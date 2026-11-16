@@ -551,6 +551,9 @@ struct RowData {
     open_atoms: bool,
     /// Whether a value of a component may hold a function with needs ([`Ty::may_hold_needs`]).
     needs: bool,
+    /// Whether a component holds, at any depth, inside functions and payloads too, the unknown
+    /// beside another member, which the printer writes as `_` alone ([`Ty::may_absorb`]).
+    absorbs: bool,
     /// The class of each component and its value where it is one value ([`class`]), and what
     /// is read from them to file the row, found the first time the row is filed
     /// ([`Row::keys`]) and kept.
@@ -638,6 +641,7 @@ impl Row {
         // levels and their rows' and shapes' answers, O(width) per row, with each function's answer kept
         // on it ([`Sig::may_hold_needs`]). Tradeoff: every row pays for it when made, read or not.
         let needs = cs.iter().any(Ty::may_hold_needs);
+        let absorbs = cs.iter().any(Ty::may_absorb);
         Row(Arc::new(RowData {
             cs,
             id: NodeId::next(),
@@ -659,6 +663,7 @@ impl Row {
             listed,
             open_atoms,
             needs,
+            absorbs,
             keys: std::sync::OnceLock::new(),
         }))
     }
@@ -1696,6 +1701,9 @@ pub struct ShapeData {
     /// Whether a value of a component or field may hold a function with needs
     /// ([`Ty::may_hold_needs`]), kept as a row keeps its own.
     needs: bool,
+    /// Whether a component or field holds, at any depth, inside functions and payloads too,
+    /// the unknown beside another member ([`Ty::may_absorb`]), kept as a row keeps its own.
+    absorbs: bool,
     /// The class of each component and field and its value where it is one value ([`class`]),
     /// found the first time the shape is filed ([`near_pairs`]) and kept, as a row keeps its own.
     keys: std::sync::OnceLock<Keys>,
@@ -1883,6 +1891,7 @@ impl Shape {
         let void = cs().any(Ty::lists_nothing);
         let one = cs().all(Ty::is_one_value);
         let needs = cs().any(Ty::may_hold_needs);
+        let absorbs = cs().any(Ty::may_absorb);
         Shape(Arc::new(ShapeData {
             items,
             fields,
@@ -1900,6 +1909,7 @@ impl Shape {
             void,
             one,
             needs,
+            absorbs,
             keys: std::sync::OnceLock::new(),
         }))
     }
@@ -2097,6 +2107,11 @@ trait Rebuild {
     fn made_set(&mut self, s: KType) -> KType {
         s
     }
+    /// The type made of a type entered, its parts made and its variables bound: `t` itself,
+    /// unless the walk changes it again ([`Absorb`]).
+    fn made_ty(&mut self, t: Ty) -> Ty {
+        t
+    }
 }
 
 /// A step of [`rebuild`]: a part to enter, or a part whose parts are made, to be made from them.
@@ -2245,7 +2260,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                         }
                     }
                 }
-                out.tys.push(made);
+                out.tys.push(w.made_ty(made));
             }
             Step::RowDone(r) => {
                 let made = r.replaced(out.tys.split_off(out.tys.len() - r.len()));
@@ -2950,6 +2965,183 @@ impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
     }
 }
 
+/// The type a text prints, as the reader reads the text back (FAIL-print-absorbed-members-twice):
+/// at every depth, inside functions too, a union that holds `_` beside other members is `_`
+/// alone, since `_` holds every value (A92, DESIGN.md sec:diagnostics, "Types in a message");
+/// the members of each union that are then equal are one, as [`Ty::union_all`] makes them,
+/// which the reader uses for `|`; and a morphism `L .. U -> V` whose bounds are then equal is
+/// the one arrow `U -> V`, as the reader makes `L .. U -> V` with `L` equal to `U`. Without
+/// it, `#box(0 | _) | #box(_)` printed `#box(_) | #box(_)`, two members as one text, and
+/// `Sig::morphism` chose `L .. U` on a difference the text does not show.
+///
+/// The printer's own walk ([`Walk::plan`]) still writes `_` for a union that holds a variable
+/// standing once, and for the unions that leaves; this walk changes only what holds the
+/// unknown itself, so the variables the printer counts are those of the type it writes.
+///
+/// A type, row, payload shape or signature that holds no union to absorb at any depth is kept
+/// whole, read from what each row, shape and signature keeps ([`Ty::may_absorb`]); each other
+/// row and shape, and each signature, is made once, by address ([`Made`]). `changes` counts
+/// the unions written `_`, the members merged and the morphisms made one arrow; a type or
+/// signature in which none happened is kept as it was, so a type with none is printed from
+/// itself.
+// Complexity tradeoff: naive, the members of each union compared pairwise after the walk,
+// O(n²) in the members; used, one walk over the type's graph, each part once, with the
+// members of each changed union merged by the hash sets [`Ty::union_all`] and
+// [`join_payloads`] keep, O(n log n) in the size n of the type, and one comparison of the two
+// bounds of each morphism made from changed parts, as the reader compares them. A type with
+// no union to absorb is printed from itself after one read of its outer level, O(width), so
+// a check that prints each of n nested types pays O(n) in all, not O(n^2) ([`Ty::may_absorb`]).
+// The text the printer writes was already O(n log n) (COMPLEXITY.md F169).
+#[derive(Default)]
+struct Absorb {
+    made: Made,
+    sigs: HashMap<*const Sig, Arc<Sig>>,
+    changes: usize,
+    /// For each type and signature entered and not yet made, innermost last, `changes` when
+    /// it was entered.
+    entered: Vec<usize>,
+}
+
+impl Absorb {
+    /// What [`Absorb`] makes of `t`, if it changes it.
+    fn ty(t: &Ty) -> Option<Ty> {
+        if !t.may_absorb() {
+            return None;
+        }
+        let mut w = Absorb::default();
+        let made = rebuild_ty(&mut w, t);
+        (w.changes > 0).then_some(made)
+    }
+
+    /// What [`Absorb`] makes of `s`, if it changes it.
+    fn sig(s: &Sig) -> Option<Sig> {
+        if !s.may_absorb() {
+            return None;
+        }
+        let mut w = Absorb::default();
+        w.entered.push(0);
+        let tys = rebuild_tys(&mut w, sig_tys(s));
+        let (arrows, needs) = sig_parts(s, tys.into_iter());
+        w.remade(s, arrows, needs)
+    }
+
+    /// The signature `s` entered, with its arrows and needs made into `arrows` and `needs`,
+    /// if anything in it changed: a morphism `L .. U -> V` whose bounds are now equal keeps its
+    /// first arrow only, as the reader reads `L .. L -> V`. Its own and bounded variables are
+    /// kept, as the printer writes those that still stand ([`Walk`]), and those its parameters
+    /// hold are found again.
+    fn remade(&mut self, s: &Sig, mut arrows: Vec<Arrow>, needs: Vec<Need>) -> Option<Sig> {
+        if !self.changed_inside() {
+            return None;
+        }
+        if matches!(s.morphism(), Some(Morphism::Bounded { .. }))
+            && arrows[0].params[0] == arrows[1].params[0]
+        {
+            arrows.truncate(1);
+            self.changes += 1;
+        }
+        let mut made = Sig {
+            params: s.params.clone(),
+            arrows,
+            bounds: s.bounds.clone(),
+            data: s.data,
+            dense: s.dense,
+            word: s.word.clone(),
+            needs,
+            own: s.own.clone(),
+            held: BTreeSet::new(),
+            named: s.named,
+            hull: s.hull.clone(),
+            facts: Facts::default(),
+        };
+        made.note_held();
+        Some(made)
+    }
+
+    /// Whether a change happened inside the type or signature made now, which it leaves.
+    fn changed_inside(&mut self) -> bool {
+        let at = (self.entered.pop()).expect("a part the walk makes is one it entered");
+        self.changes > at
+    }
+}
+
+impl Rebuild for Absorb {
+    fn known_ty(&mut self, t: &Ty) -> Option<Ty> {
+        if t.dynamic {
+            if t.absorbs_here() {
+                self.changes += 1;
+            }
+            return Some(Ty::dynamic());
+        }
+        if !t.may_absorb() {
+            return Some(t.clone());
+        }
+        self.entered.push(self.changes);
+        None
+    }
+
+    fn known_row(&mut self, r: &Row) -> Option<Row> {
+        if !r.0.absorbs {
+            return Some(r.clone());
+        }
+        self.made.rows.get(&Arc::as_ptr(&r.0)).cloned()
+    }
+
+    fn made_row(&mut self, r: &Row, out: &Row) {
+        self.made.rows.insert(Arc::as_ptr(&r.0), out.clone());
+    }
+
+    fn known_shape(&mut self, s: &Shape) -> Option<Shape> {
+        if !s.absorbs {
+            return Some(s.clone());
+        }
+        self.made.shapes.get(&s.as_ptr()).cloned()
+    }
+
+    fn made_shape(&mut self, s: &Shape, out: &Shape) {
+        self.made.shapes.insert(s.as_ptr(), out.clone());
+    }
+
+    fn known_held(&mut self, s: &Arc<Sig>) -> Option<Arc<Sig>> {
+        if !s.may_absorb() {
+            return Some(s.clone());
+        }
+        if let Some(done) = self.sigs.get(&Arc::as_ptr(s)) {
+            return Some(done.clone());
+        }
+        self.entered.push(self.changes);
+        None
+    }
+
+    /// A signature entered: itself if nothing in it changed, else [`Absorb::remade`].
+    fn made_held(&mut self, s: &Arc<Sig>, arrows: Vec<Arrow>, needs: Vec<Need>) -> Arc<Sig> {
+        let made = (self.remade(s, arrows, needs)).map_or_else(|| s.clone(), Arc::new);
+        self.sigs.insert(Arc::as_ptr(s), made.clone());
+        made
+    }
+
+    fn binding(&self, _: &str) -> Option<Cow<'_, Ty>> {
+        None
+    }
+
+    /// A type entered whose parts changed: its members merged as [`Ty::union_all`] merges
+    /// them, so the members made equal are one.
+    fn made_ty(&mut self, t: Ty) -> Ty {
+        if !self.changed_inside() {
+            return t;
+        }
+        let merged = Ty::union_all([&t]);
+        let shapes = |t: &Ty| t.payload_shapes().count();
+        if merged.tuples.len() < t.tuples.len()
+            || merged.fns.len() < t.fns.len()
+            || shapes(&merged) < shapes(&t)
+        {
+            self.changes += 1;
+        }
+        merged
+    }
+}
+
 /// [`Ty::settle`] and [`Sig::settle`]: each class variable `solve` gives a type replaced by
 /// it at every depth. A row that holds no variable, the unknown or a function, and a payload
 /// shape that holds no variable or function, are kept whole; each other is made once, by
@@ -3127,10 +3319,13 @@ pub struct Sig {
 ///
 /// And whether it holds only its own variables and those of the functions inside it
 /// ([`Sig::holds_only_own_variables`]).
+///
+/// And whether it holds the unknown beside another member at any depth (`Sig::may_absorb`),
+/// so a type printed again and again is not walked to the bottom at each print.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: ten `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: eleven `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -3141,6 +3336,7 @@ pub struct Facts(
     std::sync::OnceLock<VarBits>,
     std::sync::OnceLock<Arc<[Arc<str>]>>,
     std::sync::OnceLock<Entries>,
+    std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
@@ -10346,6 +10542,40 @@ impl Ty {
         self.may_hold_needs_outside_fns() || self.fns.iter().any(|s| s.may_hold_needs())
     }
 
+    /// Whether it holds, at any depth, inside functions and payloads too, the unknown beside
+    /// another member: a union that [`Absorb`] writes as `_` alone, as the reader reads it.
+    /// When it does not, printing it as the reader reads it leaves it as it is.
+    // Complexity tradeoff (FAIL-print-absorbed-members-twice): the naive version, the walk of
+    // [`Absorb`] to the bottom of the type at each print, is Θ(n^2) for a check that prints
+    // each of n nested tuples (33.1 times the bytes at 8n against 7.4 without the walk, on
+    // `a_part_held_twice_at_each_level_gives_a_message_of_linear_length`). Used: the answer
+    // kept on each row and shape when made and on each signature when first asked
+    // ([`Sig::may_absorb`]), so this reads the outer level, O(width), and the walk enters only
+    // the parts that answer yes. Tradeoffs: every row and shape pays for its answer when made,
+    // read or not; an eleventh `OnceLock` per signature.
+    fn may_absorb(&self) -> bool {
+        self.may_absorb_outside_fns() || self.fns.iter().any(|s| s.may_absorb())
+    }
+
+    /// Whether it is the unknown beside another member at its outer level: a union the reader
+    /// reads as `_` alone, unlike `_` itself.
+    fn absorbs_here(&self) -> bool {
+        self.dynamic
+            && !(self.set.lists_nothing()
+                && self.tuples.is_empty()
+                && self.fns.is_empty()
+                && self.vars.is_empty()
+                && self.payloads.is_empty())
+    }
+
+    /// [`Ty::may_absorb`] for the parts of it other than its functions: its outer level, and
+    /// what its rows and payload shapes keep.
+    fn may_absorb_outside_fns(&self) -> bool {
+        self.absorbs_here()
+            || self.tuples.iter().any(|r| r.0.absorbs)
+            || self.payload_shapes().any(|s| s.absorbs)
+    }
+
     /// [`Ty::may_hold_needs`] for the parts of it other than its functions: its outer level,
     /// and what its rows and payload shapes keep.
     fn may_hold_needs_outside_fns(&self) -> bool {
@@ -14373,6 +14603,26 @@ impl Sig {
         )
     }
 
+    /// Whether a type of its arrows or needs ([`sig_tys`]), at any depth, inside the functions
+    /// it holds too, holds the unknown beside another member ([`Ty::may_absorb`]). Worked out
+    /// at the first call, for it and each function below it that lacks the answer, innermost
+    /// first, and kept, as [`Sig::may_hold_needs`] is; the complexity tradeoff is
+    /// [`Ty::may_absorb`]'s.
+    fn may_absorb(&self) -> bool {
+        found_in_nest(
+            self,
+            |s| s.facts.10.get().copied(),
+            |s, b| {
+                let _ = s.facts.10.set(b);
+            },
+            |s| {
+                let here = sig_tys(s).any(Ty::may_absorb_outside_fns);
+                let fns = sig_tys(s).flat_map(|t| t.fns.iter());
+                (!here).then(|| fns.map(|f| &**f).collect())
+            },
+        )
+    }
+
     /// The bits of its variables, made from its facts at the first call.
     fn bits(&self) -> VarBits {
         *self.facts.3.get_or_init(|| VarBits::of_facts(self.facts()))
@@ -15777,6 +16027,18 @@ fn write_parts<'a>(
     // (MSG-derive-type-size).
     let alone = defs::local();
     let base = out.len();
+    // The type is written as the reader reads its text, each union that holds `_` as `_`
+    // alone and the members that leaves equal as one ([`Absorb`]).
+    let (ty, sig) = match &start {
+        Print::Ty(t, _) => (Absorb::ty(t), None),
+        Print::Sig(s, _) => (None, Absorb::sig(s)),
+        _ => (None, None),
+    };
+    let start = match (start, &ty, &sig) {
+        (Print::Ty(_, at), Some(t), _) => Print::Ty(t, at),
+        (Print::Sig(_, at), _, Some(s)) => Print::Sig(s, at),
+        (start, ..) => start,
+    };
     let shared = Shared::of(&start, spell);
     let (marked, sets) = write_text(start, out, scope, spell, &shared);
     // Inside a message the marks and references stay, and the message names them with its own

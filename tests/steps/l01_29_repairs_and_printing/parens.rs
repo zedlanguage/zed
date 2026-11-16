@@ -264,6 +264,46 @@ fn printed_types_read_back_on_seeds_that_met_a_clause_in_a_key_union() {
     }
 }
 
+/// The round trip and minimality test above on seeds whose types held two members that differ
+/// only inside a union holding `_`, which the printer wrote as one text twice
+/// (FAIL-print-absorbed-members-twice): seed 1661 drew `#box(0 | _) .. (#box(0 | _) | #box(_))
+/// -> bool`, seed 7306999953964951699 `(bool | _,) | (_,)`, and seed 2630 two functions of
+/// bounded arrows `_ .. (_ | ()) -> String` and `_ .. (_ | #a) -> String`.
+#[test]
+fn printed_types_read_back_on_seeds_that_held_members_equal_once_underscore_absorbs() {
+    for seed in [1661_u64, 2630, 7306999953964951699] {
+        read_back_round(seed);
+    }
+}
+
+/// A union of members that differ only inside a union holding `_` prints each once, as the
+/// reader reads the text, and the text reads back as the type
+/// (FAIL-print-absorbed-members-twice): `_` holds every value, so `0 | _` is `_` (A92), and
+/// `#box(0 | _) | #box(_)` is `#box(_)`.
+#[test]
+fn members_equal_once_underscore_absorbs_print_once() {
+    for (text, expected) in [
+        ("#box((0) | (_)) | #box(_)", "#box(_)"),
+        ("#box(_) | #box((0) | (_))", "#box(_)"),
+        ("((0, 0 | _)) | ((0, _))", "(0, _)"),
+        ("((((bool) | (_)),)) | (((_),))", "(_,)"),
+        (
+            "(#box(0 | _)) .. ((#box(0 | _)) | (#box(_))) -> bool",
+            "#box(_) -> bool",
+        ),
+        (
+            "((0 | _) -> bool, int) | (_ -> bool, int)",
+            "(_ -> bool, int)",
+        ),
+        ("#box((0 | _) -> bool) | #box(_ -> bool)", "#box(_ -> bool)"),
+    ] {
+        let t = parse_type(text).unwrap();
+        let back = parse_type(&t.to_string()).unwrap();
+        assert_eq!(t.to_string(), expected, "{text}");
+        assert!(same(&t, &back), "{text} prints {t}, read back as {back}");
+    }
+}
+
 /// The smallest pair seen for FAIL-kernel-candidates-key-past-columns: the printed type of
 /// seed 6869086033364754509 and one deletion the minimality check tries. The two are
 /// different types (the payload of `#pair` is the empty tuple in one, a pair in the other).
