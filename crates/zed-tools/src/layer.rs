@@ -152,14 +152,18 @@ impl WordTable {
             for w in spans(cell) {
                 // A named argument (`nodes:`) is read with its call, which the row names, and a
                 // call (`target(…)`) refers to a word its own row counts. A command line, such as
-                // `zedc build --total`, names a compiler mode and is not a word of source.
+                // `zedc build --total`, names a compiler mode and is not a word of source. A string
+                // literal, such as the empty separator `""` of L3, is an example value in the
+                // row's prose, not a word.
                 let argument = w.strip_suffix(':').is_some_and(is_word);
                 let call = w.strip_suffix("(…)").is_some_and(is_word);
+                let literal = w.len() >= 2 && w.starts_with('"') && w.ends_with('"');
                 if UNCOUNTED.contains(&w)
                     || w.starts_with("with ")
                     || w.starts_with("zedc ")
                     || argument
                     || call
+                    || literal
                 {
                     continue;
                 }

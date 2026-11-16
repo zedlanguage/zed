@@ -47,12 +47,17 @@ fn each_column_and_prefix_puts_a_word_in_its_own_kind() {
 
 #[test]
 fn spans_that_name_no_word_of_source_are_skipped() {
-    let t =
-        row("| L2 | — | `with x` | `.fold`, `abs`, `zedc build --total`, `n:`, `f(…)` |").unwrap();
+    let t = row(
+        "| L2 | — | `with x` | `.fold`, `abs`, `zedc build --total`, `n:`, `f(…)`, `\"\"`, `\"a b\"` |",
+    )
+    .unwrap();
     assert!(t.annots.is_empty() && t.facets.is_empty() && t.forms.is_empty());
     assert!(t.reads.is_empty() && t.atoms.is_empty());
-    // Only a word before `:` or `(…)` is an argument or a call: anything else is refused.
-    for bad in ["`a b:`", "`a b(…)`", "`f()`", "`1x`", "`a-b`", "`é`"] {
+    // Only a word before `:` or `(…)` is an argument or a call, and only a span quoted at both
+    // ends is a string literal: anything else is refused.
+    for bad in [
+        "`a b:`", "`a b(…)`", "`f()`", "`1x`", "`a-b`", "`é`", "`\"`", "`\"a`", "`a\"`",
+    ] {
         assert!(row(&format!("| L2 | — | — | {bad} |")).is_err(), "{bad}");
     }
 }
