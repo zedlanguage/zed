@@ -7,6 +7,7 @@
 //! The jobs run in the order the calls ran, so the errors, the classes, the needs and the
 //! records come out in the same order.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -580,6 +581,61 @@ pub(super) struct CallSigF<'a> {
     span: Span,
     what: Rc<str>,
     waiting: bool,
+    /// Whether an unbounded variable of the callee's one arrow stands inside a function type
+    /// of a parameter ([`ties_in_fns`]): the call then fixes it from the other arguments
+    /// first ([`Ck::instantiated`]).
+    ties: bool,
+    /// The places of the lambdas passed where such a function type is expected, put off until
+    /// the other arguments are checked; then the place of the one being checked.
+    later: VecDeque<usize>,
+    redo: Option<usize>,
+    /// The callee with the variables the other arguments fixed replaced, once those are
+    /// checked: each lambda put off is checked against it, and the call applies it.
+    inst: Option<Arc<Sig>>,
+}
+
+/// Whether an unbounded own variable of `sig`, a signature of one arrow, stands inside a
+/// function type of its parameter `j`: in `map2(xs: T, f: (T) -> T)`, the `T` of `f`.
+///
+/// Cost: two walks of the parameter's type ([`Ty::vars_in`], [`Ty::vars_outside`]) and a set
+/// lookup per variable. What is given up: a variable that stands both inside and outside a
+/// function type within one parameter, as in `p: (T, (T) -> T)`, counts as outside, so such a
+/// call keeps the path of a call with no such variable.
+fn own_in_fns(sig: &Sig, j: usize) -> bool {
+    let [arrow] = &sig.arrows[..] else {
+        return false;
+    };
+    let Some(p) = arrow.params.get(j) else {
+        return false;
+    };
+    let mut all = Vars::default();
+    p.vars_in(&mut all);
+    let mut outside = Vars::default();
+    p.vars_outside(&mut outside);
+    let outside: HashSet<&Arc<str>> = outside.order.iter().collect();
+    (all.order.iter())
+        .any(|v| sig.own.contains(v) && !sig.bounds.contains_key(v) && !outside.contains(v))
+}
+
+/// Whether any parameter of `sig` holds a variable [`own_in_fns`] finds.
+fn ties_in_fns(sig: &Sig) -> bool {
+    !sig.own.is_empty() && (0..sig.params.len()).any(|j| own_in_fns(sig, j))
+}
+
+/// The type an argument at the parameter `j` of `sig` is checked against: the union of that
+/// parameter's types over the arrows. A function type that still holds a variable of the
+/// callee is no type to fit a lambda to, as nothing fixed the variable: the argument is then
+/// checked alone, generic in its parameters, as for a parameter with no written type.
+fn callee_want(sig: &Sig, j: usize) -> Ty {
+    let want = Ty::union_all(sig.arrows.iter().map(|ar| &ar.params[j]));
+    if !sig.own.is_empty() && !want.fns.is_empty() {
+        let mut vs = Vars::default();
+        want.vars_in(&mut vs);
+        if vs.order.iter().any(|v| sig.own.contains(v)) {
+            return Ty::dynamic();
+        }
+    }
+    want
 }
 
 pub(super) struct MemberF<'a> {
@@ -1140,7 +1196,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let ExprKind::Is { of, ty, negated } = &e.kind else {
                     unreachable!("an `is`")
                 };
-                let t = denoted(ty);
+                let t = self.written(ty, false);
                 let bool_ = Ty::carrier(Carrier::Bool);
                 let here = self.arms.here();
                 let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
@@ -2674,8 +2730,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.pending.len() <= s.level {
             self.pending.push(Vec::new());
         }
+        self.open_type_vars(s.level);
         let given = std::mem::take(&mut s.given);
         for ((id, p), g) in s.ids.iter().zip(&f.params).zip(given) {
+            // A written type is read again with its type variables as this function's classes.
+            let g = match (&p.ty, g) {
+                (Some(a), Some(_)) => Some(self.written(a, true)),
+                (_, g) => g,
+            };
             let (t, why) = match (&p.ty, g) {
                 (Some(a), Some(t)) if t == Ty::dynamic() => (t, Why::Untracked(a)),
                 (Some(a), Some(t)) => {
@@ -6288,7 +6350,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
         };
         let s = CallSigF {
-            sig,
             receiver,
             args,
             slots,
@@ -6299,6 +6360,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             what,
             waiting: false,
+            ties: ties_in_fns(&sig),
+            later: VecDeque::new(),
+            redo: None,
+            inst: None,
+            sig,
         };
         self.call_sig_step(m, Box::new(s));
     }
@@ -6310,16 +6376,30 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.waiting = false;
             self.lit_taking = None;
             let x = m.take_arg();
-            s.got.push(Some(x));
+            match s.redo.take() {
+                Some(j) => s.got[j] = Some(x),
+                None => s.got.push(Some(x)),
+            }
         }
         while let Some(slot) = s.slots.get(s.got.len()).copied() {
             let j = s.got.len();
             let a = match slot {
                 _ if j == 0 && s.receiver.is_some() => s.receiver.take(),
                 Some(at) => match s.args.get(at) {
+                    // A lambda passed where a function type holds a variable of the callee
+                    // is checked after the other arguments, which fix the variable (DESIGN.md
+                    // sec:type_resolution, rule 2, the order it gives a struct constructor).
+                    ArgSrc::Expr(e)
+                        if s.ties
+                            && matches!(e.kind, ExprKind::Lambda { .. })
+                            && own_in_fns(&s.sig, j) =>
+                    {
+                        s.later.push_back(j);
+                        None
+                    }
                     ArgSrc::Expr(e) => {
                         let e = *e;
-                        let want = Ty::union_all(s.sig.arrows.iter().map(|ar| &ar.params[j]));
+                        let want = callee_want(&s.sig, j);
                         // An operation on literals alone that takes the parameter's carrier:
                         // the rejections inside it are dropped, so they are not built. The
                         // walk of `e` holds no call, so no other argument is walked first.
@@ -6334,17 +6414,41 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             s.got.push(a);
         }
+        if s.ties && s.inst.is_none() {
+            s.inst = Some(self.instantiated(&s.sig, &s.got));
+        }
+        // A queue taken from the front: O(1) a lambda, where `Vec::remove(0)` shifted the rest,
+        // O(k^2) for k lambdas put off in one call.
+        if let Some(j) = s.later.pop_front() {
+            let inst = s
+                .inst
+                .clone()
+                .expect("instantiated before the lambdas put off");
+            let Some(Some(at)) = s.slots.get(j).copied() else {
+                unreachable!("a lambda put off has a slot")
+            };
+            let ArgSrc::Expr(e) = s.args.get(at) else {
+                unreachable!("a lambda put off is an expression")
+            };
+            let e = *e;
+            let want = callee_want(&inst, j);
+            s.redo = Some(j);
+            s.waiting = true;
+            m.k(Frame::CallSig(s));
+            return m.job(Job::Arg(e, Want::of(&want)));
+        }
         let args = std::mem::take(&mut s.got);
+        let sig = s.inst.clone().unwrap_or_else(|| s.sig.clone());
         let t = match s.curry {
             true => match s.bits {
                 Some(p) => {
                     let given = (args.iter())
                         .map(|a| a.clone().and_then(|a| Some((a.clone(), a.expr?))))
                         .collect();
-                    let t = self.partial(&s.sig, args, &s.missing, false, &s.what, s.span);
+                    let t = self.partial(&sig, args, &s.missing, false, &s.what, s.span);
                     self.curried_bits(t, s.what.clone(), p, given, s.span)
                 }
-                None => self.partial(&s.sig, args, &s.missing, false, &s.what, s.span),
+                None => self.partial(&sig, args, &s.missing, false, &s.what, s.span),
             },
             false => {
                 let what = callee(&s.what);
@@ -6353,10 +6457,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // of a trial.
                 let from_outside = !self.trying && self.replaying == 0 && !self.widened.is_empty();
                 let with = from_outside.then(|| self.outside_args(&args)).flatten();
-                let form = Construct::Call(what.as_str().into(), s.sig.clone());
+                let form = Construct::Call(what.as_str().into(), sig.clone());
                 let t = self.as_written(form, args, s.span);
                 match with {
-                    Some(with) => self.try_outside(&what, &s.sig, with, s.span),
+                    Some(with) => self.try_outside(&what, &sig, with, s.span),
                     None if from_outside => self.tried_at(s.span, Some(t.loose())),
                     None => {}
                 }
@@ -6364,6 +6468,74 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         };
         m.ty(t);
+    }
+
+    /// `sig`, of one arrow, with each unbounded own variable that the arguments `got` fix
+    /// replaced by its type, for a call where such a variable stands inside a function type
+    /// of a parameter ([`ties_in_fns`]). DESIGN.md sec:type_resolution, rule 2: a variable is
+    /// fixed by the arguments that are not literals, and the literals then take it; so each
+    /// argument that is not a literal, at a parameter where the variable stands outside the
+    /// functions, binds it ([`Ty::sub`]), and a variable none of them binds that a literal is
+    /// passed for is the literal's carrier, `int` for `3`. The lambdas passed where a function
+    /// type holds the variable are not in `got` yet; they are then checked against the result.
+    ///
+    /// Why the signature is replaced before the application and not bound by it: the
+    /// application compares a function argument with a function-typed parameter as written,
+    /// apart from the binding of the other parameters, so it never binds a variable of the
+    /// callee through a function, and `map2(xs: 3, f: inc)` with `inc(v: int) = v + 1` was
+    /// refused. A variable left unbound (no argument outside a function fixes it), or bound to
+    /// the unknown or to nothing, stays as before.
+    ///
+    /// Complexity tradeoff: one comparison per argument at a parameter that holds such a
+    /// variable outside the functions, and one replacement of the signature, O(size of the
+    /// signature), once per call of such a function. The naive way, binding through function
+    /// types inside the comparison, would need the binding carried into every comparison of
+    /// function types; not built.
+    fn instantiated(&self, sig: &Arc<Sig>, got: &[Option<Arg<'a>>]) -> Arc<Sig> {
+        let free = |v: &Arc<str>| sig.own.contains(v) && !sig.bounds.contains_key(v);
+        let [arrow] = &sig.arrows[..] else {
+            return sig.clone();
+        };
+        let mut b = Binds::new();
+        for (a, p) in got.iter().zip(&arrow.params) {
+            let Some(a) = a.as_ref().filter(|a| a.lit.is_none()) else {
+                continue;
+            };
+            let mut vs = Vars::default();
+            p.vars_outside(&mut vs);
+            if !vs.order.iter().any(free) {
+                continue;
+            }
+            let mut tried = b.clone();
+            if a.ty.without_loose().sub(p, &mut tried) {
+                b = tried;
+            }
+        }
+        for (a, p) in got.iter().zip(&arrow.params) {
+            let (Some(Some(l)), Some(v)) = (a.as_ref().map(|a| &a.lit), p.as_var()) else {
+                continue;
+            };
+            if free(v) && b.get(v).is_none() {
+                b.insert(v.clone(), Ty::carrier(lit_carrier(&l.value)));
+            }
+        }
+        b.retain(|v, t| free(v) && !t.is_empty() && !t.dynamic);
+        if b.is_empty() {
+            return sig.clone();
+        }
+        let mut inst = Sig::clone(sig);
+        for ar in &mut inst.arrows {
+            for p in &mut ar.params {
+                *p = p.replace(&b);
+            }
+            ar.result = ar.result.replace(&b);
+        }
+        inst.needs = inst.needs.iter().map(|n| n.replace(&b)).collect();
+        for v in b.keys() {
+            inst.own.remove(v);
+            inst.held.remove(v);
+        }
+        Arc::new(inst)
     }
 
     /// A call whose arguments do not fit `sig`, for the reasons `misfits`. For the declared
@@ -6723,11 +6895,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.pending.len() <= level {
             self.pending.push(Vec::new());
         }
+        self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
         for p in slots {
             let declared = p.and_then(|p| p.ty.as_ref());
             let t = match declared {
-                Some(t) => denoted(t),
+                Some(t) => self.written(t, true),
                 None => Ty::var(format!("${}", self.class()).into()),
             };
             let id = p.map(|p| self.id(p.span, &p.name));
@@ -6935,7 +7108,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let p = &s.params[*i];
                         let mut t = arrow.params[j].clone();
                         if let Some(a) = &p.ty {
-                            let a = denoted(a);
+                            let a = self.written(a, false);
                             if !self.subtype(&t, &a) {
                                 let why = t.refused(&a);
                                 let (ta, tt) = (self.text(&a), self.text(&t));
@@ -9207,6 +9380,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(b) = self.bound.get_mut(level) {
             *b = Vars::default();
         }
+        self.close_type_vars(level);
         self.level -= 1;
         Arc::new(sig)
     }

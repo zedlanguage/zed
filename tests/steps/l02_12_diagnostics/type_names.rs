@@ -76,8 +76,6 @@ fn a_type_variable_written_twice_is_accepted() {
 
 #[test]
 fn a_type_variable_the_body_reads_is_accepted() {
-    // The checker reads a free `T` as `_` (row FAIL-typevar-free-in-checker), so `main` does
-    // not use the result here.
     accepted("f(x: T) = { g = (y: T) -> y; g(x) };\nmain() = 0;\n");
 }
 
@@ -222,4 +220,95 @@ fn a_type_two_slips_away_is_not_offered() {
         &["The type `Cnfgi` is not defined."],
     );
     assert!(!out.contains("repair:"), "{out}");
+}
+
+/// What the program with these definitions writes when `main` writes `out` to `stdout`.
+fn writes(defs: &str, out: &str) -> String {
+    output(&format!(
+        "{defs}\nmain(m: MainArgs) {{\n  m.stdout <- {out};\n}}\n"
+    ))
+}
+
+/// What the program `src` writes to `stdout`.
+fn output(src: &str) -> String {
+    let p = zedc::run::load(src.as_bytes()).unwrap_or_else(|e| panic!("rejected:\n{src}\n{e}"));
+    let files =
+        |_: &str| -> std::sync::Arc<dyn zed_kernel::Lookup> { unreachable!("no `Files` port") };
+    match p.run(&std::collections::BTreeMap::new(), files) {
+        Ok(w) => w
+            .writes
+            .iter()
+            .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+            .collect(),
+        Err(e) => panic!("{src}: run error: {e}"),
+    }
+}
+
+const MAP2: &str = "map2(xs: T, f: (T) -> T) = f(xs);";
+const MAP2_F_FIRST: &str = "map2(f: (T) -> T, xs: T) = f(xs);";
+const INC: &str = "inc(positional v: int) = v + 1;";
+
+/// Row FAIL-typevar-free-in-checker: the uses of a type variable in a signature are one
+/// type, which each call binds (DESIGN.md sec:type_resolution, rules 2 and 4). `T` is fixed by
+/// the arguments that are not lambdas, here the literal `3`, which gives it `int`; the lambda
+/// is then checked as `(int) -> int`, and the call gives `int`.
+#[test]
+fn a_free_type_variable_ties_its_uses_at_a_call() {
+    assert_eq!(writes(MAP2, r#""${map2(xs: 3, f: (v) -> v + 1)}""#), "4\n");
+    assert_eq!(
+        writes(MAP2, r#""${map2(xs: 3, f: (v) -> v + 1) * 2}""#),
+        "8\n"
+    );
+    assert_eq!(
+        writes(MAP2, r#""${map2(xs: 3, f: (v: int) -> v * 5)}""#),
+        "15\n"
+    );
+    assert_eq!(
+        writes(MAP2, r#""${map2(xs: 2.5, f: (v) -> v + 1.0)}""#),
+        "3.5\n"
+    );
+}
+
+/// The lambda is checked after the other arguments wherever it stands, so its order in the
+/// call or the signature does not matter, and a function that is not a lambda binds the same.
+#[test]
+fn a_free_type_variable_is_bound_in_any_argument_order() {
+    let at_a = r#""${{ a = 3 + 0; map2(xs: a, f: (v) -> v * 2) }}""#;
+    assert_eq!(writes(MAP2, at_a), "6\n");
+    let f_first = r#""${map2(f: (v) -> v + 1, xs: 3)}""#;
+    assert_eq!(writes(MAP2_F_FIRST, f_first), "4\n");
+    let named = format!("{MAP2}\n{INC}");
+    assert_eq!(writes(&named, r#""${map2(xs: 3, f: inc)}""#), "4\n");
+    let named_first = format!("{MAP2_F_FIRST}\n{INC}");
+    assert_eq!(writes(&named_first, r#""${map2(f: inc, xs: 3)}""#), "4\n");
+}
+
+/// A lambda whose result is not the type the variable took is rejected in the variable's
+/// type at the call, not in `_`.
+#[test]
+fn a_lambda_against_a_bound_type_variable_is_checked_at_its_type() {
+    let out = rejects(
+        &format!("{MAP2}\nmain() = {{ _ = map2(xs: 3, f: (v) -> \"s\"); 0 }};\n"),
+        &["the lambda returns \"s\", and `int -> int` returns int"],
+    );
+    assert!(!out.contains("`_"), "{out}");
+}
+
+/// A program whose one call passes `n` lambdas, each at a parameter `gi: (T) -> T`, and the
+/// literal `3` at `x: T`; the call gives the last lambda applied to `x`.
+pub(crate) fn lambdas_at_one_type_variable(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!(", g{i}: (T) -> T")).collect();
+    let args: String = (0..n).map(|i| format!(", g{i}: (v) -> v + {i}")).collect();
+    let last = n - 1;
+    format!(
+        "f(x: T{params}) = g{last}(x);\n\
+         main(m: MainArgs) {{\n  m.stdout <- \"${{f(x: 3{args})}}\";\n}}\n"
+    )
+}
+
+/// [`lambdas_at_one_type_variable`] at a small size, the check its benchmark makes besides
+/// the ratio: each lambda is checked at `int`, and the call gives `3 + 3`.
+#[test]
+fn many_lambdas_at_one_type_variable_are_each_checked_at_its_type() {
+    assert_eq!(output(&lambdas_at_one_type_variable(4)), "6\n");
 }

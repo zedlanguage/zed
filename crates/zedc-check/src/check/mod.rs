@@ -1737,6 +1737,10 @@ struct Ck<'t, 'a> {
     leaving: Vec<usize>,
     /// The needs being checked at calls, one inside another.
     open: Vec<Open>,
+    /// The type variables written in the signatures of the functions being checked, one
+    /// inside another, outermost first: the level of each function and the class each name
+    /// of the form `[A-Z][0-9]*` stands for there ([`Self::written`]).
+    type_vars: Vec<(usize, Binds)>,
     /// The variables of the parameters a partial call leaves out: the next application
     /// leaves the needs on them to the function the call gives.
     defer: BTreeSet<Arc<str>>,
@@ -2012,6 +2016,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
+            type_vars: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
             lit_refused: Vec::new(),
@@ -3555,6 +3560,59 @@ impl<'t, 'a> Ck<'t, 'a> {
             out.push(Note { span: root, text });
         }
         out
+    }
+
+    /// Opens the type variables of the function checked at `level`, the current level, after
+    /// those of the functions around it; the scopes of functions whose checks ended without
+    /// [`Self::close_type_vars`] are dropped first.
+    fn open_type_vars(&mut self, level: usize) {
+        while self.type_vars.last().is_some_and(|(l, _)| *l >= level) {
+            self.type_vars.pop();
+        }
+        self.type_vars.push((level, Binds::new()));
+    }
+
+    /// Closes the type variables of the function checked at `level`, if they are open.
+    fn close_type_vars(&mut self, level: usize) {
+        if self.type_vars.last().is_some_and(|(l, _)| *l == level) {
+            self.type_vars.pop();
+        }
+    }
+
+    /// The type the written type `t` denotes, each type variable it names free replaced by
+    /// the class it stands for: that of the innermost function being checked whose signature
+    /// or body named it already, and otherwise, where `fresh` says so, a new class of the
+    /// function checked now. So the uses of `T` in one signature are one type, which a call
+    /// binds (DESIGN.md sec:type_resolution, rule 4), and a lambda in the body that writes `T`
+    /// means the function's `T`, as resolve finds the home of each use. A name left without a
+    /// class stays the variable it was, which the checker reads as `_`; outside every function
+    /// none gets one.
+    // Complexity tradeoff: each name is looked up in the scopes from the innermost out,
+    // O(depth) per name, against a map from each name to a stack of classes, O(1) per name
+    // but a removal per name at each function's end. Written types name few variables and
+    // functions nest few deep, so the scan is the cheaper one in practice; a type of n names
+    // costs O(n·d) for d nested functions.
+    pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
+        let ty = denoted(t);
+        if self.type_vars.is_empty() {
+            return ty;
+        }
+        let mut binds = Binds::new();
+        for n in free_type_vars(t) {
+            let found = (self.type_vars.iter().rev()).find_map(|(_, b)| b.get(n).cloned());
+            let c = match found {
+                Some(c) => c,
+                None if fresh => {
+                    let c = Ty::var(format!("${}", self.class()).into());
+                    let (_, b) = self.type_vars.last_mut().expect("a scope is open");
+                    b.insert(n.into(), c.clone());
+                    c
+                }
+                None => continue,
+            };
+            binds.insert(n.into(), c);
+        }
+        ty.replace(&binds)
     }
 
     /// A new class, of every value, at the current level.
@@ -11370,6 +11428,47 @@ fn carrier_mask(t: &Type) -> Result<u8, &Type> {
         }
     }
     Ok(mask)
+}
+
+/// The names of the form `[A-Z][0-9]*` that the written type `t` holds and that no `for`
+/// clause in it bounds, each once, in written order: the type variables of the signature
+/// around it (DESIGN.md sec:type_resolution, rule 4). A name a clause anywhere in `t` bounds
+/// is left out everywhere in `t`; resolve gives such a name one home. One walk on its own
+/// stack, linear in the size of `t`.
+fn free_type_vars(t: &Type) -> Vec<&str> {
+    let (mut names, mut bounded) = (Vec::new(), HashSet::new());
+    let mut stack = vec![t];
+    while let Some(t) = stack.pop() {
+        match &t.kind {
+            TypeKind::Name(n) if zedc_resolve::resolve::type_var_form(n) => names.push(n.as_str()),
+            TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
+            TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
+                stack.extend(ts.iter().rev())
+            }
+            TypeKind::Diff(a, b) => stack.extend([&**b, &**a]),
+            TypeKind::Arrow { params, result, .. } => {
+                stack.push(result);
+                stack.extend(params.iter().rev().map(|p| &p.ty));
+            }
+            TypeKind::Bounded {
+                lower,
+                upper,
+                result,
+            } => stack.extend([&**result, &**upper, &**lower]),
+            TypeKind::Apply(_, ps) | TypeKind::AtomApply(_, ps) => {
+                stack.extend(ps.iter().rev().map(|p| &p.ty))
+            }
+            TypeKind::Record(fs) => stack.extend(fs.iter().rev().map(|(_, t)| t)),
+            TypeKind::Array(of) | TypeKind::Range { of, .. } => stack.push(of),
+            TypeKind::For { ty, bounds } => {
+                bounded.extend(bounds.iter().map(|b| b.name.as_str()));
+                stack.push(ty);
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    names.retain(|n| !bounded.contains(n) && seen.insert(*n));
+    names
 }
 
 /// The type a type expression denotes; a name that is no prelude type is a type variable.
