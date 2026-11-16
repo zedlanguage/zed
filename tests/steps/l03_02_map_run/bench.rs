@@ -159,6 +159,151 @@ fn a_range_is_made_and_read_in_constant_time() {
     scaling::check_order("the kernel run of reads of `0 ..< n`", N_KERNEL, 0, run);
 }
 
+/// `2^63 + d`, an integer past `i64`.
+fn past_i64(d: usize) -> Value {
+    Value::int(num_bigint::BigInt::from(i64::MAX) + 1 + d)
+}
+
+/// `r = 2^63 - 2 ..< 2^63 + n`, which crosses the 64-bit edge, read without a walk: the tuple
+/// of `r[2^63 + n - 1]`, `2^63 + n / 2 in r`, `r.count`, the first and last entry of `r` and
+/// the entries before and after the one at `2^63 + n / 2`.
+fn wide_reads_term(n: usize) -> Term {
+    let lo = lit(Value::int(num_bigint::BigInt::from(i64::MAX) - 1));
+    let range = Term::Prim(Prim::Range, vec![lo, lit(past_i64(n))]);
+    let half = || {
+        Term::Prim(
+            Prim::Tuple,
+            vec![lit(past_i64(n / 2)), lit(past_i64(n / 2))],
+        )
+    };
+    let reads = Term::Prim(
+        Prim::Tuple,
+        vec![
+            get(var("r"), lit(past_i64(n - 1))),
+            Term::Prim(Prim::Has, vec![lit(past_i64(n / 2)), var("r")]),
+            count(var("r")),
+            Term::Prim(Prim::FirstEntry, vec![var("r")]),
+            Term::Prim(Prim::LastEntry, vec![var("r")]),
+            Term::Prim(Prim::EntryBefore, vec![var("r"), half()]),
+            Term::Prim(Prim::EntryAfter, vec![var("r"), half()]),
+        ],
+    );
+    let_("r", range, reads)
+}
+
+#[test]
+fn a_wide_range_is_made_and_read_in_constant_time() {
+    // Plan row RANGE-lazy-wide. Complexity tradeoff: a range with an end past `i64` was built
+    // as a family of its n entries, n big-integer additions and O(n) memory for any read (the
+    // method until RANGE-lazy-wide); it is kept as its two ends, so making it and each read
+    // here cost O(digits), the same at n and 8n.
+    let terms = scaling::inputs(N_KERNEL, wide_reads_term);
+    let run = |k: usize| {
+        let pair = |x: Value| Value::tuple(vec![x.clone(), x]);
+        let low = Value::Int(i64::MAX - 1);
+        let want = Value::tuple(vec![
+            past_i64(k - 1),
+            Value::Bool(true),
+            Value::Int(k as i64 + 2),
+            pair(low),
+            pair(past_i64(k - 1)),
+            pair(past_i64(k / 2 - 1)),
+            pair(past_i64(k / 2 + 1)),
+        ]);
+        assert_eq!(eval(&terms[&k]).unwrap(), want);
+    };
+    scaling::check_order(
+        "the kernel run of reads of `2^63 - 2 ..< 2^63 + n`",
+        N_KERNEL,
+        0,
+        run,
+    );
+}
+
+/// `(0 ..< n) < (1 ..< n)`, `min` and `max` of the two, and `min` and `max` of `0 ..< n` and
+/// `0 ..< n + 1`, which differ at their last ends.
+fn ranges_ordered_term(n: usize) -> Term {
+    let r = |a: i64, b: i64| Term::Prim(Prim::Range, vec![lit(a), lit(b)]);
+    let n = n as i64;
+    let both = |p: Prim, x: Term, y: Term| Term::Prim(p, vec![x, y]);
+    Term::Prim(
+        Prim::Tuple,
+        vec![
+            both(Prim::Lt, r(0, n), r(1, n)),
+            both(Prim::Min, r(1, n), r(0, n)),
+            both(Prim::Max, r(0, n), r(1, n)),
+            both(Prim::Min, r(0, n + 1), r(0, n)),
+            both(Prim::Max, r(0, n), r(0, n + 1)),
+        ],
+    )
+}
+
+#[test]
+fn two_ranges_are_ordered_from_their_ends_in_constant_time() {
+    // Plan row RANGE-lazy-wide. Complexity tradeoff: two ranges of other ends were ordered by
+    // the walk over both maps, which built each, O(n) (the method until RANGE-lazy-wide); the
+    // ends decide the order, so it is read from them, O(1), and no entry is built.
+    let terms = scaling::inputs(N_KERNEL, ranges_ordered_term);
+    let run = |k: usize| {
+        let r = |a: i64, b: i64| Value::Family(Family::range(a, b - 1));
+        let n = k as i64;
+        let want = Value::tuple(vec![
+            Value::Bool(true),
+            r(0, n),
+            r(1, n),
+            r(0, n),
+            r(0, n + 1),
+        ]);
+        let got = eval(&terms[&k]).unwrap();
+        assert_eq!(got, want);
+        let Value::Tuple(parts) = &got else {
+            panic!("a tuple")
+        };
+        // The results are the ranges themselves, kept as their ends.
+        let spans = parts[1..].iter().map(|v| match v {
+            Value::Family(f) => f.span(),
+            _ => None,
+        });
+        assert!(spans.into_iter().all(|s| s.is_some()));
+    };
+    scaling::check_order(
+        "the kernel run of `<`, `min` and `max` of two ranges of n entries",
+        N_KERNEL,
+        0,
+        run,
+    );
+}
+
+/// `(2^63 ..< 2^63 + n) >< (+)` in the kernel: the walk builds the wide range's entries.
+fn wide_sum_term(n: usize) -> Term {
+    let range = Term::Prim(Prim::Range, vec![lit(past_i64(0)), lit(past_i64(n))]);
+    fold(range, Term::PrimFn(Prim::Add), Some(lit(0)))
+}
+
+#[test]
+fn a_walk_over_a_wide_range_runs_in_linear_time() {
+    // Plan row RANGE-lazy-wide, the other side of the switchover (A96): the first walk builds
+    // the wide range's n entries once, O(n) big-integer additions, as the eager range did, and
+    // adds them, O(n).
+    let terms = scaling::inputs(N_KERNEL, wide_sum_term);
+    let run = |k: usize| {
+        let n = num_bigint::BigInt::from(k);
+        let base = num_bigint::BigInt::from(i64::MAX) + 1;
+        let want = &base * &n + &n * (&n - 1) / 2;
+        assert_eq!(eval(&terms[&k]).unwrap(), Value::int(want));
+    };
+    scaling::check(
+        "the kernel run of `(2^63 ..< 2^63 + n) >< (+)`",
+        N_KERNEL,
+        run,
+    );
+    under_nine(
+        "the kernel run of `(2^63 ..< 2^63 + n) >< (+)`, instructions",
+        N_KERNEL,
+        run,
+    );
+}
+
 /// `r = 0 ..` read at `n`: the tuple of `r[n]`, `n in r` and `r.first` (zedc-elab,
 /// `Frame::RangeFrom`).
 fn open_reads_term(n: usize) -> Term {

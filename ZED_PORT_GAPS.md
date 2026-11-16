@@ -4115,3 +4115,12 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 |---|---|---|---|
 | A panic (`-> !`) where a walk meets a range with no upper end, reached through `Deref` and the counting methods; resolution keeps such a range out of every walk, so the panic marks a broken compiler, not a program error | `walked_unbounded`, the `Entries::From` arms of `Deref`, `DerefMut`, `len`, `count`, `entry_beside`, `end_entry(true)` | Implicit conversions (`Deref`); a stop the type does not show | A union `Map \| Range \| From` with no walk defined on `From`, so a walk of it does not type-check and needs no stop |
 | The low end kept as `Arc<Value>`, shared by every copy, as `Entries::Map` shares its tree | `Entries::From` | Identity (gap 1) | The low end held by value: an `int` is one word or a pointer to its digits |
+
+## Entries from RANGE-lazy-wide (`zed-kernel/src/value.rs` `Ends`, `Span`, `Family::range_wide`; `eval.rs` `range`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two forms of a span's ends, `i64` pairs and `Value` triples, chosen by whether both ends fit a machine word, so the common case reads and compares `i64`s | `Ends::Word`, `Ends::Wide`, `Span::{size, count, end, map, find, beside}` | Machine integers (gap 4) | One `int` pair: the compiler stores an `int` in one machine word while it fits and as digits past it, so the two forms are one |
+| A `u128` count saturated at `u128::MAX` for the hash, which reads a family's size as a machine integer | `Span::size`, `Family::size` | Machine integers (gap 4) | The exact count as an `int`, hashed as any integer |
+| `num_bigint::BigInt` arithmetic to read an end's integer back (`built_integer`, which takes a `Big`'s coefficient, debug-asserting it keeps no power) and to step a wide span's map | `built_integer`, `Span::map`, `Family::range_wide` | Big-integer library types (gap 4) | `int` arithmetic: an end is an `int`, and stepping is `+ 1` |
+| A binary search over `BigInt` beside a key whose value could not be built, kept only for a memory refusal | `search_beside` | Recovery from a refused allocation; big-integer library types | The integer beside the key's value (`next_integer`) on the language's `int`, with the refusal the allocation gives as an atom |

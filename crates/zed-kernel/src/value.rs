@@ -42,7 +42,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
-use num_traits::{One, ToPrimitive};
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
@@ -1244,80 +1244,266 @@ impl std::ops::DerefMut for Entries {
 
 /// The integers `lo ..= last`, `lo <= last`, of a range family, and their map once built.
 pub(crate) struct Span {
-    lo: i64,
-    last: i64,
+    ends: Ends,
     map: std::sync::OnceLock<btree::Map<Value, Value>>,
 }
 
+/// The two ends of a [`Span`]. The form is fixed by the ends (`Family::range_wide`): `Word`
+/// exactly when both are 64-bit, so one set of integers has one form, and two spans hold the
+/// same integers exactly when their ends are equal.
+enum Ends {
+    /// Both ends 64-bit (plan row RANGE-lazy).
+    Word { lo: i64, last: i64 },
+    /// An end past `i64` (plan row RANGE-lazy-wide): each end, and the count `last - lo + 1`
+    /// made once, as `Value::int` gives it, `Int` where 64-bit and `Big` past it, a `Big`
+    /// holding a built integer and no kept power (`Rat::int`), so [`built_integer`] reads it
+    /// back without building.
+    Wide {
+        lo: Value,
+        last: Value,
+        count: Value,
+    },
+}
+
+/// The built integer a wide span's end or count holds: an `Int` widened, or a `Big`'s
+/// coefficient, which is the whole integer since `Value::int` keeps no power (`Ends::Wide`).
+pub(crate) fn built_integer(v: &Value) -> BigInt {
+    match v {
+        Value::Int(i) => BigInt::from(*i),
+        Value::Big(r) => {
+            let (n, pows) = r.integer_factors();
+            debug_assert!(pows.is_empty(), "a span's end is built by `Value::int`");
+            n.clone()
+        }
+        _ => unreachable!("a span's ends and count are integers"),
+    }
+}
+
 impl Span {
-    /// The number of integers, from 1 to 2^64, which `u128` holds exactly.
-    fn count(&self) -> u128 {
-        // `last >= lo`, so the difference of the two widened is from 0 to 2^64 − 1.
-        (i128::from(self.last) - i128::from(self.lo)) as u128 + 1
-    }
-
-    /// The map `{lo -> lo, …, last -> last}`, built on the first call, O(n), and shared after.
-    fn map(&self) -> &btree::Map<Value, Value> {
-        self.map.get_or_init(|| {
-            (self.lo..=self.last)
-                .map(|k| (Value::Int(k), Value::Int(k)))
-                .collect()
-        })
-    }
-
-    /// The integer `k` is, when it is one of the span's. Under the total order a key equals
-    /// `Int(i)` only when it is `Int(i)`: a value of another kind than the numbers is ordered by
-    /// its kind (`scalar_cmp`), a `Big` is never in the 64-bit range (`number_cmp`), and two
-    /// numbers of equal value and different kinds are ordered by kind (`number_cmp`'s
-    /// `then(number_kind)`), so a key that is no `Int` is in no span.
-    fn find(&self, k: &Value) -> Option<i64> {
-        match k {
-            Value::Int(i) if (self.lo..=self.last).contains(i) => Some(*i),
-            _ => None,
+    /// The number of integers, from 1 to 2^64 for 64-bit ends, which `u128` holds exactly;
+    /// past `u128::MAX` for wide ends it is `u128::MAX`. That keeps the hash, which reads it
+    /// (`leaf_digest`), equal on equal families: equal families have equal counts. Two
+    /// families of `u128::MAX` or more entries are both ranges, as no map holds that many,
+    /// and ranges are compared by their ends, so no comparison reads the saturated number as
+    /// the count. O(1), or O(digits) for wide ends.
+    fn size(&self) -> u128 {
+        match &self.ends {
+            // `last >= lo`, so the difference of the two widened is from 0 to 2^64 − 1.
+            Ends::Word { lo, last } => (i128::from(*last) - i128::from(*lo)) as u128 + 1,
+            Ends::Wide { count, .. } => built_integer(count).to_u128().unwrap_or(u128::MAX),
         }
     }
 
-    /// The least integer of the span greater than `k` under the total order (`after`), or the
-    /// greatest less than it, by binary search on the integers: `Int` values are ordered as
-    /// their `i64`s, so the integers of the span greater than `k` are a suffix of it and those
-    /// less than it a prefix. At most 64 comparisons, each of one integer with `k`.
-    fn beside(&self, k: &Value, after: bool) -> Option<i64> {
-        // `past(i)`: whether `Int(i)` is on the far side of `k`; monotone in `i`, false then
-        // true for `after`, true then false for its mirror, so the search finds the border.
-        let past = |i: i64| match after {
-            true => cmp(&Value::Int(i), k) == Ordering::Greater,
-            false => cmp(&Value::Int(i), k) == Ordering::Less,
-        };
-        // The span as `i128`, so that the midpoint and the steps past either end never overflow.
-        let (mut lo, mut hi) = (i128::from(self.lo), i128::from(self.last));
-        if after {
-            // The least `i` in `lo ..= hi` with `past(i)`, if any.
-            if !past(self.last) {
-                return None;
+    /// The number of integers as an integer value, exact: `Int` up to `i64::MAX`, `Big`
+    /// past it. O(1).
+    fn count(&self) -> Value {
+        match &self.ends {
+            Ends::Word { .. } => match i64::try_from(self.size()) {
+                Ok(n) => Value::Int(n),
+                Err(_) => Value::int(BigInt::from(self.size())),
+            },
+            Ends::Wide { count, .. } => count.clone(),
+        }
+    }
+
+    /// The least integer (`last` false) or the greatest. O(1).
+    fn end(&self, last: bool) -> Value {
+        match (&self.ends, last) {
+            (Ends::Word { lo, .. }, false) => Value::Int(*lo),
+            (Ends::Word { last, .. }, true) => Value::Int(*last),
+            (Ends::Wide { lo, .. }, false) => lo.clone(),
+            (Ends::Wide { last, .. }, true) => last.clone(),
+        }
+    }
+
+    /// The map `{lo -> lo, …, last -> last}`, built on the first call, O(n), and shared after.
+    /// Wide ends are stepped by big-integer additions, O(n) of them; a count past memory never
+    /// ends here, as the walk over any family of that many entries.
+    fn map(&self) -> &btree::Map<Value, Value> {
+        self.map.get_or_init(|| match &self.ends {
+            Ends::Word { lo, last } => (*lo..=*last)
+                .map(|k| (Value::Int(k), Value::Int(k)))
+                .collect(),
+            Ends::Wide { lo, last, .. } => {
+                let last = built_integer(last);
+                std::iter::successors(Some(built_integer(lo)), |i| (*i < last).then(|| i + 1))
+                    .map(|i| {
+                        let k = Value::int(i);
+                        (k.clone(), k)
+                    })
+                    .collect()
             }
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                match past(mid as i64) {
+        })
+    }
+
+    /// The key `k`, when it is one of the span's integers. Under the total order a key equals
+    /// an integer only when it is that integer, of integer kind: a value of another kind than
+    /// the numbers is ordered by its kind (`scalar_cmp`), a `Big` is never in the 64-bit range
+    /// (`number_cmp`), and two numbers of equal value and different kinds are ordered by kind
+    /// (`number_cmp`'s `then(number_kind)`). So a 64-bit span holds only `Int` keys, and a
+    /// wide one the integer-kind keys between its ends. O(1), or O(digits) for wide ends.
+    fn find(&self, k: &Value) -> Option<Value> {
+        let holds = match (&self.ends, k) {
+            (Ends::Word { lo, last }, Value::Int(i)) => (lo..=last).contains(&i),
+            (Ends::Word { .. }, _) => false,
+            (Ends::Wide { lo, last, .. }, _) => {
+                k.number_kind() == Some(0)
+                    && cmp(k, lo) != Ordering::Less
+                    && cmp(k, last) != Ordering::Greater
+            }
+        };
+        holds.then(|| k.clone())
+    }
+
+    /// The least integer of the span greater than `k` under the total order (`after`), or the
+    /// greatest less than it.
+    // Complexity tradeoff: the naive version builds the map and searches it, O(n) for n
+    // integers. Used for 64-bit ends: a binary search on the integers, at most 64
+    // comparisons, no entry built. Used for wide ends (plan row RANGE-lazy-wide): the two
+    // ends compared with `k` and, when `k` lies between them, the integer beside it read from
+    // `k`'s value (`next_integer`), O(1) comparisons and O(digits) arithmetic; a binary search
+    // over the span would cost O(log n) comparisons, each O(digits), which for an end of
+    // 10^6 bits is 10^6 of them. That search is kept only where `k`'s value cannot be built
+    // (`next_integer` refused its memory). Tradeoff: none on the 64-bit form.
+    fn beside(&self, k: &Value, after: bool) -> Option<Value> {
+        let (lo, last) = match &self.ends {
+            Ends::Word { lo, last } => (*lo, *last),
+            Ends::Wide { lo, last, .. } => return wide_beside(lo, last, k, after),
+        };
+        word_beside(lo, last, k, after).map(Value::Int)
+    }
+}
+
+/// `past(i)` for [`Span::beside`]: whether the integer `i` is on the far side of `k`, greater
+/// than it for `after` and less than it otherwise. Under the total order it is monotone in
+/// `i`, false then true for `after`, true then false for its mirror, so a search finds the
+/// border.
+fn past(i: &Value, k: &Value, after: bool) -> bool {
+    cmp(i, k)
+        == match after {
+            true => Ordering::Greater,
+            false => Ordering::Less,
+        }
+}
+
+/// [`Span::beside`] for the 64-bit ends `lo ..= last`, by binary search on the integers: `Int`
+/// values are ordered as their `i64`s, so the integers of the span greater than `k` are a
+/// suffix of it and those less than it a prefix. At most 64 comparisons, each of one integer
+/// with `k`.
+fn word_beside(lo_end: i64, last_end: i64, k: &Value, after: bool) -> Option<i64> {
+    let past = |i: i64| past(&Value::Int(i), k, after);
+    // The span as `i128`, so that the midpoint and the steps past either end never overflow.
+    let (mut lo, mut hi) = (i128::from(lo_end), i128::from(last_end));
+    if after {
+        // The least `i` in `lo ..= hi` with `past(i)`, if any.
+        if !past(last_end) {
+            return None;
+        }
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match past(mid as i64) {
+                true => hi = mid,
+                false => lo = mid + 1,
+            }
+        }
+    } else {
+        // The greatest `i` in `lo ..= hi` with `past(i)`, if any.
+        if !past(lo_end) {
+            return None;
+        }
+        while lo < hi {
+            let mid = lo + (hi - lo + 1) / 2;
+            match past(mid as i64) {
+                true => lo = mid,
+                false => hi = mid - 1,
+            }
+        }
+    }
+    // `lo` lies in the span, which is all `i64`.
+    Some(lo as i64)
+}
+
+/// [`Span::beside`] for wide ends `lo ..= last`, `lo <= last`. With `near` the end on `k`'s
+/// side and `far` the other (`lo` and `last` for `after`, `last` and `lo` for its mirror),
+/// `past` is monotone from `near` to `far` ([`past`]): false at `far` leaves no integer past
+/// `k`; true at `near` makes `near` the first. Otherwise `near` is not past `k` and `far` is,
+/// so the answer lies strictly inside the span on `far`'s side of `near`, and `k` is a number
+/// with a finite value: a value of another kind, and a NaN or an infinity, lies on one side of
+/// every integer (`scalar_cmp`'s kind order, `Exact`'s order), so `past` is the same at both
+/// ends for it. That answer is the integer beside `k`'s value (`next_integer`), or, where
+/// `k`'s value cannot be built, the border found by binary search (`search_beside`).
+fn wide_beside(lo: &Value, last: &Value, k: &Value, after: bool) -> Option<Value> {
+    let (near, far) = match after {
+        true => (lo, last),
+        false => (last, lo),
+    };
+    if !past(far, k, after) {
+        return None;
+    }
+    if past(near, k, after) {
+        return Some(near.clone());
+    }
+    Some(next_integer(k, after).unwrap_or_else(|| {
+        let (lo, last) = (built_integer(lo), built_integer(last));
+        Value::int(search_beside(lo, last, k, after))
+    }))
+}
+
+/// The least integer greater than the number `k` under the total order (`after`), or the
+/// greatest less than it, read from `k`'s exact value `x`. For an integer `k` they are `k + 1`
+/// and `k - 1`. For `k` of another number kind an integer `i` of value `x` is less than `k`,
+/// since numbers of one value are ordered by kind and the integers' kind is the least
+/// (`number_cmp`, `number_kind`), so `i > k` exactly when `i > x` and `i < k` exactly when
+/// `i <= x`: they are `floor(x) + 1` and `floor(x)`. `None` for a value of no finite number, and
+/// where the system refuses the memory to build `x`'s parts (`Rat::built_parts`). O(digits of
+/// `x`).
+fn next_integer(k: &Value, after: bool) -> Option<Value> {
+    let kind = k.number_kind()?;
+    let Exact::Finite(x) = k.exact() else {
+        return None;
+    };
+    let (n, d) = x.built_parts().ok()?;
+    let (q, r) = (&*n / &*d, &*n % &*d);
+    let q = BigInt::from(q);
+    let floor = match x.is_negative() && !r.is_zero() {
+        true => -q - 1,
+        false if x.is_negative() => -q,
+        false => q,
+    };
+    Some(Value::int(match (after, kind) {
+        (true, _) => floor + 1,
+        (false, 0) => floor - 1,
+        (false, _) => floor,
+    }))
+}
+
+/// The border of [`past`] inside the wide span `lo ..= last` by binary search, for a key whose
+/// value `next_integer` could not build: `past` false at the end on `k`'s side and true at
+/// the other ([`wide_beside`]), so the least `i` with `past(i)` for `after`, the greatest for
+/// its mirror. O(log n) comparisons for n integers, each O(digits); used only on that refusal,
+/// where `Rat`'s order itself falls back to comparing forms (`impl Ord for Rat`), which the
+/// search then follows as the built map's search would.
+fn search_beside(mut lo: BigInt, mut hi: BigInt, k: &Value, after: bool) -> BigInt {
+    let past = |i: &BigInt| past(&Value::int(i.clone()), k, after);
+    while lo < hi {
+        match after {
+            true => {
+                let mid = &lo + (&hi - &lo) / 2;
+                match past(&mid) {
                     true => hi = mid,
                     false => lo = mid + 1,
                 }
             }
-        } else {
-            // The greatest `i` in `lo ..= hi` with `past(i)`, if any.
-            if !past(self.lo) {
-                return None;
-            }
-            while lo < hi {
-                let mid = lo + (hi - lo + 1) / 2;
-                match past(mid as i64) {
+            false => {
+                let mid = &lo + (&hi - &lo + 1) / 2;
+                match past(&mid) {
                     true => lo = mid,
                     false => hi = mid - 1,
                 }
             }
         }
-        // `lo` lies in the span, which is all `i64`.
-        Some(lo as i64)
     }
+    lo
 }
 
 impl Hole for Value {
@@ -1478,16 +1664,36 @@ impl Family {
     pub fn range(lo: i64, last: i64) -> Self {
         match last < lo {
             true => Family::default(),
-            false => Family(
-                Entries::Range(Arc::new(Span {
-                    lo,
-                    last,
-                    map: std::sync::OnceLock::new(),
-                })),
-                fresh_id(),
-                0,
-            ),
+            false => Family::span_of(Ends::Word { lo, last }),
         }
+    }
+
+    /// The set of the integers `lo ..= last` of any width, as [`Family::range`] gives it: kept
+    /// as its two ends, 64-bit (`Family::range`) when both fit in `i64`, and wide otherwise
+    /// (plan row RANGE-lazy-wide); empty when `last < lo`. O(digits): the count is made here,
+    /// once.
+    pub fn range_wide(lo: BigInt, last: BigInt) -> Self {
+        if last < lo {
+            return Family::default();
+        }
+        if let (Some(lo), Some(last)) = (lo.to_i64(), last.to_i64()) {
+            return Family::range(lo, last);
+        }
+        let count = Value::int(&last - &lo + 1);
+        Family::span_of(Ends::Wide {
+            lo: Value::int(lo),
+            last: Value::int(last),
+            count,
+        })
+    }
+
+    /// The range family of the ends `ends`, `lo <= last`, its map not built.
+    fn span_of(ends: Ends) -> Self {
+        let span = Span {
+            ends,
+            map: std::sync::OnceLock::new(),
+        };
+        Family(Entries::Range(Arc::new(span)), fresh_id(), 0)
     }
 
     /// The set of the integers from the integer `lo` up, with no upper end, each key mapping to
@@ -1498,10 +1704,24 @@ impl Family {
         Family(Entries::From(Arc::new(lo)), fresh_id(), 0)
     }
 
-    /// The two ends `lo` and `last` of a family made by [`Family::range`] and not changed since.
+    /// The two ends `lo` and `last` of a family made by [`Family::range`] and not changed since:
+    /// a range of 64-bit ends. A wide range ([`Family::range_wide`]) has none here; its ends are
+    /// read by `ends`.
     pub fn span(&self) -> Option<(i64, i64)> {
         match &self.0 {
-            Entries::Range(s) => Some((s.lo, s.last)),
+            Entries::Range(s) => match s.ends {
+                Ends::Word { lo, last } => Some((lo, last)),
+                Ends::Wide { .. } => None,
+            },
+            Entries::Map(_) | Entries::From(_) => None,
+        }
+    }
+
+    /// The two ends `lo` and `last` of a range of any width, as values, not changed since it
+    /// was made. Two ranges hold the same integers exactly when these are equal (`Ends`).
+    pub(crate) fn ends(&self) -> Option<(Value, Value)> {
+        match &self.0 {
+            Entries::Range(s) => Some((s.end(false), s.end(true))),
             Entries::Map(_) | Entries::From(_) => None,
         }
     }
@@ -1626,18 +1846,19 @@ impl Family {
     }
 
     /// The value at key `k` of the top level, as [`Family::get`] gives it, copied: O(1) on a
-    /// range, which builds none of its entries for it.
+    /// range (O(digits) on a wide one), which builds none of its entries for it.
     pub fn lookup(&self, k: &Value) -> Option<Value> {
         match &self.0 {
             // A key is its own value in a range; `find` reads the key's own kind, which `-0.0`
             // and `0.0` share, so `k.key()` is not needed.
-            Entries::Range(s) => s.find(k).map(Value::Int),
+            Entries::Range(s) => s.find(k),
             Entries::From(lo) => from_holds(lo, k).then(|| k.clone()),
             Entries::Map(_) => self.get(k).cloned(),
         }
     }
 
-    /// Whether the top level has an entry at key `k`, as `in` reads it: O(1) on a range.
+    /// Whether the top level has an entry at key `k`, as `in` reads it: O(1) on a range
+    /// (O(digits) on a wide one).
     pub fn contains(&self, k: &Value) -> bool {
         match &self.0 {
             Entries::Range(s) => s.find(k).is_some(),
@@ -1650,8 +1871,7 @@ impl Family {
     /// A range with no upper end has no greatest entry, and zedc never asks it for one.
     pub fn end_entry(&self, last: bool) -> Option<(Value, Value)> {
         match (&self.0, last) {
-            (Entries::Range(s), false) => Some((Value::Int(s.lo), Value::Int(s.lo))),
-            (Entries::Range(s), true) => Some((Value::Int(s.last), Value::Int(s.last))),
+            (Entries::Range(s), _) => Some((s.end(last), s.end(last))),
             (Entries::From(lo), false) => Some((Value::clone(lo), Value::clone(lo))),
             (Entries::From(_), true) => walked_unbounded(),
             (Entries::Map(m), false) => m.get_min().cloned(),
@@ -1660,10 +1880,11 @@ impl Family {
     }
 
     /// The entry of the top level just after key `k` (`after`) or just before it, copied, `k`
-    /// held or not: O(log n) on a range, which builds none of its entries for it.
+    /// held or not: O(log n) on a range, O(digits) on a wide one, which builds none of its
+    /// entries for it (`Span::beside`).
     pub fn entry_beside(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
         match &self.0 {
-            Entries::Range(s) => s.beside(k, after).map(|i| (Value::Int(i), Value::Int(i))),
+            Entries::Range(s) => s.beside(k, after).map(|i| (i.clone(), i)),
             Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.beside(k, after).cloned(),
         }
@@ -1736,21 +1957,25 @@ impl Family {
         Some(out)
     }
 
-    /// The number of top-level entries: O(1) on a range of fewer than 2^64 integers. The one
-    /// range of 2^64, `i64::MIN ..= i64::MAX`, is past `usize`; its map is built for the count,
-    /// as every family's entries were before ranges were kept as their ends, which no memory
-    /// holds, so the call does not return a wrong number. [`Family::count`] counts it exactly.
+    /// The number of top-level entries: O(1) on a range of fewer than 2^64 integers. A range
+    /// of more, as `i64::MIN ..= i64::MAX` or a wide one, is past `usize`; its map is built for
+    /// the count, as every family's entries were before ranges were kept as their ends, which
+    /// no memory holds, so the call does not return a wrong number. [`Family::count`] counts it
+    /// exactly.
     pub fn len(&self) -> usize {
         match &self.0 {
-            Entries::Range(s) => usize::try_from(s.count()).unwrap_or_else(|_| self.0.len()),
+            Entries::Range(s) => usize::try_from(s.size()).unwrap_or_else(|_| self.0.len()),
             Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.len(),
         }
     }
 
     /// The number of top-level entries as an integer value, exact for every family: O(1) on a
-    /// range, `Big` past `i64`.
+    /// range, `Big` past `i64`, a wide range's made with it (`Family::range_wide`).
     pub fn count(&self) -> Value {
+        if let Entries::Range(s) = &self.0 {
+            return s.count();
+        }
         let n = self.size();
         match i64::try_from(n) {
             Ok(n) => Value::Int(n),
@@ -1758,11 +1983,13 @@ impl Family {
         }
     }
 
-    /// The number of top-level entries, exact for every family and O(1): unlike [`Family::len`],
-    /// it builds no map for the range of 2^64 integers, so the hash and the comparisons read it.
+    /// The number of top-level entries, exact for every family but a range of `u128::MAX`
+    /// integers or more, for which it is `u128::MAX` (`Span::size`), and O(1): unlike
+    /// [`Family::len`], it builds no map for the range of 2^64 integers, so the hash and the
+    /// comparisons read it.
     pub(crate) fn size(&self) -> u128 {
         match &self.0 {
-            Entries::Range(s) => s.count(),
+            Entries::Range(s) => s.size(),
             Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.len() as u128,
         }
@@ -2391,15 +2618,27 @@ fn atoms<'a>(a: &'a Atom, b: &'a Atom, r: Relation) -> Step<'a> {
 
 fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
     // Two ranges are compared by their ends, building neither map: the same ends are the same
-    // integer entries, which every relation reads as the same, as for one shared map below; other
-    // ends are other entries, and under the total order the walk decides.
-    let (x, y) = (a.span(), b.span());
-    if let (Some(x), Some(y)) = (x, y) {
-        match (x == y, r) {
-            (true, _) => return Step::Same,
-            (false, Relation::Identity | Relation::SurfaceEq) => return Step::Ends(None),
-            _ => {}
-        }
+    // integer entries, which every relation reads as the same, as for one shared map below;
+    // other ends are other entries.
+    // Complexity tradeoff: the naive version, the walk below, orders two ranges of other ends
+    // by building both maps and reading them to the first difference, O(n) for n entries.
+    // Used (plan row RANGE-lazy-wide): their order read from the ends, O(1) (O(digits) for wide
+    // ends). Proof that it is the walk's order, under the total order, `min`, `max` and the
+    // language's order alike: the walk pairs the i-th entries of the two maps (`advance`),
+    // compares their keys by the total order, then their values, and ends with the shorter
+    // side less when one runs out. The i-th entry of a range is `lo + i -> lo + i`. With other
+    // low ends the first keys differ and the walk ends there, so the lesser `lo` is less. With
+    // one low end the keys and values agree, integer with equal integer under every relation,
+    // as far as the shorter span goes, which then runs out: the lesser `last` is less.
+    // Integers are ordered by value under the total order (`number_cmp`). Tradeoff: none.
+    let (x, y) = (a.ends(), b.ends());
+    if let (Some((xl, xt)), Some((yl, yt))) = (&x, &y) {
+        let order = cmp(xl, yl).then_with(|| cmp(xt, yt));
+        return match (order, r) {
+            (Ordering::Equal, _) => Step::Same,
+            (_, Relation::Identity | Relation::SurfaceEq) => Step::Ends(None),
+            (o, _) => Step::Ends(Some(o)),
+        };
     }
     // With a range on one side the sharing is not tested, which would build its map: `same`
     // false only sends the pair to the walk, which reads the entries and decides exactly.
@@ -2705,14 +2944,15 @@ pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
     // Two ranges hold the same entries exactly when they have the same ends, and are never
     // empty, so they are compared without building either map; a range and a map of another
     // size differ, which `len` reads from the range's ends.
-    match (a.span(), b.span()) {
+    let (x, y) = (a.ends(), b.ends());
+    match (&x, &y) {
         (Some(x), Some(y)) => return x == y,
         (Some(_), None) | (None, Some(_)) if a.size() != b.size() => return false,
         _ => {}
     }
     // One shared map: equal without a walk, as for sequences in `items_eq`. A range is not
     // tested for sharing, which would build its map; the walk decides it.
-    if a.span().is_none() && b.span().is_none() && a.0.ptr_eq(&b.0) {
+    if x.is_none() && y.is_none() && a.0.ptr_eq(&b.0) {
         return true;
     }
     COMPARISONS.with(|c| {
@@ -3757,6 +3997,270 @@ mod tests {
             cmp(&Value::Family(all.clone()), &Value::Family(all.clone())),
             Ordering::Equal
         );
+    }
+
+    /// Whether the range `f` has built its map.
+    fn built_map(f: &Family) -> bool {
+        let Entries::Range(s) = &f.0 else {
+            panic!("a range is kept as its ends")
+        };
+        s.map.get().is_some()
+    }
+
+    /// The integers `lo ..= last` of any width.
+    fn integers(lo: &BigInt, last: &BigInt) -> Vec<Value> {
+        std::iter::successors(Some(lo.clone()), |i| (i < last).then(|| i + 1))
+            .map(Value::int)
+            .collect()
+    }
+
+    /// [`keys_near`]'s keys of other kinds and at the 64-bit edges, and keys of every number
+    /// kind near the wide integers `ends`: the integers within 2 of each, a float of each such
+    /// value and of it plus one half, and a rational one half past it.
+    fn keys_near_wide(ends: &[BigInt]) -> Vec<Value> {
+        let mut keys = keys_near(&[]);
+        for end in ends {
+            for d in -2..=2 {
+                let k: BigInt = end + d;
+                let x = k.to_f64().expect("a finite float");
+                let half = Rat::new(&k * 2 + 1, BigInt::from(2)).expect("a nonzero den");
+                keys.extend([
+                    Value::int(k),
+                    Value::float(x),
+                    Value::float32(x as f32),
+                    Value::float(x + 0.5),
+                    Value::rat(half),
+                ]);
+            }
+        }
+        keys
+    }
+
+    /// `2^63 + d`, the integer `d` past `i64::MAX + 1`.
+    fn past_top(d: i64) -> BigInt {
+        BigInt::from(i64::MAX) + 1 + d
+    }
+
+    /// `-2^63 - 1 + d`, the integer `d` past `i64::MIN - 1`.
+    fn past_bottom(d: i64) -> BigInt {
+        BigInt::from(i64::MIN) - 1 + d
+    }
+
+    #[test]
+    fn a_wide_range_kept_as_its_ends_reads_as_the_set_of_its_integers() {
+        // Plan row RANGE-lazy-wide: a range with an end past `i64` is kept as its two ends, and
+        // every read agrees with the set of the same integers built entry by entry, at keys of
+        // every kind near both ends, building no entry for the reads. Spans just past `i64` at
+        // either end, across either 64-bit edge, one integer wide, and far past it.
+        let far = BigInt::from(2).pow(100u32);
+        let spans = [
+            (past_top(0), past_top(2)),
+            (past_bottom(-2), past_bottom(0)),
+            (past_top(-2), past_top(1)),
+            (past_bottom(-1), past_bottom(2)),
+            (past_bottom(0), past_bottom(0)),
+            (past_top(0), past_top(0)),
+            (&far - 1, &far + 1),
+            (-&far - 1, -&far + 1),
+        ];
+        for (lo, last) in spans {
+            let lazy = Family::range_wide(lo.clone(), last.clone());
+            let built = Family::set(integers(&lo, &last));
+            assert_eq!(lazy.span(), None, "{lo} ..= {last} is wide");
+            for k in keys_near_wide(&[lo.clone(), last.clone()]) {
+                let at = format!("{lo} ..= {last} at {k}");
+                assert_eq!(lazy.lookup(&k), built.get(&k).cloned(), "{at}");
+                assert_eq!(lazy.contains(&k), built.get(&k).is_some(), "{at}");
+                for after in [false, true] {
+                    let want = built.entry_beside(&k, after);
+                    assert_eq!(lazy.entry_beside(&k, after), want, "{at}, after {after}");
+                }
+            }
+            for last_end in [false, true] {
+                assert_eq!(lazy.end_entry(last_end), built.end_entry(last_end));
+            }
+            assert_eq!(lazy.count(), built.count());
+            assert!(!lazy.is_empty());
+            assert!(!built_map(&lazy), "a read built the range's entries");
+            // `term::build::made_by` makes the range again from these ends, so the build writes
+            // no entry.
+            assert_eq!(
+                lazy.ends(),
+                Some((Value::int(lo.clone()), Value::int(last.clone())))
+            );
+            // Equality both ways, the total order, the hash and the printed form read the
+            // entries, building the map, and agree with the set's.
+            assert!(lazy == built && built == lazy);
+            assert_eq!(lazy.len(), built.len());
+            assert_eq!(
+                cmp(&Value::Family(lazy.clone()), &Value::Family(built.clone())),
+                Ordering::Equal
+            );
+            assert_eq!(
+                digest(&Value::Family(lazy.clone())),
+                digest(&Value::Family(built.clone()))
+            );
+            assert_eq!(lazy.to_string(), built.to_string());
+            assert!(lazy.iter().eq(built.iter()));
+        }
+    }
+
+    #[test]
+    fn a_range_made_from_any_width_has_one_form_for_one_set() {
+        // `range_wide` keeps 64-bit ends in the 64-bit form, so equal sets have equal ends, and
+        // gives the empty family when `last < lo`, `lo` past `i64` or not.
+        let r = |lo: BigInt, last: BigInt| Family::range_wide(lo, last);
+        assert_eq!(r(0.into(), 4.into()).span(), Some((0, 4)));
+        let edges = r(i64::MIN.into(), i64::MAX.into());
+        assert_eq!(edges.span(), Some((i64::MIN, i64::MAX)));
+        assert!(families_eq(&edges, &Family::range(i64::MIN, i64::MAX)));
+        for (lo, last) in [
+            (past_top(1), past_top(0)),
+            (past_bottom(0), past_bottom(-1)),
+            (BigInt::from(0), past_bottom(0)),
+            (past_top(0), BigInt::from(i64::MAX)),
+        ] {
+            let empty = r(lo, last);
+            assert!(empty.is_empty() && empty.ends().is_none());
+        }
+    }
+
+    #[test]
+    fn a_wide_range_of_more_than_u128_integers_is_read_from_its_ends() {
+        // `-2^200 ..= 2^200`, 2^201 + 1 integers, past `u128`: counted exactly, read, tested,
+        // stepped, hashed, compared and ordered from its ends, its map never built.
+        let n = BigInt::from(2).pow(200u32);
+        let all = Family::range_wide(-&n, n.clone());
+        let one_less = Family::range_wide(-&n, &n - 1);
+        assert_eq!(all.count(), Value::int(&n * 2 + 1));
+        assert_eq!(all.size(), u128::MAX);
+        let v = |k: &BigInt| Value::int(k.clone());
+        let at = |k: &BigInt| Some((v(k), v(k)));
+        assert_eq!(all.lookup(&v(&n)), Some(v(&n)));
+        assert_eq!(all.lookup(&v(&(&n + 1))), None);
+        assert_eq!(all.lookup(&Value::float(0.5)), None);
+        assert!(all.contains(&Value::Int(0)) && all.contains(&v(&-&n)));
+        assert!(!all.contains(&v(&(-&n - 1))));
+        assert_eq!(all.end_entry(false), at(&-&n));
+        assert_eq!(all.end_entry(true), at(&n));
+        let half = |x: i64| Value::rat(Rat::new(BigInt::from(x), BigInt::from(2)).unwrap());
+        let i = |x: i64| at(&BigInt::from(x));
+        assert_eq!(all.entry_beside(&Value::float(0.5), true), i(1));
+        assert_eq!(all.entry_beside(&Value::float(0.5), false), i(0));
+        assert_eq!(all.entry_beside(&half(-3), true), i(-1));
+        assert_eq!(all.entry_beside(&half(-3), false), i(-2));
+        assert_eq!(all.entry_beside(&Value::float(-2.0), false), i(-2));
+        assert_eq!(all.entry_beside(&Value::float(-2.0), true), i(-1));
+        assert_eq!(
+            all.entry_beside(&Value::Int(i64::MAX), true),
+            at(&past_top(0))
+        );
+        assert_eq!(
+            all.entry_beside(&Value::Int(i64::MIN), false),
+            at(&past_bottom(0))
+        );
+        assert_eq!(all.entry_beside(&v(&n), true), None);
+        assert_eq!(all.entry_beside(&v(&-&n), false), None);
+        assert_eq!(
+            all.entry_beside(&Value::float(f64::INFINITY), false),
+            at(&n)
+        );
+        assert_eq!(all.entry_beside(&Value::atom("a"), true), at(&-&n));
+        assert_eq!(all.entry_beside(&Value::str("a"), true), None);
+        let digest = |f: &Family| leaf_digest(&Value::Family(f.clone()));
+        assert_eq!(digest(&all), digest(&all.clone()));
+        assert!(families_eq(&all, &all.clone()));
+        assert!(!families_eq(&all, &one_less));
+        assert!(!families_eq(&all, &Family::set(0..=2)));
+        let (a, b) = (Value::Family(all.clone()), Value::Family(one_less.clone()));
+        assert_eq!(cmp(&a, &a.clone()), Ordering::Equal);
+        assert_eq!(cmp(&a, &b), Ordering::Greater);
+        assert_eq!(a.surface_cmp(&b), Some(Ordering::Greater));
+        assert_eq!(b.selects(&a, true), Some(true));
+        assert_eq!(a.selects(&b, false), Some(true));
+        assert!(!built_map(&all) && !built_map(&one_less));
+    }
+
+    #[test]
+    fn two_ranges_of_any_width_are_ordered_by_their_ends_as_their_sets_are() {
+        // Plan row RANGE-lazy-wide: two ranges of other ends are ordered from their ends under
+        // the total order, the language's order, `min` and `max`, as the sets of their integers
+        // are, 64-bit, wide, across either 64-bit edge and mixed.
+        let r = |lo: &BigInt, last: &BigInt| {
+            Value::Family(Family::range_wide(lo.clone(), last.clone()))
+        };
+        let s = |lo: &BigInt, last: &BigInt| Value::Family(Family::set(integers(lo, last)));
+        let b = BigInt::from;
+        let spans = [
+            (b(0), b(4)),
+            (b(0), b(5)),
+            (b(1), b(4)),
+            (b(-1), b(0)),
+            (past_top(-2), past_top(1)),
+            (past_top(-2), past_top(0)),
+            (past_top(-1), past_top(0)),
+            (past_top(0), past_top(2)),
+            (past_bottom(-1), past_bottom(2)),
+            (past_bottom(0), past_bottom(2)),
+            (past_bottom(-1), past_bottom(1)),
+        ];
+        for (a, z) in &spans {
+            for (c, d) in &spans {
+                let (p, q) = (s(a, z), s(c, d));
+                for (x, y) in [
+                    (r(a, z), r(c, d)),
+                    (r(a, z), q.clone()),
+                    (p.clone(), r(c, d)),
+                ] {
+                    assert_eq!(x == y, p == q, "{x} and {y}");
+                    assert_eq!(x.surface_eq(&y), p.surface_eq(&q), "{x} and {y}");
+                    assert_eq!(cmp(&x, &y), cmp(&p, &q), "{x} and {y}");
+                    assert_eq!(x.surface_cmp(&y), p.surface_cmp(&q), "{x} and {y}");
+                    for min in [false, true] {
+                        assert_eq!(x.selects(&y, min), p.selects(&q, min), "{x} and {y}");
+                    }
+                }
+            }
+        }
+        // Two 64-bit ranges of 2^64 and 2^64 - 1 entries, and of other low ends, are ordered
+        // without their maps, which no memory holds.
+        let all = Family::range(i64::MIN, i64::MAX);
+        let (shorter, higher) = (
+            Family::range(i64::MIN, i64::MAX - 1),
+            Family::range(i64::MIN + 1, i64::MAX),
+        );
+        let f = |f: &Family| Value::Family(f.clone());
+        assert_eq!(cmp(&f(&all), &f(&shorter)), Ordering::Greater);
+        assert_eq!(cmp(&f(&all), &f(&higher)), Ordering::Less);
+        assert_eq!(f(&shorter).surface_cmp(&f(&higher)), Some(Ordering::Less));
+        assert_eq!(f(&all).selects(&f(&higher), true), Some(true));
+        assert_eq!(f(&all).selects(&f(&shorter), false), Some(true));
+        assert!(![&all, &shorter, &higher].into_iter().any(built_map));
+    }
+
+    #[test]
+    fn the_search_beside_a_key_agrees_with_the_integer_read_from_its_value() {
+        // `search_beside`, kept for a key whose value cannot be built, finds the integer
+        // `next_integer` reads from the value, at every key strictly inside a wide span.
+        let (lo, last) = (past_bottom(-3), past_top(3));
+        let (lo_v, last_v) = (Value::int(lo.clone()), Value::int(last.clone()));
+        let mut inside = 0;
+        for k in keys_near_wide(&[past_bottom(0), past_top(0), BigInt::from(0)]) {
+            for after in [false, true] {
+                let (near, far) = match after {
+                    true => (&lo_v, &last_v),
+                    false => (&last_v, &lo_v),
+                };
+                if past(near, &k, after) || !past(far, &k, after) {
+                    continue;
+                }
+                inside += 1;
+                let want = next_integer(&k, after).expect("a finite number");
+                let got = Value::int(search_beside(lo.clone(), last.clone(), &k, after));
+                assert_eq!(got, want, "{k}, after {after}");
+            }
+        }
+        assert!(inside > 100, "{inside} keys inside");
     }
 
     #[test]

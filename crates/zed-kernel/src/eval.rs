@@ -3790,9 +3790,15 @@ fn entries(vals: Vec<Value>) -> Result<Value, KernelError> {
 // the ordered map at once, O(n) time and memory (the method until plan row RANGE-lazy). Used:
 // when `a` and `b - 1` are both 64-bit, the two ends kept as they are (`Family::range`), O(1);
 // a read, `in`, `.count` and the first and last entry cost O(1) and the entry beside a key
-// O(log n), and the first walk over the entries builds the map, O(n), as before. Tradeoff: an
-// end past `i64` still builds each key with `+`, O(n) big-integer additions (plan row
-// RANGE-lazy-wide).
+// O(log n), and the first walk over the entries builds the map, O(n), as before. When an end is
+// past `i64` (plan row RANGE-lazy-wide), the naive version, the method until then, built each
+// key `a + i` with `+` and collected them, O(n) big-integer additions and O(n) memory for any
+// read, and never ended for a count past memory. Used: the ends built once and kept
+// (`Family::range_wide`), O(digits); a read, `in`, `.count` and the first and last entry cost
+// O(digits), the entry beside a key O(digits) from the key's value, and the first walk builds
+// the map, O(n) additions, as before. Tradeoff: an end that is a kept power (`2^K`, `K` large)
+// is built here, as `b - 1` and the old count `b - a` built it; the system may refuse the
+// memory, which is the error [`KernelError::NumberTooLarge`] the old build gave too.
 fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
     // `b - 1`, which is 64-bit for every 64-bit `b` above `i64::MIN` and for `b = 2^63`, the end
     // `..= i64::MAX` gives.
@@ -3800,23 +3806,13 @@ fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
     if let (Value::Int(lo), Value::Int(last)) = (a, &last) {
         return Ok(Value::Family(Family::range(*lo, *last)));
     }
-    if let (Value::Int(_), Value::Int(y)) = (a, b) {
-        // Only `b = i64::MIN`, whose `b - 1` is past `i64`: no integer is below it.
-        debug_assert_eq!(*y, i64::MIN);
-        return Ok(Value::Family(Family::new()));
-    }
-    // An end past `i64`: the count `b - a`, and each key `a + i`. A count past `i64` never
-    // ends before memory runs out, as any family of that many entries.
-    let count = match int_binary(Prim::Sub, b, a)?.expect("an integer difference") {
-        Value::Int(c) => c,
-        n if n.as_integer().is_some_and(|n| n.is_negative()) => 0,
-        _ => i64::MAX,
+    // An end past `i64`, `b = i64::MIN` (its `b - 1` past `i64`, no integer below it) among
+    // them: `range_wide` gives the empty family when `b - 1 < a`.
+    let built = |v: &Value| {
+        let n = v.as_integer().expect("an integer");
+        n.to_integer().map_err(|e| too_large(Prim::Range, e))
     };
-    let keys = (0..count).map(|i| int_binary(Prim::Add, a, &Value::Int(i)));
-    let keys: Vec<Value> = keys
-        .map(|k| k.map(|k| k.expect("an integer sum")))
-        .collect::<Result<_, _>>()?;
-    Ok(Value::Family(Family::set(keys)))
+    Ok(Value::Family(Family::range_wide(built(a)?, built(&last)?)))
 }
 
 /// An entry of a family as the tuple `(k, v)`, or the empty tuple `()` for none: the answer of

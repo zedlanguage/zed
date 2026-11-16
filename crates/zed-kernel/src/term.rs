@@ -659,11 +659,14 @@ pub mod build {
     /// `..= i64::MAX`) or `rangeFrom(lo)`; `None` for a family kept as its entries. The build
     /// writes it where it would write the family as a literal, since a literal is written entry
     /// by entry, O(n) for a range of n entries, and never ends for `a ..` (plan row RANGE-open).
+    /// A range with an end past `i64` is kept as its ends too (RANGE-lazy-wide), so it is made
+    /// again the same way, O(digits); `span`, which gives only 64-bit ends, would leave it to
+    /// the literal, written entry by entry.
     /// It is written here, not in module `value`, so that `value` names nothing of `term`.
     pub fn made_by(f: &crate::Family) -> Option<Term> {
-        if let Some((lo, last)) = f.span() {
-            let high = Value::int(num_bigint::BigInt::from(last) + 1);
-            return Some(prim(Prim::Range, vec![lit(Value::Int(lo)), lit(high)]));
+        if let Some((lo, last)) = f.ends() {
+            let high = Value::int(crate::value::built_integer(&last) + 1);
+            return Some(prim(Prim::Range, vec![lit(lo), lit(high)]));
         }
         f.open_lo()
             .map(|lo| prim(Prim::RangeFrom, vec![lit(Value::clone(lo))]))

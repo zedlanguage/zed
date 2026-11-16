@@ -524,7 +524,98 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 )
             },
         ),
+        // Plan row RANGE-lazy-wide: a range with an end past `i64` is kept as its two ends too,
+        // read, counted, tested and taken at its ends from them. The models are the integers
+        // themselves, not a range. Just past `i64::MAX`, just below `i64::MIN`, across either
+        // 64-bit edge, and a range of 10^30 entries, which no memory holds.
+        (
+            "reads_of_a_range_just_past_64_bits",
+            "${[(9223372036854775808 ..< 9223372036854775811)[9223372036854775808] else 0, \
+             (9223372036854775808 ..< 9223372036854775811)[9223372036854775810] else 0, \
+             (9223372036854775808 ..< 9223372036854775811)[9223372036854775811] else 0, \
+             (9223372036854775808 ..< 9223372036854775811)[9223372036854775807] else 0]}",
+            ints(&[wide(0, 0), wide(0, 2), 0.into(), 0.into()]),
+        ),
+        (
+            "a_range_across_the_top_64_bit_edge",
+            "${[(9223372036854775806 ..= 9223372036854775809).count, \
+             9223372036854775807 in 9223372036854775806 ..= 9223372036854775809, \
+             9223372036854775808 in 9223372036854775806 ..= 9223372036854775809, \
+             9223372036854775810 in 9223372036854775806 ..= 9223372036854775809, \
+             (9223372036854775806 ..= 9223372036854775809).first else 0, \
+             (9223372036854775806 ..= 9223372036854775809).last else 0]}",
+            family(vec![
+                (i(0), Value::Int(4)),
+                (i(1), Value::Bool(true)),
+                (i(2), Value::Bool(true)),
+                (i(3), Value::Bool(false)),
+                (i(4), Value::int(wide(0, -2))),
+                (i(5), Value::int(wide(0, 1))),
+            ]),
+        ),
+        (
+            "a_range_across_the_bottom_64_bit_edge",
+            "${[(-9223372036854775810 ..< -9223372036854775806).count, \
+             -9223372036854775809 in -9223372036854775810 ..< -9223372036854775806, \
+             -9223372036854775808 in -9223372036854775810 ..< -9223372036854775806, \
+             -9223372036854775806 in -9223372036854775810 ..< -9223372036854775806, \
+             (-9223372036854775810 ..< -9223372036854775806).first else 0, \
+             (-9223372036854775810 ..< -9223372036854775806).last else 0]}",
+            family(vec![
+                (i(0), Value::Int(4)),
+                (i(1), Value::Bool(true)),
+                (i(2), Value::Bool(true)),
+                (i(3), Value::Bool(false)),
+                (i(4), Value::int(wide(1, -1))),
+                (i(5), Value::int(wide(1, 2))),
+            ]),
+        ),
+        (
+            "a_range_just_below_64_bits_equal_to_the_set_of_its_integers",
+            "${[(-9223372036854775811 ..= -9223372036854775809) == \
+             {-9223372036854775811, -9223372036854775810, -9223372036854775809}, \
+             (-9223372036854775811 ..= -9223372036854775809) == \
+             {-9223372036854775811, -9223372036854775810}]}",
+            family(vec![(i(0), Value::Bool(true)), (i(1), Value::Bool(false))]),
+        ),
+        // `<`, `min` and `max` of two ranges are refused by the checker (they take numbers,
+        // strings and booleans), so their order from the ends is tested in the kernel
+        // (`two_ranges_of_any_width_are_ordered_by_their_ends_as_their_sets_are`) and in
+        // `bench::two_ranges_are_ordered_from_their_ends_in_constant_time`.
+        (
+            "a_range_of_10_to_the_30_entries_read_counted_and_tested",
+            "${[(0 ..< 1000000000000000000000000000000)[999999999999999999999999999999] else -1, \
+             (0 ..< 1000000000000000000000000000000).count, \
+             1000000000000000000000000000000 in 0 ..< 1000000000000000000000000000000, \
+             (0 ..< 1000000000000000000000000000000).last else -1]}",
+            {
+                let e30 = num_bigint::BigInt::from(10).pow(30u32);
+                family(vec![
+                    (i(0), Value::int(&e30 - 1)),
+                    (i(1), Value::int(e30.clone())),
+                    (i(2), Value::Bool(false)),
+                    (i(3), Value::int(&e30 - 1)),
+                ])
+            },
+        ),
     ]
+}
+
+/// The integer `d` past `i64::MAX + 1` (`below` 0), or past `i64::MIN - 1` (`below` 1).
+fn wide(below: u8, d: i64) -> num_bigint::BigInt {
+    match below {
+        0 => num_bigint::BigInt::from(i64::MAX) + 1 + d,
+        _ => num_bigint::BigInt::from(i64::MIN) - 1 + d,
+    }
+}
+
+/// `[x0, x1, …]` of integers of any width.
+fn ints(xs: &[num_bigint::BigInt]) -> Term {
+    family(
+        (xs.iter().enumerate())
+            .map(|(k, x)| (i(k as i64), Value::int(x.clone())))
+            .collect(),
+    )
 }
 
 /// `a ..`: `rangeFrom(a)`, the integers from `a` up.
@@ -663,6 +754,82 @@ fn a_range_with_no_upper_end_read_at_keys_from_stdin() {
                 .map(|(j, t)| (i(j as i64), eval(t).unwrap()))
                 .collect(),
         ));
+        let stdin = format!("{n}\n");
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {n}"
+        );
+        assert_eq!(ran.stdout, want, "zedc run at {n}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {n}"
+        );
+        assert_eq!(ran.stdout, want, "executable at {n}");
+    }
+}
+
+#[test]
+fn a_wide_range_made_from_ends_read_from_stdin() {
+    // Plan row RANGE-lazy-wide: with the low end `n` known only at run time, the kernel prim
+    // `Range` itself runs, in the interpreter and in the executable, on a range of 10^24
+    // entries from `n`, whose high end is past `i64` for every `n` here; `n` past `i64` at
+    // either end and across either 64-bit edge. The model is the integers themselves. The last
+    // entry reads `2^63 ..< 10^24`, which is build-stage: the build keeps it as the call that
+    // makes it (`zedc_stage` `built_value`, from `term::build::made_by`), since as a literal it
+    // has about 10^24 entries to write.
+    let body = "${[(n ..< n + 1000000000000000000000000)[n + 999999999999999999999999] else 0, \
+                (n ..< n + 1000000000000000000000000).count, \
+                n - 1 in n ..< n + 1000000000000000000000000, \
+                n + 5 in n ..< n + 1000000000000000000000000, \
+                (n ..< n + 1000000000000000000000000).first else 0, \
+                (n ..= n + 1000000000000000000000000).last else 0, \
+                (9223372036854775808 ..< 1000000000000000000000000)[n] else -1]}";
+    let src = dir("l03_02_map_run/wide_stdin").join("wide_stdin.zed");
+    let text = format!(
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = dir("l03_02_map_run/wide_stdin").join("wide_stdin");
+    built(&src, &exe);
+    let e24 = num_bigint::BigInt::from(10).pow(24u32);
+    for n in [
+        wide(0, 0),
+        wide(0, -3),
+        wide(1, 0),
+        wide(1, 2),
+        num_bigint::BigInt::from(0),
+        -&e24 - 3,
+    ] {
+        let want = expected(&family(vec![
+            (i(0), Value::int(&n + &e24 - 1)),
+            (i(1), Value::int(e24.clone())),
+            (i(2), Value::Bool(false)),
+            (i(3), Value::Bool(true)),
+            (i(4), Value::int(n.clone())),
+            (i(5), Value::int(&n + &e24)),
+            (
+                i(6),
+                eval(&or(
+                    at(
+                        prim(
+                            Prim::Range,
+                            vec![
+                                lit(Value::int(num_bigint::BigInt::from(1u64 << 63))),
+                                lit(Value::int(e24.clone())),
+                            ],
+                        ),
+                        lit(Value::int(n.clone())),
+                    ),
+                    "outOfBounds",
+                    -1,
+                ))
+                .unwrap(),
+            ),
+        ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
         assert_eq!(
