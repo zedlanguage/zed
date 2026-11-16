@@ -277,6 +277,150 @@ fn division_pairs_have_their_point_found_where_the_omega_test_refuses() {
     }
 }
 
+#[test]
+fn an_unbounded_regime_whose_clause_repeats_its_unit_is_decided() {
+    // FAIL-modular-unbounded-regime-undecided (seed 2125, case 28 of
+    // `one_scope::one_variable_boundary_modes_do_not_depend_on_names`): the regime with no
+    // bound, `x mod 10 != 8 && (x mod 8 != 4 || x mod 10 != 8)`, as `solve_regime` writes it.
+    // x = 0 holds both.
+    let i = |v: i64| Int::from(v);
+    let not8: ResidueSet = vec![(i(0), i(7)), (i(9), i(9))];
+    let units: BTreeMap<Int, ResidueSet> = [(i(10), not8.clone())].into_iter().collect();
+    let clauses = vec![BTreeMap::from([
+        (i(8), vec![(i(0), i(3)), (i(5), i(7))]),
+        (i(10), not8),
+    ])];
+    let out = solve_regime_in(&None, &None, units.clone(), clauses.clone());
+    let x = found(&out).expect("a point");
+    assert!(holds_modular_point(&x, &units, &clauses), "{x:?}");
+    // The whole formula, with its aliases and remainders as the test drew it.
+    let f = seed_2125_case_28();
+    let m = solve_modular(&f, true);
+    let m = m.expect("decided").expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+}
+
+/// The small instances of `bench::absorbed_clauses_scale`: each has a point, and each clause
+/// holds there.
+#[test]
+fn absorbed_clauses_have_their_point_found() {
+    for n in [1, 2, 3, 8, 50] {
+        let (units, clauses) = absorbed_clauses(n);
+        let out = solve_regime_in(&None, &None, units.clone(), clauses.clone());
+        let x = found(&out).unwrap_or_else(|| panic!("{n}: a point"));
+        assert!(holds_modular_point(&x, &units, &clauses), "{n}: {x:?}");
+    }
+}
+
+/// `x mod 10 != 8` and `n` clauses `x mod p_i == 0 || x mod 10 != 8` over the primes
+/// `p_i` from 11: each clause repeats the unit, so the regime is the unit alone.
+pub(super) fn absorbed_clauses(
+    n: usize,
+) -> (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>) {
+    let i = |v: i64| Int::from(v);
+    let not8: ResidueSet = vec![(i(0), i(7)), (i(9), i(9))];
+    let units: BTreeMap<Int, ResidueSet> = [(i(10), not8.clone())].into_iter().collect();
+    // Every prime from 2, by trial division by the primes found so far; the first four (2, 3,
+    // 5, 7) share a factor with 10 or are skipped so each clause's modulus is new.
+    let mut primes: Vec<i64> = Vec::with_capacity(n + 4);
+    let mut k = 2;
+    while primes.len() < n + 4 {
+        if primes
+            .iter()
+            .take_while(|p| *p * *p <= k)
+            .all(|p| k % p != 0)
+        {
+            primes.push(k);
+        }
+        k += 1;
+    }
+    let clauses = (primes.into_iter().skip(4))
+        .map(|p| BTreeMap::from([(i(p), vec![(i(0), i(0))]), (i(10), not8.clone())]))
+        .collect();
+    (units, clauses)
+}
+
+/// A clause whose literal on a unit's modulus does not hold the unit's set is kept: with the
+/// unit `x mod 10 in {3, 4}`, the clause `x mod 10 == 4 || x mod 7 == 2` leaves `x = 3` out
+/// unless `x mod 7 == 2`, and the clause `x mod 10 == 5` leaves no point.
+#[test]
+fn a_clause_the_units_do_not_imply_is_kept() {
+    let i = |v: i64| Int::from(v);
+    let units: BTreeMap<Int, ResidueSet> = [(i(10), vec![(i(3), i(4))])].into_iter().collect();
+    let clauses = vec![BTreeMap::from([
+        (i(10), vec![(i(4), i(4))]),
+        (i(7), vec![(i(2), i(2))]),
+    ])];
+    let out = solve_regime_in(&None, &None, units.clone(), clauses.clone());
+    let x = found(&out).expect("a point");
+    assert!(holds_modular_point(&x, &units, &clauses), "{x:?}");
+    let none = vec![BTreeMap::from([(i(10), vec![(i(5), i(5))])])];
+    let out = solve_regime_in(&None, &None, units, none);
+    assert!(found(&out).is_none(), "{:?}", found(&out));
+}
+
+/// [`res_within`] against the definition, on every pair of sets modulo 1 to 6.
+#[test]
+fn res_within_is_the_subset_test() {
+    let set = |bits: u32, m: i64| -> ResidueSet {
+        res_normalize(
+            (0..m)
+                .filter(|r| bits >> r & 1 == 1)
+                .map(|r| (Int::from(r), Int::from(r)))
+                .collect(),
+            &Int::from(m),
+        )
+    };
+    for m in 1..=6i64 {
+        for a in 0..1u32 << m {
+            for b in 0..1u32 << m {
+                let want = a & !b == 0;
+                assert_eq!(
+                    res_within(&set(a, m), &set(b, m), &Int::from(m)),
+                    want,
+                    "{m} {a:b} {b:b}"
+                );
+            }
+        }
+    }
+}
+
+/// The formula of seed 2125, case 28, of
+/// `one_scope::one_variable_boundary_modes_do_not_depend_on_names`, as that test drew it.
+fn seed_2125_case_28() -> Formula {
+    let s = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let q = |i: u32| Lin::atom(Atom::Aux(i));
+    let c = |v: i64| Lin::constant(v);
+    let con = |c: Con| Formula::Con(c);
+    let not = |c: Con| Formula::Not(crate::presburger::Shared::new(Formula::Con(c)));
+    let (x, x1, x2, x3) = (s("x"), s("x@1"), s("x@2"), s("x@3"));
+    let mut parts = vec![
+        con(Con::eq(&x, &x1.minus(&c(1)))),
+        con(Con::eq(&x1, &x2.minus(&c(5)))),
+        con(Con::eq(&x2, &x3.plus(&c(7)))),
+    ];
+    for (v, k, qi, off) in [
+        (&x1, 10, 0, 0),
+        (&x3, 4, 2, 5),
+        (&x1, 8, 4, 0),
+        (&x3, 4, 6, 5),
+        (&x2, 2, 8, 3),
+    ] {
+        parts.push(con(Con::eq(
+            v,
+            &q(qi).times(k).plus(&q(qi + 1)).plus(&c(off)),
+        )));
+        parts.push(con(Con::ge(&q(qi + 1), &c(0))));
+        parts.push(con(Con::ge(&c(k - 1), &q(qi + 1))));
+    }
+    parts.push(Formula::or(vec![
+        not(Con::eq(&q(1), &c(0))),
+        not(Con::eq(&q(5), &c(6))),
+    ]));
+    parts.push(not(Con::eq(&q(1), &c(0))));
+    Formula::and(parts)
+}
+
 /// The point a regime's answer gives, for messages.
 fn found(out: &RegimeOut) -> Option<Int> {
     match out {

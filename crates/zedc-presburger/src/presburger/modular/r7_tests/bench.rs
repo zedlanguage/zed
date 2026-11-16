@@ -21,6 +21,21 @@ fn division_pairs_scale() {
 /// The size of [`division_pairs_scale`].
 const N_PAIRS: usize = 10_000;
 
+/// Dropping the clauses a regime's units imply (FAIL-modular-unbounded-regime-undecided), on
+/// [`absorbed_clauses`]: `n` clauses, each with the unit's own literal, so all are dropped and
+/// the regime is the unit alone.
+#[test]
+fn absorbed_clauses_scale() {
+    let inputs = scaling::inputs(N_ABSORBED, absorbed_clauses);
+    scaling::check_order("clauses the units imply dropped", N_ABSORBED, 1, |n| {
+        let (units, clauses) = inputs[&n].clone();
+        assert!(found(&solve_regime_in(&None, &None, units, clauses)).is_some());
+    });
+}
+
+/// The size of [`absorbed_clauses_scale`].
+const N_ABSORBED: usize = 20_000;
+
 #[test]
 fn pncx_fixed_chain_scale() {
     let inputs = scaling::inputs(60_000, fixed_chain);

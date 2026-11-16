@@ -302,6 +302,17 @@ fn res_contains(s: &[(Int, Int)], r: &Int) -> bool {
     idx < s.len() && s[idx].0 <= *r
 }
 
+/// Whether every residue of `inner` lies in `outer`, both sorted and disjoint in `0..m`: no gap
+/// of `outer` meets `inner`. Each gap is tested against the last run of `inner` that starts
+/// in it or before it: the runs before that one end before it starts. O(g log u) for `g` gaps
+/// of `outer` and `u` runs of `inner`.
+fn res_within(inner: &[(Int, Int)], outer: &[(Int, Int)], m: &Int) -> bool {
+    res_complement(outer, m).iter().all(|(gap_lo, gap_hi)| {
+        let i = inner.partition_point(|(lo, _)| lo <= gap_hi);
+        i == 0 || inner[i - 1].1 < *gap_lo
+    })
+}
+
 /// Maps the residue interval `[a, b]` of `rem = (s_x * x + c_lo) mod m` (where `0 <= a <= b < m`
 /// and `s_x` is `1` or `-1`) to a `ResidueSet` for `x mod m`.
 fn shift_residue_interval(a: &Int, b: &Int, s_x: i8, c_lo: &Int, m: &Int) -> ResidueSet {
@@ -2205,6 +2216,26 @@ fn solve_regime_step(
     clauses: Vec<BTreeMap<Int, ResidueSet>>,
     stack: &mut Vec<RegimeTask>,
 ) -> RegimeOut {
+    // A clause with a literal `x mod m in s` whose set `s` holds the unit's set for `m` is true
+    // at every point of the regime, so it is dropped: the regime's points are the same with it
+    // and without it, and a point found without it satisfies the unit and so the clause. Kept,
+    // its modulus joined the coprime base, and a literal on a lower power of a base whose
+    // allowed set spans more than two blocks of that power is left to the general path
+    // (`intersect_mod_divisor`; FAIL-modular-unbounded-regime-undecided: `x mod 10 != 8` with
+    // the clause `x mod 8 != 4 || x mod 10 != 8` lifted `x mod 2 != 0` over `[0, 7]` modulo 8).
+    // Complexity tradeoff: naive version, none (every clause kept). Used: per literal one
+    // lookup of its modulus among the units and a test of each gap of `s` against the unit's
+    // runs by binary search, O(g log u) for `g` gaps and `u` runs, so O(L log U) for `L` runs
+    // written in the clauses. What is given up: nothing. Tests:
+    // `r7_tests::an_unbounded_regime_whose_clause_repeats_its_unit_is_decided`,
+    // `bench::absorbed_clauses_scale`.
+    let clauses: Vec<BTreeMap<Int, ResidueSet>> = clauses
+        .into_iter()
+        .filter(|cl| {
+            !cl.iter()
+                .any(|(m, s)| unit_mods.get(m).is_some_and(|unit| res_within(unit, s, m)))
+        })
+        .collect();
     // Check if `[lo, hi]` is already a single point.
     if let (Some(l), Some(h)) = (lo, hi) {
         if l > h {
