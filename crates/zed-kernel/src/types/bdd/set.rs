@@ -599,9 +599,13 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// one and not in the other. Each node of `y` from the root down splits the part of `x` it
 /// covers at its atom, after removing the literal on that atom, and the two sides are joined
 /// past the node; two subtrees that are one node leave nothing. The walk keeps a stack of its
-/// own. For `m <= n` literals the expected work is `O(m (1 + D))`, `D` the bound on a node's
-/// expected depth in module `priority` for `N = n + m` keys (`O(log N)` when no two keys share
-/// a point): there are at most `m` splits, one at each node of `y`; a split or a removal walks
+/// own. For `m = min(|x|, |y|)` of `N = |x| + |y|` literals the expected work is `O(m (1 + D))`,
+/// `D` the bound on a node's expected depth in module `priority` for `N` keys (`O(log N)` when no
+/// two keys share a point): there are at most `|y|` splits, one at each node of `y`, and when
+/// `x` is the smaller set each node of `y` split at is an ancestor, in `y`'s treap, of the
+/// position of a literal of `x`, so the splits are at most the sum over `x`'s literals of `1 +`
+/// that position's depth, `|x| (1 + D)` in expectation (cross-review round 3, Claude R3-C2:
+/// 10 to 30 splits for `|x| = 1`); a split or a removal walks
 /// one search path of a treap whose keys are a range of what is left of `x`, whose ancestors
 /// are among those in the treap of all that is left, so `1 + D` in expectation; and a join walks
 /// the facing spines of its two sides, two paths of the treap of at most `N` keys it makes.

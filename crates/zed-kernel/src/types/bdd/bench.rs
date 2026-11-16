@@ -268,8 +268,9 @@ fn parity_built_a_literal_at_a_time_scales() {
     // The bound is proved for these inputs (author decision P300: an `O(n log n)` method read at
     // or under `8 ln(8n)/ln n`, 10.40 at 1,024): a set insert into a treap whose priorities are
     // drawn (module `priority`) walks one path, of expected depth at most `T0 + n(n - 1)/p +
-    // 2c H_n` (COMPLEXITY K123), and `T0`, the atoms whose digest another atom of the set shares,
-    // is 0 here, which the assertion below checks on every input.
+    // 2c H_n` (COMPLEXITY K123), and `T0`, the atoms whose point (digest modulo `P`) another atom
+    // of the set shares, is 0 here, which the assertion below checks on every input (cross-review
+    // round 3, Sol X3-F1: digests `0` and `P` differ but are one point).
     let n = 1 << 10;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
@@ -277,9 +278,11 @@ fn parity_built_a_literal_at_a_time_scales() {
                 let rows: Vec<Row> = (0..m as u64)
                     .map(|i| atom(j * SHAPE_STRIDE + 16 * m as u64 + i))
                     .collect();
-                let digests: std::collections::BTreeSet<u64> =
-                    rows.iter().map(|r| r.digest()).collect();
-                assert_eq!(digests.len(), m, "atoms of one digest");
+                let points: std::collections::BTreeSet<u64> = rows
+                    .iter()
+                    .map(|r| r.digest() % crate::priority::P)
+                    .collect();
+                assert_eq!(points.len(), m, "atoms at one priority point");
                 rows.into_iter().map(Part::literal).collect::<Vec<_>>()
             })
             .collect::<Vec<_>>()

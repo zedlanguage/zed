@@ -697,6 +697,26 @@ fn an_exclusive_or_built_from_two_holds_its_complement() {
     }
 }
 
+/// An exclusive or asked for while only its complement lives holds that complement, as one made
+/// fresh does: once the caller drops the complement, the next `not` finds it, not a node made
+/// again. `Part::xor` returned `n.not()`, which holds `n` only weakly (cross-review of
+/// PERF-xor-shape-free, round 3, Claude R3-C1).
+#[test]
+fn an_exclusive_or_found_through_its_complement_holds_it() {
+    let lits: Vec<Part<Row>> = (20..24).map(|i| Part::literal(atom(i))).collect();
+    let holds = |p: &Part<Row>| matches!(p, Part::Expr(e) if e.known().is_some());
+    let y = (1..4).fold(lits[0].clone(), |f, i| xor_by_or(&f, &lits[i]));
+    let (s, constant) = y.xor_tag().expect("an exclusive or of four");
+    let n = y.not();
+    let n_id = n.id();
+    drop(y);
+    let again = Part::xor(Some(s), constant);
+    assert_eq!(again.not().id(), n_id);
+    drop(n);
+    assert!(holds(&again), "its complement is not held: {again:?}");
+    assert_eq!(again.not().id(), n_id, "its complement was made again");
+}
+
 #[test]
 fn an_exclusive_or_is_found_again_when_only_its_complement_lives() {
     // The steps leave live only one of the two exclusive ors of a set, its two constants; the

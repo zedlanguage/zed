@@ -20,7 +20,7 @@
 //! its literals once the forms it reads are made (an exclusive or of `n` atoms makes its forms on
 //! first read, `O(n log n)` expected over all of them, module `xor`); asked which atoms every
 //! value takes or refuses (`Part::forced`), in `O(n log n)` on a list and in one pass over the
-//! nodes of an expression (COMPLEXITY.md K32); and settled on
+//! nodes of an expression once the forms it reads are made (COMPLEXITY.md K32); and settled on
 //! its shared subexpressions (`Part::settle`), one evaluation per shared subexpression in each
 //! round. The last is above the rule of low complexity, an open item (DESIGN.md L1.23). Listing
 //! values takes one pass over a list's first nodes, as a diagram would have them
@@ -1154,9 +1154,13 @@ impl<'m> Connect<'m> {
         // form is not this union (module `xor`), or two lists that `zip_chain` joins as lists
         // (`a&(a|b) | !a&b` is `a|b`; cross-review of PERF-xor-shape-free, round 2, Sol X2-F4),
         // as `Connect::zipped` finds them. `zipped` itself is not called on the meets: its rules
-        // for choices can find this choice again. The first two tests take constant time when
-        // they fail; when the second fits it joins the two sets of atoms (`xor::join`), in the
-        // work of `set::symmetric`. The third is the call `zipped` makes on two lists, at its cost.
+        // for choices can find this choice again. Complexity tradeoff: the naive method keeps the
+        // union as an expression, in constant time, and leaves a second node for one function
+        // (cross-review round 3, Claude R3-T1). The leaf and tag tests build no form; a test of
+        // equal or opposite tags can compare two sets' contents when they were made on different
+        // threads or tie at a digest (cross-review round 3, Sol X3-F2). When the second test fits
+        // it joins the two sets of atoms (`xor::join`), in the work of `set::symmetric`. The
+        // third is the call `zipped` makes on two lists, at its cost.
         if let Some(z) = Part::zip_at_once(&a, &b, Op::Or).or_else(|| xor::xor_of(&a, &b, Op::Or)) {
             return z;
         }
@@ -2605,11 +2609,19 @@ mod xor {
             } else if let Some(x) = found(s.id, constant) {
                 x
             } else if let Some(n) = found(s.id, !constant) {
-                // When only the complement lives, the one asked for is its complement's (`mate`):
-                // made anew beside a complement of its own, it would replace the live one in the
-                // table, and one function would have two nodes (test
-                // `an_exclusive_or_is_found_again_when_only_its_complement_lives`).
-                n.not()
+                // When only the complement lives, the one asked for is made and holds that live
+                // complement, which keeps it without holding it, as below. Made beside a
+                // complement of its own, it would replace the live one in the table, and one
+                // function would have two nodes (test
+                // `an_exclusive_or_is_found_again_when_only_its_complement_lives`); taken as
+                // `n.not()`, it would hold `n` only weakly, and `n` would be made again once the
+                // caller drops it (cross-review round 3, Claude R3-C1).
+                let x = node(&s, constant);
+                if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
+                    let _ = e.complement.set(n.clone());
+                    m.set_back(e);
+                }
+                x
             } else {
                 // The node asked for holds its complement, so neither is made only to be freed.
                 let x = node(&s, constant);

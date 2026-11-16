@@ -422,11 +422,39 @@ fn a_function_part_is_found_at_any_depth() {
     }
 }
 
-/// The part `Type::function_part` finds in `t`, a type of pairs whose first components are
-/// `tuples` or `structs` and whose other components hold no kind-wide part: the components in
-/// the order the walk first meets them (`Part::taken_toward`, each type once, as the walk
-/// pushes them), and of those the kind-wide one met last, which the walk pops first.
-fn kind_wide_part_met_last(t: &Type, tuples: &Type, structs: &Type) -> Type {
+/// The part `Type::function_part` finds in a type whose pairs are `rows`, whose first components
+/// are `tuples` or `structs` and whose other components hold no kind-wide part: the walk reads
+/// the rows in their order (`Row`'s), so the components come in the order of the rows sorted,
+/// each type once, as the walk pushes them; of those, the kind-wide one met last, which the walk
+/// pops first. The rows are written out by the test, not read by the walk under test, so a walk
+/// whose order followed the draw would fail (cross-review of PERF-xor-shape-free, round 3,
+/// Claude R3-C4).
+fn kind_wide_part_met_last(mut rows: Vec<Row>, tuples: &Type, structs: &Type) -> Type {
+    rows.sort();
+    let mut met: Vec<Type> = Vec::new();
+    for r in &rows {
+        for c in r.iter() {
+            if !met.contains(c) {
+                met.push(c.clone());
+            }
+        }
+    }
+    let wide = |c: &&Type| *c == tuples || *c == structs;
+    met.iter()
+        .rev()
+        .find(wide)
+        .expect("a kind-wide component")
+        .clone()
+}
+
+/// The same part, read from the walk itself (`Part::taken_toward`), for a meet: the walk of a
+/// meet reads its decision list, whose order of rows is neither `Row`'s nor fixed across atom
+/// names (`r1` before `r2` for some names, after for others, under every draw), so the test
+/// cannot write it out. This oracle uses the walk under test, so it checks that `function_part`
+/// keeps each type once, at its first meeting, not that the walk's order is free of the draw;
+/// that rests on the proof in `the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type`
+/// (cross-review of PERF-xor-shape-free, round 3, Claude R3-C4, Sol Q1(a)).
+fn kind_wide_part_walked(t: &Type, tuples: &Type, structs: &Type) -> Type {
     let mut met: Vec<Type> = Vec::new();
     let mut paths = crate::digest::DigestSet::default();
     t.p().tuples.lens[&2].taken_toward(true, &mut paths, &mut |r| {
@@ -455,11 +483,13 @@ fn the_function_part_of_a_union_of_pairs_is_fixed_by_the_type() {
     let structs = Type::universe(Universe::Struct);
     let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
     let mut t = Type::empty();
+    let mut rows = Vec::new();
     for i in 0..8 {
         let wide = if i % 2 == 0 { &tuples } else { &structs };
         t = &t | &pair(wide, &Type::atom(&format!("a{i}")));
+        rows.push(Row::new(vec![wide.clone(), Type::atom(&format!("a{i}"))]));
     }
-    let part = kind_wide_part_met_last(&t, &tuples, &structs);
+    let part = kind_wide_part_met_last(rows, &tuples, &structs);
     assert_eq!(t.function_part(), Some(part), "{}", t.surface());
 }
 
@@ -470,7 +500,7 @@ fn the_function_part_of_a_union_of_pairs_is_fixed_by_the_type() {
 /// the walk first meets each row is fixed: a skipped subtree was walked in full before, so
 /// skipping it drops no first meeting, and the walk without skips reads each set in order.
 /// Each type is pushed once, when first met, so the part is the kind-wide component first met
-/// last (`kind_wide_part_met_last`). Removing a type met again only when it was popped gave the
+/// last (`kind_wide_part_walked`). Removing a type met again only when it was popped gave the
 /// part of a row met a second time under some draws (cross-review of PERF-xor-shape-free,
 /// round 2, Sol X2-F1; red under each of 16 values of `ZED_TREAP_SEED`, since one of the 16
 /// types met a row twice under each).
@@ -484,11 +514,11 @@ fn the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type() {
         let x = &pair(&tuples, &atom(1)) | &pair(&structs, &atom(2));
         let y = &x | &pair(&Type::int(), &atom(3));
         let t = &x & &y;
-        let part = kind_wide_part_met_last(&t, &tuples, &structs);
+        let part = kind_wide_part_walked(&t, &tuples, &structs);
         assert_eq!(t.function_part(), Some(part), "{i}: {}", t.surface());
         // `(r1 | r2) & (r1 | r3)`, two sets sharing one row (round 2, Gemini R2-F1).
         let t = &x & &(&pair(&tuples, &atom(1)) | &pair(&Type::int(), &atom(3)));
-        let part = kind_wide_part_met_last(&t, &tuples, &structs);
+        let part = kind_wide_part_walked(&t, &tuples, &structs);
         assert_eq!(t.function_part(), Some(part), "{i}: {}", t.surface());
     }
 }
