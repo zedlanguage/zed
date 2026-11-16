@@ -1175,6 +1175,46 @@ fn a_summary_of_two_inputs_keeps_the_holes_of_its_demand() {
     diffs.none_but(2, 0, 0, 0);
 }
 
+/// A set of 1 to 3 pieces in `-12..=12` with holes between them.
+fn holed(rng: &mut Rng) -> IntervalSet {
+    let mut lo = rng.int(-12, -4);
+    let mut ps = Vec::new();
+    for _ in 0..rng.int(1, 3) {
+        let hi = lo + rng.int(0, 5);
+        ps.push((lo, hi));
+        lo = hi + rng.int(2, 5);
+    }
+    pieces(&ps)
+}
+
+/// Chains summarized as `pa(b) + z` with steep pieces in `pa` (PERF-preimage-back-two-input-chain:
+/// `pa_image` gives the hull of a piece of slope other than 0, 1 and -1): `t0 = z`,
+/// `tj = if b >= gj { t(j-1) + cj * b } else { t(j-1) + ej }`, `|cj|` from 2 to 4, over a `b`
+/// and a `z` with holes, asked for a set with holes. Each preimage is compared with the
+/// transfer before and both boxes with the interpreter ([`Diffs::preimage`]); a box wider
+/// than the one before is found. Seeds 101 to 120 and `indep_2j` were the only checks of the
+/// summary, all of slope 0 or 1. No box is wider than before; 2 are narrower and keep every
+/// point the interpreter finds. With `pa_image` giving the hull of its values, the test fails.
+#[test]
+fn steep_summaries_of_two_inputs_keep_the_holes_of_their_demand() {
+    let mut rng = Rng::new(0x5_7ee9);
+    let mut diffs = Diffs::default();
+    for case in 0..60 {
+        let k = 1 + case % 3;
+        let t = (1..=k as i64).fold(var("z"), |t, _| {
+            let c = rng.pick(&[-4, -3, -2, 2, 3, 4]);
+            let g = prim(Prim::Ge, var("b"), int(rng.int(-4, 4)));
+            let steep = prim(Prim::Add, t.clone(), prim(Prim::Mul, int(c), var("b")));
+            let flat = prim(Prim::Add, t, int(rng.int(-4, 4)));
+            Term::If(Shared::new(g), Shared::new(steep), Shared::new(flat))
+        });
+        let ds = over(&[("b", holed(&mut rng)), ("z", holed(&mut rng))]);
+        let d = Demand::Ints(holed(&mut rng));
+        diffs.preimage(&format!("case {case}"), &t, &ds, &d);
+    }
+    diffs.none(60, 2);
+}
+
 /// The `let` form of `indep_2j k=2` is not refused on a tie of `b1` and `b2`, whose rows
 /// differ (PREIMAGE-tie-indep-let).
 #[test]
