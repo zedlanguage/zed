@@ -312,3 +312,35 @@ pub(crate) fn lambdas_at_one_type_variable(n: usize) -> String {
 fn many_lambdas_at_one_type_variable_are_each_checked_at_its_type() {
     assert_eq!(output(&lambdas_at_one_type_variable(4)), "6\n");
 }
+
+const TO_F64: &str = "h(positional z: f64) = z;";
+
+/// The expected type is matched against the result before the arguments (DESIGN.md
+/// sec:type_resolution, rule 2): where `f64` is wanted, `T` is `f64`, the literal `3` takes
+/// it and the lambda is checked as `(f64) -> f64`, as `3` alone would take `f64` there.
+#[test]
+fn the_expected_type_binds_a_type_variable_before_a_literal() {
+    let defs = format!("{MAP2}\n{TO_F64}");
+    assert_eq!(
+        writes(&defs, r#""${h(map2(xs: 3, f: (v) -> v + 1.5))}""#),
+        "4.5\n"
+    );
+    assert_eq!(
+        writes(&defs, r#""${h(map2(xs: 3, f: (v) -> v))}""#),
+        "3.0\n"
+    );
+    // Control: where nothing is wanted, the literal fixes `T` at `int`.
+    assert_eq!(writes(MAP2, r#""${map2(xs: 3, f: (v) -> v)}""#), "3\n");
+}
+
+/// An argument that is not a literal and disagrees with the expected type does not bind
+/// `T`; the call is rejected at that argument.
+#[test]
+fn an_argument_against_the_expected_type_is_rejected() {
+    rejects(
+        &format!(
+            "{MAP2}\n{TO_F64}\nmain() = {{ a = 3 + 0; _ = h(map2(xs: a, f: (v) -> v)); 0 }};\n"
+        ),
+        &["`map2`"],
+    );
+}

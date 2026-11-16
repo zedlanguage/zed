@@ -592,6 +592,8 @@ pub(super) struct CallSigF<'a> {
     /// The callee with the variables the other arguments fixed replaced, once those are
     /// checked: each lambda put off is checked against it, and the call applies it.
     inst: Option<Arc<Sig>>,
+    /// The numeric carrier the call's place wants ([`Ck::want_at`]).
+    wanted: Option<Carrier>,
 }
 
 /// Whether an unbounded own variable of `sig`, a signature of one arrow, stands inside a
@@ -2903,6 +2905,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => t,
             };
             return m.ty(t);
+        }
+        if let ExprKind::Call { .. } = &e.kind {
+            self.want_at = want.num.map(|c| (e.span, c));
         }
         m.job(Job::Expr(e));
     }
@@ -6335,6 +6340,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         what: Rc<str>,
     ) {
+        // Taken by every call, so one wanted carrier never outlives the walk it was set for;
+        // kept only by the call it was set for.
+        let wanted = (self.want_at.take())
+            .filter(|(at, _)| *at == span)
+            .map(|(_, c)| c);
         let sig = self.open(&sig);
         let has_receiver = receiver.is_some();
         let (slots, missing) = match fit(
@@ -6364,6 +6374,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             later: VecDeque::new(),
             redo: None,
             inst: None,
+            wanted,
             sig,
         };
         self.call_sig_step(m, Box::new(s));
@@ -6415,7 +6426,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.got.push(a);
         }
         if s.ties && s.inst.is_none() {
-            s.inst = Some(self.instantiated(&s.sig, &s.got));
+            s.inst = Some(self.instantiated(&s.sig, &s.got, s.wanted));
         }
         // A queue taken from the front: O(1) a lambda, where `Vec::remove(0)` shifted the rest,
         // O(k^2) for k lambdas put off in one call.
@@ -6472,12 +6483,16 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `sig`, of one arrow, with each unbounded own variable that the arguments `got` fix
     /// replaced by its type, for a call where such a variable stands inside a function type
-    /// of a parameter ([`ties_in_fns`]). DESIGN.md sec:type_resolution, rule 2: a variable is
-    /// fixed by the arguments that are not literals, and the literals then take it; so each
-    /// argument that is not a literal, at a parameter where the variable stands outside the
-    /// functions, binds it ([`Ty::sub`]), and a variable none of them binds that a literal is
-    /// passed for is the literal's carrier, `int` for `3`. The lambdas passed where a function
-    /// type holds the variable are not in `got` yet; they are then checked against the result.
+    /// of a parameter ([`ties_in_fns`]). DESIGN.md sec:type_resolution, rule 2: the expected
+    /// type is matched against the result first, a variable it leaves open is fixed by the
+    /// arguments that are not literals, and the literals then take it. So a result that is a
+    /// variable alone, at a place that wants one numeric carrier (`wanted`), is that carrier;
+    /// then each argument that is not a literal, at a parameter where an open variable stands
+    /// outside the functions, binds it ([`Ty::sub`]); and a variable still open that a literal
+    /// is passed for is the literal's carrier, `int` for `3`. The lambdas passed where a
+    /// function type holds the variable are not in `got` yet; they are then checked against
+    /// the result. An argument that disagrees with the expected type does not bind; the
+    /// application then rejects it at the instance.
     ///
     /// Why the signature is replaced before the application and not bound by it: the
     /// application compares a function argument with a function-typed parameter as written,
@@ -6491,12 +6506,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// signature), once per call of such a function. The naive way, binding through function
     /// types inside the comparison, would need the binding carried into every comparison of
     /// function types; not built.
-    fn instantiated(&self, sig: &Arc<Sig>, got: &[Option<Arg<'a>>]) -> Arc<Sig> {
+    fn instantiated(
+        &self,
+        sig: &Arc<Sig>,
+        got: &[Option<Arg<'a>>],
+        wanted: Option<Carrier>,
+    ) -> Arc<Sig> {
         let free = |v: &Arc<str>| sig.own.contains(v) && !sig.bounds.contains_key(v);
         let [arrow] = &sig.arrows[..] else {
             return sig.clone();
         };
         let mut b = Binds::new();
+        if let (Some(c), Some(v)) = (wanted, arrow.result.as_var())
+            && free(v)
+        {
+            b.insert(v.clone(), Ty::carrier(c));
+        }
         for (a, p) in got.iter().zip(&arrow.params) {
             let Some(a) = a.as_ref().filter(|a| a.lit.is_none()) else {
                 continue;

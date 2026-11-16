@@ -1496,6 +1496,11 @@ struct Ck<'t, 'a> {
     /// rejection inside it is not built ([`Ck::lit_spares`]). Set only while that argument
     /// is walked.
     lit_taking: Option<Span>,
+    /// The span of a call walked where one numeric carrier is wanted, with that carrier, as
+    /// `map2(…)` in `h(map2(…))` for `h(positional z: f64)`: the expected type that
+    /// [`Ck::instantiated`] matches against the callee's result before the arguments. Set when
+    /// the call's walk starts; its own `call_sig` takes it.
+    want_at: Option<(Span, Carrier)>,
     /// The operations inside [`Ck::lit_taking`] whose rejection was not built; each leaves
     /// the set when its argument takes its carrier ([`Ck::lit_takes`]), so the set is empty
     /// when the walk of the unit ends ([`Ck::walk`]).
@@ -1950,6 +1955,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_order: Vec::new(),
             lit_dropped: BTreeMap::new(),
             lit_taking: None,
+            want_at: None,
             lit_spared: HashSet::new(),
             comparing: None,
             unnamed: HashMap::new(),
