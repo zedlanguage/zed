@@ -1194,3 +1194,27 @@ fn chains_and_shifted_pairs_of_the_benchmarks_compare_at_small_depths() {
         assert_shifted_pairs_compare_as_written(d);
     }
 }
+
+/// Formula 67 of seed 15455823323744612893, `2 * c == d + 2 && ((3 * d == -4 && 2 * a >= 3 *
+/// b - 4) || (3 * c <= 2 && 2 * a >= 3 * b - 4) || (c >= 1 && 2 * a >= 3 * b - 4))`, through
+/// the exact cover, with its shared part `2 * a >= 3 * b - 4` taken out and as written: the set
+/// of `d` is the even integers, holes without end on both sides, so no set of ranges is exact
+/// and each writing gets the one set the even integers give, `(-inf, +inf)`, with the cause
+/// `Repeats` (PRES-cover-tail-writing). Before, the tail was kept as the whole piece of the
+/// solver's set that held it, `(-inf, -2] u [0, +inf)` as written and `(-inf, +inf)` factored.
+#[test]
+fn formula_67_of_seed_15455823323744612893_gets_one_set_for_d_however_written() {
+    use zedc::store::interval::IntervalSet;
+    use zedc::store::presburger::exact::project_each_exact;
+    use zedc::store::presburger::{Refusal, UNFACTORED};
+    let f = tiers_formula(15_455_823_323_744_612_893, 67);
+    let syms: Vec<Atom> = ["a", "b", "c", "d"].map(|n| Atom::Sym(n.into())).into();
+    let factored = project_each_exact(&f, &syms);
+    UNFACTORED.with(|u| u.set(true));
+    let as_written = project_each_exact(&f, &syms);
+    UNFACTORED.with(|u| u.set(false));
+    assert_eq!(factored, as_written, "formula 67: {f}");
+    let (each, causes) = factored.expect("answered");
+    assert_eq!(each[3], Ok(IntervalSet::top()), "formula 67: {f}");
+    assert_eq!(causes, vec![Refusal::Repeats], "formula 67: {f}");
+}

@@ -18371,29 +18371,50 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result
     // reaches one state in every order of the parts (module `forced`), so its verdict does not
     // depend on that order, and a contradiction then costs no O(n log n) ordering pass
     // (`canonical_parts` cost 7.5 times the whole projection of main on
-    // `l01_38_presburger::bench::slack_scale::paired_chain_project_scales`).
+    // `l01_38_presburger::bench::slack_scale::paired_chain_project_scales`, which is
+    // `project_each`, the solver alone).
+    //
+    // With the cover, every step below reads `cover_input(f)` and nothing else of `f`
+    // (PRES-cover-order-refusals, PRES-cover-sign-through-h): each equation in the sign
+    // [`flips`] chooses, `t >= 0` beside `-t >= 0` as `t == 0`, a repeated conjunct once
+    // ([`signed`]), and the parts in one order ([`canonical_parts`]). Proof that the answer
+    // and any refusal are then the same for every such writing of `f`: they are values of one
+    // function of `cover_input(f)`, which those writings share, since the contradiction check,
+    // `one_row`, `row_sums`, `certified_domains`, the solver (`factored`, then
+    // `project_each_written`) and the cover are each deterministic, read no state that
+    // depends on the writing, and are given only that formula, the cover with the solver's
+    // answer on it. Before, the cover alone read `cover_input(f)`, while the solver and
+    // `certified_domains` read `f` in its own signs, so the set `h` the cover starts from, and
+    // with it the cover's work and a refusal at its limit, depended on the sign
+    // (`exact::tests::one_meaning_written_with_another_sign_or_scale_gets_one_answer`: one
+    // sign answered `[-5, -1]` in 8100 units, the other refused at that limit, needing 21500).
+    // Writings with other parts, such as a shared part taken out by hand, are other inputs:
+    // there the answer, where given, is still one (the exact set, or for holes without end the
+    // set `exact::ended` reads from it), while whether a limit refuses it depends on the work
+    // each writing needs.
+    // The solver alone keeps `f` as written, as before the cover: `canonical_parts` cost
+    // `l01_38_omega_test::bench::disj_groups::row_sums::
+    // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
+    // 20 s where the order as written takes 0.09 s at m = 9600; row PRES-cover-canonical-row-sums).
+    // Complexity tradeoff: one pass over `f` for each projection the cover checks, O(n log n)
+    // in the size of `f` (`signed`, then `canonical_parts`), before the contradiction check
+    // too, against reading `f` as written there, which let a contradiction be answered in one
+    // writing and refused in another.
+    let written;
+    let f = if cover.is_some() {
+        written = cover_input(f);
+        &written
+    } else {
+        f
+    };
     let conjuncts = f.conjunct_list();
     if forced::empty(f, &conjuncts) {
         return Ok(no_points(syms));
     }
-    // The cover asks its questions of the parts in one order, so that its work, and with it a
-    // refusal at its work limit, does not depend on the order they are written in
-    // (PRES-cover-order-refusals). The solver alone keeps the order as written, as before the
-    // cover: `canonical_parts` cost `l01_38_omega_test::bench::disj_groups::row_sums::
-    // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
-    // 20 s where the order as written takes 0.09 s at m = 9600; row PRES-cover-canonical-row-sums).
-    let ordered;
-    let f = if cover.is_some() {
-        ordered = canonical_parts(f);
-        &ordered
-    } else {
-        f
-    };
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
     // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
     // refused where the join stops at its work limit.
-    let conjuncts = f.conjunct_list();
     let solver_found = || {
         // The formula with each shared part taken out of the disjunctions that hold it in every
         // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
@@ -18418,21 +18439,12 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result
         {
             return Ok(each);
         }
-        // The cover is given `f` with each equation in the sign [`flips`] chooses, `t >= 0`
-        // beside `-t >= 0` as `t == 0`, and a repeated conjunct once ([`signed`]), then its
-        // parts in one order ([`canonical_parts`]): the cover charges its work row by row, and
-        // the work of a row depends on the sign it is written in, so with the signs as written
-        // `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and answered it
-        // with the other (row PRES-cover-order-rewrites; test
+        // `f` is `cover_input` of the formula given (above): the cover charges its work row by
+        // row, and the work of a row depends on the sign it is written in, so with the signs as
+        // written `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and
+        // answered it with the other (row PRES-cover-order-rewrites; test
         // `l01_39_reduced_product::pendants::the_rewrites_of_seed_5401893596085442912_give_one_answer`).
-        // The solver keeps `f` as ordered above: signing the formula it is given as well changes
-        // the order of its parts and so its answers, and lost the narrower projection that
-        // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection` checks; the
-        // cover's answer is exact whatever set the solver gives it.
-        // Complexity tradeoff: one more pass over `f` for each projection the cover checks,
-        // O(n log n) in the size of `f` (`signed`, then `canonical_parts`), against handing the
-        // cover `f` as ordered, which keeps each sign as written and lets the refusal depend on it.
-        solver_found().map(|e| cover(&cover_input(f), syms, e))
+        solver_found().map(|e| cover(f, syms, e))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
@@ -18467,7 +18479,9 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result
 /// Proof: by induction on height, children have the same writing and sharing up to ids;
 /// sorting by content gives the same sequence, and interning gives one node for that
 /// sequence. Ids are used only for equality, never for ordering. Thus permutations
-/// yield isomorphic DAGs, including duplicate parts, before any budgeted search.
+/// yield isomorphic DAGs before any budgeted search. A part repeated in a conjunction or
+/// disjunction is kept once (idempotence: equal parts compare equal, so they are adjacent
+/// after the sort), so a writing with a part repeated has the same form too.
 /// Complexity tradeoff: an extra pass and O(N) storage over the distinct parts and
 /// edges; sorting costs O(sum d log d) comparisons. A comparison may read a whole
 /// pair of sub-DAGs, but never unfolds shared trees. The naive alternative, ordering
@@ -18516,6 +18530,17 @@ fn canonical_parts(f: &Formula) -> Formula {
             }
             if matches!(g, Formula::And(_) | Formula::Or(_)) {
                 parts.sort_by(cmp);
+                // A part repeated once (`a && a` is `a`, `a || a` is `a`): equal parts are
+                // adjacent once sorted. The constructors drop a repeated constraint but keep a
+                // repeated compound part, so `f && f` gave the cover each disjunction of `f`
+                // twice, twice the work, and a refusal at a limit that `f` meets
+                // (`exact::tests::every_writing_of_a_formula_gets_one_answer`).
+                parts.dedup_by(|a, b| cmp(a, b).is_eq());
+                // And a conjunction or disjunction of one part is that part: `f && f`, `f`
+                // kept whole in it as one conjunct, would otherwise read as `And([f])`.
+                if parts.len() == 1 {
+                    return parts.pop().expect("one part");
+                }
             }
             let key = (
                 g.rank(),

@@ -495,8 +495,9 @@ fn cover(
     // union that ranges cannot hold (`projection::ranges`).
     let mut open: Vec<Strided> = Vec::new();
     let mut tails: Vec<Tail> = Vec::new();
-    // The tails whose holes repeat without end, kept whole.
-    let mut kept = IntervalSet::empty();
+    // The pieces of the tails whose holes repeat without end, each with its residues: the
+    // values there with a point of `f` are exactly those residues' ([`ended`]).
+    let mut kept: Vec<Kept> = Vec::new();
     let mut read = 0;
     // No value has a point where the solver's set, which holds every value with one, is empty.
     if h.is_empty() {
@@ -567,7 +568,7 @@ fn cover(
             }
         }
         if gap.is_empty() {
-            return Ok(ended(h, found, &kept));
+            return ended(found, kept, work);
         }
         // The residue question of a piece with holes and no end: a point of `f` there in a
         // residue no part found holds. Where there is none, the values of `s` there are those
@@ -603,12 +604,19 @@ fn cover(
             ]);
             match work.ask(&q)? {
                 Some(m) => points.push(m),
-                // Holes without end, which ranges cannot hold: the part of the tail not shown
-                // empty is kept whole, the finest set of ranges holding its values, and the
-                // answer is wider than exact for that cause, given with it ([`exact_each`]).
+                // Holes without end, which ranges cannot hold: the values of `s` in the tail's
+                // piece are exactly those of its residues, kept with them; the answer is then
+                // read from the exact set alone ([`ended`]), wider than exact for that cause,
+                // given with it ([`exact_each`]).
                 None => {
                     let left = gap.meet(&tail.piece);
-                    kept = kept.join(&left);
+                    let have: Rc<[bool]> = tail.have.into();
+                    kept.extend(left.pieces().map(|(lo, hi)| Kept {
+                        lo: lo.clone(),
+                        hi: hi.clone(),
+                        step: tail.step.clone(),
+                        have: have.clone(),
+                    }));
                     gap = gap.minus(&left);
                 }
             }
@@ -664,7 +672,7 @@ fn cover(
         // with the whole gap, a question after k cells carries the k holes they made, and k
         // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
         let Some(piece) = gap.first().cloned() else {
-            return Ok(ended(h, found, &kept));
+            return ended(found, kept, work);
         };
         work.question(size + 2)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
@@ -677,45 +685,294 @@ fn cover(
     }
 }
 
-/// The answer of [`cover`] once the gap is empty: `found`, exact, and, where `kept` holds the
-/// parts of tails with holes without end, each piece of `h` that meets `kept`, whole, with
-/// `true` for the cause ([`Refusal::Repeats`]).
-///
-/// P246, why an answer is the same for every order of `f`'s parts: a piece of `h` meets
-/// `kept` only when the values of `s` with a point there have holes without end (a tail,
-/// unbounded and within `h`, is kept only when its residue question finds no point there in
-/// another residue, so the values there miss that residue past any bound). Conversely, where
-/// they have such holes, the gap there cannot be emptied by listing values and ranges (a
-/// finite union of ranges is not those values) nor by questions (a question on a piece drops
-/// an empty piece, and one on a progression drops pieces between its finite ends), so the cover keeps a part of it or refuses. So when the cover answers, the
-/// pieces of `h` made whole are those where the values have holes without end, a property
-/// of `f` and of `h`, the solver's answer, which a reordering does not change
-/// (`l01_38_omega_test::omega::reordered_formulas_agree` checks `h` on main); outside them
-/// `found` is exact, so the same. The cover now reads `canonical_parts(f)`, with
-/// equal subtrees interned; permutations therefore also take the same cells and
-/// spend the same work before a refusal. The enumeration test below separately
-/// checks this tail rule, including its finite exceptions.
-// Complexity tradeoff: before, `kept` alone was kept whole, the part of the tail the cells
-// had not filled when its question was asked; that point depends on which cells came first,
-// so on the order of the disjuncts (bench `omega::the_answer_does_not_depend_on_the_order_of_
-// the_disjuncts_in_a_*_quarter`: `[..-11, -8, -5..-1]` in one order and `[..-1]` in the
-// other, both with the cause). Naive canonical alternative: list the exact values down to
-// the start of the period of the holes and keep only the rest whole, finer but needing that
-// start, which no step here finds. Used: the pieces of `h` whole, coarser where the cells
-// had listed part of the tail, O(p log p) for p pieces of `h`.
-fn ended(h: &IntervalSet, found: IntervalSet, kept: &IntervalSet) -> (IntervalSet, bool) {
-    if kept.is_empty() {
-        return (found, false);
-    }
-    let whole = (h.pieces())
-        .filter(|(l, u)| {
-            !IntervalSet::range(l.clone(), u.clone())
-                .meet(kept)
-                .is_empty()
+/// A piece of a tail kept by [`cover`], an interval from `lo` to `hi`, where the values of `s`
+/// with a point of `f` are exactly those whose residue modulo `step` is marked in `have`: the
+/// tail's residue question found no point there in another residue, and each marked value is
+/// one of a strided part that holds over the whole piece (`projection::ranges`).
+struct Kept {
+    lo: End,
+    hi: End,
+    step: Int,
+    have: Rc<[bool]>,
+}
+
+/// A residue table `have` modulo `step` read as a periodic set of integers, with the nearest
+/// residue at or below and at or above each residue that is in the set and that is out of it,
+/// so that the nearest member or nonmember of any value is read in O(1). The table of a tail
+/// has both: a strided part holds, and not every residue (`projection::ranges` makes no tail
+/// where every residue is marked).
+struct Periodic {
+    step: Int,
+    have: Rc<[bool]>,
+    /// `below[b][r]`: the greatest residue `r' <= r` with `have[r'] == b`, if any.
+    below: [Vec<Option<usize>>; 2],
+    /// `above[b][r]`: the least residue `r' >= r` with `have[r'] == b`, if any.
+    above: [Vec<Option<usize>>; 2],
+}
+
+impl Periodic {
+    /// The tables of `have`, charged as the residue tables of `projection::ranges` are, one
+    /// unit for each 64 residues.
+    fn new(step: &Int, have: &Rc<[bool]>, work: &mut Work) -> Result<Self, Refusal> {
+        let n = have.len();
+        work.charge(n as u64 / 64 + 1)?;
+        debug_assert!(have.contains(&true) && have.contains(&false));
+        let mut below = [vec![None; n], vec![None; n]];
+        let mut above = [vec![None; n], vec![None; n]];
+        let mut last = [None, None];
+        for (r, &b) in have.iter().enumerate() {
+            last[b as usize] = Some(r);
+            below[0][r] = last[0];
+            below[1][r] = last[1];
+        }
+        let mut next = [None, None];
+        for (r, &b) in have.iter().enumerate().rev() {
+            next[b as usize] = Some(r);
+            above[0][r] = next[0];
+            above[1][r] = next[1];
+        }
+        Ok(Periodic {
+            step: step.clone(),
+            have: have.clone(),
+            below,
+            above,
         })
-        .cloned()
+    }
+
+    fn residue(&self, v: &Int) -> usize {
+        v.mod_floor(&self.step).to_i128().expect("a table's size") as usize
+    }
+
+    fn at(&self, v: &Int) -> bool {
+        self.have[self.residue(v)]
+    }
+
+    /// The greatest value at or below `v` that is in the set (`b`) or out of it (`!b`).
+    fn last(&self, b: bool, v: &Int) -> Int {
+        let (r, n) = (self.residue(v), self.have.len());
+        let to = |k: usize| Int::from(k as i64);
+        match self.below[b as usize][r] {
+            Some(q) => v - &to(r - q),
+            None => {
+                let q = self.below[b as usize][n - 1].expect("both kinds of residue");
+                v - &to(r + n - q)
+            }
+        }
+    }
+
+    /// The least value at or above `v` that is in the set (`b`) or out of it (`!b`).
+    fn first(&self, b: bool, v: &Int) -> Int {
+        let (r, n) = (self.residue(v), self.have.len());
+        let to = |k: usize| Int::from(k as i64);
+        match self.above[b as usize][r] {
+            Some(q) => v + &to(q - r),
+            None => {
+                let q = self.above[b as usize][0].expect("both kinds of residue");
+                v + &to(n - r + q)
+            }
+        }
+    }
+}
+
+/// The answer of [`cover`] once the gap is empty: `found`, exact, where no tail was kept;
+/// else the set read from the exact set `E` of the values of `s` with a point alone, with
+/// `true` for the cause ([`Refusal::Repeats`]): `E` where its values have no holes without
+/// end, and each ray past the start of the period of those holes, whole.
+///
+/// Why `E` is known exactly here: `found` holds only values of `E` (each cell's values have
+/// points); `h`, the cover's input, holds every value of `E`, and each piece of it left the
+/// gap by a cell (into `found`), by a question that found no point there (a piece, or the
+/// pieces of `outside`), or as a kept piece; in a kept piece `E` is exactly its residues
+/// ([`Kept`]). So `E` is `found` outside the kept pieces and the residues inside them, and the
+/// pieces are disjoint (each is taken out of the gap when it is kept).
+///
+/// The rule (PRES-cover-tail-writing; P246): where `E` has holes without end above, it equals
+/// far above a periodic set `P`, the residues of the kept piece with no upper end (`E` there),
+/// a set `E` alone fixes: `P = {v : v + k·T in E for every large k}` for any period `T`. Let
+/// `p` be one more than the greatest value where `E` and `P` differ, and `u` the least value of
+/// `E` at or above `p` (`E` has one, as `P` does): every value from `u` up is given, and below
+/// it `E` as it is. The same below, read on the values negated. So the answer is
+/// `(-inf, l] ∪ (E ∩ (l, u)) ∪ [u, +inf)`, `(-inf, +inf)` where the two rays meet, a function
+/// of `E` alone, which holds `E` and is exact outside the two rays. Kept pieces exist exactly
+/// when `E` has holes without end (a tail is kept only when its residue question proves them,
+/// and where `E` has them the gap there cannot be emptied otherwise: a finite union of ranges
+/// is not `E` there, a question on a piece drops only an empty piece and one on a progression
+/// only pieces between its finite ends), so the cause is a function of `E` too. Every writing
+/// of one formula that the cover answers then gets one set and one cause, whatever the
+/// solver's `h` and whatever order the cells came in. Before, each piece of `h` holding a kept
+/// piece was given whole, and `h` depends on the writing: formula 67 of seed
+/// 15455823323744612893 in `l01_38_presburger::shared` (the even integers) got `(-inf, -2] ∪
+/// [0, +inf)` as written and `(-inf, +inf)` with a shared part taken out.
+///
+/// The price: where the solver's `h` leaves out a value inside a ray, the answer holds it (the
+/// even integers above get `(-inf, +inf)`, not the `h` above), since no such cut is fixed by
+/// `E`: any set of ranges holding the even integers holds a ray each way, and which odd values
+/// it leaves out is not fixed by them.
+// Complexity tradeoff: naive, every piece of `h` holding a kept piece given whole, O(q log q)
+// for `q` pieces of `h`, but an answer that depends on `h`. Used: one walk down from the kept
+// piece with no upper end and one up from the one with no lower end, each stopping at the
+// first value where `E` and the period differ: O(1) for each piece of `found` passed (O(log p)
+// to find it, `p` pieces of `found`), one table of the period, made in O(T) and charged as
+// `projection::ranges` charges its own, and for each kept piece passed with another period a
+// scan of at most the lcm of the two periods, charged before it at the same rate; then the
+// values of each kept piece between the rays listed, each charged [`LISTED`]
+// (`projection::listed`). In all O((p + k) log p + k·L) for k kept pieces and L the largest
+// lcm, where before O(q log q).
+fn ended(found: IntervalSet, mut kept: Vec<Kept>, work: &mut Work) -> Result<(IntervalSet, bool), Refusal> {
+    if kept.is_empty() {
+        return Ok((found, false));
+    }
+    kept.sort_by(|a, b| a.lo.cmp(&b.lo));
+    let up = ray_from(&found, &kept, work)?;
+    let negated: Vec<Kept> = (kept.iter().rev())
+        .map(|k| {
+            let n = k.have.len();
+            Kept {
+                lo: negated_end(&k.hi),
+                hi: negated_end(&k.lo),
+                step: k.step.clone(),
+                have: (0..n).map(|r| k.have[(n - r) % n]).collect(),
+            }
+        })
         .collect();
-    (found.join(&IntervalSet::from_pieces(whole)), true)
+    let down = ray_from(&found.neg(), &negated, work)?.map(|u| u.map(|u| -&u));
+    let (l, u) = match (down, up) {
+        (Some(None), _) | (_, Some(None)) => return Ok((IntervalSet::top(), true)),
+        (Some(Some(l)), Some(Some(u))) if &l + &Int::from(1) >= u => {
+            return Ok((IntervalSet::top(), true));
+        }
+        (l, u) => (l.flatten(), u.flatten()),
+    };
+    let between = IntervalSet::range(
+        l.as_ref().map_or(End::NegInf, |l| fin(&(l + &Int::from(1)))),
+        u.as_ref().map_or(End::PosInf, |u| fin(&(u - &Int::from(1)))),
+    );
+    let mut pieces: Vec<(End, End)> = found.meet(&between).into_pieces();
+    if let Some(l) = &l {
+        pieces.push((End::NegInf, fin(l)));
+    }
+    if let Some(u) = &u {
+        pieces.push((fin(u), End::PosInf));
+    }
+    // A kept piece between the rays is bounded: one with no upper end holds the start of the
+    // upper ray's period or lies past it (`ray_from`), and the same below.
+    for k in &kept {
+        let inside = IntervalSet::range(k.lo.clone(), k.hi.clone()).meet(&between);
+        for (a, b) in inside.pieces() {
+            let (End::Fin(a), End::Fin(b)) = (a, b) else {
+                unreachable!("a kept piece between the rays is bounded");
+            };
+            projection::listed(&Int::from(a), &Int::from(b), &k.step, &k.have, work, &mut pieces)?;
+        }
+    }
+    Ok((IntervalSet::from_pieces(pieces), true))
+}
+
+fn negated_end(e: &End) -> End {
+    match e {
+        End::NegInf => End::PosInf,
+        End::PosInf => End::NegInf,
+        End::Fin(v) => End::Fin(-v),
+    }
+}
+
+/// For [`ended`]: where the values `E` of `s` have holes without end above (a kept piece with no
+/// upper end, `kept` sorted and disjoint), the least value `u` of `E` from which `E` agrees
+/// with its period at every value, `None` in it where `E` is that period everywhere; `None`
+/// where `E` has no such holes above. `E` is read as [`ended`] says: in a kept piece its
+/// residues, elsewhere `found`.
+fn ray_from(
+    found: &IntervalSet,
+    kept: &[Kept],
+    work: &mut Work,
+) -> Result<Option<Option<Int>>, Refusal> {
+    let Some(top) = kept.last().filter(|k| k.hi == End::PosInf) else {
+        return Ok(None);
+    };
+    let p = Periodic::new(&top.step, &top.have, work)?;
+    let End::Fin(lo) = &top.lo else {
+        return Ok(Some(None));
+    };
+    let one = Int::from(1);
+    // `cur`: every value above it agrees with `P`; the kept pieces below it are those of
+    // `kept[..next]`, each wholly below it (they are disjoint from the ones passed).
+    let mut cur = &Int::from(lo) - &one;
+    let mut next = kept.len() - 1;
+    let differs = loop {
+        // The values from `cur` down to the next kept piece are `found`'s: a value of a piece
+        // of `found` differs from `P` at a value out of `P`, a value between two pieces at one
+        // in `P`, so each run is read in O(1) by `P`'s tables.
+        let below = next.checked_sub(1).map(|i| &kept[i]);
+        let floor = below.map_or(End::NegInf, |k| k.hi.clone());
+        let mut w = cur.clone();
+        let mut hit = None;
+        while fin(&w) > floor {
+            let (inside, start) = match found.piece_at_or_below(&fin(&w)) {
+                Some((a, b)) if *b >= fin(&w) => (true, a.clone()),
+                Some((_, b)) => (false, b.succ()),
+                None => (false, End::NegInf),
+            };
+            let start = start.max(floor.succ());
+            let d = p.last(!inside, &w);
+            if fin(&d) >= start {
+                hit = Some(d);
+                break;
+            }
+            let End::Fin(s) = start else {
+                unreachable!("a run with no lower end holds a value of each kind of residue");
+            };
+            w = &Int::from(&s) - &one;
+        }
+        if hit.is_some() {
+            break hit;
+        }
+        let Some(k) = below else {
+            unreachable!("the run with no lower end returned above");
+        };
+        // A kept piece with other residues: compared with `P` from its top down, over at most
+        // the lcm of the two periods (equal there, they are equal everywhere), charged first.
+        let End::Fin(hi) = &k.hi else {
+            unreachable!("a kept piece below another has an upper end");
+        };
+        let hi = Int::from(hi);
+        let g = p.step.gcd(&k.step);
+        let lcm = &p.step.div_floor(&g) * &k.step;
+        let span = match &k.lo {
+            End::Fin(a) => Some(&(&hi - &Int::from(a)) + &one),
+            _ => None,
+        };
+        let count = match &span {
+            Some(s) if *s < lcm => s.clone(),
+            _ => lcm.clone(),
+        };
+        let n = count.to_i128().and_then(|n| u64::try_from(n).ok()).unwrap_or(u64::MAX);
+        work.charge(n / 64 + 1)?;
+        let q = Periodic {
+            step: k.step.clone(),
+            have: k.have.clone(),
+            below: [Vec::new(), Vec::new()],
+            above: [Vec::new(), Vec::new()],
+        };
+        let mut v = hi.clone();
+        let mut d = None;
+        for _ in 0..n {
+            if p.at(&v) != q.at(&v) {
+                d = Some(v);
+                break;
+            }
+            v = &v - &one;
+        }
+        if d.is_some() {
+            break d;
+        }
+        match &k.lo {
+            End::Fin(a) => cur = &Int::from(a) - &one,
+            _ => return Ok(Some(None)),
+        }
+        next -= 1;
+    };
+    let d = differs.expect("a value that differs");
+    Ok(Some(Some(p.first(true, &(&d + &one)))))
 }
 
 /// A part of `f` as [`direct`] reads it: a conjunction of constraints not yet projected, so
@@ -1751,9 +2008,10 @@ mod tests {
             );
             let (left, right) = (cover_input(&f), cover_input(&g));
             assert_eq!(format!("{left:?}"), format!("{right:?}"));
-            // The established conjunction constructor removes duplicate rows; the
-            // disjunction constructor retains them, equally for both equation signs.
-            assert_eq!(constraints(&left), if conjunction { 1 } else { 2 });
+            // The conjunction constructor removes duplicate rows; the disjunction
+            // constructor retains them, and `canonical_parts` keeps a repeated part once
+            // (`a || a` is `a`), equally for both equation signs.
+            assert_eq!(constraints(&left), 1);
         }
     }
 
@@ -2207,12 +2465,15 @@ mod tests {
 
     /// Exhaust the orders of two strided rays and a finite exception, including the
     /// orders inside each conjunction. The oracle enumerates witnesses in a box large
-    /// enough for every tested x; it does not ask the solver. P246: Repeats may widen
-    /// the infinite component of h, but must keep the finite component exact.
+    /// enough for every tested x; it does not ask the solver. P246 and
+    /// PRES-cover-tail-writing: the answer is read from the exact set `E` alone, the ray below
+    /// past the last value where `E` and its period differ whole and `E` above it exact, the
+    /// same for the solver's `h`, for another sound `h`, for every order, and for every place
+    /// the cells stop and the kept tail starts.
     #[test]
     fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
-        let h =
-            IntervalSet::from_pieces(vec![(End::NegInf, End::of(-1)), (End::of(3), End::of(4))]);
+        // Sound for every formula here (each has `x <= 4`), and wider than the solver's.
+        let wide = IntervalSet::range(End::NegInf, End::of(4));
         let orders = [
             [0, 1, 2],
             [0, 2, 1],
@@ -2250,13 +2511,16 @@ mod tests {
                             top.reverse();
                         }
                         let f = Formula::And(super::super::Shared::new(top));
-                        // Supply the same sound h directly, so the test exercises exact_each
-                        // even if a future solver fast path recognizes this family.
-                        let got = exact_each(
+                        // The whole path, and `exact_each` given another sound `h` directly,
+                        // so the test exercises the cover even if a future solver fast path
+                        // recognizes this family: one answer.
+                        let got = project_each_exact(&f, &[a("x")]).expect("answered");
+                        let given = exact_each(
                             &super::super::canonical_parts(&f),
                             &[a("x")],
-                            (vec![Ok(h.clone())], vec![]),
+                            (vec![Ok(wide.clone())], vec![]),
                         );
+                        assert_eq!(got, given, "{f}");
                         let set = got.0[0].as_ref().expect("this small tail must answer");
                         assert_eq!(got.1, vec![Refusal::Repeats], "{f}");
                         if let Some(want) = &expected {
@@ -2264,27 +2528,54 @@ mod tests {
                         } else {
                             expected = Some(got.clone());
                         }
+                        // `E` from enumerated points in [-12, 12]; below it `E` is its period,
+                        // the residues 0 and 1 (each ray reaches past -12 with no other bound).
+                        let period = |x: i64| matches!(x.rem_euclid(step), 0 | 1);
+                        let listed: Vec<bool> = (-12..=12)
+                            .map(|x| {
+                                (-20..=20).any(|v| {
+                                    let m = [
+                                        (a("x"), Int::from(x)),
+                                        (a("y"), Int::from(v)),
+                                        (a("z"), Int::from(v)),
+                                    ]
+                                    .into_iter()
+                                    .collect();
+                                    f.holds(&m)
+                                })
+                            })
+                            .collect();
+                        let e = |x: i64| if x < -12 { period(x) } else { x <= 12 && listed[(x + 12) as usize] };
+                        // The rule: `d` the least value where `E` and its period differ (one
+                        // above 4 at the latest), `l` the greatest value of `E` below it, then
+                        // `(-inf, l]` and `E` above `l`.
+                        let d = (-12..=12).find(|&x| e(x) != period(x)).expect("a difference");
+                        let l = (-12..d).rev().find(|&x| e(x)).expect("a value below");
+                        let points = |from: i64| {
+                            IntervalSet::from_pieces(
+                                (from..=12).filter(|&x| e(x)).map(|x| (End::of(x), End::of(x))).collect(),
+                            )
+                        };
+                        let want = IntervalSet::range(End::NegInf, End::of(l)).join(&points(l + 1));
+                        assert_eq!(set, &want, "{f}");
                         for x in -12..=12 {
-                            let has_point = (-20..=20).any(|v| {
-                                let m = [
-                                    (a("x"), Int::from(x)),
-                                    (a("y"), Int::from(v)),
-                                    (a("z"), Int::from(v)),
-                                ]
-                                .into_iter()
-                                .collect();
-                                f.holds(&m)
-                            });
-                            assert!(!has_point || set.contains(x), "lost point {x}: {f}");
-                            if x >= 0 {
-                                assert_eq!(set.contains(x), has_point, "finite component {x}: {f}");
-                            }
+                            assert!(!e(x) || set.contains(x), "lost point {x}: {f}");
                         }
-                        // ended must erase the arbitrary finite cut of a proved tail.
-                        for cut in [-4, -10, -30] {
-                            let kept = IntervalSet::range(End::NegInf, End::of(cut));
-                            let found = IntervalSet::single(3);
-                            assert_eq!(ended(&h, found, &kept), (set.clone(), true));
+                        // ended reads `E` alone: the same wherever the cells stopped and the
+                        // kept tail starts (below `d`, where `E` is the tail's residues).
+                        for cut in [d - 1, d - 4, d - 25] {
+                            let kept = vec![Kept {
+                                lo: End::NegInf,
+                                hi: End::of(cut),
+                                step: Int::from(step),
+                                have: (0..step).map(period).collect(),
+                            }];
+                            let mut work = Work { used: 0, limit: u64::MAX };
+                            assert_eq!(
+                                ended(points(cut + 1), kept, &mut work),
+                                Ok((want.clone(), true)),
+                                "cut {cut}: {f}"
+                            );
                         }
                         checked += 1;
                     }
@@ -2751,5 +3042,313 @@ mod tests {
             w_add.used,
             step_limit
         );
+    }
+
+    /// PRES-cover-sign-through-h (seat Gemini, PRES-pugh-xr round 3): the cover's input
+    /// (`cover_input`) is the same for two writings of one formula, but the solver's hull `h`
+    /// (`factored` before `signed`) and `certified_domains` (`is_difference` before rows are
+    /// reduced by their gcd) read the formula as written, so flipping one equation's sign or
+    /// scaling one inequality by 2 can widen `h` or skip `certified_domains` and turn an answer
+    /// into [`Refusal::Questions`] at a limit the other writing meets.
+    #[test]
+    fn one_meaning_written_with_another_sign_or_scale_gets_one_answer() {
+        let u_pos = Formula::And(Shared::new(vec![
+            ge(&[("b", 1)], -1),
+            Formula::Or(Shared::new(vec![
+                eq(&[("b", 2), ("a", -1)], 0),
+                ge(&[("b", 1)], -1),
+            ])),
+        ]));
+        let u_neg = Formula::And(Shared::new(vec![
+            ge(&[("b", 1)], -1),
+            Formula::Or(Shared::new(vec![
+                eq(&[("b", -2), ("a", 1)], 0),
+                ge(&[("b", 1)], -1),
+            ])),
+        ]));
+        let build = |last_u: Formula| {
+            // `c0 <= c1 || c1 <= c2 || ... || c7 <= c0` holds on all integers: its negation is
+            // the strict 8-cycle `c0 > c1 > ... > c7 > c0`, which has no unary bounds and every
+            // proper subset satisfiable. When all eight arms share `u_pos`, `factored` pulls
+            // `u_pos` out leaving one 2-arm disjunction whose cycle arm `solve` empties; when the
+            // eighth arm flips `2*b - a == 0` to `-2*b + a == 0`, `factored` misses before
+            // `signed` runs, leaving eight disjunctions whose solver hull on `b` stays unbounded
+            // above.
+            let names = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"];
+            let mut ds: Vec<Formula> = (0..7)
+                .map(|i| {
+                    Formula::And(Shared::new(vec![
+                        u_pos.clone(),
+                        ge(&[(names[i + 1], 1), (names[i], -1)], 0),
+                    ]))
+                })
+                .collect();
+            ds.push(Formula::And(Shared::new(vec![
+                last_u,
+                ge(&[(names[0], 1), (names[7], -1)], 0),
+            ])));
+            let tiers = Formula::Not(Shared::new(Formula::Or(Shared::new(ds))));
+            Formula::And(Shared::new(vec![
+                ge(&[("b", 1)], 5),
+                eq(&[("a", 1), ("b", -1)], -1),
+                Formula::Or(Shared::new(vec![ge(&[("a", -1)], 0), ge(&[("a", 1)], -5)])),
+                tiers,
+            ]))
+        };
+        let f_same = build(u_pos.clone());
+        let f_flip = build(u_neg);
+        assert_eq!(
+            super::super::cover_input(&f_same),
+            super::super::cover_input(&f_flip)
+        );
+
+        EXACT_OFF.set(true);
+        let h_same = project(&f_same, "b");
+        let h_flip = project(&f_flip, "b");
+        EXACT_OFF.set(false);
+        let exact_b = IntervalSet::of(-5, -1);
+        println!("solver sets for b: same={h_same}, flip={h_flip}");
+
+        EXACT_QUESTIONS.set(0);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        assert_eq!(project(&f_same, "b"), exact_b);
+        let q_same = EXACT_QUESTIONS.replace(0);
+        let loop_same = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+
+        EXACT_QUESTIONS.set(0);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        assert_eq!(project(&f_flip, "b"), exact_b);
+        let q_flip = EXACT_QUESTIONS.replace(0);
+        let loop_flip = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+        println!("questions and loop work: same=({q_same}, {loop_same}), flip=({q_flip}, {loop_flip})");
+
+        for limit in [loop_same, loop_flip] {
+            EXACT_LIMIT_SET.set(Some(limit));
+            let same = project_each_exact(&f_same, &[a("b")]).unwrap().0;
+            let flip = project_each_exact(&f_flip, &[a("b")]).unwrap().0;
+            EXACT_LIMIT_SET.set(None);
+            assert_eq!(same, flip, "one equation written with the other sign, limit {limit}");
+        }
+
+        // Case A-2: `x >= 0` scaled to `2 * x >= 0` keeps the same cover input.
+        let g = |k: i64| {
+            Formula::And(Shared::new(vec![
+                ge(&[("x", k)], 0),
+                ge(&[("x", -1)], 10),
+                Formula::Or(Shared::new(vec![
+                    eq(&[("x", 1), ("y", -1)], 0),
+                    eq(&[("x", 1), ("y", -1)], -2),
+                ])),
+            ]))
+        };
+        assert_eq!(
+            super::super::cover_input(&g(1)),
+            super::super::cover_input(&g(2))
+        );
+        for limit in [Some(1), Some(10), None] {
+            EXACT_LIMIT_SET.set(limit);
+            let unit = project_each_exact(&g(1), &[a("x")]).unwrap().0;
+            let scaled = project_each_exact(&g(2), &[a("x")]).unwrap().0;
+            EXACT_LIMIT_SET.set(None);
+            assert_eq!(scaled, unit, "2x >= 0 and x >= 0 are one row, limit {limit:?}");
+        }
+        assert_eq!(
+            project_each_exact(&g(1), &[a("x")]).unwrap().0,
+            vec![Ok(IntervalSet::of(0, 10))]
+        );
+    }
+
+    /// `f` with every equation in the other sign.
+    fn flipped(f: &Formula) -> Formula {
+        f.map_cons(&|c| {
+            Formula::Con(match c.rel {
+                Rel::Eq => Con {
+                    lin: c.lin.times(-1),
+                    rel: Rel::Eq,
+                },
+                Rel::Ge => c.clone(),
+            })
+        })
+    }
+
+    /// `f` with every row times `k`, more than zero, as written, not divided by the gcd.
+    fn scaled(f: &Formula, k: i64) -> Formula {
+        f.map_cons(&|c| {
+            Formula::Con(Con {
+                lin: c.lin.times(k),
+                rel: c.rel.clone(),
+            })
+        })
+    }
+
+    /// PRES-cover-sign-through-h and PRES-cover-tail-writing: the answer depends on the formula
+    /// alone. Random formulas, boxed ([`boxed`]) and with holes without end in `x`
+    /// ([`holed`]), are projected as written and in writings that `cover_input` makes one:
+    /// every equation in the other sign, every row times 2 or 3, the parts in random orders, the
+    /// formula repeated as a conjunct of itself, and all of these at once. Each must give the
+    /// same answer, cause and refusal, at the full limit and at a low one. Writings that are other
+    /// inputs, a part shared by every disjunct taken out by hand and the formula with no part
+    /// taken out (`UNFACTORED`), must give the same answer and cause wherever both answer. Every
+    /// answer must be exact (boxed: the values of the 729 points; holed: the values in `-W..=W`,
+    /// or more only with [`Refusal::Repeats`]).
+    #[test]
+    fn every_writing_of_a_formula_gets_one_answer() {
+        use super::super::UNFACTORED;
+        const LOW: u64 = 150_000;
+        let seed = crate::seed::seed("every_writing_of_a_formula_gets_one_answer");
+        let mut rng = Rng(seed | 1);
+        let window = IntervalSet::of(-W, W);
+        let (mut differ, mut wrong) = (Vec::new(), Vec::new());
+        let (mut forms, mut answered, mut repeats, mut refused) = (0, 0, 0, 0);
+        for round in 0..24 {
+            // A part `c` shared by both disjuncts, as written, `c && (d || e)`, and taken out by
+            // hand, `(c && d) || (c && e)`.
+            let (f, syms, want, strides) = if round % 2 == 0 {
+                let parts: Vec<Formula> = (0..3).map(|_| formula(&mut rng, 2)).collect();
+                let f = boxed(Formula::and(vec![
+                    parts[0].clone(),
+                    Formula::or(vec![parts[1].clone(), parts[2].clone()]),
+                ]));
+                let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
+                let want: Vec<IntervalSet> = NAMES.iter().map(|n| brute(&f, n)).collect();
+                (f, syms, Some(want), Vec::new())
+            } else {
+                let (f, strides) = holed(&mut rng);
+                (f, vec![a("x")], None, strides)
+            };
+            let spread = match &f {
+                Formula::And(gs) => {
+                    let gs: Vec<Formula> = gs.to_vec();
+                    let (ors, rest): (Vec<Formula>, Vec<Formula>) =
+                        gs.into_iter().partition(|g| matches!(g, Formula::Or(_)));
+                    match ors.split_first() {
+                        Some((Formula::Or(ds), others)) => {
+                            let mut shared = rest;
+                            shared.extend(others.iter().cloned());
+                            Some(Formula::Or(Shared::new(
+                                (ds.iter())
+                                    .map(|d| {
+                                        let mut c = shared.clone();
+                                        c.push(d.clone());
+                                        Formula::And(Shared::new(c))
+                                    })
+                                    .collect(),
+                            )))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let k = rng.int(2, 3);
+            let same: Vec<Formula> = vec![
+                flipped(&f),
+                scaled(&f, k),
+                shuffled(&f, &mut rng),
+                Formula::And(Shared::new(vec![f.clone(), f.clone()])),
+                shuffled(&scaled(&flipped(&f), k), &mut rng),
+            ];
+            for limit in [None, Some(LOW)] {
+                EXACT_LIMIT_SET.set(limit);
+                let first = project_each_exact(&f, &syms);
+                for g in &same {
+                    forms += 1;
+                    let other = project_each_exact(g, &syms);
+                    if other != first {
+                        differ.push(format!(
+                            "round {round} limit {limit:?}: {first:?} and {other:?}: {f} and {g}"
+                        ));
+                    }
+                }
+                let mut others = Vec::new();
+                if let Some(g) = &spread {
+                    others.push((format!("{g}"), project_each_exact(g, &syms)));
+                }
+                UNFACTORED.with(|u| u.set(true));
+                others.push(("unfactored".into(), project_each_exact(&f, &syms)));
+                UNFACTORED.with(|u| u.set(false));
+                EXACT_LIMIT_SET.set(None);
+                for (name, other) in &others {
+                    forms += 1;
+                    if let (Ok((a, ca)), Ok((b, cb))) = (&first, other) {
+                        for (s, (x, y)) in a.iter().zip(b).enumerate() {
+                            if let (Ok(x), Ok(y)) = (x, y)
+                                && (x != y || ca.contains(&Refusal::Repeats) != cb.contains(&Refusal::Repeats))
+                            {
+                                differ.push(format!(
+                                    "round {round} limit {limit:?} symbol {s}: {x} {ca:?} and {y} {cb:?}: {f} and {name}"
+                                ));
+                            }
+                        }
+                    }
+                }
+                let Ok((sets, causes)) = &first else {
+                    refused += 1;
+                    continue;
+                };
+                for (s, got) in sets.iter().enumerate() {
+                    let Ok(got) = got else {
+                        refused += 1;
+                        continue;
+                    };
+                    answered += 1;
+                    let kept = causes.contains(&Refusal::Repeats);
+                    repeats += usize::from(kept);
+                    match &want {
+                        Some(want) if got != &want[s] => {
+                            wrong.push(format!("round {round} symbol {s}: {got} not {}: {f}", want[s]));
+                        }
+                        Some(_) => {}
+                        None => {
+                            let points = holed_values(&f, &strides);
+                            let seen = got.meet(&window);
+                            if !points.minus(&seen).is_empty() || (seen != points && !kept) {
+                                wrong.push(format!("round {round}: {seen} not {points}: {f}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "seed {seed}: {forms} writings, {answered} answers, {repeats} with Repeats, {refused} refused"
+        );
+        assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
+        assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+    }
+
+    /// The even integers, written as one equation, as two disjuncts, with a bound split in two
+    /// and with a residue question's worth of strides, get one set and one cause: every
+    /// integer, as no finite union of ranges is the even integers, with [`Refusal::Repeats`]
+    /// wherever that is so, whichever step answers.
+    #[test]
+    fn the_even_integers_get_one_answer_in_every_writing() {
+        let writings = [
+            eq(&[("x", 1), ("y", -2)], 0),
+            Formula::or(vec![
+                eq(&[("x", 1), ("y", -2)], 0),
+                eq(&[("x", 1), ("z", -2)], 0),
+            ]),
+            Formula::or(vec![
+                Formula::and(vec![eq(&[("x", 1), ("y", -2)], 0), ge(&[("x", 1)], 0)]),
+                Formula::and(vec![eq(&[("x", 1), ("y", -2)], 0), ge(&[("x", -1)], -1)]),
+            ]),
+            Formula::or(vec![
+                eq(&[("x", 1), ("y", -4)], 0),
+                eq(&[("x", 1), ("z", -4)], -2),
+            ]),
+        ];
+        let got: Vec<_> = (writings.iter())
+            .map(|f| (format!("{f}"), project_each_exact(f, &[a("x")])))
+            .collect();
+        for (f, g) in &got {
+            assert_eq!(
+                g,
+                &Ok((vec![Ok(IntervalSet::top())], vec![Refusal::Repeats])),
+                "{f}: all {got:#?}"
+            );
+        }
     }
 }
