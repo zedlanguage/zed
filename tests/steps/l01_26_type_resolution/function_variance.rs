@@ -229,3 +229,61 @@ fn a_wider_domain_says_so_and_offers_its_lambda_as_code() {
         "inc(x: int | f64) = x;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: x -> inc(x: x));\n",
     );
 }
+
+/// Row MSG-fn-domain-wider-repair, part (2): a function whose parameter is declared with a
+/// range, passed at an exact slot whose parameter type is wider, is refused with the carrier
+/// form of part (1), the domain named narrower, and the repairs as code: the declaration on
+/// the slot's parameter type, or a function of the slot's type. Only that one error: no
+/// second one about a value out of range. A refusal for something else keeps its own message.
+#[test]
+fn a_narrower_range_domain_says_so_in_the_carrier_form() {
+    let src = "small(x: int[0..<10]) = x;\napply(f: (x: int) -> int) = f(x: 100);\nr = apply(f: small);\n";
+    assert_eq!(
+        type_errors(src),
+        vec![
+            "`small` is `(x: int[0..=9]) -> int[0..=9]`, not `(x: int) -> int`: its domain is \
+             narrower than `(x: int) -> int`'s, `x` in `int[0..=9]` where `(x: int) -> int` \
+             passes any `int`, and a function passed as `(x: int) -> int` must take exactly \
+             that domain. [small]"
+        ]
+    );
+    let (info, _) = super::info(src);
+    let repairs: Vec<&str> = (info.errors[0].notes.iter())
+        .map(|n| &*n.text)
+        .filter(|t| t.starts_with("repair: "))
+        .collect();
+    assert_eq!(
+        repairs,
+        vec![
+            "repair: declare `small(x: int)`, which takes what `(x: int) -> int` passes",
+            "repair: pass a function of type `(x: int) -> int` in place of `small`",
+        ]
+    );
+    accepted("small(x: int) = x;\napply(f: (x: int) -> int) = f(x: 100);\nr = apply(f: small);\n");
+    // Two parameters, one ranged, the slot's order differing from the declaration's.
+    let two = "sub(a: int[0..=9], b: int) = a - b;\napply(f: (b: int, a: int) -> int) = f(b: 1, a: 50);\nr = apply(f: sub);\n";
+    let errors = type_errors(two);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("its domain is narrower")
+            && errors[0].contains("`a` in `int[0..=9]` where"),
+        "{errors:?}"
+    );
+    let (info, _) = super::info(two);
+    assert!(
+        (info.errors[0].notes.iter())
+            .any(|n| n.text == "repair: declare `sub(a: int, b: int)`, which takes what `(b: int, a: int) -> int` passes"),
+        "{:?}",
+        info.errors[0].notes
+    );
+    // A refusal for something else as well (a result the slot does not take) keeps its own
+    // message.
+    let wide = "half(x: int[0..=9]) = rat(x) / 2;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: half);\n";
+    let errors = type_errors(wide);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(!errors[0].contains("narrower"), "{errors:?}");
+    // At a partial slot the range domain is accepted (FAIL-fn-range-domain-partial-slot).
+    accepted(
+        "small(x: int[0..<10]) = x;\napply(f: (x: int) ->? int) = f(x: 100) else 0;\nr = apply(f: small);\n",
+    );
+}

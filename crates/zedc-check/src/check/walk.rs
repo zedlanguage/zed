@@ -15678,7 +15678,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let what = format!("`{}`", f.name);
         let permuted = Arc::new(permuted);
+        // A range need the slot leaves in place (an exact arrow may pass any value of its
+        // parameter types) is refused by `fits_slot` as a value out of range; where that need
+        // alone keeps `s` out, the message says the domain is narrower instead
+        // (MSG-fn-domain-wider-repair, part 2). The mark costs O(1); the trial is made only
+        // once an error was given.
+        let ranged =
+            !self.trying && (permuted.needs.iter()).any(|n| range_need_of(&s, n).is_some());
+        let saved = self.mark();
         let fits = self.fits_slot(&permuted, e, &what, span);
+        if ranged && self.errors.len() > saved.errors {
+            let at = (span, &saved);
+            if self.narrower_range(&f.name, (&s, &permuted), e, &from, at) {
+                return Ty::func(e.clone());
+            }
+        }
         if !fits {
             if let Some(lambda) = self.lambda_repair(&f.name, &s, &permuted, e, &from, span) {
                 self.wider_domain(&f.name, (&s, &permuted), e, &lambda, (span, call));
@@ -15899,6 +15913,100 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[span]);
         notes.push(note);
         self.reject(None, span, Msg::noted(text, noted), notes);
+    }
+
+    /// Rejects the declared function `name`, of signature `s` and, with its parameters in
+    /// `e`'s order, `permuted` (`from` maps each parameter of `s` to its place in `e`), passed
+    /// at `span` where the function type `e` is expected, where the errors given since `saved`
+    /// come only of its parameters declared with a range, which `e` may pass any value of
+    /// their types (MSG-fn-domain-wider-repair, part 2): those errors are undone, and the
+    /// message says the domain is narrower than `e`'s, as for a carrier
+    /// (`` `small` is `(x: int[0..=9]) -> int[0..=9]`, not `(x: int) -> int` ``), with the
+    /// repairs that apply, the declaration widened as code and a function of type `e` in
+    /// place of `name`. False, and nothing changed, where `s` without those needs does not fit
+    /// either, so that the errors given are about something else.
+    ///
+    /// Complexity tradeoff: one trial of [`Self::fits_slot`] on `s` without its range needs,
+    /// made only after a range need was refused, the cost of the check that refused it.
+    fn narrower_range(
+        &mut self,
+        name: &str,
+        (s, permuted): (&Sig, &Arc<Sig>),
+        e: &Arc<Sig>,
+        from: &[usize],
+        (span, saved): (Span, &Mark),
+    ) -> bool {
+        let ranged: Vec<(usize, IntDomain)> = (permuted.needs.iter())
+            .filter_map(|n| range_need_of(s, n).map(|(p, d)| (p, d.clone())))
+            .collect();
+        let mut unranged = (**permuted).clone();
+        unranged.needs.retain(|n| range_need_of(s, n).is_none());
+        unranged.facts = Default::default();
+        let unranged = Arc::new(unranged);
+        let what = format!("`{name}`");
+        if self.tried(|ck| ck.fits_slot(&unranged, e, &what, span)) != Some(true) {
+            return false;
+        }
+        self.undo(saved);
+        let (st, et) = (self.sig_text(s), self.sig_text(e));
+        // The slot's type of each ranged parameter, where `e` has one arrow to read it from.
+        let slot_ty = |ck: &Self, p: usize| match &e.arrows[..] {
+            [qa] => Some(ck.text(&qa.params[from[p]])),
+            _ => None,
+        };
+        let mut seen = HashSet::new();
+        let mut parts = Vec::new();
+        let mut widened = HashMap::new();
+        for (p, d) in &ranged {
+            if !seen.insert(*p) {
+                continue;
+            }
+            let x = &s.params[*p].name;
+            let part = match slot_ty(self, *p) {
+                Some(t) => {
+                    widened.insert(*p, t.clone());
+                    format!(
+                        "`{x}` in `{}` where `{et}` passes any `{t}`",
+                        domain_text(d)
+                    )
+                }
+                None => format!("`{x}` in `{}`", domain_text(d)),
+            };
+            parts.push(part);
+        }
+        let text = format!(
+            "`{name}` is `{st}`, not `{et}`: its domain is narrower than `{et}`'s, {}, and a \
+             function passed as `{et}` must take exactly that domain",
+            parts.join(", and ")
+        );
+        // The declaration with each ranged parameter of the slot's type, as code, where `s`
+        // has one arrow and no defaults, so that the code is the whole parameter list.
+        let declared = match (&s.arrows[..], s.params.iter().all(|p| p.default.is_none())) {
+            ([sa], true) if widened.len() == seen.len() => {
+                let list: Vec<String> = (s.params.iter().zip(&sa.params).enumerate())
+                    .map(|(i, (p, t))| {
+                        let t = widened.get(&i).cloned().unwrap_or_else(|| self.text(t));
+                        let pos = if p.positional { "positional " } else { "" };
+                        format!("{pos}{}: {t}", p.name)
+                    })
+                    .collect();
+                Some(format!("{name}({})", list.join(", ")))
+            }
+            _ => None,
+        };
+        let widen = match declared {
+            Some(code) => format!("repair: declare `{code}`, which takes what `{et}` passes"),
+            None => format!("repair: declare `{name}` on the parameter types `{et}` passes"),
+        };
+        self.error_offering(
+            span,
+            text,
+            [
+                widen,
+                format!("repair: pass a function of type `{et}` in place of `{name}`"),
+            ],
+        );
+        true
     }
 
     /// Whether the function `s`, named `what` in messages, with its parameters in the order of
@@ -22063,26 +22171,31 @@ fn guarded_needs(s: &Sig, e: &Sig) -> Vec<Need> {
         && e.arrows.iter().all(|a| a.partial)
         && s.arrows.iter().any(|a| !a.partial)
         && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_some();
-    let met = |n: &Need| match &n.kind {
-        NeedKind::InDomain {
-            domain:
-                IntDomain {
-                    written: Some(r),
-                    key: None,
-                    ..
-                },
-            param,
-            bits: None,
-            ..
-        } => (s.params.get(*param))
-            .and_then(|p| p.range.as_ref()?.int())
-            .is_some_and(|own| own.within(r)),
-        _ => false,
-    };
     (s.needs.iter())
-        .filter(|n| !(guarded && met(n)))
+        .filter(|n| !(guarded && range_need_of(s, n).is_some()))
         .cloned()
         .collect()
+}
+
+/// Where the need `n` of the function `s` is that of a parameter declared with a range, that
+/// each call pass it an int of a range `r` holding its declared range (the need made of the
+/// declaration, or of a use of the parameter at a ranged slot that holds it): the parameter's
+/// index in `s` and the need's domain `r`. O(1).
+fn range_need_of<'n>(s: &Sig, n: &'n Need) -> Option<(usize, &'n IntDomain)> {
+    let NeedKind::InDomain {
+        domain,
+        param,
+        bits: None,
+        ..
+    } = &n.kind
+    else {
+        return None;
+    };
+    let (Some(r), None) = (&domain.written, &domain.key) else {
+        return None;
+    };
+    let own = s.params.get(*param)?.range.as_ref()?.int()?;
+    own.within(r).then_some((*param, domain))
 }
 /// `s` with no needs, nor any function its arrows return at any depth: what `s` is as a type,
 /// whose needs [`Ck::needs_hold`] checks by calls.
