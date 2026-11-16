@@ -599,9 +599,9 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// one and not in the other. Each node of `y` from the root down splits the part of `x` it
 /// covers at its atom, after removing the literal on that atom, and the two sides are joined
 /// past the node; two subtrees that are one node leave nothing. For `m <= n` literals,
-/// `O(m log(n/m + 1))` nodes are visited in expectation (Blelloch, Ferizovic and Sun, "Just
-/// join for parallel ordered sets", SPAA 2016), each split or join in `O(log n)`; the walk
-/// keeps a stack of its own.
+/// the expected work is `O(m log(n/m + 1))` in all, its splits and joins included (Blelloch,
+/// Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016); the walk keeps a stack
+/// of its own.
 pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Tree<A>> {
     /// A pair of subtrees whose difference is wanted, or the join of the last two differences.
     enum Step<A: Atom> {
@@ -655,8 +655,8 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // removes each of the smaller set's `m` literals in the larger's `n`, `O(m log n)` expected, and
 // makes `O(log n)` nodes for each literal, most of them dropped at the next. Used: the join-based
 // set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016),
-// difference with the literals of `y` kept: `O(m log(n/m + 1))` nodes visited in expectation, so
-// `O(n)` when `m` is near `n`, each with a split or a join in `O(log n)`, and the nodes made are
+// difference with the literals of `y` kept: `O(m log(n/m + 1))` expected work in all, its splits
+// and joins included, so `O(n)` when `m` is near `n`, and the nodes made are
 // those of the result's changed paths. For `m = 1` both make one path, and the one literal is
 // added or removed directly, which the step stack would make about 17% dearer (parity, 4.55G
 // against 3.89G instructions at 8,192 literals).

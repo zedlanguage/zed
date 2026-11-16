@@ -1149,7 +1149,11 @@ impl<'m> Connect<'m> {
             let [p, q] = parts;
             [q, p]
         };
-        Part::expr(Form::Or(a, b))
+        // The meets may be a leaf, or the two halves of an exclusive or (`a&!b`, `!a&b`), whose
+        // one form is not this union (module `xor`); both tests take constant time.
+        Part::zip_at_once(&a, &b, Op::Or)
+            .or_else(|| xor::xor_of(&a, &b, Op::Or))
+            .unwrap_or_else(|| Part::expr(Form::Or(a, b)))
     }
 
     /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
@@ -1735,7 +1739,9 @@ impl<A: Literal> Part<A> {
         while let Some(p) = parts.pop() {
             match p {
                 Part::Expr(e) => {
-                    if exprs.insert(e.id)
+                    // An exclusive or is a union: no factor, and its halves are not made.
+                    if e.xor.is_none()
+                        && exprs.insert(e.id)
                         && let Form::And(a, b) = e.form()
                     {
                         parts.push(b);
@@ -1966,6 +1972,13 @@ impl<A: Literal> Part<A> {
         let (mut seen, mut out) = (DigestSet::default(), Vec::new());
         let mut stack = vec![self];
         while let Some(p) = stack.pop() {
+            // The two halves of an exclusive or share its first atom, so no union holding one
+            // has disjoint disjuncts; answered without making its halves.
+            if let Part::Expr(e) = p
+                && e.xor.is_some()
+            {
+                return None;
+            }
             if let Part::Expr(e) = p
                 && let Form::Or(a, b) = e.form()
             {
@@ -2117,6 +2130,10 @@ impl<A: Literal> Part<A> {
                 Part::Expr(e) => {
                     if !seen.insert(e.id) {
                         continue;
+                    }
+                    // An exclusive or's halves are meets, not rows; they are not made to show it.
+                    if e.xor.is_some() {
+                        return None;
                     }
                     let Form::Or(a, b) = e.form() else {
                         return None;
@@ -2481,7 +2498,12 @@ mod xor {
     //! ([`mate`]), equal to the one dropped.
     //!
     //! An exclusive or is recognized when it is built from two others ([`xor_of`], [`xor_choice`]),
-    //! and a literal is one, of one atom; any other part is not taken for one.
+    //! and a literal is one, of one atom; any other part is not taken for one. So the one form is
+    //! that of these constructions, not of every part equal to a parity: `u&v | !u&!v` and
+    //! `(u|v) & (!u|!v)` are read when each meet or union is an expression or a chain of two
+    //! literals, but not `(u|v) & !(u&v)` with `u&v` an expression (its complement is a `Not`), nor
+    //! a sum of products such as `a&!b&!c | !a&b&!c | !a&!b&c | a&b&c` (cross-review of
+    //! PERF-xor-shape-free: Sol F5, Gemini F5).
     //!
     //! Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the naive method built the
     //! exclusive or over the set's tree, a node per tree node joining its subtrees' and its atom,

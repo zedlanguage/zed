@@ -586,6 +586,33 @@ fn odd(bits: u32, k: u32) -> bool {
     (bits & ((1 << k) - 1)).count_ones() % 2 == 1
 }
 
+/// `(a ^ b) & w | (a ^ b) & !w`, each meet built with `a ^ b` spread over `a` and `!a`, is
+/// merged as a choice on `w`, whose branches meet to `a&!b` and `!a&b`: the exclusive or of
+/// `a` and `b` in its one form, not a union of the two meets (cross-review of
+/// PERF-xor-shape-free, Gemini F1). And a branch that meets to `false` leaves the other.
+#[test]
+fn a_choice_whose_branches_are_the_halves_of_an_exclusive_or_is_that_exclusive_or() {
+    let [a, b, c, d] = [0, 1, 2, 3].map(|i| Part::literal(atom(i)));
+    let w = xor_by_or(&c, &d);
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let some = or(&a.not(), &b.not());
+    let any = or(&a, &b);
+    let half = |w: &Part<Row>| or(&and(&a, &and(&some, w)), &and(&a.not(), &and(&any, w)));
+    let merged = or(&half(&w), &half(&w.not()));
+    let x = xor_by_or(&a, &b);
+    assert!(x.xor_tag().is_some());
+    assert_eq!(
+        merged.id(),
+        x.id(),
+        "{merged:?} is not the exclusive or {x:?}"
+    );
+    // `a&!a&w | !a&b&w`, and the same under `!w`: the union of the second meets, `!a&b`.
+    let half = |w: &Part<Row>| or(&and(&a, &and(&a.not(), w)), &and(&a.not(), &and(&b, w)));
+    let merged = or(&half(&w), &half(&w.not()));
+    assert_eq!(merged.id(), and(&a.not(), &b).id(), "{merged:?}");
+}
+
 #[test]
 fn exclusive_ors_built_in_any_order_are_one_node() {
     let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
