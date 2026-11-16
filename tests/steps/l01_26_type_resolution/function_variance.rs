@@ -454,6 +454,257 @@ fn a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain() {
     }
 }
 
+/// Row PROOF-generic-body-values-from-args, the cases of the proof at `Ck::coerce_forwarded`
+/// that run: a function passed to a generic parameter reaches a partial slot by every route a
+/// generic body has for a value of a type variable (a closure that captures it, a closure
+/// returned, a lambda's parameter, a generic call that gives it back, a tuple built and read,
+/// a partial application, a method call, a local function, a positional parameter, an `if`
+/// over two arguments, the body giving it back), and each route reaches the argument the call
+/// rebuilds, so each misses outside the function's domain and calls it inside. A use that
+/// needs no test (an exact slot, a call of the value given back) gets the function's own
+/// values.
+#[test]
+fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
+    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let cases = [
+        // A closure that captures the argument, called in the body.
+        (
+            "pass(x) = { h = y -> apply(f: x); h(1) };\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        // A closure that captures the argument, returned and called by the caller.
+        (
+            "mk(x) = y -> apply(f: x);\na = mk(x: small)(1);\n",
+            "6",
+            "4",
+        ),
+        // The argument passed to a lambda's parameter.
+        (
+            "pass(x) = { h = y -> apply(f: y); h(x) };\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        // A generic call that gives back its argument, or a component of a tuple built of it.
+        (
+            "id(v) = v;\npass(x) = apply(f: id(v: x));\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "fst(p) = p[0];\npass(x) = apply(f: fst(p: (x, 1)));\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "k(v, g) = g(v);\npass(x) = apply(f: k(v: 1, g: z -> x));\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: (x, 1)[0]);\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        // The generic function called through a lambda, a name, a partial application, a
+        // method call, a positional parameter, and a parameter of another function.
+        (
+            "pass(x) = apply(f: x);\nh = y -> pass(x: y);\na = h(small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\nh = pass;\na = h(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x, y) = apply(f: x) + y;\nc = pass(y: 1, ...);\na = c(x: small);\n",
+            "7",
+            "5",
+        ),
+        ("pass(x) = apply(f: x);\na = small.pass();\n", "6", "4"),
+        ("pass(x) = apply(f: x);\na = small.pass;\n", "6", "4"),
+        (
+            "pass(positional x) = apply(f: x);\na = pass(small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\nq(g: (x: int) -> int) = pass(x: g);\na = q(g: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\nq(g: (x: int | f64) ->? int) = pass(x: g);\na = q(g: small);\n",
+            "6",
+            "4",
+        ),
+        // A local function that captures the argument.
+        (
+            "pass(x) { g(y) = apply(f: x); return g(y: 1); }\na = pass(x: small);\n",
+            "6",
+            "4",
+        ),
+        // Two arguments of two variables, chosen by `if`, or each passed on.
+        (
+            "pass(x, y) = apply(f: if true { x } else { y });\na = pass(x: small, y: big);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: if false { small } else { x });\na = pass(x: big);\n",
+            "1",
+            "1",
+        ),
+        (
+            "mk(x) = y -> apply(f: x) + apply(f: y);\na = mk(x: small)(big);\n",
+            "7",
+            "5",
+        ),
+        (
+            "mk(x) = (y -> apply(f: y), x);\nb = mk(x: big);\na = b[0](small);\n",
+            "6",
+            "4",
+        ),
+        // The same function passed straight to the slot beside the call.
+        (
+            "pass(x) = apply(f: x);\na = pass(x: small) + apply(f: small);\n",
+            "12",
+            "8",
+        ),
+        (
+            "apply2(f: (x: int | bool) ->? int) = f(x: true) else 9;\npass(x) = apply(f: x) + apply2(f: x);\na = pass(x: small);\n",
+            "15",
+            "13",
+        ),
+        // The body gives the argument back: a partial slot misses, an exact use calls it.
+        (
+            "pass(x) = if apply(f: x) > 0 { x } else { x };\na = apply(f: pass(x: small));\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = if apply(f: x) > 0 { x } else { x };\na = pass(x: small)(x: 2);\n",
+            "3",
+            "3",
+        ),
+        (
+            "q(f: (x: int) -> int) = f(x: 2);\npass(x) = if apply(f: x) > 0 { x } else { x };\na = q(f: pass(x: small));\n",
+            "3",
+            "3",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        let src = |k: &str| format!("{}{rest}", head.replace('K', k));
+        runs_to(&src("2.5"), "a", miss);
+        runs_to(&src("3"), "a", hit);
+    }
+}
+
+/// Row PROOF-generic-body-values-from-args, the cases of the proof where a value of a type
+/// variable does not come from a place in one argument that the call shows: a default (of the
+/// argument or of a function written in the program), an entry of a family, a value with an
+/// `else`, a generic function called through a parameter, a lambda inside `map`, and the
+/// result of calling a parameter. Each is refused rather than run without a test of the
+/// domain; before the fix of FAIL-partial-slot-generic-pass these ran `small` on 2.5.
+#[test]
+fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+    let cases = [
+        "pass(x, y = x) = apply(f: y);\na = pass(x: small);\n",
+        "pass(x, y = small) = apply(f: y);\na = pass(x: 1);\n",
+        "pass(x) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+        "pass(x) = apply(f: x else x);\na = pass(x: small);\n",
+        "pass(x) = apply(f: x);\nrun(g, v) = g(x: v);\na = run(g: pass, v: small);\n",
+        "pass(x) = apply(f: x);\ntwice(g) = g(x: small);\na = twice(g: pass);\n",
+        "pass(x) = apply(f: x);\na = [small].map(g -> pass(x: g))[0];\n",
+        "pass(x, y) = apply(f: y(x));\na = pass(x: 1, y: n -> small);\n",
+    ];
+    for rest in cases {
+        let src = format!("{head}{rest}");
+        let errors = type_errors(&src);
+        assert!(
+            errors.iter().any(|e| e.contains("must give `#notFound`")
+                && e.contains("is not one argument of this call, or a component of one")),
+            "{src}: {errors:?}"
+        );
+    }
+}
+
+/// Row PROOF-generic-body-values-from-args, the cases of the proof that this zedc does not
+/// compile yet: each is refused before the checker reaches the call, so no rebuilding is put
+/// for it. When one of them is compiled, this test fails, and the proof at
+/// `Ck::coerce_forwarded` must cover that construct (a test of it in
+/// [`a_generic_body_passes_on_only_its_arguments_by_every_route`] or a refusal in
+/// [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`]).
+#[test]
+fn constructs_the_proof_leaves_for_later_are_not_compiled_yet() {
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+    let cases = [
+        // `initial` in a loop: a value of a generation, carried from frame to frame.
+        "pass(x) { r = loop t { while t < 1; initial g = x; g' = g; }; return apply(f: r.g); }\na = pass(x: small);\n",
+        // A memo table, whose entry a later call would read.
+        "@memoized\npass(x) = apply(f: x);\na = pass(x: small);\n",
+        // `match`, whose arms may bind a value of the variable.
+        "pass(x) = apply(f: match 1 { 1 -> x, _ -> x });\na = pass(x: small);\n",
+        // Recursion, which passes the argument on to the next call.
+        "pass(x, n: int) = if n <= 0 { apply(f: x) } else { pass(x: x, n: n - 1) };\na = pass(x: small, n: 2);\n",
+        // A declared type variable in a result, a generic struct, a binding with a declared
+        // type that fixes a variable from the result.
+        "pass(x: T) -> (T, int) = (x, apply(f: x));\na = pass(x: small)[1];\n",
+        "struct Box(X) { v: X }\npass(b) = apply(f: b.v);\na = pass(b: Box(v: small));\n",
+        "pass(x) = if apply(f: x) > 0 { x } else { x };\ng: (x: int | f64) ->? int = pass(x: small);\na = g(x: 2.5) else 7;\n",
+    ];
+    let compiled: Vec<_> = cases
+        .iter()
+        .map(|rest| (rest, front_errors(&format!("{head}{rest}"))))
+        .filter(|(_, errors)| !errors.iter().any(|e| e.contains("does not compile it yet")))
+        .collect();
+    assert!(compiled.is_empty(), "{compiled:#?}");
+}
+
+/// The errors of the first pass before the checker that refuses `src`, else the checker's.
+fn front_errors(src: &str) -> Vec<String> {
+    let tokens = match zedc::lex::lex_fence(src) {
+        Ok(t) => t,
+        Err(e) => return vec![format!("{e:?}")],
+    };
+    let tree = match zedc::parse::parse(src, &tokens, "Unit", zedc::parse::TOP) {
+        Ok(t) => t,
+        Err(e) => return vec![format!("{e:?}")],
+    };
+    let stmts = match zedc::ast::unit(src, &tokens, &tree) {
+        Ok(s) => s,
+        Err(e) => return vec![format!("{e:?}")],
+    };
+    match zedc::resolve::resolve(&stmts) {
+        Ok(_) => type_errors(src),
+        Err(e) => vec![format!("{e:?}")],
+    }
+}
+
+/// Row MSG-partial-slot-rebuild-kind-reason: a function passed on to two partial slots whose
+/// types rebuild it in two ways, one testing its domain and the result it gives, the other its
+/// domain alone, is rebuilt once with both, in either order. Before the fix it was refused as
+/// passed on to partial function types "that test its domain in different ways", which they do
+/// not: both test the domain `int | f64` of `mid`.
+#[test]
+fn a_function_rebuilt_in_two_ways_at_one_call_gets_both() {
+    let slots = "small(x: int) = x + 1;\nmid(x: int | f64) = small;\napply3(f: (x: int | f64 | bool) ->? ((x: int) -> int)) = 0;\napplyB(f: (x: int | f64 | bool) ->? ((x: int | f64) ->? int)) = f(x: 1)(x: K) else 6 else 7;\n";
+    let cases = [
+        "pass(x) = applyB(f: x) + apply3(f: x);\na = pass(x: mid);\n",
+        "pass(x) = apply3(f: x) + applyB(f: x);\na = pass(x: mid);\n",
+        "pass(x) = applyB(f: x) + apply3(f: x) + applyB(f: x);\na = pass(x: mid);\n",
+    ];
+    for rest in cases {
+        let src = |k: &str| format!("{}{rest}", slots.replace('K', k));
+        let n = rest.matches("applyB").count();
+        runs_to(&src("2.5"), "a", &(6 * n).to_string());
+        runs_to(&src("2"), "a", &(3 * n).to_string());
+    }
+}
+
 /// A function the generic body takes out of a family argument has no place in the argument
 /// where the call can put a test of its domain, so the pass to the partial slot is refused,
 /// where before the fix the run called `small` with 2.5.

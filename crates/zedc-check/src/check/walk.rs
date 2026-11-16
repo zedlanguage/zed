@@ -16770,16 +16770,84 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// as for `pass(p) = apply(f: p[0])` (FAIL-partial-slot-generic-pass). The body of `pass`
     /// is checked once for every type its parameter may take, where [`Self::coercion`] can
     /// rebuild nothing, so the function it hands to a partial slot is rebuilt here, where its
-    /// type is known, to test its domain. A generic body makes no value of a type variable but
-    /// from its arguments, so each use there of that place sees the rebuilt function, which
-    /// equals the argument on its domain and gives `#notFound` outside it: an exact use, which
-    /// passes only keys of the domain, gets what the argument gives.
+    /// type is known, to test its domain. Each use in the body of that place then sees the
+    /// rebuilt function, which equals the argument on its domain and gives `#notFound` outside
+    /// it: an exact use, which passes only keys of the domain, gets what the argument gives.
     ///
     /// Where the need's value is not found in an argument the call shows (a variable that two
-    /// parameters hold, an entry of a family, a value that flowed into a class), the program
-    /// is refused, since the run would call the function outside its domain. So is a second
-    /// rebuilding of the same place that differs from the first, since the elaborator rebuilds
-    /// a place once.
+    /// parameters hold, an entry of a family, a default, the result of calling a parameter),
+    /// the program is refused, since the run would call the function outside its domain.
+    /// Two rebuildings of one place are joined ([`rebuilt_too`]), since the elaborator
+    /// rebuilds a place once (one fit per span: `info.fits.get(&e.span)` in the elaborator's
+    /// walk, zedc-elab/src/elab/walk.rs).
+    ///
+    /// Proof that rebuilding the argument is enough (PROOF-generic-body-values-from-args).
+    /// The claim: a value of the need's type `$v`, a variable that [`CallFrame::place`] finds
+    /// at a place `p` of argument `i`, is, at every run of the body for this call, the value
+    /// at `p` of argument `i`. So the rebuilt argument is what each use of `$v` there reads.
+    /// The body is checked once for all types `$v` may take (DESIGN.md sec:type_resolution,
+    /// the paragraph on classes: "the body is checked once"), and a use of a value of `$v` is a
+    /// need checked again at each call (same paragraph, "is recorded in the signature as a
+    /// need"). So a construct of the body gives a value of the bare `$v` only where it gives it
+    /// for every type `$v` may take; it cannot build one, and can only give back a value of
+    /// `$v` it was given. Case by case, over each construct that can give a value in a body:
+    ///
+    /// - A literal: its class takes a carrier, never a function, so at a partial function slot
+    ///   it is refused (`apply(f: if false { x } else { 0 })` does not take `(0)`).
+    /// - An operator or a prelude word on numbers or strings: it narrows its operand's class
+    ///   to carriers (the same paragraph), so its result is no bare `$v` (`apply(f: x + 0)` is
+    ///   refused). A prelude word generic in its element, as `map` and a lookup in a family,
+    ///   gives back an element it was given; the element read is found in no argument,
+    ///   since `place` follows tuple components alone ([`CallFrame::component`]), so a
+    ///   value read from a family is refused (`apply(f: { 1 -> x }[1] else x)`), and a lambda
+    ///   that `map` calls on a family of the argument passes on the argument, which the
+    ///   family holds as given.
+    /// - `if` and `else`: `if` gives one arm, each of its own variable, each need checked on
+    ///   its own; `x else x` gives a value of no bare variable and is refused.
+    /// - A tuple built and a component read, a destructuring: the component read is the value
+    ///   put there ([`CallFrame::component`] records the path).
+    /// - A default: filled at the call from the declaring function's text, not from an
+    ///   argument the call shows, so `pass(x, y = x) = apply(f: y)` is refused.
+    /// - A closure, a local function, a lambda's parameter: a function declared in another
+    ///   reads the outer function's classes as they are (the same paragraph), so a captured
+    ///   `x` keeps the outer `$v` and is found in the outer call's frame; a lambda called on
+    ///   `x` is a call whose need binds the lambda's parameter to `$v`.
+    /// - A call of a generic function, a partial application (`pass(y: 1, ...)`), a method
+    ///   call (`small.pass()`), a call through a name or a lambda: the call binds the callee's
+    ///   variables to the argument types, and its result is a variable bound to what the check
+    ///   gives (the same paragraph); by this proof applied to the callee, whose body is
+    ///   checked first, a result of the bare `$v` is a value it was given. The induction is
+    ///   on the call graph, which has no cycle: recursion is refused before this check
+    ///   (zedc-resolve/src/resolve/tables.rs, "which is recursion").
+    /// - The result of calling a parameter (`y(x)`): a variable that no parameter holds, so
+    ///   `place` finds nothing and the program is refused.
+    /// - A port read: its value has the port's declared type (DESIGN.md sec:ports), never a
+    ///   variable of the body.
+    /// - Introspection (`x::names`, DESIGN.md sec:introspection): strings and types, read at
+    ///   build, never a value of `$v`.
+    /// - Partial evaluation (DESIGN.md sec:staging): it runs on the elaborated program, after
+    ///   this rebuilding, and keeps the program's meaning, so it gives no value the program
+    ///   does not.
+    /// - Not compiled by this zedc, refused before the check reaches the call
+    ///   (zedc-base/src/rejection.rs, "does not compile it yet"): `loop` with `initial`
+    ///   (DESIGN.md sec:generations; `initial` outside a loop is refused as such), `@memoized`
+    ///   and its memo arena (sec:arenas), `match`, recursion, a declared result type, a
+    ///   struct's type parameters, a binding with a declared type. When one of these is
+    ///   compiled, the test `constructs_the_proof_leaves_for_later_are_not_compiled_yet`
+    ///   fails, and the proof must take it in.
+    ///
+    /// The place found holds no fit but this one's kind: [`Fit::Lambda`] and [`Fit::Adapter`]
+    /// are put only where [`Want::fun`] is a function, which `only_fn` makes `None` for a type
+    /// that holds a variable, as the type of a generic parameter does, and [`Fit::Read`] only
+    /// on a call of numbers, where [`Self::coercion`] gives `None` and this returns first.
+    /// [`Self::refit_declared`] fits a declared function again at a parameter whose variable
+    /// the call fixed ([`ties_in_fns`]). Where the variable stands at that parameter alone,
+    /// the argument fixed it to the argument's own type, so the fit is the identity and
+    /// [`Self::fit_declared`] puts no adapter (no domain test, no result rebuilt, no
+    /// reordering); where it also stands inside another parameter's function type, two
+    /// parameters hold it, and `place` finds nothing, so the program is refused before a
+    /// merge.
+    /// Each case is a test in l01_26_type_resolution/function_variance.rs.
     ///
     /// Cost: [`Self::coercion`] for each such need at each call, which [`holds_fn`] ends at
     /// once where no partial function type is wanted; then O(d) for a place d components deep,
@@ -16795,9 +16863,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let found = self.call_frames.last().and_then(|f| {
             let (i, path) = f.place(&n.on)?;
-            Some((f.args[i]?.at, path))
+            Some((f.args[i]?.at, path, f.names.get(i).cloned()))
         });
-        let Some((at, path)) = found else {
+        let Some((at, path, name)) = found else {
             let (t, wt) = (self.text(on), self.text(w));
             let code = self.code(Some(n.span)).unwrap_or("the value");
             return self.error_offering(
@@ -16824,15 +16892,36 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), &steps, c),
             Some(_) => None,
         };
+        // No program reaches this refusal (MSG-partial-slot-rebuild-kind-reason): the join of
+        // two rebuildings of one place fails for no two coercions of one type
+        // ([`join_coercions`]),
+        // and the argument at `at` holds no fit of another kind, by the proof above. It stays
+        // for a case the proof does not cover, with its reason and a repair as code.
         let Some(fit) = merged else {
             let code = self.code(Some(at)).unwrap_or("the value");
-            return self.error(
-                at,
-                format!(
-                    "`{code}` is passed on to partial function types that test its domain in \
-                     different ways, and an argument is rebuilt for one of them alone"
+            let (t, wt) = (self.text(on), self.text(w));
+            // The parameter declared with the type wanted: the call then fits the argument to
+            // it, and the body passes on a value of that type, which needs no rebuilding.
+            let repair = name
+                .filter(|_| steps.is_empty())
+                .map(|x| format!("{x}: {wt}"));
+            let headline = match &repair {
+                Some(r) => format!(
+                    "`{code} : {t}` is passed on as `{wt}` and is rebuilt here already. Try \
+                     `{r}` instead."
                 ),
+                None => {
+                    format!("`{code} : {t}` is passed on as `{wt}` and is rebuilt here already")
+                }
+            };
+            let why = format!(
+                "a call through `{wt}` may pass a key outside the domain of `{code}`, which \
+                 must give `#notFound`, so `{code}` would be called through a test of its \
+                 domain; this call already rebuilds `{code}` in another way, and this version \
+                 of zedc rebuilds an argument once"
             );
+            let menu = std::iter::once(why).chain(repair.map(|r| format!("repair: `{r}`")));
+            return self.error_offering(at, headline, menu);
         };
         // Written past `Self::put`, which makes no write while needs are replayed: this
         // write is on the call being checked, not on the body the needs came from.
@@ -23350,9 +23439,25 @@ fn wrapped(steps: &[(usize, usize)], c: Coercion) -> Coercion {
     })
 }
 
-/// `d` that also rebuilds the place `steps` reach (as for [`wrapped`]) as `c` does, where `d`
-/// leaves that place as it is or rebuilds it as `c` already; `None` where the two differ
-/// there. O(d) for d steps.
+/// `d` that also rebuilds the place `steps` reach (as for [`wrapped`]) as `c` does: where `d`
+/// leaves that place as it is, `c` is put there; where `d` rebuilds it too, the two are
+/// joined ([`join_coercions`]). `None` where they cannot be joined, or `d` does not have the shape
+/// `steps` walk.
+///
+/// Why a join and not a refusal where the two differ (MSG-partial-slot-rebuild-kind-reason):
+/// both are [`Ck::coercion`]s of one type, the type the call fixes for that place, so they
+/// differ only in which places each rebuilds, and the join is sound for every use of the
+/// place. `pass(x) = applyB(f: x) + apply3(f: x)` with `mid(x: int | f64) = small` passes
+/// `mid` as `(x: int | f64 | bool) ->? ((x: int | f64) ->? int)`, which rebuilds `mid`
+/// and the function it returns, and as `(x: int | f64 | bool) ->? ((x: int) -> int)`, which
+/// rebuilds `mid` alone. A rebuilt function equals the function on its domain, and a use
+/// whose type needs no rebuilding there passes only keys of that domain (the checker proved
+/// them, or the partial arrow's keys all lie in it, [`Ck::domain_guard`]), so it gets the same
+/// values through the join; and a use that needs it gets its test. Before, this program was
+/// refused as testing the domain "in different ways", which it does not.
+///
+/// O(d + |c|) for d steps: the walk down `d` along `steps`, then the join, which visits the
+/// places of `c` at most once.
 fn rebuilt_too(mut d: Coercion, steps: &[(usize, usize)], c: Coercion) -> Option<Coercion> {
     let mut at = &mut d;
     for (k, &(i, len)) in steps.iter().enumerate().rev() {
@@ -23371,7 +23476,72 @@ fn rebuilt_too(mut d: Coercion, steps: &[(usize, usize)], c: Coercion) -> Option
             Some(inner) => at = inner,
         }
     }
-    (*at == c).then_some(d)
+    join_coercions(at, c).then_some(d)
+}
+
+/// Joins `b` into `a`, two rebuildings of one place: each place either rebuilds is rebuilt,
+/// and a function both rebuild tests its domain where either does. `false` where the two do
+/// not have one shape (a function of one arity, or a tuple of one length, at each place both
+/// rebuild) or test two different domains at one function; `a` is then left part joined.
+///
+/// Neither happens for two [`Ck::coercion`]s of one type: at each place the type is one
+/// function `s` or one tuple, so both have its shape there, and a test of the domain is
+/// [`domain_test`] of `s` and its ranges alone, the same for both. The `false` keeps the
+/// refusal in [`Ck::coerce_forwarded`] for a case that this argument does not cover.
+///
+/// Complexity tradeoff: the naive way, recursion on both trees, is O(|b|) as well, but as
+/// deep as the type nests, which a deep value overflows (the stack rule of
+/// [`Ck::coercion`]); this walk keeps its own stack of pairs. A place `a` does not rebuild
+/// takes `b`'s subtree whole, in O(1); so each place of `b` is visited at most once.
+fn join_coercions(a: &mut Coercion, b: Coercion) -> bool {
+    let mut stack = vec![(a, b)];
+    while let Some((a, b)) = stack.pop() {
+        match (a, b) {
+            (
+                Coercion::Fn {
+                    arity,
+                    domain,
+                    result,
+                },
+                Coercion::Fn {
+                    arity: arity2,
+                    domain: domain2,
+                    result: result2,
+                },
+            ) => {
+                if *arity != arity2 {
+                    return false;
+                }
+                if let Some(y) = domain2 {
+                    match domain {
+                        None => *domain = Some(y),
+                        Some(x) if *x == y => {}
+                        Some(_) => return false,
+                    }
+                }
+                if let Some(r2) = result2 {
+                    match result {
+                        None => *result = Some(r2),
+                        Some(r) => stack.push((&mut **r, *r2)),
+                    }
+                }
+            }
+            (Coercion::Tuple(xs), Coercion::Tuple(ys)) => {
+                if xs.len() != ys.len() {
+                    return false;
+                }
+                for (x, y) in xs.iter_mut().zip(ys) {
+                    let Some(y) = y else { continue };
+                    match x {
+                        None => *x = Some(y),
+                        Some(x) => stack.push((x, y)),
+                    }
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// The length of the one tuple that every value of `t` is, where `t` is one tuple shape and
@@ -23879,6 +24049,103 @@ mod tests {
         ];
         for (text, want) in cases {
             assert_eq!(plain_rat(text).as_deref(), want, "{text}");
+        }
+    }
+
+    /// A function of one parameter, tested by `domain` and with its result rebuilt by
+    /// `result` where given.
+    fn fn_coercion(domain: Option<Domain>, result: Option<Coercion>) -> Coercion {
+        Coercion::Fn {
+            arity: 1,
+            domain,
+            result: result.map(Box::new),
+        }
+    }
+
+    /// Two distinct domains, for the tests of [`join_coercions`].
+    fn domains() -> (Domain, Domain) {
+        let one = Domain {
+            arrows: vec![vec![]],
+            ranges: vec![None],
+        };
+        let two = Domain {
+            arrows: vec![vec![], vec![]],
+            ranges: vec![None, None],
+        };
+        (one, two)
+    }
+
+    /// Row MSG-partial-slot-rebuild-kind-reason: two rebuildings of one place join to the one
+    /// that rebuilds each place either rebuilds, in either order, at a tuple's components and
+    /// a function's result; they do not join where they test two domains or differ in shape,
+    /// which no two coercions of one type do (the proof at [`join_coercions`]).
+    #[test]
+    fn rebuildings_of_one_place_join_where_their_tests_agree() {
+        let (d, other) = domains();
+        let inner = fn_coercion(Some(d.clone()), None);
+        let both = fn_coercion(Some(d.clone()), Some(inner.clone()));
+        let alone = fn_coercion(Some(d.clone()), None);
+        for (a, b) in [(both.clone(), alone.clone()), (alone.clone(), both.clone())] {
+            let mut a = a;
+            assert!(join_coercions(&mut a, b));
+            assert_eq!(a, both);
+        }
+        // The domain of one, the result of the other.
+        let mut a = fn_coercion(None, Some(inner.clone()));
+        assert!(join_coercions(&mut a, alone.clone()));
+        assert_eq!(a, both);
+        // Components of a tuple, each rebuilt by one of the two, or by both.
+        let mut a = Coercion::Tuple(vec![Some(alone.clone()), None, Some(alone.clone())]);
+        let b = Coercion::Tuple(vec![None, Some(alone.clone()), Some(both.clone())]);
+        assert!(join_coercions(&mut a, b));
+        assert_eq!(
+            a,
+            Coercion::Tuple(vec![
+                Some(alone.clone()),
+                Some(alone.clone()),
+                Some(both.clone())
+            ])
+        );
+        // Two domains, two arities, two tuple lengths, a tuple and a function.
+        let refused = [
+            (alone.clone(), fn_coercion(Some(other), None)),
+            (
+                alone.clone(),
+                Coercion::Fn {
+                    arity: 2,
+                    domain: None,
+                    result: None,
+                },
+            ),
+            (
+                Coercion::Tuple(vec![None]),
+                Coercion::Tuple(vec![None, None]),
+            ),
+            (Coercion::Tuple(vec![Some(alone.clone())]), alone.clone()),
+        ];
+        for (a, b) in refused {
+            let mut a = a;
+            assert!(!join_coercions(&mut a, b.clone()), "{b:?}");
+        }
+    }
+
+    /// The join keeps its own stack, so a rebuilding nested 100,000 functions deep joins
+    /// without overflowing the stack the test runs on.
+    #[test]
+    fn a_deep_join_keeps_its_own_stack() {
+        let deep = |n: usize| {
+            let mut c = fn_coercion(None, None);
+            for _ in 0..n {
+                c = fn_coercion(None, Some(c));
+            }
+            c
+        };
+        let mut a = deep(100_000);
+        assert!(join_coercions(&mut a, deep(100_000)));
+        // Dropped by hand, one level at a time: the derived drop of the box chain recurses.
+        let mut at = Some(a);
+        while let Some(Coercion::Fn { result, .. }) = at {
+            at = result.map(|b| *b);
         }
     }
 }
