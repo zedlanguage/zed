@@ -2319,8 +2319,8 @@ fn linear(
         };
         // Each total definition in the part of the body that reads its variable, so that a nest
         // of disjunctions does not carry the definitions of the levels below each level
-        // ([`presburger::placed`], FAIL-relational-if-chain-growth).
-        let (beside, body) = presburger::placed(&rel.body, &placings);
+        // ([`presburger::placing::placed`], FAIL-relational-if-chain-growth).
+        let (beside, body) = presburger::placing::placed(&rel.body, &placings);
         let whole = Formula::and(vec![beside, within(dom), body]);
         let mut mentioned = rel.body.atoms();
         for (_, _, f) in &rel.defs {
@@ -2465,7 +2465,7 @@ impl Tr {
             .collect()
     }
 
-    /// The definitions as [`presburger::placed`] places them, a quotient and its remainder as
+    /// The definitions as [`presburger::placing::placed`] places them, a quotient and its remainder as
     /// one, each marked total where some value of its variables satisfies it for every value
     /// of the other atoms. Proof for each that is so marked: a quotient and remainder by a
     /// constant `c` other than 0 (checked here) are those of Euclidean division, which exist
@@ -2475,8 +2475,8 @@ impl Tr {
     /// definition is not marked: a quotient by a term holds products a premise may tie, a
     /// `bitAnd` is only bounded, the cases of a summary are not shown to cover every point,
     /// and a claimed call holds its callee's relation. O(definitions).
-    fn placings(&self) -> Vec<presburger::Placing> {
-        let mut out: Vec<presburger::Placing> = Vec::new();
+    fn placings(&self) -> Vec<presburger::placing::Placing> {
+        let mut out: Vec<presburger::placing::Placing> = Vec::new();
         for (n, what, def) in &self.defs {
             if what.remainder()
                 && let Some(last) = out.last_mut()
@@ -2491,7 +2491,7 @@ impl Tr {
                 What::If(..) | What::Abs(_) | What::Min(..) | What::Max(..) => true,
                 _ => false,
             };
-            out.push(presburger::Placing {
+            out.push(presburger::placing::Placing {
                 own: vec![*n],
                 def: def.clone(),
                 total,
@@ -3669,6 +3669,8 @@ struct Memo {
     back: HashMap<(At, Demand), Entry<Res>>,
     /// The piecewise-affine summary of an integer term of one input ([`Walk::pa`]).
     pa: HashMap<At, Entry<Option<Pa>>>,
+    /// The summary of an integer term of one input and a line of another ([`Walk::pa_line`]).
+    pa_line: HashMap<At, Entry<Option<PaLine>>>,
     /// The interval an integer demand on a term is met with before it is read ([`Walk::clip`]).
     clip: HashMap<At, Entry<Option<IntervalSet>>>,
     /// The summaries of a term in every class of remainders of a split ([`Walk::by_class`]).
@@ -5534,6 +5536,106 @@ impl<'t> Tx<'t> {
         Some(r)
     }
 
+    /// The inputs on which `p`, `pa(v) + a * w` ([`PaLine`]), takes a value in `z`, as a box
+    /// that holds every point of the preimage; exact when the preimage is that box, by the
+    /// test below. `None` where [`Tx::invert_pa`] gives none, and the caller reads the `if` as
+    /// before.
+    ///
+    /// Write `W` for the domain of `w` and `F(y) = {w in W : y + a * w in z}`. The preimage is
+    /// the union over `v` of `{v} × F(pa(v))`. The box:
+    ///
+    /// 1. `v` lies where `pa` takes a value in `z - a * hull(W)` ([`Tx::invert_pa`]). A `v`
+    ///    outside has no `w` in the hull of `W`, so none in `W`.
+    /// 2. With `Y` the values of `pa` over the `v` of step 1 ([`pa_image`], exact on pieces of
+    ///    slope 0, 1 or -1 and a superset on steeper ones), `w` lies in `W` where `a * w` is in
+    ///    `z - Y`: the union of `F(y)` for `y` in `Y`, which holds the `F(pa(v))` of every `v`
+    ///    of step 1, and is that union where `Y` is exact. Shifting `z` by every value from
+    ///    `lo` to `hi`, the least and greatest of `Y`, fills the holes of `z` that the walk
+    ///    keeps (`indep_2j`, `a_summary_of_two_inputs_keeps_the_holes_of_its_demand`).
+    ///
+    /// Exact when `lo == hi` (every `v` of step 1 has the one `F`, and step 2 is that `F`), or
+    /// when `z` is one interval and `F(lo) == F(hi)` is not empty. Proof of the second case,
+    /// for `a > 0` (`a < 0` is the same with the order of `y` reversed): `F(y)` is `W` met
+    /// with the interval `I(y) = [ceil((zl - y) / a), floor((zh - y) / a)]`, whose two ends
+    /// fall as `y` rises. Take `f` in `F(lo) = F(hi)` and `y` from `lo` to `hi`. Then
+    /// `I(lo) ∩ I(hi) ⊆ I(y)`, so `F(lo) ⊆ F(y)`. Take `x` in `F(y)`. If `x` is below the
+    /// lower end of `I(lo)`, it is at least the lower end of `I(hi)` and below `f`, which is
+    /// in `I(hi)`, so `x` is in `I(hi)`. If `x` is above the upper end of `I(hi)`, it is in
+    /// `I(lo)` the same way. Otherwise `x` lies between the lower end of `I(lo)` and the
+    /// upper end of `I(hi)`, so in both. So `F(y) = F(lo)` for every such `y`. Then every
+    /// `v` of step 1 has `F(pa(v)) = F(lo)`, which is not empty, so the preimage is the box
+    /// of step 1 by `F(lo)`, and step 2 gives `F(lo)`. With `F(lo)` empty the claim fails:
+    /// over `W = {0, 5, 10}` the ends can give `[8, 9]` and `[1, 2]` and a `y` between them
+    /// `[4, 6]`, which holds 5.
+    // Complexity tradeoff: naive version, the `if` chain read arm by arm with the demand
+    // shifted at each `t + 1` ([`Walk::back_in`]), Θ(k²) calls for a chain of `k` levels over
+    // two inputs (`cross_dead`). Used: this inversion of the summary built once, `O(P + q)`
+    // for its `P` pieces and the `q` pieces of `v`'s set to list `Y`, and `O(p y log(p y))`
+    // for the `p` pieces of `z` shifted by the `y` pieces of `Y`, which can give `p y`
+    // pieces (PERF-preimage-back-two-input-chain). Alternative: shifting by the hull of `Y`,
+    // `O(log P + p)`, which loses the holes of `z` between the values of `pa` (above).
+    fn invert_pa_line(&self, p: &PaLine, z: &IntervalSet) -> Option<Res> {
+        let Some((w, a)) = &p.line else {
+            return self.invert_pa(&p.pa, z);
+        };
+        let dw = self.cx.get(w)?;
+        let (wl, wh) = dw.bounds()?;
+        let (u, x) = (value_at(wl, a, &Int::ZERO), value_at(wh, a, &Int::ZERO));
+        let (alo, ahi) = if u <= x { (u, x) } else { (x, u) };
+        let mut r = self.invert_pa(&p.pa, &minus(z, &alo, &ahi))?;
+        if self.empty(&r) {
+            return Some(Res::none());
+        }
+        let ys = match (&p.pa, p.pa.var()) {
+            (Pa::Const(c), _) => IntervalSet::point(Num::from(c)),
+            (_, Some(v)) => {
+                let dv = match r.dom.get(v) {
+                    Some(s) => &**s,
+                    None => self.cx.get(v)?,
+                };
+                pa_image(&p.pa, dv)
+            }
+            (_, None) => return None,
+        };
+        let Some((lo, hi)) = ys.bounds() else {
+            return Some(Res::none());
+        };
+        let (lo, hi) = (end_val(lo), end_val(hi));
+        // The `w` in the hull of `W` with `y + a * w` in `zs`, met with `W`.
+        let solve = |zs: &IntervalSet, y: &Int| {
+            let mut out = Vec::new();
+            invert_piece(wl, wh, a, y, zs, &mut out);
+            IntervalSet::from_pieces(out)
+        };
+        let exact = match (&lo, &hi) {
+            (Val::Fin(l), Val::Fin(h)) if l == h => true,
+            (Val::Fin(l), Val::Fin(h)) if z.only().is_some() => {
+                let f = solve(z, l).meet(dw);
+                !f.is_empty() && f == solve(z, h).meet(dw)
+            }
+            _ => false,
+        };
+        // `z` less each piece of the values `ys`: the union of `z - y` for `y` in `ys`.
+        let shifted = (ys.pieces())
+            .flat_map(|(yl, yh)| {
+                minus(z, &end_val(yl), &end_val(yh))
+                    .pieces()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let shifted = IntervalSet::from_pieces(shifted);
+        match self.meet_domain(w, Rc::new(solve(&shifted, &Int::ZERO)), dw, false) {
+            Met::Empty => return Some(Res::none()),
+            Met::Whole => {}
+            Met::Part(s) => {
+                r.dom.insert(w.clone(), s);
+            }
+        }
+        r.exact = r.exact && exact;
+        Some(r)
+    }
+
     /// Whether the box `r` holds a point of the inputs' domains: each input it narrows meets its
     /// domain, `O(p log P)` for the `p` pieces of the box's set and the `P` of the domain.
     fn reaches_inputs(&self, r: &Res) -> bool {
@@ -6766,6 +6868,14 @@ impl<'m, 't> Walk<'m, 't> {
                 {
                     return r;
                 }
+                // A summary of one input and a line of another, inverted once rather than read
+                // arm by arm ([`Tx::invert_pa_line`]).
+                if let Demand::Ints(z) = &d
+                    && let Some(pl) = self.pa_line(t, env).await
+                    && let Some(r) = self.with(|tx| tx.invert_pa_line(&pl, z))
+                {
+                    return r;
+                }
                 if let Some(index) = self.with(|tx| tx.run.residue.as_ref().map(|r| r.index)) {
                     // A test in a class of remainders: the summary over every class, 1 where
                     // it holds and 0 where it fails.
@@ -7408,6 +7518,126 @@ impl<'m, 't> Walk<'m, 't> {
             let (st, sf) = (st.map_or(dom, |s| &**s), sf.map_or(dom, |s| &**s));
             select(var, dom, [yes.then_some((st, pa)), no.then_some((sf, pb))])
         })
+    }
+
+    /// The summary of the term as `pa(v) + a * w` ([`PaLine`]): [`Walk::pa`] where it gives one
+    /// (with no line), and otherwise built from `+ c`, `- c`, `c - u`, `-u`, `c * u`, the sum
+    /// and difference of two such summaries that read at most two inputs, one of them only by
+    /// lines, and an `if` whose guard narrows at most one input, both arms having the one line
+    /// after a line of an input other than the guard's is moved into the line part
+    /// ([`PaLine::lift`]): the arms' `pa` parts are then sliced by the guard
+    /// ([`Walk::pa_select`]). Exact, as [`Walk::pa`] is: the `if` is its arm on each input's
+    /// set, and the line is the same in both arms. `None` in a class of remainders
+    /// ([`split_residues`]), where the `if` is read as before.
+    ///
+    /// On the chain `t0 = m; tj = if i >= j { t(j-1) } else { t(j-1) + 1 }` the summary is
+    /// `pa(i) + m`, built once per level, `O(k log k)` for `k` levels.
+    // Complexity tradeoff: naive version, no summary of two inputs, so that an `if` chain over
+    // two inputs is read arm by arm by [`Walk::back_in`], Θ(k²) calls, the demand on `t(j-1)`
+    // shifted by each `+ 1` (chain `cross_dead`: 11.2 times the instructions from 8 to 64 and
+    // 15.6 from 64 to 512, PERF-preimage-back-two-input-chain). Used: this summary, one line
+    // beside a summary of one input, `O(log k)` a level. Alternatives: a summary over several
+    // inputs, a sum of one-input summaries ([`Sep`]), inverted by the bounds of the other terms,
+    // which is not exact for an `if` whose guard and arms read different inputs and cannot
+    // slice by the guard; a memo of the walk on the demand shifted to a canonical offset, which
+    // keeps one entry per level but needs the arms' transfers to commute with the shift, which
+    // only `+ c` arms give. Given up: an `if` whose arms have different lines, two lines, and a
+    // line of the guard's input beside a summary of another input (each then read as before).
+    // Test: `l01_25_preimage_catalog::s22::bench::chain_cross_dead_scales_at_64`.
+    async fn pa_line(&'m self, t: Tid, env: Eid) -> Option<PaLine> {
+        if self.with(|tx| tx.run.void || tx.run.residue.is_some()) {
+            return None;
+        }
+        let call = self.cached(
+            |m| &mut m.pa_line,
+            (t, env),
+            move || self.pa_line_at(t, env),
+        );
+        call.await
+    }
+
+    async fn pa_line_at(&'m self, t: Tid, env: Eid) -> Option<PaLine> {
+        if let Some(pa) = self.pa(t, env).await {
+            return Some(PaLine { pa, line: None });
+        }
+        match self.node(t) {
+            Node::Var(x) => {
+                let (bt, be) = self.lookup(env, x)?;
+                self.pa_line(bt, be).await
+            }
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.pa_line(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.pa_line(c, env).await
+                }
+                _ => None,
+            },
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                self.pa_line_prim(t, p, args, env).await
+            }
+            Node::If(g, a, b) => {
+                let gt = self.back(g, env, Demand::Bool(true)).await;
+                let gf = self.back(g, env, Demand::Bool(false)).await;
+                if !gt.exact || !gf.exact || gt.dom.len() > 1 || gf.dom.len() > 1 {
+                    return None;
+                }
+                let keep = gt.dom.keys().chain(gf.dom.keys()).next().cloned();
+                let pa = self.pa_line(a, env).await?.lift(keep.as_ref());
+                let pb = self.pa_line(b, env).await?.lift(keep.as_ref());
+                if pa.line != pb.line {
+                    return None;
+                }
+                let sel = self.pa_select(g, env, &pa.pa, &pb.pa).await?;
+                PaLine::new(sel, pa.line)
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Walk::pa_line`] of `-u`, `u + c`, `c + u`, `u - c`, `c - u`, `c * u`, `u + v` and
+    /// `u - v`; the arity was checked by the caller.
+    async fn pa_line_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<PaLine> {
+        let a = self.arg(args, 0);
+        match p {
+            Prim::Neg => self.pa_line(a, env).await?.affine(Int::from(-1), Int::ZERO),
+            Prim::Add | Prim::Sub => {
+                let b = self.arg(args, 1);
+                let sign = Int::from(if p == Prim::Add { 1 } else { -1 });
+                if let Some(c) = self.constant_coef(b, env).await {
+                    return self.pa_line(a, env).await?.affine(Int::ONE, &sign * &c);
+                }
+                if let Some(c) = self.constant_coef(a, env).await {
+                    return self.pa_line(b, env).await?.affine(sign, c);
+                }
+                let u = self.pa_line(a, env).await?;
+                let v = self.pa_line(b, env).await?.affine(sign, Int::ZERO)?;
+                u.plus(&v)
+            }
+            Prim::Mul => {
+                if self.with(|tx| tx.power(t, env)).is_some() {
+                    return None;
+                }
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_coef(a, env).await {
+                    Some(c) => (c, b),
+                    None => (self.constant_coef(b, env).await?, a),
+                };
+                let u = self.pa_line(u, env).await?;
+                if c.is_zero() {
+                    // `u` is summarized, so it has a value at every input, and the product is 0.
+                    return Some(PaLine {
+                        pa: Pa::Const(Int::ZERO),
+                        line: None,
+                    });
+                }
+                u.affine(c, Int::ZERO)
+            }
+            _ => None,
+        }
     }
 
     /// `min(pa, c)`, or `max(pa, c)` where not `min`, over the domain of `pa`'s input
@@ -10464,6 +10694,132 @@ fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
     }
 }
 
+/// The values `pa` takes over `dom`, a set of its input: each piece of `pa` met with each
+/// piece of `dom` it overlaps gives the values between the two ends of the meet, which are
+/// exactly its values when the slope is 0, 1 or -1 and a superset otherwise. `O(p + q)` for
+/// the `p` pieces of `pa` and the `q` of `dom`, both in the order of the input, plus the
+/// sort of the meets.
+fn pa_image(pa: &Pa, dom: &IntervalSet) -> IntervalSet {
+    let ds: Vec<&(End, End)> = dom.pieces().collect();
+    let mut out = Vec::new();
+    let mut j = 0;
+    for (span, a, b) in pa_pieces(pa) {
+        let (pl, ph) = span.unwrap_or((NegInf, PosInf));
+        while j < ds.len() && ds[j].1 < pl {
+            j += 1;
+        }
+        // The pieces of `dom` from `j` that start at or before `ph`; the last may reach the
+        // next piece of `pa`, so `j` stays.
+        for (dl, dh) in ds[j..]
+            .iter()
+            .take_while(|(dl, _)| *dl <= ph)
+            .map(|d| (&d.0, &d.1))
+        {
+            let lo = if *dl < pl { &pl } else { dl };
+            let hi = if *dh > ph { &ph } else { dh };
+            let (u, v) = (value_at(lo, &a, &b), value_at(hi, &a, &b));
+            let (u, v) = if u <= v { (u, v) } else { (v, u) };
+            out.push((val_end(u), val_end(v)));
+        }
+    }
+    IntervalSet::from_pieces(out)
+}
+
+/// The end of an interval set at the value `v`.
+fn val_end(v: Val) -> End {
+    match v {
+        Val::Neg => NegInf,
+        Val::Fin(x) => Fin(Num::from(&x)),
+        Val::Pos => PosInf,
+    }
+}
+
+/// A summary of an integer term of two inputs: `pa(v) + a * w`, a summary of one input `v`
+/// ([`Pa`]) and a line in another input `w` with no constant, `a` not 0 and `w` not `v`
+/// ([`PaLine::new`] keeps both). The term has a value wherever `pa` has one. Built by
+/// [`Walk::pa_line`] and inverted by [`Tx::invert_pa_line`].
+#[derive(Clone)]
+struct PaLine {
+    pa: Pa,
+    line: Option<(Arc<str>, Int)>,
+}
+
+impl PaLine {
+    /// `pa + a * w` for `line = (w, a)`, with the line dropped when `a` is 0 and added to
+    /// `pa` when `pa` reads `w` ([`Pa::plus`], which reads one input there and so gives a
+    /// summary).
+    fn new(pa: Pa, line: Option<(Arc<str>, Int)>) -> Option<PaLine> {
+        match line {
+            Some((_, a)) if a.is_zero() => Some(PaLine { pa, line: None }),
+            Some((w, a)) if pa.var() == Some(&w) => {
+                let pa = pa.plus(
+                    &Pa::Linear {
+                        var: w,
+                        a,
+                        b: Int::ZERO,
+                    },
+                    1,
+                )?;
+                Some(PaLine { pa, line: None })
+            }
+            line => Some(PaLine { pa, line }),
+        }
+    }
+
+    /// `mul * self + add`.
+    fn affine(&self, mul: Int, add: Int) -> Option<PaLine> {
+        let line = (self.line.as_ref()).map(|(w, a)| (w.clone(), a * &mul));
+        PaLine::new(self.pa.affine(mul, add), line)
+    }
+
+    /// `self` with a summary that is a line of an input other than `keep` moved into the line
+    /// part, when the line part is empty or reads that input: `m + 1`, kept beside a guard on
+    /// `i`, is `1 + 1 * m`. Otherwise `self`.
+    fn lift(self, keep: Option<&Arc<str>>) -> PaLine {
+        let (Pa::Linear { var, a, b }, Some(keep)) = (&self.pa, keep) else {
+            return self;
+        };
+        if var == keep {
+            return self;
+        }
+        let a = match &self.line {
+            None => a.clone(),
+            Some((w, c)) if w == var => a + c,
+            Some(_) => return self,
+        };
+        let pa = Pa::Const(b.clone());
+        PaLine::new(pa, Some((var.clone(), a))).unwrap_or(self)
+    }
+
+    /// `self + o`, when the two read at most two inputs between them and one of them only
+    /// through lines.
+    fn plus(&self, o: &PaLine) -> Option<PaLine> {
+        let x = self.clone().lift(o.pa.var());
+        let y = o.clone().lift(x.pa.var());
+        let line = match (x.line, y.line) {
+            (None, l) | (l, None) => l,
+            (Some((v, a)), Some((w, b))) if v == w => Some((v, &a + &b)),
+            _ => return None,
+        };
+        PaLine::new(x.pa.plus(&y.pa, 1)?, line)
+    }
+}
+
+/// `z` less every value from `lo` to `hi`: the values `x - y` for `x` in `z` and `y` from `lo`
+/// to `hi`, `O(p)` for the `p` pieces of `z`. An end is infinite where `z`'s is or the bound's
+/// is.
+fn minus(z: &IntervalSet, lo: &Val, hi: &Val) -> IntervalSet {
+    let sub = |e: &End, v: &Val, inf: End| match (e, v) {
+        (Fin(x), Val::Fin(y)) => Fin(Num::from(&(&Int::from(x) - y))),
+        (Fin(_), _) => inf,
+        (e, _) => e.clone(),
+    };
+    let pieces = (z.pieces())
+        .map(|(zl, zh)| (sub(zl, hi, NegInf), sub(zh, lo, PosInf)))
+        .collect();
+    IntervalSet::from_pieces(pieces)
+}
+
 /// The bounds of a sum of terms ([`Tx::invert_sep`]): the sums of the terms' finite least and
 /// greatest values with the constant, and the numbers of infinite ones.
 struct Sums {
@@ -13375,7 +13731,7 @@ mod tests {
         } else if a.is::<Option<Lin>>() || a.is::<Option<Formula>>() {
             // A translation read again defines its own auxiliary atoms anew.
             Some(renamed(&shown_any(a), &shown_any(b)))
-        } else if a.is::<Option<Pa>>() || a.is::<Option<ByClass>>() {
+        } else if a.is::<Option<Pa>>() || a.is::<Option<ByClass>>() || a.is::<Option<PaLine>>() {
             // A summary read again builds its own treaps and trees, so the two are compared
             // by what they state: each piece, and each class's summary.
             Some(shown_any(a) == shown_any(b))
@@ -13444,6 +13800,11 @@ mod tests {
             format!("{:?}", x.as_ref().map(Lin::to_string))
         } else if let Some(x) = v.downcast_ref::<Option<Pa>>() {
             x.as_ref().map_or_else(|| "none".into(), pa_shown)
+        } else if let Some(x) = v.downcast_ref::<Option<PaLine>>() {
+            x.as_ref().map_or_else(
+                || "none".into(),
+                |p| format!("{} line {:?}", pa_shown(&p.pa), p.line),
+            )
         } else if let Some(x) = v.downcast_ref::<Option<ByClass>>() {
             x.as_ref().map_or_else(|| "none".into(), by_class_shown)
         } else {

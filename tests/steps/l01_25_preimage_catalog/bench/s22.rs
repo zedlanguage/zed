@@ -282,6 +282,13 @@ fn chain_cross_dead_scales() {
     scales("cross_dead", 8);
 }
 
+/// The chain `cross_dead` at 64 and 512, past the start-up cost that weighs on 8 and 64
+/// (PERF-preimage-back-two-input-chain).
+#[test]
+fn chain_cross_dead_scales_at_64() {
+    scales("cross_dead", 64);
+}
+
 /// COMPLEXITY.md S22e-quad: the `2k + 1` classes of `k` distinct remainders share one reading
 /// of the chain. Each class runs the transfer from the root to the chain's top `if`, whose
 /// summary in that class is read from one summary of the chain over all classes, built once.

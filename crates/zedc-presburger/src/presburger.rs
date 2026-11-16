@@ -112,7 +112,9 @@ mod one_row;
 mod pairs;
 #[cfg(test)]
 mod pick_wide_tests;
-mod placing;
+// Public and not re-exported here: placing.rs reads `Formula::and`, whose impl is in this file,
+// so a `use` of it here would make an import cycle (S1F-presburger-placing-cycle).
+pub mod placing;
 mod refusal;
 mod row_domains;
 mod row_sums;
@@ -123,7 +125,6 @@ use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
 use nesting::nesting;
-pub use placing::{Placing, placed};
 pub use refusal::{Each, One, Refusal, Split, Tie, Written, free_names, names_in};
 pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;

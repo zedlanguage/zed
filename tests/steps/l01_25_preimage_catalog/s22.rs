@@ -1146,6 +1146,35 @@ fn chains_of_slow_families_keep_their_preimages() {
     diffs.none_but(26, 0, 0, 0);
 }
 
+/// `indep_2j` at sizes 2 and 8 keeps the preimages of the transfer before. Its first level,
+/// `if b1 >= 1 { z } else { z + 2 }`, is summarized as `pa(b1) + z` (PERF-preimage-back-two-input-chain),
+/// and the levels above ask it for `z` in a set of even values: shifting that set by every
+/// value from 0 to 2, and not by the values 0 and 2 that `pa(b1)` takes, filled its holes,
+/// a box wider than the box before (seed 10941256705569691110 of
+/// [`chains_of_slow_families_keep_their_preimages`]).
+#[test]
+fn a_summary_of_two_inputs_keeps_the_holes_of_its_demand() {
+    let mut diffs = Diffs::default();
+    for k in [2, 8] {
+        let (t, ds, d) = family("indep_2j", k);
+        let renamed = diffs.renamed;
+        diffs.preimage(&format!("indep_2j k={k}"), &t, &ds, &d);
+        // Renamed only as in `chains_of_slow_families_keep_their_preimages`: the result is
+        // that of the term with each copy of an `if` bound by `let`.
+        if diffs.renamed != renamed {
+            let mut lets_made = 0;
+            let lets = with_lets(&t, &mut lets_made);
+            assert_eq!(
+                format!("{:?}", preimage_listed(&t, &ds, &Listed::new(), &d)),
+                format!("{:?}", preimage_listed(&lets, &ds, &Listed::new(), &d)),
+                "indep_2j k={k}: the copies of an `if` read otherwise than one `let`"
+            );
+            diffs.renamed = renamed;
+        }
+    }
+    diffs.none_but(2, 0, 0, 0);
+}
+
 /// The `let` form of `indep_2j k=2` is not refused on a tie of `b1` and `b2`, whose rows
 /// differ (PREIMAGE-tie-indep-let).
 #[test]
