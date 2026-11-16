@@ -1999,13 +1999,16 @@ type RefusedCount = (usize, usize, usize);
 /// names refused depend on how the part is written (row GROUP-order-verdicts: seed
 /// 17956898709070133281 case 9 of the joined parts refuses `z1` as written and answers it
 /// with the names reversed), so there each set kept, refused or not, is checked only to hold
-/// its exact hull, where some name is refused.
+/// its exact set of values, where some name is refused. The cover is not checked against the
+/// hull: its answers are exact, so where a name's values have a hole its answer has the hole
+/// too (seed 576410681482475148 case 77 answers `z1 = [-6,-1 1,1]`, the set brute force finds
+/// within the hull `[-6,1]`).
 fn check_refused(
     label: &str,
     order: &mut Rng,
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
-    hulls: impl FnOnce() -> BTreeMap<String, IntervalSet>,
+    hulls: impl FnOnce() -> BTreeMap<String, (IntervalSet, IntervalSet)>,
     count: &mut RefusedCount,
     wrong: &mut Vec<String>,
 ) {
@@ -2019,12 +2022,12 @@ fn check_refused(
     let hulls = hulls();
     if cover_refused {
         for (n, (x, _)) in &covered {
-            let h = &hulls[n];
-            if x.meet(h) != *h {
+            let e = &hulls[n].1;
+            if x.meet(e) != *e {
                 wrong.push(format!(
                     "{label}: {f}\n  boxes {bs:?}\n  under the cover {n} = {} misses {}",
                     show(x),
-                    show(h)
+                    show(e)
                 ));
             }
         }
@@ -2038,7 +2041,7 @@ fn check_refused(
         if x != s.get(n).ints() {
             count.2 += 1;
         }
-        let h = &hulls[n];
+        let h = &hulls[n].0;
         if x.meet(h) != *h {
             wrong.push(format!(
                 "{label}: {f}\n  boxes {bs:?}\n  {n} = {} misses {}",
@@ -2114,6 +2117,17 @@ fn brute_hulls(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<St
         .collect()
 }
 
+/// Each name's hull and its exact set of values from [`brute`].
+fn brute_sets(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+) -> BTreeMap<String, (IntervalSet, IntervalSet)> {
+    brute(items, bs, WIDE, true)
+        .into_iter()
+        .map(|(n, (h, e))| (n, (shown_set(&h), shown_set(&e))))
+        .collect()
+}
+
 /// [`check_refused`] on `cases` random parts drawn from `seed`, with `double` each part two
 /// random parts over the same names joined (more rows, so more refusals), the hulls by brute
 /// force. Each case draws its orders from a sequence of its own, so a case of a seed checks
@@ -2126,7 +2140,7 @@ fn refused_names_in(seed: u64, cases: usize, double: bool) -> RefusedCount {
         let (items, bs) = next_case(&mut r, double);
         let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
         let label = format!("seed {seed} case {case}");
-        let hulls = || brute_hulls(&items, &bs);
+        let hulls = || brute_sets(&items, &bs);
         check_refused(
             &label, &mut order, &items, &bs, hulls, &mut count, &mut wrong,
         );
@@ -2193,7 +2207,7 @@ fn check_refused_case(seed: u64, case: usize, double: bool, want: RefusedCount) 
     let (items, bs) = random_case(seed, case, double);
     let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
     let (mut count, mut wrong) = ((0, 0, 0), Vec::new());
-    let hulls = || brute_hulls(&items, &bs);
+    let hulls = || brute_sets(&items, &bs);
     check_refused("", &mut order, &items, &bs, hulls, &mut count, &mut wrong);
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     assert_eq!(count, want, "seed {seed} case {case}");
@@ -2213,6 +2227,14 @@ fn a_refused_part_keeps_a_sound_box() {
 #[test]
 fn a_refused_joined_part_keeps_a_sound_box() {
     check_refused_case(12, 296, true, (1, 6, 2));
+}
+
+/// Case 77 of seed 576410681482475148: the solver alone refuses no name; the cover refuses
+/// some name, and answers `z1` with the set brute force finds, `[-6,-1 1,1]`, which has a
+/// hole at 0 within the hull `[-6,1]`; a check of the cover against the hull failed it.
+#[test]
+fn a_part_whose_name_has_a_hole_keeps_its_exact_set_under_the_cover() {
+    check_refused_case(576410681482475148, 77, false, (0, 0, 0));
 }
 
 /// Case 2 of seed 12220907512220935064, each part two joined: the names the solver refuses
@@ -2383,6 +2405,45 @@ fn decided(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
         presburger::decide(&f),
         presburger::satisfiable(&f).map(|m| m.is_some())
     )
+}
+
+/// Seed 5401893596085442912 of [`rewritten_parts_give_one_answer`], kept (row
+/// PRES-cover-order-rewrites): its case 4 refused `z0` with `Questions` as written, and three
+/// rewrites (another order, a repeated conjunct, an equation as two inequalities) answered
+/// `z0 = [-13, -5]`. The formula reached the cover with `!(a + z1 == b + 2c - 4)` in the sign it
+/// was written in, and the cover's work depends on the sign of each row; the projection now
+/// writes each equation in one sign before the cover (`project_each_asked`).
+#[test]
+fn the_rewrites_of_seed_5401893596085442912_give_one_answer() {
+    let seed = 5401893596085442912;
+    let mut wrong = Vec::new();
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(seed, 10)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = (each_answer(&s, &f, &syms), hung(&s, &f));
+        for g in rewrites {
+            let got = (each_answer(&s, &g, &syms), hung(&s, &g));
+            let both_hung = want.1.is_some() && got.1.is_some();
+            if got.0 != want.0 || (both_hung && got.1 != want.1) {
+                wrong.push(format!(
+                    "case {case}\n  {f}\n  {g}\n  want {want:?}\n  got  {got:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} rewrites differ:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
 }
 
 /// The parts of [`rewritten_parts_give_one_answer`], each written seven ways, with duplicate,

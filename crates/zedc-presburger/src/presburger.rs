@@ -18146,7 +18146,22 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         {
             return Ok(each);
         }
-        solver_found().map(|e| exact::exact_each(f, syms, e))
+        // The cover is given `f` with each equation in the sign [`flips`] chooses, `t >= 0`
+        // beside `-t >= 0` as `t == 0`, and a repeated conjunct once ([`signed`]), then its
+        // parts in one order ([`canonical_parts`]): the cover charges its work row by row, and
+        // the work of a row depends on the sign it is written in, so with the signs as written
+        // `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and answered it
+        // with the other (row PRES-cover-order-rewrites; test
+        // `l01_39_reduced_product::pendants::the_rewrites_of_seed_5401893596085442912_give_one_answer`).
+        // The solver keeps `f` as ordered above: signing the formula it is given as well changes
+        // the order of its parts and so its answers, and lost the narrower projection that
+        // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection` checks; the
+        // cover's answer is exact whatever set the solver gives it.
+        // Complexity tradeoff: one more pass over `f` for each projection the cover checks,
+        // O(n log n) in the size of `f` (`signed`, then `canonical_parts`), against handing the
+        // cover `f` as ordered, which keeps each sign as written and lets the refusal depend on it.
+        solver_found()
+            .map(|e| exact::exact_each(&canonical_parts(&signed(f, Signs::Chosen)), syms, e))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
