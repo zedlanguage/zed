@@ -1909,6 +1909,12 @@ struct CallFrame<'a> {
     /// For each variable of a parameter, the parameter's position, or `None` where two or
     /// more parameters hold it.
     by_var: HashMap<Arc<str>, Option<usize>>,
+    /// The variables that are the whole type of a parameter, as `$1` of `pass(x)`.
+    whole: HashSet<Arc<str>>,
+    /// For each variable that a use gives as a component of a tuple that is the whole value
+    /// of an argument, or a component of such a component (`p[0]`, `g, n = p`), the
+    /// argument's position and the components taken ([`Self::place`]).
+    parts: HashMap<Arc<str>, (usize, Option<Rc<Taken>>)>,
     /// The call's span, where a call of a function applies its signature's needs; `None` for
     /// the check of a value that flowed into a class, which no call's span names. A fold
     /// checked under the frame is recorded at it ([`Ck::saw_fold`]).
@@ -1925,7 +1931,9 @@ impl<'a> CallFrame<'a> {
         names: Vec<Arc<str>>,
     ) -> Self {
         let mut by_var = HashMap::new();
+        let mut whole = HashSet::new();
         for (i, p) in params.iter().enumerate().take(args.len()) {
+            whole.extend(p.as_var().cloned());
             for v in &p.vars {
                 by_var
                     .entry(v.clone())
@@ -1941,10 +1949,44 @@ impl<'a> CallFrame<'a> {
             args,
             names,
             by_var,
+            whole,
+            parts: HashMap::new(),
             call: Some(call),
         }
     }
 
+    /// Where in the call's arguments a value of `t` lies, where `t` is a variable: the
+    /// argument's position, when `t` is the whole type of that argument's parameter alone,
+    /// and the components taken to reach the value from it ([`Self::component`]), innermost
+    /// first. O(1) expected: three lookups.
+    fn place(&self, t: &Ty) -> Option<(usize, Option<Rc<Taken>>)> {
+        let v = t.as_var()?;
+        match self.by_var.get(v) {
+            Some(&Some(i)) if self.whole.contains(v) => Some((i, None)),
+            _ => self.parts.get(v).cloned(),
+        }
+    }
+
+    /// Records that a value of `to` is component `i` of a value of `of`, a tuple of `len`
+    /// components, where [`Self::place`] finds `of`. O(1): the path shares its parent's.
+    fn component(&mut self, of: &Ty, to: &Ty, i: usize, len: usize) {
+        let (Some((at, up)), Some(v)) = (self.place(of), to.as_var()) else {
+            return;
+        };
+        let taken = Rc::new(Taken { i, len, up });
+        self.parts.insert(v.clone(), (at, Some(taken)));
+    }
+}
+
+/// A component taken on the way into an argument ([`CallFrame::place`]): component `i` of a
+/// tuple of `len`, inside the place `up` gives (the argument itself where it is `None`).
+struct Taken {
+    i: usize,
+    len: usize,
+    up: Option<Rc<Taken>>,
+}
+
+impl<'a> CallFrame<'a> {
     /// The argument that a value of type `t` came from: that of the one parameter that holds
     /// its variables, where one alone does. Complexity tradeoff: naive, a test of `t`'s
     /// variables against every parameter's, O(p) set tests for p parameters, so O(p^2) for a

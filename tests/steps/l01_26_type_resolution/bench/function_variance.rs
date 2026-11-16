@@ -70,6 +70,49 @@ fn many_and_deep_functions_inside_values_at_partial_slots_scale() {
     });
 }
 
+/// n functions, each passed through its own generic parameter to a partial slot; one function
+/// passed down a chain of n generic functions to the slot; and one function n tuples deep in a
+/// generic argument, taken out by n indexings (FAIL-partial-slot-generic-pass): each need that
+/// passes a function through a type variable into the slot finds the argument it came from by
+/// one hash lookup and rebuilds it along the component path, O(depth), once per call, so
+/// checking and elaborating the whole is linear. Besides its ratio: the program elaborates at
+/// each size. Small instances:
+/// `function_variance::a_function_passed_through_a_generic_parameter_misses_outside_its_domain`
+/// and `function_variance::a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain`.
+#[test]
+fn functions_passed_through_generic_parameters_to_partial_slots_scale() {
+    let what = "n functions passed through generic parameters, a chain of n, and one n deep";
+    let make = |n: usize| {
+        let mut src = String::from(
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\nq0(x) = apply(f: x);\n",
+        );
+        let (mut deep_v, mut deep_get) = ("s0".to_string(), "p".to_string());
+        for _ in 0..n {
+            deep_v = format!("({deep_v}, 1)");
+            deep_get.push_str("[0]");
+        }
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nb{i} = pass(x: s{i});\nq{}(x) = q{i}(x: x);\n",
+                i + 1
+            ));
+        }
+        src.push_str(&format!(
+            "c = q{n}(x: s0);\ndeep(p) = apply(f: {deep_get});\nd = deep(p: {deep_v});\n"
+        ));
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(
+            u.get("d").is_some() && u.get("c").is_some(),
+            "{what} at {m}"
+        );
+    });
+}
+
 /// n functions, each with a parameter declared with a range and each passed to an exact slot
 /// whose parameter type is wider (MSG-fn-domain-wider-repair, part 2): each is refused once,
 /// with the narrower-domain message, after one trial of the fit without its range needs, so

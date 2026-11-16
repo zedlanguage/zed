@@ -10956,6 +10956,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => None,
         };
+        // A component of a tuple that lies in an argument of the call lies there too, so that
+        // a function the use gives can be rebuilt in that argument ([`Self::coerce_forwarded`]).
+        let taken = match n.kind {
+            NeedKind::Component { i, .. } => i,
+            NeedKind::Destructure { i, .. } => Some(i),
+            _ => None,
+        };
+        if let (Some(r), Some(i)) = (&n.result, taken)
+            && let Some(len) = one_tuple(&on)
+            && let Some(frame) = self.call_frames.last_mut()
+        {
+            frame.component(&n.on, r, i, len);
+        }
         let start = self.refused.len();
         let out = match &n.kind {
             NeedKind::Component { i, key, site } => {
@@ -11044,6 +11057,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Into { what, ty } => {
                 let from = self.call_frames.last().and_then(|f| f.named(&n.on));
                 self.passes_into(&on, ty, what, from, span);
+                self.coerce_forwarded(n, &on, ty);
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
@@ -16522,9 +16536,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   key it does not hold gives `#notFound` (DESIGN.md sec:type_language, the `m[k]` row),
     ///   and a lambda in its place would break the operations on data a partial slot allows
     ///   (`m as (k -> v) into …`, l08_02_remaps).
-    /// - `t` holds a type variable or the unknown: no rebuilding is made here, which leaves a
-    ///   gap (row FAIL-partial-slot-generic-pass): the value is a function only at some
-    ///   instance, which a generic function, compiled once, does not know.
+    /// - `t` holds a type variable or the unknown: no rebuilding is made here, since the value
+    ///   is a function only at some instance, which a generic function, compiled once, does
+    ///   not know; the argument it came from is rebuilt at each call instead
+    ///   ([`Self::coerce_forwarded`]).
     /// - Otherwise (a union holding functions or tuples beside other values, several tuple
     ///   shapes, a function in a payload): where `t` holds a function of an exact arrow and
     ///   `w` a partial function type, the value is not rebuilt, and the program is refused
@@ -16633,6 +16648,82 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         Ok(out.pop().expect("one coercion"))
+    }
+
+    /// Rebuilds, at the call written in the program whose needs are being checked, the argument
+    /// that the need `n` (a value of `on` passed at a parameter of type `w`) reads, as `small`
+    /// in `pass(x: small)` for `pass(x) = apply(f: x)`, or the component of it that it reads,
+    /// as for `pass(p) = apply(f: p[0])` (FAIL-partial-slot-generic-pass). The body of `pass`
+    /// is checked once for every type its parameter may take, where [`Self::coercion`] can
+    /// rebuild nothing, so the function it hands to a partial slot is rebuilt here, where its
+    /// type is known, to test its domain. A generic body makes no value of a type variable but
+    /// from its arguments, so each use there of that place sees the rebuilt function, which
+    /// equals the argument on its domain and gives `#notFound` outside it: an exact use, which
+    /// passes only keys of the domain, gets what the argument gives.
+    ///
+    /// Where the need's value is not found in an argument the call shows (a variable that two
+    /// parameters hold, an entry of a family, a value that flowed into a class), the program
+    /// is refused, since the run would call the function outside its domain. So is a second
+    /// rebuilding of the same place that differs from the first, since the elaborator rebuilds
+    /// a place once.
+    ///
+    /// Cost: [`Self::coercion`] for each such need at each call, which [`holds_fn`] ends at
+    /// once where no partial function type is wanted; then O(d) for a place d components deep,
+    /// the size of the rebuilding made.
+    fn coerce_forwarded(&mut self, n: &Need, on: &Ty, w: &Ty) {
+        let c = match self.coercion(on, w) {
+            Ok(Some(c)) => c,
+            Ok(None) => return,
+            Err(why) => {
+                let at = self.call_frames.last().and_then(|f| f.from(&n.on));
+                return self.untestable(at.map_or(n.span, |a| a.at), why);
+            }
+        };
+        let found = self.call_frames.last().and_then(|f| {
+            let (i, path) = f.place(&n.on)?;
+            Some((f.args[i]?.at, path))
+        });
+        let Some((at, path)) = found else {
+            let (t, wt) = (self.text(on), self.text(w));
+            let code = self.code(Some(n.span)).unwrap_or("the value");
+            return self.error_offering(
+                n.span,
+                format!(
+                    "`{code}` is `{t}` at this call, passed as `{wt}`: a call through `{wt}` \
+                     may pass a key outside its domain, which must give `#notFound`, and the \
+                     function is not one argument of this call, or a component of one, where a \
+                     test of its domain can be put"
+                ),
+                [format!(
+                    "repair: declare the type of the parameter that `{code}` comes from"
+                )],
+            );
+        };
+        let mut steps = Vec::new();
+        let mut up = path;
+        while let Some(t) = up {
+            steps.push((t.i, t.len));
+            up = t.up.clone();
+        }
+        let merged = match self.info.fits.get(&at) {
+            None => Some(wrapped(&steps, c)),
+            Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), &steps, c),
+            Some(_) => None,
+        };
+        let Some(fit) = merged else {
+            let code = self.code(Some(at)).unwrap_or("the value");
+            return self.error(
+                at,
+                format!(
+                    "`{code}` is passed on to partial function types that test its domain in \
+                     different ways, and an argument is rebuilt for one of them alone"
+                ),
+            );
+        };
+        // Written past `Self::put`, which makes no write while needs are replayed: this
+        // write is on the call being checked, not on the body the needs came from.
+        let undo = self.set(Undo::Fit(at, Some(Fit::Coerce(fit))));
+        self.log.push(undo);
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose
@@ -23132,6 +23223,52 @@ pub(super) enum Untestable {
     /// beside other kinds of value at that place, or inside an atom's payload: the value is
     /// rebuilt only where it is one function or one tuple.
     Mixed { t: Box<Ty>, w: Box<Ty> },
+}
+
+/// The rebuilding of a value that rebuilds the place `steps` reach in it (each a component and
+/// its tuple's length, innermost first) as `c` does, and leaves the rest as it is.
+fn wrapped(steps: &[(usize, usize)], c: Coercion) -> Coercion {
+    steps.iter().fold(c, |c, &(i, len)| {
+        let mut cs = vec![None; len];
+        cs[i] = Some(c);
+        Coercion::Tuple(cs)
+    })
+}
+
+/// `d` that also rebuilds the place `steps` reach (as for [`wrapped`]) as `c` does, where `d`
+/// leaves that place as it is or rebuilds it as `c` already; `None` where the two differ
+/// there. O(d) for d steps.
+fn rebuilt_too(mut d: Coercion, steps: &[(usize, usize)], c: Coercion) -> Option<Coercion> {
+    let mut at = &mut d;
+    for (k, &(i, len)) in steps.iter().enumerate().rev() {
+        let Coercion::Tuple(cs) = at else {
+            return None;
+        };
+        if cs.len() != len {
+            return None;
+        }
+        let slot = &mut cs[i];
+        match slot {
+            None => {
+                *slot = Some(wrapped(&steps[..k], c));
+                return Some(d);
+            }
+            Some(inner) => at = inner,
+        }
+    }
+    (*at == c).then_some(d)
+}
+
+/// The length of the one tuple that every value of `t` is, where `t` is one tuple shape and
+/// nothing else (its components may hold type variables).
+fn one_tuple(t: &Ty) -> Option<usize> {
+    let alone = t.set.is_empty()
+        && t.payloads.is_empty()
+        && t.family.is_empty()
+        && t.fns.is_empty()
+        && t.vars.is_empty()
+        && !t.dynamic;
+    t.tuples.only().filter(|_| alone).map(|r| r.len())
 }
 
 /// Whether `t` holds, at some place a value of it may stand (its functions, their results,

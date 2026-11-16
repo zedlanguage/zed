@@ -354,6 +354,121 @@ fn a_function_inside_a_value_misses_outside_its_domain() {
     }
 }
 
+/// Row FAIL-partial-slot-generic-pass: a function of exact domain passed through a parameter
+/// whose type is a type variable to a partial slot misses with `#notFound` outside its domain,
+/// as when it is passed straight to the slot: through two such parameters, beside another
+/// parameter, to two partial slots, and where the body also gives the function back, whose
+/// exact uses still call it. Before the fix the run called `small` with 2.5 and stopped with a
+/// bug in zedc.
+#[test]
+fn a_function_passed_through_a_generic_parameter_misses_outside_its_domain() {
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\npass(x) = apply(f: x);\n";
+    let cases = [
+        ("a = pass(x: small);\n", "6", "4"),
+        ("pass2(y) = pass(x: y);\na = pass2(y: small);\n", "6", "4"),
+        (
+            "pass2(x, y) = apply(f: x) + y;\na = pass2(x: small, y: 10);\n",
+            "16",
+            "14",
+        ),
+        (
+            "apply2(f: (x: int | #b) ->? int) = f(x: 7) else 7;\npass2(x) = apply(f: x) + apply2(f: x);\na = pass2(x: small);\n",
+            "14",
+            "12",
+        ),
+        (
+            "pass2(x) = (apply(f: x), x);\nb = pass2(x: small);\na = b[1](x: 3) + b[0];\n",
+            "10",
+            "8",
+        ),
+        (
+            "b = (pass(x: small), pass(x: small));\na = b[1];\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass2(x) = { y = x; apply(f: y) };\na = pass2(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass2(x) = [x].map(g -> apply(f: g))[0];\na = pass2(x: small);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass2(x, y) = apply(f: if true { x } else { y });\na = pass2(x: small, y: small);\n",
+            "6",
+            "4",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        let src = |k: &str| format!("{}{rest}", head.replace('K', k));
+        runs_to(&src("2.5"), "a", miss);
+        runs_to(&src("3"), "a", hit);
+    }
+}
+
+/// Row FAIL-partial-slot-generic-pass: a function that is a component of a tuple argument, at
+/// any depth, taken by index or by destructuring, is rebuilt in its place in that argument, so
+/// it misses outside its domain too; a component that is a literal leaves the other untouched.
+#[test]
+fn a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain() {
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let cases = [
+        (
+            "pass(p) = apply(f: p[0]);\na = pass(p: (small, 1));\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(p) = apply(f: p[0]);\nq = (small, 1);\na = pass(p: q);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(p) = { g, n = p; apply(f: g) };\na = pass(p: (small, 1));\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(p) = apply(f: p[1][0]);\na = pass(p: (1, (small,)));\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(p) = apply(f: p[0]) + apply(f: p[1]);\na = pass(p: (small, small));\n",
+            "12",
+            "8",
+        ),
+        (
+            "pass(p) = apply(f: p[0]) + p[1];\na = pass(p: (small, 10));\n",
+            "16",
+            "14",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        let src = |k: &str| format!("{}{rest}", head.replace('K', k));
+        runs_to(&src("2.5"), "a", miss);
+        runs_to(&src("3"), "a", hit);
+    }
+}
+
+/// A function the generic body takes out of a family argument has no place in the argument
+/// where the call can put a test of its domain, so the pass to the partial slot is refused,
+/// where before the fix the run called `small` with 2.5.
+#[test]
+fn a_function_taken_from_a_family_argument_is_refused_for_a_partial_slot() {
+    let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\na = pass(m: { 1 -> small });\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+    assert!(
+        errors[0].contains("must give `#notFound`")
+            && errors[0].contains("is not one argument of this call, or a component of one"),
+        "{src}: {errors:?}"
+    );
+}
+
 /// A family passed to a partial slot is not rebuilt as a function: its lookup of a key it
 /// does not hold gives `#notFound` already, and it stays data for the operations on data the
 /// slot allows (the remaps of l08_02, which broke when a family was rebuilt as a lambda).
