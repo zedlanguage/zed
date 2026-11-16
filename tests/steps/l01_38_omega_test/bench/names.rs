@@ -289,3 +289,50 @@ fn decide_scales_over_a_sum_of_conditionals_tied_jointly() {
         }
     });
 }
+
+/// `!(q0 + ... + q{n-1} == k)` beside `(g_i <= t_i && q_i == 0) || (g_i >= t_i + 1 && q_i == 2)`
+/// for each `i`, with `t_i = i`: the guards never tie, so the formula never reaches the renaming.
+fn untied_sum_ne(n: usize, k: i64) -> Formula {
+    let v = |s: String| Lin::atom(Atom::Sym(s.into()));
+    let c = Lin::constant;
+    let con = Formula::Con;
+    let sum = (0..n).fold(c(0), |s, i| s.plus(&v(format!("q{i:04}"))));
+    let mut fs = vec![Formula::negate(con(Con::eq(&sum, &c(k))))];
+    for i in 0..n {
+        let (g, q) = (v(format!("g{i:04}")), v(format!("q{i:04}")));
+        let t = i as i64;
+        fs.push(Formula::or(vec![
+            Formula::and(vec![con(Con::ge(&c(t), &g)), con(Con::eq(&q, &c(0)))]),
+            Formula::and(vec![con(Con::ge(&g, &c(t + 1))), con(Con::eq(&q, &c(2)))]),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+/// `decide` and `satisfiable` on whether a sum of `n` conditionals of 0 or 2 can be other than
+/// 0 (FAIL-search-sum-ne-disjunctions-growth): with no ties ([`untied_sum_ne`]) and with every
+/// guard tied ([`tie_sum`], renamed first). It grew 12.0 and 14.7 times at 8n, in the search.
+#[test]
+fn decide_scales_over_a_sum_of_conditionals_other_than_a_constant() {
+    let n = 64;
+    let tied = |n: usize| tie_sum(n, 0, true, &(0..2 * n).collect::<Vec<_>>());
+    let small = [untied_sum_ne(n, 0), tied(n)];
+    let large = [
+        untied_sum_ne(n * scaling::FACTOR, 0),
+        tied(n * scaling::FACTOR),
+    ];
+    for g in small.iter().chain(&large) {
+        assert_eq!(decide(g), Ok(true), "{g}");
+        assert!(satisfiable(g).expect("not refused").is_some(), "{g}");
+    }
+    scaling::check(
+        "decide on a sum of conditionals other than a constant",
+        n,
+        |m| {
+            for g in if m == n { &small } else { &large } {
+                let _ = std::hint::black_box(decide(g));
+                let _ = std::hint::black_box(satisfiable(g));
+            }
+        },
+    );
+}
