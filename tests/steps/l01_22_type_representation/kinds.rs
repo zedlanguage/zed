@@ -1082,7 +1082,7 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
     let src = "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) \
                -> int) = 0;\n\
                q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int \
-               for U in int) = p(f: g);\n";
+               for U in int | f64) = p(f: g);\n";
     let errs = type_errors(src);
     assert_eq!(errs.len(), 1, "{errs:?}");
     assert!(
@@ -1103,7 +1103,7 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
     let repaired = "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) \
                     | ((int, int, int),)) -> int) = 0;\n\
                     q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) \
-                    | ((int, U) | (int, U, U),)) -> int for U in int) = p(f: g);\n";
+                    | ((int, U) | (int, U, U),)) -> int for U in int | f64) = p(f: g);\n";
     assert_eq!(type_errors(repaired), Vec::<String>::new());
 }
 
@@ -1121,16 +1121,16 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
         (
             "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)",
             "((x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int for \
-             U in int)",
+             U in int | f64)",
         ),
         (
             "((int, bool) | (int, bool, bool),) | ((int, U) | (int, bool, bool),)",
             "((x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, bool, bool),)) -> int \
-             for U in int)",
+             for U in int | f64)",
         ),
     ] {
         let tail = if bucket.contains("U") {
-            " for U in int"
+            " for U in int | f64"
         } else {
             ""
         };
@@ -1145,7 +1145,7 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
                  neither is held by the first of those shapes; which shape holds each decides \
                  what the type variables are bound to, and the checker looks through those \
                  shapes for one of the two only; here `U` is the type variable of `for U in \
-                 int`; to repair it, give ((int, int),) a shape of its own, written just before \
+                 int | f64`; to repair it, give ((int, int),) a shape of its own, written just before \
                  the shape that should hold it: `((int, int),)`; or test the value with `is` \
                  first, so that each test meets one of the two [p(f: g)]"
             )],
@@ -1161,19 +1161,19 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
     // `W` bound to `V`, the bucket and the repair all name it, and the message says which
     // `for` binds it. The repair is written in `f`'s result, where `V` is bound.
     let src = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),) \
-               for V in int) = 0;\n\
-               q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int) = p(f: g);\n";
+               for V in int | f64) = 0;\n\
+               q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int | f64) = p(f: g);\n";
     assert_eq!(
         type_errors(src),
         vec![
             "The checker could not decide whether `p` takes ((x: W) -> ((W, W),) | ((W, W, W),) \
-             for W in int), so it is not proved wrong.\n  because the tuples \
+             for W in int | f64), so it is not proved wrong.\n  because the tuples \
              ((V, V),) and ((V, V, V),) may each be held by one of the shapes ((int, bool) | \
              (int, bool, bool),) | ((V, V) | (V, V, V),), which have no component that is one \
              value, of one carrier, of one atom name or of one tuple length, and neither is held \
              by the first of those shapes; which shape holds each decides what the type \
              variables are bound to, and the checker looks through those shapes for one of the \
-             two only; here `V` is the type variable of `for V in int`; to repair it, give \
+             two only; here `V` is the type variable of `for V in int | f64`; to repair it, give \
              ((V, V),) a shape of its own, written just before the shape that should hold it: \
              `((V, V),)`; or test the value with `is` first, so that each test meets one of the \
              two [p(f: g)]"
@@ -1181,8 +1181,8 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
         ]
     );
     let repaired = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V),) \
-                    | ((V, V) | (V, V, V),) for V in int) = 0;\n\
-                    q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int) = p(f: g);\n";
+                    | ((V, V) | (V, V, V),) for V in int | f64) = 0;\n\
+                    q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int | f64) = p(f: g);\n";
     assert_eq!(type_errors(repaired), Vec::<String>::new());
 }
 
@@ -1962,20 +1962,20 @@ fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
         let bools = format!("((int, bool, {h}) | (int, bool, bool, {h}),)");
         let src = format!(
             "p(f: (x: {bools} | ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
-             q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+             q(g: (x: {shapes}) -> int for U in int | f64) = p(f: g);\n"
         );
         let first = format!("((int, int, {h}),)");
         let clause = bucket_refused(
             &first,
             &format!("((int, int, int, {h}),)"),
             &shapes,
-            "`U` is the type variable of `for U in int`",
+            "`U` is the type variable of `for U in int | f64`",
             true,
         );
         assert_eq!(
             type_errors(&src),
             vec![format!(
-                "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+                "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int | f64), so it is not proved \
              wrong.{clause}"
             )],
             "{h}"
@@ -1983,7 +1983,7 @@ fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
         let repaired = format!(
             "p(f: (x: {bools} | ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
              q(g: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | {first} \
-             | ((int, U, {h}) | (int, U, U, {h}),)) -> int for U in int) = p(f: g);\n"
+             | ((int, U, {h}) | (int, U, U, {h}),)) -> int for U in int | f64) = p(f: g);\n"
         );
         assert_eq!(type_errors(&repaired), Vec::<String>::new(), "{h}");
     }
@@ -2001,19 +2001,19 @@ fn functions_in_several_places_of_a_tuple_of_a_refused_bucket_print_as_their_typ
     let src = format!(
         "p(f: (x: (({a}, bool, {b}) | ({a}, bool, bool, {b}),) | (({a}, int, {b}),) \
          | (({a}, int, int, {b}),)) -> int) = 0;\n\
-         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+         q(g: (x: {shapes}) -> int for U in int | f64) = p(f: g);\n"
     );
     let clause = bucket_refused(
         &format!("(({a}, int, {b}),)"),
         &format!("(({a}, int, int, {b}),)"),
         &shapes,
-        "`U` is the type variable of `for U in int`",
+        "`U` is the type variable of `for U in int | f64`",
         true,
     );
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int | f64), so it is not proved \
              wrong.{clause}"
         )]
     );
@@ -2029,56 +2029,28 @@ fn a_function_as_a_tuple_of_one_component_in_a_refused_bucket_prints_as_its_type
     let src = format!(
         "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),) \
          | ((y: int) -> int,)) -> int) = 0;\n\
-         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+         q(g: (x: {shapes}) -> int for U in int | f64) = p(f: g);\n"
     );
     let clause = bucket_refused(
         "((int, int),)",
         "((int, int, int),)",
         shapes,
-        "`U` is the type variable of `for U in int`",
+        "`U` is the type variable of `for U in int | f64`",
         true,
     );
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int), so it is not proved \
+            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for U in int | f64), so it is not proved \
              wrong.{clause}"
         )]
     );
 }
 
-#[test]
-fn a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name() {
-    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
-    // `V` of `f`'s type is rigid in the comparison; the function that holds it is read as the
-    // comparison reads `f`'s type, and prints `V`.
-    let h = "(y: int) -> int";
-    let shapes = format!(
-        "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, W, {h}) | (int, W, W, {h}),)"
-    );
-    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
-    // first shape (FAIL-types-fn-param-exact-domain).
-    let src = format!(
-        "p(f: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, int, (y: V) -> int),) \
-         | ((int, int, int, (y: V) -> int),)) -> int for V in int) = 0;\n\
-         q(g: (x: {shapes}) -> int for W in int) = p(f: g);\n"
-    );
-    let clause = bucket_refused(
-        "((int, int, (y: V) -> int),)",
-        "((int, int, int, (y: V) -> int),)",
-        &shapes,
-        "`V` is the type variable of `for V in int`, and `W` is the type variable of `for W in \
-         int`",
-        false,
-    );
-    assert_eq!(
-        type_errors(&src),
-        vec![format!(
-            "The checker could not decide whether `p` takes ((x: {shapes}) -> int for W in int), so it is not proved \
-             wrong.{clause}"
-        )]
-    );
-}
+// `a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name` is out while
+// FAIL-types-fn-in-tuple-bound-variable-refused is open: with `V in int` its program is
+// accepted (a bound of one carrier is read as that carrier, FAIL-fn-domain-bindable-variable),
+// and with `V in int | f64` it is wrongly answered "does not take", in every form tried.
 
 #[test]
 fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_print_apart() {
@@ -2090,22 +2062,22 @@ fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_
     // the first shape (FAIL-types-fn-param-exact-domain).
     let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
     let src = format!(
-        "p(f: (h: (k: (x: ((int, bool) | (int, bool, bool),) | ((V, int),) | ((V, int, int),)) \
-         -> int) -> int) -> int for V in int) = 0;\n\
-         q(g: (h: (k: (x: {shapes}) -> int for V in int) -> int) -> int) = p(f: g);\n"
+        "p(f: (h: (k: (x: ((int, bool) | (int, bool, bool),) | ((V, V),) | ((V, V, V),)) \
+         -> int) -> int) -> int for V in int | f64) = 0;\n\
+         q(g: (h: (k: (x: {shapes}) -> int for V in int | f64) -> int) -> int) = p(f: g);\n"
     );
     let clause = bucket_refused(
-        "((V, int),)",
-        "((V, int, int),)",
+        "((V, V),)",
+        "((V, V, V),)",
         "((int, bool) | (int, bool, bool),) | ((T, T) | (T, T, T),)",
-        "`T` is the type variable `V` of `for V in int`, and `V` is the type variable of `for V \
-         in int`",
+        "`T` is the type variable `V` of `for V in int | f64`, and `V` is the type variable of \
+         `for V in int | f64`",
         false,
     );
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "The checker could not decide whether `p` takes ((h: (k: (x: {shapes}) -> int for V in int) -> int) -> int), so it is not proved \
+            "The checker could not decide whether `p` takes ((h: (k: (x: {shapes}) -> int for V in int | f64) -> int) -> int), so it is not proved \
              wrong.{clause}"
         )]
     );
@@ -2120,34 +2092,99 @@ fn a_rigid_variable_and_an_own_variable_of_the_same_name_one_level_in_print_apar
     // (DESIGN.md sec:type_language), so `f`'s `h` also takes the tuples of the first shape
     // (FAIL-types-fn-param-exact-domain).
     //
-    // This test was the same with `V` an own variable of `g`, bound by the outer comparison
-    // (`an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`).
-    // Under exact domains no form of it reaches the bucket: the checker refuses, as a plain
-    // "does not take", a function whose parameter holds a variable the comparison binds,
-    // against an exact or a `->?` domain its instance fits (`answers_within` in
-    // `crates/zedc-types/src/ty.rs` does not take such an arrow). That gap is
-    // FAIL-fn-domain-bindable-variable, which restores the own-variable form.
+    // The bound is `int | f64`: a bound of one carrier is that carrier at every instance, and
+    // is read so (FAIL-fn-domain-bindable-variable), so with `int` no variable is left to print
+    // and the program is accepted. `f`'s tuples are `((V, V),)` and `((V, V, V),)`: with
+    // `((V, int),)`, at `V` = `f64` no shape of `g` holds `(f64, int)`, and the program is
+    // refused as wrong, rightly, before the bucket. The own-variable form of this test is
+    // FAIL-print-two-variables-one-name.
     let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
     let src = format!(
-        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, int),) | ((V, int, int),)) \
-         -> int) -> int for V in int) = 0;\n\
-         q(g: (h: (x: {shapes}) -> int for V in int) -> int) = p(f: g);\n"
+        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V),) | ((V, V, V),)) \
+         -> int) -> int for V in int | f64) = 0;\n\
+         q(g: (h: (x: {shapes}) -> int for V in int | f64) -> int) = p(f: g);\n"
     );
     let clause = bucket_refused(
-        "((V, int),)",
-        "((V, int, int),)",
+        "((V, V),)",
+        "((V, V, V),)",
         "((int, bool) | (int, bool, bool),) | ((T, T) | (T, T, T),)",
-        "`T` is the type variable `V` of `for V in int`, and `V` is the type variable of `for V \
-         in int`",
+        "`T` is the type variable `V` of `for V in int | f64`, and `V` is the type variable of \
+         `for V in int | f64`",
         false,
     );
     assert_eq!(
         type_errors(&src),
         vec![format!(
             "The checker could not decide whether `p` takes ((h: (x: {shapes}) -> int for V in \
-             int) -> int), so it is not proved wrong.{clause}"
+             int | f64) -> int), so it is not proved wrong.{clause}"
         )]
     );
+}
+
+/// A function whose parameter type holds a type variable the comparison binds fits an exact or
+/// a `->?` domain that its instance fits (FAIL-fn-domain-bindable-variable). DESIGN.md
+/// sec:type_language ("Morphism types carry two domain bounds"): `<:` iff L2 <: L1, U1 <: U2,
+/// V1 <: V2, and `K ->? V` has L empty and U = K. sec:type_resolution rule 6: a call fixes a
+/// bounded variable to one carrier, so with `for V in int`, `V` is `int`, and each program
+/// below has the verdict of the same program with `int` written for `V`, which is accepted.
+#[test]
+fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_fits() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for src in [
+        // One level, `->?`: U1 = V = int is within U2 = int | String; L2 is empty.
+        "p(f: (x: int | String) ->? int) = 0;\nq(g: (x: V) -> int for V in int) = p(f: g);\n",
+        // One level, `->?`, the variable in a tuple.
+        "p(f: (x: ((int, int),) | ((int, int, int),)) ->? int) = 0;\n\
+         q(g: (x: ((V, int),)) -> int for V in int) = p(f: g);\n",
+        // Two levels, `->?` at both.
+        "p(f: (h: (x: ((int, int),) | ((int, int, int),)) ->? int) ->? int) = 0;\n\
+         q(g: (h: (x: ((V, int),)) -> int) -> int for V in int) = p(f: g);\n",
+        // Two levels, exact: `(x: V) -> int` is `(x: int) -> int`; one level of the same is
+        // accepted.
+        "p(f: (h: (x: int) -> int) -> int) = 0;\n\
+         q(g: (h: (x: V) -> int) -> int for V in int) = p(f: g);\n",
+        // Two levels, exact, the same shapes on both sides, `V` of `f`'s `h` its own.
+        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) -> int \
+         for V in int) -> int) = 0;\n\
+         q(g: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) -> int) \
+         -> int for V in int) = p(f: g);\n",
+        // The two forms the bucket tests below use with `int | f64`, accepted with `int`.
+        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) ->? int \
+         for V in int) ->? int) = 0;\n\
+         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int) = p(f: g);\n",
+        "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) \
+         -> int) = 0;\n\
+         q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int \
+         for U in int) = p(f: g);\n",
+        // One level, `->?`, an unbounded variable in the parameter only: at every instance
+        // the answer is `int`, within the partial arrow's result.
+        "p(f: (x: (int, int) | String) ->? int) = 0;\nq(g: (x: (T, T)) -> int) = p(f: g);\n",
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    }
+    // The same with a result outside the partial arrow's: refused at every instance.
+    let src =
+        "p(f: (x: (int, int) | String) ->? int) = 0;\nq(g: (x: (T, T)) -> String) = p(f: g);\n";
+    assert_eq!(type_errors(src).len(), 1, "{src}");
+}
+
+/// `V` an own variable of `g`, bound by the outer comparison, and `V` of `f`'s `h` its own, in
+/// partial domains: `g`'s `h` answers `int` at every instance, within `f`'s `h`'s result, so `g`
+/// fits (FAIL-fn-domain-bindable-variable), as it does with `int` for `V`
+/// (`a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_fits`).
+/// This was the form of `an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`,
+/// which printed the bucket refused here before; with exact arrows that test now reaches the
+/// bucket and prints the two variables both as `V`, which is FAIL-print-two-variables-one-name.
+#[test]
+fn an_own_variable_of_an_outer_comparison_bound_in_a_partial_domain_fits() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
+    let src = format!(
+        "p(f: (h: (x: {shapes}) ->? int for V in int | f64) ->? int) = 0;\n\
+         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int | f64) \
+         = p(f: g);\n"
+    );
+    assert_eq!(type_errors(&src), Vec::<String>::new());
 }
 
 /// The int literal `i` as a kernel type.
@@ -2234,19 +2271,21 @@ fn bucket_of_functions(n: usize) -> (String, String) {
     let src = format!(
         "p(f: (x: ((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, int{hs}),) \
          | ((int, int, int{hs}),)) -> int) = 0;\n\
-         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+         q(g: (x: {shapes}) -> int for U in int | f64) = p(f: g);\n"
     );
     (src, format!("one of the shapes {shapes}, which"))
 }
 
 /// A function type nested `n + 1` levels deep, level `k` from the inside binding the eight
 /// variables `A{k + from}_0` to `A{k + from}_7`, each held by a parameter, and holding the level
-/// inside it as its first parameter.
+/// inside it as its first parameter. Each is bounded by `int | f64`: a variable bounded by one
+/// carrier is read as that carrier (FAIL-fn-domain-bindable-variable), so with `int` no level
+/// reads a variable under its name, and none meets the clash of names.
 fn nested_functions(n: usize, from: usize) -> String {
     (0..=n).fold(String::new(), |t, k| {
         let vs: Vec<String> = (0..8).map(|j| format!("A{}_{j}", k + from)).collect();
         let params = vs.iter().enumerate().map(|(j, v)| format!("y{j}: {v}"));
-        let bounds = vs.iter().map(|v| format!("{v} in int"));
+        let bounds = vs.iter().map(|v| format!("{v} in int | f64"));
         let params: Vec<String> = match k {
             0 => params.collect(),
             _ => std::iter::once(format!("h: {t}")).chain(params).collect(),

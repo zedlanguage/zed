@@ -2339,6 +2339,37 @@ fn found_in_nest<'a>(
     true
 }
 
+/// The functions the types of `s` hold outside functions, as [`vars_of`] meets them, or none
+/// if one of those types holds, outside functions, a variable for which `may_hold` is false:
+/// the `here` of [`found_in_nest`] for [`Sig::holds_no_variable`] and
+/// [`Sig::holds_only_own_variables`].
+fn fns_outside(s: &Sig, may_hold: impl Fn(&Arc<str>) -> bool) -> Option<Vec<&Sig>> {
+    // By address: every row and shape is borrowed from `s` for the whole walk, so no key
+    // names a freed node, and the sets are only read by insert, never iterated. The sets are
+    // this signature's own: a row skipped here because another signature of the chain walked
+    // it would leave its functions unread when this one is answered.
+    let (mut rows, mut shapes) = (HashSet::new(), HashSet::new());
+    let mut fns = Vec::new();
+    let mut stack: Vec<&Ty> = sig_tys(s).collect();
+    while let Some(t) = stack.pop() {
+        if !t.vars.iter().all(&may_hold) {
+            return None;
+        }
+        for r in t.tuples.iter().filter(|r| !r.0.fixed) {
+            if rows.insert(Arc::as_ptr(&r.0)) {
+                stack.extend(r.iter());
+            }
+        }
+        for sh in t.payload_shapes().filter(|sh| !sh.bits.is_empty()) {
+            if shapes.insert(Arc::as_ptr(&sh.0)) {
+                stack.extend(sh.items.iter().chain(sh.fields.values()));
+            }
+        }
+        fns.extend(t.fns.iter().map(|f| &**f));
+    }
+    Some(fns)
+}
+
 /// The variables of `tys` added to `out` in order of first appearance, as [`Ty::vars_in`]
 /// gives them, by one walk that enters each shared row, payload shape and held function once.
 // Complexity tradeoff (COMPLEXITY.md FAIL-returned-chain-quadratic): a walk that enters every
@@ -3078,10 +3109,13 @@ pub struct Sig {
 /// And whether it holds no variable at any depth ([`Sig::holds_no_variable`]) and whether it or
 /// a function it returns has needs ([`Sig::holds_needs`], [`Sig::may_hold_needs`]), so a nest of functions asked from
 /// the outermost in is walked once, not once from each level.
+///
+/// And whether it holds only its own variables and those of the functions inside it
+/// ([`Sig::holds_only_own_variables`]).
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: nine `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: ten `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -3092,6 +3126,7 @@ pub struct Facts(
     std::sync::OnceLock<VarBits>,
     std::sync::OnceLock<Arc<[Arc<str>]>>,
     std::sync::OnceLock<Entries>,
+    std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
@@ -4938,6 +4973,20 @@ struct Cx<'s> {
     // `nested_function_results_are_compared_in_linear_time`, 8.0 times at 8n both ways; with
     // this memo off, the false judgment at n 64 did not end in 60 s.
     fitted_written: FittedWritten,
+    /// The verdict of each comparison of a function with another where both hold only their
+    /// own variables ([`Comparing::fits_alone`]), with why it was refused if it was, by the
+    /// addresses of the two signatures, kept with them so that neither address is reused while
+    /// the entry lives. Unlike `fitted`, its key does not depend on the names the functions are
+    /// read under, which each comparison around them makes anew.
+    // Complexity tradeoff (COMPLEXITY.md row FAIL-kinds-bench-nested-deep-time): naive version,
+    // the verdict kept only by `fitted`'s names: a parameter of function type is compared in
+    // both directions ([`cover`] and [`permitted`]), each opening the two functions under new
+    // names, so the two functions one level down are compared twice, those k levels down 2^k
+    // times, 2^(n+1) - 1 comparisons in all for a nest n deep (measured 7, 15, 31, 63, 127 at
+    // n = 2 to 6). Used: one comparison per pair of signatures, 2n + 1 for the nest. Tradeoff:
+    // one entry per pair, and the two signatures kept alive, until the outermost comparison
+    // ends.
+    fitted_alone: HashMap<(*const Sig, *const Sig), FittedAlone>,
     /// When asked for, by [`why_unfit`], why the outermost comparison failed, if one of the
     /// covers rule 6 of sec:type_resolution gives is refused there: `Some(None)` until it is
     /// found. Only the outermost [`fits_in`] reads it, so a comparison inside, tried and
@@ -5046,6 +5095,10 @@ type Fitted = (bool, Option<String>);
 /// The verdicts of [`Cx::fitted_written`]: by the addresses of the two signatures, each
 /// verdict kept with the two, so that no other signature takes an address while it is held.
 type FittedWritten = HashMap<(usize, usize), (Arc<Sig>, Arc<Sig>, Fitted)>;
+
+/// An entry of [`Cx::fitted_alone`]: the two signatures compared, kept so that their addresses,
+/// the key, are not reused, and the verdict.
+type FittedAlone = (Arc<Sig>, Arc<Sig>, Fitted);
 
 impl Cx<'_> {
     /// `ok`, the answer of the comparison this state ran, unless the comparison was refused.
@@ -6994,12 +7047,92 @@ impl<'m, 's> Comparing<'m, 's> {
                 None => return false,
             }
         };
+        if alone_in_any_scope(s) && alone_in_any_scope(&q) {
+            return self.fits_alone(s, q).await;
+        }
         // Compared alone, so the verdict kept, with its refusal, is the same whatever was
         // refused before it, and is given again with that refusal ([`Self::begin_alone`]).
         let before = self.begin_alone();
         let ok = self.fits(s.clone(), se.clone(), q, qe).await;
         let why = self.end_alone(before);
         self.cx.borrow_mut().fitted.insert(key, (ok, why.clone()));
+        if let Some(why) = why {
+            self.refuse(|| why);
+        }
+        ok
+    }
+
+    /// Whether the function `s` fits the function `q`, both holding only their own variables
+    /// and no class variable ([`alone_in_any_scope`]): compared once for each pair of
+    /// signatures, by [`fits_in`] in a state of its own, as [`fits_sig_with`] compares two
+    /// signatures, and the verdict kept in [`Cx::fitted_alone`] with why it was refused, if it
+    /// was, which is given again each time, as [`Self::fits_read`] gives its kept refusal.
+    ///
+    /// Proof that the verdict is the one for the two functions wherever they are met. (1) The
+    /// state of its own holds only `solve`, the same for the whole comparison, and the count of
+    /// names made, so that no name made before is made again; nothing of the comparisons
+    /// around is read. (2) Those comparisons could matter only through variables `s` and `q`
+    /// hold: [`Cx::open`] reads each own variable of a signature it opens by a reading it writes
+    /// into the environment there (a mask, a rigid name, a new name, or the name itself with
+    /// the outer reading dropped), before any type of the signature is read, and every variable
+    /// a signature of either nest holds outside functions is its own, so no reading of a scope
+    /// around is ever looked up, and neither are the rigid bounds, own bounds or names kept
+    /// there (`rigid`, `own_bounds`, `owned`). The other state [`fits_in`] reads (`wide`,
+    /// `free`, `bind_none`, `witnessed`, `q_arrows`, `within_q`, `compared`) it sets for itself
+    /// and gives back; the memos kept for the whole comparison (`kept_rows`, `kept_read`,
+    /// `kept_compared`, `fitted`, `fitted_written`) start empty in the state of its own and
+    /// are dropped with it, so none of their names is read outside it. What
+    /// differs is the new names some own variables are read under where a scope around owns
+    /// the same name, a renaming of the variables `s` and `q` bind, which sec:type_resolution's
+    /// rule 4 gives no meaning (each signature binds its own). The one read of the
+    /// environments before [`Cx::open`], [`read_alike`] for a signature with needs, reads the
+    /// readings around of names the signature binds itself; in the state of its own it finds
+    /// them alike, so two such signatures are compared as written, where a scope around that
+    /// read one of those names apart on the two sides refused a signature against itself.
+    /// (3) `solve` answers for class variables, and neither signature holds one at any depth,
+    /// so it gives nothing in either state. (4) The verdict is kept with the refusal made inside the attempt, read as
+    /// [`Self::begin_alone`] reads it, so a kept verdict is given with the same refusal, and
+    /// the two signatures are kept with it, so their addresses name them while it lives. So the
+    /// verdict kept is that of [`fits_in`] on `s` and `q` compared alone, the same each time.
+    ///
+    /// Complexity tradeoff: naive version, as before, each comparison read under the names of
+    /// the scope around and kept by those names ([`Cx::fitted`]): a parameter of function type
+    /// is compared in both directions, by [`cover`] (`q`'s within `s`'s) and by [`permitted`]
+    /// (`s`'s within `q`'s), each opening the pair one level down under new names, so the
+    /// level one down is compared twice, the level k down 2^k times, and a nest n deep
+    /// 2^(n+1) - 1 times in all (measured: 7, 15, 31, 63, 127 comparisons at depths 2 to 6).
+    /// Used: the verdict by the pair of signatures, so 2n + 1 comparisons for the nest, each
+    /// costing its own level. Tradeoff: one entry per pair met, held until the outermost
+    /// comparison ends, and a function that holds a variable of a scope around it (a curried
+    /// `(x: T) -> (y: T) -> T`) is still kept by names only, and a nest of such functions in
+    /// parameters is still compared a number of times exponential in its depth; row
+    /// FAIL-types-fn-outer-variable-nest.
+    async fn fits_alone(&'m self, s: &Arc<Sig>, q: Arc<Sig>) -> bool {
+        let key = (Arc::as_ptr(s), Arc::as_ptr(&q));
+        let kept = (self.cx.borrow().fitted_alone.get(&key)).map(|(_, _, f)| f.clone());
+        let (ok, why) = match kept {
+            Some(f) => f,
+            None => {
+                let mut open = std::mem::take(&mut *self.cx.borrow_mut());
+                *self.cx.borrow_mut() = Cx {
+                    solve: open.solve,
+                    count: open.count,
+                    fitted_alone: std::mem::take(&mut open.fitted_alone),
+                    ..Cx::default()
+                };
+                let ok = self
+                    .fits(s.clone(), Env::new(), q.clone(), Env::new())
+                    .await;
+                let inner = std::mem::replace(&mut *self.cx.borrow_mut(), open);
+                let why = inner.unchosen;
+                let mut cx = self.cx.borrow_mut();
+                cx.count = inner.count;
+                cx.fitted_alone = inner.fitted_alone;
+                cx.fitted_alone
+                    .insert(key, (s.clone(), q, (ok, why.clone())));
+                (ok, why)
+            }
+        };
         if let Some(why) = why {
             self.refuse(|| why);
         }
@@ -11271,6 +11404,15 @@ fn reads_alike_anywhere(s: &Sig, env: &Env) -> bool {
     }
 }
 
+/// Whether `s` reads the same in any comparison it is met in: it holds only its own variables
+/// and those of functions inside it ([`Sig::holds_only_own_variables`]), and no class
+/// variable at any depth, so neither the readings of a scope around it nor the solved class
+/// variables reach it ([`Comparing::fits_alone`]). Both facts are kept with the signature, so
+/// this costs O(1) after the first ask of each signature.
+fn alone_in_any_scope(s: &Sig) -> bool {
+    s.facts().classes.is_empty() && s.holds_only_own_variables()
+}
+
 /// Whether each variable of `s`, as written, reads alike by `se` and by `qe`.
 fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
     let mut vs = Vars::default();
@@ -11326,9 +11468,22 @@ impl Cx<'_> {
         // The bounded variables of `q` whose bound has two classes or more, by the names they
         // are read as: each is widened only where it stands once in an arrow ([`repeated`]).
         let mut several = HashSet::new();
+        // A bounded own variable of either side whose bound is one carrier and no values of no
+        // carrier is read as that carrier, held by a parameter or not
+        // (FAIL-fn-domain-bindable-variable). Proof that this is exact: a call fixes a bounded
+        // variable to one carrier of its bound (rule 6 of sec:type_resolution), so such a
+        // variable is that carrier at every instance, and the signature is the one with the
+        // carrier written for it. Read as a variable instead, it was compared as itself
+        // wherever the comparison does not bind it: inside a function type of a parameter,
+        // where the two sides change places, `(h: (x: V) -> int) -> int for V in int` asked
+        // whether `(x: int) -> int` is a `(x: V) -> int`, `int` within `V`, which no
+        // comparison binding nothing holds, so it did not fit `(h: (x: int) -> int) -> int`,
+        // its only instance. A bound of several carriers, or with values of no carrier, is
+        // read as before. Cost: a test of the mask per own variable.
+        let one = |m: u8| m.count_ones() == 1 && m & OTHER == 0;
         for v in &q.own {
             match q.bounds.get(v) {
-                Some(&m) if q.held.contains(v) => {
+                Some(&m) if q.held.contains(v) && !one(m) => {
                     let w = cx.fresh(v);
                     cx.rigid.insert(w.clone(), m);
                     wide.insert(w.clone(), Ty::of_mask(m));
@@ -11352,7 +11507,7 @@ impl Cx<'_> {
         let mut free = Vec::new();
         for v in &s.own {
             match s.bounds.get(v) {
-                Some(&m) if !s.held.contains(v) => {
+                Some(&m) if !s.held.contains(v) || one(m) => {
                     se.insert(v.clone(), Read::Mask(m));
                 }
                 bound => {
@@ -11550,17 +11705,38 @@ async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, 
 /// within `qa`'s result, binding nothing ([`every_arrow_fits`]). Rule 6 of sec:type_resolution
 /// gives a key the first arrow that takes it, which is one of these, so each key of `qa` that
 /// `s` takes is answered within. An arrow is left out only where, at some parameter, its type
-/// and `qa`'s share no value ([`Ty::meets`] false). An arrow that holds a variable the
-/// comparison binds in a parameter ([`holds_bindable`]) and may take a key of `qa` is refused: which binding a key gives it is not
-/// worked out here, so this safe path does not take it. Cost: one [`Ty::meets`] per parameter
-/// and one comparison of results per arrow of `s`.
+/// and `qa`'s share no value ([`Ty::meets`] false).
+///
+/// An arrow that holds a variable the comparison binds in a parameter ([`holds_bindable`]) is
+/// taken at every instance at once (FAIL-fn-domain-bindable-variable): where its result holds
+/// no such variable, the result is compared as it is, and the arrow is never left out, whatever
+/// its parameter types. Proof that this is sound. `s` is used at some instance `σ` (rule 2 of
+/// sec:type_resolution), the one the permission ([`permitted`]) and the covers of the other
+/// arrows of `q` take; this function must hold at that `σ`, which it is not told. A result
+/// that holds no variable the comparison binds is the same type `R` at every instance, so the
+/// check that `R` is within `qa`'s result is the check at `σ`, whichever `σ` is. Leaving no
+/// such arrow out asks more than the keys need, never less: an arrow that takes no key of `qa`
+/// at `σ` needs no check, and one more check that passes changes nothing. So a yes here holds
+/// at `σ`. Where the result holds such a variable, which `σ` the use takes is not worked out
+/// here, and the arrow is refused (the safe path: a wrong no, never a wrong yes). What is
+/// given up: such an arrow whose result is within at the `σ` taken, and an arrow that holds a
+/// variable the comparison binds, takes no key of `qa` at `σ`, and returns outside `qa`'s
+/// result; both are refused. Before, every arrow that held such a variable and might take a key
+/// was refused, so `(x: (T,)) -> int` did not fit `(x: (int,) | String) ->? int`. A variable of
+/// a bound of one carrier is read as that carrier ([`Cx::open`]), so it is in no arrow here.
+///
+/// Cost: one [`Ty::meets`] per parameter of an arrow that holds no such variable, a walk of
+/// the parameter and result types of one that does ([`types_hold_bindable`]), and one
+/// comparison of results per arrow of `s`; the naive form, each instance compared, is not
+/// available, since an unbounded variable has infinitely many.
 async fn answers_within<'m>(s: &Sig, sas: &[Arrow], qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
     for sa in sas {
-        if !sa.params.iter().zip(&qa.params).all(|(x, y)| x.meets(y)) {
-            continue;
-        }
         if holds_bindable(s, sa, &c.cx.borrow()) {
-            return false;
+            if types_hold_bindable(s, std::slice::from_ref(&sa.result), &c.cx.borrow()) {
+                return false;
+            }
+        } else if !sa.params.iter().zip(&qa.params).all(|(x, y)| x.meets(y)) {
+            continue;
         }
         if !within_as_is(&sa.result, &qa.result, c).await {
             return false;
@@ -11581,11 +11757,17 @@ async fn answers_within<'m>(s: &Sig, sas: &[Arrow], qa: &Arrow, c: &'m Comparing
 /// Cost: for an arrow whose parameters hold no variable, the outer level of each
 /// ([`Ty::holds_vars`]); otherwise a walk of the parameter types and a lookup per variable.
 fn holds_bindable(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
-    if !sa.params.iter().any(Ty::holds_vars) {
+    types_hold_bindable(s, &sa.params, cx)
+}
+
+/// Whether a variable the comparison may bind, as [`holds_bindable`] reads it, stands in one
+/// of the types `ts` of `s`, at any depth.
+fn types_hold_bindable(s: &Sig, ts: &[Ty], cx: &Cx) -> bool {
+    if !ts.iter().any(Ty::holds_vars) {
         return false;
     }
     let mut vs = Vars::default();
-    sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    ts.iter().for_each(|p| p.vars_in(&mut vs));
     vs.order.iter().any(|v| {
         s.bounds.contains_key(v)
             || cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok()
@@ -13569,41 +13751,35 @@ impl Sig {
         fn known(s: &Sig) -> Option<bool> {
             (s.facts.6.get().copied()).or_else(|| s.facts.4.get().map(|o| !o.is_empty()))
         }
-        /// The functions the types of `s` hold outside functions, as [`vars_of`] meets them,
-        /// or none if one of those types holds a variable outside functions.
-        fn outside(s: &Sig) -> Option<Vec<&Sig>> {
-            // By address: every row and shape is borrowed from `s` for the whole walk, so no
-            // key names a freed node, and the sets are only read by insert, never iterated.
-            // The sets are this signature's own: a row skipped here because another signature
-            // of the chain walked it would leave its functions unread when this one is answered.
-            let (mut rows, mut shapes) = (HashSet::new(), HashSet::new());
-            let mut fns = Vec::new();
-            let mut stack: Vec<&Ty> = sig_tys(s).collect();
-            while let Some(t) = stack.pop() {
-                if !t.vars.is_empty() {
-                    return None;
-                }
-                for r in t.tuples.iter().filter(|r| !r.0.fixed) {
-                    if rows.insert(Arc::as_ptr(&r.0)) {
-                        stack.extend(r.iter());
-                    }
-                }
-                for sh in t.payload_shapes().filter(|sh| !sh.bits.is_empty()) {
-                    if shapes.insert(Arc::as_ptr(&sh.0)) {
-                        stack.extend(sh.items.iter().chain(sh.fields.values()));
-                    }
-                }
-                fns.extend(t.fns.iter().map(|f| &**f));
-            }
-            Some(fns)
-        }
         !found_in_nest(
             self,
             known,
             |s, b| {
                 let _ = s.facts.6.set(b);
             },
-            outside,
+            |s| fns_outside(s, |_| false),
+        )
+    }
+
+    /// Whether each variable it holds, at any depth, is an own variable of the signature that
+    /// holds it outside functions, or of a function around that one within it: whether it
+    /// holds only its own variables and those of the functions inside it. Each signature of
+    /// the nest is asked whether every variable its types hold outside functions is its own
+    /// ([`Sig::own`]); a variable of a function around it within the nest is not taken, so the
+    /// answer is false for `(x: T) -> (y: T) -> T for T in int`, whose inner function holds the
+    /// `T` of the outer one. Such a signature reads the same in any comparison: every variable
+    /// it holds is bound by a signature within it. Worked out at the first call, for it and for
+    /// each function it holds that lacks the answer, innermost first, and kept, as
+    /// [`Sig::holds_no_variable`] is (`found_in_nest`), so a nest asked from the outermost
+    /// in costs its size once.
+    pub fn holds_only_own_variables(&self) -> bool {
+        !found_in_nest(
+            self,
+            |s| s.facts.9.get().map(|own_only| !own_only),
+            |s, b| {
+                let _ = s.facts.9.set(!b);
+            },
+            |s| fns_outside(s, |v| s.own.contains(v)),
         )
     }
 

@@ -499,8 +499,14 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
     // type's domain is exact (DESIGN.md sec:type_language, "Plain `K -> V` is exact";
     // FAIL-types-fn-param-exact-domain), so `g` takes no value `p`'s `f` does not.
     let c = "((int, bool) | (int, bool, bool),)";
-    let program = |slot: &str, g: &str| {
-        format!("p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in int) = p(f: g);\n")
+    // The refusals bound `U` by `int | f64`: a bound of one carrier is read as that carrier
+    // (FAIL-fn-domain-bindable-variable), which leaves no variable for the bucket. The
+    // acceptances bound it by `int`: with `int | f64` they are answered "does not take", which
+    // is FAIL-types-bindable-union-param-refused.
+    let program = |slot: &str, g: &str, bound: &str| {
+        format!(
+            "p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in {bound}) = p(f: g);\n"
+        )
     };
     // The second tuple prints as `((int, int, int),)` or, where the message names it once as
     // a type variable, as that variable.
@@ -515,23 +521,24 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
             format!("({b}, bool) | ({a} | ((bool,),), bool)"),
         ),
     ] {
-        let errs = type_errors(&program(&slot, &g));
+        let errs = type_errors(&program(&slot, &g, "int | f64"));
         assert_eq!(errs.len(), 1, "{g}: {errs:?}");
         assert!(refusal.iter().all(|r| errs[0].contains(r)), "{g}: {errs:?}");
     }
     assert_eq!(
         type_errors(&program(
             &format!("({a}, bool) | ({c}, bool)"),
-            &format!("({b}, bool) | ({a}, bool)")
+            &format!("({b}, bool) | ({a}, bool)"),
+            "int"
         )),
         Vec::<String>::new()
     );
-    // The control: with no shape refused, the parameter fits (`(U, int)`, which holds no
-    // value of `p`'s parameter but `(int, int)`, gives the bound its variable).
+    // The control: with no shape refused, the parameter fits (`(U, int)` is `(int, int)`).
     assert_eq!(
         type_errors(&program(
             &format!("({a}, bool) | (int, int)"),
-            &format!("({a}, bool) | (U, int)")
+            &format!("({a}, bool) | (U, int)"),
+            "int"
         )),
         Vec::<String>::new()
     );

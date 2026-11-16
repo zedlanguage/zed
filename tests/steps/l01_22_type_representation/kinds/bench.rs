@@ -606,9 +606,14 @@ fn function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_
     // comparison around it, of the levels `k + 1`, may already read as themselves for `g`'s,
     // and then gives them new names. The type fits at every depth, as it does without the
     // clash. Eight variables a level make a search of the names kept, instead of their count,
-    // cost the square of the depth times 64.
+    // cost the square of the depth times 64. Each variable is bounded by `int | f64`: one
+    // bounded by a single carrier is read as it (DESIGN rule 6), and no clash is met.
+    // FAIL-kinds-bench-nested-deep-time (2026-11-15): the domain check compares each level in
+    // both directions under new names, 2^(n+1) - 1 comparisons, until the verdict of two
+    // functions holding only their own variables was kept by the pair (`Comparing::fits_alone`).
     // TEST-bench-move-l0123 (author P169): n was 256, now 640; 1x measured 188 ms (ns=187696364) at
-    // load 25.71 on 2026-11-14.
+    // load 25.71 on 2026-11-14, with the bound `int`. With `int | f64`, 1x 536 ms
+    // (ns=535701088), ratio 8.086, at load 43.1 on 2026-11-15.
     let inputs = scaling::inputs(640, |n| {
         format!(
             "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
