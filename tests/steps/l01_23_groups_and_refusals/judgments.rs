@@ -1855,3 +1855,65 @@ fn a_function_type_has_an_exact_domain() {
         ("(int -> int)", "(int -> int)", true),
     ]);
 }
+
+/// Results that are tuples of functions and values with no variable, which a comparison of
+/// function types reads once and compares row by row, component by component
+/// (PERF-types-shared-row-each-level): a yes needs each component within the one at its
+/// place, and a no comes from one component that is not, at any depth of nested rows. A row
+/// of another length, or a union of rows on the right, is compared as before.
+#[test]
+fn rows_of_functions_in_results_are_compared_by_component() {
+    judge(&[
+        (
+            "(int -> ((int -> int), 1))",
+            "(int -> ((int -> int), int))",
+            true,
+        ),
+        (
+            "(int -> ((int -> int), int))",
+            "(int -> ((int -> int), 1))",
+            false,
+        ),
+        (
+            "(int -> ((int -> 1), 1))",
+            "(int -> ((int -> int), 1))",
+            true,
+        ),
+        (
+            "(int -> ((int -> int), 1))",
+            "(int -> ((int -> 1), 1))",
+            false,
+        ),
+        // An exact domain: `int -> int` is not within `1 -> int`.
+        (
+            "(int -> ((int -> int), 1))",
+            "(int -> ((1 -> int), 1))",
+            false,
+        ),
+        (
+            "(int -> ((int -> int), ((int -> int), 1)))",
+            "(int -> ((int -> int), ((int -> int), int)))",
+            true,
+        ),
+        (
+            "(int -> ((int -> int), ((int -> int), int)))",
+            "(int -> ((int -> int), ((int -> int), 1)))",
+            false,
+        ),
+        (
+            "(int -> ((int -> int), 1))",
+            "(int -> ((int -> int), 1, 1))",
+            false,
+        ),
+        (
+            "(int -> ((int -> int), 1))",
+            "(int -> (((int -> int), 1) | ((int -> int), 2)))",
+            true,
+        ),
+        (
+            "(int -> (((int -> int), 1) | ((int -> int), 2)))",
+            "(int -> ((int -> int), 1))",
+            false,
+        ),
+    ]);
+}

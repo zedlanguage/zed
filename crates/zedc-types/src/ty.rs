@@ -3075,13 +3075,13 @@ pub struct Sig {
 /// And, for a family, the functions and kind-wide parts its entries hold ([`Entries`]), so a
 /// type that holds the family reads them at the cost of its outer level.
 ///
-/// And whether it holds no variable at any depth ([`Sig::holds_no_variable`]) and whether it or
-/// a function it returns has needs ([`Sig::holds_needs`], [`Sig::may_hold_needs`]), so a nest of functions asked from
-/// the outermost in is walked once, not once from each level.
+/// And whether it or a function it returns has needs ([`Sig::holds_needs`],
+/// [`Sig::may_hold_needs`]), so a nest of functions asked from the outermost in is walked once,
+/// not once from each level.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: nine `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: eight `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -3092,7 +3092,6 @@ pub struct Facts(
     std::sync::OnceLock<VarBits>,
     std::sync::OnceLock<Arc<[Arc<str>]>>,
     std::sync::OnceLock<Entries>,
-    std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
 );
@@ -4890,6 +4889,20 @@ struct Cx<'s> {
     /// names none of the variables it holds at any depth ([`reads_alike_anywhere`]).
     /// [`Comparing::closed_form`] puts these back as written and the others as tokens.
     closed: HashSet<Arc<str>>,
+    /// The rows [`Cx::read`] read that hold no variable at any depth, inside functions and
+    /// payloads too ([`Row::holds_vars`]), by number, each with the row it read as: kept for
+    /// the whole comparison, not set aside by [`Cx::open`], so a row shared by the comparisons
+    /// of function types nested in each other is read once. The names made for its functions
+    /// are made outside every scope, so [`Cx::forget`] keeps them (PERF-types-shared-row-each-
+    /// level).
+    kept_rows: HashMap<NodeId, Row>,
+    /// The numbers of the rows `kept_rows` holds as read: rows whose only variables are names
+    /// of `fns` made outside every scope.
+    kept_read: HashSet<NodeId>,
+    /// The verdict of each comparison of one row of `kept_read` within another, with why it
+    /// was refused if it was, by their two numbers ([`Comparing::kept_rows_in`]): kept for the
+    /// whole comparison, as `fitted` is.
+    kept_compared: HashMap<(NodeId, NodeId), Fitted>,
     /// The names of `rigid` and `fns` made by the comparisons open now, last made last.
     made: Vec<Arc<str>>,
     /// The number of names made: a quote is in no name a program writes, and the count keeps
@@ -5047,6 +5060,12 @@ impl Cx<'_> {
         w
     }
 
+    /// A new name, made outside every scope: [`Self::forget`] does not drop it.
+    fn fresh_kept(&mut self) -> Arc<str> {
+        self.count += 1;
+        format!("'{}", self.count).into()
+    }
+
     /// `t` as the comparison reads it on a side read by `env`: each variable `env` maps
     /// replaced, and each function, outside other functions, replaced by a new variable that
     /// `fns` maps to it and `env`, in its tuples and in its atoms' payloads. The cost is that of
@@ -5071,6 +5090,9 @@ impl Cx<'_> {
         /// shape with those read.
         struct Reading<'t> {
             t: &'t Ty,
+            /// Whether `t` is inside a row of [`Cx::kept_rows`]: it holds no variable, and the
+            /// names of its functions are made outside every scope.
+            kept: bool,
             rows: Vec<Row>,
             row: Vec<Ty>,
             shapes: Vec<&'t Shape>,
@@ -5078,9 +5100,10 @@ impl Cx<'_> {
             comps: Vec<&'t Ty>,
             shape: Vec<Ty>,
         }
-        fn start(t: &Ty) -> Reading<'_> {
+        fn start(t: &Ty, kept: bool) -> Reading<'_> {
             Reading {
                 t,
+                kept,
                 rows: Vec::new(),
                 row: Vec::new(),
                 shapes: t.payload_shapes().filter(|s| !s.fixed).collect(),
@@ -5089,7 +5112,10 @@ impl Cx<'_> {
                 shape: Vec::new(),
             }
         }
-        let mut memo: HashMap<NodeId, Shape> = HashMap::new();
+        // By number and whether read inside a kept row: a shape read outside one holds names a
+        // comparison of function types made, which [`Cx::forget`] drops, so a row kept beyond
+        // that comparison may not take its reading.
+        let mut memo: HashMap<(NodeId, bool), Shape> = HashMap::new();
         // Complexity tradeoff (PERF-types-shared-tuple-vars): a shared row is read once, by its
         // number, as a shared shape is. Naive, as before: each row read once per path to it,
         // so P(0) = (T,), P(k) = (P(k-1), P(k-1)), n + 1 rows in memory, was read as 2^(n+1) - 1
@@ -5106,24 +5132,51 @@ impl Cx<'_> {
         // verdict by the pair of names and gives the same verdict for each copy, as the shapes
         // read once here already did. Cost: one map entry per row read.
         let mut rows: HashMap<NodeId, Row> = HashMap::new();
-        let mut stack = vec![start(t)];
+        // Complexity tradeoff (PERF-types-shared-row-each-level): a row that holds no variable
+        // at any depth is read once for the whole comparison ([`Cx::kept_rows`]), not once for
+        // each comparison of function types that reads it. Naive, as before: a row of n
+        // functions shared by the results of n function types nested in each other was read at
+        // each of the n levels, with new names, and so compared again at each (its numbers
+        // were new), O(n^2). Now one read and one map entry per such row, and the names of its
+        // functions, made outside every scope, live until the comparison ends. Proof that the
+        // reading is the same: [`Self::read_outer`] reads a type from its own parts and `env`,
+        // which it reads only to look up a variable, and the solved classes, fixed for the
+        // comparison; such a row holds no variable, at any depth, so it reads alike by every
+        // environment but for the new names of its functions, each kept in `fns` with the
+        // empty environment, by which each of those functions reads as by any other
+        // ([`reads_alike_anywhere`]: it holds no variable). A name kept for the whole
+        // comparison stands for that function there, and no name is made twice.
+        let mut stack = vec![start(t, false)];
         loop {
             let top = stack
                 .last_mut()
                 .expect("the type being read is on the stack");
             if let Some(cs) = top.t.tuples.get(top.rows.len()) {
                 // No component read yet: the row is not started, and may be read already.
-                if top.row.is_empty()
-                    && let Some(done) = rows.get(&cs.node())
-                {
-                    top.rows.push(done.clone());
-                    continue;
+                if top.row.is_empty() {
+                    let done = match cs.holds_vars() {
+                        true => rows.get(&cs.node()),
+                        false => self.kept_rows.get(&cs.node()),
+                    };
+                    if let Some(done) = done {
+                        top.rows.push(done.clone());
+                        continue;
+                    }
                 }
                 match cs.get(top.row.len()) {
-                    Some(c) => stack.push(start(c)),
+                    Some(c) => {
+                        let kept = top.kept || !cs.holds_vars();
+                        stack.push(start(c, kept));
+                    }
                     None => {
                         let row: Row = std::mem::take(&mut top.row).into_iter().collect();
-                        rows.insert(cs.node(), row.clone());
+                        match cs.holds_vars() {
+                            true => rows.insert(cs.node(), row.clone()),
+                            false => {
+                                self.kept_read.insert(row.node());
+                                self.kept_rows.insert(cs.node(), row.clone())
+                            }
+                        };
                         top.rows.push(row);
                     }
                 }
@@ -5132,29 +5185,37 @@ impl Cx<'_> {
             if let Some(&sh) = top.shapes.get(top.read.len()) {
                 // A shape not fixed has a component, so no components means not started.
                 if top.comps.is_empty() {
-                    if let Some(done) = memo.get(&sh.node()) {
+                    if let Some(done) = memo.get(&(sh.node(), top.kept)) {
                         top.read.push(done.clone());
                         continue;
                     }
                     top.comps = sh.items.iter().chain(sh.fields.values()).collect();
                 }
                 match top.comps.get(top.shape.len()).copied() {
-                    Some(c) => stack.push(start(c)),
+                    Some(c) => {
+                        let kept = top.kept;
+                        stack.push(start(c, kept));
+                    }
                     None => {
                         let mut items = std::mem::take(&mut top.shape);
                         let fields = items.split_off(sh.items.len());
                         let read =
                             Shape::new(items, sh.fields.keys().cloned().zip(fields).collect());
-                        memo.insert(sh.node(), read.clone());
+                        memo.insert((sh.node(), top.kept), read.clone());
                         top.comps.clear();
                         top.read.push(read);
                     }
                 }
                 continue;
             }
-            let Reading { t, rows, read, .. } =
-                stack.pop().expect("the type being read is on the stack");
-            let out = self.read_outer(t, rows, read, env);
+            let Reading {
+                t,
+                kept,
+                rows,
+                read,
+                ..
+            } = stack.pop().expect("the type being read is on the stack");
+            let out = self.read_outer(t, rows, read, env, kept);
             match stack.last_mut() {
                 Some(up) if up.rows.len() < up.t.tuples.len() => up.row.push(out),
                 Some(up) => up.shape.push(out),
@@ -5164,8 +5225,17 @@ impl Cx<'_> {
     }
 
     /// [`Self::read`] of `t` whose tuples read as `tuples` and whose payload shapes not fixed
-    /// read as `shapes`, in order: its functions and variables.
-    fn read_outer(&mut self, t: &Ty, mut tuples: Vec<Row>, shapes: Vec<Shape>, env: &Env) -> Ty {
+    /// read as `shapes`, in order: its functions and variables. Where `kept`, `t` is inside a
+    /// row of [`Cx::kept_rows`] and so holds no variable, and each function is named outside
+    /// every scope and kept with the empty environment.
+    fn read_outer(
+        &mut self,
+        t: &Ty,
+        mut tuples: Vec<Row>,
+        shapes: Vec<Shape>,
+        env: &Env,
+        kept: bool,
+    ) -> Ty {
         // A variable read as the empty type leaves a row with no value.
         tuples.retain(|r| !r.0.void);
         let payloads = match shapes.is_empty() {
@@ -5196,6 +5266,14 @@ impl Cx<'_> {
             payloads,
         };
         for s in &t.fns {
+            if kept {
+                // It holds no variable, so it reads alike by every environment.
+                let w = self.fresh_kept();
+                self.closed.insert(w.clone());
+                self.fns.insert(w.clone(), (s.clone(), Env::new()));
+                out.vars.insert(w);
+                continue;
+            }
             let w = self.fresh("");
             if reads_alike_anywhere(s, env) {
                 self.closed.insert(w.clone());
@@ -7017,6 +7095,94 @@ impl<'m, 's> Comparing<'m, 's> {
         self.sub_near(t, other, None, binds).await
     }
 
+    /// Whether `t` is within `other` where each is one tuple shape and nothing else, of rows
+    /// [`Cx::read`] read and kept for the whole comparison ([`Cx::kept_read`]) and of one
+    /// length: each component within the one of `other` at its place ([`Comparing::sub_in`]),
+    /// compared once for each pair of rows in the comparison, the verdict kept in
+    /// [`Cx::kept_compared`] with why it was refused, if it was, and given again with it, as
+    /// [`Comparing::fits_read`] keeps its verdicts. Nothing where the two are not such rows, or
+    /// where the components give no and a component of `t` is empty ([`Ty::is_empty`]): the
+    /// comparison then goes on as before.
+    ///
+    /// Proof that the verdict is the one [`Comparing::sub_near`] gives, and the same each time
+    /// the pair is met. A yes: a tuple whose components are each within those of another is
+    /// within it. A no: each component of `t` holds a value ([`Ty::is_empty`] is false, which
+    /// reads a row that lists a value at each place as holding one, as [`Ty::of_row`] makes a
+    /// row with no value the empty type and as [`Comparing::rows`] reads a row when it gives
+    /// no at its first component found not within), so a component `c` not within `d` puts
+    /// the tuples with a value of `c` outside `d` beside values of the others outside `other`.
+    /// The same each time: a row of [`Cx::kept_read`] holds no variable but the names of its
+    /// functions, each made outside every scope ([`Cx::fresh_kept`]) and kept with the empty
+    /// environment for the whole comparison, and not one a binding may bind (each is a name of
+    /// [`Cx::fns`]). So the comparison of its components reads no variable of `binds`, `rigid`
+    /// or the own variables, and its functions are compared by their names in [`Cx::fitted`],
+    /// kept for the whole comparison, each read from its signature, which holds no variable,
+    /// and `solve`, fixed for the comparison. It is compared alone ([`Self::begin_alone`]), so
+    /// the verdict kept does not depend on what was refused before it.
+    ///
+    /// Complexity tradeoff (PERF-types-shared-row-each-level): naive version, as before, each
+    /// comparison of such rows walked, rebuilt and formed both sides outside their functions
+    /// ([`Comparing::closed_form`]): a row of n functions shared by the results of n function
+    /// types nested in each other was compared again at each level, O(n^2) (52.7 times at
+    /// 8n). Used: one comparison of each pair of rows, a lookup each time after, so each row
+    /// pair costs its width once. Given up: rows with a payload not fixed, or a variable at
+    /// any depth, go the old way; a tuple within a union of tuples, none holding it alone, is
+    /// not this case (one shape on each side).
+    async fn kept_rows_in(&'m self, t: &Ty, other: &Ty, binds: &Binds) -> Option<bool> {
+        let one = |t: &Ty| {
+            let only = t.set.lists_nothing()
+                && t.fns.is_empty()
+                && t.vars.is_empty()
+                && !t.dynamic
+                && t.payloads.is_empty()
+                && t.tuples.len() == 1;
+            only.then(|| t.tuples[0].clone())
+        };
+        let (cs, ds) = (one(t)?, one(other)?);
+        let key = (cs.node(), ds.node());
+        {
+            let cx = self.cx.borrow();
+            let kept = |r: &Row| cx.kept_read.contains(&r.node());
+            if !kept(&cs) || !kept(&ds) || cs.len() != ds.len() {
+                return None;
+            }
+            if let Some((ok, why)) = cx.kept_compared.get(&key).cloned() {
+                drop(cx);
+                if let Some(why) = why {
+                    self.refuse(|| why);
+                }
+                return Some(ok);
+            }
+        }
+        let before = self.begin_alone();
+        let ok = self.components_in(cs.clone(), ds, binds.clone()).await;
+        let why = self.end_alone(before);
+        if !ok && cs.iter().any(Ty::is_empty) {
+            return None;
+        }
+        self.cx
+            .borrow_mut()
+            .kept_compared
+            .insert(key, (ok, why.clone()));
+        if let Some(why) = why {
+            self.refuse(|| why);
+        }
+        Some(ok)
+    }
+
+    /// Whether each component of `cs` is within the one of `ds` at its place
+    /// ([`Comparing::sub_in`]), stopping at the first that is not, in a frame of its own.
+    fn components_in(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, bool> {
+        self.stack.call(move || async move {
+            for (c, d) in cs.iter().zip(&ds) {
+                if !self.sub_in(c, d, &mut b).await {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+
     /// [`Comparing::sub_in`]. When `t` is one tuple, `near` may give the part of `other` that
     /// may share a value with it ([`near_pairs`]), what is read once of `other` ([`Whole`]) and
     /// its shapes filed: the kernel then decides on that part ([`Comparing::near_form`]), and
@@ -7028,6 +7194,11 @@ impl<'m, 's> Comparing<'m, 's> {
         near: Option<(&Ty, &Whole, &Arc<Filed>)>,
         binds: &mut Binds,
     ) -> bool {
+        if near.is_none()
+            && let Some(ok) = self.kept_rows_in(t, other, binds).await
+        {
+            return ok;
+        }
         // The scalars, atoms with their payloads, kind-wide part and tuples of `t` are decided
         // together, once, by the kernel on their normal forms ([`Comparing::by_form`]), which
         // sees shapes that hold a piece only together. Trying each shape of `other` in turn
@@ -7163,9 +7334,11 @@ impl<'m, 's> Comparing<'m, 's> {
     /// variables, so it adds no order to the comparison (BENCH-closed-form-late-variable:
     /// `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`,
     /// 8.2 times at 8n). A nest of n function types, each result holding the next beside a
-    /// shared row of n functions, costs O(n^2), 52.9 times at 8n, and 53.0 times with this
-    /// step left out: each of the n comparisons reads and compares the shared row again
-    /// (PERF-types-shared-row-each-level). A token costs O(1) to make and is compared by
+    /// shared row of n functions, cost O(n^2), 52.9 times at 8n, and 53.0 times with this
+    /// step left out: each of the n comparisons read and compared the shared row again.
+    /// Since PERF-types-shared-row-each-level such a row, holding no variable, is read once
+    /// ([`Cx::kept_rows`]) and its tuples are compared by [`Comparing::kept_rows_in`] before
+    /// this step is reached: 7.7 times at 8n. A token costs O(1) to make and is compared by
     /// [`Comparing::fits_read`], whose verdict is kept by the pair of names, as the rule of one
     /// shape compares it.
     async fn closed_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
@@ -8597,9 +8770,11 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// first other variable lies at the end of the walk still costs its size at each comparison,
 /// as its [`Cx::read`] did: the order of the comparison is unchanged (8.2 times at 8n for n
 /// such levels, `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`).
-/// A memo per node within one comparison was not added: each comparison of function types
-/// reads its sides afresh, with new names, so a shared row read at n levels is n distinct
-/// read rows and a memo by node would not hit (PERF-types-shared-row-each-level).
+/// A memo per node within one comparison was not added here: a row read with names made in
+/// a scope is a new node at each comparison of function types, so a memo by node would not
+/// hit. A row that holds no variable is instead read once with names made outside every
+/// scope ([`Cx::kept_rows`]) and compared by [`Comparing::kept_rows_in`] before this walk
+/// (PERF-types-shared-row-each-level).
 fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<(Binds, Named)> {
     if cx.fns.is_empty() {
         return None;
@@ -9627,7 +9802,7 @@ impl Ty {
     // Θ(n^2) for n nested calls that each hold the last result in a tuple, or that each return
     // a function returning the one before. Used: the answer kept on each row and shape when
     // made and on each signature when first asked, so this reads the outer level, O(width).
-    // Tradeoffs: every row and shape pays for its answer when made, read or not; a ninth
+    // Tradeoffs: every row and shape pays for its answer when made, read or not; an eighth
     // `OnceLock` per signature.
     pub fn may_hold_needs(&self) -> bool {
         self.may_hold_needs_outside_fns() || self.fns.iter().any(|s| s.may_hold_needs())
@@ -13368,86 +13543,24 @@ impl Sig {
         })
     }
 
-    /// Whether it holds no variable at any depth, functions it holds included: whether
-    /// [`Sig::vars_order`] is empty. Worked out at the first call, for it and for each function
-    /// it holds that lacks the answer, innermost first, and kept, as the other facts are: a
-    /// signature is not changed once made, and a clone starts with no facts.
-    ///
-    /// The walk is that of `vars_of`: the types `sig_tys` gives, entering each row that is
-    /// not fixed and each payload shape that may hold a variable, once each; a function met is
-    /// read by its own answer (or its kept order) in place of being entered. It holds no
-    /// variable when none of those types does and each function met holds none, as `vars_of`
-    /// then adds nothing (`found_in_nest`).
-    // Complexity tradeoff (FAIL-l01-26-deep-bench-bytes): the naive version, `vars_order()`
-    // and a test for empty, keeps an order only for the signature asked, so asked of each of n
-    // nested functions from the outermost in, as a comparison reads them (`Cx::read_outer`),
-    // each walk enters every function below it: Θ(n^2) time and bytes, 2,051,638,488 bytes on
-    // the first comparison of `(int) -> …` 8,000 deep against 48,546,152 at 1,000 (42.3 times).
-    // Keeping the order at each function met is O(n^2) in memory for nested lambdas that each
-    // hold all n variables (FAIL-returned-chain-quadratic, at `vars_of`). Used: one answer per
-    // signature, filled innermost first, so the types of each signature outside functions are
-    // walked once in all, O(size) for a nest asked in any order. Tradeoffs: a seventh
-    // `OnceLock` per signature, which keeps whether it holds a variable.
-    pub fn holds_no_variable(&self) -> bool {
-        /// Whether it holds a variable, if known: kept, or read from its kept order.
-        fn known(s: &Sig) -> Option<bool> {
-            (s.facts.6.get().copied()).or_else(|| s.facts.4.get().map(|o| !o.is_empty()))
-        }
-        /// The functions the types of `s` hold outside functions, as [`vars_of`] meets them,
-        /// or none if one of those types holds a variable outside functions.
-        fn outside(s: &Sig) -> Option<Vec<&Sig>> {
-            // By address: every row and shape is borrowed from `s` for the whole walk, so no
-            // key names a freed node, and the sets are only read by insert, never iterated.
-            // The sets are this signature's own: a row skipped here because another signature
-            // of the chain walked it would leave its functions unread when this one is answered.
-            let (mut rows, mut shapes) = (HashSet::new(), HashSet::new());
-            let mut fns = Vec::new();
-            let mut stack: Vec<&Ty> = sig_tys(s).collect();
-            while let Some(t) = stack.pop() {
-                if !t.vars.is_empty() {
-                    return None;
-                }
-                for r in t.tuples.iter().filter(|r| !r.0.fixed) {
-                    if rows.insert(Arc::as_ptr(&r.0)) {
-                        stack.extend(r.iter());
-                    }
-                }
-                for sh in t.payload_shapes().filter(|sh| !sh.bits.is_empty()) {
-                    if shapes.insert(Arc::as_ptr(&sh.0)) {
-                        stack.extend(sh.items.iter().chain(sh.fields.values()));
-                    }
-                }
-                fns.extend(t.fns.iter().map(|f| &**f));
-            }
-            Some(fns)
-        }
-        !found_in_nest(
-            self,
-            known,
-            |s, b| {
-                let _ = s.facts.6.set(b);
-            },
-            outside,
-        )
-    }
-
     /// Whether it has needs, or a function its arrows return at any depth has: such a
     /// function is checked by its calls, not as a type alone. Only the functions each result
     /// holds at its top are read, not those in its tuples or payloads. Worked out at the first
     /// call, for it and each function so returned that lacks the answer, innermost first, and
-    /// kept, as [`Sig::holds_no_variable`] is.
+    /// kept, as the other facts are: a signature is not changed once made, and a clone starts
+    /// with no facts.
     // Complexity tradeoff (FAIL-power-returned-n-deep-ratio): the naive version walks the
     // functions returned below it at each ask, with a set of those seen, so a call through each
     // of n nested returned functions walks the n below it: Θ(n^2) (31 times the work at 8n for
     // `2 ^ k` returned through n arrows). Used: one answer per signature, filled innermost
     // first ([`found_in_nest`]), so each signature's arrows are read once in all. Tradeoffs:
-    // an eighth `OnceLock` per signature.
+    // a seventh `OnceLock` per signature.
     pub fn holds_needs(&self) -> bool {
         found_in_nest(
             self,
-            |s| s.facts.7.get().copied(),
+            |s| s.facts.6.get().copied(),
             |s, b| {
-                let _ = s.facts.7.set(b);
+                let _ = s.facts.6.set(b);
             },
             |s| {
                 let fns = s.arrows.iter().flat_map(|a| a.result.fns.iter());
@@ -13465,13 +13578,13 @@ impl Sig {
     // naive walk of the results below it at each ask is Θ(n^2) for a call through each of n
     // nested returned functions. Used: one answer per signature ([`found_in_nest`]); each
     // result's outer level is read once, its rows and shapes keeping their own answers.
-    // Tradeoffs: a ninth `OnceLock` per signature.
+    // Tradeoffs: an eighth `OnceLock` per signature.
     pub fn may_hold_needs(&self) -> bool {
         found_in_nest(
             self,
-            |s| s.facts.8.get().copied(),
+            |s| s.facts.7.get().copied(),
             |s, b| {
-                let _ = s.facts.8.set(b);
+                let _ = s.facts.7.set(b);
             },
             |s| {
                 let results = || s.arrows.iter().map(|a| &a.result);
@@ -18376,53 +18489,6 @@ mod tests {
             let returns = Arc::new(Sig::one(vec![], vec![], open));
             assert!(Ty::func(returns.clone()).may_hold_needs());
             assert!(!returns.holds_needs());
-        }
-    }
-
-    /// A signature holds no variable exactly when its order of variables is empty, for nests
-    /// of functions that hold a variable at the top, at the bottom, in a row or in none, asked
-    /// from the outermost in or the innermost out, and a nest asked from the outermost in is
-    /// answered at each level without keeping an order (FAIL-l01-26-deep-bench-bytes).
-    #[test]
-    fn a_signature_holds_no_variable_exactly_when_its_order_is_empty() {
-        /// `n` functions, each returning the one below; the innermost returns `bottom`, and
-        /// the one at depth `at` takes `extra` as well.
-        fn nest(n: usize, bottom: Ty, at: usize, extra: Ty) -> Vec<Arc<Sig>> {
-            let mut out: Vec<Arc<Sig>> = Vec::new();
-            let mut result = bottom;
-            for d in (0..n).rev() {
-                let params = if d == at { vec![extra.clone()] } else { vec![] };
-                let s = Arc::new(Sig::one(vec![], params, result));
-                result = Ty::func(s.clone());
-                out.push(s);
-            }
-            out.reverse();
-            out
-        }
-        let int = || Ty::carrier(Carrier::Int);
-        let in_row = Ty::tuple(vec![int(), Ty::var("R".into())]);
-        let cases = [
-            (int(), 99, int()),
-            (Ty::var("B".into()), 99, int()),
-            (int(), 0, Ty::var("T".into())),
-            (int(), 3, in_row),
-        ];
-        for (bottom, at, extra) in cases {
-            for outermost_first in [true, false] {
-                let sigs = nest(6, bottom.clone(), at, extra.clone());
-                let mut asked: Vec<&Arc<Sig>> = sigs.iter().collect();
-                if !outermost_first {
-                    asked.reverse();
-                }
-                let answers: Vec<bool> = asked.iter().map(|s| s.holds_no_variable()).collect();
-                assert!(sigs.iter().all(|s| s.facts.4.get().is_none()));
-                let fresh = nest(6, bottom.clone(), at, extra.clone());
-                let mut want: Vec<bool> = fresh.iter().map(|s| s.vars_order().is_empty()).collect();
-                if !outermost_first {
-                    want.reverse();
-                }
-                assert_eq!(answers, want, "bottom {bottom:?}, at {at}");
-            }
         }
     }
 
