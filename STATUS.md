@@ -2569,30 +2569,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BENCH-l01-31-if-regions-text-ratio | running | 2026-11-15 15:54 | agent bench-bytes spawned |
-| FAIL-generic-get-function-key | impl attempt 1 | 2026-11-15 15:54 | start (agent fnkey-msg), worktree /home/luke/Work/wt/fnkey-msg |
-| FAIL-l01-26-deep-bench-bytes | impl attempt 1 | 2026-11-15 15:54 | reproduced on aa39c5d7e (load 43): refusal first runs 48.5MB->2051MB (42.3x), later runs 18.7->149MB (8.0x); power 17.8x bytes, 45.7x instr; 16000-deep and curr |
+| FAIL-default-literal-sum-carrier | running | 2026-11-16 06:55 | started |
 | FAIL-linked-two-cases-seed-216 | impl attempt 1 | 2026-11-15 15:07 | linked-216 start; also FAIL-preimage-slow-seed-wall-time; worktree wt/linked-216 at origin/main |
-| FAIL-port-read-in-mapped-function | impl attempt 1 | 2026-11-15 17:04 | port-map started; worktree /home/luke/Work/wt/trees/port-map |
-| FAIL-power-returned-n-deep-ratio | running | 2026-11-15 15:54 | agent bench-bytes spawned |
-| FAIL-relational-if-chain-growth | impl attempt 1 | 2026-11-15 13:49 | reproduced on 1bfcb9d29 (--bench): y==x-j 22.9x instr at 32/256, y<x-j 15.8x at 128/1024, pairs chain 10.9x instr 19.8x bytes at 512/4096, cross_dead 12.1x at 8 |
-| FAIL-types-fn-param-exact-domain | impl attempt 1 | 2026-11-15 08:45 | started; DESIGN sec:type_language checked: exact K -> V, L2<:L1, U1<:U2, V1<:V2, consistent (5481 'exact domains are invariant') |
-| GRAPH-lazy-tarjan | impl attempt 1 | 2026-11-15 04:35 | start, worktree /home/luke/Work/wt/trees/lazy-tarjan, load 26.45 32.08 38.02 |
-| MSG-data-code-form | impl attempt 1 | 2026-11-15 15:54 | start (agent fnkey-msg), worktree /home/luke/Work/wt/fnkey-msg |
-| PERF-chain-scales-above-nine | running | 2026-11-15 15:24 | owner in spawn-queue.txt |
-| PERF-plane-allowance-join-bound | running | 2026-11-15 15:17 | owner in spawn-queue.txt |
-| PERF-plane-shadow-pairs | running | 2026-11-15 15:17 | owner in spawn-queue.txt |
-| PRES-cover-bench-regressions | running | 2026-11-15 16:27 | cross-review start: four seats, at most 3 rounds |
-| PRES-cover-order-refusals | running | 2026-11-15 16:27 | cross-review start: four seats, at most 3 rounds |
-| PRES-cover-refusals-where-exact | running | 2026-11-15 16:27 | cross-review start: four seats, at most 3 rounds |
-| PRES-pugh-xr | xr attempt 1 | 2026-11-15 16:27 | start, cross-review of wt/pugh-budget 001f6c3b7, worktree /home/luke/Work/wt/trees/pugh-xr, load 25.67 31.55 37.72 |
-| PRES-work-charge-fit | running | 2026-11-15 16:27 | cross-review start: four seats, at most 3 rounds |
-| PROOF-run-under-test-bug | impl attempt 1 | 2026-11-15 16:44 | assertion added in Evaluator::run_under; unit test red without it (1 failed), green with it; stops_binary new test red under a stage set to stop (6/1, rc 101 at |
-| RAM-cause | running | 2026-11-15 16:59 | started |
-| REDUCE-identity-escaping-values | impl attempt 1 | 2026-11-15 15:51 | started; worktree wt/escaping-values at daab6ab01 |
-| STATUS-daily-checker-counts | running | 2026-11-15 16:59 | started |
-| TEST-kernel-lib-split | impl attempt 1 | 2026-11-15 16:44 | kernel-small start, worktree /home/luke/Work/wt/trees/kernel-small; load 58.75 |
-| XR-case-group-wake | case-wake attempt 1 | 2026-11-15 15:54 | stopped for cross-review: in-case group wake with chain representatives is exact (3 red tests green, l01_39 groups and zedc_preimage lib pass) but distinct star |
+| FAIL-map-chain-needs-quadratic | chain-xr attempt 1 | 2026-11-16 01:22 | round 1 done (no proved fix; D, R, S converge on shared needs + reserved ids); round 2 launched, three seats, same prompt |
+| FAIL-one-scope-pairs-seed-refusal | running | 2026-11-16 06:30 | worktree wt/trees/omega-scope from origin/main 80a74c15f; also FAIL-modular-unbounded-regime-undecided, FAIL-omega-alone-retry-scaling, FAIL-settle-proven-marks |
+| FAIL-ratio-fn-types-deep | running | 2026-11-16 06:35 | worktree wt/trees/ratio-l0126 from origin/main 80a74c15f |
+| FAIL-ratio-meet-deep | running | 2026-11-16 06:35 | worktree wt/trees/ratio-l0126 from origin/main 80a74c15f; also FAIL-ratio-fn-types-deep, FAIL-ratio-replace-bound-functions |
+| FAIL-ratio-replace-bound-functions | running | 2026-11-16 06:35 | worktree wt/trees/ratio-l0126 from origin/main 80a74c15f |
+| FAIL-types-meet-exact-arrows-differing-domains | impl attempt 1 | 2026-11-16 05:20 | ty-meet started on f26e21922 in /home/luke/Work/wt/trees/ty-meet; FAIL-partial-slot-generic-pass follows |
+| FP-ops-concat-zip | impl attempt 1 | 2026-11-16 05:10 | fp-concat started on f26e21922 in /home/luke/Work/wt/trees/fp-concat |
+| FP-ops-generic-receivers | running | 2026-11-16 06:43 | worktree wt/trees/fp-generic from 1f5c8efc3 |
+| FP-ops-strings | impl attempt 1 | 2026-11-16 05:09 | started; worktree /home/luke/Work/wt/trees/fp-strings on wt/fp-strings from f26e21922; load 8.23 9.48 11.88 |
+| PERF-set-digest-shape-free | impl attempt 1 | 2026-11-16 05:10 | digest started on f26e21922 in /home/luke/Work/wt/trees/digest; load 8.97 9.57 11.88 |
+| RANGE-open | running | 2026-11-16 07:00 | worktree wt/trees/range-lazy from 89f2489b2 |
+| TEST-default-ints-from-calls | running | 2026-11-16 07:05 | started |
+| TEST-scan-float-long-chunk-ranks | running | 2026-11-16 07:00 | worktree wt/trees/fp-generic from 1f5c8efc3 |
+| XR-case-group-wake | xr-case-wake attempt  | 2026-11-15 15:54 | XR-case-group-wake round 2 closed. Opus fin2 (Gemini minus corners and deferral, plus chain ids) exact on both groups, chain 8.56 / star_extra 9.12 / boxstar 9. |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
@@ -2610,7 +2602,8 @@ Regenerated by update-status.sh (wt/daily-counts.sh) from the history of origin/
 | 2026-11-12 | 171 | 131 | 20 | 104 |
 | 2026-11-13 | 61 | 36 | 5 | 116 |
 | 2026-11-14 | 83 | 22 | 97 | -24 |
-| 2026-11-15 | 31 | 14 | 29 | 60 |
+| 2026-11-15 | 40 | 27 | 56 | 100 |
+| 2026-11-16 | 34 | 16 | 22 | 20 |
 
 ## Open points
 
