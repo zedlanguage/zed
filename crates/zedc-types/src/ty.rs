@@ -4737,9 +4737,10 @@ struct Cx<'s> {
     /// own and kept here with the reading of its side: a function moved into the other side,
     /// as a binding of a variable there, is read as it was where it came from.
     fns: BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
-    /// How many functions of `fns` hold no variable at any depth ([`Sig::vars_order`] empty):
+    /// The variables of `fns` whose function reads alike in every environment: its reading
+    /// names none of the variables it holds at any depth ([`reads_alike_anywhere`]). These are
     /// the only ones [`Comparing::closed_form`] puts back, so with none it has nothing to do.
-    closed: usize,
+    closed: HashSet<Arc<str>>,
     /// The names of `rigid` and `fns` made by the comparisons open now, last made last.
     made: Vec<Arc<str>>,
     /// The number of names made: a quote is in no name a program writes, and the count keeps
@@ -4757,6 +4758,23 @@ struct Cx<'s> {
     // pair, linear in the depth. Tradeoff: one entry per pair compared, held until the
     // outermost comparison ends.
     fitted: HashMap<(Arc<str>, Arc<str>), Fitted>,
+    /// The verdict of each comparison of two functions as written, with no reading
+    /// ([`Comparing::fits_written`]), by the two signatures' addresses, each kept with its
+    /// signature so that no other takes the address while the entry is held; made in the
+    /// innermost comparison of function types open now, or outside every one, and set aside
+    /// and given back with [`Cx::compared`].
+    // Complexity tradeoff (BENCH-closed-form-late-variable): the functions put back by
+    // [`Comparing::closed_form`] are compared by [`Comparing::form_verdict`] as written, not
+    // through `fitted`, and a failed fit of an arrow is followed by the search for a cover,
+    // which compares the same two results again: a nest of `n` function types, each result
+    // holding the next beside a closed function, was compared in O(2^n) when it did not fit
+    // (n = 12 took 13 s; with `closed_form` off, 8 ms). Used: the verdict kept by the pair of
+    // signatures, one comparison per pair and scope, linear in the depth, as `fitted` does
+    // for functions read as variables. Tradeoff: one entry per pair compared, held until the
+    // comparison of function types around ends. Test:
+    // `nested_function_results_are_compared_in_linear_time`, 8.0 times at 8n both ways; with
+    // this memo off, the false judgment at n 64 did not end in 60 s.
+    fitted_written: FittedWritten,
     /// When asked for, by [`why_unfit`], why the outermost comparison failed, if one of the
     /// covers rule 6 of sec:type_resolution gives is refused there: `Some(None)` until it is
     /// found. Only the outermost [`fits_in`] reads it, so a comparison inside, tried and
@@ -4854,6 +4872,10 @@ struct Cx<'s> {
 /// A verdict kept in [`Cx::fitted`]: whether the function fits, and why the comparison was
 /// refused, if it was ([`Comparing::begin_alone`]).
 type Fitted = (bool, Option<String>);
+
+/// The verdicts of [`Cx::fitted_written`]: by the addresses of the two signatures, each
+/// verdict kept with the two, so that no other signature takes an address while it is held.
+type FittedWritten = HashMap<(usize, usize), (Arc<Sig>, Arc<Sig>, Fitted)>;
 
 impl Cx<'_> {
     /// `ok`, the answer of the comparison this state ran, unless the comparison was refused.
@@ -5019,7 +5041,9 @@ impl Cx<'_> {
         };
         for s in &t.fns {
             let w = self.fresh("");
-            self.closed += usize::from(s.holds_no_variable());
+            if reads_alike_anywhere(s, env) {
+                self.closed.insert(w.clone());
+            }
             self.fns.insert(w.clone(), (s.clone(), env.clone()));
             out.vars.insert(w);
         }
@@ -5048,11 +5072,11 @@ impl Cx<'_> {
     /// rows and payload shapes made since, giving back those of the comparison around.
     fn forget(&mut self, mark: Mark) {
         self.compared = mark.compared;
+        self.fitted_written = mark.fitted_written;
         for w in self.made.drain(mark.made..) {
             self.rigid.remove(&w);
-            if let Some((s, _)) = self.fns.remove(&w) {
-                self.closed -= usize::from(s.holds_no_variable());
-            }
+            self.fns.remove(&w);
+            self.closed.remove(&w);
         }
         for (w, bound) in self.own.drain(mark.own..) {
             if bound.is_some() {
@@ -5117,11 +5141,13 @@ impl Cx<'_> {
 }
 
 /// Where [`Cx::open`] left [`Cx::made`] and [`Cx::own`], and the comparisons of rows and
-/// payload shapes of the comparison around it ([`Cx::compared`]), for [`Cx::forget`].
+/// payload shapes of the comparison around it ([`Cx::compared`]) and of functions as written
+/// ([`Cx::fitted_written`]), for [`Cx::forget`].
 struct Mark {
     made: usize,
     own: usize,
     compared: HashMap<Compared, (bool, Binds)>,
+    fitted_written: FittedWritten,
 }
 
 /// A comparison of the row or payload shape numbered `left` with the one numbered `right`
@@ -6669,6 +6695,45 @@ impl<'m, 's> Comparing<'m, 's> {
             .call(move || async move { fits_in(&s, &se, &q, &qe, self).await })
     }
 
+    /// Whether the function `f` as written, with no reading, fits `g` as written ([`fits_in`]):
+    /// compared once for each pair in the innermost comparison of function types open now, the
+    /// verdict kept in [`Cx::fitted_written`] with why it was refused, as [`Self::fits_read`]
+    /// keeps it. Why the kept verdict is the one a new comparison gives: [`fits_in`] of two
+    /// signatures with empty readings reads, besides them, only `solve`, fixed for the
+    /// comparison; the bounds of the rigid names and own variables the two hold (`rigid`,
+    /// `own_bounds`), each fixed from when it is made until the comparison of function types
+    /// that made it ends ([`Cx::forget`]), and `f` and `g`, made before the first comparison,
+    /// hold none made after it, while the memo ends with the scope it was made in ([`Mark`]);
+    /// the rows compared and the verdicts of `fitted`, kept answers of the same comparisons;
+    /// and the refusal, which this compares alone ([`Self::begin_alone`]) and gives again.
+    /// `why` is read only by the outermost [`fits_in`], which is not one of these.
+    async fn fits_written(&'m self, f: &Arc<Sig>, g: &Arc<Sig>) -> bool {
+        let key = (Arc::as_ptr(f) as usize, Arc::as_ptr(g) as usize);
+        let kept = self
+            .cx
+            .borrow()
+            .fitted_written
+            .get(&key)
+            .map(|e| e.2.clone());
+        if let Some((ok, why)) = kept {
+            if let Some(why) = why {
+                self.refuse(|| why);
+            }
+            return ok;
+        }
+        let before = self.begin_alone();
+        let ok = self
+            .fits(f.clone(), Env::new(), g.clone(), Env::new())
+            .await;
+        let why = self.end_alone(before);
+        let entry = (f.clone(), g.clone(), (ok, why.clone()));
+        self.cx.borrow_mut().fitted_written.insert(key, entry);
+        if let Some(why) = why {
+            self.refuse(|| why);
+        }
+        ok
+    }
+
     /// Whether the function read as the variable `v`, `s` read by `se`, fits the one read as
     /// `w`, if `w` is one ([`fits_in`]): compared once for each pair of names, the verdict kept
     /// in `fitted`. The verdict depends on the two signatures, their readings, the bounds of
@@ -6875,17 +6940,23 @@ impl<'m, 's> Comparing<'m, 's> {
     }
 
     /// [`Comparing::by_form`] of `t` and `other` with each variable outside their functions
-    /// that stands for a function holding no variable at any depth ([`Cx::read`]) replaced by
-    /// that function; nothing where there is no such variable.
+    /// that stands for a function that reads alike in every environment
+    /// ([`reads_alike_anywhere`], kept in [`Cx::closed`] by [`Cx::read`]) replaced by that
+    /// function; nothing where there is no such variable.
     ///
     /// Why (TEST-nested-marks-struct-parts): inside a comparison of function types, each
     /// function that a parameter or result holds is read as a variable, so the forms were not
     /// made, and each piece was tried by the rule of one shape ([`accepts`]), which finds a set
     /// piece only in the other side's set, not in its shapes: `int -> (#_, 1) \ (#a, 1)` did
     /// not fit `int -> (#_, 1) | (1, int -> int)`, a definite no, though `(#_, 1) \ (#a, 1)` is
-    /// within `(#_, 1)`. A function with no variable reads alike in every environment, so
-    /// compared as written, as [`Comparing::form_verdict`] compares its functions, it gives
-    /// what [`Comparing::fits_read`] gives for the variable read in its place.
+    /// within `(#_, 1)`. A function that reads alike in every environment, compared as
+    /// written, as [`Comparing::form_verdict`] compares its functions, gives what
+    /// [`Comparing::fits_read`] gives for the variable read in its place. Since
+    /// TEST-nested-marks-fn-vars that covers a function holding variables of its own only, as
+    /// `(T -> T for T in int)` beside a set of every atom
+    /// (`a_set_of_every_atom_beside_a_function_holding_a_variable_is_compared_as_a_set`), not
+    /// only one with no variable; one holding a variable of the function type around it is
+    /// still left as its variable (FAIL-closed-form-outer-variable).
     ///
     /// Complexity tradeoff: no walk at all while no function holding no variable is read
     /// ([`Cx::closed`] is 0), as in every comparison outside function types; else one walk of
@@ -6896,10 +6967,18 @@ impl<'m, 's> Comparing<'m, 's> {
     /// functions of both sides collected first, O(size) at each comparison whose forms were
     /// not made, cost O(n^2) on a type of n rows compared at each of its n levels
     /// (FAIL-closed-form-shared-rows-scaling: `rows_shared_on_many_paths_scale_in_a_function`,
-    /// over 300 s at n 25600 where 3.4 s before). What is given up: a function that holds a
-    /// variable (its own, or one read around it) is left as its variable, so such a
-    /// comparison is still tried by the rule of one shape. The complete solution would key the
-    /// forms by the variables read as functions and compare those by [`Comparing::fits_read`].
+    /// over 300 s at n 25600 where 3.4 s before). Its own cost, a walk of each side outside
+    /// its functions, is of the order of the [`Cx::read`] of those sides that made the
+    /// variables, so it adds no order to the comparison (BENCH-closed-form-late-variable:
+    /// `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`,
+    /// 8.2 times at 8n). A nest of n function types, each result holding the next beside a
+    /// shared row of n functions, costs O(n^2), 52.9 times at 8n, and 53.0 times with this
+    /// step left out: each of the n comparisons reads and compares the shared row again
+    /// (PERF-types-shared-row-each-level). What is given up: a function that holds a variable
+    /// of the function type around it is left as its variable, so such a comparison is still
+    /// tried by the rule of one shape (FAIL-closed-form-outer-variable). The complete solution
+    /// would key the forms by the variables read as functions and compare those by
+    /// [`Comparing::fits_read`].
     async fn closed_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
         let binds = closed_binds(&self.cx.borrow(), t, other)?;
         let (t, other) = (t.replace_outside(&binds), other.replace_outside(&binds));
@@ -7001,8 +7080,7 @@ impl<'m, 's> Comparing<'m, 's> {
         for (spot, fs) in left.spots(&whole.fns) {
             if let Some(pairs) = starred.get(&spot) {
                 for (f, g) in pairs {
-                    let fit =
-                        f == g || (self.fits(f.clone(), Env::new(), g.clone(), Env::new())).await;
+                    let fit = f == g || self.fits_written(f, g).await;
                     if fit {
                         let i = forms.id(f);
                         forms.hold(g, i);
@@ -7027,9 +7105,8 @@ impl<'m, 's> Comparing<'m, 's> {
                     fit.push(forms.id(g));
                 }
                 for f in compared.iter().filter(|f| **f != g) {
-                    let (f, g) = ((*f).clone(), g.clone());
-                    if self.fits(f.clone(), Env::new(), g, Env::new()).await {
-                        fit.push(forms.id(&f));
+                    if self.fits_written(f, g).await {
+                        fit.push(forms.id(f));
                     }
                 }
                 for i in fit {
@@ -8267,7 +8344,8 @@ fn held(verdict: Verdict) -> Option<bool> {
 }
 
 /// The variables outside the functions of `t` and `other` that stand for a function of
-/// `cx.fns` holding no variable at any depth, each bound to that function, for
+/// `cx.fns` that reads alike in every environment ([`Cx::closed`]), each bound to that
+/// function, for
 /// [`Comparing::closed_form`]: none where there is no such variable, or where
 /// [`Comparing::by_form`] makes no form of the two with them put back.
 ///
@@ -8284,15 +8362,31 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// payload shape only if it holds a variable or the unknown outside functions (`open`), and
 /// each once (by number).
 ///
+/// Why `Forms::fns` meets every component this walk reads (BENCH-closed-form-late-variable,
+/// the claim FAIL-closed-form-shared-rows-scaling left unproved): a row or shape is `open`
+/// exactly when a component is not [`Ty::closed`]; an open row has no kernel type, so no exact
+/// one ([`Row::made`]), and an open shape has no exact one ([`Shape::new`]), so
+/// [`Node::kept`] is none for each, and [`Node::below`] yields every open row and payload
+/// shape of a type (it filters only on `kept`, over the same shapes as
+/// [`Ty::payload_shapes`]). `Forms::fns` walks the components of each node it yields, and
+/// meets each node at least once with its components walked (a node met again is skipped only
+/// after a first visit that walked them), so by induction on depth it reaches every component
+/// this walk reaches, and returns none at the first that holds a variable.
+///
 /// Complexity tradeoff: O(1) while `cx` holds no function with no variable
 /// ([`Cx::closed`]); else the nodes entered before the first variable that stops it, O(size)
 /// at most. The naive walk, every variable of both sides collected before any is looked up,
 /// cost O(size) at each comparison whose forms were not made: O(n^2) for a type of n rows
 /// compared at each of its n levels (FAIL-closed-form-shared-rows-scaling). What is given
 /// up: nothing; the answer is the naive one. Where `cx` holds such a function, a type whose
-/// first other variable lies at the end of the walk still costs its size at each comparison.
+/// first other variable lies at the end of the walk still costs its size at each comparison,
+/// as its [`Cx::read`] did: the order of the comparison is unchanged (8.2 times at 8n for n
+/// such levels, `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`).
+/// A memo per node within one comparison was not added: each comparison of function types
+/// reads its sides afresh, with new names, so a shared row read at n levels is n distinct
+/// read rows and a memo by node would not hit (PERF-types-shared-row-each-level).
 fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
-    if cx.closed == 0 {
+    if cx.closed.is_empty() {
         return None;
     }
     enum Walk<'a> {
@@ -8305,12 +8399,12 @@ fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
         rows.chain(c.payload_shapes().filter(|s| s.open).map(Walk::Shape))
     }
     let mut binds = Binds::new();
-    // Binds each variable of `c` that stands for a function with no variable; false at the
-    // first that does not, when `stops`.
+    // Binds each variable of `c` that stands for a function reading alike in every
+    // environment; false at the first that does not, when `stops`.
     let mut look = |c: &Ty, stops: bool| {
         for v in &c.vars {
             match cx.fns.get(v) {
-                Some((s, _)) if s.holds_no_variable() => {
+                Some((s, _)) if cx.closed.contains(v) => {
                     binds.or_insert_with(v.clone(), || Ty::func(s.clone()));
                 }
                 _ if stops => return false,
@@ -10614,6 +10708,37 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     fits
 }
 
+/// Whether the function `s`, read by `env`, reads as it does by an empty environment: `env`
+/// names none of the variables `s` holds at any depth ([`Sig::facts`]), so [`fits_in`] of it
+/// by `env` gives what it gives by [`Env::new`] (TEST-nested-marks-fn-vars).
+///
+/// Why: [`fits_in`] reads its environment only by looking up a variable the signature holds
+/// at any depth: [`read_alike`] those of its arrows and needs, [`Cx::open`] its own (which it
+/// then reads anew, whatever the environment held), [`Cx::read`] those of its arrows, and the
+/// functions it holds are kept with the environment so made and read the same way when
+/// compared ([`Comparing::fits_read`]), their variables among those `s` holds at any depth.
+/// A lookup that misses reads the variable through `solve` or as itself, which does not
+/// depend on the environment. `facts` holds more than the lookups read (the bounded, own and
+/// held variables), which can only say no where yes would do.
+///
+/// Complexity tradeoff: the smaller of `env` and the facts is walked, each name looked up in
+/// the other, O(min · log max), once for each function [`Cx::read`] reads; the facts are
+/// worked out once for each signature. The naive test, a reading of the whole signature by
+/// both environments, costs its size at each read. The test it replaces, "holds no variable"
+/// ([`Sig::vars_order`] empty), put back no function with a type variable of its own, such as
+/// `T -> T for T in int`, and each comparison beside one fell to the rule of one shape.
+fn reads_alike_anywhere(s: &Sig, env: &Env) -> bool {
+    if env.is_empty() {
+        return true;
+    }
+    let f = s.facts();
+    if env.len() <= f.classes.len() + f.names.len() {
+        env.keys().all(|v| !f.holds(v))
+    } else {
+        (f.classes.iter().chain(&f.names)).all(|v| !env.contains_key(v))
+    }
+}
+
 /// Whether each variable of `s`, as written, reads alike by `se` and by `qe`.
 fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
     let mut vs = Vars::default();
@@ -10651,6 +10776,7 @@ impl Cx<'_> {
             made: cx.made.len(),
             own: cx.own.len(),
             compared: std::mem::take(&mut cx.compared),
+            fitted_written: std::mem::take(&mut cx.fitted_written),
         };
         // Each own variable names its own binder here, so the reading of the same name around it
         // is dropped, or replaced by a new name. An own variable of `s` whose name `q` holds, as

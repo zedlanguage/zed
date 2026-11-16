@@ -1362,6 +1362,45 @@ fn a_set_of_every_atom_nested_in_a_result_type_is_compared_as_a_set() {
     ]);
 }
 
+/// A function whose signature holds a type variable, beside a set of every atom nested in a
+/// tuple, in a function's result or parameter type (TEST-nested-marks-fn-vars): the results
+/// are compared by their own subtyping, and the parameters as one set, as above. The function
+/// beside `D` is generic in a variable of its own, `(T -> T for T in int)`, which reads alike
+/// in every environment. Before, five of the six judgments true here were a definite no (all
+/// but `own_d_again <: own_d`). One that holds the variable of the function type around it, `T -> T` in
+/// `(T -> … for T in int)`, is read by the environment and is not put back
+/// (FAIL-closed-form-outer-variable).
+#[test]
+fn a_set_of_every_atom_beside_a_function_holding_a_variable_is_compared_as_a_set() {
+    // Results `D` and `(#_, 1) | (1, g)`, `g` the generic `(T -> T for T in int)`: the second
+    // holds `D` and `(#a, 1)` besides.
+    let d_result = "(int -> ((#_, 1) \\ (#a, 1)))";
+    let own_wider = "(int -> ((#_, 1) | (1, (T -> T for T in int))))";
+    // Results `D | (1, g)`, written two ways, and `(#_, 1) | (1, g)`, which holds it.
+    let own_d = "(int -> (((#_, 1) \\ (#a, 1)) | (1, (T -> T for T in int))))";
+    let own_d_again = "(int -> ((#_ \\ #a, 1) | (1, (T -> T for T in int))))";
+    // Parameters `D | (g, 1)` written two ways, and `(#_ \ #b, 1) | (g, 1)`, which holds
+    // `(#a, 1)` and lacks `(#b, 1)`: neither parameter holds the other.
+    let own_param = "((((#_, 1) \\ (#a, 1)) | ((T -> T for T in int), 1)) -> int)";
+    let own_param_again = "(((#_ \\ #a, 1) | ((T -> T for T in int), 1)) -> int)";
+    let own_param_other = "(((#_ \\ #b, 1) | ((T -> T for T in int), 1)) -> int)";
+    judge(&[
+        // Domains both `int`; `D <: (#_, 1) | (1, g)`, and not back (`(#a, 1)`).
+        (d_result, own_wider, true),
+        (own_wider, d_result, false),
+        // One set written two ways, both ways; within `(#_, 1) | (1, g)`, and not back.
+        (own_d, own_d_again, true),
+        (own_d_again, own_d, true),
+        (own_d, own_wider, true),
+        (own_wider, own_d, false),
+        // Parameters one set, both ways; two sets, no function in both types.
+        (own_param, own_param_again, true),
+        (own_param_again, own_param, true),
+        (own_param, own_param_other, false),
+        (own_param_other, own_param, false),
+    ]);
+}
+
 /// The struct part `{..}`, which the forms keep whole, beside functions and sets of every atom
 /// nested in tuples and payloads.
 #[test]
@@ -1452,6 +1491,88 @@ fn many_nested_sets_of_every_atom_beside_functions_in_a_result_are_decided() {
     let (left, right) = nested_cut_results(4);
     assert!(left.subtype(&right));
     assert!(!right.subtype(&left));
+}
+
+/// Two function types `(T -> N(n, last) for T in int)`, `N(0, last)` the pair `(T, last)` and
+/// `N(k + 1, last)` the pair `((int -> int), N(k, last))`, with `last` `1` on the left and
+/// `int` on the right (BENCH-closed-form-late-variable). Inside the comparison of the two
+/// function types each `int -> int` is read as a variable that stands for a function with no
+/// variable, and `T` as a variable that is no function's, last in the walk of each level: the
+/// results are compared at each of their `n` levels, each a pair holding `T` at its bottom.
+/// The left is a subtype, as `1` is in `int`, and not back.
+fn late_variable_results(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let nest = |last: &str| {
+        let inner = (0..n).fold(format!("(T, {last})"), |s, _| {
+            format!("((int -> int), {s})")
+        });
+        parse_type(&format!("(T -> {inner} for T in int)")).unwrap()
+    };
+    (nest("1"), nest("int"))
+}
+
+/// The small instance of
+/// `bench::results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`.
+#[test]
+fn results_with_a_variable_late_beside_closed_functions_are_decided() {
+    for n in [0, 1, 4] {
+        let (left, right) = late_variable_results(n);
+        assert!(left.subtype(&right), "{n}");
+        assert!(!right.subtype(&left), "{n}");
+    }
+}
+
+/// A nest of `n` function types `G(n - 1)`, `G(0)` being `(int -> last)` and `G(k + 1)`
+/// `(int -> (1, G(k)))`, with `last` `1` on the left and `int` on the right
+/// (BENCH-closed-form-late-variable). Inside the comparison of the outer two, each `G(k)` is
+/// read as a variable that stands for a function with no variable, so `closed_form` puts it
+/// back and `form_verdict` compares the pair as written, and when they do not fit, the search
+/// for a cover compares the same two results again. The left is a subtype, and not back.
+fn nested_function_results(n: usize, last: &str) -> zedc::check::ty::Ty {
+    use zedc::check::read::parse_type;
+    let mut text = format!("type G0 = (int -> {last});\n");
+    for k in 1..n {
+        text.push_str(&format!("type G{k} = (int -> (1, G{}));\n", k - 1));
+    }
+    text.push_str(&format!("(int -> (1, G{}))", n - 1));
+    parse_type(&text).unwrap()
+}
+
+/// `nested_function_results` with each result holding besides a row `R(n)` of `n + 1`
+/// functions, shared by every level: `R(0)` is `((int -> int), 1)` and `R(i + 1)`
+/// `((int -> int), R(i))`. Each of the `n` comparisons of function types reads `R(n)` again.
+fn nested_function_results_beside_a_row(n: usize, last: &str) -> zedc::check::ty::Ty {
+    use zedc::check::read::parse_type;
+    let mut text = "type R0 = ((int -> int), 1);\n".to_string();
+    for i in 1..=n {
+        text.push_str(&format!("type R{i} = ((int -> int), R{});\n", i - 1));
+    }
+    text.push_str(&format!("type G0 = (int -> (R{n}, {last}));\n"));
+    for k in 1..n {
+        let g = format!("type G{k} = (int -> (R{n}, ((int -> int), G{})));\n", k - 1);
+        text.push_str(&g);
+    }
+    text.push_str(&format!("(int -> (R{n}, ((int -> int), G{})))", n - 1));
+    parse_type(&text).unwrap()
+}
+
+/// The small instances of `bench::nested_function_results_are_compared_in_linear_time` and
+/// its row of functions beside each level. Before `Cx::fitted_written`, the false judgments
+/// cost O(2^n): `n` 12 took 1.1 s without the row and 13.2 s with it.
+#[test]
+fn nested_function_results_beside_closed_functions_are_decided() {
+    for n in [1, 2, 3, 6] {
+        let (left, right) = (
+            nested_function_results(n, "1"),
+            nested_function_results(n, "int"),
+        );
+        assert!(left.subtype(&right), "{n}");
+        assert!(!right.subtype(&left), "{n}");
+        let left = nested_function_results_beside_a_row(n, "1");
+        let right = nested_function_results_beside_a_row(n, "int");
+        assert!(left.subtype(&right), "row {n}");
+        assert!(!right.subtype(&left), "row {n}");
+    }
 }
 
 /// A union of `n` rows `((#_, i) \ (#a, i), x)`, each a set of every atom nested beside `x`,

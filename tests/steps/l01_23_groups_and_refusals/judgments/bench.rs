@@ -274,6 +274,53 @@ fn nested_sets_of_every_atom_in_results_are_cut_in_linear_time() {
     );
 }
 
+/// The results of `late_variable_results(n)` are compared at each of their `n` levels with a
+/// function with no variable in the comparison's state, and the first variable that is no
+/// such function, `T`, lies at the bottom, last in the walk of each level
+/// (BENCH-closed-form-late-variable): `closed_binds` must not walk the whole level below at
+/// each level.
+#[test]
+fn results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time() {
+    let n = 256;
+    let pairs = scaling::inputs(n, late_variable_results);
+    scaling::check(
+        "results of n levels with a variable last, beside functions with no variable",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}
+
+/// A nest of `n` function types, each result holding the next, compared both ways
+/// (BENCH-closed-form-late-variable, `nested_function_results`): the false one searches for a
+/// cover after each failed fit, which compares the same results again, and the verdict kept by
+/// `Cx::fitted_written` keeps it linear. With that memo off, the false judgment at n 64 did not
+/// end in 60 s (negative control, 2026-11-15); with it, 8.0 times at 8n both ways.
+#[test]
+fn nested_function_results_are_compared_in_linear_time() {
+    let n = 64;
+    let pairs = scaling::inputs(n, |n| {
+        (
+            nested_function_results(n, "1"),
+            nested_function_results(n, "int"),
+        )
+    });
+    scaling::check("a nest of n function types, left within right", n, |m| {
+        let (left, right) = &pairs[&m];
+        assert!(left.subtype(right));
+    });
+    scaling::check(
+        "a nest of n function types, right not within left",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(!right.subtype(left));
+        },
+    );
+}
+
 /// `nested_sets_of_every_atom_are_cut_in_linear_time` against the union of the one shape and
 /// `(1, 2)` (PERF-types-cut-rows-union-scaling): the kernel splits the first components into
 /// the class of the `n` nested sets and that of `1`, and decides the class of the nested sets
