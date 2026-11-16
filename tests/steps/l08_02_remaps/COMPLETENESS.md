@@ -68,7 +68,7 @@ this group when they pass.
 
 ## Source-level tests
 
-All 191 tests of the group pass (2026-11-15, REDUCE-generic-identity-values).
+All 214 tests of the group pass, the 35 benchmarks run apart (2026-11-15, RANGE-result-hull).
 
 | Case | Covering tests |
 |---|---|

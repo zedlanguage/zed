@@ -2869,6 +2869,7 @@ impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
             own: s.own.clone(),
             held: s.held.clone(),
             named: s.named,
+            hull: s.hull.clone(),
             facts: Facts::default(),
         });
         self.families.insert(Arc::as_ptr(s), made.clone());
