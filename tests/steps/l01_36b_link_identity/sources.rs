@@ -86,14 +86,28 @@ pub(super) fn hash(krate: &Path) -> [u8; 32] {
 #[test]
 fn the_runtime_library_names_the_sources_it_was_built_from() {
     let native = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/zed-native");
-    let id = build_id(&std::env::current_exe().unwrap()).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let id = build_id(&exe).unwrap();
+    let read = sources::of(&native).unwrap().read;
+    // The sources as they are now are those of the build only if none changed since; a run on
+    // a checkout edited after its build (FAIL-l01-36b-link-identity-flake) fails here, and
+    // names the files written after this executable.
+    let built = std::fs::metadata(&exe).unwrap().modified().unwrap();
+    let later: Vec<_> = read
+        .iter()
+        .filter(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t > built)
+        })
+        .collect();
     assert!(
         id.ends_with(&hash(&native)),
-        "the section of this test's zed-native ends with the hash of its sources as they are now"
+        "the section of this test's zed-native ends with the hash of its sources as they are \
+         now; written after this test executable: {later:?}"
     );
     // zedc's sources, through which zed-native depends on them, and a file zedc includes
     // from outside every crate, are among them; a test's sources are not.
-    let read = sources::of(&native).unwrap().read;
     let root = native.join("../..").canonicalize().unwrap();
     for wanted in [
         "crates/zed-native/src/link.rs",

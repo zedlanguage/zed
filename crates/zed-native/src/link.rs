@@ -391,15 +391,19 @@ fn hash_file(path: &Path) -> Result<blake3::Hash, String> {
 /// place: the bytes of the note's descriptor, which nothing else in the file depends on. The
 /// note is found by its section, and the descriptor in it by its bytes. False if `exe` has no
 /// such note.
+///
+/// The note is found through a file opened only for reading, and the key is written by `dd`,
+/// a process of its own (FAIL-l01-36b-link-identity-flake). A file this process held open for
+/// writing would be held open, for writing, by each child another thread of this process forks
+/// at that moment, until the child reaches exec; running `exe` while one such child has not,
+/// which a loaded machine can delay by many milliseconds, fails with "Text file busy"
+/// (ETXTBSY), in the build's caller or in any process that runs the output at once. A process
+/// that runs builds on several threads and runs what they build, as the tests do, met it. The
+/// cost is one spawn, about a millisecond, beside a link of a second or more.
 fn write_build_id(exe: &Path, partial: &blake3::Hash, key: &blake3::Hash) -> Result<bool, String> {
     use object::{Object as _, ObjectSection as _};
-    use std::os::unix::fs::FileExt as _;
     let at = |e: &dyn std::fmt::Display| format!("{}: {e}", exe.display());
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(exe)
-        .map_err(|e| at(&e))?;
+    let mut file = std::fs::File::open(exe).map_err(|e| at(&e))?;
     let offset = {
         let cache = object::ReadCache::new(&mut file);
         let elf = object::File::parse(&cache).map_err(|e| at(&e))?;
@@ -413,12 +417,43 @@ fn write_build_id(exe: &Path, partial: &blake3::Hash, key: &blake3::Hash) -> Res
             Some(start + k as u64)
         })
     };
+    drop(file);
     let Some(offset) = offset else {
         return Ok(false);
     };
-    file.write_all_at(key.as_bytes(), offset)
-        .map_err(|e| at(&e))?;
-    Ok(true)
+    // `bs=1` with `seek` and `count` in bytes, as POSIX defines them; `conv=notrunc` leaves
+    // the rest of the file.
+    let mut of = OsString::from("of=");
+    of.push(exe);
+    let mut dd = Command::new("dd")
+        .arg(of)
+        .args([
+            "bs=1".to_string(),
+            format!("seek={offset}"),
+            format!("count={}", blake3::OUT_LEN),
+            "conv=notrunc".to_string(),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "zedc could not run `dd` to write the build ID of {} ({e}). Repair: install \
+                 coreutils, which hold `dd`, or put the directory holding `dd` on PATH",
+                exe.display()
+            )
+        })?;
+    let wrote = dd.stdin.take().map(|mut s| s.write_all(key.as_bytes()));
+    let done = dd.wait_with_output().map_err(|e| at(&e))?;
+    match wrote {
+        Some(Ok(())) if done.status.success() => Ok(true),
+        _ => Err(at(&format!(
+            "`dd` could not write the build ID ({}): {}",
+            done.status,
+            String::from_utf8_lossy(&done.stderr).trim_end()
+        ))),
+    }
 }
 
 /// The paths a linker's dependency file (`--dependency-file`) lists as the files it read, in
