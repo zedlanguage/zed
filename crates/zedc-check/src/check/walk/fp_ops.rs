@@ -374,14 +374,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             for a in &mut s.arrows {
                 a.result = a.result.union(&not_found);
             }
-            s.dense = false;
+            s.dense = Dense::No;
             s.word = None;
             s.needs = Vec::new();
             s.note_held();
             runs = runs.union(&Ty::func(Arc::new(s)));
         }
-        // The runs are ranked from 0, so the keys are one integer interval, as a range's from
-        // `0` are (`Ck::range_end`).
+        // The runs are ranked from 0, every rank present, so the keys are the ranks `0 ..< n`,
+        // as a range's from `0` are (`Ck::range_end`).
         let int = Ty::carrier(Carrier::Int);
         let mut outer = Sig::one(
             super::super::positional(1),
@@ -390,7 +390,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
         outer.arrows[0].partial = true;
         outer.data = true;
-        outer.dense = true;
+        outer.dense = Dense::Ranks;
         outer.note_held();
         Some((out.union(&Ty::func(Arc::new(outer))), gives))
     }
