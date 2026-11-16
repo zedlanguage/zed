@@ -1592,6 +1592,34 @@ fn a_set_of_every_atom_beside_a_function_holding_an_outer_variable_is_compared_a
     ]);
 }
 
+/// A function that reads alike in every environment (`int -> int`) beside one that holds the
+/// outer variable (`T -> T`), on either side, over two carriers: compared by the variables
+/// they are read as, where one of them holds `T` (`Comparing::fits_named`). An attempt to
+/// break `reads_alike_anywhere`: a function written alike on both sides is equal only where
+/// both read alike, so `T -> T` read on each side is never taken for `int -> int`, and the
+/// carrier `f64` of `T` makes the two differ. The cases with `T -> T` on the left and
+/// `int -> int` on the right are wrong on main for another cause and are left to row
+/// FAIL-types-result-fn-outer-binding.
+#[test]
+fn functions_reading_alike_or_holding_the_outer_variable_are_compared_by_their_readings() {
+    let d = "((#_, 1) \\ (#a, 1))";
+    let generic =
+        |inner: &str, set: &str| format!("(T -> ({set} | (1, ({inner}))) for T in int | f64)");
+    let (s_tt, s_ii) = (generic("T -> T", d), generic("int -> int", d));
+    let (q_tt, q_ii) = (
+        generic("T -> T", "(#_, 1)"),
+        generic("int -> int", "(#_, 1)"),
+    );
+    let (p_tt, p_ii) = (generic("T -> T", "(1, 1)"), generic("int -> int", "(1, 1)"));
+    judge(&[
+        (&p_ii, &p_tt, false),
+        (&s_tt, &q_tt, true),
+        (&s_ii, &q_ii, true),
+        (&s_ii, &q_tt, false),
+        (&q_tt, &s_tt, false),
+    ]);
+}
+
 /// A generic function over `(#k0 | #k1, T)` within one arrow per atom
 /// (FAIL-types-generic-arrow-overload-cover).
 #[test]

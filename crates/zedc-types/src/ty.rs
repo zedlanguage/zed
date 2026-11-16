@@ -4887,8 +4887,8 @@ struct Cx<'s> {
     /// as a binding of a variable there, is read as it was where it came from.
     fns: BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
     /// The variables of `fns` whose function reads alike in every environment: its reading
-    /// names none of the variables it holds at any depth ([`reads_alike_anywhere`]). These are
-    /// the only ones [`Comparing::closed_form`] puts back, so with none it has nothing to do.
+    /// names none of the variables it holds at any depth ([`reads_alike_anywhere`]).
+    /// [`Comparing::closed_form`] puts these back as written and the others as tokens.
     closed: HashSet<Arc<str>>,
     /// The names of `rigid` and `fns` made by the comparisons open now, last made last.
     made: Vec<Arc<str>>,
@@ -7051,7 +7051,7 @@ impl<'m, 's> Comparing<'m, 's> {
                     None => {
                         let d = match near {
                             Some((near, whole, _)) => self.near_form(t, near, whole).await,
-                            None => self.by_form(t, other).await,
+                            None => self.by_form(t, other, None).await,
                         };
                         let d = match d {
                             Some(d) => Some(d),
@@ -7076,8 +7076,9 @@ impl<'m, 's> Comparing<'m, 's> {
     /// Whether the scalars, atoms with their payloads, kind-wide part and tuples of `t` are all
     /// in `other`, decided by the kernel on the normal forms of the two sides ([`Forms`]), or
     /// nothing where the forms are not made or the kernel refused. False, with no pair tried,
-    /// for the class [`Forms::tie`] names.
-    async fn by_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
+    /// for the class [`Forms::tie`] names. `named` gives the variables the functions stand for,
+    /// where they were put in place of them ([`Comparing::closed_form`]).
+    async fn by_form(&'m self, t: &Ty, other: &Ty, named: Option<&Named>) -> Option<bool> {
         if other.dynamic {
             return Some(true);
         }
@@ -7089,16 +7090,48 @@ impl<'m, 's> Comparing<'m, 's> {
             (Some(a), Some(b)) => a.subtype_verdict(&b),
             _ => {
                 let right = Right::of(other)?;
-                self.form_verdict(t, other, &right.fns, &right).await?
+                self.form_verdict(t, other, &right.fns, &right, named)
+                    .await?
             }
         };
         held(verdict)
     }
 
     /// [`Comparing::by_form`] of `t` and `other` with each variable outside their functions
-    /// that stands for a function that reads alike in every environment
-    /// ([`reads_alike_anywhere`], kept in [`Cx::closed`] by [`Cx::read`]) replaced by that
-    /// function; nothing where there is no such variable.
+    /// that stands for a function ([`Cx::fns`]) replaced: by that function where it reads alike
+    /// in every environment ([`reads_alike_anywhere`], kept in [`Cx::closed`] by [`Cx::read`]),
+    /// else by a token of its own ([`fn_token`]) that [`Comparing::fits_named`] compares by the
+    /// variable; nothing where there is no such variable.
+    ///
+    /// Proof that a yes is sound (FAIL-closed-form-outer-variable). Write `S(x)` for the set of
+    /// functions a variable `x` of [`Cx::fns`] stands for: its signature read by its
+    /// environment. Put back, each function at a place of the forms is either a function `s`
+    /// of a variable in [`Cx::closed`], or the token of a variable `x` not in it; write `S(f)`
+    /// for `S(x)` of the variable `named` keeps for `f`. For a closed `s`, `S(s)` is `s` read
+    /// by the empty environment, since its reading names none of the variables it holds
+    /// ([`reads_alike_anywhere`]); so two variables put back as one equal `s` stand for one
+    /// set, and a token, named by a variable whose name holds a quote, which no name a program
+    /// writes does, equals no written function and no other token. [`Forms`] reads of a
+    /// function only its equality and hash: each function of `t` is a mark `i` of its own, and
+    /// each function `g` of `other` at a place holds the marks of the functions of `t` there
+    /// that equal it or that fit it by [`Comparing::fits_named`]. Each of those gives yes only
+    /// where `S(f)` is within `S(g)`: [`Comparing::fits_written`] compares two closed
+    /// functions as written, which reads each by the empty environment, and
+    /// [`Comparing::fits_read`] compares the two variables as each is read, as [`accepts`]
+    /// does. Let `γ` take a form to values, a mark `i` to `S(f)` of its function and every
+    /// other part to itself. The form of `t` is made of the marks and parts with no function by
+    /// union, tuples and payloads, and a difference only of a part that holds no function (a
+    /// row or shape holding a function has no exact kernel type, [`RowData::exact`]), so `γ`
+    /// of it is `t`. The form of `other` is made the same way, each `g` replaced by its marks,
+    /// and `γ` of those is within `S(g)`, so `γ` of it is within `other`: union, tuples and
+    /// payloads keep the order of their parts, and a difference whose part taken away holds no
+    /// mark is `γ` of the first part without that part. The kernel takes distinct marks to
+    /// share no value; where two sets `S` share some, a form of tuples and unions within
+    /// another with the marks apart is still within it with each mark read as its set, since
+    /// each value of the first is in the set of some tuple of marks of the first, a tuple of
+    /// the second too, whose sets hold that value. So `form(t)` within `form(other)` gives `t`
+    /// within `other`. What is given up: a function of `t` within the union of two functions
+    /// of `other` and within neither alone is found not to fit, as at a place of one shape.
     ///
     /// Why (TEST-nested-marks-struct-parts): inside a comparison of function types, each
     /// function that a parameter or result holds is read as a variable, so the forms were not
@@ -7111,11 +7144,13 @@ impl<'m, 's> Comparing<'m, 's> {
     /// TEST-nested-marks-fn-vars that covers a function holding variables of its own only, as
     /// `(T -> T for T in int)` beside a set of every atom
     /// (`a_set_of_every_atom_beside_a_function_holding_a_variable_is_compared_as_a_set`), not
-    /// only one with no variable; one holding a variable of the function type around it is
-    /// still left as its variable (FAIL-closed-form-outer-variable).
+    /// only one with no variable; until FAIL-closed-form-outer-variable one holding a variable
+    /// of the function type around it, as `T -> T` in `T -> (D | (1, T -> T)) for T in int`,
+    /// was left as its variable, so its comparison fell to the rule of one shape and the set
+    /// `D` was not found within `(#_, 1)`. Such a function is now a token.
     ///
-    /// Complexity tradeoff: no walk at all while no function holding no variable is read
-    /// ([`Cx::closed`] is 0), as in every comparison outside function types; else one walk of
+    /// Complexity tradeoff: no walk at all while no function is read ([`Cx::fns`] is empty),
+    /// as in every comparison outside function types; else one walk of
     /// each side outside its functions, entering only the rows and payloads that hold a
     /// variable, that stops at the first variable which leaves [`Comparing::by_form`] with no
     /// form ([`closed_binds`]), a lookup of each variable found, and a rebuild of the part
@@ -7130,15 +7165,37 @@ impl<'m, 's> Comparing<'m, 's> {
     /// 8.2 times at 8n). A nest of n function types, each result holding the next beside a
     /// shared row of n functions, costs O(n^2), 52.9 times at 8n, and 53.0 times with this
     /// step left out: each of the n comparisons reads and compares the shared row again
-    /// (PERF-types-shared-row-each-level). What is given up: a function that holds a variable
-    /// of the function type around it is left as its variable, so such a comparison is still
-    /// tried by the rule of one shape (FAIL-closed-form-outer-variable). The complete solution
-    /// would key the forms by the variables read as functions and compare those by
-    /// [`Comparing::fits_read`].
+    /// (PERF-types-shared-row-each-level). A token costs O(1) to make and is compared by
+    /// [`Comparing::fits_read`], whose verdict is kept by the pair of names, as the rule of one
+    /// shape compares it.
     async fn closed_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
-        let binds = closed_binds(&self.cx.borrow(), t, other)?;
+        let (binds, named) = closed_binds(&self.cx.borrow(), t, other)?;
         let (t, other) = (t.replace_outside(&binds), other.replace_outside(&binds));
-        self.by_form(&t, &other).await
+        self.by_form(&t, &other, Some(&named)).await
+    }
+
+    /// Whether the function `f` fits `g`, in the forms of [`Comparing::form_verdict`]: by the
+    /// variables they stand for ([`Comparing::fits_read`]) where either is the token of a
+    /// variable that does not read alike in every environment (`named`, [`closed_binds`]), and
+    /// as written ([`Comparing::fits_written`]) otherwise; nothing where a token meets a
+    /// function that stands for no variable, which [`Cx::read`] leaves none of.
+    async fn fits_named(
+        &'m self,
+        f: &Arc<Sig>,
+        g: &Arc<Sig>,
+        named: Option<&Named>,
+    ) -> Option<bool> {
+        let (vf, vg) = match named {
+            Some(n) => (n.get(f), n.get(g)),
+            None => (None, None),
+        };
+        let token = |v: Option<&(Arc<str>, bool)>| v.is_some_and(|v| !v.1);
+        if !token(vf) && !token(vg) {
+            return Some(self.fits_written(f, g).await);
+        }
+        let ((v, _), (w, _)) = (vf?, vg?);
+        let (s, se) = self.cx.borrow().fns.get(v)?.clone();
+        Some(self.fits_read(v, &s, &se, w).await)
     }
 
     /// [`Comparing::by_form`] of the tuple `t` and the type `whole` reads, from `near`: `whole`
@@ -7161,7 +7218,7 @@ impl<'m, 's> Comparing<'m, 's> {
             _ => {
                 let right = whole.right.as_ref()?;
                 let near_fns = Forms::fns(near, false, &mut HashSet::new())?;
-                self.form_verdict(t, near, &near_fns, right).await?
+                self.form_verdict(t, near, &near_fns, right, None).await?
             }
         };
         held(verdict)
@@ -7171,13 +7228,14 @@ impl<'m, 's> Comparing<'m, 's> {
     /// where they are not made; [`Verdict::Inhabited`], with no pair tried, for the class
     /// [`Forms::tied`] names. `other` is the type compared with, or the part of it that may
     /// share a value with `t`, whose functions at each place are `fns`; `whole` reads the type
-    /// compared with.
+    /// compared with. Two functions are compared by [`Comparing::fits_named`], with `named`.
     async fn form_verdict(
         &'m self,
         t: &Ty,
         other: &Ty,
         fns: &PlaceFns,
         whole: &Right,
+        named: Option<&Named>,
     ) -> Option<Verdict> {
         let mut forms = Forms::default();
         let left = Forms::fns(t, true, &mut forms.fields)?;
@@ -7236,7 +7294,7 @@ impl<'m, 's> Comparing<'m, 's> {
         for (spot, fs) in left.spots(&whole.fns) {
             if let Some(pairs) = starred.get(&spot) {
                 for (f, g) in pairs {
-                    let fit = f == g || self.fits_written(f, g).await;
+                    let fit = f == g || self.fits_named(f, g, named).await?;
                     if fit {
                         let i = forms.id(f);
                         forms.hold(g, i);
@@ -7261,7 +7319,7 @@ impl<'m, 's> Comparing<'m, 's> {
                     fit.push(forms.id(g));
                 }
                 for f in compared.iter().filter(|f| **f != g) {
-                    if self.fits_written(f, g).await {
+                    if self.fits_named(f, g, named).await? {
                         fit.push(forms.id(f));
                     }
                 }
@@ -8500,10 +8558,11 @@ fn held(verdict: Verdict) -> Option<bool> {
 }
 
 /// The variables outside the functions of `t` and `other` that stand for a function of
-/// `cx.fns` that reads alike in every environment ([`Cx::closed`]), each bound to that
-/// function, for
-/// [`Comparing::closed_form`]: none where there is no such variable, or where
-/// [`Comparing::by_form`] makes no form of the two with them put back.
+/// `cx.fns`, each bound to that function where it reads alike in every environment
+/// ([`Cx::closed`]) and to a token of its own otherwise ([`fn_token`]), with the variable of
+/// each function so put ([`Named`]), for [`Comparing::closed_form`]: none where there is no
+/// such variable, where [`Comparing::by_form`] makes no form of the two with them put back,
+/// or where a token equals a function put back for another variable.
 ///
 /// Why stopping at the first other variable gives what `by_form` of the types put back gives
 /// (unless `other` holds the unknown, where `by_form` answers true whatever it holds, and the
@@ -8529,8 +8588,8 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// after a first visit that walked them), so by induction on depth it reaches every component
 /// this walk reaches, and returns none at the first that holds a variable.
 ///
-/// Complexity tradeoff: O(1) while `cx` holds no function with no variable
-/// ([`Cx::closed`]); else the nodes entered before the first variable that stops it, O(size)
+/// Complexity tradeoff: O(1) while `cx` holds no function ([`Cx::fns`]); else the nodes
+/// entered before the first variable that stops it, O(size)
 /// at most. The naive walk, every variable of both sides collected before any is looked up,
 /// cost O(size) at each comparison whose forms were not made: O(n^2) for a type of n rows
 /// compared at each of its n levels (FAIL-closed-form-shared-rows-scaling). What is given
@@ -8541,8 +8600,8 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// A memo per node within one comparison was not added: each comparison of function types
 /// reads its sides afresh, with new names, so a shared row read at n levels is n distinct
 /// read rows and a memo by node would not hit (PERF-types-shared-row-each-level).
-fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
-    if cx.closed.is_empty() {
+fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<(Binds, Named)> {
+    if cx.fns.is_empty() {
         return None;
     }
     enum Walk<'a> {
@@ -8555,25 +8614,41 @@ fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
         rows.chain(c.payload_shapes().filter(|s| s.open).map(Walk::Shape))
     }
     let mut binds = Binds::new();
-    // Binds each variable of `c` that stands for a function reading alike in every
-    // environment; false at the first that does not, when `stops`.
+    let mut named = Named::new();
+    // Binds each variable of `c` that stands for a function: to that function where it reads
+    // alike in every environment, else to a token of its own ([`fn_token`]). False at the
+    // first other variable, when `stops`, and at a token equal to the function or token of
+    // another variable (`named`), which only a function written as a token could be.
     let mut look = |c: &Ty, stops: bool| {
         for v in &c.vars {
             match cx.fns.get(v) {
-                Some((s, _)) if cx.closed.contains(v) => {
-                    binds.or_insert_with(v.clone(), || Ty::func(s.clone()));
+                Some(_) if binds.map.contains_key(v) => {}
+                Some((s, _)) => {
+                    let closed = cx.closed.contains(v);
+                    let f = match closed {
+                        true => s.clone(),
+                        false => fn_token(v),
+                    };
+                    use std::collections::hash_map::Entry as At;
+                    match named.entry(f.clone()) {
+                        At::Occupied(e) if !(closed && e.get().1) => return false,
+                        At::Occupied(_) => {}
+                        At::Vacant(e) => {
+                            e.insert((v.clone(), closed));
+                        }
+                    }
+                    binds.insert(v.clone(), Ty::func(f));
                 }
-                _ if stops => return false,
-                _ => {}
+                None if stops => return false,
+                None => {}
             }
         }
         true
     };
     let stop = !other.dynamic;
-    if !look(other, stop) {
+    if !look(other, stop) || !look(t, false) {
         return None;
     }
-    look(t, false);
     let mut entered: HashSet<NodeId> = HashSet::new();
     let mut stack: Vec<Walk> = below(t).chain(below(other)).collect();
     stack.reverse();
@@ -8594,7 +8669,24 @@ fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
         }
         stack[from..].reverse();
     }
-    (!binds.is_empty()).then_some(binds)
+    (!binds.is_empty()).then_some((binds, named))
+}
+
+/// The functions [`closed_binds`] puts in place of the variables read as functions, each with
+/// its variable and whether that variable reads alike in every environment ([`Cx::closed`]).
+/// Two variables share an entry only where both read alike everywhere and were read from one
+/// function.
+type Named = HashMap<Arc<Sig>, (Arc<str>, bool)>;
+
+/// A function that stands for the variable `v`, read as a function that does not read alike
+/// in every environment, in the forms of [`Comparing::closed_form`]: one arrow of no
+/// parameters, named by `v`, so it equals no other variable's token. [`Forms`] reads of a
+/// function only its equality and hash, and [`Comparing::form_verdict`] compares a token by
+/// the variable it stands for ([`Comparing::fits_named`]), so its arrow is never read.
+fn fn_token(v: &Arc<str>) -> Arc<Sig> {
+    let mut s = Sig::one(Vec::new(), Vec::new(), Ty::empty());
+    s.word = Some(v.clone());
+    Arc::new(s)
 }
 
 /// What [`Forms`] reads of the type of the expected side: the functions at each place of its
