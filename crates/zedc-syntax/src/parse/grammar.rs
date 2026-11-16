@@ -336,7 +336,9 @@ fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
                 let c = u32::from_str_radix(&hex, 16)
                     .ok()
                     .and_then(char::from_u32)
-                    .ok_or_else(|| format!("`\\u{{{hex}}}` in a character class is no character"))?;
+                    .ok_or_else(|| {
+                        format!("`\\u{{{hex}}}` in a character class is no character")
+                    })?;
                 chars.push(Some(c));
                 i += 4 + close;
             }
@@ -362,7 +364,9 @@ fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
         if k + 2 < chars.len() && chars[k + 1].is_none() {
             let high = chars[k + 2].ok_or("a character class holds `--`")?;
             if high < low {
-                return Err(format!("the range `{low}-{high}` of a character class runs downward"));
+                return Err(format!(
+                    "the range `{low}-{high}` of a character class runs downward"
+                ));
             }
             ranges.push((low, high));
             k += 3;
