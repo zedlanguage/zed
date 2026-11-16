@@ -1915,8 +1915,9 @@ fn a_sum_of_conditionals_tied_jointly_is_decided_for_every_constant() {
 
 /// The cycle `v_i + 20 >= v_(i+1)` over `v0` to `v3` with `v0 + v1 + v2 + v3 >= 20` as the base,
 /// and one disjunction of `k` disjuncts, the `j`-th the cycle's rows and `u_j >= 0`. Each
-/// disjunct holds at the base's point, so `settle_as_sets` marks it proven
-/// (FAIL-omega-alone-retry-scaling, FAIL-alone-point-refused-at-model).
+/// disjunct holds at the base's point, where `settle_as_sets` once marked it proven with no
+/// solve; it is now tested like any other (FAIL-omega-alone-retry-scaling,
+/// FAIL-alone-point-refused-at-model, FAIL-settle-proven-marks-names).
 pub(super) fn disjuncts_a_solve_refuses(k: usize) -> Formula {
     let c = Lin::constant;
     let v: Vec<Lin> = (0..4)
@@ -1947,6 +1948,45 @@ fn a_disjunction_decide_proves_has_a_point() {
         assert_eq!(decide(&f), Ok(true), "k = {k}");
         let m = satisfiable(&f).unwrap().expect("a point");
         assert!(f.holds(&m), "k = {k}: {m:?}");
+    }
+}
+
+/// FAIL-settle-proven-marks-names: `settle_as_sets` marked a disjunct proven with no solve
+/// when it held at the point `solve` found for the base, and that point depends on the names,
+/// so a disjunct `solve` refuses could be marked under one naming and not under another, and
+/// `decide` answer under one and refuse under the other. Every disjunct is now tested. Each
+/// disjunct of [`disjuncts_a_solve_refuses`] holds at the base's point; under all 24 namings of
+/// `v0` to `v3`, with the `u_j` named in either order, `decide` and `satisfiable` give one
+/// answer. No formula was found on which the marks differed before the change (seeds 4,000 to
+/// 11,999 of `one_variable_boundary_modes_do_not_depend_on_names` and the probes of the plan
+/// row), and this test passed before it too.
+#[test]
+fn a_disjunct_proven_at_the_base_point_gives_one_answer_in_every_naming() {
+    for k in [1, 2, 3] {
+        let f = disjuncts_a_solve_refuses(k);
+        each_permutation(4, |p| {
+            for reversed in [false, true] {
+                let g = f.map_cons(&|c: &Con| {
+                    let mut lin = Lin::constant(c.lin.constant.clone());
+                    for (a, n) in &c.lin.terms {
+                        let s = a.to_string();
+                        let i: usize = s[1..].parse().unwrap();
+                        let name = match (&s[..1], reversed) {
+                            ("v", _) => format!("v{}", p[i]),
+                            (_, false) => format!("u{i}"),
+                            (_, true) => format!("u{}", k - 1 - i),
+                        };
+                        lin = lin.plus(&Lin::atom(Atom::Sym(name.into())).times(n.clone()));
+                    }
+                    Formula::Con(Con { lin, rel: c.rel })
+                });
+                assert_eq!(decide(&g), Ok(true), "{g}");
+                let m = satisfiable(&g)
+                    .unwrap_or_else(|e| panic!("{g}: {e}"))
+                    .expect("a point");
+                assert!(g.holds(&m), "{g}: {m:?}");
+            }
+        });
     }
 }
 

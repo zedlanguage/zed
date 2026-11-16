@@ -2960,18 +2960,22 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// order, [`solve`] answers by the rows and not their order or names, and the base after each
 /// stage is the same set of rows ([`Linked::meet`] keeps the least constant for a term and
 /// comparison whatever the order), so by induction on the stages and rounds every naming
-/// gives the same rounds, the same disjuncts removed and the same answer. A disjunct whose
-/// constraints hold at the point found for the base is kept untested, as [`settle`] keeps it,
-/// only while that point holds every row added to the base since: it is then a point of the
-/// base and the disjunct, so the test would keep it too, and the point, which may depend on
-/// the names, changes no result. The cost is that of [`settle`] with the points of later
-/// stages unused, at most one test of each disjunct for each round.
+/// gives the same rounds, the same disjuncts removed and the same answer. No disjunct is kept
+/// untested because it holds at a point found for the base, as [`settle`] keeps it: that point
+/// depends on the names, so a disjunct it holds would be marked proven ([`AsSets::proven`])
+/// under one naming and, where [`solve`] refuses its test, not under another
+/// (FAIL-settle-proven-marks-names). The cost is at most one test of each disjunct for each
+/// round.
 ///
-/// While the point holds, a disjunct is tested first against the base projected onto the
-/// atoms of its disjunction ([`stage_kernels`]), as [`settle`] and [`project_parts`] test
-/// theirs, and against the base rows linked to it only when the solver refuses that. The
-/// projection has a point with the disjunct exactly when the base has one, so where both
-/// tests answer they answer alike, and the answer is a fact of the rows, not of their order.
+/// A disjunct is tested first against the base projected onto the atoms of its disjunction
+/// ([`stage_kernels`]), as [`settle`] and [`project_parts`] test theirs, and against the base
+/// rows linked to it only when the solver refuses that. The projection has a point with the
+/// disjunct exactly when the base has one, so where both tests answer they answer alike, and
+/// the answer is a fact of the rows, not of their order. Not proved: that the solver refuses a
+/// projection under every naming alike. The projection's rows come from eliminations whose
+/// order follows the names and the order of the stage, so a disjunct whose projection the
+/// solver refuses under one naming and answers under another, and whose linked rows it
+/// refuses, would be marked proven under the second naming only.
 /// On a chain of `n` stages with a disjunction at each, every test read the whole chain
 /// before, `n` solves of `n` rows (COMPLEXITY.md PROJECT-dead2-quadratic).
 ///
@@ -2979,30 +2983,40 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// shown to have a point: [`AsSets::proven`] says which were. The last round adds nothing to
 /// the base (a round that adds rows is not the last), so each disjunct left was tested in it
 /// against the base as returned, and the marks of that round hold for the parts returned.
-// Complexity tradeoff: naive version, each disjunct the base's point missed is solved with
+// Complexity tradeoff: naive version, each disjunct is solved with
 // every base row linked to its atoms, a whole union-find group: on a chain of n stages, n
-// solves of n rows, O(n²) (40.6 times the instructions from 16 to 128 stages). Used: while the
-// point holds, a disjunct is tested first against the base projected by halves onto its own
+// solves of n rows, O(n²) (40.6 times the instructions from 16 to 128 stages). Used: a
+// disjunct is tested first against the base projected by halves onto its own
 // atoms (`stage_kernels`, `by_halves`), O((m + k) log k) for k disjunctions on a chain or
 // tree of m rows (11.0 times). Tradeoffs: a projection the solver refuses sends the question
 // to the whole group, O(n) that disjunct, as before; the hulls are unchanged. Tests
 // `l01_38_omega_test::omega::project_each_on_a_chained_pipeline_scales` and
 // `omega::pipeline_stage_hulls_match_the_code_before`; COMPLEXITY.md row
 // PROJECT-dead2-quadratic.
+// Complexity tradeoff (FAIL-settle-proven-marks-names): before, a disjunct that held at the
+// point `solve` found for the base was kept and marked proven with no solve, O(r) for its r
+// rows, and the projections were made only when some disjunct of the stage missed that point.
+// Now every disjunct is tested and every stage's projections are made, so the marks do not
+// depend on the names through that point. Cost: a stage whose disjuncts all held at the point
+// now pays its projections and one small solve for each disjunct, and the base is solved
+// without a model; the order of growth is unchanged. Measured (load 57 to 65, before → after):
+// `project_each_on_a_chained_pipeline_scales` 9.66 → 9.66 times at 8n, the same instructions;
+// `names::decide_on_disjuncts_a_solve_refuses_scales` 8.49 → 8.14, but 3.5 times the
+// instructions at each size (78.3 M → 274.3 M at 400 disjuncts), where every disjunct held at
+// the point and is now solved; `satisfiable_on_disjuncts_with_loose_rows_scales` 8.93 → 8.50,
+// 1.8 times the instructions. COMPLEXITY.md row FAIL-settle-proven-marks-names.
 fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
     let mut base = Linked::reduced(std::mem::take(&mut p.cons));
     loop {
-        let Some(model) = solve(&base.cons, !p.ors.is_empty())? else {
+        if solve(&base.cons, false)?.is_none() {
             return Ok(None);
-        };
+        }
         let mut proven: Vec<Vec<bool>> = Vec::new();
         if p.ors.is_empty() {
             p.cons = base.cons;
             return Ok(Some(AsSets { p, proven }));
         }
         let mut changed = false;
-        // Whether `model` is a point of the base as it now stands.
-        let mut at_model = true;
         let mut stage = std::mem::take(&mut p.ors);
         while !stage.is_empty() {
             let mut alone: Vec<Rc<Parts>> = Vec::new();
@@ -3019,7 +3033,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             let si = (!old_path() && stage.len() > 1 && dw.is_some())
                 .then(|| SlackIndex::of(&base.cons, &Near::default(), &stage))
                 .flatten();
-            let kernels = stage_kernels(&base, &stage, at_model.then_some(&model));
+            let kernels = stage_kernels(&base, &stage);
             for (ds, kernel) in stage.into_iter().zip(kernels) {
                 let n = ds.len();
                 // Each disjunct not shown empty, and whether it is shown to have a point.
@@ -3030,9 +3044,6 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
                             .is_some_and(|s| s.classify(&d) == SlackStatus::Refuted)
                         {
                             return None;
-                        }
-                        if at_model && d.cons.iter().all(|c| c.holds_linear(&model)) {
-                            return Some((d, true));
                         }
                         if let Some(ref dw) = dw
                             && let Some(ok) = dw.holds_unary(&d.cons)
@@ -3076,7 +3087,6 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             changed |= !alone.is_empty();
             stage = Vec::new();
             for d in &alone {
-                at_model &= d.cons.iter().all(|c| c.holds_linear(&model));
                 d.cons.iter().for_each(|c| {
                     base.meet(c.clone());
                 });
@@ -3091,21 +3101,13 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
 }
 
 /// For each disjunction of `stage`, the rows of `base` projected ([`by_halves`]) onto the atoms
-/// of its disjuncts' own constraints, when `model`, a point of the base, is given and a
-/// disjunct does not hold there, so that one is asked; otherwise `None` for each. The stage
+/// of its disjuncts' own constraints; `None` for each on the old path. The stage
 /// adds no rows to the base while it is tested, so every projection is of the base as the
 /// stage began. On a chain or a tree of `m` rows, `k` disjunctions cost O((m + k) log k)
 /// instead of a solve of the whole linked group for each disjunct.
-fn stage_kernels(
-    base: &Linked,
-    stage: &[Vec<Rc<Parts>>],
-    model: Option<&Model>,
-) -> Vec<Option<Linked>> {
+fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>> {
     let mut kernels: Vec<Option<Linked>> = stage.iter().map(|_| None).collect();
-    let asks = model.is_some_and(|m| {
-        (stage.iter().flatten()).any(|d| !d.cons.iter().all(|c| c.holds_linear(m)))
-    });
-    if !asks || old_path() {
+    if old_path() {
         return kernels;
     }
     let keep: Vec<BTreeSet<Atom>> = (stage.iter())
@@ -3128,8 +3130,9 @@ fn stage_kernels(
 
 /// The parts that [`settle_as_sets`] leaves, and for each disjunction left, in the order of
 /// `p.ors`, whether each of its disjuncts is shown to have a point with the base: [`solve`]
-/// found one with the base rows linked to it, or its constraints hold at a point of the base.
-/// A disjunct kept because [`solve`] refused it is not.
+/// found one with the base projected onto its disjunction's atoms or with the base rows linked
+/// to it, or its unary rows fit the base's disjoint wide rows ([`slack::DisjointWide`]). A
+/// disjunct kept because [`solve`] refused it is not.
 struct AsSets {
     p: Parts,
     proven: Vec<Vec<bool>>,
@@ -3285,9 +3288,9 @@ impl Alone<'_> {
     /// disjuncts over a group of `r` rows costs up to `k` solves of `r` rows and a disjunct,
     /// O(k r) solved rows, only when the first `k - 1` systems are refused or have no point:
     /// a case the naive way refused or answered by the names. Settling tested each disjunct
-    /// not holding at the base's point against those `r` rows already ([`settle_as_sets`]), so
-    /// the bound exceeds settling's cost only for disjuncts it read at that point or through a
-    /// projection. COMPLEXITY.md row FAIL-omega-boundary-modes-flake.
+    /// against a projection of those `r` rows or against the rows themselves
+    /// ([`settle_as_sets`]), so the bound exceeds settling's cost only for disjuncts it read
+    /// through a projection. COMPLEXITY.md row FAIL-omega-boundary-modes-flake.
     fn point(&self) -> Result<Option<Model>, Refusal> {
         let point_of = |sys: &[&Con]| match solve(sys, true) {
             Ok(s) => Ok(s),
@@ -3334,8 +3337,7 @@ impl Alone<'_> {
 /// each has a disjunct with no disjunction of its own that `proven` marks; otherwise `None`.
 /// Only those disjuncts may be taken. Settling left disjuncts that it did not show empty,
 /// and `proven` ([`AsSets::proven`]) marks those shown to have a point with the base: each
-/// was tested against the rows linked to it, or holds at a point of the base as it now stands
-/// ([`settle_as_sets`]). A disjunct that [`solve`] refused is not marked and never taken,
+/// was tested against a projection of the base or the rows linked to it ([`settle_as_sets`]). A disjunct that [`solve`] refused is not marked and never taken,
 /// even when it comes first: taking it would read a refusal as a point. The rows a disjunct
 /// is linked to are linked to no other disjunction, so the points of separate groups
 /// combine into one point of the base with every disjunct taken. Whether `p` has such a
@@ -13318,8 +13320,9 @@ fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)
 ///
 /// Complexity tradeoff: only disjunctions shown removable by one disjunct over private atoms
 /// with unit coefficients are removed here; the rest are settled and searched ([`settle`],
-/// [`settle_as_sets`], [`pick`]), whose test of a disjunct that the base's point misses solves
-/// it with every base row linked to it. What is given up: a formula with many disjunctions
+/// [`settle_as_sets`], [`pick`]), whose test of a disjunct that the base's point misses (in
+/// [`settle_as_sets`], of every disjunct) solves it with a projection of the base or every base
+/// row linked to it. What is given up: a formula with many disjunctions
 /// linked through one group of base rows, none of them shown removable by this rule (their
 /// atoms shared, or with coefficients other than 1 or -1, or bounds that do not cancel), still
 /// costs a solve of the group for each such disjunct: quadratic in the formula. A base row over
