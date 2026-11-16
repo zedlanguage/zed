@@ -9357,6 +9357,87 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
         rel: c.rel,
     }
 }
+
+/// For the constraints taken that a repair has specialized at the model of [`pick`] or
+/// [`settle`] (each numbered by its place among those taken, and listed in [`Near::by_atom`]),
+/// the value at the model of the constraint's terms without its constant, an atom with no value
+/// counting 0 as in [`specialize_con`]. Kept as the model moves ([`TermValues::moved`]) and
+/// dropped when it is replaced ([`TermValues::clear`]). A constraint that [`Linked::meet`] puts
+/// in the place of another has the same terms, so its kept value stands.
+// Complexity tradeoff (FAIL-search-sum-ne-disjunctions-growth): naive version,
+// [`specialize_con`] on each constraint taken that reads a freed atom, which walks all `k` of
+// its terms: on a sum of `n` conditionals other than a constant, `sum(q_i) != k` beside
+// `(g_i <= t_i && q_i == 0) || (g_i >= t_i + 1 && q_i == 2)`, each of the `n` repairs specializes
+// the sum, `O(n)`, so `O(n²)` in all (13.8 times the instructions at 8n, 64 to 512). Used: the
+// terms' value is computed once, `O(k)`, when first asked, and moved by `coefficient * change`
+// for each atom the model changes, `O(log k)` per constraint reading it; a specialization then
+// costs `O(min(free, k) log k)`. The moves cost no more than the repairs that make them, which
+// walk the same constraints. What is given up: nothing, the specialized constraint is the one
+// [`specialize_con`] gives; a model changed without [`TermValues::moved`] or
+// [`TermValues::clear`] would give wrong repairs, so both callers do one at each change.
+// Tests: `l01_38_omega_test::bench::names::decide_scales_over_a_sum_of_conditionals_other_than_a_constant`.
+#[derive(Default)]
+struct TermValues(FxHashMap<usize, Int>);
+
+impl TermValues {
+    /// The model was replaced: no value kept holds.
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// The model `model` is about to take the values of `m`: each value kept of a constraint
+    /// that reads an atom whose value changes moves by its coefficient times the change.
+    fn moved(&mut self, acc: &[Con], near: &Near, model: &Model, m: &Model) {
+        if self.0.is_empty() {
+            return;
+        }
+        for (a, v) in m {
+            let old = model.get(a).cloned().unwrap_or(Int::ZERO);
+            if *v == old {
+                continue;
+            }
+            let change = v - &old;
+            for id in near.by_atom.get(a).into_iter().flatten() {
+                if let Some(x) = self.0.get_mut(id) {
+                    *x = &*x + &(&acc[*id].lin.terms[a] * &change);
+                }
+            }
+        }
+    }
+
+    /// `acc[id]` with each atom outside `free` replaced by its value in `model`: what
+    /// [`specialize_con`] gives, reading only the atoms of `free` (or the terms, the fewer).
+    fn specialize(&mut self, acc: &[Con], id: usize, free: &BTreeSet<Atom>, model: &Model) -> Con {
+        let c = &acc[id];
+        let all = self.0.entry(id).or_insert_with(|| {
+            (c.lin.terms.iter())
+                .filter_map(|(a, coef)| model.get(a).map(|v| coef * v))
+                .fold(Int::ZERO, |s, x| &s + &x)
+        });
+        let mut k = &c.lin.constant + &*all;
+        let mut terms = BTreeMap::new();
+        let mut keep = |a: &Atom, coef: &Int| {
+            if let Some(v) = model.get(a) {
+                k = &k - &(coef * v);
+            }
+            terms.insert(a.clone(), coef.clone());
+        };
+        if free.len() <= c.lin.terms.len() {
+            (free.iter())
+                .filter_map(|a| c.lin.terms.get(a).map(|coef| (a, coef)))
+                .for_each(|(a, coef)| keep(a, coef));
+        } else {
+            (c.lin.terms.iter())
+                .filter(|(a, _)| free.contains(*a))
+                .for_each(|(a, coef)| keep(a, coef));
+        }
+        Con {
+            lin: Lin { terms, constant: k },
+            rel: c.rel,
+        }
+    }
+}
+
 /// The atoms of `extra` that no constraint of two or more atoms taken so far reads, re-solved
 /// with every other atom held at `model`: with `extra` specialized there and those atoms'
 /// bounds. A point found is a point of the constraints taken with `extra`, since none of
@@ -9426,7 +9507,13 @@ fn own_repair_in(
 // it still runs when this finds nothing; the point found can differ from the one
 // [`local_repair`] would give (other variables keep their values), so a later choice of
 // [`pick`] can differ. Tests: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
-fn least_read_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
+fn least_read_repair(
+    acc: &[Con],
+    near: &Near,
+    values: &mut TermValues,
+    model: &Model,
+    extra: &[Con],
+) -> Option<Model> {
     let read = |a: &Atom| near.by_atom.get(a).map_or(0, Vec::len);
     let mut free: BTreeSet<Atom> = BTreeSet::new();
     let mut all: BTreeSet<&Atom> = BTreeSet::new();
@@ -9459,7 +9546,7 @@ fn least_read_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> 
         near.bounds(a, &mut local);
     }
     for id in ids {
-        local.push(specialize_con(&acc[id], &free, model));
+        local.push(values.specialize(acc, id, &free, model));
     }
     let mut m = solve_repair(&local, true).ok()??;
     for a in free {
@@ -9471,8 +9558,15 @@ fn least_read_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> 
 /// The variables of `extra` re-solved with their neighbors fixed at `model`: with `extra`, the
 /// constraints taken so far that link a variable of `extra` to others, specialized at `model`,
 /// and each variable's bounds. The fewest-read variables are tried first ([`least_read_repair`]).
-fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
-    if let Some(m) = least_read_repair(acc, near, model, extra) {
+/// `values` are kept at `model` ([`TermValues`]).
+fn local_repair(
+    acc: &[Con],
+    near: &Near,
+    values: &mut TermValues,
+    model: &Model,
+    extra: &[Con],
+) -> Option<Model> {
+    if let Some(m) = least_read_repair(acc, near, values, model, extra) {
         return Some(m);
     }
     let seed: BTreeSet<Atom> = extra
@@ -9510,7 +9604,7 @@ fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Optio
         return None;
     }
     for id in ids {
-        local.push(specialize_con(&acc[id], &seed, model));
+        local.push(values.specialize(acc, id, &seed, model));
     }
     let mut m = solve_repair(&local, true).ok()??;
     for a in seed {
@@ -9640,6 +9734,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // point of at the end.
     let mut took: Vec<&Parts> = Vec::new();
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
+    let mut values = TermValues::default();
     let mut acc = Linked::default();
     let mut near = Near::default();
     take(&p.cons, &mut acc, &mut near);
@@ -9710,6 +9805,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                 }
                 if !valid && kernel.is_none() {
                     model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                    values.clear();
                     stamp = fresh_stamp();
                     valid = true;
                 }
@@ -9753,7 +9849,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                         taken = Some((d, Model::new()));
                         break;
                     }
-                    if let Some(m) = local_repair(&acc.cons, &near, &model, &d.cons) {
+                    if let Some(m) = local_repair(&acc.cons, &near, &mut values, &model, &d.cons) {
                         taken = Some((d, m));
                         break;
                     }
@@ -9785,6 +9881,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                     }
                     if !valid {
                         model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                        values.clear();
                         stamp = fresh_stamp();
                         valid = true;
                     }
@@ -9815,6 +9912,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                 if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
                     stamp = fresh_stamp();
                 }
+                values.moved(&acc.cons, &near, &model, &m);
                 model.extend(m);
                 take(&d.cons, &mut acc, &mut near);
                 took.push(d);
@@ -13309,6 +13407,8 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         // A point of the base as it is now, or `None` once the solver refuses to find one, after
         // which each disjunct is solved with its groups.
         let mut point = Some(model);
+        // Kept at `point` ([`TermValues`]).
+        let mut values = TermValues::default();
         let mut changed = false;
         // The disjunctions to test, with those of a disjunct added to the base appended, so
         // that a chain of disjunctions each left with one disjunct is read in one round, not
@@ -13389,7 +13489,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         }
                         if !served
                             && let Some(pt) = &point
-                            && local_repair(&base.cons, &near, pt, &d.cons).is_some()
+                            && local_repair(&base.cons, &near, &mut values, pt, &d.cons).is_some()
                         {
                             return true;
                         }
@@ -13430,6 +13530,10 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         // the ones its rows narrow, that is on the order of the parts (item
                         // PROJECT-canon-precision).
                         changed = true;
+                        // `repair_unary` may change the point's values in place.
+                        if dw_rep.is_some() {
+                            values.clear();
+                        }
                         let dw_done = match (&mut dw_rep, &mut point) {
                             (Some(rep), Some(pt)) => match rep.repair_unary(pt, &d.cons) {
                                 Some(Ok(())) => true,
@@ -13446,12 +13550,16 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         } else {
                             let repaired = match &point {
                                 Some(pt) if d.cons.iter().all(|c| c.holds_linear(pt)) => None,
-                                Some(pt) => Some(
-                                    own_repair(&near, pt, &d.cons)
-                                        .or_else(|| local_repair(&base.cons, &near, pt, &d.cons)),
-                                ),
+                                Some(pt) => Some(own_repair(&near, pt, &d.cons).or_else(|| {
+                                    local_repair(&base.cons, &near, &mut values, pt, &d.cons)
+                                })),
                                 None => None,
                             };
+                            match (&repaired, &point) {
+                                (Some(Some(m)), Some(pt)) => values.moved(&base.cons, &near, pt, m),
+                                (Some(None), _) => values.clear(),
+                                _ => {}
+                            }
                             take(&d.cons, &mut base, &mut near);
                             match (repaired, &mut point) {
                                 (Some(Some(m)), Some(pt)) => pt.extend(m),
