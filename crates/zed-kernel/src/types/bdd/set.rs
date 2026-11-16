@@ -15,7 +15,15 @@
 //! distinct literals act as independent uniform numbers (Seidel and Aragon 1996), and a fixed
 //! hash of a digest the program's text decides is not that; some sets of literals make a path
 //! (COMPLEXITY.md K123). The tests in `set/tests.rs` check keys built the way programs build
-//! them.
+//! them. The priorities are not yet drawn per run as the other treaps' are (module
+//! [`crate::priority`]): the exclusive ors (module `xor`) build their expressions over a set's
+//! tree, so a drawn shape would reach the digests and the printed form of every type that holds
+//! an exclusive or (row PERF-xor-shape-free).
+//!
+//! A set's digests are sums over its literals ([`make`]), the same for every shape of the set,
+//! a first step to drawing the priorities. The order of types still compares two sets of equal
+//! digests root first (`Walk::Sets` in module `types`), which reads the shape, a function of
+//! the literals while the priorities are a fixed hash.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering as Atomic;
@@ -124,13 +132,35 @@ fn id<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
     t.map_or(0, |s| s.id)
 }
 
-/// The digest of a set, `t` its root.
+/// The digest of a set, `t` its root: the sum of its literals' hashes ([`make`]), 0 when empty.
 pub(super) fn digest<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
-    t.map_or(mix(14, 0), |s| s.digest)
+    t.map_or(0, |s| s.digest)
 }
 
 pub(super) fn name_digest<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
-    t.map_or(mix(14, 0), |s| s.name_digest)
+    t.map_or(0, |s| s.name_digest)
+}
+
+/// The digest of the set of `left`, the literal of an atom of digest `atom` taken as `taken`, and
+/// `right`, from the digests of `left` and `right`: the sum of the hashes of the literals, so the
+/// same for every shape of the set.
+///
+/// Complexity tradeoff: the digest this replaces mixed the literal with the children's digests,
+/// also `O(1)` per node, but a function of the shape, which drawn priorities make a function of
+/// the draw; digests order types, so the draw would reach what zedc prints. A sum is `O(1)` per
+/// node from the children's sums and depends only on the literals. Given up: a sum of fixed
+/// hashes has collisions a program could choose (two sets of equal sums); a collision costs only
+/// a comparison of the two sets by their literals, as any collision of digests does.
+///
+/// Under the short-addresses build the sum is kept to its low 8 bits, as `mix` keeps every digest
+/// (`address::short64`): the low 8 bits of a sum are the sum of the low 8 bits, so it is still
+/// one function of the literals.
+fn summed(atom: u64, taken: bool, left: u64, right: u64) -> u64 {
+    crate::address::short64(
+        mix(15, atom ^ u64::from(taken))
+            .wrapping_add(left)
+            .wrapping_add(right),
+    )
 }
 
 /// The number of literals.
@@ -150,18 +180,16 @@ fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     };
     let s = Arc::new(Set {
         id: NEXT.fetch_add(1, Atomic::Relaxed),
-        digest: mix(
-            mix(
-                mix(15, key.0.digest() ^ u64::from(key.1)),
-                digest(left.as_ref()),
-            ),
+        digest: summed(
+            key.0.digest(),
+            key.1,
+            digest(left.as_ref()),
             digest(right.as_ref()),
         ),
-        name_digest: mix(
-            mix(
-                mix(15, key.0.name_digest() ^ u64::from(key.1)),
-                name_digest(left.as_ref()),
-            ),
+        name_digest: summed(
+            key.0.name_digest(),
+            key.1,
+            name_digest(left.as_ref()),
             name_digest(right.as_ref()),
         ),
         prio: priority(&key),

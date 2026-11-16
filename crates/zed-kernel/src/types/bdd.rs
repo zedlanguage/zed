@@ -2260,6 +2260,92 @@ pub(super) enum Walk<'a, A: Literal> {
     Sets(Option<&'a Set<A>>, Option<&'a Set<A>>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
+    /// The rest of two sequences of blocks of tied digests, compared block by block in order.
+    CellRest(Box<Rest<'a, A>>),
+}
+
+/// A piece of a sequence of blocks still to be read in order: every block under a cell, or the
+/// cell's own.
+pub(super) enum Piece<'a, A: Literal> {
+    Tree(&'a Cell<A>),
+    Key(&'a Cell<A>),
+}
+
+/// What is left of two sequences of blocks compared block by block in order (module `types`,
+/// `walk`): for each, the pieces still to read, the next last.
+///
+/// Complexity tradeoff: two sequences whose digests tie were compared by their roots, then
+/// their subtrees, which is `O(1)` where the roots differ but reads the shapes, which follow the
+/// run's draw of priorities (module [`crate::priority`]), so the order of two distinct sequences
+/// of one digest would follow the draw. Read in order, they are compared by their contents only,
+/// in `O(k + d)` for a first difference at the `k`-th block and treaps of depth `d`, `O(n)` at
+/// worst, as the walk by roots was. Two pieces that are one cell are passed over whole, as are
+/// two found equal before. Given up: one allocation of the box and two of its stacks for each
+/// pair of sequences compared this way.
+pub(super) struct Rest<'a, A: Literal> {
+    a: Vec<Piece<'a, A>>,
+    b: Vec<Piece<'a, A>>,
+}
+
+impl<'a, A: Literal> Rest<'a, A> {
+    pub(super) fn new(a: &'a Cell<A>, b: &'a Cell<A>) -> Box<Rest<'a, A>> {
+        Box::new(Rest {
+            a: vec![Piece::Tree(a)],
+            b: vec![Piece::Tree(b)],
+        })
+    }
+
+    /// The next two blocks' cells, one of each sequence, or the order of the sequences' lengths
+    /// when one of them has no more: `Err(Equal)` when both end together. `equal` says whether
+    /// two cells, by id, were found equal before.
+    pub(super) fn next(
+        &mut self,
+        equal: impl Fn(u64, u64) -> bool,
+    ) -> Result<(&'a Cell<A>, &'a Cell<A>), Ordering> {
+        /// Puts the pieces of `n`'s subtree in place of it: the right, the cell, the left.
+        fn open<'a, A: Literal>(pieces: &mut Vec<Piece<'a, A>>, n: &'a Cell<A>) {
+            pieces.extend(n.right.as_deref().map(Piece::Tree));
+            pieces.push(Piece::Key(n));
+            pieces.extend(n.left.as_deref().map(Piece::Tree));
+        }
+        loop {
+            match (self.a.pop(), self.b.pop()) {
+                (None, None) => return Err(Ordering::Equal),
+                (None, Some(_)) => return Err(Ordering::Less),
+                (Some(_), None) => return Err(Ordering::Greater),
+                (Some(Piece::Key(x)), Some(Piece::Key(y))) => return Ok((x, y)),
+                (Some(Piece::Tree(x)), Some(Piece::Tree(y))) => {
+                    if x.id == y.id || equal(x.id, y.id) {
+                        continue;
+                    }
+                    // The larger is opened, both when of one size, so that two subtrees that
+                    // hold the same blocks meet as pieces.
+                    match x.len.cmp(&y.len) {
+                        Ordering::Less => {
+                            self.a.push(Piece::Tree(x));
+                            open(&mut self.b, y);
+                        }
+                        Ordering::Greater => {
+                            open(&mut self.a, x);
+                            self.b.push(Piece::Tree(y));
+                        }
+                        Ordering::Equal => {
+                            open(&mut self.a, x);
+                            open(&mut self.b, y);
+                        }
+                    }
+                }
+                (Some(Piece::Tree(x)), Some(k)) => {
+                    open(&mut self.a, x);
+                    self.b.push(k);
+                }
+                (Some(k), Some(Piece::Tree(y))) => {
+                    self.a.push(k);
+                    open(&mut self.b, y);
+                }
+            }
+        }
+    }
 }
 
 impl<A: Literal> Form<A> {
@@ -2755,9 +2841,12 @@ mod list {
     //! A list is kept as a sequence of blocks (each a set of literals, module `set`) with the value
     //! of its first block; the values of the others alternate, and the complement flips that value.
     //! The sequence is a treap of cells by position (item CHAIN-deep-atom): a cell is a block and
-    //! the sequences of the blocks before and after it, its priority a hash of one literal of its
-    //! block ([`priority`]), ties broken by position, the earlier above. So one sequence has one
-    //! shape, whatever edits made it, and the cells are shared through a table of the thread by
+    //! the sequences of the blocks before and after it, its priority drawn once per run from one
+    //! literal of its block ([`priority`]), ties broken by position, the earlier above. So one
+    //! sequence has one shape in a run, whatever edits made it; the shape follows the draw, so a
+    //! cell's digests are folds of its blocks in order ([`folded`]), the same for every shape, and
+    //! the order of types compares two sequences of equal digests by their blocks in order. The
+    //! cells are shared through a table of the thread by
     //! their children and block: one list is one cell. Each cell keeps, made on first use, the atoms of its blocks, so the
     //! block of an atom is found from the root in `O(log m)` for `m` blocks. A chain of literals
     //! joined to a list ([`Bdd::or_literal`]) adds each literal to the first block, or puts a block
@@ -2771,8 +2860,8 @@ mod list {
     // list built a literal at a time costs O(m²) for m literals. Used: the list is a treap of
     // hash-consed cells, and a literal joined to it rebuilds the cells on the paths to the blocks
     // it changes, O(log m) cells in expectation, each found in the table in O(1) expected.
-    // Given up: the balance holds only in expectation (the priorities are hashes of the
-    // literals); each live cell has a weak entry in its thread's table and caches its atoms and
+    // Given up: the balance holds only in expectation over the run's draw of priorities; each
+    // live cell has a weak entry in its thread's table and caches its atoms and
     // views once read; a larger constant factor per literal than a plain node.
 
     use std::collections::HashMap;
@@ -2781,6 +2870,7 @@ mod list {
 
     use super::set::{self, Key, NEXT, Set, Tree};
     use super::{Bdd, Digest, Literal, Owned, Part, mix};
+    use crate::priority::Priorities;
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
     /// it. A cell that is the root of a list's sequence is the list, with the value of its first
@@ -2789,12 +2879,15 @@ mod list {
         /// The cell's id, unique among the nodes of the process, and the next id, kept for it:
         /// the list of first value `v` has the id `id + v`.
         pub(in crate::types) id: u64,
-        /// A hash of the blocks in order, equal for equal sequences.
+        /// A hash of the blocks in order, equal for equal sequences ([`folded`]).
         pub(in crate::types) digest: u64,
         pub(in crate::types) name_digest: u64,
         prio: u64,
         /// The number of blocks.
         pub(super) len: usize,
+        /// [`R`] to the power `len`, wrapping: what [`folded`] multiplies the digest of the
+        /// blocks before a sequence by.
+        pow: u64,
         pub(in crate::types) left: Seq<A>,
         pub(in crate::types) block: Arc<Set<A>>,
         pub(in crate::types) right: Seq<A>,
@@ -2868,25 +2961,72 @@ mod list {
         t.as_ref().map_or(0, |c| c.len)
     }
 
+    /// The digest of a sequence: [`folded`] over its blocks, 0 when empty.
     fn digest<A: Literal>(t: &Seq<A>) -> u64 {
-        t.as_ref().map_or(mix(17, 0), |c| c.digest)
+        t.as_ref().map_or(0, |c| c.digest)
     }
 
     fn name_digest<A: Literal>(t: &Seq<A>) -> u64 {
-        t.as_ref().map_or(mix(17, 0), |c| c.name_digest)
+        t.as_ref().map_or(0, |c| c.name_digest)
     }
 
-    /// The priority of the cell of `block`: a hash of the literal at the root of the block's treap,
-    /// the literal of highest priority there (module `set`), by a hash other than that priority. So
-    /// it is uniform whatever the size of the block, and a literal added to a block of `k` changes
-    /// it only when it outranks the `k` there, with probability `1 / (k + 1)` in any order of
-    /// adding: a block edited in place keeps its cell's place, and its atoms are carried over
-    /// ([`replace`]). A priority hashed from the whole block moved the cell at each edit and made
-    /// its atoms again, `O(k)` each. "Uniform" and "with probability" take the hashes as
-    /// independent uniform priorities, which is not proved and fails for chosen literals
-    /// (COMPLEXITY.md K123).
+    /// [`R`] to the power of the number of blocks.
+    fn pow<A: Literal>(t: &Seq<A>) -> u64 {
+        t.as_ref().map_or(1, |c| c.pow)
+    }
+
+    /// The base of [`folded`]: odd, so that each power of it is odd too.
+    const R: u64 = 0x9e37_79b9_7f4a_7c15;
+
+    /// The digest of the sequence `left`, a block of digest `block`, then `right`, from the
+    /// digests of `left` and `right` and [`R`] to the power of the length of `right`: the
+    /// polynomial `e_1 R^(k-1) + e_2 R^(k-2) + ... + e_k`, wrapping, of the hashes `e_i` of the `k`
+    /// blocks in order. `left` contributes its polynomial times `R^(1 + |right|)`, the block `e`
+    /// times `R^|right|`, and `right` its own, so the sum is that of the whole sequence: the same
+    /// for every shape of the sequence.
+    ///
+    /// Complexity tradeoff: the digest this replaces mixed the block's digest with the children's,
+    /// also `O(1)` per cell, but a function of the shape, which the drawn priorities make a function
+    /// of the draw; digests order types, so the draw reached what zedc prints. The fold is `O(1)`
+    /// per cell, two multiplications and an addition, from the children's digests and powers, one
+    /// more word per cell. Given up: such a polynomial in a fixed base has collisions a program
+    /// could choose; a collision costs only a comparison of the two sequences by their blocks, as
+    /// any collision of digests does.
+    ///
+    /// Under the short-addresses build the digest is kept to its low 8 bits, as `mix` keeps every
+    /// digest (`address::short64`): reducing modulo `2^8` commutes with wrapping sums and products,
+    /// so it is still one function of the blocks.
+    fn folded(left: u64, block: u64, right: u64, right_pow: u64) -> u64 {
+        let before = left.wrapping_mul(R).wrapping_add(mix(16, block));
+        crate::address::short64(before.wrapping_mul(right_pow).wrapping_add(right))
+    }
+
+    /// The priorities of the cells, by the value of `taken` of the literal at the root of their
+    /// block, drawn once per run (module [`crate::priority`]). The root is picked by the
+    /// priorities of the literals in sets (module `set`), a fixed hash, not drawn.
+    static PRIORITIES: [Priorities; 2] = [Priorities::new(13), Priorities::new(14)];
+
+    /// The priority of the cell of `block`: the run's random polynomial of degree 4 at the digest
+    /// of the literal at the root of the block's treap, the literal of highest priority there
+    /// (module `set`), one polynomial for each value of `taken`.
+    ///
+    /// The bound. Each block's root is a function of the block alone, fixed before the draw (and,
+    /// were the sets' priorities drawn too, by a draw independent of this one), so the cells'
+    /// priorities are the polynomials of this draw at points fixed before it. No atom is in two
+    /// blocks of a list (module comment), so the roots of two cells of one sequence are distinct
+    /// literals, and distinct points unless their atoms' digests are equal: cells at distinct points take 5-wise independent uniform priorities, which bounds
+    /// every cell's expected depth by `O(log m)` for `m` blocks, whatever the blocks (Seidel and
+    /// Aragon 1996, Theorem 3.3 and section 6; the proof, with the cells whose points are equal
+    /// counted as ties, is in module [`crate::priority`]).
+    ///
+    /// A literal added to a block changes this priority only when it becomes the block's root, so
+    /// a block edited in place mostly keeps its cell's place, and its atoms are carried over
+    /// ([`replace`]); a priority hashed from the whole block moved the cell at each edit and made
+    /// its atoms again, `O(k)` for a block of `k`. How often the root changes is not proved for
+    /// these priorities (for independent uniform ones it is `1 / (k + 1)` per literal added); no
+    /// bound here rests on it.
     fn priority<A: Literal>(block: &Set<A>) -> u64 {
-        mix(mix(19, block.key.0.digest()), u64::from(block.key.1))
+        PRIORITIES[usize::from(block.key.1)].of(block.key.0.digest())
     }
 
     /// The value of the block at `k` of a run whose first block has the value `first`.
@@ -2913,13 +3053,16 @@ mod list {
             }
             let c = Arc::new(Cell {
                 id: NEXT.fetch_add(2, Atomic::Relaxed),
-                digest: mix(mix(mix(16, digest(&left)), block.digest), digest(&right)),
-                name_digest: mix(
-                    mix(mix(16, name_digest(&left)), block.name_digest),
+                digest: folded(digest(&left), block.digest, digest(&right), pow(&right)),
+                name_digest: folded(
+                    name_digest(&left),
+                    block.name_digest,
                     name_digest(&right),
+                    pow(&right),
                 ),
                 prio: priority(&block),
                 len: len(&left) + 1 + len(&right),
+                pow: pow(&left).wrapping_mul(R).wrapping_mul(pow(&right)),
                 left,
                 block,
                 right,
@@ -3650,11 +3793,29 @@ mod list {
     #[cfg(test)]
     impl<A: Literal> Bdd<A> {
         /// Whether every cell of the list that has made its atoms holds the atoms of its blocks,
-        /// and its length and shape are those of a treap by position and priority.
+        /// its length and shape are those of a treap by position and priority, and its digests
+        /// are the folds of its blocks in order, as a sequence of any shape has them.
         pub(super) fn cells_are_sound(&self) -> bool {
             let Bdd::List(c, _) = self else { return true };
             let mut stack = vec![&**c];
             while let Some(c) = stack.pop() {
+                // The blocks in order, from a stack of the cells whose left is read.
+                let (mut digest, mut name_digest, mut pow) = (0, 0, 1u64);
+                let (mut path, mut at) = (Vec::new(), Some(c));
+                while at.is_some() || !path.is_empty() {
+                    while let Some(d) = at {
+                        path.push(d);
+                        at = d.left.as_deref();
+                    }
+                    let d = path.pop().expect("a cell");
+                    digest = folded(digest, d.block.digest, 0, 1);
+                    name_digest = folded(name_digest, d.block.name_digest, 0, 1);
+                    pow = pow.wrapping_mul(R);
+                    at = d.right.as_deref();
+                }
+                if (digest, name_digest, pow) != (c.digest, c.name_digest, c.pow) {
+                    return false;
+                }
                 let mut all = imbl::OrdSet::new();
                 let mut blocks = 0;
                 let mut sub = vec![c];
@@ -3680,6 +3841,9 @@ mod list {
             true
         }
     }
+
+    #[cfg(test)]
+    mod tests;
 }
 
 #[cfg(test)]

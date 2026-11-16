@@ -117,7 +117,9 @@ const FORK: &str = "; the checker could not decide this, so it is not proved wro
      types so that they agree in that component, or test the value with `is` first";
 
 /// The head is the first recursive definition the check reads, in a walk of its parts in
-/// their order, which is by contents and not by names: here `Even`, of the group of two.
+/// their order, which is by contents and not by names, and not by the run's draw of the
+/// treaps' priorities (PERF-set-digest-shape-free): here `Ints`, of the group of one. (Before
+/// the digests of sets were sums over their literals, the order read `Even` first.)
 #[test]
 fn a_refused_check_names_the_head_of_the_group_it_reads() {
     Type::forget_emptiness();
@@ -126,14 +128,13 @@ fn a_refused_check_names_the_head_of_the_group_it_reads() {
         refused(&a, &b),
         format!(
             "{FORK}\n  \
-             the check reads the recursive type `Even`, defined by:\n    \
-             type Even = #nil | #cons(int, Odd);\n    \
-             type Odd = #cons(int, Even);"
+             the check reads the recursive type `Ints`, defined by:\n    \
+             type Ints = #nil | #cons(int, Ints);"
         )
     );
 }
 
-/// The head's group of four definitions is listed whole, the head first, then by name.
+/// The head's group of two definitions is listed whole, the head first, then by name.
 #[test]
 fn a_refused_check_lists_every_definition_of_the_head_group() {
     Type::forget_emptiness();
@@ -142,22 +143,20 @@ fn a_refused_check_lists_every_definition_of_the_head_group() {
         refused(&a, &b),
         format!(
             "{FORK}\n  \
-             the check reads the recursive type `Even0`, defined by:\n    \
-             type Even0 = #nil | #cons(int, Odd0);\n    \
-             type Even1 = #nil | #cons(int, Odd1);\n    \
-             type Odd0 = #cons(int, Even1);\n    \
-             type Odd1 = #cons(int, Even0);"
+             the check reads the recursive type `Ints0`, defined by:\n    \
+             type Ints0 = #nil | #cons(int, Ints1);\n    \
+             type Ints1 = #nil | #cons(int, Ints0);"
         )
     );
 }
 
-/// The message of a check that reads groups of n definitions: the head group grows with n and
-/// is listed whole, two types for each definition.
+/// The message of a check that reads groups of n definitions: the head group, the ring `Ints`,
+/// grows with n and is listed whole, one type for each definition.
 pub(super) fn the_head_group_named(n: usize) {
     Type::forget_emptiness();
     let (a, b) = fork_empty(n);
     let text = a.refused(&b);
-    assert_eq!(text.matches("\n    type ").count(), 2 * n);
+    assert_eq!(text.matches("\n    type ").count(), n);
     std::hint::black_box(text);
 }
 
@@ -186,9 +185,9 @@ fn the_listed_definitions_read_as_declarations() {
     let declared: Vec<&str> = (decls.iter())
         .map(|d| d["type ".len()..].split_once(' ').expect("a name").0)
         .collect();
-    assert_eq!(declared, ["Even0", "Even1", "Odd0", "Odd1"]);
+    assert_eq!(declared, ["Ints0", "Ints1"]);
     for word in unit.split(|c: char| !c.is_alphanumeric()) {
-        let named = word.starts_with(['E', 'O']);
+        let named = word.starts_with('I');
         assert!(!named || declared.contains(&word), "{word} in {unit}");
     }
 }

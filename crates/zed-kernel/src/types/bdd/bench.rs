@@ -161,14 +161,20 @@ fn joining_chains_to_lists_scales() {
     // in common are joined a literal of the shorter at a time. Small instances:
     // `chains_built_a_literal_at_a_time_stay_lists`.
     let n = 1 << 11;
+    // The work follows paths of the list's treap of cells, whose shape the run's draw of
+    // priorities gives; it is summed over `SHAPES` offsets of the atoms.
     let lits = scaling::inputs(n, |m| {
-        let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
-        xs.sort();
-        let lits: Vec<(Part<Row>, Part<Row>)> = xs
-            .into_iter()
-            .map(|x| (Part::literal(x.clone()), Part::literal(x).not()))
-            .collect();
-        lits
+        (0..SHAPES)
+            .map(|j| {
+                let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
+                xs.sort();
+                let lits: Vec<(Part<Row>, Part<Row>)> = xs
+                    .into_iter()
+                    .map(|x| (Part::literal(x.clone()), Part::literal(x).not()))
+                    .collect();
+                lits
+            })
+            .collect::<Vec<_>>()
     });
     let chains = scaling::inputs(n, |m| {
         let chain = |from: u64| {
@@ -179,13 +185,16 @@ fn joining_chains_to_lists_scales() {
         (chain(0), chain(m as u64 / 2))
     });
     scaling::check("a list built a literal at a time, by literals", n, |m| {
-        let xs = &lits[&m];
-        let f =
-            (xs[1..].iter().enumerate()).fold(xs[0].0.clone(), |f, (i, (x, not_x))| match i % 2 {
-                0 => f.zip(x, Op::Or),
-                _ => f.zip(not_x, Op::And),
-            });
-        assert!(matches!(f, Part::Bdd(_)), "{f:?}");
+        for xs in &lits[&m] {
+            let f =
+                (xs[1..].iter().enumerate()).fold(xs[0].0.clone(), |f, (i, (x, not_x))| {
+                    match i % 2 {
+                        0 => f.zip(x, Op::Or),
+                        _ => f.zip(not_x, Op::And),
+                    }
+                });
+            assert!(matches!(f, Part::Bdd(_)), "{f:?}");
+        }
     });
     // A chain grown a literal at a time stays a chain, so both operands of each step are
     // chains; listing the long one too at each step took `O(m²)` (59 s for the forced atoms
@@ -418,17 +427,25 @@ fn restricting_lists_that_share_a_tail_scales() {
     // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by cell,
     // the cells of the tail are restricted once.
     let n = 1 << 11;
-    // Each list rebuilds the tail's right spine where its last block shrinks, so the work
-    // follows that spine; it is summed over the tails of `SHAPES` offsets of the atoms.
+    // Each list rebuilds the tail's right spine where its last block shrinks, and the cells
+    // above its head on the tail's left spine, so the work follows those two spines of one
+    // treap a tail. A spine's length is the number of records of the priorities in order, for
+    // independent uniform priorities a sum of independent events of probabilities `1/i`
+    // (Rényi): mean `H_m` and variance `H_m - sum 1/i²`, so its standard deviation is 31% of
+    // its mean at m = 2048 (not proved for the drawn priorities; no bound rests on it). The
+    // work is summed over the tails of `4 * SHAPES` offsets of the atoms, 5.5% for the mean,
+    // with `m / 4` lists on each tail, so `8m` lists in all as over `SHAPES` tails of `m`
+    // lists, where the ratio of the bytes ran from 8.6 to 10.5 by the run's draw
+    // (PERF-set-digest-shape-free); memoized by list it is still `8m²`.
     let lists = scaling::inputs(n, |m| {
-        (0..SHAPES)
+        (0..4 * SHAPES)
             .map(|j| {
                 let o = j * SHAPE_STRIDE;
                 let tail = blocks(o + 8000, m);
                 let Bdd::List(_, v) = &tail else {
                     unreachable!("a list of blocks has a cell")
                 };
-                let heads: Vec<Bdd<Row>> = (0..m as u64)
+                let heads: Vec<Bdd<Row>> = (0..m as u64 / 4)
                     .map(|i| {
                         let head = (!*v, Some(pair_block(o + 30000 + 2 * i)));
                         Bdd::assemble(vec![head], &tail)

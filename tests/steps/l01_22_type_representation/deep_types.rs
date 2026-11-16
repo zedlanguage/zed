@@ -125,9 +125,13 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // digest of the one sample with a `Tree` instance; EMPTY-normalize makes a tuple with an
     // empty component empty, which drops the member `#b((Never))` from one random sample's
     // union (line 29); GSX-unsolved hashes a recursive member without its definitions' names,
-    // which changes the digests of the `Tree` sample again (line 16) and nothing else. The
-    // text is the same when this test runs
-    // alone, among the others and on one thread.
+    // which changes the digests of the `Tree` sample again (line 16) and nothing else;
+    // PERF-set-digest-shape-free makes the digest of a set a sum over its literals and that of a
+    // list an ordered fold over its blocks, which changes the digests and so the order of
+    // operands. The text is the same when this test runs alone, among the others and on one
+    // thread, and under the draws of the treaps' priorities checked (`ZED_TREAP_SEED` 0 to 4);
+    // the sets' priorities are not drawn yet, since the exclusive ors are built over a set's
+    // shape (row PERF-xor-shape-free).
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());

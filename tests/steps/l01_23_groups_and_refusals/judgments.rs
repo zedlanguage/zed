@@ -540,8 +540,14 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_la
     assert!(a.subtype(b), "{a} <: {b}");
     Type::forget_emptiness();
     assert_eq!((a - b).verdict(), Verdict::Empty, "{a} - {b}");
-    // Fixed seed, so an exact count.
-    assert_eq!(order_free(10511391382961984112), 37);
+    // Fixed seed, so an exact count. It was 37 until PERF-set-digest-shape-free made the digests
+    // of sets and lists functions of their contents: the new digests put the operands of
+    // `ts[137]` (a morphism from a `#cons` of a meet) in another order, and the search, which
+    // stops at the first fork in operand order (`verdict_alone`, `empty_past_forks`), now proves
+    // it empty where it was refused at a fork, so queries 52 (`ts[137] <: ts[142]`) and 78
+    // (`ts[137] <: ts[33]`) hold. The count is the same under every draw of the treaps'
+    // priorities (`ZED_TREAP_SEED` 0, 1 and 2).
+    assert_eq!(order_free(10511391382961984112), 39);
 }
 
 /// Asks `QUERIES` queries `a <: b` on the corpus of `seed` one at a time with the kept results

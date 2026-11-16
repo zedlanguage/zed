@@ -1110,13 +1110,11 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             }
             let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest));
             if c == Ordering::Equal {
-                // A sequence has one shape, so equal digests are compared cell by cell: the
-                // cells before, the blocks, then the cells after, each pushed after the next.
+                // The shapes follow the run's draw of priorities, so sequences of tied digests
+                // are compared by their blocks in order (`bdd::Rest`), and found equal last.
                 steps.extend([
                     Step::Equal(key.0, key.1),
-                    A::walk(Walk::Cells(a.right.as_deref(), b.right.as_deref())),
-                    A::walk(Walk::Sets(Some(&a.block), Some(&b.block))),
-                    A::walk(Walk::Cells(a.left.as_deref(), b.left.as_deref())),
+                    A::walk(Walk::CellRest(bdd::Rest::new(a, b))),
                 ]);
             }
             c
@@ -1129,7 +1127,14 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest))
                 .then(a.key.1.cmp(&b.key.1));
             if c == Ordering::Equal {
-                // The atoms are pushed last, so they are compared first, then the left sets.
+                // A set's shape is a function of its literals (its priorities are a fixed hash,
+                // module `bdd::set`), so sets of tied digests are compared root first, with no
+                // allocation: the atoms are pushed last, so they are compared first, then the
+                // left sets.
+                // Complexity tradeoff: comparing them in order (`bdd::Rest`, as sequences are)
+                // would not read the shape, which drawn priorities would need (row
+                // PERF-xor-shape-free), but took three allocations a block: 38% more
+                // instructions and twice the bytes comparing equal lists built on two threads.
                 steps.extend([
                     Step::Equal(key.0, key.1),
                     A::walk(Walk::Sets(a.right.as_deref(), b.right.as_deref())),
@@ -1139,6 +1144,17 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             }
             c
         }
+        Walk::CellRest(mut rest) => match rest.next(|x, y| equal.contains(&(x, y))) {
+            Err(c) => c,
+            Ok((x, y)) => {
+                // The blocks are compared before the rest, which waits below them.
+                steps.extend([
+                    A::walk(Walk::CellRest(rest)),
+                    A::walk(Walk::Sets(Some(&x.block), Some(&y.block))),
+                ]);
+                Ordering::Equal
+            }
+        },
         Walk::Exprs(a, b) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {

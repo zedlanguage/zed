@@ -59,8 +59,15 @@ fn check(family: &str, atoms: Vec<Row>, taken: impl Fn(usize) -> bool) -> (usize
     keys.sort();
     keys.dedup_by(|a, b| a.0 == b.0);
     let n = keys.len();
+    let sum = |d: fn(&Row) -> u64| (keys.iter()).fold(0, |s, k| summed(d(&k.0), k.1, s, 0));
+    let sums = (sum(Atom::digest), sum(Atom::name_digest));
     let t = from_sorted(keys);
     assert_eq!(len(t.as_ref()), n);
+    assert_eq!(
+        (digest(t.as_ref()), name_digest(t.as_ref())),
+        sums,
+        "{family}"
+    );
     let (height, tied) = shape(&t);
     let ln_n = (n as f64).ln();
     let c = (height.saturating_sub(tied) as f64 - 1.0) / (2.0 * ln_n);
@@ -140,6 +147,25 @@ fn structured_digests_give_a_logarithmic_height() {
         rows(|i| i.wrapping_mul(0x9e37_79b9_7f4a_7c15)),
         |_| true,
     );
+}
+
+/// A set's digests are sums over its literals, so two shapes of one set have one digest: built by
+/// hand with each of three literals at the root.
+#[test]
+fn every_shape_of_a_set_has_its_digests() {
+    let [a, b, c] = [0, 1, 2].map(|i| (Row::new(vec![int(i)]), i != 1));
+    let one = |k: &Key<Row>| Some(make(k.clone(), None, None));
+    let shapes = [
+        make(a.clone(), None, Some(make(b.clone(), None, one(&c)))),
+        make(b.clone(), one(&a), one(&c)),
+        make(c.clone(), Some(make(a.clone(), None, one(&b))), None),
+    ];
+    let digests = shapes.each_ref().map(|s| (s.digest, s.name_digest));
+    assert!(digests.iter().all(|&d| d == digests[0]), "{digests:?}");
+    let sum = [&a, &b, &c]
+        .iter()
+        .fold(0, |s, k| summed(Atom::digest(&k.0), k.1, s, 0));
+    assert_eq!(digests[0].0, sum);
 }
 
 /// `m` distinct atoms of one digest among `N` others share one priority, and they are next to
