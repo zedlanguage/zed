@@ -755,8 +755,12 @@ impl<'a> Elab<'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_)
-            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+            | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
+            // A call that pushes to a port, its value dropped as `_ = e;` drops it.
+            StmtKind::Expr(value) => {
+                m.k(Frame::Bind(s));
+                m.stack.push(Job::Expr(value));
+            }
             StmtKind::Bind { value, targets } => {
                 if let [Target::Name(n, _)] = &targets[..]
                     && !self.info.split_folds.is_empty()
@@ -3270,8 +3274,14 @@ impl<'a> Elab<'a> {
 
     /// The bindings of `targets = v`.
     fn bind(&mut self, s: &'a Stmt, v: Term) -> Vec<Bind> {
-        let StmtKind::Bind { targets, .. } = &s.kind else {
-            unreachable!("a binding")
+        let targets = match &s.kind {
+            StmtKind::Bind { targets, .. } => targets,
+            // An expression statement binds its value to a name no program writes, as `_`.
+            StmtKind::Expr(_) => {
+                let t = self.temp();
+                return vec![(t.to_string(), t, v)];
+            }
+            _ => unreachable!("a binding or an expression statement"),
         };
         let mut out = Vec::new();
         match &targets[..] {

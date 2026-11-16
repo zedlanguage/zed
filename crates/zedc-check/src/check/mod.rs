@@ -1650,6 +1650,9 @@ struct Ck<'t, 'a> {
     /// The parameters that are output ports ([`ports`]): a push to one is checked as a push
     /// to a `Lines` port of `main` is.
     port_params: HashSet<usize>,
+    /// The functions with an output port parameter ([`ports`]), a call of which is a
+    /// statement that writes ([`Ck::expr_stmt`]).
+    port_writers: HashSet<usize>,
     /// The memory limit written before `main`, in bytes, the span of its `@limits` and that of
     /// the argument of `memory:` ([`Self::main_limits`]): a number proved larger is rejected
     /// ([`Self::too_large_power`]).
@@ -2037,6 +2040,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             rough: false,
             lines_out: HashSet::new(),
             port_params: HashSet::new(),
+            port_writers: HashSet::new(),
             main_memory: None,
             wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),

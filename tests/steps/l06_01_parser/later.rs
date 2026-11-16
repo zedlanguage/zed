@@ -51,13 +51,6 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(x) = { g(x); 0 };",
-            &[concat!(
-                zed_tests::not_yet!("an expression statement"),
-                " [g(x);]"
-            )],
-        ),
-        (
             "f(x) = { out' <- x; 0 };",
             &[concat!(
                 zed_tests::not_yet!("a generation push `x' <- e`"),

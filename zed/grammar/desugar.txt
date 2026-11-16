@@ -13,7 +13,7 @@ Return        : the result tuple(⟦e1⟧, …), or ⟦e1⟧ alone
 Emit          : adds ⟦e⟧ at the body's next emission rank, so a body with emits is the family {0 -> ⟦e0⟧, 1 -> ⟦e1⟧, …}
 While         : the guard of the enclosing loop's gen, tested before its step
 Until         : the guard of the enclosing loop's gen, tested after its step
-ExprStmt      : writes the generations `e` writes and drops its value
+ExprStmt      : makes the port operations and writes the generations `e` writes and drops its value, as `_ = e;` does; legal only where each path of `e` writes, by a call of a function with an output port parameter (step L1.19), a block with a push or a statement that writes, or from L6 a generation write, and drops no declared result (sec:tour_methods)
 Import        : binds the listed names, or the unit under its name or alias, to bindings the unit at Path exports, checked against the Pin when one is given; no term
 Path          : a qualified name, resolved to a unit or a binding
 Pin           : the BLAKE3-256 content address the imported unit must have (step M0.7)

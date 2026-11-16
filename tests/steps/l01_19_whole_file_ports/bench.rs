@@ -148,6 +148,24 @@ fn a_chain_of_helpers_passing_a_port_scales() {
     });
 }
 
+/// A chain of n helpers whose bodies are expression statements is checked in linear time:
+/// each statement's paths are walked once (`check::ports::silent_tail`). The whole check is
+/// timed, as the statements are checked in it. Small instance:
+/// `ports::a_chain_of_expression_statements_passing_a_port_writes_once`.
+#[test]
+fn a_chain_of_expression_statements_is_checked_in_linear_time() {
+    let n = 2_000;
+    let units = inputs(n, |m| {
+        let text = ports::statement_chain(m);
+        let (stmts, res) = resolved(&text);
+        (text, stmts, res)
+    });
+    check_order("checking n expression statements", n, 1, |m| {
+        let (text, stmts, res) = &units[&m];
+        ports::accepts_the_statements(text, stmts, res);
+    });
+}
+
 /// Small instance: `sharing::a_wave_and_its_replay_share_the_input`.
 #[test]
 fn a_wave_over_n_lines_and_its_replay_share_the_input_and_scale() {

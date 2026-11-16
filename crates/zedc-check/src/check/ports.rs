@@ -16,14 +16,17 @@
 use std::collections::{HashMap, HashSet};
 
 use zedc_resolve::resolve::tables::Tables;
-use zedc_resolve::resolve::{Kind, Ref};
-use zedc_syntax::ast::{Note, TypeKind};
+use zedc_resolve::resolve::{Kind, Ref, Resolution};
+use zedc_syntax::ast::{Expr, ExprKind, Note, StmtKind, TypeKind};
 use zedc_syntax::lex::Span;
 
 /// The output port parameters of a unit and the errors of its uses of output ports.
 pub struct Ports {
     /// The binder of each parameter that is an output port.
     pub params: HashSet<usize>,
+    /// The binder of each declared function with an output port parameter: a call of one
+    /// pushes to the port it is given, and so is a statement ([`silent_tail`]).
+    pub writers: HashSet<usize>,
     /// Each error: its place, its headline and its notes.
     pub errors: Vec<(Span, String, Vec<Note>)>,
 }
@@ -385,7 +388,75 @@ pub fn ports(t: &Tables<'_>) -> Ports {
             ));
         }
     }
-    Ports { params, errors }
+    let writers = outs.into_keys().collect();
+    Ports {
+        params,
+        writers,
+        errors,
+    }
+}
+
+/// The first part of the expression statement whose value is `value`, in the order of the
+/// text, that ends a path writing to no port; none when every path writes. DESIGN.md
+/// sec:tour_methods: "a call in statement position is legal when it writes a generation
+/// (`c*.tick()`) or a port, and dead otherwise", and "the check is per flow path: each branch
+/// of an `if` or `match` and each block's export is checked on its own". A path writes when it
+/// ends in a call of one of `writers`, the functions with an output port parameter, which every
+/// call fills with an output port ([`ports`] rejects any other argument there). The default of
+/// an `else` stands in for a failure and is no path of its own, as the repair `c*.m() else #ok;`
+/// shows. A block with no export writes when it holds a push or an expression statement, each
+/// checked where it stands.
+// Complexity tradeoff: each node on the paths is visited once, from an explicit stack, so the
+// check of one statement costs the size of its branches and exports, O(1) for a bare call; a
+// statement's paths are disjoint parts of its text, so a unit's statements cost O(size of the
+// unit) in all. A recursive search costs the same, with the depth of the nest on the call
+// stack.
+pub fn silent_tail<'e>(
+    value: &'e Expr,
+    res: &Resolution,
+    writers: &HashSet<usize>,
+) -> Option<&'e Expr> {
+    let mut stack = vec![value];
+    while let Some(e) = stack.pop() {
+        // The parts of a path are pushed last first, so they are met in the order of the text.
+        let writes = match &e.kind {
+            ExprKind::Call { callee, .. } => matches!(
+                res.uses.get(&callee.span),
+                Some(Ref::Bound(ids)) if ids.iter().any(|f| writers.contains(f))
+            ),
+            ExprKind::If {
+                then, otherwise, ..
+            } => {
+                stack.extend([&**otherwise, &**then]);
+                true
+            }
+            ExprKind::Else { of, .. } => {
+                stack.push(of);
+                true
+            }
+            ExprKind::Match { arms, .. } => {
+                stack.extend(arms.iter().rev().map(|a| &a.body));
+                true
+            }
+            ExprKind::Block(stmts) => match stmts.last().map(|s| &s.kind) {
+                Some(StmtKind::Return(es)) => match &es[..] {
+                    [one] => {
+                        stack.push(one);
+                        true
+                    }
+                    // A tuple of values is no write, whatever its parts do.
+                    _ => false,
+                },
+                _ => (stmts.iter())
+                    .any(|s| matches!(s.kind, StmtKind::Push { .. } | StmtKind::Expr(_))),
+            },
+            _ => false,
+        };
+        if !writes {
+            return Some(e);
+        }
+    }
+    None
 }
 
 /// Whether a parameter of the declared type `ty` is a `Lines` port.

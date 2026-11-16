@@ -286,7 +286,7 @@ impl<'a> Tables<'a> {
                         .map(|p| Collect::Expr(&p.value)),
                 );
             }
-            StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
+            StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } | StmtKind::Expr(value) => {
                 todo.push(Collect::Expr(value))
             }
             StmtKind::Return(es) => todo.extend(es.iter().map(Collect::Expr)),
@@ -301,7 +301,6 @@ impl<'a> Tables<'a> {
             | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
-            | StmtKind::Expr(_)
             | StmtKind::UnitAnnot(_) => {}
         }
     }
@@ -351,7 +350,10 @@ impl<'a> Tables<'a> {
                 })
                 .collect(),
             StmtKind::Function(f) => vec![self.id(s.span, &f.name)],
-            StmtKind::Push { .. } | StmtKind::Return(_) | StmtKind::UnitAnnot(_) => Vec::new(),
+            StmtKind::Push { .. }
+            | StmtKind::Expr(_)
+            | StmtKind::Return(_)
+            | StmtKind::UnitAnnot(_) => Vec::new(),
             // The resolver binds the declaration's names at its own text.
             StmtKind::Annotated { decl, .. } => self.binders_of(decl),
             StmtKind::Struct(_)
@@ -364,8 +366,7 @@ impl<'a> Tables<'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_)
-            | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+            | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
         }
     }
 
@@ -494,9 +495,9 @@ fn deferred_spans(e: &Expr) -> Vec<Span> {
             Collect::Expr(e) => collect_expr(e, &mut todo),
             Collect::Stmt(s) => match &s.bare().kind {
                 StmtKind::Function(_) => out.push(s.span),
-                StmtKind::Bind { value, .. } | StmtKind::Push { value, .. } => {
-                    todo.push(Collect::Expr(value))
-                }
+                StmtKind::Bind { value, .. }
+                | StmtKind::Push { value, .. }
+                | StmtKind::Expr(value) => todo.push(Collect::Expr(value)),
                 StmtKind::Return(es) => todo.extend(es.iter().map(Collect::Expr)),
                 _ => {}
             },
@@ -925,8 +926,10 @@ fn what(s: &Stmt) -> String {
             names.join(" and ")
         }
         StmtKind::Function(f) => format!("`{}`", f.name),
-        StmtKind::Push { .. } | StmtKind::Return(_) => {
-            unreachable!("a push or an export binds no name, so it is in no cycle")
+        StmtKind::Push { .. } | StmtKind::Expr(_) | StmtKind::Return(_) => {
+            unreachable!(
+                "a push, an expression statement or an export binds no name, so it is in no cycle"
+            )
         }
         StmtKind::UnitAnnot(_) => unreachable!("a unit item binds no name, so it is in no cycle"),
         StmtKind::Annotated { decl, .. } => what(decl),
@@ -940,7 +943,6 @@ fn what(s: &Stmt) -> String {
         StmtKind::IndexedDef(_)
         | StmtKind::Initial(_)
         | StmtKind::While(_)
-        | StmtKind::Until(_)
-        | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+        | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
     }
 }

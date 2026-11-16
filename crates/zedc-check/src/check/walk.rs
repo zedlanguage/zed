@@ -74,6 +74,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         ck.error_with(span, message, notes);
     }
     ck.port_params = ports.params;
+    ck.port_writers = ports.writers;
     if !stop {
         ck.bounds();
         ck.walk(unit);
@@ -337,6 +338,8 @@ pub(super) enum Frame<'a> {
     TestWant(Box<TestF<'a>>, Ty),
     /// A binding, with the number of errors before its value is checked.
     Bind(&'a Stmt, usize),
+    /// An expression statement, `say("hi", out: m.stdout);`.
+    ExprStmt(&'a Stmt),
     Declared(&'a Stmt),
     Pushed(&'a Stmt),
     InferGiven(Box<InferF<'a>>),
@@ -1500,6 +1503,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let v = m.take_ty();
                 self.bind(s, v, before);
             }
+            Frame::ExprStmt(s) => {
+                let v = m.take_ty();
+                self.expr_stmt(s, &v);
+            }
             Frame::Declared(s) => {
                 let sig = m.take_sig();
                 let StmtKind::Function(f) = &s.kind else {
@@ -1920,10 +1927,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_)
-            | StmtKind::Expr(_) => unreachable!(
-                "name resolution rejects every `initial` statement, indexed definition, while, until and expression statement before the checker reads the program"
+            | StmtKind::Until(_) => unreachable!(
+                "name resolution rejects every `initial` statement, indexed definition, while and until before the checker reads the program"
             ),
+            StmtKind::Expr(value) => {
+                m.k(Frame::ExprStmt(s));
+                m.job(Job::Expr(value));
+            }
             StmtKind::Bind { value, .. } => {
                 m.k(Frame::Bind(s, self.errors.len()));
                 m.job(Job::Expr(value));
@@ -1941,6 +1951,98 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             StmtKind::Return(_) => unreachable!("an export is not a binding"),
         }
+    }
+
+    /// The expression statement `s`, whose value is of `v` (DESIGN.md sec:tour_methods,
+    /// "Statement position must write something, and drop nothing"): a call that pushes to a
+    /// port on every path ([`super::ports::silent_tail`]) and gives nothing but the push's
+    /// acknowledgment, which is not a declared result. Otherwise it is the row "Statement that
+    /// writes nothing, or drops a declared result". The value is dropped, so no name is
+    /// bound and nothing else is checked here: `say("hi", out: m.stdout);` means
+    /// `_ = say("hi", out: m.stdout);`, whose value has no loose atom to drop.
+    fn expr_stmt(&mut self, s: &'a Stmt, v: &Ty) {
+        let StmtKind::Expr(value) = &s.kind else {
+            unreachable!("an expression statement")
+        };
+        let text = self.t.text;
+        let code = |e: &Expr| text.map_or("the value", |t| &t[e.span.start..e.span.end]);
+        let callee = |e: &'a Expr| match &e.kind {
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Name(n) => Some(n.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(tail) = super::ports::silent_tail(value, self.t.res, &self.port_writers) {
+            let shown = code(tail);
+            let why = match callee(tail) {
+                Some(f) => {
+                    format!("`{f}` has no output port parameter, so `{shown}` writes to no port")
+                }
+                None => format!("`{shown}` is a value, and writes to no port"),
+            };
+            let notes = [
+                why,
+                "repair: delete the statement, which changes nothing the program gives".into(),
+                format!("repair: bind the value to a name, and use the name, as `… = {shown};`"),
+            ];
+            self.rejects_with(
+                Row::WritesNothing,
+                s.span,
+                format!("Statement has no effect: `{shown}` writes to no port, and its value is dropped."),
+                notes.into_iter().map(|text| Note { span: tail.span, text }).collect(),
+            );
+            return;
+        }
+        // `e else d;` drops only `d`, so it is accepted when every other member of `e` is a
+        // loose failure (DESIGN.md sec:tour_methods; L6.3, `c*.m() else #ok;`).
+        let kept = match &value.kind {
+            ExprKind::Else { of, .. } => match self.seen.get(&of.span) {
+                Some((Some(t), _)) => t.without_loose(),
+                _ => v.clone(),
+            },
+            _ => v.clone(),
+        };
+        let nothing = Ty::tuple(Vec::new());
+        if kept.is_empty() || kept.subtype(&nothing) {
+            return;
+        }
+        // The result is dropped in writing by `_ = …`, which takes a default for each loose
+        // failure the result may be ([`Ck::discard`]).
+        let shown = code(value);
+        let dropped = if v.loose().is_empty() {
+            format!("_ = {shown};")
+        } else {
+            format!("_ = {shown} else #ok;")
+        };
+        let mut notes = vec![
+            Note {
+                span: value.span,
+                text: format!("repair: drop the result in writing, as `{dropped}`"),
+            },
+            Note {
+                span: value.span,
+                text: format!(
+                    "repair: bind the result to a name, and use the name, as `… = {shown};`"
+                ),
+            },
+        ];
+        if !v.loose().is_empty() {
+            notes.push(Note {
+                span: value.span,
+                text: "repair: handle each failure with a `match` on the result".into(),
+            });
+        }
+        let whose = callee(value).map_or(String::new(), |f| format!(" of `{f}`"));
+        self.rejects_with(
+            Row::WritesNothing,
+            s.span,
+            format!(
+                "Result{whose} is unused: `{shown} : {}`. Try `{dropped}` instead.",
+                self.show(v)
+            ),
+            notes,
+        );
     }
 
     /// The binding `s` of a value of `v`, whose check found the errors after the first

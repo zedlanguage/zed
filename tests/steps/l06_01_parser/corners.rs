@@ -131,18 +131,14 @@ fn spread_on_a_call_result() {
 }
 
 /// Whether an expression statement writes a generation, a port or an accumulator is a
-/// question for checking (step L6.3): the parser takes any expression.
+/// question for checking (step L6.3, and for a port PORT-expr-stmt): the parser takes any
+/// expression, and name resolution resolves it. The checker refuses one that writes to no
+/// port (l01_19 `ports.rs`).
 #[test]
 fn an_expression_statement_that_writes_no_generation() {
     check(&[(
         "f(x) = { g(x) + 1; 0 };",
         "(def f (x) = (block (do (+ (call g x) 1)) (return 0)))",
     )]);
-    assert_eq!(
-        refused("f(x) = { x + 1; 0 };"),
-        [concat!(
-            zed_tests::not_yet!("an expression statement"),
-            " [x + 1;]"
-        )]
-    );
+    assert_eq!(refused("f(x) = { x + 1; 0 };"), Vec::<String>::new());
 }

@@ -392,7 +392,9 @@ fn main_is_in_scope_but_neither_a_value_nor_called() {
 
 #[test]
 fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
-    let cases: [(&str, String); 9] = [
+    // An expression statement `f(x) { x + 1; }` resolves since PORT-expr-stmt; the checker
+    // refuses one that writes to no port (l01_19 `ports.rs`).
+    let cases: [(&str, String); 8] = [
         (
             "f(x) { while x < 3; }",
             zed_tests::not_yet("a `while` guard") + " [while x < 3;]",
@@ -400,10 +402,6 @@ fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
         (
             "f(x) { until x < 3; }",
             zed_tests::not_yet("an `until` guard") + " [until x < 3;]",
-        ),
-        (
-            "f(x) { x + 1; }",
-            zed_tests::not_yet("an expression statement") + " [x + 1;]",
         ),
         (
             "a[i] = i;",

@@ -4061,6 +4061,13 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `HashMap` from a shared subterm's id to the names its body reads, filled on first use and kept for the run, written through `&mut self` | `Machine::captures`, `Machine::made` (`Machine.reads`) | Identity (gap 1), mutation (gap 11) | The names read kept beside each lambda term when it is built, or a memo table threaded through the run |
 | `Rc::strong_count` read by a test to see that a value is released | `eval::tests::a_closure_holds_only_the_values_its_body_reads` | No reference counts in the language | A release observed by a foreign value's release function, or the runtime's live-cell count |
 
+## Entries from PORT-expr-stmt (`zedc-check/src/check/ports.rs` `silent_tail`, `check/walk.rs` `Ck::expr_stmt`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit `Vec` stack of `&Expr` popped in a `while let` loop that returns the first path writing to no port | `silent_tail` | Mutation (gap 11) | A fold over the branches of the expression's tree, the first silent path found by a `match` on each node kind |
+| A `HashSet<usize>` of binder ids moved out of the `ports` result into a field of the checker | `Ports::writers`, `Ck::port_writers` | Identity (gap 1), mutation | The set of output-port functions, a value the port pass gives and the statement check reads |
+
 ## Entries from PERF-treap-seeded-priorities (`zed-kernel/src/priority.rs` and its nine users: `types/bdd/settings.rs`, `types/bucket.rs`, `zedc-preimage` `spans.rs`, `divisors.rs`, `images.rs`, `preimage.rs`, `zedc-presburger` `hull/rows.rs`, `extend/holes.rs`, `extend/images/intervals.rs`)
 
 | Rust construct | Sites | Gap | At the port |

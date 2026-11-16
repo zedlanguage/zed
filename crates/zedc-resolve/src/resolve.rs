@@ -2172,7 +2172,9 @@ impl Resolver<'_> {
             StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition"),
             StmtKind::While(_) => self.later(s.span, "a `while` guard"),
             StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
-            StmtKind::Expr(_) => self.later(s.span, "an expression statement"),
+            // A call that pushes to a port (DESIGN.md sec:tour_methods, L1.19); the checker
+            // refuses one that writes nothing (`check::ports::silent_tail`).
+            StmtKind::Expr(value) => todo.push(Task::Expr(value)),
             StmtKind::Annotated { annots, decl } => {
                 self.annotations(annots, decl, todo);
                 todo.push(Task::Stmt(decl, false));

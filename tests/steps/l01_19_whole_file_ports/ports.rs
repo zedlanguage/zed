@@ -49,6 +49,144 @@ fn the_example_of_l1_19_writes_through_the_port_it_is_given() {
     );
 }
 
+/// Red before green: zedc refused every expression statement as a form of layer L6, so the
+/// example of L1.19 had to be written `_ = say("hi", out: m.stdout);`. A call in statement
+/// position that pushes to a port is a statement (DESIGN.md sec:tour_methods, "a call in
+/// statement position is legal when it writes a generation (`c*.tick()`) or a port").
+#[test]
+fn a_call_that_pushes_to_a_port_is_a_statement() {
+    let out = run(
+        "say_stmt",
+        &with_say("say(\"hi\", out: m.stdout);"),
+        "",
+        &[],
+    );
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "hi\n", "")
+    );
+    // Beside a push of `main` to the other output, in a helper's block body, and on each
+    // branch of an `if`.
+    let src = "say(positional s, out: Lines) { out <- s; }\n\
+               shout(positional s, out: Lines) { say(s ++ \"!\", out: out); }\n\
+               main(m: MainArgs) {\n  shout(\"hi\", out: m.stdout);\n  m.stderr <- \"e\";\n}\n";
+    let out = run("stmt_block_body", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "hi!\n", "e\n")
+    );
+    let branches = "k = int(m.args[0] else \"\") else 0;\n  \
+                    if k > 1 { say(\"many\", out: m.stdout) } else { say(\"one\", out: m.stdout) };";
+    let out = run("stmt_branches", &with_say(branches), "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "one\n"),
+        "{}",
+        out.stderr
+    );
+    let out = run("stmt_branches_args", &with_say(branches), "", &["--", "5"]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "many\n"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// The contrast: a call in statement position that writes to no port is refused, on any path,
+/// and so is one that drops the result of a function that pushes (DESIGN.md sec:diagnostics,
+/// "Statement that writes nothing, or drops a declared result").
+#[test]
+fn a_statement_that_writes_nothing_or_drops_a_result_is_refused() {
+    let src =
+        "f(positional x: int) = x + 1;\n\nmain(m: MainArgs) {\n  f(1);\n  m.stdout <- \"x\";\n}\n";
+    assert_eq!(
+        rejected("stmt_pure", src),
+        "4:3: Statement has no effect: `f(1)` writes to no port, and its value is dropped."
+    );
+    let branch = "k = int(m.args[0] else \"\") else 0;\n  \
+                  if k > 1 { say(\"many\", out: m.stdout) } else { 0 };";
+    assert_eq!(
+        rejected("stmt_one_branch", &with_say(branch)),
+        "5:3: Statement has no effect: `0` writes to no port, and its value is dropped."
+    );
+    let src = "bump(positional s, out: Lines) { out <- s; 3 }\n\n\
+               main(m: MainArgs) {\n  bump(\"hi\", out: m.stdout);\n}\n";
+    assert_eq!(
+        rejected("stmt_result", src),
+        "4:3: Result of `bump` is unused: `bump(\"hi\", out: m.stdout) : 3`. Try \
+         `_ = bump(\"hi\", out: m.stdout);` instead."
+    );
+    // The repair the headline offers runs.
+    let src = src.replace("  bump(", "  _ = bump(");
+    let out = run("stmt_result_dropped", &src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "hi\n"),
+        "{}",
+        out.stderr
+    );
+    // A loose failure is dropped only where the text names it: `e else d;` drops only `d`, so
+    // it stands when every other member of `e` is a loose failure (DESIGN.md
+    // sec:tour_methods).
+    let full = "full(positional s, out: Lines) { out <- s; #full }\n\n\
+                main(m: MainArgs) {\n  full(\"hi\", out: m.stdout);\n}\n";
+    assert_eq!(
+        rejected("stmt_loose", full),
+        "4:3: Result of `full` is unused: `full(\"hi\", out: m.stdout) : #full`. Try \
+         `_ = full(\"hi\", out: m.stdout) else #ok;` instead."
+    );
+    for (name, repaired) in [
+        ("stmt_loose_else", "  full(\"hi\", out: m.stdout) else #ok;"),
+        (
+            "stmt_loose_dropped",
+            "  _ = full(\"hi\", out: m.stdout) else #ok;",
+        ),
+    ] {
+        let src = full.replace("  full(\"hi\", out: m.stdout);", repaired);
+        let out = run(name, &src, "", &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, "hi\n"),
+            "{src}\n{}",
+            out.stderr
+        );
+    }
+}
+
+/// The notes of a statement that writes nothing: why, at the call, and the repairs.
+#[test]
+fn a_statement_that_writes_nothing_names_the_call_and_the_repairs() {
+    let text =
+        "f(positional x: int) = x + 1;\nmain(m: MainArgs) {\n  f(1);\n  m.stdout <- \"x\";\n}\n";
+    let (stmts, res) = resolved(text);
+    let info = check_text(&stmts, &res, Some(text));
+    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    let e = &info.errors[0];
+    assert_eq!(e.row, Some(zedc::rejection::Row::WritesNothing));
+    assert_eq!(&text[e.span.start..e.span.end], "f(1);");
+    let notes: Vec<(&str, &str)> = (e.notes.iter())
+        .map(|n| (n.text.as_str(), &text[n.span.start..n.span.end]))
+        .collect();
+    assert_eq!(
+        notes,
+        [
+            (
+                "`f` has no output port parameter, so `f(1)` writes to no port",
+                "f(1)"
+            ),
+            (
+                "repair: delete the statement, which changes nothing the program gives",
+                "f(1)"
+            ),
+            (
+                "repair: bind the value to a name, and use the name, as `… = f(1);`",
+                "f(1)"
+            ),
+        ]
+    );
+}
+
 /// The port reaches the push whatever the path: through a chain of helpers, by position, in
 /// parentheses, from a lambda in the helper, beside a push of `main` to the other output.
 #[test]
@@ -218,6 +356,46 @@ pub(super) fn helper_chain(n: usize) -> String {
         n - 1
     ));
     text
+}
+
+/// A chain of `n` helpers as [`helper_chain`] builds it, but each body above the first, and
+/// `main`, an expression statement that calls the one below: `h1(…) { h0(s, out: out); }`.
+pub(super) fn statement_chain(n: usize) -> String {
+    let mut text = String::from("h0(positional s, out: Lines) { out <- s; }\n");
+    for i in 1..n {
+        text.push_str(&format!(
+            "h{i}(positional s, out: Lines) {{ h{}(s, out: out); }}\n",
+            i - 1
+        ));
+    }
+    text.push_str(&format!(
+        "main(m: MainArgs) {{\n  h{}(\"x\", out: m.stdout);\n}}\n",
+        n - 1
+    ));
+    text
+}
+
+/// Checks a [`statement_chain`] of `n`: each of its `n` expression statements writes, so it is
+/// accepted.
+pub(super) fn accepts_the_statements(
+    text: &str,
+    stmts: &[zedc::ast::Stmt],
+    res: &zedc::resolve::Resolution,
+) {
+    let info = check_text(stmts, res, Some(text));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+}
+
+#[test]
+fn a_chain_of_expression_statements_passing_a_port_writes_once() {
+    let text = statement_chain(3);
+    let (stmts, res) = resolved(&text);
+    accepts_the_statements(&text, &stmts, &res);
+    let out = run("stmt_chain", &text, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "x\n", "")
+    );
 }
 
 /// The output ports of a [`helper_chain`] of `n`: each parameter is an output port, decided

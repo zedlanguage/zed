@@ -27,7 +27,7 @@ Decl          = ~Local                                                          
               | ~Push                                                              L1
               | ~Binding                                                           L1
               | ~Signature                                                         L7
-              | ~ExprStmt                                                          L6
+              | ~ExprStmt                                                          L1
 Local         = 'local' Decl                                                       L2
 Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
 Carry         = 'with' 'carryForward'                                              L6
@@ -38,7 +38,7 @@ Return        = 'return' Expr % ',' ';'                                         
 Emit          = 'emit' Expr ';'                                                    L4
 While         = 'while' Expr ';'                                                   L6
 Until         = 'until' Expr ';'                                                   L6
-ExprStmt      = Expr ';'                                                           L6
+ExprStmt      = Expr ';'                                                           L1
 
 Import        = 'import' Path '.' '{' Name % ',' ','? '}' Pin? ';'                 L2
               | 'import' Path ('as' Name)? Pin? ';'                                L2
