@@ -125,7 +125,7 @@ pub fn ranged_function(src: &str) -> (Scope, Term) {
     let (ps, body) = function(src);
     let sig = crate::step_helpers::l01_26_type_resolution::sig_of(src, "ok");
     let scope = Scope::new(ps.iter().zip(&sig.params).map(|(p, s)| {
-        let cell = match &s.range {
+        let cell = match s.range.as_ref().and_then(|r| r.int()) {
             Some(r) => Product::of_type_within(Type::int(), &zedc::check::written_ints(r)),
             None => Product::of_type(Type::int()),
         };

@@ -3969,6 +3969,65 @@ impl std::hash::Hash for WrittenRange {
     }
 }
 
+/// The ranges a parameter is written with ([`SParam::range`]): one on the whole of it, as
+/// `d: int[1..=9]` or the key `int[5..=9] ->? V`, or one on each component of its tuple type
+/// that has one, none on the others, as the key `((int[0..=1], int)) ->? V`
+/// (RANGE-key-component-print).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ParamRange {
+    /// A range on the whole parameter, whose type is `int`.
+    Int(WrittenRange),
+    /// A range on each component of a tuple type, by index, or none.
+    Parts(Arc<[Option<WrittenRange>]>),
+}
+
+impl ParamRange {
+    /// The range on the whole parameter, if it has one.
+    pub fn int(&self) -> Option<&WrittenRange> {
+        match self {
+            ParamRange::Int(r) => Some(r),
+            ParamRange::Parts(_) => None,
+        }
+    }
+
+    /// Pushes to `parts` the text of the parameter of type `t` written with the ranges
+    /// `range`, standing at `at`: a range in place of the type it is written on, each end
+    /// inclusive, and the type `t` alone where `range` is none. A range on components prints
+    /// as [`Row::parts`] prints the row, each ranged component's range in its place; it
+    /// prints `t` alone where `t` is not one row of as many components, which
+    /// [`ParamRange::Parts`] is not built for.
+    fn parts<'a>(
+        range: Option<&'a ParamRange>,
+        t: &'a Ty,
+        at: PrintAt,
+        parts: &mut Vec<Print<'a>>,
+    ) {
+        let rs = match range {
+            Some(ParamRange::Int(r)) => return parts.push(Print::Text(&r.text)),
+            Some(ParamRange::Parts(rs)) => rs,
+            None => return parts.push(Print::Ty(t, at)),
+        };
+        let Some(row) = t.lone_row().filter(|row| row.len() == rs.len()) else {
+            return parts.push(Print::Ty(t, at));
+        };
+        let wrap = row.wraps(at);
+        parts.push(Print::Text(if wrap { "((" } else { "(" }));
+        let mut one = true;
+        for (c, r) in row.iter().zip(rs.iter()) {
+            between(parts, &mut one, ", ");
+            parts.push(match r {
+                Some(r) => Print::Text(&r.text),
+                None => Print::Ty(c, PrintAt::Any),
+            });
+        }
+        parts.push(Print::Text(match (row.len() == 1, wrap) {
+            (true, _) => ",)",
+            (false, true) => "))",
+            (false, false) => ")",
+        }));
+    }
+}
+
 /// The width of a bit word, an int at least 0, kept as its value: `2 ^ width` is never built.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Width(pub Value);
@@ -4287,8 +4346,10 @@ pub struct SParam {
     pub default: Option<(usize, usize, bool)>,
     /// The range it is declared with, as `d: int[1..=9]`, which the signature prints in place
     /// of its type `int` (DESIGN.md L1.39); each call is checked against it by a
-    /// [`NeedKind::InDomain`] need of the signature.
-    pub range: Option<WrittenRange>,
+    /// [`NeedKind::InDomain`] need of the signature. On the one parameter of a partial map,
+    /// the ranges written on its key, the whole key's or its components'
+    /// ([`ParamRange::Parts`]), which print in the key's place.
+    pub range: Option<ParamRange>,
 }
 
 /// One arrow: a type for each parameter, and the result.
@@ -10008,6 +10069,21 @@ impl Ty {
         }
     }
 
+    /// Its one tuple shape, when it is that shape and nothing else: no set, variable,
+    /// function, unknown or payload. O(1).
+    pub fn lone_row(&self) -> Option<&Row> {
+        let alone = self.set.is_empty()
+            && self.vars.is_empty()
+            && self.fns.is_empty()
+            && !self.dynamic
+            && self.payloads.is_empty()
+            && self.family.is_empty();
+        match (alone, self.tuples.len(), self.tuples.first()) {
+            (true, 1, Some(r)) => Some(r),
+            _ => None,
+        }
+    }
+
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
     pub fn unchecked_function(&self) -> Option<&Arc<Sig>> {
@@ -15166,11 +15242,13 @@ enum PrintAt {
 
 /// A signature written as a morphism type ([`Sig::morphism`]).
 enum Morphism<'a> {
-    /// `K ->? V`: the key type, the range written on the key, printed in its place where it
-    /// has one (`int[5..=9] ->? int`, RANGE-keys), and the result, `V | #notFound`.
+    /// `K ->? V`: the key type, the ranges written on the key, printed in its place or its
+    /// components' where it has them (`int[5..=9] ->? int`, RANGE-keys;
+    /// `((int[0..=1], int)) ->? int`, RANGE-key-component-print), and the result,
+    /// `V | #notFound`.
     Partial {
         key: &'a Ty,
-        range: Option<&'a WrittenRange>,
+        range: Option<&'a ParamRange>,
         value: &'a Ty,
     },
     /// `L .. U -> V`: the guarantee, the permission and the value type.
@@ -15187,10 +15265,7 @@ impl<'a> Morphism<'a> {
     fn parts(&self, parts: &mut Vec<Print<'a>>) {
         match *self {
             Morphism::Partial { key, range, value } => {
-                parts.push(match range {
-                    Some(r) => Print::Text(&r.text),
-                    None => Print::Ty(key, PrintAt::Key),
-                });
+                ParamRange::parts(range, key, PrintAt::Key, parts);
                 parts.extend([Print::Text(" ->? "), Print::Found(value)]);
             }
             Morphism::Bounded {
@@ -15717,10 +15792,7 @@ impl Sig {
                     if several {
                         parts.push(Print::Text("("));
                     }
-                    match &self.params[0].range {
-                        Some(r) => parts.push(Print::Text(&r.text)),
-                        None => parts.push(Print::Ty(key, PrintAt::Key)),
-                    }
+                    ParamRange::parts(self.params[0].range.as_ref(), key, PrintAt::Key, parts);
                     parts.extend(result(a));
                     if several {
                         parts.push(Print::Text(")"));
@@ -15735,10 +15807,7 @@ impl Sig {
                         parts.push(Print::Text(&p.name));
                         parts.push(Print::Text(": "));
                     }
-                    match &p.range {
-                        Some(r) => parts.push(Print::Text(&r.text)),
-                        None => parts.push(Print::Ty(t, PrintAt::Any)),
-                    }
+                    ParamRange::parts(p.range.as_ref(), t, PrintAt::Any, parts);
                 }
                 parts.push(Print::Text(")"));
                 parts.extend(result(a));

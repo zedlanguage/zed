@@ -9,9 +9,8 @@ use zedc::store::interval::IntervalSet;
 /// The interval of the range `r`, as the checker reads it from the parameter `x: r`.
 fn ints(r: &str) -> IntervalSet {
     let sig = sig_of(&format!("f(x: {r}) = x;\n"), "f");
-    let written = sig.params[0]
-        .range
-        .as_ref()
+    let written = (sig.params[0].range.as_ref())
+        .and_then(|w| w.int())
         .unwrap_or_else(|| panic!("`x: {r}` has no range"));
     written_ints(written)
 }
@@ -31,6 +30,7 @@ fn a_range_below_an_end_and_one_through_the_end_before_it_are_one_type() {
         sig_of(&format!("f(x: {r}) = x;\n"), "f").params[0]
             .range
             .as_ref()
+            .and_then(|w| w.int())
             .map(|w| w.text.to_string())
     };
     assert_eq!(printed("int[0..<10]"), Some("int[0..=9]".into()));
@@ -115,4 +115,35 @@ fn a_partial_map_parameter_prints_the_range_on_its_key() {
         sig_of("f(positional m: int[5..<10] ->? int) = m(6);\n", "f").to_string(),
         "(int[5..=9] ->? int) -> int | #notFound"
     );
+}
+
+/// Row RANGE-key-component-print: the ranges on a tuple key's components print as written,
+/// each end inclusive, a component with none as its type, and the printed parameter, written
+/// back as the declaration, prints the same.
+#[test]
+fn a_partial_map_parameter_prints_the_ranges_on_its_tuple_key() {
+    let cases = [
+        (
+            "((int[0..<2], int[0..<3]))",
+            "(1, 2)",
+            "((int[0..=1], int[0..=2]))",
+        ),
+        ("((int[0..<2], int))", "(1, 7)", "((int[0..=1], int))"),
+        (
+            "((bool, int[-3..=-1], int[4..]))",
+            "(true, -2, 9)",
+            "((bool, int[-3..=-1], int[4..]))",
+        ),
+        ("(int[0..<2],)", "(1,)", "(int[0..=1],)"),
+    ];
+    for (key, arg, printed) in cases {
+        let expected = format!("({printed} ->? int) -> int | #notFound");
+        let src = |k: &str| format!("f(positional m: {k} ->? int) = m({arg});\n");
+        assert_eq!(sig_of(&src(key), "f").to_string(), expected, "{key}");
+        assert_eq!(
+            sig_of(&src(printed), "f").to_string(),
+            expected,
+            "{printed}"
+        );
+    }
 }

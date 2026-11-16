@@ -2354,7 +2354,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let closed = self.t.uses_in(d.span, &[]).is_empty();
                     (self.id(span, &f.name), i, closed)
                 }),
-                range,
+                range: range.map(ParamRange::Int),
             });
         }
         let s = InferF {
@@ -12472,7 +12472,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn floors_into(&mut self, sig: Arc<Sig>, ids: &[Option<usize>]) -> Arc<Sig> {
         let mut needs = Vec::new();
         let mut inferred: Vec<(usize, WrittenRange)> = Vec::new();
-        let mut keyed: Vec<(usize, WrittenRange)> = Vec::new();
+        // The ranges written on each partial-map parameter's key, by its index.
+        let mut keyed = Vec::new();
         for (j, id) in ids.iter().enumerate() {
             let Some(id) = id else { continue };
             self.open_params.remove(id);
@@ -12512,12 +12513,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // rejected until step L6, `order_around_cycles`), and a check run again runs the
             // whole `infer` again, entry and all. Tests: `l08_02_remaps::recursion`.
             let keys = self.param_keys.remove(id);
-            // The range on the whole key prints in the key's place, `(int[5..=9] ->? int)`
-            // (RANGE-result-hull); one on a tuple component has no place in the printed type
-            // yet (row RANGE-key-component-print).
-            let whole = (keys.iter().flat_map(|k| &k.ranges)).find(|(part, _)| part.is_none());
-            if let Some((_, r)) = whole {
-                keyed.push((j, r.clone()));
+            // The ranges on the key print in its place: the whole key's, `(int[5..=9] ->? int)`
+            // (RANGE-result-hull), or each tuple component's in the component's,
+            // `(((int[0..=1], int)) ->? int)` (RANGE-key-component-print).
+            if let Some(k) = keys.as_ref().filter(|k| !k.ranges.is_empty()) {
+                keyed.push((j, k.ranges.clone()));
             }
             if let Some(k) = keys.and_then(|k| k.need()) {
                 let name = sig
@@ -12546,7 +12546,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // A parameter declared with a range takes only the ints in it: each call shows
             // its argument's ints there (DESIGN.md L1.39), as a use's need is checked.
-            if let Some(r) = sig.params.get(j).and_then(|p| p.range.clone())
+            if let Some(r) = (sig.params.get(j)).and_then(|p| p.range.as_ref()?.int().cloned())
                 && let Some(&(_, span)) = self.param_ints.get(id)
             {
                 let name = sig.params[j].name.clone();
@@ -12576,12 +12576,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         s.facts = Default::default();
         s.needs.extend(needs);
         for (j, r) in inferred {
-            s.params[j].range = Some(r);
+            s.params[j].range = Some(ParamRange::Int(r));
         }
-        for (j, r) in keyed {
+        for (j, rs) in keyed {
             for a in &mut s.arrows {
                 if let Some(t) = a.params.get_mut(j) {
-                    *t = with_key_range(t, &r);
+                    *t = with_key_range(t, &rs);
                 }
             }
         }
@@ -21443,15 +21443,17 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
     }
 }
 
-/// `t`, the type of a parameter declared a partial map of one key, with the range `r` written
-/// on its key on the map's one parameter, so that it prints in the key's place
-/// (`int[5..=9] ->? int`, [`Sig::morphism`]); `t` as it is where it is not one function of one
-/// positional parameter. The range takes no part in what the map's type admits: a call's
-/// argument is checked against it by the parameter's need (RANGE-keys). O(the size of the
-/// map's signature), one copy.
+/// `t`, the type of a parameter declared a partial map of one key, with the ranges `rs`
+/// written on its key (`ParamKeys::ranges`) on the map's one parameter, so that they print
+/// in the key's place, the whole key's (`int[5..=9] ->? int`) or each tuple component's in
+/// the component's (`((int[0..=1], int)) ->? int`, [`Sig::morphism`]); `t` as it is where it
+/// is not one function of one positional parameter, or where a component's range has no
+/// component of the key in each arrow. The ranges take no part in what the map's type
+/// admits: a call's argument is checked against them by the parameter's need (RANGE-keys).
+/// O(the size of the map's signature), one copy.
 ///
 /// [`Sig::morphism`]: zedc_types::ty::Sig
-fn with_key_range(t: &Ty, r: &WrittenRange) -> Ty {
+fn with_key_range(t: &Ty, rs: &[(Option<usize>, WrittenRange)]) -> Ty {
     let alone = t.set.is_empty() && t.tuples.is_empty() && t.vars.is_empty() && !t.dynamic;
     let (1, true, Some(f)) = (t.fns.len(), alone, t.fns.first()) else {
         return t.clone();
@@ -21459,9 +21461,33 @@ fn with_key_range(t: &Ty, r: &WrittenRange) -> Ty {
     if !matches!(&f.params[..], [p] if p.positional && p.range.is_none()) {
         return t.clone();
     }
+    let range = match rs {
+        [(None, r)] => ParamRange::Int(r.clone()),
+        _ => {
+            // The key's components, as many in each arrow (one, for `K ->? V`).
+            let mut lens = f
+                .arrows
+                .iter()
+                .map(|a| a.params[0].lone_row().map(|r| r.len()));
+            let Some(Some(len)) = lens.next() else {
+                return t.clone();
+            };
+            if lens.any(|l| l != Some(len)) {
+                return t.clone();
+            }
+            let mut parts = vec![None; len];
+            for (part, r) in rs {
+                match part.and_then(|i| parts.get_mut(i)) {
+                    Some(slot) => *slot = Some(r.clone()),
+                    None => return t.clone(),
+                }
+            }
+            ParamRange::Parts(parts.into())
+        }
+    };
     let mut s = (**f).clone();
     s.facts = Default::default();
-    s.params[0].range = Some(r.clone());
+    s.params[0].range = Some(range);
     Ty::func(Arc::new(s))
 }
 
