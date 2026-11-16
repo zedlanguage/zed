@@ -2,7 +2,6 @@
 
 use crate::slack_scale::*;
 use zed_tests::scaling;
-use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable};
 
@@ -266,15 +265,12 @@ fn untied_projection_uses_the_endpoint_report() {
     let large = subset_sum_dp(&weights_distinct(8 * k));
     let y0 = [sym("y0")];
     let red = std::env::var_os("PDCX_RED").is_some();
-    // The solver alone, without the exact cover ([`solver_alone`]), which would make its answer
-    // exact. With the method, the join of row sums (module `row_sums`) answers both sizes
-    // exactly with the empty set, since the target is unreachable, and the endpoint report is not
-    // reached.
+    // The solver alone: the join of row sums (module `row_sums`) answers both sizes exactly with
+    // the empty set, since the target is unreachable, and the endpoint report is not reached.
     scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
-        let got = solver_alone(|| project_each(if m == k { &small } else { &large }, &y0))
-            .expect("projection");
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
         assert!(got.0[0].as_ref().expect("set").contains(9000));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
         ROW_SUMS_OFF.with(|o| o.set(false));
@@ -295,8 +291,7 @@ fn tied_projection_endpoint_reports_scale_past_512() {
     // The solver alone, as in the untied test above.
     scaling::check_order("I22 tied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
-        let got = solver_alone(|| project_each(if m == k { &small } else { &large }, &y0))
-            .expect("projection");
+        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
         assert_eq!(got.0[0], Ok(pt_set(&[1000])));
         ROW_SUMS_OFF.with(|o| o.set(false));
     });
@@ -323,11 +318,7 @@ fn ss_project_each_costs_at_most_four_decides() {
         return;
     }
     // The solver alone: with the join of row sums (module `row_sums`) the questions the
-    // halving asks are narrow enough for it, and q is the exact empty set. Alone also means
-    // without the exact cover ([`solver_alone`]), as in the halves above (R1-4): what is
-    // measured is the solver's endpoint report against its halving (`Hull::tighten`). With the
-    // cover, p and q are both `Questions` at `EXACT_LIMIT`, and the check below still fails at
-    // a thousand times that limit, so the check cannot hold (PRES-pugh-xr round 2, C).
+    // halving asks are narrow enough for it, and q is the exact empty set.
     ROW_SUMS_OFF.with(|o| o.set(true));
     let f = subset_sum_dp(&weights(64));
     let y0 = [sym("y0")];
@@ -339,14 +330,14 @@ fn ss_project_each_costs_at_most_four_decides() {
     };
     let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
     let reported = least(&mut meter, &|| {
-        drop(std::hint::black_box(solver_alone(|| project_each(&f, &y0))))
+        drop(std::hint::black_box(project_each(&f, &y0)))
     });
-    let (p, _) = solver_alone(|| project_each(&f, &y0)).expect("ss 64 project");
+    let (p, _) = project_each(&f, &y0).expect("ss 64 project");
     HULL_BISECT.with(|c| c.set(true));
     let halved = least(&mut meter, &|| {
-        drop(std::hint::black_box(solver_alone(|| project_each(&f, &y0))))
+        drop(std::hint::black_box(project_each(&f, &y0)))
     });
-    let (q, _) = solver_alone(|| project_each(&f, &y0)).expect("ss 64 project, halving");
+    let (q, _) = project_each(&f, &y0).expect("ss 64 project, halving");
     HULL_BISECT.with(|c| c.set(false));
     // The endpoint report is never coarser than the halving on this formula.
     assert!(

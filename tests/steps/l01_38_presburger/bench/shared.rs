@@ -4,7 +4,6 @@ use crate::shared::*;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use zed_tests::scaling;
-use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::presburger::Formula;
 
 #[test]
@@ -166,13 +165,8 @@ fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out_to_
 #[test]
 fn taking_a_shared_part_out_of_the_600_disjunctions_of_seed_0x5f5b_loses_no_precision() {
     let mut rng = zed_tests::instances::Rng::new(0x5F5B);
-    let fs: Vec<_> = (0..600).map(|i| (i, random_tiers(&mut rng))).collect();
+    let c = factoring_loses_no_precision((0..600).map(|i| (i, random_tiers(&mut rng))));
     // On 2026-11-14 one projection, of formula 9, is narrower than as written, and no refusal
-    // as written is answered: the solver alone.
-    let c = solver_alone(|| factoring_loses_no_precision(fs.clone()));
+    // as written is answered.
     assert_eq!((c.same, c.narrower, c.answered), (599, 1, 0), "{c:?}");
-    // With the exact cover (PRES-pugh-work-budget) both writings of formula 9 give the exact
-    // sets, so all 600 are the same (`a_shared_part_taken_out_narrows_a_projection`).
-    let c = factoring_loses_no_precision(fs);
-    assert_eq!((c.same, c.narrower, c.answered), (600, 0, 0), "{c:?}");
 }
