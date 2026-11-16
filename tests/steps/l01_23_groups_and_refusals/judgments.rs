@@ -698,6 +698,43 @@ fn a_meet_with_a_union_of_functions_keeps_both_sides() {
     );
 }
 
+/// A union holding `_` (every value) met with `G` is `G` (DESIGN.md sec:type_language, A92):
+/// `_ | F` is `_`, and `_ & G` is `G`, on either side of `&` and inside a tuple. Before
+/// (FAIL-types-meet-key-arrows-not-within, FAIL-kernel-print-seed-479643653593087009), the
+/// meet of `_ | F` with `G` kept `F & G` beside `G`, and where `F` and `G` take the same
+/// parameters `F & G` is an overload not within `G`. Each case but the last two is a type the
+/// kernel printer's round trip met on a random seed (1730459861738794369, 6234523682986511799,
+/// 2245270478369938153, 479643653593087009), with the print it read back as another type.
+#[test]
+fn a_meet_of_a_union_holding_the_unknown_is_the_other_side() {
+    use zedc::check::read::parse_type;
+    let within = |a: &str, b: &str| parse_type(a).unwrap().subtype(&parse_type(b).unwrap());
+    for (meet, other) in [
+        ("(_ | (int -> ())) & (String -> int)", "String -> int"),
+        ("(_ | ((()) -> ())) & (String -> int)", "String -> int"),
+        (
+            "((_) | ((()) -> (()))) & (((String) | (String)) -> (((String), (#b), (String))))",
+            "String -> (String, #b, String)",
+        ),
+        ("(((#a) ->? (())) | (_)) & ((rat) ->? (bool))", "rat ->? bool"),
+        (
+            "((_) | ((bool) ->? (bool))) & ((#pair((()), (rat))) -> (#box((bool))))",
+            "#pair((), rat) -> #box(bool)",
+        ),
+        (
+            "(((#b) .. ((#b) | (_)) -> (String)) | ((()) | (_))) & ((#box((#a))) | ((bool) -> (int)))",
+            "(bool -> int) | #box(#a)",
+        ),
+        ("(String -> int) & (_ | (int -> ()))", "String -> int"),
+        ("((_ | (int -> ())), bool) & ((String -> int), bool)", "(String -> int, bool)"),
+    ] {
+        assert!(
+            within(meet, other) && within(other, meet),
+            "`{meet}` is not `{other}`"
+        );
+    }
+}
+
 // FAIL-types-tuple-subtype: found by the kernel printer's round trip (l01_29 parens.rs).
 /// Two tuple types equal part by part, or two unions of the same tuples in another order, are
 /// each a subtype of the other.

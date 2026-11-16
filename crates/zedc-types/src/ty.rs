@@ -10945,8 +10945,15 @@ impl Ty {
         mut met: Vec<Row>,
         mut shapes: BTreeMap<Arc<str>, Vec<Shape>>,
     ) -> Ty {
+        // A side holding `_` is every value, whatever it holds beside it (A92), so the meet is
+        // the other side. Before (FAIL-types-meet-key-arrows-not-within), only `t` was read so;
+        // `(_ | F) & G` was `(F & G) | G`, and where `F` and `G` take the same parameters,
+        // `F & G` is their overload, which is not within `G`.
         if t.dynamic {
             return self.clone();
+        }
+        if self.dynamic {
+            return t.clone();
         }
         let mut out = Ty::set(&self.set & &t.set);
         // The payloads of an atom name: met shape by shape where both list them, so that
@@ -11012,7 +11019,7 @@ impl Ty {
         );
         out.fns = self.fns_met(t).into();
         out.prune_payloads();
-        if self.dynamic || !self.vars.is_empty() {
+        if !self.vars.is_empty() {
             out = out.union(t);
         }
         out
@@ -11467,8 +11474,12 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
     /// [`Ty::meet`] of `a` and `t`, which both hold tuples or both list the payloads of an atom
     /// of one name ([`Ty::meets_parts`]).
     async fn meet(&'m self, a: &'m Ty, t: &'m Ty) -> Ty {
+        // A side holding `_` is every value, so the meet is the other side ([`Ty::meet_rest`]).
         if t.dynamic {
             return a.clone();
+        }
+        if a.dynamic {
+            return t.clone();
         }
         let mut met = Vec::new();
         // Only the pairs of tuples that may share a value are met ([`near_pairs`]): the meet of
