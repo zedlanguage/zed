@@ -7,6 +7,10 @@
 //! The kernel runs time the terms zedc elaborates the words to (zedc-elab, walk/fp_ops.rs),
 //! built before the runs; the whole-path runs time `zedc run` of a program whose display holds
 //! the entries, so they measure the parse, the check, the elaboration and the run together.
+//!
+//! The reads of a list made by `++` that build no map of it (plan row
+//! TEST-list-concat-no-map-build) each run once after every `++` of a right-nested chain, so a
+//! read that built the map would make the chain quadratic.
 
 use std::collections::HashMap;
 
@@ -426,6 +430,127 @@ fn first_and_last_cost_the_same_at_8n() {
             run,
         );
     }
+}
+
+/// The k steps `prev = acc; acc = [i] ++ prev; read` for i from 1 to k, from `acc = [0]`, the
+/// read `read(i)` run at each step with `acc` (i + 1 entries) and `prev` (i entries) bound, its
+/// value matched and dropped; the term's value is the count of the last `acc`. The `++` chain
+/// costs O(k log k); a read that builds the joined list's ordered map costs O(i) at step i, so
+/// O(k²) in all (plan row TEST-list-concat-no-map-build).
+fn read_at_each_step(k: usize, read: &impl Fn(i64) -> Term) -> Term {
+    let mut body = Term::Prim(Prim::Count, vec![var("acc")]);
+    for i in (1..=k).rev() {
+        let then = Term::Match(rc(read(i as i64)), vec![(Pattern::Wild, body)]);
+        let joined = Term::Prim(Prim::ListConcat, vec![lit(one(i)), var("prev")]);
+        body = let_("prev", var("acc"), let_("acc", joined, then));
+    }
+    let_("acc", lit(one(0)), body)
+}
+
+/// Holds [`read_at_each_step`] at n and 8n steps under 9 times (`scaling::PREFERRED`): each read
+/// is O(1) or O(log n) on a list made by `++`, which COMPLEXITY.md F223 lists, and builds no map.
+fn joined_read_ratio(what: &str, read: impl Fn(i64) -> Term) {
+    joined_read_under(what, scaling::PREFERRED, read);
+}
+
+/// [`joined_read_ratio`] held under `bound` times.
+fn joined_read_under(what: &str, bound: f64, read: impl Fn(i64) -> Term) {
+    let terms = scaling::inputs(N_CONCAT, |k| read_at_each_step(k, &read));
+    let run = |k: usize| assert_eq!(eval(&terms[&k]).unwrap(), Value::Int(k as i64 + 1));
+    let what = format!("`{what}` after each of n `[x] ++ a`, instructions");
+    let r = ratio(&what, N_CONCAT, 1, run);
+    assert!(r < bound, "{what}: {r:.2} times at 8n, over {bound:.2}");
+}
+
+fn acc() -> Term {
+    var("acc")
+}
+
+fn prev() -> Term {
+    var("prev")
+}
+
+/// The key in the middle of `acc` at step `i`.
+fn middle(i: i64) -> Term {
+    lit((i + 1) / 2)
+}
+
+#[test]
+fn a_read_by_key_of_a_joined_list_builds_no_map() {
+    joined_read_ratio("a[k]", |i| get(acc(), middle(i)));
+    joined_read_ratio("a.0", |i| {
+        Term::Prim(Prim::TupleGet, vec![acc(), middle(i)])
+    });
+    joined_read_ratio("a[k] at a rank", |i| {
+        Term::Prim(Prim::At, vec![acc(), middle(i)])
+    });
+}
+
+#[test]
+fn in_and_count_of_a_joined_list_build_no_map() {
+    joined_read_ratio("k in a", |i| Term::Prim(Prim::Has, vec![middle(i), acc()]));
+    joined_read_ratio("a.count", |_| count(acc()));
+}
+
+#[test]
+fn the_entry_steps_of_a_joined_list_build_no_map() {
+    let entry = |i: i64| Term::Prim(Prim::Tuple, vec![middle(i), lit(0)]);
+    joined_read_ratio("firstEntry(a)", |_| {
+        Term::Prim(Prim::FirstEntry, vec![acc()])
+    });
+    joined_read_ratio("lastEntry(a)", |_| Term::Prim(Prim::LastEntry, vec![acc()]));
+    joined_read_ratio("entryAfter(a, e)", |i| {
+        Term::Prim(Prim::EntryAfter, vec![acc(), entry(i)])
+    });
+    joined_read_ratio("entryBefore(a, e)", |i| {
+        Term::Prim(Prim::EntryBefore, vec![acc(), entry(i)])
+    });
+}
+
+#[test]
+fn first_last_and_concat_of_a_joined_list_build_no_map() {
+    joined_read_ratio("a.first", |_| Term::Prim(Prim::First, vec![acc()]));
+    joined_read_ratio("a.last", |_| Term::Prim(Prim::Last, vec![acc()]));
+    // `a ++ a` builds O(log n) nodes at step i, with allocation, where the reads above build
+    // none: proved O(log min(p, q)) for operands of p and q leaves (Hinze and Paterson 2006,
+    // their concatenation), so the chain is O(n log n), held to 8 ln(8n) / ln(n), 10.41 at
+    // n = 1000, the ratio of n log n at 8n (measured 9.92, 2026-11-16, load 40).
+    let n = N_CONCAT as f64;
+    let n_log_n = FACTOR as f64 * (FACTOR as f64 * n).ln() / n.ln();
+    joined_read_under("a ++ a", n_log_n, |_| {
+        Term::Prim(Prim::ListConcat, vec![acc(), acc()])
+    });
+}
+
+/// The comparisons of `acc` with `prev`, one entry shorter and different at the first entry,
+/// and with a list of its size made by another `++` that differs at the first entry: each
+/// decided by the counts or the first entries, O(log n). Not here: `a == a` and `a <= a`, which
+/// read every entry of any family, a map too, since a NaN inside is not equal to itself (the
+/// IEEE 754 relations, `Relation::SurfaceEq`); `kernel::comparisons_of_a_joined_list_build_no_map`
+/// shows that they build no map.
+#[test]
+fn comparisons_of_a_joined_list_build_no_map() {
+    let other = |i: i64| Term::Prim(Prim::ListConcat, vec![lit(one(i as usize + 1)), prev()]);
+    for p in [Prim::Eq, Prim::Ne, Prim::Lt, Prim::Ge, Prim::Min, Prim::Max] {
+        joined_read_ratio(&format!("{p:?}(a, prev)"), |_| {
+            Term::Prim(p, vec![acc(), prev()])
+        });
+    }
+    joined_read_ratio("a == b, one size", |i| eq(acc(), other(i)));
+    joined_read_ratio("a < b, one size", |i| lt(acc(), other(i)));
+}
+
+/// A list made by `++` read as a key of a family: the hash reads its count, and the order of
+/// keys its first entries, O(log n).
+#[test]
+fn a_joined_list_as_a_key_builds_no_map() {
+    let keyed = lit(Value::Family(Family::of([
+        (one(usize::MAX >> 1), 0),
+        (Value::Family(Family::of([(0, -2), (1, -3)])), 1),
+    ])));
+    joined_read_ratio("a in keyed", |_| {
+        Term::Prim(Prim::Has, vec![acc(), keyed.clone()])
+    });
 }
 
 /// `zedc run` of `body(xs)`, `xs` a string-keyed display of n entries `"k0000" -> 0, …`,

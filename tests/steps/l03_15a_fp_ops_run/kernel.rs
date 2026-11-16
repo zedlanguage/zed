@@ -1,7 +1,8 @@
 //! The kernel primitives of plan row FP-ops-run, each on its own: the four entry steps that
 //! walk a level in key order (`firstEntry`, `lastEntry`, `entryAfter`, `entryBefore`), and
 //! `first` and `last`, the leaf at the least and greatest keypath; and the string functions of
-//! plan row FP-ops-strings, `split`, `lines` and `concat`.
+//! plan row FP-ops-strings, `split`, `lines` and `concat`; and the reads of a list made by `++`
+//! that build no map of it (plan row TEST-list-concat-no-map-build).
 
 use zed_kernel::term::build::lit;
 use zed_kernel::{Family, Prim, Term, Value, eval};
@@ -225,4 +226,215 @@ fn string_functions_pass_atoms_and_refuse_other_entries() {
     let ints = fam(vec![(int(0), int(1))]);
     let t = Term::Prim(Prim::Join, vec![lit(ints), lit(s(","))]);
     assert!(eval(&t).is_err(), "concat of ints");
+}
+
+/// The list `[0, 10, …, 10(n-1)]` made by `n - 1` concatenations of one-entry lists nested to the
+/// right, `[0] ++ ([10] ++ (… ++ [10(n-1)]))`: a list made by `++` whose ordered map is not built
+/// (plan row TEST-list-concat-no-map-build). Each call makes a new list, so a map built by one read
+/// is not found built by the next.
+fn joined(n: i64) -> Value {
+    let one = |i: i64| Family::of([(int(0), int(10 * i))]);
+    let list = (0..n - 1)
+        .rev()
+        .fold(one(n - 1), |acc, i| one(i).concat(&acc).unwrap());
+    Value::Family(list)
+}
+
+/// The same list as [`joined`], built as one map.
+fn flat(n: i64) -> Value {
+    fam((0..n).map(|i| (int(i), int(10 * i))).collect())
+}
+
+/// `p` on `args`, asserting that no list made by `++` had its map built while it ran.
+fn unflattened(p: Prim, args: Vec<Value>) -> Value {
+    let before = zed_kernel::value::lists_flattened();
+    let out = run(p, args);
+    let built = zed_kernel::value::lists_flattened() - before;
+    assert_eq!(
+        built, 0,
+        "{p:?} built the map of {built} list(s) made by `++`"
+    );
+    out
+}
+
+/// The reads by key, `in`, the count, the four entry steps, `first`, `last` and `++` itself on a
+/// list made by `++` give what they give on the same list built as one map, and build no map
+/// (COMPLEXITY.md F223: each is O(log n) or O(1) on the joined list).
+#[test]
+fn reads_of_a_joined_list_build_no_map() {
+    let n = 50;
+    let none = Value::atom("notFound");
+    let oob = Value::atom("outOfBounds");
+    for (k, want_get, want_at) in [
+        (int(0), int(0), int(0)),
+        (int(25), int(250), int(250)),
+        (int(49), int(490), int(490)),
+        (int(50), none.clone(), oob.clone()),
+        (int(-1), none.clone(), oob.clone()),
+        (s("a"), none.clone(), oob.clone()),
+    ] {
+        for (p, want) in [
+            (Prim::Get, &want_get),
+            (Prim::TupleGet, &want_get),
+            (Prim::At, &want_at),
+        ] {
+            assert_eq!(
+                unflattened(p, vec![joined(n), k.clone()]),
+                *want,
+                "{p:?} at {k}"
+            );
+            assert_eq!(
+                run(p, vec![flat(n), k.clone()]),
+                *want,
+                "{p:?} at {k}, one map"
+            );
+        }
+        let held = want_at != oob;
+        assert_eq!(
+            unflattened(Prim::Has, vec![k, joined(n)]),
+            Value::Bool(held)
+        );
+    }
+    assert_eq!(unflattened(Prim::Count, vec![joined(n)]), int(n));
+    let first = pair(int(0), int(0));
+    let last = pair(int(49), int(490));
+    assert_eq!(unflattened(Prim::FirstEntry, vec![joined(n)]), first);
+    assert_eq!(unflattened(Prim::LastEntry, vec![joined(n)]), last);
+    let step = |p: Prim, k: i64| unflattened(p, vec![joined(n), pair(int(k), int(0))]);
+    assert_eq!(step(Prim::EntryAfter, 25), pair(int(26), int(260)));
+    assert_eq!(step(Prim::EntryBefore, 25), pair(int(24), int(240)));
+    assert_eq!(step(Prim::EntryAfter, 49), end());
+    assert_eq!(step(Prim::EntryBefore, 0), end());
+    assert_eq!(step(Prim::EntryAfter, -5), first);
+    assert_eq!(step(Prim::EntryBefore, 99), last);
+    assert_eq!(unflattened(Prim::First, vec![joined(n)]), int(0));
+    assert_eq!(unflattened(Prim::Last, vec![joined(n)]), int(490));
+    let both = unflattened(Prim::ListConcat, vec![joined(n), joined(n)]);
+    assert_eq!(unflattened(Prim::Count, vec![both.clone()]), int(2 * n));
+    assert_eq!(unflattened(Prim::Get, vec![both, int(75)]), int(250));
+}
+
+/// `first` and `last` descend through a list of lists, each made by `++`, building no map.
+#[test]
+fn first_and_last_descend_through_joined_lists() {
+    let outer = |a: Value, b: Value| {
+        let one = |v: Value| Family::of([(int(0), v)]);
+        Value::Family(one(a).concat(&one(b)).unwrap())
+    };
+    let f = outer(joined(3), joined(4));
+    assert_eq!(unflattened(Prim::First, vec![f.clone()]), int(0));
+    assert_eq!(unflattened(Prim::Last, vec![f]), int(30));
+}
+
+/// `==`, `!=`, the order and `min`/`max` of a list made by `++` against lists of other sizes,
+/// against itself, against an equal list built as one map, and against lists that differ at an
+/// entry, give what the same lists built as one map give, and build no map.
+#[test]
+fn comparisons_of_a_joined_list_build_no_map() {
+    let n = 50;
+    let differs = |at: i64| {
+        fam((0..n)
+            .map(|i| (int(i), int(10 * i + i64::from(i == at))))
+            .collect())
+    };
+    let others = [
+        flat(1),
+        flat(n - 1),
+        flat(n + 1),
+        flat(n),
+        differs(0),
+        differs(n / 2),
+        differs(n - 1),
+        fam(Vec::new()),
+        fam(vec![(s("a"), int(0))]),
+    ];
+    for other in &others {
+        for p in [Prim::Eq, Prim::Ne, Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge] {
+            let want = run(p, vec![flat(n), other.clone()]);
+            let got = unflattened(p, vec![joined(n), other.clone()]);
+            assert_eq!(got, want, "{p:?} against {other}");
+            let want = run(p, vec![other.clone(), flat(n)]);
+            let got = unflattened(p, vec![other.clone(), joined(n)]);
+            assert_eq!(got, want, "{p:?} from {other}");
+            let got = unflattened(p, vec![joined(n), joined(n)]);
+            assert_eq!(
+                got,
+                run(p, vec![flat(n), flat(n)]),
+                "{p:?} of two joined lists"
+            );
+        }
+        for p in [Prim::Min, Prim::Max] {
+            let want = run(p, vec![flat(n), other.clone()]);
+            let got = unflattened(p, vec![joined(n), other.clone()]);
+            // The two are equal under `==`; which one is given is read by its count.
+            assert_eq!(
+                unflattened(Prim::Count, vec![got]),
+                run(Prim::Count, vec![want]),
+                "{p:?} against {other}"
+            );
+        }
+    }
+    let x = joined(n);
+    for (p, want) in [
+        (Prim::Eq, true),
+        (Prim::Ne, false),
+        (Prim::Le, true),
+        (Prim::Lt, false),
+    ] {
+        assert_eq!(
+            unflattened(p, vec![x.clone(), x.clone()]),
+            Value::Bool(want),
+            "{p:?} self"
+        );
+    }
+    // Rust's `==`, the identity the kernel's maps and memo tables use: by the count, the
+    // sharing, or the entries read in order.
+    let before = zed_kernel::value::lists_flattened();
+    assert!(x == x.clone() && x == joined(n) && x == flat(n) && flat(n) == x);
+    assert!(x != joined(n - 1) && x != differs(n / 2) && differs(0) != x);
+    assert_eq!(zed_kernel::value::lists_flattened(), before, "Rust's `==`");
+}
+
+/// A list made by `++` hashes as the same list built as one map, and as a key of a family it is
+/// found by an equal list either way, building no map: the hash reads the count, and the key
+/// order reads the entries to the first difference.
+#[test]
+fn a_joined_list_as_a_key_builds_no_map() {
+    use std::hash::{BuildHasher, RandomState};
+    let n = 50;
+    let hasher = RandomState::new();
+    let before = zed_kernel::value::lists_flattened();
+    assert_eq!(hasher.hash_one(joined(n)), hasher.hash_one(flat(n)));
+    assert_eq!(zed_kernel::value::lists_flattened(), before, "the hash");
+    let keyed = fam(vec![
+        (flat(n), int(1)),
+        (flat(n - 1), int(2)),
+        (joined(3), int(3)),
+    ]);
+    assert_eq!(
+        unflattened(Prim::Has, vec![joined(n), keyed.clone()]),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        unflattened(Prim::Get, vec![keyed.clone(), joined(n)]),
+        int(1)
+    );
+    assert_eq!(
+        unflattened(Prim::Get, vec![keyed.clone(), joined(n - 1)]),
+        int(2)
+    );
+    assert_eq!(unflattened(Prim::Get, vec![keyed, flat(3)]), int(3));
+}
+
+/// A walk over every entry builds the map of a list made by `++` once, O(n), which the copies of
+/// the list share: printing it twice builds one map, and its text is the one map's.
+#[test]
+fn a_walk_builds_the_map_once() {
+    let x = joined(5);
+    let before = zed_kernel::value::lists_flattened();
+    let shown = run(Prim::Show, vec![x.clone()]);
+    assert_eq!(zed_kernel::value::lists_flattened() - before, 1);
+    assert_eq!(run(Prim::Show, vec![x]), shown);
+    assert_eq!(zed_kernel::value::lists_flattened() - before, 1);
+    assert_eq!(shown, run(Prim::Show, vec![flat(5)]));
 }

@@ -1548,6 +1548,18 @@ fn search_beside(mut lo: BigInt, mut hi: BigInt, k: &Value, after: bool) -> BigI
     lo
 }
 
+thread_local! {
+    /// The maps of lists made by `++` this thread has built ([`lists_flattened`]).
+    static FLATTENED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// How many lists made by `++` this thread has built the ordered map of, each once
+/// (`Chain::map`): a count that only grows, read by the tests to show that a read which should
+/// not walk a joined list builds no map (plan row TEST-list-concat-no-map-build).
+pub fn lists_flattened() -> u64 {
+    FLATTENED.with(Cell::get)
+}
+
 /// The lists made by `++` ([`chain::Chain`]), in a module of their own so that the names of their
 /// finger tree stay apart from the value's; in this file, as the tree holds families and a family
 /// holds the tree (step S.1f).
@@ -1566,10 +1578,13 @@ mod chain {
     // the finger tree of Hinze and Paterson (2006), the one strings use (`crate::text`, COMPLEXITY.md
     // C29), with lists as its leaves: `++` shares both operands and builds O(log min(p, q)) nodes
     // for operands of `p` and `q` leaves, O(1) amortized for a leaf added at either end; the count,
-    // a read by key, `in` and the first and last entry are answered from the counts in O(1) or
-    // O(log n), building no map. A walk over the entries (the hash, `==`, the order, a print, a
-    // change through `DerefMut`) builds the map once, O(n), which the copies share, as a range's
-    // (`Span::map`). Tradeoffs: a leaf per list joined, never merged with its neighbors, so a
+    // a read by key, `in`, the entry steps and the first and last entry are answered from the
+    // counts in O(1) or O(log n), and the hash from the count, building no map; `==` and the
+    // order read the leaves in order to the first difference (`Chain::values`), building none
+    // (plan row TEST-list-concat-no-map-build, COMPLEXITY.md F223). A walk that keeps the
+    // entries or reads them all by key (a print, `keys`, a fold, a change through `DerefMut`)
+    // builds the map once, O(n), which the copies share, as a range's (`Span::map`). Tradeoffs:
+    // a leaf per list joined, never merged with its neighbors, so a
     // chain of one-entry lists holds a leaf, a one-entry map and O(1) tree nodes per entry; and a
     // change to a list made by `++` builds its map, O(n), where the map made by the union took
     // O(log n).
@@ -1619,7 +1634,7 @@ mod chain {
         }
 
         /// The parts beneath this one, in order, the middle of a deep tree among them.
-        fn parts(&self) -> impl Iterator<Item = &Part> {
+        fn parts(&self) -> impl DoubleEndedIterator<Item = &Part> {
             let (a, middle, b): (&[Option<Part>], _, &[Option<Part>]) = match &*self.0 {
                 ChainTree::Empty | ChainTree::Leaf(_) => (&[], None, &[]),
                 ChainTree::Node { parts, .. } => (parts.as_slice(), None, &[]),
@@ -1707,6 +1722,7 @@ mod chain {
         /// leaves in order, O(n), and shared after.
         pub(super) fn map(&self) -> &btree::Map<Value, Value> {
             self.map.get_or_init(|| {
+                FLATTENED.with(|c| c.set(c.get() + 1));
                 let mut out = Vec::with_capacity(self.len());
                 let mut todo = vec![&self.tree];
                 while let Some(t) = todo.pop() {
@@ -1716,11 +1732,48 @@ mod chain {
                                 out.push((Value::Int(out.len() as i64), v.clone()));
                             }
                         }
-                        _ => todo.extend(t.parts().collect::<Vec<_>>().into_iter().rev()),
+                        _ => todo.extend(t.parts().rev()),
                     }
                 }
                 out.into_iter().collect()
             })
+        }
+
+        /// The values of the list in position order, read from the leaves, building no map.
+        pub(super) fn values(&self) -> Values<'_> {
+            Values {
+                todo: vec![&self.tree],
+                leaf: None,
+            }
+        }
+    }
+
+    /// The values of a list made by `++` in position order ([`Chain::values`]): the parts not yet
+    /// read on a stack, the next on top, and the entries of the leaf being read. Reaching the
+    /// value at position `k` costs O(log n + k): the parts popped are those on the path to it and
+    /// those wholly before it, each of which holds an entry or is one of the O(log n) empty
+    /// middles of the deep trees on the way.
+    pub(super) struct Values<'a> {
+        todo: Vec<&'a Part>,
+        leaf: Option<btree::Iter<'a, Value, Value>>,
+    }
+
+    impl<'a> Iterator for Values<'a> {
+        type Item = &'a Value;
+
+        fn next(&mut self) -> Option<&'a Value> {
+            loop {
+                if let Some((_, v)) = self.leaf.as_mut().and_then(Iterator::next) {
+                    return Some(v);
+                }
+                let t = self.todo.pop()?;
+                match &*t.0 {
+                    // A leaf is a map or a range, never made by `++` (`join`); a range's
+                    // entries are its own map, built once and kept with it (`Span::map`).
+                    ChainTree::Leaf(f) => self.leaf = Some(f.0.iter()),
+                    _ => self.todo.extend(t.parts().rev()),
+                }
+            }
         }
     }
 
@@ -2459,6 +2512,23 @@ impl Family {
         }
     }
 
+    /// Whether the two families hold one shared map, or one shared list made by `++`, so that
+    /// their entries are the same without reading them. O(1), and it builds no map: false for a
+    /// range and for two families of other kinds, which a comparison then reads.
+    fn same_entries(&self, other: &Family) -> bool {
+        match (&self.0, &other.0) {
+            (Entries::Map(a), Entries::Map(b)) => a.ptr_eq(b),
+            (Entries::Seq(a), Entries::Seq(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    /// Whether the family is a list made by `++` whose map is not built, so that a walk over
+    /// its entries reads its leaves ([`chain::Chain::values`]) instead of building the map.
+    fn unbuilt(&self) -> bool {
+        matches!(&self.0, Entries::Seq(c) if c.map.get().is_none())
+    }
+
     /// Whether the family has no entries. A range is never empty (`Family::range`,
     /// `Family::range_from`), nor is a list made by `++` (`Family::concat`).
     pub fn is_empty(&self) -> bool {
@@ -2945,7 +3015,8 @@ enum Relation {
     /// The total order of [`Ord`].
     Total,
     /// Equality of [`PartialEq`], the ties of the total order. It tests sizes first, and it
-    /// reads two families with `diff`, which skips the nodes they share.
+    /// reads two families with `diff`, which skips the nodes they share, or, when one is a list
+    /// made by `++` whose map is not built, by its leaves in order ([`Pairs::Sides`]).
     Identity,
     /// The language's `==`: [`Relation::Identity`] with IEEE 754 floats.
     SurfaceEq,
@@ -2993,7 +3064,8 @@ enum Enter<'a> {
 /// The level `enter` opens, its map's entries pushed on `maps`, and its pair kept in `read`
 /// ([`Comparisons`]) from now on. `Ok(None)` when there is nothing to read here: a comparison
 /// running on this thread has entered that pair already, or under identity the two families
-/// are queued, to be read with `diff` ([`settle`]). `Err` ends the walk with its result. A pair
+/// are queued, to be read with `diff` ([`settle`]), unless one is a list made by `++` whose map
+/// is not built, which is read here. `Err` ends the walk with its result. A pair
 /// met again is found before its map iterators are made.
 fn open<'a>(
     c: &Comparisons,
@@ -3012,13 +3084,28 @@ fn open<'a>(
             if !c.enter(pair, relation) {
                 return Ok(None);
             }
-            if relation == Relation::Identity {
+            // A list made by `++` whose map is not built is read from its leaves, in position
+            // order, under every relation, identity included.
+            // Complexity tradeoff (COMPLEXITY.md F223, plan row TEST-list-concat-no-map-build):
+            // the naive walk, `zip` or `diff` of the two maps, builds the joined list's map
+            // first, O(n) for n entries even when the first entries differ. Used: the leaves
+            // read in order beside the other side's entries, O(log n + k) to a difference at
+            // position k, and O(n) to the end with no map built. Tradeoff: `zip` and `diff`
+            // pass over a subtree two maps share, which this reading cannot see, so two lists
+            // made by `++` that share most of their leaves but are not one list are read in
+            // full; their map, once some other read builds it, is read as a map again.
+            let unbuilt = a.unbuilt() || b.unbuilt();
+            if relation == Relation::Identity && !unbuilt {
                 // A family is copied by a reference count, so the queue holds no data.
                 c.pairs.borrow_mut().push((a.clone(), b.clone()));
                 return Ok(None);
             }
+            let pairs = match unbuilt {
+                true => Pairs::Sides(Side::of(a), Side::of(b)),
+                false => Pairs::Zip(a.0.zip(&b.0)),
+            };
             maps.push(MapLevel {
-                pairs: a.0.zip(&b.0),
+                pairs,
                 values: None,
                 relation,
                 pair,
@@ -3028,10 +3115,67 @@ fn open<'a>(
     }
 }
 
+/// The entries of two families side by side, for a comparison.
+enum Pairs<'a> {
+    /// Two maps, which pass over the subtrees they share ([`btree::Zip::next`]).
+    Zip(btree::Zip<'a, Value, Value>),
+    /// Two families of which one at least is a list made by `++` whose map is not built.
+    Sides(Side<'a>, Side<'a>),
+}
+
+/// The entries of one family in key order, for [`Pairs::Sides`].
+enum Side<'a> {
+    /// A map's entries.
+    Map(btree::Iter<'a, Value, Value>),
+    /// The values of a list made by `++`, and the position of the next, its key.
+    Seq(chain::Values<'a>, i64),
+}
+
+/// The key of an entry a [`Side`] gives.
+enum SideKey<'a> {
+    Key(&'a Value),
+    Position(i64),
+}
+
+impl<'a> Side<'a> {
+    fn of(f: &'a Family) -> Side<'a> {
+        match &f.0 {
+            Entries::Seq(c) if c.map.get().is_none() => Side::Seq(c.values(), 0),
+            _ => Side::Map(f.0.iter()),
+        }
+    }
+
+    fn next(&mut self) -> Option<(SideKey<'a>, &'a Value)> {
+        match self {
+            Side::Map(entries) => entries.next().map(|(k, v)| (SideKey::Key(k), v)),
+            Side::Seq(values, i) => {
+                let v = values.next()?;
+                *i += 1;
+                Some((SideKey::Position(*i - 1), v))
+            }
+        }
+    }
+}
+
+/// The order of the keys of two entries, read beside each other, under the total order, as
+/// `step` gives it: an integer key against any value is decided at once.
+fn side_keys<'a>(k: SideKey<'a>, l: SideKey<'a>) -> Step<'a> {
+    let o = match (k, l) {
+        (SideKey::Key(k), SideKey::Key(l)) => return step(k, l, Relation::Total),
+        (SideKey::Position(i), SideKey::Position(j)) => i.cmp(&j),
+        (SideKey::Position(i), SideKey::Key(l)) => cmp(&Value::Int(i), l),
+        (SideKey::Key(k), SideKey::Position(j)) => cmp(k, &Value::Int(j)),
+    };
+    match o {
+        Ordering::Equal => Step::Same,
+        o => Step::Ends(Some(o)),
+    }
+}
+
 /// The entries of two families under comparison.
 struct MapLevel<'a> {
-    /// The entries of the two maps side by side.
-    pairs: btree::Zip<'a, Value, Value>,
+    /// The entries of the two families side by side.
+    pairs: Pairs<'a>,
     /// The values of the entry whose keys were compared last.
     values: Option<(&'a Value, &'a Value)>,
     relation: Relation,
@@ -3104,9 +3248,10 @@ fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
             (o, _) => Step::Ends(Some(o)),
         };
     }
-    // With a range on one side the sharing is not tested, which would build its map: `same`
-    // false only sends the pair to the walk, which reads the entries and decides exactly.
-    let same = x.is_none() && y.is_none() && a.0.ptr_eq(&b.0);
+    // The sharing is tested on the entries as they are kept, which builds no map of a range or
+    // of a list made by `++`: `same` false only sends the pair to the walk, which reads the
+    // entries and decides exactly.
+    let same = a.same_entries(b);
     match r {
         Relation::Identity | Relation::SurfaceEq if a.size() != b.size() => Step::Ends(None),
         Relation::Identity | Relation::Total | Relation::Min | Relation::Max if same => Step::Same,
@@ -3252,13 +3397,22 @@ fn advance<'a>(level: &mut Level<'a>, maps: &mut [MapLevel<'a>]) -> Step<'a> {
             // A subtree both maps hold at the same place is equal to itself under every relation
             // but the IEEE 754 ones, under which a NaN inside is not, so those read it.
             let skip = !matches!(level.relation, Relation::SurfaceEq | Relation::SurfaceOrder);
-            match level.pairs.next(skip) {
-                (Some((k, v)), Some((l, w))) => {
-                    level.values = Some((v, w));
-                    // Keys are compared bitwise whichever relation the values are compared by.
-                    step(k, l, Relation::Total)
-                }
-                (x, y) => side(x.is_some(), y.is_some()),
+            match &mut level.pairs {
+                Pairs::Zip(pairs) => match pairs.next(skip) {
+                    (Some((k, v)), Some((l, w))) => {
+                        level.values = Some((v, w));
+                        // Keys are compared bitwise whichever relation the values are compared by.
+                        step(k, l, Relation::Total)
+                    }
+                    (x, y) => side(x.is_some(), y.is_some()),
+                },
+                Pairs::Sides(a, b) => match (a.next(), b.next()) {
+                    (Some((k, v)), Some((l, w))) => {
+                        level.values = Some((v, w));
+                        side_keys(k, l)
+                    }
+                    (x, y) => side(x.is_some(), y.is_some()),
+                },
             }
         }
     }
@@ -3406,17 +3560,18 @@ pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
 /// Whether two families are the same.
 pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
     // Two ranges hold the same entries exactly when they have the same ends, and are never
-    // empty, so they are compared without building either map; a range and a map of another
-    // size differ, which `len` reads from the range's ends.
-    let (x, y) = (a.ends(), b.ends());
-    match (&x, &y) {
-        (Some(x), Some(y)) => return x == y,
-        (Some(_), None) | (None, Some(_)) if a.size() != b.size() => return false,
-        _ => {}
+    // empty, so they are compared without building either map; two families of other sizes
+    // differ, which `size` reads in O(1) from a range's ends, a map and a list made by `++`.
+    if let (Some(x), Some(y)) = (a.ends(), b.ends()) {
+        return x == y;
     }
-    // One shared map: equal without a walk, as for sequences in `items_eq`. A range is not
-    // tested for sharing, which would build its map; the walk decides it.
-    if x.is_none() && y.is_none() && a.0.ptr_eq(&b.0) {
+    if a.size() != b.size() {
+        return false;
+    }
+    // One shared map or list made by `++`: equal without a walk, as for sequences in
+    // `items_eq`. A range is not tested for sharing, which would build its map; the walk
+    // decides it.
+    if a.same_entries(b) {
         return true;
     }
     COMPARISONS.with(|c| {
