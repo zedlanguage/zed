@@ -605,10 +605,12 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// `x` is the smaller set each node of `y` split at is an ancestor, in `y`'s treap, of the
 /// position of a literal of `x`, so the splits are at most the sum over `x`'s literals of `1 +`
 /// that position's depth, `|x| (1 + D)` in expectation (cross-review round 3, Claude R3-C2:
-/// 10 to 30 splits for `|x| = 1`); a split or a removal walks
-/// one search path of a treap whose keys are a range of what is left of `x`, whose ancestors
-/// are among those in the treap of all that is left, so `1 + D` in expectation; and a join walks
-/// the facing spines of its two sides, two paths of the treap of at most `N` keys it makes.
+/// 10 to 30 splits for `|x| = 1`); the part of `x` met at a node of `y` is `x` in that node's
+/// key range (the removals above it were at keys outside the range), so a split or a removal
+/// walks one search path of the treap of a range of the fixed set `x`, whose ancestors are among
+/// those in `x`'s treap (Seidel and Aragon, Lemma 4.3), `1 + D` in expectation; and a join walks
+/// the facing spines of two ranges of the fixed result `x \ y`, at most `|x| - 1` of them with
+/// both sides non-empty, two paths of its treap (cross-review round 3, Gemini R3-F1).
 /// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016) prove
 /// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 5-wise
 /// independent draw of module `priority` that is not proved, and it was measured with a
