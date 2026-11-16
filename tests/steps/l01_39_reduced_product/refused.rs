@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
+use zed_tests::step_helpers::l01_26_type_resolution::sig;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, Shared, project_each};
 use zedc::store::product::{Asked, Kept, Refused, Scope};
@@ -629,6 +630,82 @@ fn reads_of_one_term_under_refused_tests_settle_once() {
     let one = parts_projected(&divisions_by_one_name(1));
     assert!(one > 0, "the conditions are projected");
     assert_eq!(parts_projected(&divisions_by_one_name(8)), one);
+}
+
+/// PERF-guarded-function-constant: `n` functions that differ only in their names, each
+/// dividing by `x` under the four refused conditions (unit 49 of piece 4 of `programs.txt`).
+fn functions_that_differ_in_names(n: usize) -> String {
+    let guard = "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z \
+                 - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && 0 - 8 * w - 5 * x + 12 \
+                 * y - z + 31 >= 0";
+    let mut src = String::new();
+    for k in 0..n {
+        src += &format!(
+            "guard{k}(x: int, y: int, z: int, w: int) = if {guard} {{ 100 div x }} else {{ 0 }};\n"
+        );
+    }
+    src + "main() {\n}\n"
+}
+
+/// Functions that no use names, and that differ only in their names, check their equal tests
+/// and reads once for the unit: the second to eighth project no block of the relation that
+/// the first did not (PERF-guarded-function-constant), while each still has its warning
+/// (`m0_12_refusal_census::bench`).
+#[test]
+fn functions_that_differ_in_names_share_their_tests() {
+    let one = parts_projected(&functions_that_differ_in_names(1));
+    assert!(one > 0, "the conditions are projected");
+    assert_eq!(parts_projected(&functions_that_differ_in_names(8)), one);
+}
+
+/// The types of `checked` and `open` in the unit of `before`, the two functions and an empty
+/// `main`, in both orders, each equal to the function's type in a unit without the
+/// other, where nothing of one can be shared with the other.
+fn verdicts(before: &str, checked: &str, open: &str) -> (String, String) {
+    let unit = |fns: &[&str]| format!("{before}{}\nmain() {{\n}}\n", fns.join("\n"));
+    let alone = (
+        sig(&unit(&[checked]), "checked"),
+        sig(&unit(&[open]), "open"),
+    );
+    for pair in [[checked, open], [open, checked]] {
+        let src = unit(&pair);
+        assert_eq!((sig(&src, "checked"), sig(&src, "open")), alone, "{src}");
+    }
+    alone
+}
+
+/// Two functions whose parameters share their names by place (`x@p0`) but not their types are
+/// checked apart, in either order: the test of `checked` narrows `x` to `int[1..=5]`, which
+/// holds no 0, while that of `open` leaves 0 in it.
+#[test]
+fn functions_that_share_names_but_not_types_keep_their_own_verdicts() {
+    let checked = "checked(x: int[1..=9]) = if x <= 5 { 100 div x } else { 0 };";
+    let open = "open(x: int) = if x <= 5 { 100 div x } else { 0 };";
+    assert_eq!(
+        verdicts("", checked, open),
+        (
+            "(x: int[1..=9]) -> int[0..=100]".to_string(),
+            "(x: int) -> int | #divByZero".to_string()
+        )
+    );
+}
+
+/// A call of a function with a summary, read in a test or an operand, is a name of its own,
+/// one for equal calls; two functions whose parameters share their names by place each have
+/// their own, as the arguments read different binders: `dec(x)` holds no 0 in `checked` and
+/// holds 0 in `open`, whichever is checked first.
+#[test]
+fn equal_calls_in_functions_that_share_names_are_names_apart() {
+    let dec = "dec(positional a: int) = a - 1;\n";
+    let checked = "checked(x: int[2..=9]) = if x <= 5 { 100 div dec(x) } else { 0 };";
+    let open = "open(x: int) = if x <= 5 { 100 div dec(x) } else { 0 };";
+    assert_eq!(
+        verdicts(dec, checked, open),
+        (
+            "(x: int[2..=9]) -> int[-100..=100]".to_string(),
+            "(x: int) -> int | #divByZero".to_string()
+        )
+    );
 }
 
 mod bench;

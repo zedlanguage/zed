@@ -311,6 +311,12 @@ impl<'a> Tables<'a> {
         self.ids[&(span, name)]
     }
 
+    /// Whether some use in the unit may name binder `b`, alone or as an arrow of an overload
+    /// set. O(1).
+    pub fn used(&self, b: usize) -> bool {
+        !self.groups_of[b].is_empty()
+    }
+
     /// The binders used in `span`, outside the spans in `skip`.
     pub fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
         let from = Span {

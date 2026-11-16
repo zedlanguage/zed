@@ -808,6 +808,7 @@ impl<'a> M<'a> {
 impl<'t, 'a> Ck<'t, 'a> {
     /// Checks the statements of the unit.
     pub(super) fn walk(&mut self, unit: &'a [Stmt]) {
+        self.name_by_place(unit);
         let mut m = M::new();
         m.job(Job::Scope(unit, true));
         self.drive(&mut m);
@@ -820,6 +821,48 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A statement other than a binding drops the errors of its operations on literals
         // that met a carrier here.
         self.drop_met(0);
+    }
+
+    /// Names each parameter of a function of `unit` that no use names by its place
+    /// ([`arms::Arms::by_place`]): `guard0(x: int, y: int)` and `guard1(x: int, y: int)` both
+    /// read `x@p0` and `y@p1`, so the tests of their bodies are equal terms, and a test checked
+    /// in one is not checked again in the other ([`Ck::compute`], [`Ck::read_here`]). O(p) for
+    /// the `p` parameters of the unit's functions.
+    ///
+    /// Why two such functions may share names: the name of a parameter of `f` is in no scope
+    /// but those of `f`'s own nodes. Its body's terms are the only terms that name it
+    /// ([`Ck::term_for`], by the resolver's uses); another function reads `f`'s body only as a
+    /// definition it calls ([`Ck::callable`]), which a use of `f` names, and `f` has none; and
+    /// an implicit name for a call is shared only by calls whose arguments read the same
+    /// binders ([`Ck::term_for`], `implicit_calls`). The root's scope, the parent of every
+    /// function's first test, holds no name: each binder bound at the root is read in a copy
+    /// of it ([`Item::Bound`]). So no scope holds two parameters of one name. A function some
+    /// use names keeps [`arms::var`]'s names: a caller's scope holds its lambda
+    /// ([`Ck::bind_called`]), where a parameter of the caller with the callee's name would be
+    /// captured unless every step that reads a lambda renames its parameters apart, which is
+    /// not proved. A parameter that is a tuple `(a, b)` keeps them too.
+    fn name_by_place(&mut self, unit: &'a [Stmt]) {
+        for s in unit {
+            let s = s.bare();
+            let StmtKind::Function(f) = &s.kind else {
+                continue;
+            };
+            let Some(&id) = self.t.ids.get(&(s.span, f.name.as_str())) else {
+                continue;
+            };
+            if f.main.is_some() || self.t.used(id) {
+                continue;
+            }
+            for (i, p) in f.params.iter().enumerate() {
+                let Some(&b) = self.t.ids.get(&(p.span, p.name.as_str())) else {
+                    continue;
+                };
+                if p.tuple.is_none() {
+                    let name = format!("{}@p{i}", p.name).into();
+                    self.arms.by_place.insert(b, name);
+                }
+            }
+        }
     }
 
     /// Checks the expression `e` alone, in the unit's top scope after the walk, as an argument
@@ -8383,20 +8426,24 @@ impl<'a> Ck<'_, 'a> {
     /// ([`Scope::eager_on`]), made at the first read of a term equal to `e`'s in that scope.
     ///
     /// The read is the same at every place: the scope of a node is set once
-    /// ([`Ck::compute`]), as is each binder's value ([`Item::Bound`]), its summary
-    /// ([`Ck::summarized`]), its scope name ([`arms::var`], one per binder) and the
-    /// definition a call is kept as ([`Ck::translate_called`], final once the term that calls
-    /// it is made), and the scope's own steps read nothing but the scope and the term. So the
-    /// key and an equal term give an equal scope, and what [`product::forward`] and
-    /// [`Scope::zero_reached`] give of it is kept with it. The refusals a read adds are placed
-    /// at each read's own place ([`Ck::place_refusals`]) by the caller.
+    /// ([`Ck::compute`]), and two nodes of one class have equal scopes (the proof there), as
+    /// is each binder's value ([`Item::Bound`]), its summary ([`Ck::summarized`]), its scope
+    /// name ([`arms::Arms::scope_name`], one per binder) and the definition a call is kept as
+    /// ([`Ck::translate_called`], final once the term that calls it is made), and the scope's
+    /// own steps read nothing but the scope and the term. So the key, whose binders and calls
+    /// are the unit's ids and so apart across functions, and an equal term give an equal
+    /// scope, in any function, and what [`product::forward`] and [`Scope::zero_reached`] give
+    /// of it is kept with it. The refusals a read adds are placed at each read's own place
+    /// ([`Ck::place_refusals`]) by the caller.
     ///
     /// Complexity tradeoff: naive version, each read clones the node's scope, binds the term's
     /// binders and calls, settles its names and reads it: under `k` refused tests every read
     /// settles the same refused blocks again, so a function under four refused conditions
     /// that divides `n` times by one name settles and projects them about `3 n` times
     /// (PERF-refused-site-constant: 13 million instructions per division in the census).
-    /// Used: one read per node and equal term, found by its content address in O(log r) for
+    /// Used: one read per class of nodes ([`Ck::compute`]) and equal term, so the reads of
+    /// functions that differ only in their parameters' names are made once
+    /// (PERF-guarded-function-constant), found by its content address in O(log r) for
     /// `r` reads kept plus the term's size for the address, and the terms of one address
     /// compared with `==` (two terms that differ only in a binder's name share an address and
     /// are read apart). Tradeoffs: memory of one scope (sharing its maps with the node's) for
@@ -8410,7 +8457,7 @@ impl<'a> Ck<'_, 'a> {
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
         self.settle(wanted);
         let key = (
-            here,
+            self.arms.class[here],
             t.binders.clone(),
             t.calls.clone(),
             Address::of(&t.term),
@@ -8954,8 +9001,83 @@ impl<'a> Ck<'_, 'a> {
                         parent,
                         test,
                         outcome,
-                        ..
+                        ref fresh,
                     } => {
+                        // The questions refused here and not in the parent's scope are this
+                        // test's: those the binders it reads asked as they were told of, and
+                        // its own narrowing's. A join asks none of its own; it keeps both
+                        // sides' ([`Scope::join`]).
+                        let before = (self.arms.scopes[parent].as_ref())
+                            .map(|q| q.refusals.clone())
+                            .unwrap_or_default();
+                        let fresh = fresh.clone();
+                        let t = self.term(test);
+                        // The scope of an `Assume` is a function of its parent's scope, the
+                        // binders and calls its test reads, the products of its test's names,
+                        // its test as a term and its outcome, and of nothing else: so a node
+                        // of the class of an equal one computed before takes its scope.
+                        //
+                        // Proof, by induction over the nodes in the order computed, that two
+                        // nodes of one class ([`arms::Arms::class`]) have equal scopes. The
+                        // root, a join and a node that heads its class are their own class. A
+                        // node `n` put in the class of `c` had parents of one class, so equal
+                        // scopes `P`; the same binders and calls, so [`Ck::with_bound`] tells
+                        // `P` of the same values: each binder's product, scope name and
+                        // summary, and each definition's lambda, is set once in the unit, by
+                        // the binder ([`Ck::read_here`]), and the ids of binders are the
+                        // unit's, apart across functions, which is why they are in the key and
+                        // the names are not; equal names with equal products ([`Ck::fresh`]),
+                        // bound in the same order; and equal terms with one outcome, so
+                        // [`Scope::assume_case`], which reads nothing but the scope and the
+                        // term, gives the same scope. The projections it asks are the same
+                        // formulas over the same symbols, so while the unit's projection memo
+                        // is open a recomputation is answered with the answers the head got
+                        // (`presburger::project_each`): a shared scope is the recomputed one.
+                        // That either equals a check with the memo off rests on the memo's own
+                        // assumption, not proved, that an answer depends only on the formula
+                        // and the symbols (evidence at `project_each`). What it refused
+                        // that its parent's scope did not is placed at `n`'s own test below,
+                        // as it would be had `n` been computed.
+                        //
+                        // Complexity tradeoff (PERF-guarded-function-constant): naive version,
+                        // each node's test narrows its parent's scope anew: `n` functions that
+                        // differ only in their parameters' names, each under one test of four
+                        // conditions the solver refuses, narrowed and projected the same
+                        // relation `2n` times, 38% of 67 million instructions a function in
+                        // the census (`m0_12_refusal_census::bench`, 2026-11-16). Used: the
+                        // parameters of a function no use names are named by their places
+                        // (`Ck::name_by_place`), so the tests are equal terms, and each class
+                        // is found by its key in O(log c) for `c` classes plus the test's size
+                        // for its address, its heads compared with `==`; the reads of a class
+                        // are shared too ([`Ck::read_here`]). Tradeoffs: memory of one key and
+                        // test a class, and the address of each test computed once more. A
+                        // function that a use names keeps names of its own and shares nothing
+                        // with another. Measured: 67.0 to 42.4 million instructions a function
+                        // (the rest is the walk of each body, row PERF-guarded-function-walk).
+                        // Test:
+                        // `l01_39_reduced_product::refused::functions_that_differ_in_names_share_their_tests`.
+                        let key = (
+                            self.arms.class[parent],
+                            outcome,
+                            t.binders.clone(),
+                            t.calls.clone(),
+                            Address::of(&t.term),
+                        );
+                        let head = (self.arms.equal.get(&key))
+                            .and_then(|v| {
+                                v.iter().find(|(f, term, _)| {
+                                    (Rc::ptr_eq(f, &fresh) || **f == *fresh) && *term == t.term
+                                })
+                            })
+                            .map(|&(_, _, c)| c);
+                        if let Some(c) = head {
+                            let s = self.arms.scopes[c].clone().expect("a head is computed");
+                            self.place_refusals(test.span, &before, &s.refusals);
+                            self.arms.class[n] = c;
+                            self.arms.before[n] = self.arms.before[c].clone();
+                            self.arms.scopes[n] = Some(s);
+                            return;
+                        }
                         let (p, t) = self.assumed(n);
                         // Not shown, so a failing test leaves the names as they were
                         // (`assume_case`): emptying each costs the names in scope.
@@ -8999,15 +9121,9 @@ impl<'a> Ck<'_, 'a> {
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
                         let s = p.assume_case(&t.term, outcome, &Premises::new());
-                        // The questions refused here and not in the parent's scope are this
-                        // test's: those the binders it reads asked as they were told of, and
-                        // its own narrowing's. A join asks none of its own; it keeps both
-                        // sides' ([`Scope::join`]).
-                        let before = (self.arms.scopes[parent].as_ref())
-                            .map(|q| q.refusals.clone())
-                            .unwrap_or_default();
                         self.place_refusals(test.span, &before, &s.refusals);
                         self.arms.before[n] = Some(p);
+                        (self.arms.equal.entry(key).or_default()).push((fresh, t.term.clone(), n));
                         s
                     }
                     Node::Join(a, b) => self.scope_or_root(a).join(&self.scope_or_root(b)),
@@ -9226,17 +9342,24 @@ impl<'a> Ck<'_, 'a> {
                                 // Assumption, not proved (ASSUME-documented): one
                                 // implicit name per call, bound once at the root by
                                 // `self.implicit`, stands for every call of `f.name` whose
-                                // `args` are equal `Term`s. Equal printed keys never merge
-                                // different calls, since `args` are compared too and carry
-                                // binder ids. What is not shown: that `args` reading a
+                                // `args` are equal `Term`s reading the same binders. Equal
+                                // printed keys never merge different calls, since `args` are
+                                // compared too, and so are the binders they read: a name
+                                // alone does not tell the binder, as two functions no use
+                                // names share their parameters' names
+                                // (`Ck::name_by_place`). What is not shown: that `args` reading a
                                 // name bound inside an arm or a lambda still mean the same
                                 // value at the root. Evidence: the 6 tests of
                                 // `l01_39_reduced_product/arm_test_through_call.rs`, all
                                 // with arguments from the enclosing scope. If false, a
                                 // fact about the wrong value narrows a test: unsound.
+                                let read: Vec<usize> =
+                                    parts.vars[m[1]..].iter().map(|&(_, b)| b).collect();
                                 let found = (self.arms.implicit_calls.get(&key))
-                                    .and_then(|v| v.iter().find(|(a, _)| *a == args))
-                                    .map(|&(_, b)| b);
+                                    .and_then(|v| {
+                                        v.iter().find(|(a, r, _)| *a == args && *r == read)
+                                    })
+                                    .map(|&(_, _, b)| b);
                                 let b = match found {
                                     Some(b) => {
                                         parts.drop_since(m);
@@ -9246,7 +9369,7 @@ impl<'a> Ck<'_, 'a> {
                                         let value = parts.since(m, f.applied(args.clone()));
                                         let (b, _) = self.implicit(x, value);
                                         let at = self.arms.implicit_calls.entry(key).or_default();
-                                        at.push((args, b));
+                                        at.push((args, read, b));
                                         b
                                     }
                                 };
@@ -9301,7 +9424,7 @@ impl<'a> Ck<'_, 'a> {
                 ExprKind::Name(n) => match self.t.res.uses.get(&x.span) {
                     Some(Ref::Bound(ids)) if ids.len() == 1 => {
                         let id = ids[0];
-                        let name = var(n, id);
+                        let name = self.arms.scope_name(n, id);
                         if self.facts.contains_key(&id) {
                             parts.binders.push(id);
                             self.arms.names.insert(id, name.clone());

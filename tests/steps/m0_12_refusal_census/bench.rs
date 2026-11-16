@@ -51,8 +51,10 @@ fn guarded_divisions(n: usize) -> String {
 /// refused site in one function, 2026-11-15, ratios 7.95 and 4.66 at load 68): a unit's time
 /// follows its refusals, not its bytes. Each form is held linear here. PERF-refused-site-constant
 /// (2026-11-16) halved the cost of each refused site in one function, a read of one term at one
-/// node being made once (6.5 million, ratio 3.38); the constant per guarded function is item
-/// PERF-guarded-function-constant.
+/// node being made once (6.5 million, ratio 3.38). PERF-guarded-function-constant (2026-11-16)
+/// shares the test and reads of functions that differ only in their parameters' names, 67.0
+/// to 42.4 million instructions a guarded function (ratio 7.95 to 7.03); the rest, the walk of
+/// each body, is item PERF-guarded-function-walk.
 #[test]
 fn refused_guarded_divisions_scale_linearly() {
     for (what, make) in [

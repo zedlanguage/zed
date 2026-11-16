@@ -70,9 +70,17 @@ pub(super) enum Node<'a> {
     Join(usize, usize),
 }
 
-/// The key of a read of a term in the scope of a node ([`Arms::reads`]): the node, the
-/// term's binders and calls, and the term's content address.
+/// The key of a read of a term in the scope of a node ([`Arms::reads`]): the node's class
+/// ([`Arms::class`]), the term's binders and calls, and the term's content address.
 pub(super) type ReadKey = (usize, Vec<usize>, Vec<usize>, Address);
+
+/// The key of the class of an `Assume` node ([`Arms::equal`]): its parent's class, its
+/// outcome, its test's binders and calls, and its test's content address.
+pub(super) type ClassKey = (usize, bool, Vec<usize>, Vec<usize>, Address);
+
+/// An `Assume` node that heads a class ([`Arms::equal`]): the products of its test's names,
+/// its test as a term, and the node.
+pub(super) type ClassHead = (Rc<Vec<(Arc<str>, Product)>>, Term, usize);
 
 /// A read of a term in the scope of a node ([`Arms::reads`]): the term, the node's scope told
 /// of the term's binders and calls and settled on its names, and, once asked, what reading the
@@ -334,6 +342,17 @@ pub(super) struct Arms<'a> {
     /// address kept apart: two reads of one term in one node's scope, at two places, are one
     /// read.
     pub(super) reads: BTreeMap<ReadKey, Vec<Read>>,
+    /// For each node, once its scope is computed, the first node computed whose scope is
+    /// known to be equal to it: itself, or an `Assume` computed earlier with the same class
+    /// key and equal names and test ([`Ck::compute`](super::Ck::compute)). Two nodes of one
+    /// class share their reads ([`ReadKey`]).
+    pub(super) class: Vec<usize>,
+    /// The `Assume` nodes that head a class, by their class key, each head of one key kept
+    /// apart.
+    pub(super) equal: BTreeMap<ClassKey, Vec<ClassHead>>,
+    /// The scope name of each parameter of a function that no use names, by the parameter's
+    /// binder ([`Arms::scope_name`]).
+    pub(super) by_place: HashMap<usize, Arc<str>>,
     /// For each binder a term has called, the definition its calls are kept as ([`Called`]),
     /// or none when they are not; none also while its body is being translated, so a call
     /// of it within its own body stays a name of its own.
@@ -350,9 +369,11 @@ pub(super) struct Arms<'a> {
     /// is, by its span.
     pub(super) implicit_ifs: HashMap<Span, usize>,
     /// The binder of the name each call read in a test or an operand is, with its arguments,
-    /// by the callee's name and the printed arguments: two calls are one name when their
-    /// callees and arguments are equal terms.
-    pub(super) implicit_calls: HashMap<String, Vec<(Vec<Term>, usize)>>,
+    /// by the callee's name and the printed arguments, with the binders the arguments read, in
+    /// the order met: two calls are one name when their callees and arguments are equal terms
+    /// that read the same binders.
+    #[allow(clippy::type_complexity)]
+    pub(super) implicit_calls: HashMap<String, Vec<(Vec<Term>, Vec<usize>, usize)>>,
 }
 
 impl<'a> Arms<'a> {
@@ -376,6 +397,9 @@ impl<'a> Arms<'a> {
             here_ints: HashMap::new(),
             part_ints: HashMap::new(),
             reads: BTreeMap::new(),
+            class: vec![0],
+            equal: BTreeMap::new(),
+            by_place: HashMap::new(),
             called: HashMap::new(),
             int_scopes: HashMap::new(),
             implicit: Vec::new(),
@@ -415,7 +439,18 @@ impl<'a> Arms<'a> {
         self.depth.push(depth);
         self.jump.push(jump);
         self.chains.push(None);
+        self.class.push(k);
         k
+    }
+
+    /// The scope name of binder `id`, whose written name is `name`: [`var`]'s, or, for a
+    /// parameter of a function that no use names, its name and its place among the
+    /// parameters ([`Arms::by_place`]), `x@p0`, the same in every such function.
+    pub(super) fn scope_name(&self, name: &str, id: usize) -> Arc<str> {
+        match self.by_place.get(&id) {
+            Some(x) => x.clone(),
+            None => var(name, id),
+        }
     }
 
     /// The two nodes of the condition `test` checked here: where it holds and where it fails.
