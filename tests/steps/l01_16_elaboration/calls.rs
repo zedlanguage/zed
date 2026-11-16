@@ -172,3 +172,12 @@ fn a_bracket_with_no_one_term_is_rejected() {
         assert!(es.contains(want), "{want:?} missing from\n{src}\n{es}");
     }
 }
+
+/// Row FAIL-curried-index-untyped-param: a bracket on a parameter with no written type
+/// applies a function as it picks a component of a tuple (DESIGN.md sec:values_morphisms,
+/// application is indexing), so `ap(add)[2]` is `add(1, 2)`, as `add[1][2]` is.
+#[test]
+fn a_bracket_on_an_untyped_parameter_takes_a_function() {
+    let src = "add(x: int, y: int) = x + y;\nap(positional f) = f[1];\nr = ap(add)[2];\n";
+    assert_eq!(value(src, "r"), "3", "{src}");
+}

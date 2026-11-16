@@ -344,3 +344,74 @@ fn an_argument_against_the_expected_type_is_rejected() {
         &["`map2`"],
     );
 }
+
+/// Row FAIL-typevar-fn-only-binding: a type variable written only inside function types of
+/// the parameters is fixed by the first function argument that is not a lambda without types
+/// (DESIGN.md sec:type_resolution, rule 2), and the rest are checked against that instance.
+#[test]
+fn a_type_variable_only_inside_function_types_is_bound_by_a_function_argument() {
+    const TWO: &str = "two(f: (T) -> T, g: (T) -> T) = 0;";
+    let named = format!("{TWO}\n{INC}");
+    assert_eq!(writes(&named, r#""${two(f: inc, g: inc)}""#), "0\n");
+    assert_eq!(
+        writes(TWO, r#""${two(f: (v: int) -> v, g: (v) -> v + 1)}""#),
+        "0\n"
+    );
+}
+
+/// Row FAIL-typevar-named-fn-message: a function whose parameter is named, passed where the
+/// instance of a type variable's function type passes by position, gets the reason and the
+/// repair a plain function type gives.
+#[test]
+fn a_named_parameter_at_a_type_variable_s_function_type_gets_the_parameter_message() {
+    rejects(
+        &format!("{MAP2}\ninc(v: int) = v + 1;\nmain() = {{ _ = map2(xs: 3, f: inc); 0 }};\n"),
+        &[
+            "the parameters of `inc` (v) do not fit `int -> int`",
+            "repair: pass a lambda, `(v) -> inc(v: v)`",
+        ],
+    );
+}
+
+/// Row FAIL-typevar-fn-only-binding: a lambda with written parameter types binds the variable
+/// through them; its body then gives what it gives at that instance, so `(v: f64) -> 1` at
+/// `(f64) -> f64` gives `1.0`, and a lambda without types after it is checked at the instance.
+#[test]
+fn a_lambda_with_written_types_binds_a_type_variable_and_the_rest_follow() {
+    let two = format!("two(f: (T) -> T, g: (T) -> T) = 0;\n{INC}");
+    assert_eq!(
+        writes(MAP2, r#""${map2(xs: 2.5, f: (v: f64) -> 1)}""#),
+        "1.0\n"
+    );
+    assert_eq!(
+        writes(MAP2, r#""${map2(xs: 3, f: (v: int) -> v * 5)}""#),
+        "15\n"
+    );
+    assert_eq!(writes(&two, r#""${two(f: (v: int) -> v, g: inc)}""#), "0\n");
+    assert_eq!(writes(&two, r#""${two(f: (v) -> v, g: inc)}""#), "0\n");
+}
+
+/// Row TEST-expected-type-shapes: a type variable bound only through function types, at
+/// results of several shapes and with a callee that is itself a call. Where `f64` is wanted,
+/// the expected type fixes `T` first (DESIGN.md sec:type_resolution, rule 2), also when the
+/// callee is the result of the call `pick(0)`, whose own check came before the call it heads.
+#[test]
+fn a_type_variable_in_function_types_takes_results_of_each_shape() {
+    let defs = format!(
+        "{MAP2}\ntwo(x: T, f: (T) -> (T, T)) = f(x);\npair(x: T, f: (T) -> T) = (f(x), x);\n\
+         pick(positional n: int) = map2;\nfirst(positional p: (int, int)) = p[0];\n\
+         half(positional x: f64) = x / 2.0;\ngreet(positional s: String) = s;"
+    );
+    let cases = [
+        (r#"greet(map2(xs: "b", f: (v) -> v))"#, "b\n"),
+        (r#""${pair(x: 2, f: (v) -> v + 1)[0]}""#, "3\n"),
+        (r#""${two(x: 1, f: (v) -> (v, v + 1))[1]}""#, "2\n"),
+        (r#""${first(two(x: 7, f: (v) -> (v, 1)))}""#, "7\n"),
+        (r#""${pick(0)(xs: 2, f: (v) -> v * 3)}""#, "6\n"),
+        (r#""${half(map2(xs: 3, f: (v) -> v + 1))}""#, "2.0\n"),
+        (r#""${half(pick(0)(xs: 3, f: (v) -> v + 1))}""#, "2.0\n"),
+    ];
+    for (out, want) in cases {
+        assert_eq!(writes(&defs, out), want, "{out}");
+    }
+}

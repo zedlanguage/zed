@@ -1522,7 +1522,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         Dbg::Text(", kind: "),
     ]);
     match &n.kind {
-        NeedKind::Component { i, key } => parts.extend([
+        NeedKind::Component { i, key, .. } => parts.extend([
             Dbg::Text("Component { i: "),
             Dbg::Leaf(i),
             Dbg::Text(", key: "),
@@ -3683,6 +3683,10 @@ pub enum NeedKind {
         i: Option<usize>,
         /// The literal's type, a family's key.
         key: Ty,
+        /// Where the bracket is written: the need keeps it as it is copied into a caller, so
+        /// that a function met at a call records the bracket's meaning there (row
+        /// FAIL-curried-index-untyped-param).
+        site: Span,
     },
     /// `v[k]` with a key of this type: an application.
     Index(Ty),
@@ -4146,9 +4150,10 @@ impl Need {
         Need {
             on: f(&self.on),
             kind: match &self.kind {
-                NeedKind::Component { i, key } => NeedKind::Component {
+                NeedKind::Component { i, key, site } => NeedKind::Component {
                     i: *i,
                     key: key.clone(),
+                    site: *site,
                 },
                 NeedKind::Index(k) => NeedKind::Index(f(k)),
                 NeedKind::Map { f: g, filter } => NeedKind::Map {

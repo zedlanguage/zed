@@ -1781,6 +1781,10 @@ struct Ck<'t, 'a> {
     handled: Handled,
     /// The undeclared parameters whose type in the body holds the atoms its uses handle.
     widened: HashSet<usize>,
+    /// The brackets, by span, that a tuple, a family or another value that is no function
+    /// reached, where [`Info::brackets`] keeps the functions' number of parameters
+    /// ([`Self::bracket_meaning`]): a section there would be no one meaning.
+    bracket_plain: HashSet<Span>,
     /// Each expression's loose atoms that may reach its value from elsewhere than a parameter
     /// of [`Self::widened`], by its span, as last found: those a call passing that parameter
     /// no atom may still give. No entry is none.
@@ -2034,6 +2038,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             tail_calls: HashMap::new(),
             handled: handled(t.res),
             widened: HashSet::new(),
+            bracket_plain: HashSet::new(),
             outside: HashMap::new(),
             widened_only: HashMap::new(),
             tried: HashMap::new(),

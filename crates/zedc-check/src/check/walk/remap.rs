@@ -402,7 +402,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The source text at `span`, or nothing where the checker has no text.
-    fn src_text(&self, span: Span) -> String {
+    pub(super) fn src_text(&self, span: Span) -> String {
         self.t
             .text
             .and_then(|t| t.get(span.start..span.end))
@@ -1017,7 +1017,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if x.dynamic && x.fns.is_empty() {
             return Ty::dynamic();
         }
-        let Some(fsig) = only_fn(&f.ty) else {
+        // A function not yet known, as a parameter `f` of `h(f) = [1, 2].group(f)` whose type
+        // is not written, is a class: it takes a call of each entry as a need, as at `map`
+        // (FAIL-map-generic-parameter-function), and what it gives, a key, takes the need that
+        // it be data.
+        let f_class = only_fn(&f.ty)
+            .is_none()
+            .then(|| self.class_of_ty(&f.ty))
+            .flatten();
+        let fsig = only_fn(&f.ty);
+        if fsig.is_none() && f_class.is_none() {
             let t = self.text(&f.ty);
             self.error_offering(
                 f.at.unwrap_or(span),
@@ -1064,16 +1073,28 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return Ty::empty();
         }
-        let what = Label::Text("the function given to `group`");
-        let w = apply(
-            self,
-            what,
-            &fsig,
-            vec![Some(Arg::of(values.clone()))],
-            false,
-            span,
-        )
-        .0;
+        let given = "the function given to `group`";
+        let w = match (fsig, f_class) {
+            (Some(fsig), _) => {
+                let args = vec![Some(Arg::of(values.clone()))];
+                apply(self, Label::Text(given), &fsig, args, false, span).0
+            }
+            (None, k) => {
+                let k = k.expect("a class, as checked above");
+                let kind = NeedKind::Call {
+                    what: given.into(),
+                    positional: vec![values.clone()],
+                    named: Vec::new(),
+                    curry: false,
+                };
+                self.need(k, kind, true, span)
+            }
+        };
+        // What `f` gives is a key of the result, so data: a function as a key leaves the
+        // kernel's reindex nothing to compare (plan row FAIL-group-key-function). A class, as
+        // what a parameter `f` gives, keeps the need until its type is known.
+        let at = f.at.unwrap_or(span);
+        self.data(&w, "a key of a family", DataUse::Key, at, at, Some(span));
         family(w, family(keys, values))
     }
 }

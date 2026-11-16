@@ -1405,3 +1405,131 @@ fn the_region_split_of_a_parameter_beside_a_tuple_takes_each_calls_identity() {
                t = (s(ei, true), s(ef, true), s(ei, false));\n";
     prints(src, "t", "(0, -0.0, 3)");
 }
+
+/// Row FAIL-map-generic-parameter-function: `m.map(f)` with `f` and `m` parameters of no
+/// written type applies `f` to each entry of `m` (DESIGN.md sec:values_morphisms), as with a
+/// written function; the uses are checked at each call, where `f` and `m` are known.
+#[test]
+fn map_by_a_function_parameter_runs() {
+    prints(
+        "h(positional f, positional m) = m.map(f);\na = h(x -> x + 1, {\"k\" -> 1})[\"k\"];\n",
+        "a",
+        "2",
+    );
+    prints(
+        "h(positional f, positional m) = m.map(f);\n\
+         a = { p = h(x -> (z -> z + x), {\"k\" -> 1}); p[\"k\"](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f, positional m) = m.map(f);\n\
+         k(positional g) = h(x -> g(x), {\"k\" -> 1});\n\
+         a = k(y -> y + 1)[\"k\"];\n",
+        "a",
+        "2",
+    );
+}
+
+/// Row FAIL-map-generic-parameter-function: `where`, `foldl`, `foldr`, `flatMap` and `group`
+/// take a parameter with no written type as their function, as `map` does, on a receiver
+/// that is a parameter too or a family of known type; each call checks the function it passes.
+#[test]
+fn the_words_that_take_a_function_take_a_function_parameter() {
+    let m = "{\"a\" -> 1, \"b\" -> 5}";
+    prints(
+        &format!("h(positional f, positional m) = m.where(f);\na = h(x -> x > 2, {m})[\"b\"];\n"),
+        "a",
+        "5",
+    );
+    prints(
+        &format!("w(positional f) = {m}.where(f);\na = w(x -> x > 2)[\"a\"] else 0;\n"),
+        "a",
+        "0",
+    );
+    prints(
+        &format!("k(positional f) = {m}.map(f);\na = k(x -> x * 10)[\"b\"];\n"),
+        "a",
+        "50",
+    );
+    prints(
+        "h(positional f, positional m) = m.foldl(0, f);\na = h((a, x) -> a * 10 + x, [1, 2, 3]);\n",
+        "a",
+        "123",
+    );
+    prints(
+        "h(positional f, positional m) = m.foldr(f, 0);\na = h((x, a) -> a * 10 + x, [1, 2, 3]);\n",
+        "a",
+        "321",
+    );
+    // The same value as `[1, 2].flatMap(v -> [v, v * 10])` written out.
+    let flat = "{0 -> {0 -> 1, 1 -> 10}, 1 -> {0 -> 2, 1 -> 20}}";
+    prints(
+        "h(positional f, positional m) = m.flatMap(f);\na = h(v -> [v, v * 10], [1, 2]);\n",
+        "a",
+        flat,
+    );
+    prints(
+        "h(positional f) = [1, 2].flatMap(f);\na = h(v -> [v, v * 10]);\n",
+        "a",
+        flat,
+    );
+    prints("a = [1, 2].flatMap(v -> [v, v * 10]);\n", "a", flat);
+    prints(
+        "h(positional f, positional m) = m.group(f);\na = h(v -> v mod 2, [1, 2, 3]).count;\n",
+        "a",
+        "2",
+    );
+    prints(
+        "h(positional f) = [1, 2, 3].group(f);\na = h(v -> v mod 2)[1][2] else 0;\n",
+        "a",
+        "3",
+    );
+}
+
+/// Row FAIL-map-generic-parameter-function: the function a call passes to such a parameter is
+/// checked as a written one is: `where` needs a `bool` of it. A fold over a family of known
+/// type by such a parameter is refused by name (plan row FAIL-fold-unknown-fn-known-family).
+#[test]
+fn a_function_parameter_of_those_words_is_checked_at_each_call() {
+    rejected(
+        "w(positional f) = {\"a\" -> 1}.where(f);\na = w(x -> x + 2)[\"a\"] else 0;\n",
+        &["`where` does not take int, only bool"],
+    );
+    rejected(
+        "h(positional f) = [1, 2, 3].foldl(0, f);\na = h((a, x) -> a + x);\n",
+        &["`foldl` over a family of known type by a parameter whose type is not written"],
+    );
+}
+
+/// Row FAIL-group-key-function: what the function of `group` gives is a key, so data, whether
+/// the function is written, a parameter, or the receiver is a parameter too; and a key a
+/// display makes from a parameter's call is data at each call. Each passed the checker and
+/// stopped the run with "a bug in zedc itself".
+#[test]
+fn a_key_made_by_a_function_is_data_at_each_call() {
+    let key = "Cannot use a value that may hold a function as a key";
+    rejected("a = [1, 2, 3].group(v -> (z -> z)).count;\n", &[key]);
+    rejected(
+        "g(positional f) = [1, 2, 3].group(f);\na = g(v -> (z -> z)).count;\n",
+        &[key, "in `g(v -> (z -> z))`"],
+    );
+    rejected(
+        "g(positional f, positional m) = m.group(f);\na = g(v -> (z -> z), [1, 2, 3]).count;\n",
+        &[key],
+    );
+    rejected(
+        "k(positional f) = { f(1) -> 2 };\na = k(v -> (z -> z)).count;\n",
+        &[key, "in `k(v -> (z -> z))`"],
+    );
+    prints(
+        "k(positional f) = { f(1) -> 2 };\na = k(v -> v + 1)[2];\n",
+        "a",
+        "2",
+    );
+    prints(
+        "g(positional f) = [1, 2, 3].group(f);\na = g(v -> (v, 0))[(3, 0)][2] else 0;\n",
+        "a",
+        "3",
+    );
+}

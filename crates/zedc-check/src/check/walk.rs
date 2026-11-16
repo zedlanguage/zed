@@ -619,6 +619,58 @@ fn own_in_fns(sig: &Sig, j: usize) -> bool {
         .any(|v| sig.own.contains(v) && !sig.bounds.contains_key(v) && !outside.contains(v))
 }
 
+/// `b` with the variables of `p`, a parameter that is one function type of one arrow, bound
+/// by a function argument of the parameter types `params` and, where it is known, the result
+/// `result`, of as many parameters as `p`'s: each of `params` binds the variables `free`
+/// admits in the matching parameter type of `p`, then `result` is compared with the result
+/// of `p`. `None` when the shapes differ or a comparison fails; the variables then stay as
+/// they were. Row FAIL-typevar-fn-only-binding: in `two(f: (T) -> T, g: (T) -> T)`,
+/// `two(f: inc, g: inc)` with `inc(positional v: int)` binds `T` to `int` at `f`, and so
+/// does `two(f: (v: int) -> v, …)` by its written `int`.
+///
+/// Why this is sound: it only chooses the instance. The application then checks every
+/// argument, this one included, against the instance with the usual comparison of functions
+/// (contravariant in the parameters, covariant in the result), and a lambda's body is
+/// checked against the instance's function type, so a choice that does not fit is rejected
+/// there and never accepted. What is given up: binding from the parameters takes the
+/// argument's parameter type itself, the one instance at which the parameters fit both ways;
+/// a wider instance that would also fit, as `T = int | f64` for a result of `int`, is not
+/// tried, and the call is then rejected at the instance chosen.
+///
+/// Cost: one comparison per parameter that holds such a variable and one for the result,
+/// each O(size of the types compared). The copy of `b` tried is O(1), `Binds` being a
+/// persistent map, so a call of n function arguments costs O(n) copies, not O(n^2).
+fn bound_through_fn(
+    params: &[Ty],
+    result: Option<&Ty>,
+    p: &Ty,
+    b: &Binds,
+    free: &impl Fn(&Arc<str>) -> bool,
+) -> Option<Binds> {
+    let pf = only_fn(p)?;
+    let [pa] = &pf.arrows[..] else {
+        return None;
+    };
+    if params.len() != pa.params.len() {
+        return None;
+    }
+    let mut tried = b.clone();
+    for (x, y) in params.iter().zip(&pa.params) {
+        let mut vs = Vars::default();
+        y.vars_in(&mut vs);
+        if vs.order.iter().any(free) && !x.without_loose().sub(y, &mut tried) {
+            return None;
+        }
+    }
+    match result {
+        Some(r) => r
+            .without_loose()
+            .sub(&pa.result, &mut tried)
+            .then_some(tried),
+        None => Some(tried),
+    }
+}
+
 /// Whether any parameter of `sig` holds a variable [`own_in_fns`] finds.
 fn ties_in_fns(sig: &Sig) -> bool {
     !sig.own.is_empty() && (0..sig.params.len()).any(|j| own_in_fns(sig, j))
@@ -1543,7 +1595,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::AtIndex(v, i, of, span) => {
                 let x = m.take_arg();
                 let dense = self.dense_read(&v, span);
-                let t = self.at_index(&v, i, x, Some(of), span, dense);
+                let t = self.at_index(&v, i, x, Some(of), None, span, dense);
                 m.ty(t);
             }
             Frame::LambdaEnd {
@@ -3248,23 +3300,28 @@ impl<'t, 'a> Ck<'t, 'a> {
             false => ("map", "`map`"),
         };
         let mut out = self.passing(x, word, span, None);
-        let fsig = match only_fn(&f.ty) {
-            Some(sig) => sig,
-            None => {
-                let t = self.text(&f.ty);
-                let example = if filter { "x -> x > 0" } else { "x -> x + 1" };
-                self.error_offering(
-                    f.at.unwrap_or(span),
-                    format!("{word} takes a function, and this value is {t}"),
-                    [format!(
-                        "repair: pass a function of one parameter, as `{example}`"
-                    )],
-                );
-                return Ty::empty();
-            }
-        };
         let example = if filter { "x -> x > 0" } else { "x -> x + 1" };
-        if !self.takes_args(word, &fsig, 1, example, f.at.unwrap_or(span)) {
+        // A function not yet known, as a parameter `f` of `h(f, m) = m.map(f)` whose type is
+        // not written, is a class: it takes a call of each entry as a need, checked on each
+        // function that flows into it, as a call `f(e)` in the body is (FAIL-map-generic-
+        // parameter-function). On a receiver that is a class too, the need on the receiver
+        // holds `f`'s class, and is met where both are known.
+        let fsig = only_fn(&f.ty);
+        let f_class = fsig.is_none().then(|| self.class_of_ty(&f.ty)).flatten();
+        if fsig.is_none() && f_class.is_none() {
+            let t = self.text(&f.ty);
+            self.error_offering(
+                f.at.unwrap_or(span),
+                format!("{word} takes a function, and this value is {t}"),
+                [format!(
+                    "repair: pass a function of one parameter, as `{example}`"
+                )],
+            );
+            return Ty::empty();
+        }
+        if let Some(fsig) = &fsig
+            && !self.takes_args(word, fsig, 1, example, f.at.unwrap_or(span))
+        {
             return Ty::empty();
         }
         for p in x.pieces() {
@@ -3287,19 +3344,42 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.error(span, zedc_base::rejection::not_yet(&what));
                         return Ty::empty();
                     }
-                    let w = match entries.lists_nothing() {
-                        true => Ty::empty(),
-                        false => {
-                            let arg = Arg::of(entries);
-                            let what = Label::Text(match filter {
-                                true => "the function given to `where`",
-                                false => "the function given to `map`",
-                            });
-                            self.apply(what, &fsig, vec![Some(arg)], false, span).0
-                        }
+                    let given = match filter {
+                        true => "the function given to `where`",
+                        false => "the function given to `map`",
                     };
                     let bool_ty = Ty::carrier(Carrier::Bool);
-                    if filter && !w.lists_nothing() && !self.subtype(&w, &bool_ty) {
+                    let w = match (entries.lists_nothing(), &fsig, f_class) {
+                        (true, ..) => Ty::empty(),
+                        (false, Some(fsig), _) => {
+                            let arg = Arg::of(entries);
+                            self.apply(Label::Text(given), fsig, vec![Some(arg)], false, span)
+                                .0
+                        }
+                        (false, None, k) => {
+                            let k = k.expect("a class, as checked above");
+                            let kind = NeedKind::Call {
+                                what: given.into(),
+                                positional: vec![entries],
+                                named: Vec::new(),
+                                curry: false,
+                            };
+                            let w = self.need(k, kind, true, span);
+                            // What the function gives is not known either: `where` needs it
+                            // a `bool`, which each function that flows into `f` is checked to
+                            // give when the call need is met on it.
+                            if filter && let Some(r) = self.class_of_ty(&w) {
+                                let kind = NeedKind::Into {
+                                    what: "`where`".into(),
+                                    ty: bool_ty.clone(),
+                                };
+                                self.need(r, kind, false, span);
+                            }
+                            w
+                        }
+                    };
+                    let unknown = fsig.is_none() && self.class_of_ty(&w).is_some();
+                    if filter && !unknown && !w.lists_nothing() && !self.subtype(&w, &bool_ty) {
                         let t = self.text(&w);
                         self.error_offering(
                             f.at.unwrap_or(span),
@@ -3681,24 +3761,73 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => ("`foldr`", "`(x, a) -> x + a`"),
         };
         let out = self.passing(x, word, span, None);
-        let Some(fsig) = only_fn(&f.ty) else {
-            let t = self.text(&f.ty);
-            self.error_offering(
-                f.at.unwrap_or(span),
-                format!("{word} takes a function of two parameters, and this value is {t}"),
-                [format!(
-                    "repair: pass a function of two parameters, as {shape}"
-                )],
-            );
-            return Ty::empty();
+        // A function not yet known, as a parameter `f` of `h(f, m) = m.foldl(0, f)` whose type
+        // is not written, is a class; on a receiver that is a class too, the need on the
+        // receiver below holds it, and is met where both are known (FAIL-map-generic-
+        // parameter-function).
+        let f_class = only_fn(&f.ty).is_none() && self.class_of_ty(&f.ty).is_some();
+        let x_class = matches!(
+            (x.pieces().as_slice(), x.fns.is_empty()),
+            ([Piece::Var(_)], true)
+        );
+        let fsig = match only_fn(&f.ty) {
+            Some(fsig) => Some(fsig),
+            None if f_class && x_class => None,
+            None if f_class => {
+                // The accumulator's type is found by applying `f` until it settles (below),
+                // which a function not yet known cannot do: plan row
+                // FAIL-fold-unknown-fn-known-family.
+                let what = format!(
+                    "{word} over a family of known type by a parameter whose type is not written"
+                );
+                // The repair's type: the accumulator is `init`'s carriers and the entry what
+                // the receiver's arrows give, as the fold below reads them.
+                let entry = Ty::union_all(
+                    x.pieces()
+                        .iter()
+                        .filter_map(|p| match p {
+                            Piece::Fn(sig) if sig.data => Some(sig),
+                            _ => None,
+                        })
+                        .flat_map(|sig| sig.arrows.iter().map(|a| &a.result)),
+                )
+                .without(&misses);
+                let (acc, entry) = (self.text(&init.carriers()), self.text(&entry.carriers()));
+                let ty = match right {
+                    false => format!("({acc}, {entry}) -> {acc}"),
+                    true => format!("({entry}, {acc}) -> {acc}"),
+                };
+                self.error_offering(
+                    f.at.unwrap_or(span),
+                    zedc_base::rejection::not_yet(&what),
+                    [format!(
+                        "repair: write the type of `{}`, as `{ty}`",
+                        self.src_text(f.at.unwrap_or(span))
+                    )],
+                );
+                return Ty::empty();
+            }
+            None => {
+                let t = self.text(&f.ty);
+                self.error_offering(
+                    f.at.unwrap_or(span),
+                    format!("{word} takes a function of two parameters, and this value is {t}"),
+                    [format!(
+                        "repair: pass a function of two parameters, as {shape}"
+                    )],
+                );
+                return Ty::empty();
+            }
         };
-        if !self.takes_args(
-            word,
-            &fsig,
-            2,
-            &shape[1..shape.len() - 1],
-            f.at.unwrap_or(span),
-        ) {
+        if let Some(fsig) = &fsig
+            && !self.takes_args(
+                word,
+                fsig,
+                2,
+                &shape[1..shape.len() - 1],
+                f.at.unwrap_or(span),
+            )
+        {
             return Ty::empty();
         }
         // A class alone takes the fold as a need (CHK-need-bound); `meet` calls back here
@@ -3717,6 +3846,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => Ty::dynamic(),
             };
         }
+        // `fsig` is none only where `x_class` holds, the test just above, which returned.
+        let fsig = fsig.expect("a function, or a class receiver handled above");
         let mut values = Ty::empty();
         for p in x.pieces() {
             match p {
@@ -6341,10 +6472,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: Rc<str>,
     ) {
         // Taken by every call, so one wanted carrier never outlives the walk it was set for;
-        // kept only by the call it was set for.
-        let wanted = (self.want_at.take())
-            .filter(|(at, _)| *at == span)
-            .map(|(_, c)| c);
+        // kept only by the call it was set for. A call inside that call's span, as `pick(0)`
+        // of `pick(0)(xs: 3, f: g)`, whose callee is checked before it, leaves it in place
+        // (TEST-expected-type-shapes): that call is still within the walk it was set for.
+        let wanted = match self.want_at {
+            Some((at, _)) if at != span && at.start <= span.start && span.end <= at.end => None,
+            _ => (self.want_at.take())
+                .filter(|(at, _)| *at == span)
+                .map(|(_, c)| c),
+        };
         let sig = self.open(&sig);
         let has_receiver = receiver.is_some();
         let (slots, missing) = match fit(
@@ -6400,6 +6536,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // A lambda passed where a function type holds a variable of the callee
                     // is checked after the other arguments, which fix the variable (DESIGN.md
                     // sec:type_resolution, rule 2, the order it gives a struct constructor).
+                    // The written types of its parameters can fix the variable all the same
+                    // ([`Self::instantiated`]); its body is checked against the instance.
                     ArgSrc::Expr(e)
                         if s.ties
                             && matches!(e.kind, ExprKind::Lambda { .. })
@@ -6426,7 +6564,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.got.push(a);
         }
         if s.ties && s.inst.is_none() {
-            s.inst = Some(self.instantiated(&s.sig, &s.got, s.wanted));
+            // The written parameter types of each lambda put off, where every parameter has
+            // one and they name no variable: O(size of the written types).
+            let mut typed = vec![None; s.got.len()];
+            for &j in &s.later {
+                if let Some(Some(at)) = s.slots.get(j).copied()
+                    && let ArgSrc::Expr(e) = s.args.get(at)
+                    && let ExprKind::Lambda { params, .. } = &e.kind
+                {
+                    typed[j] = self.written_params(params);
+                }
+            }
+            let inst = self.instantiated(&s.sig, &s.got, &typed, s.wanted);
+            self.refit_declared(&s.sig, &inst, &mut s.got);
+            s.inst = Some(inst);
         }
         // A queue taken from the front: O(1) a lambda, where `Vec::remove(0)` shifted the rest,
         // O(k^2) for k lambdas put off in one call.
@@ -6481,6 +6632,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(t);
     }
 
+    /// Each declared function in `got` passed at a parameter of `sig` that the instance `inst`
+    /// turned into one closed function type, fitted to that type as at a plain function type
+    /// ([`Self::fit_declared`]): `map2(xs: 3, f: inc)` with `inc(v: int)` then gets the reason
+    /// its named parameter does not fit `int -> int` and the repairs, where the application
+    /// gave only "no arrow takes these types" (FAIL-typevar-named-fn-message). Where it fits,
+    /// the argument is `inc` with its parameters in the slot's order, as on the plain path.
+    ///
+    /// Cost: one comparison of each parameter with its instance and, for each function so
+    /// fitted, the cost of [`Self::fit_declared`]; once per call of a function whose variable
+    /// stands inside a function type.
+    fn refit_declared(&mut self, sig: &Sig, inst: &Sig, got: &mut [Option<Arg<'a>>]) {
+        let ([was], [now]) = (&sig.arrows[..], &inst.arrows[..]) else {
+            return;
+        };
+        for (j, a) in got.iter_mut().enumerate() {
+            let (Some(a), Some(p), Some(q)) = (a.as_mut(), was.params.get(j), now.params.get(j))
+            else {
+                continue;
+            };
+            if p == q || !q.vars.is_empty() {
+                continue;
+            }
+            let (Some(e), Some(want)) = (a.expr, only_fn(q)) else {
+                continue;
+            };
+            if let Some(id) = self.declared(e) {
+                a.ty = self.fit_declared(id, &want, e.span);
+            }
+        }
+    }
+
     /// `sig`, of one arrow, with each unbounded own variable that the arguments `got` fix
     /// replaced by its type, for a call where such a variable stands inside a function type
     /// of a parameter ([`ties_in_fns`]). DESIGN.md sec:type_resolution, rule 2: the expected
@@ -6488,7 +6670,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arguments that are not literals, and the literals then take it. So a result that is a
     /// variable alone, at a place that wants one numeric carrier (`wanted`), is that carrier;
     /// then each argument that is not a literal, at a parameter where an open variable stands
-    /// outside the functions, binds it ([`Ty::sub`]); and a variable still open that a literal
+    /// outside the functions, binds it ([`Ty::sub`]), and a function at a parameter where it
+    /// stands only inside one function type binds it through that type's parameters and
+    /// result ([`bound_through_fn`]); and a variable still open that a literal
     /// is passed for is the literal's carrier, `int` for `3`. The lambdas passed where a
     /// function type holds the variable are not in `got` yet; they are then checked against
     /// the result. An argument that disagrees with the expected type does not bind; the
@@ -6510,6 +6694,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         sig: &Arc<Sig>,
         got: &[Option<Arg<'a>>],
+        typed: &[Option<Vec<Ty>>],
         wanted: Option<Carrier>,
     ) -> Arc<Sig> {
         let free = |v: &Arc<str>| sig.own.contains(v) && !sig.bounds.contains_key(v);
@@ -6522,17 +6707,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             b.insert(v.clone(), Ty::carrier(c));
         }
-        for (a, p) in got.iter().zip(&arrow.params) {
+        for (j, (a, p)) in got.iter().zip(&arrow.params).enumerate() {
+            // A lambda put off whose parameters all have written types binds through them
+            // alone: its result is found when its body is checked against the instance.
+            if let Some(Some(params)) = typed.get(j) {
+                if let Some(tried) = bound_through_fn(params, None, p, &b, &free) {
+                    b = tried;
+                }
+                continue;
+            }
             let Some(a) = a.as_ref().filter(|a| a.lit.is_none()) else {
                 continue;
             };
             let mut vs = Vars::default();
             p.vars_outside(&mut vs);
-            if !vs.order.iter().any(free) {
-                continue;
-            }
-            let mut tried = b.clone();
-            if a.ty.without_loose().sub(p, &mut tried) {
+            if vs.order.iter().any(free) {
+                let mut tried = b.clone();
+                if a.ty.without_loose().sub(p, &mut tried) {
+                    b = tried;
+                }
+            } else if let Some(af) = only_fn(&a.ty.without_loose())
+                && let [aa] = &af.arrows[..]
+                && af.own.is_empty()
+                && let Some(tried) = bound_through_fn(&aa.params, Some(&aa.result), p, &b, &free)
+            {
                 b = tried;
             }
         }
@@ -6900,6 +7098,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
             .collect();
         self.lambda_sig(m, params.iter().map(Some), &[], names, body);
+    }
+
+    /// The types written for the parameters `params` of a lambda, as [`Self::lambda_sig`]
+    /// reads them, where every parameter has one and none names a variable; `None` otherwise.
+    /// Read before the lambda is checked, so that its written types can fix a variable of the
+    /// callee it is passed to ([`Self::instantiated`]); with no new class made
+    /// (`fresh: false`), so reading them twice changes nothing. A type naming a variable is
+    /// left out, as its class is only made when the lambda is checked.
+    fn written_params(&mut self, params: &[Param]) -> Option<Vec<Ty>> {
+        let tys: Vec<Ty> = (params.iter())
+            .map(|p| Some(self.written(p.ty.as_ref()?, false)))
+            .collect::<Option<_>>()?;
+        let mut vs = Vars::default();
+        tys.iter().for_each(|t| t.vars_in(&mut vs));
+        vs.order.is_empty().then_some(tys)
     }
 
     /// The signature of a lambda checked as a declared function's body is: each parameter of
@@ -9893,8 +10106,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let start = self.refused.len();
         let out = match &n.kind {
-            NeedKind::Component { i, key } => {
-                self.at_index(&on, *i, Arg::of(key.clone()), None, span, false)
+            NeedKind::Component { i, key, site } => {
+                let key = Arg::of(key.clone());
+                self.at_index(&on, *i, key, None, Some(*site), span, false)
             }
             NeedKind::Index(k) => {
                 let k = Arg::of(self.bound(k, binds));
@@ -14925,17 +15139,27 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
     /// a family's entry. With `dense`, a family misses with `#outOfBounds`
-    /// ([`Self::dense_read`]).
+    /// ([`Self::dense_read`]). With `site`, the bracket written there on a parameter with no
+    /// written type is met at a call, at `span`, with the type the call binds: a function
+    /// there takes the bracket as written ([`Self::bracket_fn`]), and the bracket's meaning
+    /// is recorded at `site` for the elaborator ([`Self::bracket_meaning`]).
+    #[allow(clippy::too_many_arguments)]
     fn at_index(
         &mut self,
         v: &Ty,
         i: Option<usize>,
         x: Arg<'a>,
         of: Option<Span>,
+        site: Option<Span>,
         span: Span,
         dense: bool,
     ) -> Ty {
         if of.is_some() && !self.bracket_count(v, span) {
+            return Ty::empty();
+        }
+        if let Some(site) = site
+            && !self.bracket_meaning(v, site, span, false)
+        {
             return Ty::empty();
         }
         let mut out = self.passing(v, "an index", span, of);
@@ -14959,7 +15183,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
                 }
-                Piece::Fn(sig) if of.is_some() => {
+                Piece::Fn(sig) if of.is_some() || site.is_some() => {
                     let r = self.bracket_fn(&sig, &x, span);
                     out = out.union(&r);
                 }
@@ -14978,6 +15202,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let kind = NeedKind::Component {
                         i,
                         key: x.ty.clone(),
+                        site: site.unwrap_or(span),
                     };
                     let r = self.need(k, kind, true, span);
                     self.bind_component(v, k, i, &r, span);
@@ -15019,34 +15244,84 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// both. A bracket the checker meets twice keeps one number. Else the bracket is
     /// rejected. One pass over `v`'s pieces.
     fn bracket_count(&mut self, v: &Ty, span: Span) -> bool {
+        self.bracket_meaning(v, span, span, true)
+    }
+
+    /// [`Self::bracket_count`] for the bracket written at `site`, of a value of type `v`,
+    /// rejected at `at`. With `own`, `v` is the bracket's own value, and a class among its
+    /// pieces may be anything, a tuple too; else `v` is what a call binds a parameter with no
+    /// written type to (row FAIL-curried-index-untyped-param), and a class left in it is the
+    /// caller's, which takes the bracket as a need and meets it at the caller's own calls.
+    ///
+    /// The calls of one function share its body's one term, so every call must give the
+    /// bracket one meaning: [`Info::brackets`] keeps the number of parameters of the functions
+    /// met at `site`, and [`Ck::bracket_plain`] whether a tuple, a family or another value
+    /// that is no function met it. A section (more than one parameter) and such a value at
+    /// one bracket are rejected in either order of the calls, as one value that may be both
+    /// is. One pass over `v`'s pieces and two lookups.
+    fn bracket_meaning(&mut self, v: &Ty, site: Span, at: Span, own: bool) -> bool {
         let mut counts = BTreeSet::new();
-        let mut other = false;
+        let (mut other, mut plain) = (false, false);
         for p in v.pieces() {
             match p {
                 Piece::Fn(sig) if !sig.data => {
                     counts.insert(sig.params.len());
                 }
                 p if p.is_atoms() => {}
-                _ => other = true,
+                Piece::Var(_) => other |= own,
+                Piece::Dyn => other = true,
+                _ => (other, plain) = (true, true),
             }
         }
+        let was_plain = self.bracket_plain.contains(&site);
+        if plain {
+            self.bracket_plain.insert(site);
+        }
+        let before = self.info.brackets.get(&site).copied();
         let Some(&n) = counts.last() else {
-            return true;
+            return match before {
+                Some(m) if m > 1 && plain => {
+                    self.bracket_met_both(v, None, Some(m), at);
+                    false
+                }
+                _ => true,
+            };
         };
-        let before = self.info.brackets.get(&span).copied();
-        if counts.len() == 1 && (n < 2 || !other) && before.is_none_or(|m| m == n) {
-            self.info.brackets.insert(span, n);
+        let alone = counts.len() == 1 && (n < 2 || !other);
+        if alone && (n < 2 || !was_plain) && before.is_none_or(|m| m == n) {
+            self.info.brackets.insert(site, n);
             return true;
         }
-        let m = (counts.iter().copied().chain(before)).find(|&m| m != n);
-        let of = |n: usize| match n {
-            1 => "a function of 1 parameter".to_string(),
-            n => format!("a function of {n} parameters"),
-        };
-        let also = m.map_or_else(|| "a tuple or a family".to_string(), of);
-        let (t, one) = (self.text(v), of(n));
+        match alone && !own {
+            // This value has one meaning; another call gave the bracket another.
+            true => self.bracket_met_both(v, Some(n), before.filter(|&m| m != n), at),
+            false => {
+                let m = (counts.iter().copied().chain(before)).find(|&m| m != n);
+                self.bracket_both_here(v, n, m, at);
+            }
+        }
+        false
+    }
+
+    /// A function of `n` parameters, or with `n` none no function.
+    fn bracket_kind(n: Option<usize>) -> String {
+        match n {
+            None => "a tuple or a family".to_string(),
+            Some(1) => "a function of 1 parameter".to_string(),
+            Some(n) => format!("a function of {n} parameters"),
+        }
+    }
+
+    /// The error of a bracket at `at` on the value of type `v` that may be a function of `n`
+    /// parameters and, as well, a function of `m` or, with `m` none, a tuple or a family.
+    fn bracket_both_here(&mut self, v: &Ty, n: usize, m: Option<usize>, at: Span) {
+        let (t, one, also) = (
+            self.text(v),
+            Self::bracket_kind(Some(n)),
+            Self::bracket_kind(m),
+        );
         self.error_offering(
-            span,
+            at,
             format!(
                 "this bracket has no one meaning: the value is {t}, so it may be {one} or \
                  {also}, and a bracket gives a function its first argument only, leaving the \
@@ -15057,7 +15332,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .to_string(),
             ],
         );
-        false
+    }
+
+    /// The error of a call at `at` that passes `v`, which is a function of `n` parameters or,
+    /// with `n` none, a tuple or a family, to a bracket on a parameter whose type is not
+    /// written, where another call passed a function of `m` parameters or, with `m` none, a
+    /// tuple or a family: the calls share the bracket's one term.
+    fn bracket_met_both(&mut self, v: &Ty, n: Option<usize>, m: Option<usize>, at: Span) {
+        let (t, one, also) = (self.text(v), Self::bracket_kind(n), Self::bracket_kind(m));
+        self.error_offering(
+            at,
+            format!(
+                "this call passes {t}, {one}, to a bracket on a parameter whose type is not \
+                 written, and another call passes {also} to it: the bracket gives a function \
+                 its first argument only, leaving the others to later brackets, so it has no \
+                 one meaning for both"
+            ),
+            [
+                "repair: write the parameter's type, so that every call passes one kind of value"
+                    .to_string(),
+            ],
+        );
     }
 
     /// The bracket `v[x]` written at `span` on the function `sig`, a piece of `v` that is no
@@ -16377,7 +16672,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// rejected. One read of `x`'s pieces.
     pub(super) fn component_read(&mut self, x: &Arg<'a>, i: usize, at: Span) -> Option<Ty> {
         let k = Arg::of(Ty::lit(&Value::int(i.into())));
-        self.tried(|ck| ck.at_index(&x.ty, Some(i), k, None, at, false))
+        self.tried(|ck| ck.at_index(&x.ty, Some(i), k, None, None, at, false))
     }
 
     /// Whether the construct being checked ([`Self::written`]), when it is the one at `span`,
@@ -18210,9 +18505,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut taken = Vars::default();
             arrow.params.iter().for_each(|p| p.vars_in(&mut taken));
             let mut inner = Vars::default();
+            // A family's arrows take its keys, which the call that builds it fixed, not a
+            // later call: a need on the class of a key, as `f(1)` of `kk(f) = { f(1) -> 2 }`
+            // gives, is checked here (row FAIL-group-key-function: deferring it lost it, since
+            // a family holds no needs, and `kk(v -> (z -> z))` passed with a function as key).
             arrow.result.each_held_fn(|s| {
-                s.arrows
-                    .iter()
+                (s.arrows.iter().filter(|_| !s.data))
                     .for_each(|a| a.params.iter().for_each(|p| p.vars_in(&mut inner)));
             });
             defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
