@@ -21,7 +21,7 @@
 | L19 | — | — | `compile`, `mix` |
 | L20 | — | `bitorder` | `records`, `json`, `csv` |
 | L21 | — | `store`, `retry`, `hedge`, `breaker`, `rate`, `peers` | `#unavailable` |
-| L22 | `@decides` | — | `ofNat`, `Semigroup`, `Monoid`, `NonCommRing`, `CommRing`, `Ring`, `additive`, `dual`, `byStrongInduction`, `byCollectionInduction`, `evalPoly`, `normalForm`, `expand`, `simplify`, `substitute`, `derivative`, `integral`, `#noClosedForm`, `#notInCarrier`, `#outsideFragment` |
+| L22 | `@decides` | — | `ofNat`, `Semigroup`, `Monoid`, `NonCommRing`, `CommRing`, `Ring`, `additive`, `dual`, `byStrongInduction`, `byCollectionInduction`, `evalPoly`, `normalForm`, `expand`, `simplify`, `substitute`, `derivative`, `integral`, `#noClosedForm`, `#notInCarrier`, `#outsideFragment`, `BoolRing`, `anf`, `nnf`, `dnf`, `cnf`, `minimize`, `factor`, `sat`, `valid`, `equivalent`, `modelCount`, `models` |
 | L24 | `@require` | `target` | `#cpu`, `#contractMismatch` |
 | L25 | — | — | `verify`, `explain`, `obligations`, `check` |
 | L26 | — | — | `#wasm` |

@@ -211,6 +211,8 @@ const PENDING: &[(&str, &str)] = &[
     ("bitorder", "TERM-1"),
     ("stack", "L18.2c"),
     ("memoizationArena", "L18.2e"),
+    // Also the L22 form `equivalent` of the boolean formulas (SYM-bool-formulas): when this
+    // entry goes, `zedc::resolve::WORDS` gains `("equivalent", 22)`.
     ("equivalent", "COST-required"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
