@@ -14748,14 +14748,16 @@ fn write_parts<'a>(
 /// alone, with a scope of its own. A function or a tuple with variables is still written in
 /// full each time: its variables are named by the whole text ([`Walk`]).
 ///
-/// A part none of whose places is below another row or function (other than the start) is not
-/// placed: [`defs::lift`] names a soft part only when a use of it lies in another part's body,
-/// so such a part would be written in full at each place anyway, and placing it would count
-/// the unions in its body once where the text writes them at each place, so that a union the
-/// text writes twice would not be named (`f(m: (int .. (int | String) -> bool, int)) = m`
-/// must read `type Part1 = int | String;`). Such a part stands only where the start's own
-/// parameters, result, components or payloads hold it, so it is written as often as the start writes
-/// it, and the shared parts below it are placed as any others.
+/// A part none of whose places is below another row or function, other than those on top (the
+/// ones the whole type holds directly, written in full), is not placed: [`defs::lift`] names a
+/// soft part only when a use of it lies in another part's body, so such a part would be
+/// written in full at each place anyway, and placing it would count the unions in its body
+/// once where the text writes them at each place, so that a union the text writes twice would
+/// not be named (`f(m: (int .. (int | String) -> bool, int)) = m` must read
+/// `type Part1 = int | String;`, and so must `int .. (int | String) -> (int .. (int | String)
+/// -> bool)`, whose two arrows share their result). Such a part stands only where the parts
+/// on top hold it, so it is written as often as they write it, and the shared parts below it
+/// are placed as any others.
 // Complexity tradeoff (FAIL-nested-display-headline-type-growth): naive, the text written as a
 // tree, each shared part in full at each place it stands, O(2^d) for a part held twice at each
 // of d levels, as a set display nested d deep types each level `{f, (inner)}` with the inner
