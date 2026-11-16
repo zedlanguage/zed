@@ -784,6 +784,40 @@ fn a_meet_of_exact_arrows_of_different_domains_is_within_each_side() {
     }
 }
 
+/// The meet of an exact arrow and a partial arrow over equal parameter types is the exact
+/// arrow over them whose result is the meet of the two: a function of both has its domain
+/// hold those types and its values there in both results. Before, the two arrows were kept
+/// apart, and the meet was not found within that one arrow; the kernel printer writes the
+/// meet as that arrow, so its text read back as another type.
+#[test]
+fn a_meet_of_an_exact_and_a_partial_arrow_over_one_domain_is_one_arrow() {
+    use zedc::check::read::parse_type;
+    let ty = |s: &str| parse_type(s).unwrap();
+    for (a, b, one) in [
+        (
+            "#b ->? int",
+            "#b .. (#b | #pair(#b, int)) -> int | f64",
+            "#b -> int",
+        ),
+        (
+            "f64 | (#b ->? int)",
+            "#b .. (#b | #pair(#b, int)) -> int | f64",
+            "#b -> int",
+        ),
+        ("int -> int | rat", "int ->? int", "int -> int"),
+    ] {
+        for (l, r) in [(a, b), (b, a)] {
+            let m = ty(l).meet(&ty(r));
+            for (x, y) in [(&m, &ty(one)), (&ty(one), &m)] {
+                assert!(
+                    x.subtype(y),
+                    "the meet of `{l}` and `{r}` is `{m}`, which is not `{one}`"
+                );
+            }
+        }
+    }
+}
+
 /// The meet of two functions of one parameter list (DESIGN.md sec:type_language, "Morphism
 /// types carry two domain bounds"): empty where a guarantee is proved outside the other side's
 /// permission; otherwise the exact arrows of both, each partial arrow met with the other

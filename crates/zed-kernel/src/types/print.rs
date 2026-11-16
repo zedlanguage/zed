@@ -21,14 +21,14 @@
 //! payload of every tuple but not every struct, or the reverse, has no surface type: it prints
 //! as `#a(tuple)` or `#a(struct)` and is marked not exact.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::TextClass as Class;
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
 use super::hash::names_first;
-use super::{Lits, Morphism, Node, Rope, Row, Spell, Surface, Surfaces, Tuples, Type};
+use super::{Lits, Morphism, Node, Rope, Row, Spell, Surface, Surfaces, Tuples, Type, Verdict};
 use crate::value::Value;
 use order::{Member, NumberType};
 use zed_graph::on_cycle;
@@ -544,6 +544,9 @@ struct Printer<'s> {
     by_name: bool,
     /// The value of each part met outside every atom, by its node's id ([`Printer::outside`]).
     outsides: HashMap<u64, bool>,
+    /// Whether each part of the morphisms met is a meet of morphism types and nothing else, by
+    /// its node's id ([`Printer::meet_of_literals`]).
+    meets: HashMap<u64, bool>,
     /// The program's own spelling of a literal value, where a message has one
     /// ([`Type::surfaces_spelled`]).
     spell: Option<Spell<'s>>,
@@ -880,15 +883,157 @@ impl Printer<'_> {
                 &|me: &mut Printer, r: &Row| me.row(ctx, *n, Some(r)),
                 &|me: &mut Printer| me.row(ctx, *n, None),
                 &|c: &Part<Row>, not| Item::Tuples(ctx.clone(), *n, c.clone(), not),
+                // `&` of tuple types is their meet to a program as to the kernel.
+                &|_: &mut Printer, _: &[Row]| None,
             ),
-            Item::Morphisms(p, not) => self.part(
-                p,
-                *not,
-                &|me: &mut Printer, m: &Morphism| me.morphism(m),
-                &|_: &mut Printer| every_morphism(),
-                &|c: &Part<Morphism>, not| Item::Morphisms(c.clone(), not),
-            ),
+            Item::Morphisms(p, not) => match (!*not).then(|| self.folded(p)).flatten() {
+                Some(t) => t,
+                None => self.part(
+                    p,
+                    *not,
+                    &|me: &mut Printer, m: &Morphism| me.morphism(m),
+                    &|_: &mut Printer| every_morphism(),
+                    &|c: &Part<Morphism>, not| Item::Morphisms(c.clone(), not),
+                    &|me: &mut Printer, ms: &[Morphism]| me.meet_text(ms),
+                ),
+            },
         }
+    }
+
+    /// The text of a part of the morphisms that is the meet of two or more morphism types and
+    /// nothing else, as the one morphism type it is. A program reads `A & B` of two function
+    /// types as an overload (DESIGN.md sec:type_language, "Relation to semantic subtyping"
+    /// (2)), the arrows of one function, not as the meet of the two sets, so `&` would read
+    /// back as another type.
+    ///
+    /// Proof that the two are one set: a function `f` lies in `L1 .. U1 -> V1` and in
+    /// `L2 .. U2 -> V2` exactly when `L1 ⊆ dom f ⊆ U1`, `L2 ⊆ dom f ⊆ U2` and its values lie
+    /// in `V1` and in `V2`, that is when `L1 | L2 ⊆ dom f ⊆ U1 & U2` and its values lie in
+    /// `V1 & V2`: the members of `(L1 | L2) .. (U1 & U2) -> (V1 & V2)`. By induction the same
+    /// holds of any number of them, as the kernel decides such a meet (module `empty`, the
+    /// meet of morphism literals). A program writes `L .. U` only with `L` within `U`: where
+    /// the kernel builds a value of `L` outside `U`, no domain lies between them, the meet is
+    /// empty and is written `Never`; where `U` is also within `L`, the two are one type and
+    /// the arrow is written `U -> V`. Where the kernel decides neither way, `None`, and the
+    /// meet is written with its connective as before.
+    // Complexity tradeoff: whether a node is such a meet is kept by its id
+    // ([`Printer::meet_of_literals`]), so the test costs each node once for the printer's life.
+    // The literals of a node found to be one are then read from its nodes, each once, and
+    // joined with [`Type::union_all`] and [`Type::meet_all`]: linear in the nodes of that
+    // meet, and its operands are not printed through it. A meet that is an operand of another
+    // meet and is also printed elsewhere is read again there: the naive `&` text would share
+    // it by name, but reads back as another type, so the folded text is the one used. The two
+    // bounds are then compared by the kernel ([`Type::subtype_verdict`]), once per meet
+    // printed, a cost the `&` text did not have.
+    fn folded(&mut self, p: &Part<Morphism>) -> Option<Text> {
+        if !self.meet_of_literals(p) {
+            return None;
+        }
+        let (mut ms, mut seen, mut stack) = (Vec::new(), HashSet::new(), vec![p.clone()]);
+        while let Some(q) = stack.pop() {
+            if !seen.insert(q.id()) {
+                continue;
+            }
+            match q.view() {
+                Ok(_) => ms.extend(q.forced().0),
+                Err(Form::And(x, y)) => stack.extend([x.clone(), y.clone()]),
+                Err(_) => unreachable!("a meet of morphism types holds only meets and lists"),
+            }
+        }
+        self.meet_text(&ms)
+    }
+
+    /// The text of the meet of the morphism types `ms`, two or more, as the one morphism type
+    /// it is, or `Never`, as [`Printer::folded`] proves; `None` for fewer than two, where the
+    /// kernel decides neither whether the lower bound is within the upper nor that it is not,
+    /// or where the arrow would name a type the literals do not.
+    ///
+    /// The arrow is written only when each type it names, its bounds and its value, is empty
+    /// or a type some literal's own text names. Each such type is then a node the text of the
+    /// literals would refer to as well ([`Printer::refer`] keys a node by its type), or the
+    /// node `Never`, which names nothing; so the folded text adds no edge to the graph of the
+    /// texts that could close a cycle, and every cycle still passes through a recursive type
+    /// with a definition, as [`Printer::heights`] needs. A type built here could hold a cycle
+    /// of its own the printer has no name for: in `R0 = (R0, R1) | (int -> R1);
+    /// R1 = (R0 & (int -> R0)) | (int, R1)`, the value of `(int -> R1) & (int -> R0)` is
+    /// `R1 & R0`, which holds `int -> (R1 & R0)`. Such a meet keeps its connective.
+    // Complexity tradeoff: each built type is compared with the types of the k literals, 3k
+    // comparisons, each O(1) unless the two are equal (two types of different digests compare
+    // at their digests). Naive: name every built type and add its cycles to the printer's
+    // definitions, a second walk of the type for each meet printed.
+    fn meet_text(&mut self, ms: &[Morphism]) -> Option<Text> {
+        if ms.len() < 2 {
+            return None;
+        }
+        let lower = Type::union_all(ms.iter().map(|m| m.guarantee.clone()));
+        let upper = Type::meet_all(ms.iter().map(|m| m.permission.clone()));
+        let value = Type::meet_all(ms.iter().map(|m| m.value.clone()));
+        let named = |t: &Type| {
+            *t == Type::empty()
+                || (ms.iter()).any(|m| m.guarantee == *t || m.permission == *t || m.value == *t)
+        };
+        match lower.subtype_verdict(&upper) {
+            Verdict::Inhabited => Some(Text::word("Never", Class::Prim)),
+            Verdict::Empty if !named(&upper) || !named(&value) => None,
+            Verdict::Empty if upper.subtype(&lower) => {
+                Some(self.morphism(&Morphism::new(upper.clone(), upper, value)))
+            }
+            Verdict::Empty if named(&lower) => {
+                Some(self.morphism(&Morphism::new(lower, upper, value)))
+            }
+            Verdict::Empty | Verdict::Refused(_) => None,
+        }
+    }
+
+    /// Whether a part of the morphisms is the meet of its atoms and nothing else: a list
+    /// that is the meet of its atoms, or a meet of two such parts.
+    ///
+    /// A list is the meet of its atoms when [`Part::forced`] finds each of them taken and none
+    /// refused, and the list holds where every atom is taken. By the three-valued logic of
+    /// `forced`, refusing any one atom, whatever the others, makes the list `false`, so the
+    /// one setting where it can hold is the one where every atom is taken; it holds there, so
+    /// it is the meet of the atoms. An `or` or a complement is never taken for one: a part
+    /// that is such a meet but kept in another form is written as before, with its connective.
+    // Complexity tradeoff: each node is decided once and kept by its id for the printer's life,
+    // with a stack of its own, as [`Printer::outside`] is; a list costs one `forced`, O(n log n)
+    // in its nodes, and one evaluation. Naive version: decide each node printed afresh, which
+    // walks the meets below it again, O(n²) for `n` meets inside each other.
+    fn meet_of_literals(&mut self, p: &Part<Morphism>) -> bool {
+        if let Some(&v) = self.meets.get(&p.id()) {
+            return v;
+        }
+        let mut stack = vec![(p.clone(), false)];
+        while let Some((q, ready)) = stack.pop() {
+            let id = q.id();
+            if self.meets.contains_key(&id) {
+                continue;
+            }
+            let v = match q.view() {
+                Ok(_) => {
+                    q.is_leaf().is_none() && {
+                        let (taken, refused) = q.forced();
+                        refused.is_empty()
+                            && taken.len() == q.distinct_atoms().len()
+                            && q.eval(&|_| true)
+                    }
+                }
+                Err(Form::And(x, y)) => {
+                    if !ready {
+                        stack.push((q.clone(), true));
+                        for o in [x, y] {
+                            if !self.meets.contains_key(&o.id()) {
+                                stack.push((o.clone(), false));
+                            }
+                        }
+                        continue;
+                    }
+                    self.meets[&x.id()] && self.meets[&y.id()]
+                }
+                Err(_) => false,
+            };
+            self.meets.insert(id, v);
+        }
+        self.meets[&p.id()]
     }
 
     fn ty(&mut self, ctx: &Ctx, t: &Type) -> Text {
@@ -1135,10 +1280,15 @@ impl Printer<'_> {
             let k = self.refer(Item::Ty(None, m.permission.clone()));
             put(&mut segs, k, At::Key);
             segs.push(Seg::Str(
-                if m.guarantee == m.permission {
-                    " -> "
-                } else {
+                // An empty guarantee is written `->?`, also where the permission is empty too:
+                // `Never -> v` and `Never ->? v` hold the same one function, of empty domain,
+                // but the checker finds the exact form within the partial one only, so it
+                // reads the kernel type back from the partial form alone
+                // (FAIL-types-exact-never-domain).
+                if m.guarantee == Type::empty() {
                     " ->? "
+                } else {
+                    " -> "
                 }
                 .into(),
             ));
@@ -1169,7 +1319,8 @@ impl Printer<'_> {
     /// `x & y` of such an `x` and a `y` of value `true` there is written `x \ !y`, `!y` a part
     /// of value `false` there; a complement `!q` of such a `q` is written as `all \ q`, and of
     /// any other `q` as `q` turned over. So, by induction on the expression, only a part that
-    /// holds values outside every atom is written with `all`.
+    /// holds values outside every atom is written with `all`. `meet` writes a meet of atoms as
+    /// one text where it can ([`Printer::list`]).
     fn part<A: super::bdd::Literal>(
         &mut self,
         p: &Part<A>,
@@ -1177,6 +1328,7 @@ impl Printer<'_> {
         lit: &dyn Fn(&mut Printer, &A) -> Text,
         all: &dyn Fn(&mut Printer) -> Text,
         item: &dyn Fn(&Part<A>, bool) -> Item,
+        meet: &dyn Fn(&mut Printer, &[A]) -> Option<Text>,
     ) -> Text {
         // An operand: a leaf as text, otherwise a node of its own.
         let operand = |me: &mut Printer, (q, not): &(Part<A>, bool)| match q.is_leaf() {
@@ -1199,7 +1351,7 @@ impl Printer<'_> {
         let (x, y, and) = match p.view() {
             Ok(b) => {
                 debug_assert!(!not, "a list turned over is the list of the other value");
-                return self.list(b, lit, all);
+                return self.list(b, lit, all, meet);
             }
             Err(Form::Not(q)) => {
                 debug_assert!(!not, "a complement turned over is its operand");
@@ -1333,14 +1485,22 @@ impl Printer<'_> {
     /// `A & ((all \ B) | C)` (READ-atom-meet). The literals of a block are a group. The text is
     /// written from the first block on into one list of segments, with a stack of what closes
     /// the blocks begun, so that no block's text is copied into the text before it.
+    ///
+    /// The atoms `b` of a block of value `false`, and the one atom `c` of a block of value
+    /// `true` after it where nothing is written after that, are met (`b1 & b2 & c`). Where
+    /// `meet` writes the meet of those atoms as one text (two morphism types, which a program
+    /// would read as an overload, [`Printer::folded`]), that text stands for them: the rest is
+    /// then `c`, or the list after the block, as before.
     // Complexity tradeoff: each diagram prints its own list, so the text is linear in the
     // lists of the distinct parts printed, where printing nodes was linear in their union.
-    // Which blocks are turned over is found in two passes over the list, linear in it.
+    // Which blocks are turned over is found in two passes over the list, linear in it. `meet`
+    // is asked once per block of value `false`, with that block's atoms.
     fn list<A: super::bdd::Literal>(
         &mut self,
         b: &Bdd<A>,
         lit: &dyn Fn(&mut Printer, &A) -> Text,
         all: &dyn Fn(&mut Printer) -> Text,
+        meet: &dyn Fn(&mut Printer, &[A]) -> Option<Text>,
     ) -> Text {
         let mut list = b.list();
         // The literals of each block in the order the atoms had when they were ordered by the
@@ -1379,14 +1539,54 @@ impl Printer<'_> {
         }
         let every = list.tail != over;
         let mut tail = every.then(|| all(self));
+        // Whether the text from each block on has a value, as `class` below finds it.
+        let mut valued = vec![every; m + 1];
+        for k in (0..m).rev() {
+            valued[k] = value[k] || turn[k] || valued[k + 1];
+        }
+        // Whether each block of value `false` is met with the one atom of the block of value
+        // `true` after it, and that block so written in it: then it ends the text.
+        let mut merged = vec![false; m];
         // The texts of each block's literals: of value `true`, `a` and `all \ b` in the order
-        // of the literals; of value `false`, the atoms refused and those taken.
+        // of the literals; of value `false`, the atoms refused and those taken. The atoms
+        // `meet` writes as one text are written so, before any of their own texts is made, so
+        // that no text made and dropped counts as a use of a part.
         let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
-        for ((_, lits), value) in list.blocks.iter().zip(&value) {
+        for (k, (_, lits)) in list.blocks.iter().enumerate() {
+            if k > 0 && merged[k - 1] {
+                texts.push((Vec::new(), Vec::new()));
+                continue;
+            }
             let (mut first, mut taken) = (Vec::new(), Vec::new());
+            // The atoms the block of value `false` meets, written `b1 & b2 & rest`.
+            let mut met = false;
+            if !value[k] {
+                let mut atoms: Vec<A> = (lits.iter().filter(|(_, t)| !t))
+                    .map(|(a, _)| a.clone())
+                    .collect();
+                // `b & c` where the rest is the one atom `c` of a block of value `true` with
+                // nothing written after it: a text after `c` would make the rest a union.
+                let c = match list.blocks.get(k + 1) {
+                    Some((_, l)) if !turn[k] && value[k + 1] && !valued[k + 2] => match &l[..] {
+                        [(c, true)] => Some(c.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let ends = c.is_some();
+                atoms.extend(c);
+                if let Some(text) = meet(self, &atoms) {
+                    first.push(text);
+                    met = true;
+                    merged[k] = ends;
+                }
+            }
             for (a, t) in lits {
+                if met && !t {
+                    continue;
+                }
                 let l = lit(self, a);
-                match (value, t) {
+                match (value[k], t) {
                     (true, true) | (false, false) => first.push(l),
                     (false, true) => taken.push(l),
                     (true, false) => {
@@ -1419,6 +1619,12 @@ impl Printer<'_> {
                     (false, _) => Class::Diff,
                     (true, 1) => first[0].class,
                     (true, _) => Class::And,
+                }),
+                // Met with the block after it, the block's text is the meet, then without the
+                // atoms taken.
+                (false, false) if merged[k] => Some(match taken.is_empty() {
+                    true => first[0].class,
+                    false => Class::Diff,
                 }),
                 // A block of value `false` before no value leaves no value.
                 (false, false) => next.map(|n| match (taken.is_empty(), first.len()) {
@@ -1474,7 +1680,7 @@ impl Printer<'_> {
                     continue;
                 }
                 let refused = Text::group(first, " & ", At::And, Class::And);
-                if every && k + 1 == m {
+                if merged[k] || every && k + 1 == m {
                     put(&mut segs, refused, at);
                     tail = None;
                     break;

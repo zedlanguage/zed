@@ -1,8 +1,35 @@
 //! Printing and reading back types of `n` parts, at `n` and `8n` (`printed.rs`).
 
+use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
 
 use crate::printed::*;
+
+/// Printing the kernel's meet of `n` function types, alone and in a union with another arrow:
+/// the printer writes each as the one arrow it is (FAIL-types-meet-exact-arrows-differing-
+/// domains), from one union of the guarantees, one meet of the permissions and of the values,
+/// and one subtype test, so the work is that of those kernel operations on `n` types.
+#[test]
+fn printing_a_meet_of_many_function_types_scales() {
+    let n = 16_000;
+    let inputs = scaling::inputs(n, |m| {
+        let met = KType::meet_all((0..m).map(|i| {
+            KType::partial(
+                &KType::atom(&format!("a{i}")) | &KType::int(),
+                KType::bool(),
+            )
+        }));
+        let met = &met & &KType::exact(KType::int(), KType::bool());
+        let other = KType::partial(KType::f64(), KType::atom("b"));
+        let union = &met | &other;
+        (met, union)
+    });
+    scaling::check("printing a meet of n function types", n, |size| {
+        let (met, union) = &inputs[&size];
+        assert_eq!(met.surface().root, "int -> bool");
+        assert_eq!(union.surface().root, "(f64 ->? #b) | (int -> bool)");
+    });
+}
 
 #[test]
 fn reading_a_printed_type_back_scales() {

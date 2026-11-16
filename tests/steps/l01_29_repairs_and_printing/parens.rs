@@ -661,10 +661,21 @@ struct Built {
 ///   as `_`, and a difference the kernel keeps is one from `_`; the place of `\` is checked
 ///   against the grammar by the first test of this file.
 ///
+/// - no `&` of two function types: the reader takes it as an overload, the arrows of one
+///   function (DESIGN.md sec:type_language, "Relation to semantic subtyping" (2)), while the
+///   kernel's `&` is the meet of the two sets. The meet of two arrows is built, and written as
+///   the one arrow it is: `(a -> b) & ((a | v) ->? b)` as `a .. (a & (a | v)) -> b`.
+///
 /// Meets of any two types, unions of a type with a part of it, and upper bounds `L | U` that
 /// hold `L` are built, as they are since rows FAIL-types-meet-function-union and
 /// FAIL-types-tuple-subtype were fixed.
 fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
+    kernel_generated_arrow(rng, depth).0
+}
+
+/// [`kernel_generated`], and whether the text is a function type, whose `&` with another
+/// would read as an overload.
+fn kernel_generated_arrow(rng: &mut Rng, depth: usize) -> (Built, bool) {
     let leaf = |rng: &mut Rng| {
         let (t, text) = [
             (KType::int(), "int"),
@@ -681,23 +692,26 @@ fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
         .nth(rng.below(9))
         .expect("a leaf");
         let text = text.to_string();
-        Built { t, text }
+        (Built { t, text }, false)
     };
     if depth == 0 || rng.below(4) == 0 {
         return leaf(rng);
     }
     let mut sub = || {
-        let b = kernel_generated(rng, depth - 1);
-        Built {
+        let (b, arrow) = kernel_generated_arrow(rng, depth - 1);
+        let b = Built {
             text: format!("({})", b.text),
             ..b
-        }
+        };
+        (b, arrow)
     };
-    let (a, b, v) = (sub(), sub(), sub());
+    let ((a, a_arrow), (b, b_arrow), (v, _)) = (sub(), sub(), sub());
     let (at, bt, vt) = (&a.text, &b.text, &v.text);
-    let built = |t: KType, text: String| Built { t, text };
+    let built = |t: KType, text: String| (Built { t, text }, false);
+    let arrow = |t: KType, text: String| (Built { t, text }, true);
     let out = match rng.below(11) {
         0 => built(&a.t | &b.t, format!("{at} | {bt}")),
+        1 if a_arrow && b_arrow => return leaf(rng),
         1 => built(&a.t & &b.t, format!("{at} & {bt}")),
         2 => built(
             KType::tuple(vec![a.t.clone(), b.t.clone(), v.t.clone()]),
@@ -716,27 +730,35 @@ fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
             KType::atom_with("pair", &KType::tuple(vec![a.t.clone(), b.t.clone()])),
             format!("#pair({at}, {bt})"),
         ),
-        7 => built(
+        7 => arrow(
             KType::exact(a.t.clone(), b.t.clone()),
             format!("{at} -> {bt}"),
         ),
-        8 => built(
+        8 => arrow(
             KType::partial(a.t.clone(), b.t.clone()),
             format!("{at} ->? {bt}"),
         ),
-        // Data types met mostly come out empty or as one side, so arrows are met here too.
-        9 => built(
-            &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(v.t.clone(), b.t.clone()),
-            format!("({at} -> {bt}) & ({vt} ->? {bt})"),
+        // Data types met mostly come out empty or as one side, so arrows are met here too. The
+        // meet is the functions with `a ⊆ dom ⊆ a & (a | v)` and values in `b`. The upper bound
+        // holds `a`, as a program's `L .. U` must: where `a` is not within it, the meet is
+        // empty, which the kernel cannot always show (`a` a payload holding a function), and
+        // the reader refuses the text. An `a` that holds a function is not drawn: the reader
+        // keeps both arrows of a meet of functions over such parameters, `((_ -> ()) -> _) &
+        // ((rat -> f64) | ())` read as an overload and not as `Never`
+        // (FAIL-types-meet-fn-param-domains).
+        9 if at.contains("->") => return leaf(rng),
+        9 => arrow(
+            &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(&a.t | &v.t, b.t.clone()),
+            format!("{at} .. ({at} & ({at} | {vt})) -> {bt}"),
         ),
         // A bound pair `L .. U` needs `L` within `U`: the upper bound is the union of `L` with
         // another type.
-        _ => built(
+        _ => arrow(
             KType::morphism(a.t.clone(), &a.t | &b.t, v.t.clone()),
             format!("{at} .. ({at} | {bt}) -> {vt}"),
         ),
     };
-    if out.t.is_empty() { leaf(rng) } else { out }
+    if out.0.t.is_empty() { leaf(rng) } else { out }
 }
 
 /// The kernel's surface printer (crates/zed-kernel/src/types/print.rs) over kernel types built
@@ -807,6 +829,94 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     );
 }
 
+/// The kernel's meet of function types, which a program cannot write with `&` alone (that is
+/// an overload), prints as the one arrow it is, alone, in a union, or after a meet with an
+/// atom taken away, and reads back as the type. Before the fix, each printed with `&` and read
+/// back as an overload (FAIL-types-meet-exact-arrows-differing-domains, the draw
+/// `((f64) | ((#a) ->? (#a))) & ((bool) ->? (rat))` of the test above).
+#[test]
+fn a_kernel_meet_of_function_types_prints_as_the_one_arrow_it_is() {
+    let int_bool = || KType::exact(KType::int(), KType::bool());
+    let pair = |a: KType, b: KType| KType::atom_with("pair", &KType::tuple(vec![a, b]));
+    let cases: [(KType, &str, &str); 7] = [
+        // Payloads whose first components meet in no value.
+        (
+            &KType::exact(
+                pair(KType::string(), KType::exact(KType::int(), KType::rat())),
+                KType::atom("a"),
+            ) & &KType::partial(
+                pair(KType::tuple(vec![]), KType::atom("a")),
+                KType::atom("a"),
+            ),
+            "Never",
+            "Never",
+        ),
+        // The meet as a whole (`Printer::folded`). (The draw itself is the empty function
+        // alone, `Never -> Never`, which the reader does not read as the kernel does; such
+        // types are not drawn, see `kernel_generated`.)
+        (
+            &(&KType::f64()
+                | &KType::partial(
+                    &KType::atom("a") | &KType::bool(),
+                    &KType::atom("a") | &KType::rat(),
+                ))
+                & &KType::partial(KType::bool(), KType::rat()),
+            "((f64) | (((#a) | (bool)) ->? ((#a) | (rat)))) & ((bool) ->? (rat))",
+            "bool ->? rat",
+        ),
+        // A list of one block of value `false`.
+        (
+            &KType::exact(KType::string(), KType::int())
+                & &KType::partial(KType::top(), KType::int()),
+            "(String) .. ((String) & (_)) -> (int)",
+            "String -> int",
+        ),
+        // In a union: a block of value `false`, then the one atom after it.
+        (
+            &(&(&KType::exact(KType::string(), KType::int())
+                & &KType::partial(KType::top(), KType::int()))
+                | &KType::partial(KType::f64(), KType::atom("b")))
+                | &KType::atom_with("box", &KType::tuple(vec![KType::string()])),
+            "(((String) .. ((String) & (_)) -> (int)) | ((f64) ->? (#b))) | (#box((String)))",
+            "(f64 ->? #b) | (String -> int) | #box(String)",
+        ),
+        // A lower bound outside the upper: no domain lies between them, so the meet is empty.
+        (
+            &int_bool() & &KType::partial(KType::f64(), KType::bool()),
+            "Never",
+            "Never",
+        ),
+        // A permission wider than the other side's guarantee: the meet is that arrow.
+        (
+            &int_bool() & &KType::partial(&KType::int() | &KType::rat(), KType::bool()),
+            "(int) -> (bool)",
+            "int -> bool",
+        ),
+        // Two partial arrows of disjoint permissions: the meet is the one function of empty
+        // domain, written `->?`, the form the checker reads as the kernel's type; it finds
+        // `Never -> v` narrower (ZED_TEST_SEED=33, FAIL-types-exact-never-domain).
+        (
+            &KType::partial(
+                KType::tuple(vec![KType::tuple(vec![]), KType::rat(), KType::string()]),
+                KType::tuple(vec![KType::rat(), KType::f64()]),
+            ) & &(&KType::atom("a") | &KType::partial(KType::rat(), KType::top())),
+            "((((()), (rat), (String))) ->? (((rat), (f64)))) & ((#a) | ((rat) ->? (_)))",
+            "Never ->? (rat, f64)",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (t, text, want) in cases {
+        let printed = t.surface();
+        assert_eq!(printed.root, want, "`{text}`");
+        assert!(printed.exact && printed.defs.is_empty(), "`{text}`");
+        assert!(
+            !kernel_read_back(text, &printed.root, &mut wrong),
+            "`{text}`"
+        );
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// A function giving a type built to print a form.
 type BuiltType = fn() -> Built;
 
@@ -832,10 +942,13 @@ const KERNEL_FORMS: [(&str, BuiltType); 7] = [
         t: &KType::int() | &KType::atom("a"),
         text: "(int) | (#a)".into(),
     }),
+    // A meet with a union of function types: `&` of two function types alone is an overload to
+    // a program, and the kernel's meet of two is printed as the one arrow it is.
     (" & ", || Built {
-        t: &KType::exact(KType::int(), KType::bool())
-            & &KType::partial(KType::f64(), KType::bool()),
-        text: "((int) -> (bool)) & ((f64) ->? (bool))".into(),
+        t: &(&KType::exact(KType::int(), KType::bool())
+            | &KType::exact(KType::f64(), KType::bool()))
+            & &KType::partial(KType::top(), KType::bool()),
+        text: "(((int) -> (bool)) | ((f64) -> (bool))) & ((_) ->? (bool))".into(),
     }),
     ("#box(", || Built {
         t: KType::atom_with("box", &KType::tuple(vec![KType::int()])),

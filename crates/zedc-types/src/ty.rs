@@ -14173,18 +14173,23 @@ impl Domains {
                 }
             }
         }
-        // Two arrows of one kind over equal parameter types are one arrow whose result is the
-        // meet of theirs: a function of both has its values there in both results, and
-        // [`Ty::meet`] holds those. The comparison of a signature takes each arrow it is given
-        // alone, so `(int ->? int) & (int ->? int | #a)` was not found within `int ->? int`.
-        // Cost: one hash lookup for each arrow, and the meets of the results merged.
-        let mut at: HashMap<(&[Ty], bool), usize> = HashMap::new();
+        // Two arrows over equal parameter types are one arrow whose result is the meet of
+        // theirs, exact where either is: a function of both has its values there in both
+        // results, and [`Ty::meet`] holds those. The signature's guarantee and permission are
+        // unchanged, since each holds those parameter types before as after: the guarantee
+        // through the exact arrow, if any, and the permission through either. The comparison
+        // of a signature takes each arrow it is given alone, so `(int ->? int) & (int ->? int |
+        // #a)` was not found within `int ->? int`, nor `(#b -> int | f64) & (#b ->? int)`
+        // within `#b -> int`. Cost: one hash lookup for each arrow, and the meets of the
+        // results merged.
+        let mut at: HashMap<&[Ty], usize> = HashMap::new();
         let mut merged: Vec<Arrow> = Vec::with_capacity(m.arrows.len());
         for a in &m.arrows {
-            match at.entry((&a.params, a.partial)) {
+            match at.entry(&a.params) {
                 std::collections::hash_map::Entry::Occupied(e) => {
                     let kept = &mut merged[*e.get()];
                     kept.result = kept.result.meet(&a.result);
+                    kept.partial &= a.partial;
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
                     e.insert(merged.len());

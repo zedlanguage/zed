@@ -2545,6 +2545,29 @@ fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
     );
 }
 
+/// A meet of two arrows inside a recursive system, `R0 & (int -> R0)` with `R0` holding
+/// `int -> R1`: the printer writes such a meet as one arrow only where each bound and value of
+/// that arrow is a type it already prints, so no new type closes a cycle around no named
+/// definition. Before, it built the arrow's value `R1 & R0` and panicked
+/// (FAIL-types-meet-exact-arrows-differing-domains, ZED_TEST_SEED=10575064587953838807).
+#[test]
+fn a_meet_of_arrows_inside_a_recursive_system_prints_as_definitions() {
+    // R0 = (R0, R1) | (int -> R1); R1 = (R0 & (int -> R0)) | (int, R1)
+    let sys = [
+        E::Union(vec![
+            tup(vec![E::Ref(0), E::Ref(1)]),
+            exact(E::Int, E::Ref(1)),
+        ]),
+        E::Union(vec![
+            E::And(vec![E::Ref(0), exact(E::Int, E::Ref(0))]),
+            tup(vec![E::Int, E::Ref(1)]),
+        ]),
+    ];
+    for (k, t) in kernel(&sys, "meet-in-system").into_iter().enumerate() {
+        prints_as_syntax(&t.expect("admitted"), &format!("R{k}"));
+    }
+}
+
 /// A chain of `n` definitions, each a pair whose second component is `#a | #b` or the next
 /// definition, the last's the first: `R(k) = ((#a | #b), (#a | #b | R(k + 1))) \ (#b, #a)`.
 /// When `marked`, the last definition's second component also holds `#c`, so no two
