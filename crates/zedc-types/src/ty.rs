@@ -6452,6 +6452,74 @@ fn near_pairs<'r, P: Placed + 'r>(
     (0..n).map(&mut sorted).collect()
 }
 
+/// An item of a payload shape as [`Comparing::shape_rest`] splits it: the type, and the
+/// kernel type of its values, which decides.
+type Item = (Ty, KType);
+
+/// The rest of a payload shape less shapes ([`Comparing::shape_rest`]).
+#[derive(Default)]
+struct Rest {
+    /// The rest as shapes, those whose items list a value ([`ShapeData::void`]).
+    shapes: Vec<Shape>,
+    /// The kernel type of each shape of the rest, void or not: together they hold the values
+    /// of the difference and no other (proof at [`Comparing::shape_rest`]).
+    parts: Vec<KType>,
+}
+
+/// Whether shapes hold a payload shape together ([`Rest::held`]).
+#[derive(Clone, Copy, Debug)]
+enum Held {
+    /// They hold it: nothing of it is outside them.
+    Yes,
+    /// A value of it outside them was built and checked.
+    No,
+    /// Neither: a part of the rest is not proved empty and no value of it was built.
+    Refused(Refusal),
+}
+
+impl Rest {
+    fn push(&mut self, items: Vec<Item>) {
+        let (items, kernels): (Vec<Ty>, Vec<KType>) = items.into_iter().unzip();
+        let s = Shape::new(items, BTreeMap::new());
+        if !s.void {
+            self.shapes.push(s);
+        }
+        self.parts.push(KType::tuple(kernels));
+    }
+
+    /// Whether the shapes taken hold the shape whose rest this is, from the kernel's verdict on
+    /// each part ([`KType::verdict`]): `No` at the first part shown to hold a value, `Yes` when
+    /// each part is empty, else refused with the first part's cause.
+    ///
+    /// Proof: the parts hold every value of the difference and no other ([`Comparing::shape_rest`]).
+    /// A value the kernel builds for a part and checks against it ([`Verdict::Inhabited`]) is
+    /// then a value of the shape outside the shapes taken, so the answer is no. When each part
+    /// is empty, so is the difference, and the answer is yes. A part that is neither decides
+    /// nothing. This does not rest on [`KType::is_empty`] or [`Ty::is_empty`] being exact: a
+    /// part that `is_empty` did not prove empty is kept, and its verdict tells. Why
+    /// (PROOF-diff-exact-skip): for the 4 pigeons and 3 holes rows of
+    /// `kinds::a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`,
+    /// `is_empty` does not prove the empty rest empty, and the comparison read that rest as a
+    /// value outside, a definite no where the answer is yes.
+    ///
+    /// Complexity tradeoff: naive version, the rest read as a no when it has a part, O(1) and
+    /// wrong where `is_empty` is not exact; used, the verdict of each part up to the first one
+    /// shown to hold a value, one search of the kernel each, all of them only where none is.
+    fn held(&self) -> Held {
+        let mut refused = None;
+        for p in &self.parts {
+            match p.verdict() {
+                Verdict::Inhabited => return Held::No,
+                Verdict::Empty => {}
+                Verdict::Refused(r) => {
+                    refused.get_or_insert(r);
+                }
+            }
+        }
+        refused.map_or(Held::Yes, Held::Refused)
+    }
+}
+
 /// The tuples of two lists `left` and `right` grouped for [`Near`]: by length and [`Kind`] at
 /// each place, each with the keys of its components.
 struct Groups<'r> {
@@ -8045,28 +8113,42 @@ impl<'m, 's> Comparing<'m, 's> {
             .call(move || async move { self.diff(&t, &u, solve).await })
     }
 
-    /// The rest of the payload shape `s` once the shapes `cut` are taken from it, as shapes.
-    /// `s` and `cut` have kernel types, so they have items and no fields ([`ShapeData::exact`]),
-    /// and [`near_pairs`] lists only shapes of as many items. The shapes are built item by
-    /// item. At item i, below a prefix of items already fixed, the values of `s`'s item i are
-    /// split by which shapes of `cut` (of those still holding the prefix) hold them at item i:
-    /// the parts of a Venn diagram of those items. A part held by no shape of `cut` gives a
-    /// shape, the prefix, the part and `s`'s items after i; a part held by some is carried on
-    /// to item i + 1 with them, and at the last item nothing of it is left. This is the
-    /// difference of products: for one shape of `cut`, `(A1, A2) \ (B1, B2)` is
-    /// `(A1 \ B1, A2)` with `(A1 & B1, A2 \ B2)`, as before.
+    /// The rest of the payload shape `s` once the shapes `cut` are taken from it, as shapes,
+    /// with the kernel type of each ([`Rest`]). `s` and `cut` have kernel types, so they have
+    /// items and no fields, each item with a kernel type ([`ShapeData::exact`]), and
+    /// [`near_pairs`] lists only shapes of as many items. The shapes are built item by item.
+    /// At item i, below a prefix of items already fixed, the values of `s`'s item i are split
+    /// by which shapes of `cut` (of those still holding the prefix) hold them at item i: the
+    /// parts of a Venn diagram of those items. A part held by no shape of `cut` gives a shape,
+    /// the prefix, the part and `s`'s items after i; a part held by some is carried on to item
+    /// i + 1 with them, and at the last item nothing of it is left. This is the difference of
+    /// products: for one shape of `cut`, `(A1, A2) \ (B1, B2)` is `(A1 \ B1, A2)` with
+    /// `(A1 & B1, A2 \ B2)`, as before.
     ///
     /// Two reductions keep the shapes few. Of the shapes of `cut` holding a part, one whose
     /// items after i are each within those of another of them is dropped ([`Self::widest`]):
     /// what it would take from the rest, the other takes. Then parts held by the same shapes
     /// are joined into one, so a prefix goes on once for each set of shapes, not once for each
-    /// part. Proof that the shapes left are the difference, with no value lost or added: the
-    /// parts at item i are disjoint and cover `s`'s item i; a value of the part held by the
-    /// set H of shapes, followed by a tail t, is in some shape of `cut` (all of whose items
-    /// before i hold the prefix, by the induction) exactly when t is in the items after i of a
-    /// shape of H; so the rest below the part is the rest of the tails less H's, which depends
-    /// on H only, and less H's widest shapes is the same set, since the dropped tails lie in
-    /// kept ones. At the last item no tail is left, so a part held by any shape is all taken.
+    /// part.
+    ///
+    /// Each part is made twice, as a [`Ty`] and as a kernel type, and every choice (a shape
+    /// of `cut` that misses `s`, a part met or left, a shape dropped by [`Self::widest`]) is
+    /// made on the kernel types: by kernel `&` and `-`, which are the meet and difference of
+    /// the sets, by [`KType::is_empty`], whose yes is proved, and by [`KType::subtype`], whose
+    /// yes is proved. Proof that the kernel types of the shapes left hold every value of the
+    /// difference and no other (PROOF-diff-exact-skip): the parts at item i are disjoint and
+    /// cover `s`'s item i. Each item of the prefix of a part held by the set H of shapes is
+    /// within the items of each shape of H at its place. So a value of that part, followed by
+    /// a tail t, is in some shape of `cut` exactly when t is in the items after i of a shape
+    /// of H: a shape not in H was found to miss a part of the prefix, or dropped because its
+    /// tail lies in the tail of a shape that is kept and holds the same prefix. A part is left
+    /// out only where `is_empty` proves it empty, so none of its values is lost; at the last
+    /// item a part held by some shape of H is in that shape, so all of it is taken. Hence a
+    /// shape left holds only values of `s` outside `cut`, and together they hold all of them.
+    /// A part that `is_empty` does not prove empty is kept, so a shape left may hold no value
+    /// ([`Rest::held`] tells). Each [`Ty`] shape holds at least the values of its kernel type
+    /// where [`Ty::meet`] and [`Ty::diff`] lose no value of the meet and the difference, their
+    /// own promise; the choices above do not rest on it.
     ///
     /// Cost: before (FAIL-types-shape-rest-many-cuts) each shape of `cut` split every shape
     /// left that it met into up to w shapes, so k shapes of `cut` left up to w^k shapes, and
@@ -8084,58 +8166,83 @@ impl<'m, 's> Comparing<'m, 's> {
     /// each meeting the next, the work grows about 8.4 times at 8 times k
     /// (`kinds::bench::the_difference_of_a_wide_payload_and_many_overlapping_cuts_scales`;
     /// 54 times before).
-    async fn shape_rest(
-        &'m self,
-        s: &Shape,
-        cut: &[Shape],
-        solve: Option<Solve<'s>>,
-    ) -> Vec<Shape> {
+    async fn shape_rest(&'m self, s: &Shape, cut: &[Shape], solve: Option<Solve<'s>>) -> Rest {
         let w = s.items.len();
+        let own: Vec<KType> = (s.items.iter().map(Ty::exact_kernel))
+            .collect::<Option<_>>()
+            .expect("the items of an exact shape have kernel types");
         // The shapes of `cut` as far as they meet `s`; one that misses `s` at an item is
         // dropped, as it takes nothing.
-        let mut cuts: Vec<Vec<Ty>> = Vec::with_capacity(cut.len());
+        let mut cuts: Vec<Vec<Item>> = Vec::with_capacity(cut.len());
         'cut: for c in cut {
             let mut met = Vec::with_capacity(w);
-            for (x, y) in s.items.iter().zip(&c.items) {
-                let m = x.meet(y);
-                if m.is_empty() {
+            for ((x, xk), y) in s.items.iter().zip(&own).zip(&c.items) {
+                let yk = (y.exact_kernel()).expect("the items of an exact shape have kernel types");
+                let mk = xk & &yk;
+                if mk.is_empty() {
                     continue 'cut;
                 }
-                met.push(m);
+                met.push((x.meet(y), mk));
             }
             cuts.push(met);
         }
         let mut within = HashMap::new();
-        let mut out = Vec::new();
-        let mut work: Vec<(Vec<Ty>, Vec<usize>)> = vec![(Vec::new(), (0..cuts.len()).collect())];
+        let mut rest = Rest::default();
+        let mut work: Vec<(Vec<Item>, Vec<usize>)> = vec![(Vec::new(), (0..cuts.len()).collect())];
         while let Some((prefix, held)) = work.pop() {
             let i = prefix.len();
-            let parts = self.parts(&cuts, &held, i, s.items[i].clone(), solve).await;
-            let mut joined: BTreeMap<Vec<usize>, Vec<Ty>> = BTreeMap::new();
+            if i == w {
+                // Only for a shape of no items: each shape of `cut` met it, and one takes it.
+                if held.is_empty() {
+                    rest.push(prefix);
+                }
+                continue;
+            }
+            if i + 1 == w {
+                // At the last item a part some shape of `held` holds is all taken, so only the
+                // part held by none is left: `s`'s item less the union of their items.
+                // Complexity tradeoff: naive version, the split by `parts` into the regions of
+                // a Venn diagram of the k held items, which costs O(k log k) meets and
+                // differences for few regions but one per region, up to 2^k regions for
+                // overlapping items (the pigeonhole rows of
+                // `kinds::a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`
+                // ran past 60 s); used, one union of k items and one difference.
+                let uk = KType::union_all(held.iter().map(|&c| cuts[c][i].1.clone()));
+                let rk = &own[i] - &uk;
+                if !rk.is_empty() {
+                    let u = Ty::union_all(held.iter().map(|&c| &cuts[c][i].0));
+                    let r = self.diff_deep(s.items[i].clone(), u, solve).await;
+                    let mut items = prefix;
+                    items.push((r, rk));
+                    rest.push(items);
+                }
+                continue;
+            }
+            let x = (s.items[i].clone(), own[i].clone());
+            let parts = self.parts(&cuts, &held, i, x, solve).await;
+            let mut joined: BTreeMap<Vec<usize>, Vec<Item>> = BTreeMap::new();
             for (r, h) in parts {
-                let h = if h.is_empty() || i + 1 == w {
+                let h = if h.is_empty() {
                     h
                 } else {
-                    self.widest(&cuts, h, i + 1, &mut within, solve).await
+                    Self::widest(&cuts, h, i + 1, &mut within)
                 };
                 joined.entry(h).or_default().push(r);
             }
             for (h, rs) in joined {
-                if !h.is_empty() && i + 1 == w {
-                    continue;
-                }
                 let mut items = prefix.clone();
-                items.push(Ty::union_all(&rs));
+                let u = Ty::union_all(rs.iter().map(|r| &r.0));
+                items.push((u, KType::union_all(rs.into_iter().map(|r| r.1))));
                 if h.is_empty() {
-                    items.extend(s.items[i + 1..].iter().cloned());
-                    out.push(Shape::new(items, BTreeMap::new()));
+                    let after = s.items[i + 1..].iter().cloned();
+                    items.extend(after.zip(own[i + 1..].iter().cloned()));
+                    rest.push(items);
                 } else {
                     work.push((items, h));
                 }
             }
         }
-        out.retain(|s| !s.void);
-        out
+        rest
     }
 
     /// The values of `x` split by which shapes of `held` (indices into `cuts`, in increasing
@@ -8152,19 +8259,23 @@ impl<'m, 's> Comparing<'m, 's> {
     /// measured); here a part goes down only the nodes whose union it meets, O(log k) nodes
     /// for a part met by few shapes, and each node's union is formed once, O(k log k) items
     /// in all.
+    ///
+    /// Each part is split as a [`Ty`] and as its kernel type, and only the kernel type decides
+    /// whether a part is empty, so that the split is exact whatever [`Ty::meet`] and
+    /// [`Ty::diff`] give ([`Rest`]).
     async fn parts(
         &'m self,
-        cuts: &[Vec<Ty>],
+        cuts: &[Vec<Item>],
         held: &[usize],
         i: usize,
-        x: Ty,
+        x: Item,
         solve: Option<Solve<'s>>,
-    ) -> Vec<(Ty, Vec<usize>)> {
-        let mut unions: HashMap<(usize, usize), Ty> = HashMap::new();
+    ) -> Vec<(Item, Vec<usize>)> {
+        let mut unions: HashMap<(usize, usize), Item> = HashMap::new();
         let mut out = Vec::new();
         // Each task: a part, the shapes holding it so far, and the nodes still to meet, the
         // next last.
-        type Task = (Ty, Vec<usize>, Vec<(usize, usize)>);
+        type Task = (Item, Vec<usize>, Vec<(usize, usize)>);
         let mut work: Vec<Task> = vec![(x, Vec::new(), vec![(0, held.len())])];
         while let Some((r, h, mut nodes)) = work.pop() {
             let Some((lo, hi)) = nodes.pop() else {
@@ -8175,17 +8286,23 @@ impl<'m, 's> Comparing<'m, 's> {
                 work.push((r, h, nodes));
                 continue;
             }
-            let u = (unions.entry((lo, hi)))
-                .or_insert_with(|| Ty::union_all(held[lo..hi].iter().map(|&c| &cuts[c][i])))
+            let (u, uk) = (unions.entry((lo, hi)))
+                .or_insert_with(|| {
+                    let node = || held[lo..hi].iter().map(|&c| &cuts[c][i]);
+                    let u = Ty::union_all(node().map(|p| &p.0));
+                    (u, KType::union_all(node().map(|p| p.1.clone())))
+                })
                 .clone();
-            let m = r.meet(&u);
-            if m.is_empty() {
+            let mk = &r.1 & &uk;
+            if mk.is_empty() {
                 work.push((r, h, nodes));
                 continue;
             }
-            let o = self.diff_deep(r, u, solve).await;
-            if !o.is_empty() {
-                work.push((o, h.clone(), nodes.clone()));
+            let m = (r.0.meet(&u), mk);
+            let ok = &r.1 - &uk;
+            if !ok.is_empty() {
+                let o = self.diff_deep(r.0, u, solve).await;
+                work.push(((o, ok), h.clone(), nodes.clone()));
             }
             if hi - lo == 1 {
                 let mut h = h;
@@ -8210,29 +8327,20 @@ impl<'m, 's> Comparing<'m, 's> {
     /// Cost: each shape of `held` is compared with the shapes kept so far, at most a of them,
     /// O(k·a) comparisons of tails for k shapes. Complexity tradeoff: comparing every pair
     /// would be O(k²) for a chain of k nested shapes, where a stays 1.
-    async fn widest(
-        &'m self,
-        cuts: &[Vec<Ty>],
+    fn widest(
+        cuts: &[Vec<Item>],
         held: Vec<usize>,
         from: usize,
         within: &mut HashMap<(usize, usize, usize), bool>,
-        solve: Option<Solve<'s>>,
     ) -> Vec<usize> {
         let mut kept: Vec<usize> = Vec::with_capacity(held.len());
         for c in held {
-            let mut dropped = false;
-            for &d in &kept {
-                if self.tail_within(cuts, c, d, from, within, solve).await {
-                    dropped = true;
-                    break;
-                }
-            }
-            if dropped {
+            if (kept.iter()).any(|&d| Self::tail_within(cuts, c, d, from, within)) {
                 continue;
             }
             let mut wider = Vec::with_capacity(kept.len() + 1);
             for d in kept {
-                if !self.tail_within(cuts, d, c, from, within, solve).await {
+                if !Self::tail_within(cuts, d, c, from, within) {
                     wider.push(d);
                 }
             }
@@ -8244,26 +8352,18 @@ impl<'m, 's> Comparing<'m, 's> {
     }
 
     /// Whether each item of `cuts[a]` from `from` on is within the item of `cuts[b]` at its
-    /// place, each pair of items compared once ([`Self::widest`]).
-    async fn tail_within(
-        &'m self,
-        cuts: &[Vec<Ty>],
+    /// place, each pair of items compared once ([`Self::widest`]). The kernel types are
+    /// compared ([`KType::subtype`], whose yes is proved), so a shape is dropped only where its
+    /// tail is within the other's.
+    fn tail_within(
+        cuts: &[Vec<Item>],
         a: usize,
         b: usize,
         from: usize,
         within: &mut HashMap<(usize, usize, usize), bool>,
-        solve: Option<Solve<'s>>,
     ) -> bool {
         for (j, (x, y)) in cuts[a].iter().zip(&cuts[b]).enumerate().skip(from) {
-            let held = match within.get(&(a, b, j)) {
-                Some(&held) => held,
-                None => {
-                    let rest = self.diff_deep(x.clone(), y.clone(), solve).await;
-                    let held = rest.is_empty();
-                    within.insert((a, b, j), held);
-                    held
-                }
-            };
+            let held = *(within.entry((a, b, j))).or_insert_with(|| x.1.subtype(&y.1));
             if !held {
                 return false;
             }
@@ -8691,11 +8791,21 @@ impl<'m, 's> Comparing<'m, 's> {
                 if matches!(found, Ok(true)) {
                     continue;
                 }
-                if self.held_together(l, i, ls, rs, t, &mut nears).await {
-                    continue;
+                let held = self.held_together(l, i, ls, rs, t, &mut nears).await;
+                match held {
+                    Some(Held::Yes) => continue,
+                    Some(Held::No) => return false,
+                    Some(Held::Refused(_)) | None => {}
                 }
                 match found {
-                    Ok(_) => return false,
+                    Ok(_) => {
+                        // The rule of one shape found no shape holding `l`, and the shapes
+                        // near it hold it together or not, undecided: a refusal, not a no.
+                        if let Some(Held::Refused(r)) = held {
+                            self.refuse(|| r.message());
+                        }
+                        return false;
+                    }
                     Err((first, k, id)) => {
                         self.refuse(|| {
                             let cx = self.cx.borrow();
@@ -8727,10 +8837,11 @@ impl<'m, 's> Comparing<'m, 's> {
     }
 
     /// Whether the payload shape `l`, number `i` of `ls`, held by no one shape of `rs` (the
-    /// shapes `t` lists for its atom), is held by the shapes of `rs` near it together: where
-    /// `l`, those shapes and `t` are exact (no variable, unknown or function; [`ShapeData::exact`]),
-    /// it is when the rest of `l` less them ([`Self::shape_rest`]) is empty. `nears` keeps the
-    /// shapes of `rs` near each of `ls` ([`near_pairs`]), made on the first call.
+    /// shapes `t` lists for its atom), is held by the shapes of `rs` near it together, where
+    /// `l`, those shapes and `t` are exact (no variable, unknown or function; [`ShapeData::exact`]):
+    /// the answer of [`Rest::held`] on the rest of `l` less them ([`Self::shape_rest`]), and
+    /// none where they are not exact. `nears` keeps the shapes of `rs` near each of `ls`
+    /// ([`near_pairs`]), made on the first call.
     ///
     /// Why (FAIL-types-shape-union-sub-incomplete): `#a(int, int, int)` was not found within
     /// the union of the cuts `#a(B_j, B_j, B_j)` (B_j the numbers below 8 with bit j set) and
@@ -8739,18 +8850,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// one item into cases at once (`TupleSplit`). The rule of one shape then failed, since no
     /// one shape holds `l`, though [`Ty::diff`] found the difference empty.
     ///
-    /// Proof that a yes is sound: the values of `l` outside every shape of `rs` are those
-    /// outside the shapes near it, as a shape [`apart`] from `l` shares no value with it. The
-    /// rest [`Self::shape_rest`] gives holds every one of them: it is the difference with no
-    /// value lost (proof there), given that a meet of two items ([`Ty::meet`]) holds no value
-    /// outside both, which the proof there assumes; a part it drops is one
-    /// [`Ty::is_empty`] proves empty (the kernel's search counts a type it does not prove empty
-    /// as inhabited, `KType::is_empty`), or a row with a component that lists nothing; and the
-    /// items it compares are compared by [`Ty::diff`], whose rest may hold more than the
-    /// difference and never less. So an empty rest means no value of `l` is outside `rs`. A
-    /// rest that is not empty decides nothing, and the answer is the search's. Not proved
-    /// here: that [`Ty::meet`] of two items of data is no wider than their meet, the claim
-    /// the exact path of [`Self::diff`] rests on too (PROOF-diff-exact-skip).
+    /// Proof: the values of `l` outside every shape of `rs` are those outside the shapes near
+    /// it, as a shape [`near_pairs`] leaves out shares no value with `l` (proof at [`Near`]).
+    /// The kernel types of the rest hold exactly those values (proof at [`Self::shape_rest`],
+    /// which makes its choices on kernel types, not on [`Ty::meet`], [`Ty::diff`] or
+    /// [`Ty::is_empty`]), so [`Rest::held`] answers for `rs`. With no shape near `l`, the rest
+    /// is `l` itself, and the answer is whether `l` holds a value. Before
+    /// (PROOF-diff-exact-skip), a rest with a part was read as deciding nothing, and the
+    /// search's no stood: where `is_empty` does not prove an empty part empty, that no was
+    /// wrong (`kinds::a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`).
     ///
     /// Complexity tradeoff: naive version, the rest made for every shape before the search,
     /// which costs each shape held by one shape a rest it does not need. Used: the rest only
@@ -8768,17 +8876,17 @@ impl<'m, 's> Comparing<'m, 's> {
         rs: &[Shape],
         t: &Ty,
         nears: &mut Option<Vec<Vec<usize>>>,
-    ) -> bool {
+    ) -> Option<Held> {
         if t.dynamic || !t.vars.is_empty() || l.0.exact.is_none() {
-            return false;
+            return None;
         }
         let near = nears.get_or_insert_with(|| near_pairs(ls.iter(), rs.iter()));
         let cut: Vec<Shape> = near[i].iter().map(|&j| rs[j].clone()).collect();
-        if cut.is_empty() || cut.iter().any(|c| c.0.exact.is_none()) {
-            return false;
+        if cut.iter().any(|c| c.0.exact.is_none()) {
+            return None;
         }
         let solve = self.cx.borrow().solve;
-        self.shape_rest(l, &cut, solve).await.is_empty()
+        Some(self.shape_rest(l, &cut, solve).await.held())
     }
 
     /// Whether the tuple piece `cs` of a type is in the tuple shapes of `t` of its length: in
@@ -9198,35 +9306,50 @@ impl<'m, 's> Comparing<'m, 's> {
                         ..Cx::default()
                     };
                     let cut: Vec<Shape> = near.into_iter().map(|j| us[j].clone()).collect();
-                    // Where both are exact the rest decides alone whether `u` holds the shape,
-                    // as it is empty exactly then (proof at [`Self::shape_rest`]), so the shape
-                    // is not first compared with its near shapes. Complexity tradeoff: that
-                    // comparison goes to the kernel's test of whether a set of tuples is
-                    // empty, which grew past n^2 for n shapes each meeting the next
-                    // (FAIL-types-shape-rest-many-cuts, sampled). Whether the skip can change an
-                    // answer: before, a yes of `sub_near` dropped the shape and anything else
-                    // went to `shape_rest`, as now, so the two differ only where `sub_near` says
-                    // yes. A yes is sound, so the exact rest is empty there, and `shape_rest`
-                    // gives its values and no other; it then gives no shape when each part it
-                    // keeps holds a value. A part is kept where `Ty::is_empty` is false, which
-                    // for these items rests on the kernel's search (`KType::is_empty`) and on
-                    // a row being void when a component lists no value ([`Row::new`]). Not
-                    // proved: that both are exact on the meets and differences of items of
-                    // data (PROOF-diff-exact-skip). Checked: the comparison and the difference
-                    // agree on 1,000 random payloads a run
-                    // (`kinds::a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty`;
-                    // 5,000 seeds once, 1,366 of them within, no disagreement).
+                    // Where both are exact the rest is made first, and the kernel's verdict on
+                    // its parts decides whether `u` holds the shape ([`Rest::held`]): yes drops
+                    // the shape, no leaves the rest. Only where it is undecided is the shape
+                    // compared with its near shapes, and a yes of that comparison, which is
+                    // sound, drops it; otherwise the rest stands. Proof that the rest holds the
+                    // difference: [`Self::shape_rest`], whose choices are made on kernel
+                    // types. Complexity tradeoff: the comparison first for every shape goes to
+                    // the kernel's test of whether a set of tuples is empty, which grew past n^2
+                    // for n shapes each meeting the next (FAIL-types-shape-rest-many-cuts,
+                    // sampled); the rest's verdict is one search of the kernel for each part.
+                    // Before (PROOF-diff-exact-skip), the rest was taken as the answer where
+                    // both were exact, and a part [`Ty::is_empty`] did not prove empty stayed
+                    // as a shape: for the empty rest of
+                    // `kinds::a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`
+                    // the difference was not empty, and the comparison said no where the answer
+                    // is yes. Checked against the comparison on 1,000 random payloads a run
+                    // (`kinds::a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty`).
                     let exact = s.0.exact.is_some() && cut.iter().all(|c| c.0.exact.is_some());
+                    let mut rest = None;
                     if exact_u && exact {
-                        left.extend(self.shape_rest(s, &cut, solve).await);
-                        changed = true;
-                        continue;
+                        let r = self.shape_rest(s, &cut, solve).await;
+                        match r.held() {
+                            Held::Yes => {
+                                changed = true;
+                                continue;
+                            }
+                            Held::No => {
+                                left.extend(r.shapes);
+                                changed = true;
+                                continue;
+                            }
+                            Held::Refused(_) => rest = Some(r.shapes),
+                        }
                     }
                     let one = payload_ty(n, vec![s.clone()]);
                     let near = payload_ty(n, cut.clone());
                     let mut b = Binds::new();
                     let held = self.sub_near(&one, &near, None, &mut b).await;
                     if self.cx.borrow().decided(held) && b.is_empty() {
+                        changed = true;
+                        continue;
+                    }
+                    if let Some(rest) = rest {
+                        left.extend(rest);
                         changed = true;
                         continue;
                     }
@@ -10285,7 +10408,11 @@ impl Ty {
             && !self.dynamic
     }
 
-    /// Whether no value is in it.
+    /// Whether it is shown to hold no value. A yes is proved; a no is not: the kernel's test
+    /// ([`KType::is_empty`]) counts a set it does not prove empty as holding a value, and a
+    /// tuple whose components are such sets is kept. Where the answer must be exact, ask the
+    /// kernel's verdict on the type's kernel type ([`KType::verdict`]), as the comparison of
+    /// payload shapes does (PROOF-diff-exact-skip).
     pub fn is_empty(&self) -> bool {
         self.set.is_empty()
             && self.tuples.is_empty()

@@ -2783,9 +2783,10 @@ fn random_item(r: &mut zed_tests::instances::Rng, d: usize) -> String {
 
 /// A payload shape of data is within a union of shapes exactly when it less the union is
 /// empty. Where both sides have kernel types, `diff` takes the rest of each shape
-/// (`Comparing::shape_rest`) without first asking `sub_near` whether the union holds it
-/// (a3cee3606); this checks that the skip changes no answer, against the comparison, which
-/// does not go through `diff`. A new seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
+/// (`Comparing::shape_rest`) and asks the kernel's verdict on it before it asks `sub_near`
+/// whether the union holds the shape (a3cee3606, PROOF-diff-exact-skip); this checks that the
+/// order changes no answer, against the comparison, which does not go through `diff`. A new
+/// seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
 #[test]
 fn a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty() {
     let (mut r, seed) = zed_tests::instances::Rng::fresh("a payload shape within a union");
@@ -2812,5 +2813,87 @@ fn a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty() {
             "{p} within {u}: {} (ZED_TEST_SEED={seed})",
             pt.diff(&ut)
         );
+    }
+}
+
+/// The pigeonhole rows for `pigeons` pigeons and `holes` holes: the tuple of one `#f | #t`
+/// for each pigeon and hole (`#t` where the pigeon sits in the hole), and the rows that
+/// forbid a placement: a pigeon in no hole, and two pigeons in one hole. The whole is within
+/// the union of the forbidden rows exactly when no placement puts each pigeon in a hole of
+/// its own, that is when `pigeons > holes`.
+fn pigeon_rows(pigeons: usize, holes: usize) -> (String, Vec<String>) {
+    let d = pigeons * holes;
+    let row = |hit: &dyn Fn(usize) -> bool, b: &str| {
+        let cs: Vec<String> = (0..d)
+            .map(|j| {
+                if hit(j) {
+                    b.to_string()
+                } else {
+                    "(#f | #t)".into()
+                }
+            })
+            .collect();
+        format!("({})", cs.join(", "))
+    };
+    let whole = row(&|_| false, "");
+    let mut forbidden = Vec::new();
+    for p in 0..pigeons {
+        forbidden.push(row(&|j| j / holes == p, "#f"));
+    }
+    for h in 0..holes {
+        for p in 0..pigeons {
+            for q in p + 1..pigeons {
+                forbidden.push(row(&|j| j == p * holes + h || j == q * holes + h, "#t"));
+            }
+        }
+    }
+    (whole, forbidden)
+}
+
+/// A payload `#a(P)` with `P` the pigeonhole tuple, against the union of `#a(F)` for each
+/// forbidden row `F` ([`pigeon_rows`]), alone and with an arm `#b(x: int)` that has no kernel
+/// type. For 4 pigeons and 3 holes the whole is within the union, and the kernel cannot show
+/// it (`TupleSplit`), so the answer is refused. Before (PROOF-diff-exact-skip) the comparison
+/// with the field arm said a plain no with no refusal: the rest of the shape less the near
+/// shapes was empty but not proved empty by `is_empty`, and was read as a value outside.
+/// With 2 or 3 pigeons in one hole fewer the yes is decided, and with a forbidden row left
+/// out the no is decided, with no refusal.
+#[test]
+fn a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused() {
+    let payloads = |rows: &[String], field: bool| {
+        let mut arms: Vec<String> = rows.iter().map(|f| format!("#a({f})")).collect();
+        if field {
+            arms.push("#b(x: int)".into());
+        }
+        ty(&arms.join(" | "))
+    };
+    for (pigeons, holes) in [(2, 1), (3, 2)] {
+        let (whole, forbidden) = pigeon_rows(pigeons, holes);
+        let pw = ty(&format!("#a({whole})"));
+        for field in [false, true] {
+            let what = format!("{pigeons} pigeons, {holes} holes, field arm {field}");
+            let all = payloads(&forbidden, field);
+            assert!(pw.subtype(&all), "{what}");
+            assert_eq!(pw.refused(&all), "", "{what}");
+            assert!(pw.diff(&all).is_empty(), "{what}: {}", pw.diff(&all));
+            // The last row forbids the last two pigeons the last hole; with it left out they
+            // may share it, the others each in a hole of its own, and the whole is outside.
+            let fewer = payloads(&forbidden[..forbidden.len() - 1], field);
+            assert!(!pw.subtype(&fewer), "{what}, a row left out");
+            assert_eq!(pw.refused(&fewer), "", "{what}, a row left out");
+        }
+    }
+    let (whole, forbidden) = pigeon_rows(4, 3);
+    let pw = ty(&format!("#a({whole})"));
+    for field in [false, true] {
+        let all = payloads(&forbidden, field);
+        assert!(!pw.subtype(&all), "field arm {field}");
+        let why = pw.refused(&all);
+        assert!(
+            why.contains("splitting more than one of its components"),
+            "field arm {field}: {why:?}"
+        );
+        // The difference may hold more than the empty rest, and never a value outside `pw`.
+        assert!(pw.diff(&all).subtype(&pw), "field arm {field}");
     }
 }
