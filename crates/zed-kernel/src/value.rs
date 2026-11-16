@@ -556,25 +556,34 @@ impl Value {
 
     /// The failure several loose atoms make together (DESIGN.md sec:failure): the set of the
     /// distinct ones as `#errs({…})`, an `#errs` among them giving its members, and a single
-    /// failure as itself.
-    pub fn merge_failures<'a>(atoms: impl IntoIterator<Item = &'a Value>) -> Value {
+    /// failure as itself. The atoms are taken by value, so the largest `#errs` set, when no
+    /// other value holds it, is extended in place.
+    pub fn merge_failures(atoms: impl IntoIterator<Item = Value>) -> Value {
         // Complexity tradeoff (COMPLEXITY.md K18): the naive merge copies every member of each
         // `#errs` set into a new set, O(n) per merge and O(n²) for a chain of `n` failing
-        // operands. Used: the largest set is shared (a copy of its persistent map) and extended by the others' members,
-        // O(m log n) for the `m` members added, so the chain costs O(n log n). Tradeoff: the
-        // smaller sets are still copied in; merging many sets of equal size costs their sum.
-        let atoms: Vec<&Value> = atoms.into_iter().collect();
+        // operands. Used: the largest set is kept and extended by the others' members, O(m log n)
+        // for the `m` members added, so the chain costs O(n log n). The set is moved out of its
+        // atom, not cloned: a chain's running set is held by its operand alone, so its B-tree
+        // nodes are changed in place, where a clone shared them and copied the O(log n) nodes on
+        // the path of every insertion (BENCH-ratios-over-nine-2026-11-16). A set another value
+        // still holds is shared and path-copied as before. Tradeoff: the smaller sets are still
+        // copied in; merging many sets of equal size costs their sum.
+        let mut atoms: Vec<Value> = atoms.into_iter().collect();
         let base = atoms
             .iter()
-            .filter_map(|a| a.errs())
-            .max_by_key(|f| f.len());
-        let mut set = base.cloned().unwrap_or_default();
+            .enumerate()
+            .filter_map(|(i, a)| a.errs().map(|f| (i, f.len())))
+            .max_by_key(|&(_, len)| len)
+            .map(|(i, _)| i);
+        let mut set = match base {
+            Some(i) => atoms.swap_remove(i).into_errs(),
+            None => Family::default(),
+        };
         let mut added = Vec::new();
-        for a in &atoms {
+        for a in atoms {
             match a.errs() {
-                Some(m) if base.is_some_and(|b| std::ptr::eq(m, b)) => {}
                 Some(m) => added.extend(m.iter().map(|(k, v)| (k.clone(), v.clone()))),
-                None => added.push((a.key(), (*a).clone())),
+                None => added.push((a.key(), a)),
             }
         }
         set.extend(added);
@@ -582,6 +591,18 @@ impl Value {
             return set.iter().next().expect("one member").1.clone();
         }
         Value::atom_with("errs", vec![Value::Family(set)])
+    }
+
+    /// The set of an `#errs({…})`, moved out of it, so its map is not copied when the atom's
+    /// payload has no other holder. Called only on a value that `errs` gives a set for.
+    fn into_errs(self) -> Family {
+        let Value::Atom(a) = self else {
+            unreachable!("`into_errs` is called on an `#errs` atom")
+        };
+        match a.payload.map(Items::into_vec).as_deref_mut() {
+            Some([Value::Family(f)]) => mem::take(f),
+            _ => unreachable!("an `#errs` atom holds one family"),
+        }
     }
 
     /// The set of an `#errs({…})`.

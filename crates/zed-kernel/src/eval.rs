@@ -2384,7 +2384,7 @@ impl<'t> Machine<'_, 't> {
             Prim::Tuple | Prim::Path | Prim::Entries | Prim::Atom | Prim::Eq | Prim::Ne
         ) && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
-            let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
+            let atoms = vals.drain(..).filter(|v| matches!(v, Value::Atom(_)));
             let out = Value::merge_failures(atoms);
             self.spare(vals);
             return give(out);
@@ -4092,7 +4092,10 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Sum, [Value::Tuple(items)]) => {
             if items.iter().any(|v| matches!(v, Value::Atom(_))) {
                 return Ok(Value::merge_failures(
-                    items.iter().filter(|v| matches!(v, Value::Atom(_))),
+                    items
+                        .iter()
+                        .filter(|v| matches!(v, Value::Atom(_)))
+                        .cloned(),
                 ));
             }
             let Some((first, rest)) = items.split_first() else {

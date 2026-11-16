@@ -39,6 +39,28 @@ fn a_chain_of_failures_merges_them_all() {
 }
 
 #[test]
+fn a_merge_leaves_a_set_another_value_holds_unchanged() {
+    // `a = #e0 + #e1; (a + #e2, a)`: the merge extends the set of `a` in place only when
+    // nothing else holds it (BENCH-ratios-over-nine-2026-11-16), and here the tuple does.
+    use zed_kernel::term::build::{let_, lit, prim, var};
+    let t = let_(
+        "a",
+        prim(
+            Prim::Add,
+            vec![lit(Value::atom("e0")), lit(Value::atom("e1"))],
+        ),
+        prim(
+            Prim::Tuple,
+            vec![
+                prim(Prim::Add, vec![var("a"), lit(Value::atom("e2"))]),
+                var("a"),
+            ],
+        ),
+    );
+    assert_eq!(evaluated(&t), "(#errs({#e0, #e1, #e2}), #errs({#e0, #e1}))");
+}
+
+#[test]
 fn a_chain_of_f32_arithmetic_runs_to_a_string() {
     // Nine links reach each of the four steps twice.
     use zed_tests::step_helpers::l01_16_elaboration::value;
