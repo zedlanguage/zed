@@ -12928,11 +12928,23 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
                     // A part that is `false` with no tuple type holding holds only tuples of
                     // the tuple types its paths to `true` take (`Part::taken_toward`), not
                     // those it refuses on every path, as `(1, 1)` in `(int, int) \ (1, 1)`.
+                    // Each row once, in the order first met: how often the walk meets a row
+                    // follows the draw of the treaps' priorities, the order of first meetings
+                    // does not (`Type::function_part`; cross-review of PERF-xor-shape-free, Sol
+                    // X2-F1). Complexity tradeoff: a sorted set of the rows met, O(log r)
+                    // comparisons for each of the walk's callbacks, at most one per set node it
+                    // walks; naive version, the rows as met, with duplicates whose number
+                    // follows the draw, which the placements below would then read.
                     let mut rows = Vec::new();
                     if !kid.whole {
                         let mut seen = DigestSet::default();
+                        let mut met = BTreeSet::new();
                         let f = &p.tuples.lens[&m];
-                        f.taken_toward(true, &mut seen, &mut |row| rows.push(row));
+                        f.taken_toward(true, &mut seen, &mut |row| {
+                            if met.insert(row) {
+                                rows.push(row);
+                            }
+                        });
                     }
                     top.3.extend(rows.iter().map(|r| r[0].clone()));
                     if m >= 2 {
@@ -13043,8 +13055,11 @@ fn first_components(f: &Part<Row>) -> Option<Type> {
     let mut seen = DigestSet::default();
     let mut taken: Vec<&Row> = Vec::new();
     f.taken_toward(true, &mut seen, &mut |r| taken.push(r));
+    // The rows in their order, each once: how often the walk meets a row follows the draw of
+    // the treaps' priorities (`Type::function_part`), and `union_all` pairs some components by
+    // position (cross-review of PERF-xor-shape-free, Sol X2-F1).
     let set: BTreeSet<&Row> = taken.iter().copied().collect();
-    let out = Type::union_all(taken.iter().map(|r| r[0].clone()));
+    let out = Type::union_all(set.iter().map(|r| r[0].clone()));
     let left = f.restrict(&|r| set.contains(r).then_some(false));
     if left.is_leaf() == Some(false) {
         return Some(out);

@@ -1889,14 +1889,20 @@ impl Type {
     // `a_function_part_is_found_in_a_recursive_type_once_per_node`, and
     // `l01_22_type_representation::kinds::the_function_part_of_a_kind_wide_part_is_found_in_linear_time`.
     // The complete solution meets the component types each path takes before walking them.
+    // Each type is pushed once, when first met, not skipped when popped a second time: the
+    // walk of a part (`Part::taken_toward`) skips a subtree it has walked and walks again a node
+    // that another set rebuilt, so how often a row is met follows the draw of the treaps'
+    // priorities, while the order in which rows are first met does not (a skipped subtree was
+    // walked in full before, and the walk reads each set in order). Skipping at the pop let a
+    // row met a second time come out first under some draws (cross-review of
+    // PERF-xor-shape-free, Sol X2-F1; test
+    // `the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type`).
     pub fn function_part(&self) -> Option<Type> {
         let mut seen = HashSet::new();
         let mut paths = crate::digest::DigestSet::default();
+        seen.insert(self.node_id());
         let mut stack = vec![self.clone()];
         while let Some(t) = stack.pop() {
-            if !seen.insert(t.node_id()) {
-                continue;
-            }
             let p = t.p();
             let open = p.tuples.rest || p.tuples.lens.values().any(|b| b.eval(&|_| false));
             if open || p.structs || p.morphisms.is_leaf() != Some(false) {
@@ -1906,9 +1912,12 @@ impl Type {
                     None => continue,
                 }
             }
-            stack.extend(p.atoms.names.values().map(|a| a.payload.clone()));
+            let payloads = p.atoms.names.values().map(|a| &a.payload);
+            stack.extend(payloads.filter(|t| seen.insert(t.node_id())).cloned());
             for part in p.tuples.lens.values() {
-                part.taken_toward(true, &mut paths, &mut |r| stack.extend(r.iter().cloned()));
+                part.taken_toward(true, &mut paths, &mut |r| {
+                    stack.extend(r.iter().filter(|t| seen.insert(t.node_id())).cloned())
+                });
             }
         }
         None

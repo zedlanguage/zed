@@ -422,28 +422,71 @@ fn a_function_part_is_found_at_any_depth() {
     }
 }
 
+/// The part `Type::function_part` finds in `t`, a type of pairs whose first components are
+/// `tuples` or `structs` and whose other components hold no kind-wide part: the components in
+/// the order the walk first meets them (`Part::taken_toward`, each type once, as the walk
+/// pushes them), and of those the kind-wide one met last, which the walk pops first.
+fn kind_wide_part_met_last(t: &Type, tuples: &Type, structs: &Type) -> Type {
+    let mut met: Vec<Type> = Vec::new();
+    let mut paths = crate::digest::DigestSet::default();
+    t.p().tuples.lens[&2].taken_toward(true, &mut paths, &mut |r| {
+        for c in r.iter() {
+            if !met.contains(c) {
+                met.push(c.clone());
+            }
+        }
+    });
+    let wide = |c: &&Type| *c == tuples || *c == structs;
+    met.iter()
+        .rev()
+        .find(wide)
+        .expect("a kind-wide component")
+        .clone()
+}
+
 /// The part found is fixed by the type, whatever the draw of the treap priorities: the tuple
 /// types a path takes come in their order (`Bdd::taken_toward`), not in the shapes' order, which
 /// gave `(..)` under some draws and `{..}` under others (PERF-xor-shape-free; the cross-review's
-/// probe, run under 16 values of `ZED_TREAP_SEED`). The atoms' names come after both kind-wide
-/// parts, so the rows' order is the parts' and the names'; the last row is walked first.
+/// probe, run under 16 values of `ZED_TREAP_SEED`). Each type is pushed once, when first met,
+/// so the part is the kind-wide component first met last.
 #[test]
 fn the_function_part_of_a_union_of_pairs_is_fixed_by_the_type() {
     let tuples = Type::universe(Universe::Tuple);
     let structs = Type::universe(Universe::Struct);
     let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
     let mut t = Type::empty();
-    let mut rows = Vec::new();
     for i in 0..8 {
         let wide = if i % 2 == 0 { &tuples } else { &structs };
-        let row = pair(wide, &Type::atom(&format!("a{i}")));
-        rows.push(Row::new(vec![wide.clone(), Type::atom(&format!("a{i}"))]));
-        t = &t | &row;
+        t = &t | &pair(wide, &Type::atom(&format!("a{i}")));
     }
-    // The walk pops the last row of the order first, and its last component first; that
-    // component is an atom, which holds no kind-wide part, so the part is the row's first.
-    let last = rows.iter().max().expect("eight rows");
-    assert_eq!(t.function_part(), Some(last[0].clone()), "{}", t.surface());
+    let part = kind_wide_part_met_last(&t, &tuples, &structs);
+    assert_eq!(t.function_part(), Some(part), "{}", t.surface());
+}
+
+/// The same for a meet of two unions that share rows, `X & Y` with `X = r1 | r2` and
+/// `Y = r1 | r2 | r3`: the walk skips a subtree of `Y`'s set that it shares with `X`'s and
+/// walks again a node that `Y`'s set rebuilt, and which subtrees the two sets share follows the
+/// draw, so a row can be met twice under one draw and once under another. The order in which
+/// the walk first meets each row is fixed: a skipped subtree was walked in full before, so
+/// skipping it drops no first meeting, and the walk without skips reads each set in order.
+/// Each type is pushed once, when first met, so the part is the kind-wide component first met
+/// last (`kind_wide_part_met_last`). Removing a type met again only when it was popped gave the
+/// part of a row met a second time under some draws (cross-review of PERF-xor-shape-free,
+/// round 2, Sol X2-F1; red under each of 16 values of `ZED_TREAP_SEED`, since one of the 16
+/// types met a row twice under each).
+#[test]
+fn the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type() {
+    let tuples = Type::universe(Universe::Tuple);
+    let structs = Type::universe(Universe::Struct);
+    let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
+    for i in 0..16 {
+        let atom = |j: usize| Type::atom(&format!("m{i}_{j}"));
+        let x = &pair(&tuples, &atom(1)) | &pair(&structs, &atom(2));
+        let y = &x | &pair(&Type::int(), &atom(3));
+        let t = &x & &y;
+        let part = kind_wide_part_met_last(&t, &tuples, &structs);
+        assert_eq!(t.function_part(), Some(part), "{i}: {}", t.surface());
+    }
 }
 
 #[test]
