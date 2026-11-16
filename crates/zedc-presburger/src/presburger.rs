@@ -18188,6 +18188,23 @@ fn memo_off() -> bool {
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
+    // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
+    // already used by decide visits each part/term through its incidence queues, O(n)
+    // work and storage; use only its proof of emptiness, then return exact empty sets in
+    // O(syms.len()). Other results leave the existing projection untouched, at the price
+    // of this extra O(n) pass, which is not built where the top-level conjuncts give the
+    // propagation no first step (`forced::empty`). In particular a trial point is not a
+    // unique projection. I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
+    // The proof is asked before the parts are put in their canonical order: the propagation
+    // reaches one state in every order of the parts (module `forced`), so its verdict does not
+    // depend on that order, and a contradiction then costs no O(n log n) ordering pass
+    // (`canonical_parts` cost 7.5 times the whole projection of main on
+    // `l01_38_presburger::bench::slack_scale::paired_chain_project_scales`).
+    let conjuncts = f.conjunct_list();
+    if forced::empty(f, &conjuncts) {
+        return Ok(no_points(syms));
+    }
     let ordered = canonical_parts(f);
     let f = &ordered;
     // A box and one row, or one equation that its residue or its ends settle, is projected
@@ -18196,17 +18213,6 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // refused where the join stops at its work limit.
     let conjuncts = f.conjunct_list();
     let solver_found = || {
-        // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
-        // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
-        // already used by decide visits each part/term through its incidence queues, O(n)
-        // work and storage; use only its proof of emptiness, then return exact empty sets in
-        // O(syms.len()). Other results leave the existing projection untouched, at the price
-        // of this extra O(n) pass, which is not built where the top-level conjuncts give the
-        // propagation no first step (`forced::empty`). In particular a trial point is not a
-        // unique projection. I17; one_row::a_forced_contradiction_projects_to_empty_in_linear_work.
-        if forced::empty(f, &conjuncts) {
-            return Ok(no_points(syms));
-        }
         // The formula with each shared part taken out of the disjunctions that hold it in every
         // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
         // anything refused, so no refusal or cause appears that the formula as written does not
