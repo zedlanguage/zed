@@ -700,6 +700,14 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
 }
 
 fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
+    // A question of the cover past its work limit is refused whatever it finds
+    // (`exact::Work::metered`), so no retry is made: each retry, of the factored form, of the
+    // form with the facts, of the old path ([`or_old`]), reran the steps before the search,
+    // which the meter does not charge, and a refused question ran for seconds past its limit
+    // (PRES-cover-bench-regressions). Outside the cover no meter runs and this never holds.
+    if exact::spent() {
+        return Err(Refusal::Questions);
+    }
     match forced::forced(f, true) {
         Forced::Empty => Ok(None),
         Forced::Point(m) => Ok(Some(m)),
@@ -744,6 +752,10 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
 
 /// [`satisfiable`] on one path ([`or_old`]).
 fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
+    // As at [`satisfiable_written`]: a spent question is refused with no retry.
+    if exact::spent() {
+        return Err(Refusal::Questions);
+    }
     if let Some(found) = modular_answer(f, true) {
         return Ok(found);
     }
@@ -859,7 +871,13 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let m = if implied.is_empty() {
         ask(p, implied)?
     } else {
-        ask(p, implied).or_else(|_| ask(absorbed(f, &[]).0, Vec::new()))?
+        ask(p, implied).or_else(|e| {
+            // As at [`satisfiable_written`]: a spent question is refused with no retry.
+            if exact::spent() {
+                return Err(e);
+            }
+            ask(absorbed(f, &[]).0, Vec::new())
+        })?
     };
     Ok(m.map(|mut m| {
         repair(&mut m, &gone);

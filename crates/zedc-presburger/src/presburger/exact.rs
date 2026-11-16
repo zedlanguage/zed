@@ -55,7 +55,8 @@
 // `or_if_projections_keep_the_gaps_the_if_reading_shows`.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -236,31 +237,71 @@ pub(super) fn spent() -> bool {
 /// [`Refusal::Repeats`] is given as the cause of the wider answer, where refusing it dropped
 /// what the solver alone answers (`l01_39_reduced_product::scaling::an_even_number_that_is_
 /// odd_is_empty`, whose parity the reduction then finds).
+///
+/// `f` is in the form of [`super::canonical_parts`], as its one caller, `project_each_asked`,
+/// gives it: the solver and the cover then read one formula whatever order its parts were
+/// written in, so the cover's models, cells, work and any refusal past the limit do not
+/// depend on that order (PRES-cover-order-refusals). A caller with a formula in another
+/// order puts it in that form first, once for both.
 pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     if EXACT_OFF.get() {
         return found;
     }
-    // Use the same writing for choosing implicants as for the initial solver.
-    // Sorting only the initial solver left these model-based choices order dependent.
-    let ordered = super::canonical_parts(f);
-    let f = &ordered;
     let (each, _) = found;
-    let size = constraints(f);
-    let factors = factors(f);
-    let mut points: Vec<Model> = Vec::new();
+    let limit = EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT);
+    // The conjuncts of `f` grouped into parts that share no atom (`split`): each symbol is
+    // covered over its own part, and the answers stand once every part is shown to have a
+    // point, by a point a cover found there or else once for the call (`has_points`).
+    let parts = split(f);
+    let many = parts.len() > 1;
+    let mut points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
+    let part_of: HashMap<&Atom, usize> = (parts.iter().enumerate())
+        .flat_map(|(i, p)| p.atoms.iter().map(move |a| (a, i)))
+        .collect();
     let mut wider = false;
-    let out: Vec<_> = (syms.iter().zip(each))
+    let out: Vec<Result<IntervalSet, Refusal>> = (syms.iter().zip(each))
         .map(|(s, got)| {
             // Each symbol's cover has a limit of its own, as each refusal names one symbol: a
             // limit shared by the call would refuse a symbol by the work of those before it,
             // so by the order of `syms`, and batch where single answers.
-            let mut work = Work {
-                used: 0,
-                limit: EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT),
-            };
-            let (set, kept) = cover(f, s, &got?, size, &factors, &mut points, &mut work)?;
-            wider |= kept;
-            Ok(set)
+            let mut work = Work { used: 0, limit };
+            (|| {
+                let h = got?;
+                let at = part_of.get(s).copied();
+                let Some(i) = at.or((!many).then_some(0)) else {
+                    // `s` is in no part of `f`: every value, once each part has a point.
+                    return Ok(IntervalSet::range(End::NegInf, End::PosInf));
+                };
+                let p = &parts[i];
+                let (set, kept) =
+                    cover(&p.f, s, &h, p.size, &p.factors, &mut points[i], &mut work)?;
+                wider |= kept;
+                Ok(set)
+            })()
+        })
+        .collect();
+    if !many {
+        return (
+            out,
+            if wider {
+                vec![Refusal::Repeats]
+            } else {
+                Vec::new()
+            },
+        );
+    }
+    let mut call = Work { used: 0, limit };
+    let has = has_points(&parts, &mut points, &mut call);
+    // A refusal, the solver's or the cover's, stays as it was; where a part has no point, `f`
+    // has none, and every other answer is empty; where the check is refused, so is every
+    // answer, which rests on it.
+    let wider = wider && has == Ok(true);
+    let out = (out.into_iter())
+        .map(|r| match (&has, r) {
+            (_, Err(e)) => Err(e),
+            (Ok(true), r) => r,
+            (Ok(false), _) => Ok(IntervalSet::empty()),
+            (Err(e), _) => Err(e.clone()),
         })
         .collect();
     (
@@ -271,6 +312,262 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
             Vec::new()
         },
     )
+}
+
+/// A part of `f` for [`split`]: the conjunction of some of its conjuncts, the atoms they read,
+/// their constraints and the factors of their products.
+struct Piece {
+    f: Formula,
+    atoms: HashSet<Atom>,
+    size: u64,
+    factors: HashSet<Atom>,
+}
+
+/// The conjuncts of `f` (its parts, and theirs where they are conjunctions too) grouped so
+/// that no two groups read one atom, each group a conjunction: `f` itself where they do not
+/// part. A product is read as reading its factors too, since its value is theirs. A value of
+/// `s` has a point of `f` exactly when it has one of the group reading `s` and every other
+/// group has a point: points of groups reading disjoint atoms join into one point of `f`.
+// Complexity tradeoff: the cover asked each question and read each cell on the whole formula,
+// so a call on n stages that share no atom cost O(n) for each symbol and O(n^2) for all
+// (`bench::omega::every_state_and_credit_of_a_pipeline_scale`, 5.4 M units for each symbol at
+// 3,450 constraints, refused). Used: union-find over the atoms of the conjuncts, O(t α) for
+// t terms, once a call; each symbol's cover then reads its own group. The same split the
+// solver makes for its hulls (item TIGHTEN-each-whole), made here for the cover.
+fn split(f: &Formula) -> Vec<Piece> {
+    let mut conjuncts: Vec<&Formula> = Vec::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::And(gs) => stack.extend(gs.iter().rev()),
+            _ => conjuncts.push(g),
+        }
+    }
+    let whole = || {
+        vec![Piece {
+            f: f.clone(),
+            atoms: atoms_of(f),
+            size: constraints(f),
+            factors: factors(f),
+        }]
+    };
+    if conjuncts.len() < 2 {
+        return whole();
+    }
+    let mut parent: Vec<usize> = (0..conjuncts.len()).collect();
+    fn root(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    let mut first: HashMap<Atom, usize> = HashMap::new();
+    let mut reads: Vec<HashSet<Atom>> = Vec::with_capacity(conjuncts.len());
+    for (i, g) in conjuncts.iter().enumerate() {
+        let atoms = atoms_of(g);
+        for a in &atoms {
+            let j = *first.entry(a.clone()).or_insert(i);
+            let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+            parent[ri] = rj;
+        }
+        reads.push(atoms);
+    }
+    // The groups in the order of their first conjunct, so the same on every run.
+    let mut order: Vec<usize> = Vec::new();
+    let mut of: HashMap<usize, usize> = HashMap::new();
+    let mut groups: Vec<(Vec<Formula>, HashSet<Atom>)> = Vec::new();
+    for (i, g) in conjuncts.iter().enumerate() {
+        let r = root(&mut parent, i);
+        let k = *of.entry(r).or_insert_with(|| {
+            order.push(r);
+            groups.push((Vec::new(), HashSet::new()));
+            groups.len() - 1
+        });
+        groups[k].0.push((*g).clone());
+        let atoms = std::mem::take(&mut reads[i]);
+        groups[k].1.extend(atoms);
+    }
+    if groups.len() < 2 {
+        return whole();
+    }
+    (groups.into_iter())
+        .map(|(gs, atoms)| {
+            let f = Formula::and(gs);
+            Piece {
+                size: constraints(&f),
+                factors: factors(&f),
+                atoms,
+                f,
+            }
+        })
+        .collect()
+}
+
+/// The atoms `f` reads, a product's factors among them.
+fn atoms_of(f: &Formula) -> HashSet<Atom> {
+    let mut out = HashSet::new();
+    each_constraint(f, |c| {
+        for a in c.lin.terms.keys() {
+            if let Atom::Product(p, q) = a {
+                for x in [p, q] {
+                    out.insert(match x {
+                        Factor::Sym(n) => Atom::Sym(n.clone()),
+                        Factor::Aux(i) => Atom::Aux(*i),
+                    });
+                }
+            }
+            out.insert(a.clone());
+        }
+    });
+    out
+}
+
+/// A point of `f`, found without a question where one comes soon: the parts of `f` are taken
+/// depth first, each disjunction by its first disjunct, then the next where that branch has
+/// no point; at the end of a branch its rows go to [`super::point_of`] (exact elimination and
+/// one solve of the rows left), and a point is taken once `f` holds there ([`holds_as`]).
+/// `None` once the rows read pass `room`, or where no branch gave a point: the caller asks the
+/// solver then, so no answer rests on a branch left untried. `f` has no product atom.
+// Complexity tradeoff: a question of the solver on a part of 7 constraints cost 40,800 units
+// and 0.65 ms (`bench::omega::independent_stages_scale`, load 60), so one for each of n parts
+// cost 1.2 s at n = 1,800. Naive alternative: every branch of the disjunctive normal form,
+// exponential in the disjunctions. Used: the first branches, stopped at `room` rows read,
+// which the caller sets to the rows the question it replaces is charged to read, so this never
+// costs more than that charge, plus the elimination and solve of the branches read (charged by
+// the solver's meter).
+fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>, Refusal> {
+    // A list shared by the branches that hold it, so a branch is copied in O(1).
+    struct Node<T>(T, List<T>);
+    type List<T> = Option<Rc<Node<T>>>;
+    fn push<T>(l: &List<T>, x: T) -> List<T> {
+        Some(Rc::new(Node(x, l.clone())))
+    }
+    // Drops a list node by node: dropped whole, a long list would recurse once a node.
+    fn unwind<T>(mut l: List<T>) {
+        while let Some(rc) = l {
+            match Rc::try_unwrap(rc) {
+                Ok(Node(_, next)) => l = next,
+                Err(_) => break,
+            }
+        }
+    }
+    let done = |branches: Vec<(List<Con>, List<(&Formula, bool)>)>| {
+        for (r, t) in branches {
+            unwind(r);
+            unwind(t);
+        }
+    };
+    // A branch: the rows taken, and the parts still to take, each with its sign.
+    let mut branches: Vec<(List<Con>, List<(&Formula, bool)>)> =
+        vec![(None, push(&None, (f, true)))];
+    let mut read = 0u64;
+    let mut charged = 0u64;
+    'branch: while let Some((mut rows, mut todo)) = branches.pop() {
+        while let Some(top) = todo.clone() {
+            let (g, pos) = top.0;
+            todo = top.1.clone();
+            match g {
+                Formula::Con(c) => match (pos, c.rel) {
+                    (true, _) => rows = push(&rows, c.clone()),
+                    (false, Rel::Ge) => rows = push(&rows, negated(c, &Int::from(-1))),
+                    (false, Rel::Eq) => {
+                        // `t != 0`: `t >= 1`, else `t <= -1`.
+                        read += 1;
+                        branches.push((push(&rows, negated(c, &Int::from(-1))), todo.clone()));
+                        rows = push(&rows, negated(c, &Int::from(1)));
+                    }
+                },
+                Formula::Not(h) => todo = push(&todo, (&**h, !pos)),
+                Formula::And(gs) | Formula::Or(gs) => {
+                    if matches!(g, Formula::And(_)) == pos {
+                        for h in gs.iter().rev() {
+                            todo = push(&todo, (h, pos));
+                        }
+                    } else if let Some((first, rest)) = gs.split_first() {
+                        // The later disjuncts wait, the next one first.
+                        for h in rest.iter().rev() {
+                            read += 1;
+                            branches.push((rows.clone(), push(&todo, (h, pos))));
+                        }
+                        todo = push(&todo, (first, pos));
+                    } else {
+                        // An empty disjunction (or a negated empty conjunction) is false.
+                        continue 'branch;
+                    }
+                }
+            }
+            if read > room {
+                work.read(read - charged)?;
+                unwind(rows);
+                unwind(todo);
+                done(branches);
+                return Ok(None);
+            }
+        }
+        let mut leaf = Vec::new();
+        let mut at = &rows;
+        while let Some(node) = at {
+            leaf.push(node.0.clone());
+            at = &node.1;
+        }
+        unwind(rows);
+        read += leaf.len() as u64;
+        work.read(read - charged)?;
+        charged = read;
+        if read > room {
+            done(branches);
+            return Ok(None);
+        }
+        if let Some(m) = work.metered(|| super::point_of(&leaf, false))?
+            && holds_as(f, &m, &mut HashMap::new())
+        {
+            done(branches);
+            return Ok(Some(m));
+        }
+    }
+    work.read(read - charged)?;
+    Ok(None)
+}
+
+/// Whether every part of [`split`] has a point: a part where a cover found one has, and each
+/// other is shown so by [`quick_point`], by [`direct`] where it reads the part exactly, or by a
+/// question. Checked once for the call, after the covers, in the order of the parts, so the
+/// same for every order of `syms`; its work has its own limit, as a cover has, and past it
+/// every answer is refused ([`Refusal::Questions`]). A call on fewer symbols checks the same
+/// parts or more, so it refuses wherever a call on more of them does.
+fn has_points(
+    parts: &[Piece],
+    points: &mut [Vec<Model>],
+    work: &mut Work,
+) -> Result<bool, Refusal> {
+    let none = Atom::Sym("#none".into());
+    for (p, found) in parts.iter().zip(points.iter_mut()) {
+        if !found.is_empty() {
+            continue;
+        }
+        if p.factors.is_empty()
+            && let Some(m) = quick_point(&p.f, 2 * (p.size + 2), work)?
+        {
+            found.push(m);
+            continue;
+        }
+        if p.factors.is_empty()
+            && let Some(set) = tried(work, |w| direct(&p.f, &none, w))?
+        {
+            if set.is_empty() {
+                return Ok(false);
+            }
+            continue;
+        }
+        work.read(p.size)?;
+        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+        match work.ask(&p.f)? {
+            None => return Ok(false),
+            Some(m) => found.push(m),
+        }
+    }
+    Ok(true)
 }
 
 /// The values of `s` with a point of `f`, given `h`, a set holding them all: the cover of the
@@ -299,6 +596,26 @@ fn cover(
     // The tails whose holes repeat without end, kept whole.
     let mut kept = IntervalSet::empty();
     let mut read = 0;
+    // No value has a point where the solver's set, which holds every value with one, is empty.
+    if h.is_empty() {
+        return Ok((IntervalSet::empty(), false));
+    }
+    // The exact projection read from the structure of `f`, with no question (`direct`). It lies
+    // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
+    // another part has no point, and then every answer is made empty (`exact_each`).
+    if factors.is_empty() {
+        if let Some(set) = tried(work, |w| direct(f, s, w))? {
+            return Ok((set, false));
+        }
+    }
+    // A first point without a question where one comes soon (`quick_point`): every point of
+    // `f` has `s` in `h`, so its cell is read as a question's point would be.
+    if points.is_empty()
+        && factors.is_empty()
+        && let Some(m) = quick_point(f, 2 * (size + 2), work)?
+    {
+        points.push(m);
+    }
     loop {
         while read < points.len() && !gap.is_empty() {
             let m = points[read].clone();
@@ -488,6 +805,284 @@ fn ended(h: &IntervalSet, found: IntervalSet, kept: &IntervalSet) -> (IntervalSe
     (found.join(&IntervalSet::from_pieces(whole)), true)
 }
 
+/// A part of `f` as [`direct`] reads it: a conjunction of constraints not yet projected, so
+/// that a conjunction above it can project it with the constraints beside it; or the exact
+/// projection of the part onto the symbol, with the atoms other than the symbol it reads.
+#[derive(Clone)]
+enum Part {
+    Rows(Vec<Con>),
+    Set(IntervalSet, HashSet<Atom>),
+}
+
+/// `run`, a fast path, given a quarter of the work left: its answer, or `None` where it is
+/// refused, so that the loop, the complete method, takes over with three quarters of the work
+/// left at least. Its work is charged to `work`.
+// Complexity tradeoff: a fast path that runs to the limit itself would refuse a symbol that the
+// loop answers at once (`direct` on a deep nest, see there). A quarter bounds what a failed
+// fast path takes from the loop; the loop alone, as before, would answer wherever it does with
+// three quarters of the limit.
+fn tried<T>(
+    work: &mut Work,
+    run: impl FnOnce(&mut Work) -> Result<Option<T>, Refusal>,
+) -> Result<Option<T>, Refusal> {
+    let mut part = Work {
+        used: 0,
+        limit: work.limit.saturating_sub(work.used) / 4,
+    };
+    let got = run(&mut part);
+    // Already counted in `EXACT_WORK` by `part`; at most a quarter of what was left, so within
+    // the limit.
+    work.used = work.used.saturating_add(part.used.min(part.limit));
+    Ok(got.ok().flatten())
+}
+
+/// The exact projection of `f` onto `s`, read from the structure of `f` with no question of
+/// the solver; `None` where a step below is not shown exact, and the cover is then asked.
+/// `f` has no product atom (the solver may read a product more tightly than as an atom of its
+/// own, as [`cell`] notes). Each part is read with its sign (a negation flips it):
+/// - a constraint is a row (a negated `t >= 0` is `-t - 1 >= 0`; a negated `t == 0` is the
+///   union of the projections of `t - 1 >= 0` and `-t - 1 >= 0`);
+/// - a disjunction projects to the union of its parts' projections, since a value has a point
+///   of `A or B` exactly when it has one of `A` or one of `B`;
+/// - a conjunction splits its parts into groups that share no atom but `s` (union-find). A
+///   group of rows alone projects by [`super::eliminated`], whose rows over `s` hold exactly
+///   where the group has a point (Pugh's exact shadow, "The Omega test", 1992); a group of one
+///   projected part keeps its set; a group with a projected part and anything more is not
+///   shown exact (`None`). The conjunction is the meet of its groups: given a point of each
+///   group with `s` at `v`, the groups read disjoint atoms but `s`, so the points join into one
+///   point of the conjunction; the other way is plain. A conjunction of rows alone stays rows,
+///   so that the conjunction above it groups them with its own.
+///
+/// So every set it gives is the set of values of `s` with a point of `f`, the cover's answer.
+// Complexity tradeoff: the cover asks the solver at least one question of the whole formula
+// for each symbol, and a question cost up to 7.6 M units at 12,000 constraints, past the limit
+// alone (R1 cross-review, `bench::omega::*`). Naive alternative: the disjunctive normal form,
+// projected one conjunction at a time, exact but exponential in the disjunctions. Used: one
+// pass over the parts, each shared part read once for each sign (`memo`), rows moved up, not
+// copied, but for a shared part read again, whose rows are charged again. Each conjunction
+// groups the rows moved up from below it again, so a nest of conjunctions k deep costs O(k n)
+// for n rows: 448,000 units at 131 constraints 64 deep and past the limit at 1027 512 deep
+// (`l01_38_presburger::nest_empty`), where the loop answers with no question. So it runs
+// under a quarter of the work left (`tried`) and the loop takes over past it. Each
+// elimination is O(m log m) (`shadow`), each constraint charged as the cover charges a
+// constraint read. Not exact for a conjunction that ties a disjunction to other
+// parts through a shared atom (`y == x + 1 and (x <= 3 or x >= 10)`), nor where a stride
+// stops the elimination; those go to the cover (safe path, P246).
+fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>, Refusal> {
+    enum Go<'a> {
+        Read(&'a Formula, bool),
+        Join(&'a Formula, bool),
+    }
+    // The parts held by more than one holder, the only ones a memo entry is kept for.
+    let mut holders: HashMap<Id, u32> = HashMap::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        if let Some(k) = Id::of(g) {
+            let n = holders.entry(k).or_insert(0);
+            *n += 1;
+            if *n > 1 {
+                continue;
+            }
+        }
+        match g {
+            Formula::Con(_) => {}
+            Formula::Not(h) => stack.push(h),
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+        }
+    }
+    let mut memo: HashMap<(Id, bool), Part> = HashMap::new();
+    let mut stack = vec![Go::Read(f, true)];
+    let mut values: Vec<Part> = Vec::new();
+    while let Some(step) = stack.pop() {
+        match step {
+            Go::Read(g, pos) => {
+                if let Some(v) = Id::of(g).and_then(|k| memo.get(&(k, pos))) {
+                    if let Part::Rows(rows) = v {
+                        work.read(rows.len() as u64)?;
+                    }
+                    values.push(v.clone());
+                    continue;
+                }
+                match g {
+                    Formula::Con(c) => {
+                        work.read(1)?;
+                        values.push(match (pos, c.rel) {
+                            (true, _) => Part::Rows(vec![c.clone()]),
+                            (false, Rel::Ge) => Part::Rows(vec![negated(c, &Int::from(-1))]),
+                            (false, Rel::Eq) => {
+                                let mut set = IntervalSet::empty();
+                                for v in [Int::from(-1), Int::from(1)] {
+                                    let Some(p) = projected(&[negated(c, &v)], s, work)? else {
+                                        return Ok(None);
+                                    };
+                                    set = set.join(&p);
+                                }
+                                Part::Set(set, others(&[c.clone()], s))
+                            }
+                        });
+                    }
+                    Formula::Not(h) => stack.push(Go::Read(h, !pos)),
+                    Formula::And(gs) | Formula::Or(gs) => {
+                        stack.push(Go::Join(g, pos));
+                        stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
+                    }
+                }
+            }
+            Go::Join(g, pos) => {
+                let (Formula::And(gs) | Formula::Or(gs)) = g else {
+                    unreachable!("a join is pushed for a conjunction or a disjunction");
+                };
+                let parts = values.split_off(values.len() - gs.len());
+                let v = if matches!(g, Formula::And(_)) == pos {
+                    met(parts, s, work)?
+                } else {
+                    joined_parts(parts, s, work)?
+                };
+                let Some(v) = v else {
+                    return Ok(None);
+                };
+                if let Some(k) = Id::of(g)
+                    && holders.get(&k).is_some_and(|&n| n > 1)
+                {
+                    memo.insert((k, pos), v.clone());
+                }
+                values.push(v);
+            }
+        }
+    }
+    match values.pop().expect("the part of `f`") {
+        Part::Rows(rows) => projected(&rows, s, work),
+        Part::Set(set, _) => Ok(Some(set)),
+    }
+}
+
+/// The values of `s` at which the conjunction `rows` has a point, by [`super::eliminated`];
+/// `None` where an atom cannot be eliminated exactly. Its rows charged to `work`.
+fn projected(rows: &[Con], s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>, Refusal> {
+    work.read(rows.len() as u64)?;
+    Ok(super::eliminated(rows, &|a| a == s).map(|left| bounded(&left, s)))
+}
+
+/// The atoms of `rows` other than `s`.
+fn others(rows: &[Con], s: &Atom) -> HashSet<Atom> {
+    (rows.iter())
+        .flat_map(|k| k.lin.terms.keys())
+        .filter(|a| *a != s)
+        .cloned()
+        .collect()
+}
+
+/// A part of [`direct`] as a set: rows projected.
+fn as_set(
+    p: Part,
+    s: &Atom,
+    work: &mut Work,
+) -> Result<Option<(IntervalSet, HashSet<Atom>)>, Refusal> {
+    Ok(match p {
+        Part::Set(set, atoms) => Some((set, atoms)),
+        Part::Rows(rows) => projected(&rows, s, work)?.map(|set| (set, others(&rows, s))),
+    })
+}
+
+/// The union of disjuncts for [`direct`]: the union of their projections.
+fn joined_parts(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refusal> {
+    let mut set = IntervalSet::empty();
+    let mut atoms: HashSet<Atom> = HashSet::new();
+    for p in parts {
+        let Some((p, more)) = as_set(p, s, work)? else {
+            return Ok(None);
+        };
+        set = set.join(&p);
+        if more.len() > atoms.len() {
+            atoms = more.into_iter().chain(atoms).collect();
+        } else {
+            atoms.extend(more);
+        }
+    }
+    Ok(Some(Part::Set(set, atoms)))
+}
+
+/// The meet of conjuncts for [`direct`]: rows alone stay rows; else the groups that share no
+/// atom but `s`, each projected, met.
+fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refusal> {
+    if parts.iter().all(|p| matches!(p, Part::Rows(_))) {
+        let mut all: Vec<Con> = Vec::new();
+        for p in parts {
+            if let Part::Rows(mut rows) = p {
+                if rows.len() > all.len() {
+                    std::mem::swap(&mut rows, &mut all);
+                }
+                all.extend(rows);
+            }
+        }
+        return Ok(Some(Part::Rows(all)));
+    }
+    // The items: each row, then each projected part, joined through the atoms they read.
+    let mut rows: Vec<Con> = Vec::new();
+    let mut sets: Vec<(IntervalSet, HashSet<Atom>)> = Vec::new();
+    for p in parts {
+        match p {
+            Part::Rows(r) => rows.extend(r),
+            Part::Set(set, atoms) => sets.push((set, atoms)),
+        }
+    }
+    let r0 = rows.len();
+    let n = r0 + sets.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    let mut first: HashMap<&Atom, usize> = HashMap::new();
+    let items = (rows.iter().enumerate())
+        .flat_map(|(i, k)| k.lin.terms.keys().map(move |a| (i, a)))
+        .chain(
+            (sets.iter().enumerate())
+                .flat_map(|(j, (_, atoms))| atoms.iter().map(move |a| (r0 + j, a))),
+        );
+    let mut read = 0u64;
+    for (i, a) in items {
+        read += 1;
+        if a == s {
+            continue;
+        }
+        let j = *first.entry(a).or_insert(i);
+        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+        parent[ri] = rj;
+    }
+    work.read(read)?;
+    // Ordered, so that the work charged before a group not shown exact is the same on every run.
+    let mut groups: BTreeMap<usize, (Vec<Con>, Vec<usize>)> = BTreeMap::new();
+    for (i, k) in rows.iter().enumerate() {
+        let r = root(&mut parent, i);
+        groups.entry(r).or_default().0.push(k.clone());
+    }
+    for j in 0..sets.len() {
+        let r = root(&mut parent, rows.len() + j);
+        groups.entry(r).or_default().1.push(j);
+    }
+    let mut set = IntervalSet::range(End::NegInf, End::PosInf);
+    for (group, held) in groups.values() {
+        let p = match (group.is_empty(), held.as_slice()) {
+            (false, []) => match projected(group, s, work)? {
+                Some(p) => p,
+                None => return Ok(None),
+            },
+            (true, [j]) => sets[*j].0.clone(),
+            _ => return Ok(None),
+        };
+        set = set.meet(&p);
+    }
+    let mut atoms = others(&rows, s);
+    for (_, more) in sets {
+        atoms.extend(more);
+    }
+    Ok(Some(Part::Set(set, atoms)))
+}
+
 /// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more.
 struct Stride {
     step: Int,
@@ -622,7 +1217,16 @@ fn cell(
         let rows = joined(&rows, s);
         let product = |k: &Con| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)));
         let how = projection::method();
-        if !rows.iter().any(product) && how == Method::Pugh {
+        let plain = !rows.iter().any(product) && how == Method::Pugh;
+        let quick = if plain {
+            work.read(rows.len() as u64)?;
+            super::eliminated(&rows, &|a| a == s)
+        } else {
+            None
+        };
+        if let Some(left) = quick {
+            c = c.join(&bounded(&left, s));
+        } else if plain {
             // The exact projection of the implicant: its parts with no holes or with an end are
             // the cell's; those with holes and no end go to the cover, which joins them with
             // the other cells' (`projection::ranges`).
@@ -1232,7 +1836,7 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{member, project_each};
+    use super::super::{Shared, member, project_each};
     use super::*;
 
     /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
@@ -1457,6 +2061,7 @@ mod tests {
                     EXACT_WORK.set(0);
                     EXACT_QUESTIONS.set(0);
                     EXACT_LIMIT_SET.set(Some(limit));
+                    let g = super::super::canonical_parts(&g);
                     let got = exact_each(&g, &[a("x")], (vec![Ok(h.clone())], vec![]));
                     EXACT_LIMIT_SET.set(None);
                     let got = (got, EXACT_WORK.get(), EXACT_QUESTIONS.get());
@@ -1617,7 +2222,11 @@ mod tests {
                         let f = Formula::And(super::super::Shared::new(top));
                         // Supply the same sound h directly, so the test exercises exact_each
                         // even if a future solver fast path recognizes this family.
-                        let got = exact_each(&f, &[a("x")], (vec![Ok(h.clone())], vec![]));
+                        let got = exact_each(
+                            &super::super::canonical_parts(&f),
+                            &[a("x")],
+                            (vec![Ok(h.clone())], vec![]),
+                        );
                         let set = got.0[0].as_ref().expect("this small tail must answer");
                         assert_eq!(got.1, vec![Refusal::Repeats], "{f}");
                         if let Some(want) = &expected {
@@ -1768,5 +2377,183 @@ mod tests {
             "{} questions",
             EXACT_QUESTIONS.get()
         );
+    }
+
+    /// `f` with the parts of every conjunction and disjunction in a random order.
+    fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
+        let mut turned = |gs: &[Formula]| {
+            let mut gs: Vec<Formula> = gs.iter().map(|g| shuffled(g, rng)).collect();
+            for i in (1..gs.len()).rev() {
+                gs.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            gs
+        };
+        match f {
+            Formula::Con(_) => f.clone(),
+            Formula::Not(g) => {
+                Formula::Not(Shared::new(turned(std::slice::from_ref(&**g)).remove(0)))
+            }
+            Formula::And(gs) => Formula::And(Shared::new(turned(gs))),
+            Formula::Or(gs) => Formula::Or(Shared::new(turned(gs))),
+        }
+    }
+
+    /// The window of `x` read by [`holed`], and the box of `y` and `z`.
+    const W: i64 = 30;
+    const BY: i64 = 2;
+
+    /// A random formula over `x`, unbounded, and `y` and `z`, each in `-BY..=BY`, whose
+    /// projection onto `x` has holes without end: besides constraints over x, y and z, its
+    /// leaves include strides `x == m * k + r` (m from 2 to 4), each with a `k` of its own that
+    /// no other leaf reads. With the strides listed as `(k, m, r)`.
+    fn holed(rng: &mut Rng) -> (Formula, Vec<(String, i64, i64)>) {
+        fn leaf(rng: &mut Rng, strides: &mut Vec<(String, i64, i64)>) -> Formula {
+            if rng.below(3) == 0 {
+                let (m, k) = (rng.int(2, 4), format!("k{}", strides.len()));
+                let r = rng.int(0, m - 1);
+                strides.push((k.clone(), m, r));
+                return eq(&[("x", 1), (k.as_str(), -m)], -r);
+            }
+            let terms = [
+                ("x", rng.int(-2, 2)),
+                ("y", rng.int(-2, 2)),
+                ("z", rng.int(-2, 2)),
+            ];
+            let terms: Vec<_> = if terms.iter().all(|t| t.1 == 0) {
+                vec![("y", 1)]
+            } else {
+                terms.to_vec()
+            };
+            if rng.below(4) == 0 {
+                eq(&terms, rng.int(-3, 3))
+            } else {
+                ge(&terms, rng.int(-6, 6))
+            }
+        }
+        fn node(rng: &mut Rng, d: u32, strides: &mut Vec<(String, i64, i64)>) -> Formula {
+            if d == 0 || rng.below(4) == 0 {
+                return leaf(rng, strides);
+            }
+            let parts: Vec<Formula> = (0..2 + rng.below(2))
+                .map(|_| node(rng, d - 1, strides))
+                .collect();
+            match rng.below(5) {
+                0 => Formula::negate(Formula::and(parts)),
+                1 | 2 => Formula::and(parts),
+                _ => Formula::or(parts),
+            }
+        }
+        let mut strides = Vec::new();
+        let g = node(rng, 3, &mut strides);
+        let f = Formula::and(vec![
+            member(&a("y"), &IntervalSet::of(-BY, BY)),
+            member(&a("z"), &IntervalSet::of(-BY, BY)),
+            g,
+        ]);
+        (f, strides)
+    }
+
+    /// The values of `x` in `-W..=W` with a point of `f`, from [`holed`]: `y` and `z` over
+    /// their box, and each `k` at `(x - r) / m` where that is whole, and one more, so that its
+    /// stride holds or fails as a point may choose; `k` read by one leaf alone, every point is
+    /// reached.
+    fn holed_values(f: &Formula, strides: &[(String, i64, i64)]) -> IntervalSet {
+        let mut set = IntervalSet::empty();
+        for x in -W..=W {
+            'x: for y in -BY..=BY {
+                for z in -BY..=BY {
+                    for pick in 0..1u32 << strides.len() {
+                        let mut m: Model = [
+                            (a("x"), Int::from(x)),
+                            (a("y"), Int::from(y)),
+                            (a("z"), Int::from(z)),
+                        ]
+                        .into_iter()
+                        .collect();
+                        for (i, (k, step, r)) in strides.iter().enumerate() {
+                            let base = (x - r).div_euclid(*step);
+                            m.insert(a(k), Int::from(base + i64::from(pick >> i & 1)));
+                        }
+                        if f.holds(&m) {
+                            set = set.join(&IntervalSet::single(x));
+                            break 'x;
+                        }
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    /// R1 cross-review Q2(c): the weakest claim of the cover was that its answer, and `ended`'s
+    /// pieces kept whole, are the same in every order of a formula's parts. Formulas with holes
+    /// without end in `x` ([`holed`]) are projected in their order and in random orders of the
+    /// parts of every node; each answer, its cause and each refusal must be the same in every
+    /// order, and the answer must hold exactly the values of `x` in `-W..=W` that points
+    /// enumerated there give, or more where the cause is [`Refusal::Repeats`] (a piece of `h`
+    /// kept whole), never fewer. `canonical_parts` must also give one formula for every order. Each
+    /// formula is projected at the work limit and again at `LOW`, so that many covers end
+    /// near their limit, where a refusal decided by the order of the work would show.
+    #[test]
+    fn the_cover_gives_one_answer_in_every_order_of_the_parts() {
+        const LOW: u64 = 150_000;
+        let seed = crate::seed::seed("the_cover_gives_one_answer_in_every_order_of_the_parts");
+        let mut rng = Rng(seed | 1);
+        let syms = vec![a("x")];
+        let window = IntervalSet::of(-W, W);
+        let (mut differ, mut wrong, mut narrow) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut repeats, mut refused, mut forms) = (0, [0, 0], 0);
+        for round in 0..40 {
+            let (f, strides) = holed(&mut rng);
+            let want = holed_values(&f, &strides);
+            let one = super::super::canonical_parts(&f);
+            let orders: Vec<Formula> = (0..6).map(|_| shuffled(&f, &mut rng)).collect();
+            for g in &orders {
+                forms += 1;
+                if super::super::canonical_parts(g) != one
+                    || format!("{:?}", super::super::canonical_parts(g)) != format!("{one:?}")
+                {
+                    differ.push(format!(
+                        "round {round}: canonical form differs: {f} and {g}"
+                    ));
+                }
+            }
+            for (l, limit) in [None, Some(LOW)].into_iter().enumerate() {
+                EXACT_LIMIT_SET.set(limit);
+                let first = project_each(&f, &syms);
+                for g in &orders {
+                    let other = project_each(g, &syms);
+                    if other != first {
+                        differ.push(format!(
+                            "round {round} limit {limit:?}: {first:?} and {other:?}: {f} and {g}"
+                        ));
+                    }
+                }
+                EXACT_LIMIT_SET.set(None);
+                match &first {
+                    Ok((sets, causes)) => match &sets[0] {
+                        Ok(got) => {
+                            let seen = got.meet(&window);
+                            let kept = causes.contains(&Refusal::Repeats);
+                            repeats += usize::from(kept);
+                            if !want.minus(&seen).is_empty() {
+                                narrow.push(format!("round {round}: {seen} misses {want}: {f}"));
+                            } else if seen != want && !kept {
+                                wrong.push(format!("round {round}: {seen} not {want}: {f}"));
+                            }
+                        }
+                        Err(_) => refused[l] += 1,
+                    },
+                    Err(_) => refused[l] += 1,
+                }
+            }
+        }
+        println!(
+            "seed {seed}: {forms} orders, {repeats} answers kept with Repeats, refused {} at the limit and {} at {LOW}",
+            refused[0], refused[1]
+        );
+        assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
+        assert!(narrow.is_empty(), "seed {seed}: {narrow:#?}");
+        assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
     }
 }
