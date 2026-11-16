@@ -13948,8 +13948,8 @@ pub fn systems_solved() -> u64 {
 // and one check of each row at its point, O(n log n) for rows of total size n beside the
 // refused run (the model is an ordered map; measured 8.1 times the instructions at 8n,
 // `bench::division_pairs_scale`); no system the Omega test answers costs more. The refused
-// run itself grows faster on these systems (56 times at 50 to 400 pairs), which this change
-// leaves as it was (FAIL-omega-pairs-shadows-cost). A point checked against every row proves
+// run itself grew faster on these systems (56 times at 50 to 400 pairs); the tradeoff below
+// (FAIL-omega-pairs-shadows-cost) stops it before the splinters. A point checked against every row proves
 // the answer, so nothing rests on the modular solver beyond the point it gives; its answers
 // that the rows are empty are not taken here, and a refusal stays a refusal where it gives no
 // point. Only its runs that read no names are made, so whether the refusal becomes a point
@@ -13957,16 +13957,68 @@ pub fn systems_solved() -> u64 {
 // have_their_point_found`, `modular::r7_tests::the_fails_question_of_c2_is_answered_however_
 // its_conjunctions_nest`, `l01_38_omega_test::one_scope::the_unit_of_seed_4236942624890658512_
 // is_answered_as_its_bodies_read`.
+//
+// Complexity tradeoff (FAIL-omega-pairs-shadows-cost): on those division pairs the refused run
+// itself was quadratic: the dark eliminations of its batch are about n/28 quotients of one
+// class, each with two splinters, and each splinter copies and runs all the rows (46.5 times
+// the bytes at 8n). Naive version: the whole search of the splinters, then the modular point.
+// Used: the Omega test is run first with the search of the splinters deferred
+// ([`SPLINTERS_DEFERRED`]); where it stops there, the modular point is tried, and only where
+// that gives none is the Omega test run again whole, as before. So a system whose point the
+// modular solver finds costs the run before the splinters and the modular run, O(n log n) on
+// these pairs (`bench::division_pairs_refused_scale`); a system it does not answer costs the
+// run before the splinters twice, at most twice the old cost, and the meter of the cover is
+// charged both runs, as both are made. Proof that the answer is the same: a point checked
+// against every row shows the rows have a point, and the Omega test answers empty only where
+// they have none, so where the old search answered empty no checked point exists and the
+// rerun gives that answer; where it found a point the answer is a point either way; where it
+// refused with Growth, Shadows or Tie the old answer was this same modular point. Only where
+// the old search ran past the meter in the splinters, or refused there by another cause, and
+// the modular point exists, is a refusal now a point. A model wanted may be the modular
+// point where it was a splinter's point; callers take a model as any point of the rows.
+// The deferral and the modular run read no names, so neither does the choice between them.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
-    match solve_omega(cons, want) {
-        Err(why @ (Refusal::Growth | Refusal::Shadows | Refusal::Tie(_))) => {
-            match point_past_refusal(cons) {
-                Some(m) => Ok(Some(if want { m } else { Model::new() })),
-                None => Err(why),
+    // A solve inside this one (none is made today) keeps its own mark.
+    let outer = SPLINTERS_SKIPPED.with(|c| c.replace(false));
+    let first = {
+        let _defer = SetFor::new(&SPLINTERS_DEFERRED);
+        solve_omega(cons, want)
+    };
+    let skipped = SPLINTERS_SKIPPED.with(|c| c.replace(outer));
+    let point = |m: Model| Ok(Some(if want { m } else { Model::new() }));
+    if !skipped {
+        return match first {
+            Err(why @ (Refusal::Growth | Refusal::Shadows | Refusal::Tie(_))) => {
+                point_past_refusal(cons).map_or(Err(why), point)
             }
+            answer => answer,
+        };
+    }
+    // Some part stopped before its splinters; an empty part makes the answer empty as before.
+    let tried = match first {
+        Ok(None) => return Ok(None),
+        Err(Refusal::Growth | Refusal::Shadows | Refusal::Tie(_)) => {
+            if let Some(m) = point_past_refusal(cons) {
+                return point(m);
+            }
+            true
+        }
+        _ => false,
+    };
+    match solve_omega(cons, want) {
+        Err(why @ (Refusal::Growth | Refusal::Shadows | Refusal::Tie(_))) if !tried => {
+            point_past_refusal(cons).map_or(Err(why), point)
         }
         answer => answer,
     }
+}
+
+thread_local! {
+    /// Set by [`solve`] around its first run of the Omega test: [`search`] then stops where it
+    /// would search splinters, sets [`SPLINTERS_SKIPPED`], and answers [`Refusal::Shadows`].
+    static SPLINTERS_DEFERRED: Cell<bool> = const { Cell::new(false) };
+    /// Whether a search stopped before its splinters under [`SPLINTERS_DEFERRED`].
+    static SPLINTERS_SKIPPED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The point [`modular::point_by_structure`] finds for the conjunction of `cons`, over the
@@ -14791,6 +14843,11 @@ fn search(
         Leaf::Empty => {}
         Leaf::Refused(r) => return Err(r),
         Leaf::Tied(t) => return Err(t.written(vars, name)),
+    }
+    // With no dark elimination there is no splinter, and `splinters` answers empty at once.
+    if !top.gray.is_empty() && SPLINTERS_DEFERRED.with(Cell::get) {
+        SPLINTERS_SKIPPED.with(|c| c.set(true));
+        return Err(Refusal::Shadows);
     }
     splinters(&top, base, vars, name)
 }

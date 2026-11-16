@@ -21,6 +21,23 @@ fn division_pairs_scale() {
 /// The size of [`division_pairs_scale`].
 const N_PAIRS: usize = 10_000;
 
+/// The whole of `solve` on [`division_pairs`], which the Omega test refuses
+/// (FAIL-omega-pairs-shadows-cost): its run up to the splinters, which it defers, and the
+/// modular solver's point. The search of the splinters it skips was quadratic here.
+#[test]
+fn division_pairs_refused_scale() {
+    let inputs = scaling::inputs(N_REFUSED, division_pairs);
+    scaling::check_order("division pairs answered by solve", N_REFUSED, 1, |n| {
+        assert!(matches!(
+            crate::presburger::solve(&inputs[&n], false),
+            Ok(Some(_))
+        ));
+    });
+}
+
+/// The size of [`division_pairs_refused_scale`].
+const N_REFUSED: usize = 4_000;
+
 /// Dropping the clauses a regime's units imply (FAIL-modular-unbounded-regime-undecided), on
 /// [`absorbed_clauses`]: `n` clauses, each with the unit's own literal, so all are dropped and
 /// the regime is the unit alone.
