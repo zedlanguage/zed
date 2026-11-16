@@ -1148,6 +1148,44 @@ fn a_family_holding_a_lambda_that_calls_a_parameter_runs() {
     );
 }
 
+#[test]
+fn a_family_with_needs_holding_a_lambda_that_calls_a_parameter_runs() {
+    // `h`'s family holds `f(1)`'s result, so the need "`f` takes `1`" goes with the family.
+    // `k` calls `h` with a lambda that returns `z -> g(z)`, a lambda that calls `k`'s parameter,
+    // so the family `k` returns holds a lambda with the need "`g` takes `z`". DESIGN.md
+    // sec:values_morphisms (application): `p["k"]` is `z -> g(z)`, and `p["k"](2)` is `g(2)`, 3.
+    let h = "h(positional f) = {\"k\" -> f(1)};\n";
+    prints(
+        &format!(
+            "{h}k(positional g) = h(x -> (z -> g(z)));\na = {{ p = k(y -> y + 1); p[\"k\"](2) }};\n"
+        ),
+        "a",
+        "3",
+    );
+    // The same with the lambda beside a value in a tuple, and with the family in a tuple.
+    prints(
+        &format!(
+            "{h}k(positional g) = (g(0), h(x -> (x, z -> g(z))));\n\
+             a = {{ p = k(y -> y + 1); (p[0], p[1][\"k\"][1](2)) }};\n"
+        ),
+        "a",
+        "(1, 3)",
+    );
+    // The lambda `h` is passed also closes over `x`, the value `f` is applied to: `p["k"]` is
+    // `z -> g(z + 1)`, and `p["k"](2)` is `g(3)`, 4.
+    prints(
+        &format!(
+            "{h}k(positional g) = h(x -> (z -> g(z + x)));\n\
+             a = {{ p = k(y -> y + 1); p[\"k\"](2) }};\n"
+        ),
+        "a",
+        "4",
+    );
+    // The same family built by `map` from an unannotated parameter is refused before this
+    // walk is reached, at `m.map(f)` and at `m.map(x -> f(x))`: row
+    // FAIL-map-generic-parameter-function.
+}
+
 // ---- `sum(x)` is `x.sum`, and a receiver that may be a family or a tuple is summed region by
 // region (row FAIL-sum-word-family) ----
 

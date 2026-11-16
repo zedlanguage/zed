@@ -68,7 +68,7 @@ this group when they pass.
 
 ## Source-level tests
 
-All 214 tests of the group pass, the 35 benchmarks run apart (2026-11-15, RANGE-result-hull).
+All 215 tests of the group pass, the 35 benchmarks run apart (2026-11-15, closure-id).
 
 | Case | Covering tests |
 |---|---|
@@ -97,6 +97,7 @@ All 214 tests of the group pass, the 35 benchmarks run apart (2026-11-15, RANGE-
 | A generic fold at two carriers through a function value (row REDUCE-generic-identity-values): a lambda bound to a name in a block, a name bound to `top` and a name bound to that name, at the top level and in a block, `top` or a block's function passed to a call whose result does not hold it; two or three calls deciding one fold in force at one read (`.map` calls nested at `int`, `f64`, `int`), each read at the identity of the call that checked it; a generic function whose tuple result holds a fold at its call's carrier and a `.map` of one at `f64`. A function a call returns and that runs later at another carrier is refused | `empty::a_generic_fold_at_two_carriers_through_a_function_value_runs_at_each`, `empty::a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet`, `kept::a_block_function_named_as_a_value_where_it_is_called_runs_the_body_of_each_call`, `three_way::function_values_and_reads_under_two_identities_agree_with_the_model_interpreted_and_built` |
 | Each way to refer to a block's function whose calls run a fold at two types (row PROOF-block-body-kept-when-named): named as a value (a tuple's member, an `if`'s branch, a map's or array's entry, a block's result, captured by a lambda, a function's body, a parameter's default, a port push in `main`, never used, and bound or aliased where the name is used other than in a call) keeps the written body and refuses its fold; bound or aliased and called through the name, or passed to a call that decides its folds, runs a body made at each call's identity (REDUCE-generic-identity-values); calls (by name, UFCS, indexing, in parentheses, curried with `...`, a bracket section, `~f~` infix, from a default, from a lambda run in place, from a generic function's block) run a body made at each call's identity; `::source`, `><` by a function, a law, a test table, interpolation and `==` are refused before elaboration or by the checker. A kept term that names a dropped written body is refused naming the function | `kept::*`; zedc-elab's unit tests `elab::dropped_tests::*` |
 | A remap of a parameter declared a partial map with a range on its key (RANGE-keys) in functions that call each other or themselves: only the recursion is reported, with no error of a key or a remap, also where only one of them remaps and where a call passes keys outside the range; a function outside the cycle still has its keys checked; a remap in a lambda or a function in the body is read before the function's check ends, so a call is checked as passing a family (row TEST-range-keys-mutual-recursion) | `recursion::*` |
+| A lambda that calls a parameter, returned in a family a call returns (row FAIL-family-lambda-calls-param): in an entry, a tuple in an entry, a family in an entry, an array; and in a family that carries the need of `f(1)` (`h(f) = {"k" -> f(1)}`), bare, beside a value in a tuple, and closing over the value `f` is applied to | `empty::a_family_holding_a_lambda_that_calls_a_parameter_runs`, `empty::a_family_with_needs_holding_a_lambda_that_calls_a_parameter_runs` |
 | Scaling | `bench::*` |
 
 ## Tests waiting in /home/luke/Work/wt/failing-tests
@@ -118,6 +119,7 @@ from DESIGN.
 | `max` and `min` of an empty `f64` level: `-inf`, `inf` | `FAIL-f64-max-empty-identity.rs` |
 | A function a call returns, as the lambda `h3(f, y) = (f(y), f)` is passed and returns, run after the call at another carrier than the one the call ran it at | `REDUCE-identity-escaping-values.rs` |
 | `group` of a family of families | `GROUP-nested.rs` |
+| `m.map(f)` and `m.map(x -> f(x))` with `f` and `m` unannotated parameters | `FAIL-map-generic-parameter-function.rs` |
 | Word count with a trailing `>< (+)` | `REDUCE-family-entries.rs` |
 | A group level is never empty, so `>< max` of each group has no `#empty` | `L4.8.rs` |
 
