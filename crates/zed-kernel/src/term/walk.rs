@@ -793,6 +793,22 @@ impl<'a> Binds<'a> {
 
 /// Calls `each` on every part of `t` that is a term, in the order the term is written, with
 /// the names `t` binds over it.
+///
+/// The names are exactly those the evaluator binds over the part (row TEST-reads-binder-forms;
+/// `eval::made::reads` leaves out a name read under them, so a name given here that the
+/// evaluator does not bind would drop a value a closure needs). Form by form, in `eval.rs`:
+/// a lambda's parameters over its body (`apply` binds them in the closure's environment); a
+/// `let`'s name over its body only (`Wait::Let`, its value evaluated first in the environment
+/// around it); a `match` arm's pattern names over that arm only (each arm runs in a copy of
+/// the environment, and `matches_any`/`matches` bind every `Bind` of a pattern that matches,
+/// nested in atoms, fields and tuples; a literal, `#_`, `is T` and `_` bind none); a `fam`'s key
+/// over its body (one binding per key; the domain is an operand); a definedness `fix`'s `this`
+/// and `key` over its step (`attempt`, which every schedule goes through). Every other part is
+/// an operand evaluated in the environment around its term, with no name added: a call's
+/// function and arguments, a primitive's arguments, an `if`'s three parts, the parts of
+/// `reindex`, `discard`, `fold` and `gen`, a push's value, and a lattice `fix`'s init, step and
+/// join (its `this` and `key` name nothing: the step and join are functions the ascent calls,
+/// `Wait::LatticeStep`). Tests: `eval::binder_tests`.
 pub(crate) fn kids<'a>(t: &'a Term, mut each: impl FnMut(Kid<'a>, Binds<'a>)) {
     use Binds::Nothing;
     let mut sh = |s: &'a Shared, b: Binds<'a>| each(Kid::Shared(s), b);

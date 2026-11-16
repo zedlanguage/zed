@@ -12,6 +12,7 @@ mod differential;
 mod edges;
 mod ends;
 mod ids;
+mod lattice;
 mod mix;
 mod print;
 mod refold;

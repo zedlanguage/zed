@@ -1083,14 +1083,31 @@ fn subs(t: &Term) -> Vec<(Part<'_>, Names<'_>, bool)> {
             key,
             kind,
             ..
-        } => {
-            let names: Names<'_> = Cow::Owned(vec![this.clone(), key.clone()]);
-            let mut out = vec![held(init), (Part::held(step), names.clone(), false)];
-            if let zed_kernel::FixKind::Lattice { join } = kind {
-                out.push((Part::held(join), names, true));
-            }
-            out
-        }
+        } => match kind {
+            // A definedness `fix` binds `this` and `key` over its step, as the kernel's
+            // `attempt` binds them. A lattice `fix` binds no name: its step and join are
+            // functions the ascent calls, evaluated as operands in the scope around the `fix`
+            // (`Wait::LatticeStep`), so a `this` or `key` either reads is a name outside it
+            // (DESIGN.md sec:kernel: `fix(F0, step, ev)`; `zed_kernel::term::walk::kids`, the
+            // ZIR binders and the preimage addresses agree). Both names were put over a lattice
+            // step and join before, which left a `let` the step or join reads looking unread,
+            // so `mix` dropped it and the staged program read an unbound name (row
+            // STAGE-subs-lattice-fix-names; test
+            // `l01_28_staging::lattice::staging_keeps_the_let_a_lattice_fix_reads_through_this_or_key`).
+            zed_kernel::FixKind::Definedness => vec![
+                held(init),
+                (
+                    Part::held(step),
+                    Cow::Owned(vec![this.clone(), key.clone()]),
+                    false,
+                ),
+            ],
+            zed_kernel::FixKind::Lattice { join } => vec![
+                held(init),
+                held(step),
+                (Part::held(join), Cow::Borrowed(&[][..]), true),
+            ],
+        },
         Term::Gen {
             init, step, guard, ..
         } => vec![held(init), held(step), held(guard)],

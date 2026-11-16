@@ -104,7 +104,11 @@ pub enum MadeShape {
 /// names the binders above it bind are kept, though bound, as the evaluator then binds a
 /// name to a value that exists. R(body) is kept on the body ([`Shared::reads_memo`]), found
 /// once for the life of the term, so each lambda body is read once whatever the number of
-/// runs and closures made of it.
+/// runs and closures made of it. R is a function of the body alone, so the memo is right
+/// under whatever binds around the lambda, and the order the memos are found in does not
+/// change them. Tests: `binder_tests` checks R against a walk of the tree per binder form, on
+/// random terms, and at a node shared under every pair of binders (row
+/// TEST-reads-binder-forms).
 // Complexity tradeoff: the exact free names of each shared node, kept per node, cost O(n²) on a
 // chain of n `let`s whose last body reads them all, and taking them along each path instead
 // crosses a shared graph exponentially often. The former set was every variable of the body:

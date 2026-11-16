@@ -47,6 +47,8 @@ pub use made::{Made, MadeFun, MadeNode, MadeShape, fun_term};
 type Env<'t> = env::Env<'t, Binding<'t>>;
 
 #[cfg(test)]
+mod binder_tests;
+#[cfg(test)]
 mod tests;
 
 /// The minimum depth of nested calls the evaluator reaches (DESIGN.md step M0.11, prelude unit
