@@ -1602,6 +1602,12 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
                 Dbg::Text(" }"),
             ]);
         }
+        NeedKind::Strings { word, tys } => {
+            parts.extend([Dbg::Text("Strings { word: "), Dbg::Leaf(word)]);
+            parts.push(Dbg::Text(", tys: "));
+            debug_list(parts, "[", tys, "]", |p, t| p.push(Dbg::Ty(t)));
+            parts.push(Dbg::Text(" }"));
+        }
         NeedKind::Into { what, ty } => parts.extend([
             Dbg::Text("Into { what: "),
             Dbg::Leaf(what),
@@ -4176,6 +4182,20 @@ pub enum NeedKind {
         /// Whether the value is the function, not the receiver.
         by: bool,
     },
+    /// `split`, `lines` or `concat`, the word `word`, with operands of the types `tys` in the
+    /// order the checker's `strings_end` takes them, which hold the value's variable: as an
+    /// operand, as the pieces of `concat`, or as their entries. Each string operand is a
+    /// string and the pieces a family of strings, and the use gives what the word gives (step
+    /// L3.2, plan row FP-ops-generic-strings). It is met on every operand at once, the value's
+    /// variable replaced by the value's type, since whether `split`'s separator may be `""`,
+    /// which gives `#emptySeparator` or, where it is always `""`, a rejection (author decision
+    /// P314), is a fact of the separator's whole type.
+    Strings {
+        /// The word, `split`, `lines` or `concat`.
+        word: Arc<str>,
+        /// The types of the operands.
+        tys: Vec<Ty>,
+    },
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
     /// argument in the domain, or passes on a parameter of its own, whose calls then show them
@@ -4541,6 +4561,10 @@ impl Need {
                     right: *right,
                     by: *by,
                 },
+                NeedKind::Strings { word, tys } => NeedKind::Strings {
+                    word: word.clone(),
+                    tys: tys.iter().map(&mut f).collect(),
+                },
                 NeedKind::Destructure { i, n } => NeedKind::Destructure { i: *i, n: *n },
                 NeedKind::Call {
                     what,
@@ -4629,7 +4653,7 @@ impl Need {
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
-            NeedKind::Fold { tys, .. } => (None, tys, &[]),
+            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => (None, tys, &[]),
         };
         std::iter::once(&self.on)
             .chain(index)
@@ -4667,7 +4691,7 @@ impl Need {
                 .iter()
                 .chain(named.iter().map(|(_, t)| t))
                 .collect(),
-            NeedKind::Fold { tys, .. } => tys.iter().collect(),
+            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => tys.iter().collect(),
         };
         std::iter::once(&self.on)
             .chain(more)
@@ -4706,7 +4730,7 @@ impl Need {
                 positional.extend(named.into_iter().map(|(_, t)| t));
                 positional
             }
-            NeedKind::Fold { tys, .. } => tys,
+            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => tys,
         };
         std::iter::once(self.on).chain(more).chain(self.result)
     }

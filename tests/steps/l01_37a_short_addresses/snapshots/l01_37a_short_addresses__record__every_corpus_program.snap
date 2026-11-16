@@ -45,13 +45,6 @@ expression: without_addresses(&out)
   [1] 7:23 to 7:73: repair: write `s.lower.split("-").concat("").split(" ").concat`
       line 7 is shown above
   [2] 7:23 to 7:73: repair: write `s.lower.split("-").concat("").split(" ").concat(sep: "")`
-09-canonical-equal.zed:11:13: `split` on `l`, whose type is generic here, is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-  [1] 11:13: `l` has a generic type here, and `map` gives it each entry of `m.stdin`, whose type is String
-      11 |     parts = l.split(" | ");
-         |             ^
-  [2] 10:27: `l` is bound here
-      10 |   m.stdout <- m.stdin.map(l -> {
-         |                           ^
 10-regex-matcher/main.zed (L19): does not load: 10-regex-matcher/main.zed:11:43: `char32` is not defined.
 10-regex-matcher/main.zed:11:60: `char32` is not defined.
 10-regex-matcher/main.zed:12:43: `char32` is not defined.

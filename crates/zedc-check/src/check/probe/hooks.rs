@@ -82,6 +82,7 @@ fn kind_name(k: &NeedKind) -> &'static str {
         NeedKind::Reduce(..) => "Reduce",
         NeedKind::Fold { .. } => "Fold",
         NeedKind::Level { .. } => "Level",
+        NeedKind::Strings { .. } => "Strings",
     }
 }
 

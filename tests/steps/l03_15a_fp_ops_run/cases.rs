@@ -666,6 +666,15 @@ fn split_and_concat_on_a_line_of_standard_input_run() {
         "{}",
         out.stderr
     );
+    // On a parameter whose type is not written, checked at the call.
+    let src = "f(positional xs) = concat(xs);\nmain(m: MainArgs) {\n  m.stdout <- f([\"a\"]);\n}\n";
+    let out = run("fp_ops/strings_generic_param", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "a\n"),
+        "{}",
+        out.stderr
+    );
 }
 
 /// `program` run by `zedc run` must be rejected, its error output holding each of `texts`.
@@ -801,37 +810,34 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     );
 }
 
-/// A parameter of a lambda given to `map` on a receiver of known type is generic while the
-/// lambda's body is checked; the note on it says so and names what it ranges over, the entries
-/// of the receiver as the program wrote it, never `_`, which in Zed is the type of every value
-/// (author A92; plan row MSG-generic-operand-wording).
+/// `split` on a line of `m.stdin` in a function passed to `map`, with an `else` that reads the
+/// result and so lets loose atoms pass beside the line's generic type, is checked where `map`
+/// applies the function to the lines (plan row FP-ops-generic-strings; the form of
+/// zed/corpus/09-canonical-equal.zed at 11:13). Before that row this was refused, and plan row
+/// MSG-generic-operand-wording tested its note on `l` here.
 #[test]
-fn a_generic_operand_is_not_shown_as_every_value() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat(l.split(\",\")));\n}\n";
-    let out = run("fp_ops/strings_generic_note", src, "", &[]);
-    assert!(out.status != 0, "{}", out.stderr);
-    assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
-    let want = "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, \
-                whose type is String";
-    assert!(out.stderr.contains(want), "{}", out.stderr);
-    // An `else` that reads the result lets loose atoms pass beside the variable, which also
-    // printed as `_`; the note is the same (zed/corpus/09-canonical-equal.zed has this form).
+fn split_with_else_on_a_line_of_standard_input_runs() {
     let src =
         "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\" | \")[0] else \"\");\n}\n";
-    let out = run("fp_ops/strings_generic_note_else", src, "", &[]);
-    assert!(out.status != 0, "{}", out.stderr);
-    assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
-    assert!(out.stderr.contains(want), "{}", out.stderr);
+    let out = run("fp_ops/strings_generic_else", src, "a | b\nc\n", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "a\nc\n"),
+        "{}",
+        out.stderr
+    );
 }
 
 /// A built-in word on a parameter whose type is not written is not compiled yet; the message
 /// names the operand by its code and calls its type generic, as the string words do, not a
 /// type parameter, which the program does not write (plan row MSG-generic-operand-wording).
+/// `concat(xs)` was the example until plan row FP-ops-generic-strings compiled it; `++` is not
+/// compiled on such a parameter yet.
 #[test]
 fn a_word_on_an_untyped_parameter_names_the_parameter() {
-    let src = "f(positional xs) = concat(xs);\nmain(m: MainArgs) {\n  m.stdout <- f([\"a\"]);\n}\n";
+    let src = "f(positional xs) = xs ++ [\"a\"];\nmain(m: MainArgs) {\n  m.stdout <- concat(f([\"b\"]));\n}\n";
     let out = run("fp_ops/generic_levels", src, "", &[]);
-    let want = "`concat` on `xs`, whose type is generic here, is part of";
+    let want = "`++` on `xs`, whose type is generic here, is part of";
     assert!(
         out.status != 0 && out.stderr.contains(want) && !out.stderr.contains("type parameter"),
         "status {}\n{}",

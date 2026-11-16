@@ -11138,6 +11138,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = Arg::of(self.bound(f, binds));
                 self.level_word(&on, *word, f, span, *site)
             }
+            NeedKind::Strings { word, tys } => {
+                // The value's variable stands for `on` in every operand: `binds` binds it so at
+                // a call, but not where the use is checked on a value that flowed into the
+                // class or on the type the class takes. A copy of `binds` is O(1) and the
+                // insert O(log |binds|) (`BindMap`), so the operands cost their size, once.
+                let mut binds = binds.clone();
+                if let Some(v) = n.on.as_var() {
+                    binds.insert(v.clone(), on.clone());
+                }
+                let args = tys
+                    .iter()
+                    .map(|t| Arg::of(self.bound(t, &mut binds)))
+                    .collect();
+                self.strings_end(word, args, span)
+            }
             NeedKind::Remap { at, src, .. } => {
                 let src = self.remap_src(n, src, &on, binds);
                 self.remap_met(*at, &src)

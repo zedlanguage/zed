@@ -462,55 +462,180 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// string. A loose atom of an operand passes through, as through any call. `split` gains
     /// `#emptySeparator` where its separator may be `""`, and one whose separator is always
     /// `""` is rejected (DESIGN L3.2, author decision P314).
+    ///
+    /// An operand whose type is a class not yet resolved, as a line of `m.stdin` in a function
+    /// passed to `map` is, is checked at each call of the generic function, on the type the
+    /// call gives it (plan row FP-ops-generic-strings, as `Ck::level_word` checks the one-level
+    /// words): the parts that hold no such class are checked here, and the call records one
+    /// need ([`NeedKind::Strings`]) of all its operands, which `meet` checks again with the
+    /// class replaced by its type. The need is recorded only where the parts checked here gave
+    /// no error, so a call never reports again what the definition reported.
+    // Complexity tradeoff: the naive method, a need per class an operand holds, as
+    // `level_word` makes one per variable, would check `split`'s separator piece by piece, and
+    // `if b { "" } else { "," }` would then be rejected for its `""` alone where the whole
+    // separator only may be empty (P314). One need of every operand checks the separator's
+    // whole type at the call, at the same cost: O(size of the operands) here, and O(size of
+    // the operands as the call binds them) at each call that `meet` checks it at. Proof that
+    // the checks end: `meet` replaces the class the need is on, so each check of the need
+    // reads one class fewer of the definition's, or classes of the caller, which a call of
+    // the caller replaces in turn; the classes of a program are finite, and `need` records
+    // each pair of a class and a use once (the visited set of P207), as at `level_word`.
     pub(super) fn strings_end(&mut self, word: &str, args: Vec<Arg<'a>>, span: Span) -> Ty {
+        let Some((args, generic)) = self.strings_classes(word, args, span) else {
+            return Ty::empty();
+        };
+        let from = self.errors.len();
+        let Some(out) = self.strings_parts(word, &args, span) else {
+            return Ty::empty();
+        };
+        match generic {
+            Some(r) if self.errors.len() == from => {
+                let kind = NeedKind::Strings {
+                    word: word.into(),
+                    tys: args.iter().map(|a| a.ty.clone()).collect(),
+                };
+                out.union(&self.need(r, kind, true, span))
+            }
+            _ if word == "concat" => out.union(&Ty::carrier(Carrier::Str)),
+            _ => out.union(&strings_rank()),
+        }
+    }
+
+    /// The operands of `word` with each class that is resolved to a type replaced by that
+    /// type, and the root of the first class not yet resolved that the word reads: a string
+    /// operand that is the class, the pieces of `concat` that are, or an entry of the pieces
+    /// that is. A variable the word reads that names no class, a type variable of a signature,
+    /// is not compiled yet. `None` after an error.
+    // Complexity tradeoff: one walk of the operands' variables and one replacement, O(size of
+    // the operands); a type a class is resolved to holds no variable (the invariant at
+    // `Class::resolved`), so one replacement leaves only classes not yet resolved. The naive
+    // method, a lookup of the class at each piece a check reads, costs the same and would be
+    // made in every check below.
+    #[allow(clippy::type_complexity)]
+    fn strings_classes(
+        &mut self,
+        word: &str,
+        mut args: Vec<Arg<'a>>,
+        span: Span,
+    ) -> Option<(Vec<Arg<'a>>, Option<usize>)> {
+        if !args.iter().any(|a| a.ty.holds_vars()) {
+            return Some((args, None));
+        }
+        let mut vars = Vars::default();
+        for a in &args {
+            a.ty.vars_in(&mut vars);
+        }
+        let mut resolved = Binds::new();
+        let mut any = false;
+        for v in &vars.order {
+            if let Some(r) = self.class_root(v)
+                && let Some(t) = self.classes[r].resolved.clone()
+            {
+                resolved.insert(v.clone(), t);
+                any = true;
+            }
+        }
+        if any {
+            for a in &mut args {
+                a.ty = a.ty.replace(&resolved);
+            }
+        }
+        let mut generic = None;
+        for (i, a) in args.iter().enumerate() {
+            let pieces = word == "concat" && i == 0;
+            let mut read: Vec<Arc<str>> = a.ty.vars.iter().cloned().collect();
+            if pieces {
+                let sigs: Vec<Arc<Sig>> = (a.ty.pieces().into_iter())
+                    .filter_map(|p| match p {
+                        Piece::Fn(sig) if sig.data => Some(sig),
+                        _ => None,
+                    })
+                    .collect();
+                read.extend(Self::entries_of(&sigs).vars.iter().cloned());
+            }
+            for v in &read {
+                if let Some(r) = self.class_root(v) {
+                    generic.get_or_insert(r);
+                    continue;
+                }
+                let at = a.at.unwrap_or(span);
+                let what = match (pieces, self.operand_text(a.at)) {
+                    (true, Some(c)) => {
+                        format!("`concat` of `{c}`, whose entries are of a generic type,")
+                    }
+                    (true, None) => {
+                        "`concat` of a family whose entries are of a generic type".into()
+                    }
+                    (false, Some(c)) => format!("`{word}` on `{c}`, whose type is generic here,"),
+                    (false, None) => format!("`{word}` on a value whose type is generic here"),
+                };
+                self.error(at, zedc_base::rejection::not_yet(&what));
+                return None;
+            }
+        }
+        Some((args, generic))
+    }
+
+    /// The checks of `strings_end` on the parts of the operands `args` that hold no class:
+    /// gives the loose atoms that pass through and `#emptySeparator` where the separator may
+    /// be `""`, and leaves out what the word itself gives. A class is checked at each call,
+    /// by the need `strings_end` records. `None` after a rejection.
+    fn strings_parts(&mut self, word: &str, args: &[Arg<'a>], span: Span) -> Option<Ty> {
         let quoted = format!("`{word}`");
         let mut out = Ty::empty();
         let (pieces, strings) = match word {
             "concat" => (args.first(), &args[1..]),
-            _ => (None, &args[..]),
+            _ => (None, args),
         };
         for (i, a) in strings.iter().enumerate() {
             out = out.union(&self.passing(&a.ty, &quoted, span, a.at));
             let i = i + usize::from(pieces.is_some());
-            if !self.string_operand(word, &args, i, span) {
-                return Ty::empty();
+            if !self.string_operand(word, args, i, span) {
+                return None;
             }
         }
-        if let ("split", [s, sep]) = (word, &args[..]) {
+        if let ("split", [s, sep]) = (word, args) {
             // An empty separator has no answer, so it is the failure `#emptySeparator`, given
             // exactly where the separator's type holds `""`: a type that holds no `""`, as
             // `","` or a name bound to it, adds no atom, and one whose only value is `""` is
-            // rejected. Each test reads the separator's type once, O(its size).
+            // rejected. Each test reads the separator's type once, O(its size). A separator
+            // that holds a class is tested at each call, on its whole type there.
             let value = sep.ty.without_loose();
             let empty = Value::str("");
-            if !value.lists_nothing() && self.subtype(&value, &Ty::lit(&empty)) {
-                self.empty_separator(s, sep, span);
-                return Ty::empty();
-            }
-            if value.contains(&empty) {
-                out = out.union(&Ty::set(KType::atom("emptySeparator")));
+            if value.vars.is_empty() {
+                if !value.lists_nothing() && self.subtype(&value, &Ty::lit(&empty)) {
+                    self.empty_separator(s, sep, span);
+                    return None;
+                }
+                if value.contains(&empty) {
+                    out = out.union(&Ty::set(KType::atom("emptySeparator")));
+                }
             }
         }
         let Some(p) = pieces else {
-            return out.union(&strings_rank());
+            return Some(out);
         };
         out = out.union(&self.passing(&p.ty, &quoted, span, p.at));
         let example = "concat([\"a\", \"b\"], sep: \", \")";
-        let Some(sigs) = self.levels_of(&p.ty, &quoted, example, span, p.at) else {
-            return Ty::empty();
-        };
+        // The pieces less their classes, which the need checks.
+        let mut known = p.ty.clone();
+        known.vars = VarSet::new();
+        let sigs = self.levels_of(&known, &quoted, example, span, p.at)?;
         let at = p.at.unwrap_or(span);
         // The pieces as the program wrote them, where on one line, else by the parameter's
-        // name in DESIGN step L3.2, `concat(pieces, sep: s)`, as at `strings_call`.
-        let code = match self.operand_text(p.at) {
+        // name in DESIGN step L3.2, `concat(pieces, sep: s)`, as at `strings_call`. Pieces with
+        // no place in the program, as at a call of a generic function whose `concat` `meet`
+        // checks on the types the call gives (plan row FP-ops-generic-strings), are named by
+        // no name, since none of the callee's is in scope at the call: `None`.
+        let code = p.at.map(|_| match self.operand_text(p.at) {
             Some(c) => postfix_subject(p.expr, &c),
             None => "pieces".to_string(),
-        };
+        });
         let entries = Self::entries_of(&sigs);
         if !entries.loose_ty().lists_nothing() {
             let what = "`concat` of a family whose entries may be failure atoms";
             self.error(at, zedc_base::rejection::not_yet(what));
-            return Ty::empty();
+            return None;
         }
         for e in entries.pieces() {
             match e {
@@ -522,62 +647,54 @@ impl<'t, 'a> Ck<'t, 'a> {
                             "`concat` joins a family of strings, and this value is {t}, a \
                              family of families"
                         ),
-                        [format!(
-                            "repair: join the inner families first, as `{code} >< (++)`"
-                        )],
+                        [match code {
+                            Some(c) => {
+                                format!("repair: join the inner families first, as `{c} >< (++)`")
+                            }
+                            None => "repair: pass a family of strings to this call, joining \
+                                     the inner families first with `>< (++)`"
+                                .to_string(),
+                        }],
                     );
-                    return Ty::empty();
+                    return None;
                 }
                 Piece::Dyn => self.any(&quoted, span),
-                Piece::Var(_) => {
-                    let what = match self.code(p.at).map(str::trim).filter(|c| !c.contains('\n')) {
-                        Some(c) => {
-                            format!("`concat` of `{c}`, whose entries are of a generic type,")
-                        }
-                        None => "`concat` of a family whose entries are of a generic type".into(),
-                    };
-                    self.error(at, zedc_base::rejection::not_yet(&what));
-                    return Ty::empty();
-                }
+                // An entry whose type is a class is checked at each call, by the need
+                // `strings_end` records ([`Self::strings_classes`] found the class).
+                Piece::Var(_) => {}
                 e if self.subtype(&e.ty(), &Ty::carrier(Carrier::Str)) => {}
                 e => {
                     let t = self.text(&e.ty());
                     self.error_offering(
                         at,
                         format!("`concat` joins strings, and an entry of this family is {t}"),
-                        [format!(
-                            "repair: make each entry a string, as \
-                             `concat({code}.map(x -> String(x)))`"
-                        )],
+                        [match code {
+                            Some(c) => format!(
+                                "repair: make each entry a string, as \
+                                 `concat({c}.map(x -> String(x)))`"
+                            ),
+                            None => "repair: pass a family of strings to this call".to_string(),
+                        }],
                     );
-                    return Ty::empty();
+                    return None;
                 }
             }
         }
-        out.union(&Ty::carrier(Carrier::Str))
+        Some(out)
     }
 
     /// Whether `args[i]`, a string operand of the built-in `word` (`split`, `lines`, or the
     /// `sep` of `concat`) called at `span` with the operands `args`, may be only strings or
-    /// loose atoms; any other value is rejected.
+    /// loose atoms, beside the classes it holds; any other value is rejected.
     fn string_operand(&mut self, word: &str, args: &[Arg<'a>], i: usize, span: Span) -> bool {
         let a = &args[i];
         let at = a.at.unwrap_or(span);
         for p in a.ty.without_loose().pieces() {
             match p {
                 Piece::Dyn => self.any(&format!("`{word}`"), span),
-                // The program may write no type parameter, as `l` of `m.stdin.map(l -> …)`, so
-                // the operand is named by its code and its type called generic, the word for a
-                // type decided where the function is applied (plan row
-                // FAIL-l01-37a-split-snapshot).
-                Piece::Var(_) => {
-                    let what = match self.code(a.at).map(str::trim).filter(|c| !c.contains('\n')) {
-                        Some(c) => format!("`{word}` on `{c}`, whose type is generic here,"),
-                        None => format!("`{word}` on a value whose type is generic here"),
-                    };
-                    self.error(at, zedc_base::rejection::not_yet(&what));
-                    return false;
-                }
+                // A class, as the type of `l` of `m.stdin.map(l -> …)`, is checked at each call,
+                // by the need `strings_end` records ([`Self::strings_classes`] found it).
+                Piece::Var(_) => {}
                 p if self.subtype(&p.ty(), &Ty::carrier(Carrier::Str)) => {}
                 p => {
                     let t = self.text(&p.ty());
@@ -641,30 +758,40 @@ impl<'t, 'a> Ck<'t, 'a> {
             (Some(ExprKind::Str(_)), _) | (_, None) => "its separator is the empty string".into(),
             (_, Some(c)) => format!("its separator `{c}` is always the empty string"),
         };
-        let subject = self.operand_text(s.at).unwrap_or_else(|| "s".to_string());
-        // The call in the program's style: `split(s, sep)` as a function, `s.split(sep)` as a
-        // method.
-        let split = match call.starts_with("`split(") {
-            true => format!("`split({subject}, sep)`"),
-            false => format!("`{}.split(sep)`", postfix_subject(s.expr, &subject)),
+        // The repairs that rewrite the `split` name its string by its code. A string with no
+        // code here, as at a call of a generic function, whose `split` `meet` checks on the
+        // types the call gives (plan row FP-ops-generic-strings), is named by no name, which
+        // would not be in scope at the call: the repair there is a separator that is not empty.
+        let rewrites: Vec<String> = match self.operand_text(s.at) {
+            Some(subject) => {
+                // The call in the program's style: `split(s, sep)` as a function,
+                // `s.split(sep)` as a method.
+                let split = match call.starts_with("`split(") {
+                    true => format!("`split({subject}, sep)`"),
+                    false => format!("`{}.split(sep)`", postfix_subject(s.expr, &subject)),
+                };
+                (view_forms(s.expr, &subject).into_iter())
+                    .map(|form| format!("repair: write {form}"))
+                    .chain([format!(
+                        "repair: write {split}, with a separator `sep` that is not empty"
+                    )])
+                    .collect()
+            }
+            None => vec!["repair: pass a separator that is not empty to this call".to_string()],
         };
         let mut notes = vec![Note {
             span: at,
             text: "this separator is always the empty string".to_string(),
         }];
         notes.extend(self.derive(&[at]));
-        let menu = view_forms(s.expr, &subject)
-            .into_iter()
-            .map(|form| format!("repair: write {form}"))
-            .chain([
-                format!("repair: write {split}, with a separator `sep` that is not empty"),
-                "repair: write `#emptySeparator` in place of this call, where the failure is \
+        let menu = rewrites.into_iter().chain([
+            "repair: write `#emptySeparator` in place of this call, where the failure is \
                  meant"
-                    .to_string(),
-                "repair: write `#bug(\"…\")` in place of this call, where it is never meant to \
+                .to_string(),
+            "repair: write `#bug(\"…\")` in place of this call, where it is never meant to \
                  be reached"
-                    .to_string(),
-            ]);
+                .to_string(),
+        ]);
         notes.extend(menu.map(|text| Note { span, text }));
         self.rejects_with(
             Row::AlwaysFails,
