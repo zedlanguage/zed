@@ -144,6 +144,17 @@ impl Work {
         answer?
     }
 
+    /// A size-preserving exact shadow, with its input rows and all generated rows
+    /// counted. A stopped shadow's provisional contradiction is discarded by `metered`.
+    fn eliminate(
+        &mut self,
+        rows: &[Con],
+        keep: &dyn Fn(&Atom) -> bool,
+    ) -> Result<Option<Vec<Con>>, Refusal> {
+        self.read(rows.len() as u64)?;
+        self.metered(|| super::eliminated_counted(rows, keep))
+    }
+
     /// `run`, its work counted by the solver's meter ([`charge`]) and charged here, the meter
     /// given the work left: refused with [`Refusal::Questions`] where it passes the limit,
     /// whatever `run` returned, since a step that reads a spent meter as no point (as
@@ -556,8 +567,8 @@ fn has_points(
     work: &mut Work,
 ) -> Result<bool, Refusal> {
     let none = Atom::Sym("#none".into());
-    // The fast paths' allowance, shared by the parts, as `work` is (`tried`).
-    let mut fast = work.limit / 4;
+    // The fast paths' allowance, the same work limit as the questions (`tried`, `POLY-nf-work`).
+    let mut fast = work.limit;
     for (p, found) in parts.iter().zip(points.iter_mut()) {
         if !found.is_empty() {
             continue;
@@ -620,7 +631,7 @@ fn cover(
     // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
     // another part has no point, and then every answer is made empty (`exact_each`).
     if factors.is_empty() {
-        if let Some(set) = tried(&mut (work.limit / 4), |w| direct(f, s, w)) {
+        if let Some(set) = tried(&mut { work.limit }, |w| direct(f, s, w)) {
             return Ok((set, false));
         }
     }
@@ -751,9 +762,10 @@ fn cover(
                 Formula::Con(Con { lin, rel: Rel::Eq }),
                 super::member(&j, &other),
             ]);
-            // A refusal of this question only leaves the gap to the questions by piece; past
-            // the work limit, the next charge refuses.
+            // A refusal of this question for another cause leaves the gap to the questions by
+            // piece; past the work limit, the cover stops here at once.
             match work.ask(&q) {
+                Err(_) if work.used > work.limit => return Err(Refusal::Questions),
                 Err(_) => {}
                 Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
                 Ok(Some(m)) => {
@@ -839,18 +851,25 @@ enum Part {
 // Complexity tradeoff: before, a failed fast path was charged to the limit, up to a quarter of
 // the work left, so the loop could refuse a cover needing more than three quarters of the limit
 // that it answers alone (`tests::the_work_limit_is_met_alike_on_both_sides`). Used: an
-// allowance of its own, so the work of a cover is at most 5/4 of the limit (the limit, and a
-// quarter for the fast paths), each step past it by at most its own charge. A fast path that
-// answers adds no work to the loop's either, so a refusal with fast paths is a refusal
-// without them, for the same points found before (`exact_each`). The loop is the lazy model
+// allowance of its own equal to the same A99 work limit `L` as the complete method (as the
+// factored fast path of `POLY-nf-power-value` in `COMPLEXITY.md` runs under its own budget of
+// the limit before giving way to expansion), with no unmeasured fraction. When `direct` answers,
+// the loop does not run, so total admitted work is at most `L`; when `direct` declines or passes
+// `L`, the loop starts at `0` with limit `L`, so total admitted work per symbol is at most `2 * L`
+// (each meter passing `L` by at most its single stopping charge), and the refusal boundary of
+// the loop is identical to running with no fast path. Stopping at `*fast == 0` keeps a shared
+// zeroed allowance (`has_points`) from walking remaining parts. The loop is the lazy model
 // enumeration of Monniaux, "Quantifier Elimination by Lazy Model Enumeration", CAV 2010,
-// sec. 2.2 and 3; a fast path is a cheaper try in front of it, so it gets a share of its own
-// rather than a share of the loop's. Not derived: the quarter itself, which no measurement places
-// at the point where a failed fast path stops paying for itself (PRES-pugh-xr round 3, B).
+// sec. 2.2 and 3, with model-based cells after Bjørner and Janota, "Playing with Quantified
+// Satisfaction", LPAR-20, 2015, sec. 2.2; `direct` is Pugh's structural exact shadow, "A
+// practical algorithm for exact array dependence analysis", CACM 35(8), 1992, p. 106.
 fn tried<T>(
     fast: &mut u64,
     run: impl FnOnce(&mut Work) -> Result<Option<T>, Refusal>,
 ) -> Option<T> {
+    if *fast == 0 {
+        return None;
+    }
     let mut part = Work {
         used: 0,
         limit: *fast,
@@ -888,12 +907,12 @@ fn tried<T>(
 // groups the rows moved up from below it again, so a nest of conjunctions k deep costs O(k n)
 // for n rows: 448,000 units at 131 constraints 64 deep and past the limit at 1027 512 deep
 // (`l01_38_presburger::nest_empty`), where the loop answers with no question. So it runs
-// under an allowance of its own, a quarter of the limit (`tried`), and the loop takes over
+// under an allowance of its own equal to the limit (`tried`), and the loop takes over
 // past it. Each
-// elimination is O(m log m) (`shadow`), each constraint charged as the cover charges a
-// constraint read. Not exact for a conjunction that ties a disjunction to other
-// parts through a shared atom (`y == x + 1 and (x <= 3 or x >= 10)`), nor where a stride
-// stops the elimination; those go to the cover (safe path, P246).
+// elimination charges its substitutions and bound pairs (`eliminated_counted`), and each
+// constraint read is charged as the cover charges one. Not exact for a conjunction that ties a
+// disjunction to other parts through a shared atom (`y == x + 1 and (x <= 3 or x >= 10)`), nor
+// where a stride stops the elimination; those go to the cover (safe path, P246).
 fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>, Refusal> {
     enum Go<'a> {
         Read(&'a Formula, bool),
@@ -985,8 +1004,9 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
 /// The values of `s` at which the conjunction `rows` has a point, by [`super::eliminated`];
 /// `None` where an atom cannot be eliminated exactly. Its rows charged to `work`.
 fn projected(rows: &[Con], s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>, Refusal> {
-    work.read(rows.len() as u64)?;
-    Ok(super::eliminated(rows, &|a| a == s).map(|left| bounded(&left, s)))
+    Ok(work
+        .eliminate(rows, &|a| a == s)?
+        .map(|left| bounded(&left, s)))
 }
 
 /// The atoms of `rows` other than `s`.
@@ -1247,8 +1267,7 @@ fn cell(
         let how = projection::method();
         let plain = !rows.iter().any(product) && how == Method::Pugh;
         let quick = if plain {
-            work.read(rows.len() as u64)?;
-            super::eliminated(&rows, &|a| a == s)
+            work.eliminate(&rows, &|a| a == s)?
         } else {
             None
         };
@@ -1291,7 +1310,7 @@ fn cell(
             // exact step (`eliminated_whole`), the rows it makes charged as it makes them (so
             // that it stops at the limit, not after rows without bound) and the rows left
             // charged to the work.
-            let left = match super::eliminated(&rows, &|a| a == s) {
+            let left = match work.eliminate(&rows, &|a| a == s)? {
                 Some(left) => Some(left),
                 None => work.metered(|| super::eliminated_whole(&rows, &|a| a == s))?,
             };
@@ -1310,7 +1329,7 @@ fn cell(
                 if let Some(r) = one {
                     c = c.join(&r);
                 } else if !fix.is_empty()
-                    && let Some(left) = super::eliminated(&fixed(&rows, &fix, m), &|a| a == s)
+                    && let Some(left) = work.eliminate(&fixed(&rows, &fix, m), &|a| a == s)?
                 {
                     c = c.join(&bounded(&left, s));
                 }
@@ -1472,7 +1491,7 @@ fn runs(
     within: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<IntervalSet>, Refusal> {
-    let Some(mut two) = super::eliminated(rows, &|a| a == s || a == q) else {
+    let Some(mut two) = work.eliminate(rows, &|a| a == s || a == q)? else {
         return Ok(None);
     };
     if let Some((lo, hi)) = within.bounds() {
@@ -1493,7 +1512,7 @@ fn runs(
             });
         }
     }
-    let Some(over_q) = super::eliminated(&two, &|a| a == q) else {
+    let Some(over_q) = work.eliminate(&two, &|a| a == q)? else {
         return Ok(None);
     };
     let range = bounded(&over_q, q);
@@ -1882,6 +1901,108 @@ mod tests {
         fn int(&mut self, lo: i64, hi: i64) -> i64 {
             lo + self.below((hi - lo + 1) as u64) as i64
         }
+    }
+
+    /// Signing must simplify a raw duplicate node even when neither of its rows changes.
+    /// Previously one sign kept two rows and the other rebuilt the node as a single row.
+    #[test]
+    fn raw_repeated_equations_have_one_cover_input_in_both_signs() {
+        use super::super::{Signs, canonical_parts, cover_input, signed};
+        let chosen = signed(&eq(&[("x", 1), ("y", -2)], 0), Signs::Chosen);
+        let flipped = match &chosen {
+            Formula::Con(c) => Formula::Con(Con {
+                lin: c.lin.times(-1),
+                rel: Rel::Eq,
+            }),
+            _ => unreachable!(),
+        };
+        for conjunction in [false, true] {
+            let raw = |c: &Formula| {
+                let kids = super::super::Shared::new(vec![c.clone(), c.clone()]);
+                if conjunction {
+                    Formula::And(kids)
+                } else {
+                    Formula::Or(kids)
+                }
+            };
+            let (f, g) = (raw(&chosen), raw(&flipped));
+            // Keep the old expressions in the diagnostic: the negative control checks
+            // actual nesting, which Formula's flattened comparison deliberately ignores.
+            println!(
+                "old cover inputs: {:?} / {:?}",
+                canonical_parts(&signed(&f, Signs::Chosen)),
+                canonical_parts(&signed(&g, Signs::Chosen))
+            );
+            let (left, right) = (cover_input(&f), cover_input(&g));
+            assert_eq!(format!("{left:?}"), format!("{right:?}"));
+            // The established conjunction constructor removes duplicate rows; the
+            // disjunction constructor retains them, equally for both equation signs.
+            assert_eq!(constraints(&left), if conjunction { 1 } else { 2 });
+        }
+    }
+
+    /// Refused ordering is an explicit error, never a provisional color assignment.
+    #[test]
+    fn a_spent_ordering_returns_before_color_refinement() {
+        let row = Con::ge(&lin(&[("x", 1)], 0), &Lin::constant(0));
+        let mut work = Work { used: 0, limit: 0 };
+        let mut rejected = false;
+        let got = work.metered(|| {
+            rejected = super::super::canonical(vec![a("x")], &[&row]).is_err();
+        });
+        assert!(rejected);
+        assert_eq!(got, Err(Refusal::Questions));
+    }
+
+    /// Three rows are admitted, but substituting y into the two bounds is additional work.
+    /// Stopping that shadow must refuse, never turn a stopped proof into an empty set.
+    #[test]
+    fn a_small_shadow_charges_its_generated_rows() {
+        let rows: Vec<_> = [
+            eq(&[("x", 1), ("y", -1)], 0),
+            ge(&[("y", 1)], 0),
+            ge(&[("y", -1)], 10),
+        ]
+        .into_iter()
+        .map(|f| match &f {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+        let mut work = Work {
+            used: 0,
+            limit: rows.len() as u64 * SOLVER_UNIT,
+        };
+        assert_eq!(
+            projected(&rows, &a("x"), &mut work),
+            Err(Refusal::Questions)
+        );
+        let mut work = Work {
+            used: 0,
+            limit: EXACT_LIMIT,
+        };
+        assert_eq!(
+            projected(&rows, &a("x"), &mut work),
+            Ok(Some(IntervalSet::of(0, 10)))
+        );
+    }
+
+    /// An insertion after refusal must not update the row index or contradiction flag.
+    /// Only the enclosing metered caller may interpret the incomplete solver state.
+    #[test]
+    fn a_spent_insertion_leaves_the_system_alone() {
+        let mut sys = super::super::System::new([0].into_iter());
+        let mut work = Work { used: 0, limit: 0 };
+        assert!(matches!(
+            work.metered(|| sys.add(super::super::Row {
+                a: vec![(0, Int::ONE)].into(),
+                k: Int::ZERO,
+            })),
+            Err(Refusal::Questions)
+        ));
+        assert!(sys.rows.is_empty());
+        assert!(sys.ids.is_empty());
+        assert!(!sys.empty);
     }
 
     fn a(s: &str) -> Atom {
@@ -2645,5 +2766,171 @@ mod tests {
         assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
         assert!(narrow.is_empty(), "seed {seed}: {narrow:#?}");
         assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+    }
+
+    /// PRES-pugh-xr round 3, question B: `direct` runs under the full A99 work limit `L` on its
+    /// own meter (`tried`), so a structural projection needing between `L / 4` and `L` units
+    /// answers in zero solver questions, and a depleted `fast == 0` allowance walks nothing.
+    #[test]
+    fn fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing() {
+        let arms: Vec<Formula> = (0..=30).map(|k| eq(&[("x", 1)], -2 * k)).collect();
+        // `y - 2 * x == 0` skips `certified_domains` (`-2` is not unit), while `direct`
+        // eliminates `y` by Pugh's unit-coefficient shadow with zero solver questions.
+        let f = Formula::and(vec![eq(&[("y", 1), ("x", -2)], 0), Formula::or(arms)]);
+        let want =
+            IntervalSet::from_pieces((0..=30).map(|k| (End::of(2 * k), End::of(2 * k))).collect());
+
+        EXACT_QUESTIONS.set(0);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        assert_eq!(project(&f, "x"), want);
+        assert_eq!(EXACT_QUESTIONS.replace(0), 0);
+        let fast_needed = FAST_WORK.replace(0);
+        assert_eq!(EXACT_WORK.replace(0), fast_needed);
+        assert!(fast_needed > 4);
+
+        // At limit == `fast_needed`, the old `limit / 4` allowance aborted `direct` a quarter of
+        // the way through; with `fast = work.limit`, `direct` finishes with zero solver questions
+        // and total work <= L.
+        EXACT_LIMIT_SET.set(Some(fast_needed));
+        EXACT_QUESTIONS.set(0);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = project_each(&f, &[a("x")]).unwrap().0;
+        EXACT_LIMIT_SET.set(None);
+        assert_eq!(got, vec![Ok(want)]);
+        assert_eq!(EXACT_QUESTIONS.replace(0), 0);
+        assert_eq!(FAST_WORK.replace(0), fast_needed);
+        assert_eq!(EXACT_WORK.replace(0), fast_needed);
+
+        // Once `fast` reaches 0 in `has_points`, `tried` must not walk `holders` or charge reads.
+        let mut zero = 0;
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let skipped = tried(&mut zero, |w| direct(&f, &a("x"), w));
+        assert!(skipped.is_none());
+        assert_eq!(FAST_WORK.replace(0), 0);
+        assert_eq!(EXACT_WORK.replace(0), 0);
+    }
+
+    /// PRES-pugh-xr round 3, question D(1): `eliminated_counted` charges the `p * q` bound pairs
+    /// formed under `one_other()` in both `projected` and `cell`, and when the meter runs out
+    /// mid-shadow `Work::metered` returns `Err(Refusal::Questions)` rather than reading a
+    /// truncated shadow as empty.
+    #[test]
+    fn counted_elimination_charges_pairs_and_refuses_when_spent() {
+        let s = a("x");
+        let p = 30i64;
+        let mut rows: Vec<Con> = vec![
+            Con::ge(&lin(&[("x", 1)], 0), &Lin::constant(0)),
+            Con::ge(&lin(&[("x", -1)], 10), &Lin::constant(0)),
+        ];
+        for i in 1..=p {
+            rows.push(Con::ge(&lin(&[("y", 1), ("x", -i)], 0), &Lin::constant(0)));
+            rows.push(Con::ge(
+                &lin(&[("y", -1), ("x", i)], 1000),
+                &Lin::constant(0),
+            ));
+        }
+        let read_only = (rows.len() as u64) * SOLVER_UNIT;
+        let pair_work = ((p * p) as u64) * SOLVER_UNIT;
+
+        let mut full = Work {
+            used: 0,
+            limit: u64::MAX,
+        };
+        let got = projected(&rows, &s, &mut full).unwrap();
+        assert_eq!(got, Some(IntervalSet::of(0, 10)));
+        assert!(
+            full.used >= read_only + pair_work,
+            "expected at least {} units (reads {} + pairs {}), got {}",
+            read_only + pair_work,
+            read_only,
+            pair_work,
+            full.used
+        );
+
+        // One unit below the full cost, the shadow truncates mid-elimination and `projected`
+        // refuses with `Questions` (never `Ok(Some(empty))`).
+        let mut tight = Work {
+            used: 0,
+            limit: full.used - 1,
+        };
+        assert_eq!(projected(&rows, &s, &mut tight), Err(Refusal::Questions));
+
+        // The same holds in `cell`'s quick path on a satisfiable point `(x = 0, y = 0)`.
+        let f_conj = Formula::And(Shared::new(
+            rows.iter().cloned().map(Formula::Con).collect(),
+        ));
+        let m: Model = [(a("x"), Int::from(0)), (a("y"), Int::from(0))]
+            .into_iter()
+            .collect();
+        let factors = HashSet::new();
+        let within = IntervalSet::of(0, 10);
+        let mut cell_full = Work {
+            used: 0,
+            limit: u64::MAX,
+        };
+        let (c_set, _, _) = cell(&f_conj, &m, &s, &factors, &within, &mut cell_full).unwrap();
+        assert_eq!(c_set, IntervalSet::of(0, 10));
+        assert!(cell_full.used >= read_only + pair_work);
+
+        let mut cell_tight = Work {
+            used: 0,
+            limit: cell_full.used - 1,
+        };
+        assert_eq!(
+            cell(&f_conj, &m, &s, &factors, &within, &mut cell_tight).err(),
+            Some(Refusal::Questions)
+        );
+    }
+
+    /// PRES-pugh-xr round 3, question D(2): when `canonical` or `System::add` passes the meter's
+    /// limit inside `solve`, `solve` stops at once instead of running color refinement, component
+    /// search, `System::add` and `relaxed_empty` across the remaining rows and components.
+    #[test]
+    fn spent_canonical_and_system_add_stop_without_unbounded_tail_charges() {
+        let mut cons: Vec<Con> = Vec::new();
+        for i in 0..80 {
+            let x = format!("u{i}");
+            let y = format!("v{i}");
+            cons.push(Con::ge(&lin(&[(&x, 1), (&y, 1)], 0), &Lin::constant(0)));
+            cons.push(Con::ge(&lin(&[(&x, 1), (&y, -1)], 0), &Lin::constant(0)));
+            cons.push(Con::ge(&lin(&[(&x, -1)], 10), &Lin::constant(0)));
+            cons.push(Con::ge(&lin(&[(&y, -1)], 10), &Lin::constant(0)));
+        }
+        // `solve` charges `cons.len() + terms` = `320 + 480 = 800` solver units on entry, and
+        // `canonical` charges `n + cons.len() + terms` = `160 + 320 + 480 = 960` solver units.
+        let entry_charge = (320 + 480) * SOLVER_UNIT;
+        let canon_charge = (160 + 320 + 480) * SOLVER_UNIT;
+
+        // Failing in `canonical` must stop before any `System::add` runs.
+        let mut w_canon = Work {
+            used: 0,
+            limit: entry_charge + SOLVER_UNIT,
+        };
+        let r_canon = w_canon.metered(|| super::super::solve(&cons, true));
+        assert_eq!(r_canon, Err(Refusal::Questions));
+        assert_eq!(
+            w_canon.used,
+            entry_charge + canon_charge,
+            "solve continued charging after canonical spent the meter"
+        );
+
+        // Failing in the first component's `System::add` must stop without charging the other 79
+        // components (`320` rows would add `> 80_000` more units if ignored).
+        let step_limit = entry_charge + canon_charge + 4 * SOLVER_UNIT;
+        let mut w_add = Work {
+            used: 0,
+            limit: step_limit,
+        };
+        let r_add = w_add.metered(|| super::super::solve(&cons, true));
+        assert_eq!(r_add, Err(Refusal::Questions));
+        assert!(
+            w_add.used <= step_limit + 4 * SOLVER_UNIT,
+            "System::add kept running across remaining rows/components: used={} vs limit={}",
+            w_add.used,
+            step_limit
+        );
     }
 }

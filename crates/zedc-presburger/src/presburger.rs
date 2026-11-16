@@ -10322,7 +10322,21 @@ pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> 
 /// single row `-1 >= 0` where `rows` hold nowhere. `None` when an atom outside `keep` cannot be
 /// eliminated so.
 pub fn eliminated(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
-    match shadow(rows, keep, true) {
+    eliminated_small(rows, keep, false)
+}
+
+/// The same size-preserving exact shadow as `eliminated`, with generated rows charged.
+/// Only a caller inside `exact::Work::metered` may read this: a spent shadow returns
+/// `None` internally, also the contradiction marker, and the enclosing meter must veto it.
+/// Pugh (CACM 1992), exact real/dark shadows: charging changes no elimination condition.
+/// Tradeoff: generated substitutions and bound pairs used to run outside the cover's
+/// ledger; counting them can refuse a cover earlier. The CPU fit remains a separate task.
+pub(super) fn eliminated_counted(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    eliminated_small(rows, keep, true)
+}
+
+fn eliminated_small(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, charged: bool) -> Option<Vec<Con>> {
+    match shadow_logged(&mut rows.iter(), keep, true, false, charged, None) {
         None => Some(vec![Con::ge(&Lin::constant(0), &Lin::constant(1))]),
         Some(out) => (out.iter())
             .all(|c| c.lin.terms.keys().all(keep))
@@ -10590,6 +10604,9 @@ fn shadow_logged<'a>(
             else {
                 return false;
             };
+            if charged && exact::charge(d.rows.len() as u64).is_err() {
+                return false;
+            }
             let e = if e.lin.terms[&x].is_positive() {
                 e.lin.clone()
             } else {
@@ -10613,6 +10630,9 @@ fn shadow_logged<'a>(
             && (grow
                 || others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs
                 || eq_trial());
+        if charged && exact::spent() {
+            return None;
+        }
         // With `dark`, an atom is eliminated too when each pair of its bounds has, in its real
         // shadow, the integer points of its dark shadow ([`Side1::dark_is_real`], always so
         // for a coefficient 1 or -1): the dark shadow of the whole then has the points of the
@@ -10633,6 +10653,11 @@ fn shadow_logged<'a>(
                         old_terms += c.lin.terms.len();
                         Side1::push(c, &x, i, &mut lows, &mut highs);
                     }
+                }
+                // This feasibility trial combines pairs before the actual elimination.
+                // Charge it separately: a rejected trial still did those combinations.
+                if charged && exact::charge((lows.len() * highs.len()) as u64).is_err() {
+                    return None;
                 }
                 let (mut new_rows, mut new_terms) = (0, 0);
                 let all = (lows.iter()).all(|lo| {
@@ -13835,7 +13860,7 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
         rows,
         keys,
         row_keys,
-    } = canonical(atoms, &cons);
+    } = canonical(atoms, &cons)?;
     let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
     // In the order of `canonical`, so that neither the order of the constraints nor the names of
     // the variables decide the order of the work, except among variables that refinement cannot
@@ -14387,7 +14412,12 @@ fn parts(
         match search(vs.len(), &rows, &part_keys, want, &part_name) {
             Ok(None) => return Ok(None),
             Ok(Some(p)) => points.push((vs, p)),
-            Err(r) => refused = Some(least(refused, r)),
+            Err(r) => {
+                if exact::spent() {
+                    return Err(r);
+                }
+                refused = Some(least(refused, r));
+            }
         }
     }
     if let Some(r) = refused {
@@ -14875,12 +14905,20 @@ impl Ties {
 /// rows of one color are equal, so the orders depend on the structure alone. O(n + m + t log t)
 /// for n variables, m rows and t terms, with the sorts of each row's terms and each variable's
 /// rows. The colors of the rows, in the order taken, come with them.
-fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Canonical {
+fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Result<Canonical, Refusal> {
     let n = atoms.len();
     // A question of the cover is charged the variables, rows and terms read here
-    // (PRES-pugh-work-budget); a refusal past the limit is read by the caller's next charge.
+    // (PRES-pugh-work-budget). Stop before color refinement when admission fails; a
+    // discarded charge used to run that O(t log t) pass after the question was refused.
     let terms: usize = cons.iter().map(|c| c.lin.terms.len()).sum();
-    let _ = exact::charge((n + cons.len() + terms) as u64);
+    exact::charge((n + cons.len() + terms) as u64)?;
+    Ok(canonical_order(atoms, cons))
+}
+
+// The public coloring utility has no fallible result. The solver uses the counted entry
+// above (and `colors_counted` below), so an interrupted ordering is never used as a proof.
+fn canonical_order(atoms: Vec<Atom>, cons: &[&Con]) -> Canonical {
+    let n = atoms.len();
     let color = stable_colors(&atoms, cons, &[], &[]);
     let by_color = |v: &usize| (color[*v], *v);
     let mut rows_of: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -14966,6 +15004,14 @@ struct Canonical {
 /// of the rows does not tell them apart, and the numbers depend on that structure only, not on
 /// the names.
 pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
+    colors_inner(cons, false).expect("the unmetered public coloring utility")
+}
+
+fn colors_counted(cons: &[Con]) -> Result<(Vec<Atom>, BTreeMap<Atom, u64>), Refusal> {
+    colors_inner(cons, true)
+}
+
+fn colors_inner(cons: &[Con], counted: bool) -> Result<(Vec<Atom>, BTreeMap<Atom, u64>), Refusal> {
     let cons: Vec<&Con> = cons.iter().collect();
     let atoms: Vec<Atom> = cons
         .iter()
@@ -14977,13 +15023,17 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
         atoms: order,
         keys: colors,
         ..
-    } = canonical(atoms, &cons);
+    } = if counted {
+        canonical(atoms, &cons)?
+    } else {
+        canonical_order(atoms, &cons)
+    };
     let colors = order
         .iter()
         .zip(colors)
         .map(|(a, k)| (a.clone(), k as u64))
         .collect();
-    (order, colors)
+    Ok((order, colors))
 }
 
 /// The color of each of `atoms` (sorted, each in some row of `cons`), then of each row of
@@ -15452,8 +15502,12 @@ impl System {
 
     fn add(&mut self, r: Row) {
         // A question of the cover is charged each row made, its terms and one more
-        // (PRES-pugh-work-budget); past its limit `Omega::run` stops at its next step.
-        let _ = exact::charge(r.a.len() as u64 + 1);
+        // (PRES-pugh-work-budget). Do not normalize or index a row after admission
+        // fails. This leaves a partial system, used only inside a metered question whose
+        // answer is refused regardless of the solver's provisional result.
+        if exact::charge(r.a.len() as u64 + 1).is_err() {
+            return;
+        }
         let r = match r.normal(false) {
             Norm::False => {
                 self.empty = true;
@@ -16011,6 +16065,9 @@ impl System {
             with.iter().partition(|r| r.at(j).is_positive());
         for lo in &lowers {
             for hi in &uppers {
+                if exact::spent() {
+                    return with;
+                }
                 self.add(combine(lo, hi, j, dark));
             }
         }
@@ -16046,12 +16103,18 @@ fn apart(lowers: Vec<usize>, mut hi: Vec<usize>, beyond: usize) -> usize {
 fn relaxed_empty(gs: &System) -> bool {
     let mut sys = System::new(gs.vars.iter().map(|v| v.key));
     for (a, r) in &gs.rows {
+        if exact::spent() {
+            return false;
+        }
         sys.add(Row {
             a: a.clone(),
             k: r.k.clone(),
         });
     }
     while !sys.empty {
+        if exact::spent() {
+            return false;
+        }
         let Some((fill, js)) = sys.least(&[&sys.exact, &sys.inexact]) else {
             return false;
         };
@@ -16059,6 +16122,9 @@ fn relaxed_empty(gs: &System) -> bool {
             return box_empty(&sys);
         };
         for j in js {
+            if exact::spent() {
+                return false;
+            }
             sys.eliminate(j, false);
         }
     }
@@ -16735,6 +16801,9 @@ impl Omega {
                     ));
                 }
                 for (r, rel) in base {
+                    if exact::spent() {
+                        break;
+                    }
                     if *rel == Rel::Eq && r.a.len() == 1 {
                         continue;
                     }
@@ -16776,6 +16845,9 @@ impl Omega {
             }
         }
         for (r, rel) in base {
+            if exact::spent() {
+                break;
+            }
             match rel {
                 Rel::Eq => es.push(r.clone(), &mut sys),
                 Rel::Ge => sys.add(r.clone()),
@@ -17011,6 +17083,9 @@ impl Omega {
                             if relaxed_empty(&self.sys) {
                                 return Leaf::Empty;
                             }
+                            if exact::spent() {
+                                return Leaf::Refused(Refusal::Questions);
+                            }
                         }
                         if self.exact3 && self.sys.live == 3 {
                             // A gray shadow inside a splinter, which would leave the question
@@ -17079,6 +17154,9 @@ impl Omega {
                 self.tested = true;
                 if relaxed_empty(&self.sys) {
                     return Leaf::Empty;
+                }
+                if exact::spent() {
+                    return Leaf::Refused(Refusal::Questions);
                 }
             }
             // The rows are empty when the box of their bounds shows it, and have a point when
@@ -17882,6 +17960,9 @@ impl Omega {
         // pieces of zedc_presburger, zedc_preimage and l01_ (2026-11-14) gave the same
         // verdicts as before, apart from two snapshots that already failed on main.
         for r in rows {
+            if exact::spent() {
+                return;
+            }
             let loose = self.sys.loose.contains(&lesser(&r.a));
             let r = resolve(&r, &defs, &at);
             if loose && !r.a.is_empty() {
@@ -18160,8 +18241,7 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         // Complexity tradeoff: one more pass over `f` for each projection the cover checks,
         // O(n log n) in the size of `f` (`signed`, then `canonical_parts`), against handing the
         // cover `f` as ordered, which keeps each sign as written and lets the refusal depend on it.
-        solver_found()
-            .map(|e| exact::exact_each(&canonical_parts(&signed(f, Signs::Chosen)), syms, e))
+        solver_found().map(|e| exact::exact_each(&cover_input(f), syms, e))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
@@ -18267,6 +18347,19 @@ fn canonical_parts(f: &Formula) -> Formula {
                 .clone()
         },
     )
+}
+
+/// The cover's row signs and constructor simplifications must both be independent of
+/// which rows `signed` happened to change. In particular a raw `And([e,e])` can survive
+/// `signed` when e already has the chosen sign, while `And([-e,-e])` is rebuilt as e.
+/// Rebuild every compound after signing, before sorting and interning, so both have one
+/// copy. Do this only for the cover: normalizing the solver's input can lose precision.
+/// Tradeoff: an additional shared-DAG fold and constructor work; no search or allowance.
+/// This is Boolean idempotence around the existing Pugh exact projection, not a new
+/// quantifier-elimination rule. It does not canonicalize arbitrary semantic equivalence.
+fn cover_input(f: &Formula) -> Formula {
+    let signed = signed(f, Signs::Chosen);
+    canonical_parts(&signed.map_cons(&|c| Formula::Con(c.clone())))
 }
 
 /// Exact projections without a cover question when every row is a difference row,
@@ -25359,7 +25452,13 @@ fn find_probe_points(
             explicit_unary.insert(a.clone());
         }
     }
-    let (ord_atoms, col_map) = colors(&solve_cons);
+    // A refused ordering means the question's meter is spent, so its answer is refused
+    // whatever the search finds: stop at once (as `exact::spent` asks), rather than
+    // `(false, false)`, which would fall back to `probe_kept`'s per-disjunct loop and do
+    // that work after the refusal (PRES-pugh-xr round 3).
+    let Ok((ord_atoms, col_map)) = colors_counted(&solve_cons) else {
+        return (true, false);
+    };
     let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
 
     let mut plans: Vec<RowPlan> = Vec::with_capacity(num_rows);
@@ -25960,7 +26059,7 @@ fn try_pick_disjoint_wide<'a>(
             explicit_unary.insert(a.clone());
         }
     }
-    let (ord_atoms, col_map) = colors(&red_cons);
+    let (ord_atoms, col_map) = colors_counted(&red_cons).ok()?;
     let ranks: HashMap<&Atom, usize> = ord_atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
 
     // No row's target lies out of its reach here: every row is an equation with unit
