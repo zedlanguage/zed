@@ -503,6 +503,8 @@ fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>,
     // A list shared by the branches that hold it, so a branch is copied in O(1).
     struct Node<T>(T, List<T>);
     type List<T> = Option<Rc<Node<T>>>;
+    // A branch: the rows taken, and the parts still to take, each with its sign.
+    type Branch<'a> = (List<Con>, List<(&'a Formula, bool)>);
     fn push<T>(l: &List<T>, x: T) -> List<T> {
         Some(Rc::new(Node(x, l.clone())))
     }
@@ -515,15 +517,13 @@ fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>,
             }
         }
     }
-    let done = |branches: Vec<(List<Con>, List<(&Formula, bool)>)>| {
+    let done = |branches: Vec<Branch>| {
         for (r, t) in branches {
             unwind(r);
             unwind(t);
         }
     };
-    // A branch: the rows taken, and the parts still to take, each with its sign.
-    let mut branches: Vec<(List<Con>, List<(&Formula, bool)>)> =
-        vec![(None, push(&None, (f, true)))];
+    let mut branches: Vec<Branch> = vec![(None, push(&None, (f, true)))];
     let mut read = 0u64;
     let mut charged = 0u64;
     'branch: while let Some((mut rows, mut todo)) = branches.pop() {
@@ -668,10 +668,10 @@ fn cover(
     // The exact projection read from the structure of `f`, with no question (`direct`). It lies
     // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
     // another part has no point, and then every answer is made empty (`exact_each`).
-    if factors.is_empty() {
-        if let Some(set) = tried(&mut { work.limit }, |w| direct(f, s, w)) {
-            return Ok((set, false));
-        }
+    if factors.is_empty()
+        && let Some(set) = tried(&mut { work.limit }, |w| direct(f, s, w))
+    {
+        return Ok((set, false));
     }
     // A first point without a question where one comes soon (`quick_point`): every point of
     // `f` has `s` in `h`, so its cell is read as a question's point would be.
@@ -1010,7 +1010,7 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
                                     };
                                     set = set.join(&p);
                                 }
-                                Part::Set(set, others(&[c.clone()], s))
+                                Part::Set(set, others(std::slice::from_ref(c), s))
                             }
                         });
                     }
@@ -2255,7 +2255,10 @@ mod tests {
             }
             assert!(each.1.is_empty());
             assert_eq!(EXACT_QUESTIONS.get(), 0);
-            assert_eq!(project_each_exact(&f, &[a("x"), a("y"), a("z")]).unwrap(), each);
+            assert_eq!(
+                project_each_exact(&f, &[a("x"), a("y"), a("z")]).unwrap(),
+                each
+            );
             assert_eq!(EXACT_QUESTIONS.get(), 0);
         }
         assert!(super::super::certified_domains(&evens(4), &[a("x")]).is_none());
