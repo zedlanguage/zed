@@ -147,6 +147,9 @@ enum Frame<'a> {
     Unary(Prim, &'a Expr),
     /// A call read at a carrier ([`Fit::Read`]), by its span, once elaborated: the cast to it.
     Read(Span, Prim),
+    /// A value rebuilt for a type holding a partial function type ([`Fit::Coerce`]), by its
+    /// span, once elaborated.
+    Coerce(Span, &'a check::Coercion),
     /// A generic literal of [`check::Info::witness`], by its span, once elaborated: it takes
     /// the carrier of the value of the parameter of that binder.
     Witness(Span, &'a check::Witness),
@@ -1017,6 +1020,15 @@ impl<'a> Elab<'a> {
                         _ => Prim::CastF64,
                     };
                     m.k(Frame::Read(e.span, p));
+                    m.stack.push(Job::Expr(e));
+                    return;
+                }
+            }
+            // A value passed where a type holding a partial function type is expected: the
+            // value, then rebuilt so that each function it holds there tests its domain.
+            Some(Fit::Coerce(c)) => {
+                if self.coercing.insert(e.span) {
+                    m.k(Frame::Coerce(e.span, c));
                     m.stack.push(Job::Expr(e));
                     return;
                 }
@@ -2300,7 +2312,14 @@ impl<'a> Elab<'a> {
                 m.k(Frame::FitBody(Box::new(ff)));
                 m.body(body);
             }
-            (Fit::Adapter { from, domain }, _) => {
+            (
+                Fit::Adapter {
+                    from,
+                    domain,
+                    result,
+                },
+                _,
+            ) => {
                 let ExprKind::Name(n) = &e.kind else {
                     unreachable!("an adapter is recorded on a name")
                 };
@@ -2308,6 +2327,10 @@ impl<'a> Elab<'a> {
                     let temps: Vec<Arc<str>> = from.iter().map(|_| self.temp()).collect();
                     let args = from.iter().map(|&j| Term::Var(temps[j].clone())).collect();
                     let call = Term::App(Shared::new(f), args);
+                    let call = match result {
+                        Some(c) => self.coerce(call, c),
+                        None => call,
+                    };
                     let body = match domain {
                         Some(d) => in_domain(d, &temps, call),
                         None => call,
@@ -2318,6 +2341,84 @@ impl<'a> Elab<'a> {
             }
             _ => unreachable!("a lambda fit is recorded on a lambda"),
         }
+    }
+
+    /// `v` rebuilt by `c` ([`check::Coercion`]): a function as a lambda that calls it where
+    /// its arguments are in its domain and gives `#notFound` elsewhere ([`in_domain`]), its
+    /// result rebuilt in turn; a tuple as the tuple of its components, each rebuilt where `c`
+    /// says. Each value is bound to a temporary once and read from it.
+    ///
+    /// Cost: O(size of `c`) terms. The nodes of `c` are listed breadth first, so that each
+    /// node's children come after it, then built from the last to the first, each from its
+    /// children's terms, without recursion, since `c` nests as deep as the types it follows.
+    fn coerce(&mut self, v: Term, c: &check::Coercion) -> Term {
+        struct Node<'c> {
+            c: &'c check::Coercion,
+            x: Arc<str>,
+            kids: Vec<Option<usize>>,
+        }
+        let mut ns = vec![Node {
+            c,
+            x: self.temp(),
+            kids: Vec::new(),
+        }];
+        let mut i = 0;
+        while i < ns.len() {
+            let kids: Vec<Option<&check::Coercion>> = match ns[i].c {
+                check::Coercion::Fn { result, .. } => vec![result.as_deref()],
+                check::Coercion::Tuple(cs) => cs.iter().map(Option::as_ref).collect(),
+            };
+            let mut at = Vec::with_capacity(kids.len());
+            for k in kids {
+                at.push(k.map(|c| {
+                    let x = self.temp();
+                    ns.push(Node {
+                        c,
+                        x,
+                        kids: Vec::new(),
+                    });
+                    ns.len() - 1
+                }));
+            }
+            ns[i].kids = at;
+            i += 1;
+        }
+        let mut built: Vec<Option<Term>> = (0..ns.len()).map(|_| None).collect();
+        for i in (0..ns.len()).rev() {
+            let x = || Term::Var(ns[i].x.clone());
+            // The term `input` rebuilt by the child at `kid`, if there is one.
+            let mut by = |kid: Option<usize>, input: Term| match kid {
+                Some(j) => {
+                    let body = built[j].take().expect("a child is built before its parent");
+                    Term::Let(ns[j].x.clone(), Shared::new(input), Shared::new(body))
+                }
+                None => input,
+            };
+            let t = match ns[i].c {
+                check::Coercion::Fn { arity, domain, .. } => {
+                    let temps: Vec<Arc<str>> = (0..*arity).map(|_| self.temp()).collect();
+                    let args = temps.iter().map(|t| Term::Var(t.clone())).collect();
+                    let call = by(ns[i].kids[0], Term::App(Shared::new(x()), args));
+                    let body = match domain {
+                        Some(d) => in_domain(d, &temps, call),
+                        None => call,
+                    };
+                    Term::Lam(temps, Shared::new(body))
+                }
+                check::Coercion::Tuple(cs) => {
+                    let parts = (0..cs.len())
+                        .map(|k| {
+                            let at = Term::Lit(Value::Int(k as i64));
+                            by(ns[i].kids[k], Term::Prim(Prim::TupleGet, vec![x(), at]))
+                        })
+                        .collect();
+                    Term::Prim(Prim::Tuple, parts)
+                }
+            };
+            built[i] = Some(t);
+        }
+        let top = built[0].take().expect("the value's term");
+        Term::Let(ns[0].x.clone(), Shared::new(v), Shared::new(top))
     }
 
     /// Takes up a caller where its job left off.
@@ -2352,6 +2453,11 @@ impl<'a> Elab<'a> {
             Frame::Read(s, p) => {
                 self.reading.remove(&s);
                 let t = m.t().map(|a| Term::Prim(p, vec![a]));
+                m.give(t);
+            }
+            Frame::Coerce(s, c) => {
+                self.coercing.remove(&s);
+                let t = m.t().map(|v| self.coerce(v, c));
                 m.give(t);
             }
             Frame::Witness(s, w) => {

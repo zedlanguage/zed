@@ -30,7 +30,8 @@ fn a_function_with_the_names_reordered_gets_an_adapter() {
         fits(&p),
         [Fit::Adapter {
             from: vec![1, 0],
-            domain: None
+            domain: None,
+            result: None
         }]
     );
     assert_eq!(value(&p, "y"), "-1");

@@ -2143,9 +2143,6 @@ fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_
         // One level, `->?`, the variable in a tuple.
         "p(f: (x: ((int, int),) | ((int, int, int),)) ->? int) = 0;\n\
          q(g: (x: ((V, int),)) -> int for V in int) = p(f: g);\n",
-        // Two levels, `->?` at both.
-        "p(f: (h: (x: ((int, int),) | ((int, int, int),)) ->? int) ->? int) = 0;\n\
-         q(g: (h: (x: ((V, int),)) -> int) -> int for V in int) = p(f: g);\n",
         // Two levels, exact: `(x: V) -> int` is `(x: int) -> int`; one level of the same is
         // accepted.
         "p(f: (h: (x: int) -> int) -> int) = 0;\n\
@@ -2155,10 +2152,7 @@ fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_
          for V in int) -> int) = 0;\n\
          q(g: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) -> int) \
          -> int for V in int) = p(f: g);\n",
-        // The two forms the bucket tests below use with `int | f64`, accepted with `int`.
-        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) ->? int \
-         for V in int) ->? int) = 0;\n\
-         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int) = p(f: g);\n",
+        // The form the bucket tests below use with `int | f64`, accepted with `int`.
         "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) \
          -> int) = 0;\n\
          q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int \
@@ -2173,6 +2167,25 @@ fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_
     let src =
         "p(f: (x: (int, int) | String) ->? int) = 0;\nq(g: (x: (T, T)) -> String) = p(f: g);\n";
     assert_eq!(type_errors(src).len(), 1, "{src}");
+    // Two levels, `->?` at the outer arrow, `g` of exact arrows: the types fit, and the one
+    // error is that a call through `f` of an `h` outside `g`'s domain must give `#notFound`,
+    // which no test at run time can tell, since a function value does not show its domain
+    // (FAIL-partial-slot-untestable-domain). Before that row these were accepted, and such a
+    // call ran `g` on an `h` it does not take.
+    for src in [
+        "p(f: (h: (x: ((int, int),) | ((int, int, int),)) ->? int) ->? int) = 0;\n\
+         q(g: (h: (x: ((V, int),)) -> int) -> int for V in int) = p(f: g);\n",
+        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)) ->? int \
+         for V in int) ->? int) = 0;\n\
+         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int) = p(f: g);\n",
+    ] {
+        let errors = type_errors(src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(
+            errors[0].contains("`h` is a function, whose domain its value does not show"),
+            "{src}: {errors:?}"
+        );
+    }
 }
 
 /// `V` an own variable of `g`, bound by the outer comparison, and `V` of `f`'s `h` its own, in
@@ -2182,6 +2195,8 @@ fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_
 /// This was the form of `an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`,
 /// which printed the bucket refused here before; with exact arrows that test now reaches the
 /// bucket and prints the two variables both as `V`, which is FAIL-print-two-variables-one-name.
+/// The types fit; the one error is that a call through `f` of an `h` outside `g`'s domain must
+/// give `#notFound`, which no test at run time can tell (FAIL-partial-slot-untestable-domain).
 #[test]
 fn an_own_variable_of_an_outer_comparison_bound_in_a_partial_domain_fits() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
@@ -2191,7 +2206,12 @@ fn an_own_variable_of_an_outer_comparison_bound_in_a_partial_domain_fits() {
          q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int | f64) \
          = p(f: g);\n"
     );
-    assert_eq!(type_errors(&src), Vec::<String>::new());
+    let errors = type_errors(&src);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("`h` is a function, whose domain its value does not show"),
+        "{errors:?}"
+    );
 }
 
 /// The int literal `i` as a kernel type.

@@ -287,3 +287,127 @@ fn a_narrower_range_domain_says_so_in_the_carrier_form() {
         "small(x: int[0..<10]) = x;\napply(f: (x: int) ->? int) = f(x: 100) else 0;\nr = apply(f: small);\n",
     );
 }
+
+/// Row FAIL-fit-declared-permuted-needs: a declared function passed with its named parameters
+/// in another order keeps its needs on its own parameters, so a declared range is checked on
+/// the parameter it is declared on, whichever order the slot writes. `sub`'s `b` takes
+/// `int[0..=9]`, and the slot passes any `int` there: refused, as with both parameters `int`.
+/// Before the fix the range need read the slot's parameter at `b`'s own place, `a: bool`,
+/// found no range there, and the call gave 40, outside `b`'s domain.
+#[test]
+fn a_reordered_function_keeps_its_ranges_on_its_own_parameters() {
+    for (a, b) in [("bool", "true"), ("int", "3")] {
+        let src = format!(
+            "sub(a: {a}, b: int[0..=9]) = if {b} == {b} {{ b }} else {{ 0 }};\napply(f: (b: int, a: {a}) -> int) = f(b: 40, a: {b});\nr = apply(f: sub);\n"
+        );
+        let errors = type_errors(&src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(
+            errors[0].contains("`b` in `int[0..=9]` where"),
+            "{src}: {errors:?}"
+        );
+    }
+    // Within the range at a partial slot: the call runs, outside it misses.
+    let partial = |arg: &str| {
+        format!(
+            "sub(a: bool, b: int[0..=9]) = if a {{ b }} else {{ 0 }};\napply(f: (b: int, a: bool) ->? int) = f(b: {arg}, a: true) else 7;\nr = apply(f: sub);\n"
+        )
+    };
+    runs_to(&partial("4"), "r", "4");
+    runs_to(&partial("40"), "r", "7");
+}
+
+/// Row FAIL-partial-slot-nested-guard: a function of exact domain that reaches a partial slot
+/// inside another value (a tuple), or as the value of any expression (a call, an `if`, the
+/// result of a function passed), is rebuilt where the partial type is expected, so that a call
+/// through it outside its domain misses with `#notFound`, as for a name. Before the fix each
+/// of these called `small` with 2.5, and the run stopped with a bug in zedc.
+#[test]
+fn a_function_inside_a_value_misses_outside_its_domain() {
+    let small = "small(x: int) = x + 1;\n";
+    let tuple = "useWide(b: ((x: int | f64) ->? int,)) = b[0](x: K) else 9;\n";
+    let apply = "apply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let cases = [
+        (tuple, "a = useWide(b: (small,));\n", "9"),
+        (tuple, "t = (small,);\na = useWide(b: t);\n", "9"),
+        (apply, "get() = small;\na = apply(f: get());\n", "6"),
+        (
+            apply,
+            "a = apply(f: if true { small } else { small });\n",
+            "6",
+        ),
+        (
+            apply,
+            "q(g: (x: int) -> int, n: int) = apply(f: if n > 0 { g } else { g });\na = q(g: small, n: 1);\n",
+            "6",
+        ),
+        (
+            "apply(f: () -> ((x: int | f64) ->? int)) = f()(x: K) else 6;\n",
+            "get() = small;\na = apply(f: get);\n",
+            "6",
+        ),
+    ];
+    for (slot, rest, miss) in cases {
+        let src = |k: &str| format!("{small}{}{rest}", slot.replace('K', k));
+        runs_to(&src("2.5"), "a", miss);
+        runs_to(&src("3"), "a", "4");
+    }
+}
+
+/// A family passed to a partial slot is not rebuilt as a function: its lookup of a key it
+/// does not hold gives `#notFound` already, and it stays data for the operations on data the
+/// slot allows (the remaps of l08_02, which broke when a family was rebuilt as a lambda).
+#[test]
+fn a_family_passed_to_a_partial_slot_stays_a_family() {
+    let tuple = "useWide(b: ((int | f64) ->? int,)) = b[0](K) else 9;\n";
+    let apply = "apply(f: (int | f64) ->? int) = f(K) else 6;\n";
+    let cases = [
+        (tuple, "a = useWide(b: ({ 3 -> 4 },));\n", "9"),
+        (apply, "m = { 3 -> 4 };\na = apply(f: m);\n", "6"),
+        (apply, "a = apply(f: { 3 -> 4 });\n", "6"),
+    ];
+    for (slot, rest, miss) in cases {
+        let src = |k: &str| format!("{}{rest}", slot.replace('K', k));
+        runs_to(&src("2.5"), "a", miss);
+        runs_to(&src("5"), "a", miss);
+        runs_to(&src("3"), "a", "4");
+    }
+}
+
+/// Row FAIL-partial-slot-untestable-domain: a parameter whose type is a variable bounded by
+/// one carrier is tested by that carrier, since a call fixes the variable to one carrier of
+/// its bound; a domain no test at run time can read (a parameter of function type, a variable
+/// bounded by several carriers, a function beside other values) is refused, with the repair
+/// as code, where before the call ran the function's body on a value it does not take.
+#[test]
+fn a_domain_no_test_can_read_is_refused() {
+    let one = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\nq(g: (x: V) -> int for V in int) = apply(f: g);\na = q(g: small);\n"
+        )
+    };
+    runs_to(&one("2.5"), "a", "6");
+    runs_to(&one("3"), "a", "4");
+    let refused = [
+        (
+            "useH(h: (x: int) -> int) = h(x: 1);\napply(f: (h: ((x: int) -> int) | int) ->? int) = f(h: 3) else 6;\na = apply(f: useH);\n",
+            "`h` is a function, whose domain its value does not show",
+        ),
+        (
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\nq(g: (x: V) -> int for V in int | f64) = apply(f: g);\n",
+            "`x` is `V`, which a call may fix to any of `int | f64`",
+        ),
+        (
+            "small(x: int) = x + 1;\nuseWide(b: ((x: int | f64) ->? int) | int) = 9;\npick(n: int) = if n > 0 { small } else { 1 };\na = useWide(b: pick(n: 1));\n",
+            "sits beside other values",
+        ),
+    ];
+    for (src, why) in refused {
+        let errors = type_errors(src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(
+            errors[0].contains(why) && errors[0].contains("must give `#notFound`"),
+            "{src}: {errors:?}"
+        );
+    }
+}

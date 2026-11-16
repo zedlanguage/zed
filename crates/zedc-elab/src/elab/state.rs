@@ -38,6 +38,9 @@ pub(super) struct Elab<'a> {
     /// The calls being read at a carrier ([`zedc_check::check::Fit::Read`]), each while it is
     /// elaborated.
     pub(super) reading: HashSet<Span>,
+    /// The values being rebuilt for a type that holds a partial function type
+    /// ([`zedc_check::check::Fit::Coerce`]), each while it is elaborated.
+    pub(super) coercing: HashSet<Span>,
     /// The term of each component read a generic literal takes its carrier from
     /// ([`zedc_check::check::Witness`]), by the read's span: built once and shared.
     pub(super) reads: HashMap<Span, Shared>,
@@ -106,6 +109,7 @@ impl<'a> Elab<'a> {
             passing: HashMap::new(),
             guarding: HashSet::new(),
             reading: HashSet::new(),
+            coercing: HashSet::new(),
             reads: HashMap::new(),
             split: HashMap::new(),
             fresh: 0,

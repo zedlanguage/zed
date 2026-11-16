@@ -112,7 +112,16 @@ pub enum Fit {
         /// may pass a key outside it: such a call gives `#notFound` and does not reach the
         /// function (DESIGN.md sec:type_language, "Morphism types carry two domain bounds").
         domain: Option<Domain>,
+        /// How each value the function returns is rebuilt, where its result type holds a
+        /// function of exact arrows at a place where the expected type's result holds a
+        /// partial one ([`Coercion`]).
+        result: Option<Box<Coercion>>,
     },
+    /// A value whose type holds a function of exact arrows at a place where the type its slot
+    /// expects holds a partial function type, as `(small,)` passed as `((x: int | f64) ->?
+    /// int,)`, or `get()` with `get() = small`: the value, rebuilt with each such function
+    /// called through the test of its domain (FAIL-partial-slot-nested-guard).
+    Coerce(Coercion),
     /// A call whose type lists numeric literal values alone, as `g(c)` with `g(positional c:
     /// bool) = if c { 2 } else { 1 }`, at a parameter of the one numeric carrier recorded:
     /// each value is read at that carrier, and every one of them is exactly a value of it
@@ -130,6 +139,27 @@ pub struct Domain {
     pub arrows: Vec<Vec<KType>>,
     /// The declared range of each parameter, if it has one.
     pub ranges: Vec<Option<WrittenRange>>,
+}
+
+/// How a value is rebuilt where its type holds a function of exact arrows at a place where
+/// the type wanted holds a partial function type: a call through the partial type of a key
+/// outside the function's domain gives `#notFound` and does not reach the function (DESIGN.md
+/// sec:type_language, "Morphism types carry two domain bounds"), so the function is called
+/// through a lambda that tests the key ([`Fit::Coerce`], [`Fit::Adapter`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Coercion {
+    /// A function of `arity` parameters, called through a lambda that tests its domain, if
+    /// `domain` is given, and rebuilds the value it returns, if `result` is given.
+    Fn {
+        /// The number of its parameters.
+        arity: usize,
+        /// Its domain, in the order of the expected type's parameters.
+        domain: Option<Domain>,
+        /// How the value it returns is rebuilt.
+        result: Option<Box<Coercion>>,
+    },
+    /// A tuple, each component rebuilt where it has a coercion.
+    Tuple(Vec<Option<Coercion>>),
 }
 
 /// What a call names, for the repairs of a [`Misfit`]: a declared function, a prelude word, or

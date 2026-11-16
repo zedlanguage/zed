@@ -223,19 +223,23 @@ impl Cond<'_> {
 type Held<'a> = Option<(bool, Saved<'a>)>;
 
 /// What the type expected where an expression is checked says about it: the one function
-/// type it is, if it is one, and the one numeric carrier it holds, if it holds one. Only
-/// these decide how the expression is checked, so a frame keeps them and not the type.
+/// type it is, if it is one, the one numeric carrier it holds, if it holds one, and the type
+/// itself where it holds a partial function type at some place ([`Ck::coercion`]). Only these
+/// decide how the expression is checked, so a frame keeps them and not the type.
 #[derive(Default)]
 pub(super) struct Want {
     fun: Option<Arc<Sig>>,
     num: Option<Carrier>,
+    guard: Option<Ty>,
 }
 
 impl Want {
+    /// Cost: one walk of `t`'s functions, results and components ([`holds_fn`]).
     fn of(t: &Ty) -> Want {
         Want {
             fun: only_fn(t),
             num: t.numeric_carrier(),
+            guard: holds_fn(t, &|s| s.arrows.iter().any(|a| a.partial)).then(|| t.clone()),
         }
     }
 }
@@ -323,9 +327,10 @@ pub(super) enum Frame<'a> {
         x: Box<Arg<'a>>,
     },
     ArgOf(&'a Expr),
-    /// A name of function type passed where the function type is expected: records the test
-    /// of its domain a call through that type needs ([`Ck::domain_guard`]).
-    Guarded(&'a Expr, Arc<Sig>),
+    /// A value checked where a type that holds a partial function type is expected: records
+    /// how it is rebuilt so that a call through that type of a key outside the domain of a
+    /// function it holds misses ([`Ck::coercion`]).
+    Guarded(&'a Expr, Ty),
     Scope(Box<ScopeF<'a>>),
     Tests(Box<ScopeF<'a>>),
     TestArgs(Box<TestF<'a>>),
@@ -1465,20 +1470,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Guarded(e, want) => {
                 let t = m.take_ty();
-                // Its parameters are in `want`'s order where it fits: a function type fits
-                // another only with the same parameters in the same order ([`ty::fits_sig`]).
-                if let Some(s) = only_fn(&t)
-                    && s.params.len() == want.params.len()
-                {
-                    let ranges = s.params.iter().map(|p| p.range.clone()).collect();
-                    if let Some(domain) = self.domain_guard(&s, ranges, &want) {
-                        let from = (0..s.params.len()).collect();
-                        let fit = Fit::Adapter {
-                            from,
-                            domain: Some(domain),
-                        };
-                        self.put(Undo::Fit(e.span, Some(fit)));
-                    }
+                // One fit a span: the other fits of an expression that is not a lambda or a
+                // declared function's name (which do not come here) are [`Fit::Read`], on a
+                // call whose type lists numbers alone, which holds no function, so `coercion`
+                // gives none there.
+                match self.coercion(&t, &want) {
+                    Ok(None) => {}
+                    Ok(Some(c)) => self.put(Undo::Fit(e.span, Some(Fit::Coerce(c)))),
+                    Err(why) => self.untestable(e.span, why),
                 }
                 m.ty(t);
             }
@@ -3017,10 +3016,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.fit_declared(id, &sig, e.span, call);
                 return m.ty(t);
             }
-            if let ExprKind::Name(_) = &e.kind {
-                m.k(Frame::Guarded(e, sig));
-                return m.job(Job::Expr(e));
-            }
+        }
+        // Any other value where a type holding a partial function type is wanted: a name, a
+        // tuple, a call, an `if` (FAIL-partial-slot-nested-guard). The frame waits below the
+        // expression's job, or below the type a literal gives at once.
+        if let Some(w) = want.guard {
+            m.k(Frame::Guarded(e, w));
         }
         if let (Some(l), Some(c)) = (literal(e, self.t.text), want.num) {
             self.spells_lit(&l);
@@ -15777,12 +15778,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (i, &j) in from.iter().enumerate() {
             inv[j] = i;
         }
+        // The needs that hold, at `s`'s parameter places, which `range_need_of` reads; the
+        // permuted signature holds them at `e`'s (FAIL-fit-declared-permuted-needs).
+        let kept = guarded_needs(&s, e);
         let permuted = Sig {
             bounds: s.bounds.clone(),
             data: s.data,
             dense: s.dense,
             word: s.word.clone(),
-            needs: guarded_needs(&s, e),
+            needs: needs_in_order(&kept, &from),
             own: s.own.clone(),
             held: s.held.clone(),
             named: s.named,
@@ -15806,13 +15810,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // alone keeps `s` out, the message says the domain is narrower instead
         // (MSG-fn-domain-wider-repair, part 2). The mark costs O(1); the trial is made only
         // once an error was given.
-        let ranged =
-            !self.trying && (permuted.needs.iter()).any(|n| range_need_of(&s, n).is_some());
+        let ranged = !self.trying && kept.iter().any(|n| range_need_of(&s, n).is_some());
         let saved = self.mark();
         let fits = self.fits_slot(&permuted, e, &what, span);
         if ranged && self.errors.len() > saved.errors {
             let at = (span, &saved);
-            if self.narrower_range(&f.name, (&s, &permuted), e, &from, at) {
+            if self.narrower_range(&f.name, (&s, &kept, &permuted), e, &from, at) {
                 return Ty::func(e.clone());
             }
         }
@@ -15848,12 +15851,27 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
         }
         let ranges = inv.iter().map(|&i| s.params[i].range.clone()).collect();
-        let domain = match fits {
-            true => self.domain_guard(&permuted, ranges, e),
-            false => None,
+        let guard = match fits {
+            true => self.domain_guard(&permuted, ranges, e).and_then(|domain| {
+                let result = self.coercion(&results(&s), &results(e))?;
+                Ok((domain, result.map(Box::new)))
+            }),
+            false => Ok((None, None)),
         };
-        if domain.is_some() || from.iter().enumerate().any(|(i, &j)| i != j) {
-            self.put(Undo::Fit(span, Some(Fit::Adapter { from, domain })));
+        let (domain, result) = match guard {
+            Ok(guard) => guard,
+            Err(why) => {
+                self.untestable(span, why);
+                (None, None)
+            }
+        };
+        if domain.is_some() || result.is_some() || from.iter().enumerate().any(|(i, &j)| i != j) {
+            let fit = Fit::Adapter {
+                from,
+                domain,
+                result,
+            };
+            self.put(Undo::Fit(span, Some(fit)));
         }
         Ty::func(e.clone())
     }
@@ -15872,20 +15890,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// domain, since every value of partial type is a family, a lambda that adopted its exact
     /// domain, or one such adapter), or each partial arrow of `e` has an exact arrow of `s`
     /// whose parameter types hold its own, no range declared: its keys are all in the domain.
-    /// An unbounded type variable of `s` holds every value. A parameter whose type has no
-    /// kernel type (a function, a bounded variable) cannot be tested at run time, nor can a
-    /// range on the components of a key ([`domain_test`]); there no test is made and the call
-    /// runs as it did before this test existed, a gap of its own (row
-    /// FAIL-partial-slot-untestable-domain), since refusing those programs, which were
-    /// accepted, would break them. [`guarded_needs`] keeps every range need there.
+    /// An unbounded type variable of `s` holds every value. A variable bounded by one carrier
+    /// is tested by that carrier ([`domain_test`]). A parameter whose type has no kernel type
+    /// there (a function, a variable bounded by several carriers) cannot be tested at run time,
+    /// nor can a range on the components of a key: there the program is refused
+    /// ([`Untestable::Param`], FAIL-partial-slot-untestable-domain), since a call that runs
+    /// `s` on a key outside its domain runs its body on a value it does not take.
     ///
     /// Complexity tradeoff: the cover test is one subtype comparison per parameter per pair of
     /// arrows of `e` and `s`, O(a_e · a_s · params) comparisons, done once per function
     /// passed; the naive alternative, a test on every call, costs the same at run time on each
     /// call where no test is needed. The test itself is O(a_s · params) at each call.
-    fn domain_guard(&self, s: &Sig, ranges: Vec<Option<ParamRange>>, e: &Sig) -> Option<Domain> {
+    fn domain_guard(
+        &self,
+        s: &Sig,
+        ranges: Vec<Option<ParamRange>>,
+        e: &Sig,
+    ) -> Result<Option<Domain>, Untestable> {
         if !e.arrows.iter().any(|a| a.partial) || s.arrows.iter().all(|a| a.partial) {
-            return None;
+            return Ok(None);
         }
         let ranged = ranges.iter().any(Option::is_some);
         let holds = |x: &Ty, y: &Ty| {
@@ -15900,9 +15923,211 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
         };
         if !ranged && e.arrows.iter().filter(|a| a.partial).all(covered) {
-            return None;
+            return Ok(None);
         }
         domain_test(s, ranges)
+            .map(Some)
+            .map_err(|(param, parts)| Untestable::Param {
+                s: Arc::new(s.clone()),
+                e: Arc::new(e.clone()),
+                param,
+                parts,
+            })
+    }
+
+    /// How a value of type `t` is rebuilt where the type `w` is expected, so that a call
+    /// through a partial function type of `w` of a key outside the domain of a function the
+    /// value holds at that place gives `#notFound` and does not reach the function (DESIGN.md
+    /// sec:type_language, "Morphism types carry two domain bounds";
+    /// FAIL-partial-slot-nested-guard). `None` where nothing needs it.
+    ///
+    /// The cases, each sound as follows.
+    /// - `w` holds no partial function type at any place a value stands ([`holds_fn`]): every
+    ///   call through `w` is through an exact arrow, whose keys the checker proved in the
+    ///   domain. None.
+    /// - `t` is one function `s` and `w` one function `e`: `s` is called through a lambda that
+    ///   tests its domain, where a partial arrow of `e` may pass a key outside it
+    ///   ([`Self::domain_guard`]), and rebuilds what it returns, by this same rule on the union
+    ///   of the results of `s` and of `e`.
+    /// - `t` is one tuple shape and `w` holds one shape of its length: each component by this
+    ///   rule. A value of `t` is a tuple of that length, and each component of it a value of
+    ///   `t`'s component at the component `w` passes on.
+    /// - `t` is a family (`Sig::data`), a morphism held as data: kept as it is. Its lookup of a
+    ///   key it does not hold gives `#notFound` (DESIGN.md sec:type_language, the `m[k]` row),
+    ///   and a lambda in its place would break the operations on data a partial slot allows
+    ///   (`m as (k -> v) into …`, l08_02_remaps).
+    /// - `t` holds a type variable or the unknown: no rebuilding is made here, which leaves a
+    ///   gap (row FAIL-partial-slot-generic-pass): the value is a function only at some
+    ///   instance, which a generic function, compiled once, does not know.
+    /// - Otherwise (a union holding functions or tuples beside other values, several tuple
+    ///   shapes, a function in a payload): where `t` holds a function of an exact arrow and
+    ///   `w` a partial function type, the value is not rebuilt, and the program is refused
+    ///   ([`Untestable::Mixed`]); elsewhere none is needed.
+    ///
+    /// Complexity tradeoff: the walk visits each pair of places of `t` and `w` that a value
+    /// may stand at once, on an explicit stack, as deep as the types nest; at a function, one
+    /// [`Self::domain_guard`], O(a_e · a_s · params) comparisons. The naive way, a test at
+    /// every call of every function value, costs a test per call where none is needed.
+    fn coercion(&self, t: &Ty, w: &Ty) -> Result<Option<Coercion>, Untestable> {
+        enum Step {
+            Enter(Ty, Ty),
+            Fn(usize, Option<Domain>),
+            Tuple(usize),
+        }
+        let partial = |s: &Sig| s.arrows.iter().any(|a| a.partial);
+        // A family is data, not a function to rebuild: a lookup of a key it does not hold
+        // gives `#notFound` already, and operations on data (a remap, `.map`) must still
+        // find a family where one was passed.
+        let exact = |s: &Sig| !s.data && s.arrows.iter().any(|a| !a.partial);
+        let function = |s: &Sig| !s.data;
+        // Tested once, at the root, by one walk each. Below it the walk goes by structure, at
+        // O(1) a place: where `w` holds no partial function type below a place, every case
+        // there gives None (`domain_guard` gives None for an `e` with no partial arrow), save
+        // the refusal, which tests both at its place. Testing at every place, as at first,
+        // walked all the levels below each one: O(d²) for a value d tuples deep (bench
+        // `many_and_deep_functions_inside_values_at_partial_slots_scale`, 28 times at 8n).
+        if !holds_fn(w, &partial) || !holds_fn(t, &function) {
+            return Ok(None);
+        }
+        let mut stack = vec![Step::Enter(t.clone(), w.clone())];
+        let mut out: Vec<Option<Coercion>> = Vec::new();
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(t, w) => {
+                    if !t.vars.is_empty() || t.dynamic || (t.tuples.iter()).any(|r| r.open()) {
+                        out.push(None);
+                        continue;
+                    }
+                    // A value of `t` is one function, or one tuple, only where `t` holds no
+                    // scalar, atom or kind-wide part beside it.
+                    let one =
+                        |t: &Ty| t.set.is_empty() && t.payloads.is_empty() && t.family.is_empty();
+                    if let (true, Some(s), Some(e)) =
+                        (one(&t) && t.tuples.is_empty(), t.fns.only(), w.fns.only())
+                    {
+                        // A function of another arity does not fit `e`: that is refused as a
+                        // mismatch of types, and no call through `e` reaches it. A family
+                        // is kept as it is (see `exact` above).
+                        if s.data || s.params.len() != e.params.len() {
+                            out.push(None);
+                            continue;
+                        }
+                        let ranges = s.params.iter().map(|p| p.range.clone()).collect();
+                        let domain = self.domain_guard(s, ranges, e)?;
+                        stack.push(Step::Fn(s.params.len(), domain));
+                        stack.push(Step::Enter(results(s), results(e)));
+                        continue;
+                    }
+                    if let (true, Some(r)) = (one(&t) && t.fns.is_empty(), t.tuples.only()) {
+                        let mut same = w.tuples.iter().filter(|q| q.len() == r.len());
+                        match (same.next(), same.next()) {
+                            (Some(q), None) => {
+                                stack.push(Step::Tuple(r.len()));
+                                for (x, y) in r.iter().zip(q.iter()).rev() {
+                                    stack.push(Step::Enter(x.clone(), y.clone()));
+                                }
+                                continue;
+                            }
+                            // No tuple of its length fits: refused as a mismatch of types.
+                            (None, _) => {
+                                out.push(None);
+                                continue;
+                            }
+                            (Some(_), Some(_)) => {}
+                        }
+                    }
+                    // The walk stops at this place, so the places tested here do not nest, and
+                    // these two walks visit each place below the root at most once in all.
+                    if holds_fn(&t, &exact) && holds_fn(&w, &partial) {
+                        return Err(Untestable::Mixed {
+                            t: Box::new(t),
+                            w: Box::new(w),
+                        });
+                    }
+                    out.push(None);
+                }
+                Step::Fn(arity, domain) => {
+                    let result = out.pop().expect("the result's coercion");
+                    out.push(match (&domain, &result) {
+                        (None, None) => None,
+                        _ => Some(Coercion::Fn {
+                            arity,
+                            domain,
+                            result: result.map(Box::new),
+                        }),
+                    });
+                }
+                Step::Tuple(n) => {
+                    let cs = out.split_off(out.len() - n);
+                    out.push(match cs.iter().all(Option::is_none) {
+                        true => None,
+                        false => Some(Coercion::Tuple(cs)),
+                    });
+                }
+            }
+        }
+        Ok(out.pop().expect("one coercion"))
+    }
+
+    /// Refuses the value at `span`, passed where a partial function type is expected, whose
+    /// domain no test at run time can read ([`Untestable`]): run without it, a call through
+    /// that type of a key outside the domain would run the function's body on a value it
+    /// does not take, where it must give `#notFound` (FAIL-partial-slot-untestable-domain).
+    fn untestable(&mut self, span: Span, why: Untestable) {
+        let code = (self.t.text)
+            .and_then(|t| t.get(span.start..span.end))
+            .unwrap_or("the value")
+            .to_string();
+        let (text, wanted) = match why {
+            Untestable::Param { s, e, param, parts } => {
+                let (st, et) = (self.sig_text(&s), self.sig_text(&e));
+                let x = &s.params[param].name;
+                let what = match parts {
+                    true => format!("a range on the components of `{x}`"),
+                    false => match s.arrows.iter().find_map(|a| a.params.get(param)) {
+                        Some(p) if !p.fns.is_empty() => {
+                            format!("`{x}` is a function, whose domain its value does not show")
+                        }
+                        Some(p) => match p.as_var().and_then(|v| Some((v, s.bounds.get(v)?))) {
+                            Some((v, &m)) => format!(
+                                "`{x}` is `{v}`, which a call may fix to any of `{}`, and its \
+                                 value does not show which",
+                                self.text(&Ty::of_mask(m))
+                            ),
+                            None => format!(
+                                "`{x}` is `{}`, whose type variables a call may fix to types \
+                                 its value does not show",
+                                self.text(p)
+                            ),
+                        },
+                        None => format!("`{x}`"),
+                    },
+                };
+                let text = format!(
+                    "`{code}` is `{st}`, passed as `{et}`: a call through `{et}` may pass a \
+                     key outside `{code}`'s domain, which must give `#notFound`, and no test \
+                     at run time can tell: {what}"
+                );
+                (text, et)
+            }
+            Untestable::Mixed { t, w } => {
+                let (tt, wt) = (self.text(&t), self.text(&w));
+                let text = format!(
+                    "`{code}` is `{tt}`, passed as `{wt}`: a call through `{wt}` may pass a \
+                     key outside the domain of a function `{code}` holds, which must give \
+                     `#notFound`, and no test at run time can be put on a function that sits \
+                     beside other values or inside an atom's payload"
+                );
+                (text, wt)
+            }
+        };
+        self.error_offering(
+            span,
+            text,
+            [format!(
+                "repair: pass a value of type `{wanted}` in place of `{code}`"
+            )],
+        );
     }
 
     /// The lambda that passes the parameters of the function type `e` to the declared function
@@ -16054,16 +16279,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn narrower_range(
         &mut self,
         name: &str,
-        (s, permuted): (&Sig, &Arc<Sig>),
+        (s, kept, permuted): (&Sig, &[Need], &Arc<Sig>),
         e: &Arc<Sig>,
         from: &[usize],
         (span, saved): (Span, &Mark),
     ) -> bool {
-        let ranged: Vec<(usize, IntDomain)> = (permuted.needs.iter())
+        let ranged: Vec<(usize, IntDomain)> = (kept.iter())
             .filter_map(|n| range_need_of(s, n).map(|(p, d)| (p, d.clone())))
             .collect();
         let mut unranged = (**permuted).clone();
-        unranged.needs.retain(|n| range_need_of(s, n).is_none());
+        let rest: Vec<Need> = (kept.iter())
+            .filter(|n| range_need_of(s, n).is_none())
+            .cloned()
+            .collect();
+        unranged.needs = needs_in_order(&rest, from);
         unranged.facts = Default::default();
         let unranged = Arc::new(unranged);
         let what = format!("`{name}`");
@@ -22253,24 +22482,125 @@ fn in_text_order(edits: &[(Span, String)]) -> Vec<&(Span, String)> {
 
 /// The run-time test of the domain of the function `s`, whose parameters have the declared
 /// ranges `ranges`, as [`Domain`]: the kernel type of each parameter of each arrow, and each
-/// int range. `None` where a parameter type has no kernel type (a function, whose own domain a
-/// test of its value cannot read; a bounded type variable, whose instance may be narrower
-/// than its bound, even `Never`, so that a test by the bound would let through keys outside
-/// the domain), or a range is on the components of a key: no test is sound there.
+/// int range. The error is the place of a parameter no test is sound for, with whether it is
+/// for a range on the components of a key ([`Untestable::Param`]).
 ///
-/// Cost: O(a · params), one kernel type per parameter per arrow.
-fn domain_test(s: &Sig, ranges: Vec<Option<ParamRange>>) -> Option<Domain> {
+/// The type variables of the parameters are read as follows, each with its proof.
+/// - A variable bounded by one carrier, as `V` of `for V in int`, is that carrier: a call
+///   fixes a bounded variable to one carrier of its bound (DESIGN.md sec:type_resolution,
+///   rule 6; `Binds::of_arrow` in zedc-types reads it so: "a call fixes it to a carrier of
+///   its bound, which `Never` is not"), so at every instance `V` is `int`, and the domain of
+///   a function of exact arrows, which is invariant, is the declared parameter type at that
+///   instance.
+///   (`none(x: Never) = 1` is refused as `(x: V) -> int for V in int`.)
+/// - A variable bounded by several carriers has an instance the value does not show: no test.
+/// - An unbounded variable on which `s` makes no use is read as every value, `_`, as
+///   [`Ck::domain_guard`]'s cover reads it: `s` takes every value there, its body testing
+///   nothing of it. One that `s` uses ([`Sig::needs`]) takes only the instances those uses
+///   hold at: no test.
+///
+/// A parameter of function type has no test either: a test of a function value cannot read
+/// its domain. Nor has a range on the components of a key ([`ParamRange::Parts`]).
+///
+/// Cost: O(a · params) kernel types, one per parameter per arrow, after one walk of the
+/// parameter types for their variables and one substitution of each.
+fn domain_test(s: &Sig, ranges: Vec<Option<ParamRange>>) -> Result<Domain, (usize, bool)> {
+    let mut vars = Vars::default();
+    for a in &s.arrows {
+        for p in &a.params {
+            p.vars_in(&mut vars);
+        }
+    }
+    let used = |v: &str| (s.needs.iter()).any(|n| n.on.vars.contains(v));
+    let mut binds = Binds::new();
+    for v in &vars.order {
+        match s.bounds.get(v) {
+            Some(&m) if m & OTHER == 0 && m.count_ones() == 1 => {
+                binds.insert(v.clone(), Ty::of_mask(m));
+            }
+            Some(_) => {}
+            None if !used(v) => {
+                binds.insert(v.clone(), Ty::set(KType::top()));
+            }
+            None => {}
+        }
+    }
     let arrows = (s.arrows.iter())
-        .map(|a| a.params.iter().map(Ty::kernel).collect::<Option<Vec<_>>>())
-        .collect::<Option<Vec<_>>>()?;
-    let ranges = (ranges.into_iter())
-        .map(|r| match r {
-            None => Some(None),
-            Some(ParamRange::Int(r)) => Some(Some(r)),
-            Some(ParamRange::Parts(_)) => None,
+        .map(|a| {
+            (a.params.iter().enumerate())
+                .map(|(j, p)| p.subst(&binds).kernel().ok_or((j, false)))
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect::<Option<Vec<_>>>()?;
-    Some(Domain { arrows, ranges })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ranges = (ranges.into_iter().enumerate())
+        .map(|(j, r)| match r {
+            None => Ok(None),
+            Some(ParamRange::Int(r)) => Ok(Some(r)),
+            Some(ParamRange::Parts(_)) => Err((j, true)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Domain { arrows, ranges })
+}
+
+/// Why a value passed where a type holding a partial function type is expected cannot be
+/// given the test of its domain that a call through that type needs, for the message
+/// ([`Ck::untestable`]).
+pub(super) enum Untestable {
+    /// The function of type `s` (its parameters in `e`'s order) passed as `e`, whose
+    /// parameter at `param` has no test ([`domain_test`]); `parts` where that is for a range
+    /// on its components.
+    Param {
+        s: Arc<Sig>,
+        e: Arc<Sig>,
+        param: usize,
+        parts: bool,
+    },
+    /// A value of type `t` passed as `w`, where `t` holds a function that would need a test
+    /// beside other kinds of value at that place, or inside an atom's payload: the value is
+    /// rebuilt only where it is one function or one tuple.
+    Mixed { t: Box<Ty>, w: Box<Ty> },
+}
+
+/// Whether `t` holds, at some place a value of it may stand (its functions, their results,
+/// its tuples' components, its atoms' payloads; not the parameters of its functions), a
+/// function for which `pick` holds.
+///
+/// Cost: one visit of each function, row and payload shape, each entered once by its address
+/// (a shared one is reached by many paths), on an explicit stack, since types nest as deep as
+/// the text.
+fn holds_fn(t: &Ty, pick: &dyn Fn(&Sig) -> bool) -> bool {
+    let mut seen: HashSet<*const ()> = HashSet::new();
+    let mut stack: Vec<&Ty> = vec![t];
+    while let Some(t) = stack.pop() {
+        for s in t.fns.iter() {
+            if !seen.insert(Arc::as_ptr(s).cast()) {
+                continue;
+            }
+            if pick(s) {
+                return true;
+            }
+            stack.extend(s.arrows.iter().map(|a| &a.result));
+        }
+        for r in t.tuples.iter() {
+            if seen.insert((&**r as *const [Ty]).cast()) {
+                stack.extend(r.iter());
+            }
+        }
+        for shapes in t.payloads.values().flatten() {
+            for sh in shapes {
+                if seen.insert((&**sh as *const ty::ShapeData).cast()) {
+                    stack.extend(sh.items.iter().chain(sh.fields.values()));
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The union of the results of the arrows of `s`: what a call of it may return. O(arrows)
+/// unions.
+fn results(s: &Sig) -> Ty {
+    Ty::union_all(s.arrows.iter().map(|a| &a.result))
 }
 
 /// The needs of the declared function `s` that hold where it is passed as the function type
@@ -22293,10 +22623,34 @@ fn guarded_needs(s: &Sig, e: &Sig) -> Vec<Need> {
     let guarded = !e.arrows.is_empty()
         && e.arrows.iter().all(|a| a.partial)
         && s.arrows.iter().any(|a| !a.partial)
-        && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_some();
+        && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_ok();
     (s.needs.iter())
         .filter(|n| !(guarded && range_need_of(s, n).is_some()))
         .cloned()
+        .collect()
+}
+
+/// The needs `needs` of a function, made at its own parameter places, at the places the
+/// parameters stand in a slot that passes them in another order: `from[i]` is the place in the
+/// slot of the function's parameter `i`. A need on a parameter, [`NeedKind::InDomain`], names
+/// it by its place, and [`Ck::needs_hold`] reads it at that place among the slot's arguments,
+/// so a need left at the function's place is checked on another parameter's argument
+/// (FAIL-fit-declared-permuted-needs: `sub(a: bool, b: int[0..=9])` was accepted as
+/// `(b: int, a: bool) -> int`, its need on `b` read on the `bool` passed as `a`). No other
+/// kind of need holds a parameter place. The partial call's rest remaps the same way.
+///
+/// Cost: one pass over the needs, O(needs).
+fn needs_in_order(needs: &[Need], from: &[usize]) -> Vec<Need> {
+    (needs.iter())
+        .map(|n| {
+            let mut n = n.clone();
+            if let NeedKind::InDomain { param, .. } = &mut n.kind
+                && let Some(&j) = from.get(*param)
+            {
+                *param = j;
+            }
+            n
+        })
         .collect()
 }
 
