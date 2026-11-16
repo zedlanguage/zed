@@ -444,8 +444,9 @@ pub(super) enum Frame<'a> {
     InKey(&'a Expr, Span, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
     InSet(Ty, Span),
-    /// `a ..< b` or `a ..= b`, waiting for `a`: `a`, `b` and the span of the range.
-    RangeLo(&'a Expr, &'a Expr, Span),
+    /// `a ..< b`, `a ..= b` or `a ..`, waiting for `a`: `a`, `b` if written, and the span of
+    /// the range.
+    RangeLo(&'a Expr, Option<&'a Expr>, Span),
     /// The same, waiting for `b`: `a`, the type of `a`, and the span of the range.
     RangeHi(&'a Expr, Ty, Span),
 }
@@ -1193,14 +1194,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.in_end(&k, &x, span);
                 m.ty(t);
             }
-            Frame::RangeLo(lo, hi, span) => {
+            Frame::RangeLo(lo, Some(hi), span) => {
                 let a = m.take_ty();
                 m.k(Frame::RangeHi(lo, a, span));
                 m.job(Job::Expr(hi));
             }
+            // `a ..`: no high end to check.
+            Frame::RangeLo(lo, None, span) => {
+                let a = m.take_ty();
+                let t = self.range_end(lo, &a, None, span);
+                m.ty(t);
+            }
             Frame::RangeHi(lo, a, span) => {
                 let b = m.take_ty();
-                let t = self.range_end(lo, &a, &b, span);
+                let t = self.range_end(lo, &a, Some(&b), span);
                 m.ty(t);
             }
             Frame::Else1(e) => {
@@ -3243,12 +3250,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Read { .. } | ExprKind::For { .. } => unreachable!(
                 "name resolution rejects every read and for before the checker reads the program"
             ),
-            // `a ..< b` and `a ..= b`; resolution rejects the range with no upper end.
+            // `a ..< b`, `a ..= b`, and `a ..` where resolution admits it: read by a key, by
+            // `in` or by `.first` (plan row RANGE-open).
             ExprKind::Range(from, to) => {
-                let hi = to
-                    .bound()
-                    .expect("resolution rejects a range with no upper end");
-                m.k(Frame::RangeLo(from, hi, e.span));
+                m.k(Frame::RangeLo(from, to.bound().map(|b| &**b), e.span));
                 m.job(Job::Expr(from));
             }
             // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
@@ -4890,9 +4895,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// through any primitive. An end that may be other than an integer is rejected. The keys are
     /// one integer interval, every key present, so a read that misses gives `#outOfBounds`
     /// ([`Dense::Interval`]); they are the ranks `0`, `1`, … ([`Dense::Ranks`]) when `lo`, the
-    /// low end, is known to be `0`.
-    fn range_end(&mut self, lo: &'a Expr, a: &Ty, b: &Ty, span: Span) -> Ty {
-        for (end, t) in [("low", a), ("high", b)] {
+    /// low end, is known to be `0`. With no `b`, the range `a ..` has the same type, its keys
+    /// one interval with no upper end and never the ranks of a list (plan row RANGE-open).
+    fn range_end(&mut self, lo: &'a Expr, a: &Ty, b: Option<&Ty>, span: Span) -> Ty {
+        let repair = match b {
+            Some(_) => "repair: give both ends as integers, as `0 ..< n`",
+            None => "repair: give the low end as an integer, as `0 ..`",
+        };
+        for (end, t) in [("low", a)].into_iter().chain(b.map(|b| ("high", b))) {
             for p in t.without_loose().pieces() {
                 match p {
                     Piece::Set(s) if s.subtype(&KType::int()) => {}
@@ -4906,7 +4916,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 "a range runs over integers, and its {end} end may be {t}, \
                                  which is not an integer"
                             ),
-                            ["repair: give both ends as integers, as `0 ..< n`".to_string()],
+                            [repair.to_string()],
                         );
                     }
                 }
@@ -4926,14 +4936,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // sec:type_language, the `m[k]` row, whose own example is `lst : int[a..<b]`; plan row
         // RANGE-read-out-of-bounds). Only a low end known to be `0` makes the keys the ranks,
         // a list, which `flatMap` demands; `(2 ..< 5)` has the keys 2, 3, 4, which are no ranks.
-        sig.dense = match self.known(lo).value {
-            Some(Value::Int(0)) => Dense::Ranks,
+        // `rangeFrom(a)` holds every integer `k >= a`: one interval too, with no upper end, so
+        // never the ranks of a list.
+        sig.dense = match (b, self.known(lo).value) {
+            (Some(_), Some(Value::Int(0))) => Dense::Ranks,
             _ => Dense::Interval,
         };
         sig.note_held();
-        Ty::func(Arc::new(sig))
-            .union(&a.loose_ty())
-            .union(&b.loose_ty())
+        let t = Ty::func(Arc::new(sig)).union(&a.loose_ty());
+        match b {
+            Some(b) => t.union(&b.loose_ty()),
+            None => t,
+        }
     }
 
     /// A condition's type and the facts it makes when it holds and when it does not.

@@ -23,7 +23,10 @@ fn each_form_names_the_step_that_compiles_it() {
         (
             "f(x) = x..;",
             &[concat!(
-                zed_tests::not_yet!("a range with no upper end, `a ..`,"),
+                zed_tests::not_yet!(
+                    "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, \
+                     `k in a ..` or `(a ..).first`,"
+                ),
                 " [x..]"
             )],
         ),

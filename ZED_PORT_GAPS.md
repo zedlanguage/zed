@@ -4101,3 +4101,10 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `Deref` and `DerefMut` on `Entries`, so every reader of a family's map reads a range through its built map without naming the range, and a change replaces the range with the map | `impl Deref for Entries`, `impl DerefMut for Entries` | Implicit conversions; mutation (gap 11) | A union type `Map \| Range` with an explicit `entries(f)` that builds the map, called at each walk |
 | `clippy.toml` `ignore-interior-mutability` for `Span`, whose hash and order read its entries, which the cache does not change | `clippy.toml` | Lint configuration | None: Zed has no interior mutability for a lint to flag |
 | A binary search over `i128` for the integer beside a key of another kind, comparing by the total order | `Span::beside` | Machine integers (gap 4) | `int` with the range `int[-2^63 - 1..=2^63]`, which the compiler stores in one machine word plus one bit |
+
+## Entries from RANGE-open (`zed-kernel/src/value.rs` `Entries::From`, `walked_unbounded`; `zedc-resolve` `Task::OpenRead`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A panic (`-> !`) where a walk meets a range with no upper end, reached through `Deref` and the counting methods; resolution keeps such a range out of every walk, so the panic marks a broken compiler, not a program error | `walked_unbounded`, the `Entries::From` arms of `Deref`, `DerefMut`, `len`, `count`, `entry_beside`, `end_entry(true)` | Implicit conversions (`Deref`); a stop the type does not show | A union `Map \| Range \| From` with no walk defined on `From`, so a walk of it does not type-check and needs no stop |
+| The low end kept as `Arc<Value>`, shared by every copy, as `Entries::Map` shares its tree | `Entries::From` | Identity (gap 1) | The low end held by value: an `int` is one word or a pointer to its digits |

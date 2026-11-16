@@ -159,6 +159,53 @@ fn a_range_is_made_and_read_in_constant_time() {
     scaling::check_order("the kernel run of reads of `0 ..< n`", N_KERNEL, 0, run);
 }
 
+/// `r = 0 ..` read at `n`: the tuple of `r[n]`, `n in r` and `r.first` (zedc-elab,
+/// `Frame::RangeFrom`).
+fn open_reads_term(n: usize) -> Term {
+    let n = n as i64;
+    let reads = Term::Prim(
+        Prim::Tuple,
+        vec![
+            Term::Prim(Prim::At, vec![var("r"), lit(n)]),
+            Term::Prim(Prim::Has, vec![lit(n), var("r")]),
+            Term::Prim(Prim::First, vec![var("r")]),
+        ],
+    );
+    let_("r", Term::Prim(Prim::RangeFrom, vec![lit(0)]), reads)
+}
+
+#[test]
+fn a_range_with_no_upper_end_is_read_in_constant_time() {
+    // Plan row RANGE-open. Complexity tradeoff: a read of `0 ..` at `n` built by the integers
+    // up to `n` would cost O(n) time and memory; `rangeFrom(0)` is kept as its low end, so the
+    // range and each read cost O(1) at any key (a key past 64 bits, O(digits), in `runs`).
+    let terms = scaling::inputs(N_KERNEL, open_reads_term);
+    let run = |k: usize| {
+        let n = k as i64;
+        let want = Value::tuple(vec![Value::Int(n), Value::Bool(true), Value::Int(0)]);
+        assert_eq!(eval(&terms[&k]).unwrap(), want);
+    };
+    scaling::check_order("the kernel run of reads of `0 ..` at n", N_KERNEL, 0, run);
+}
+
+#[test]
+fn a_program_reading_a_range_with_no_upper_end_runs_in_constant_time() {
+    // Plan row RANGE-open: the whole path, parse to output, of reads of `0 ..` at n; the key's
+    // text grows by one digit from n to 8n.
+    let srcs: HashMap<usize, _> = scaling::inputs(N_KERNEL, |k| {
+        program(
+            &format!("open_reads_{k}"),
+            &format!("${{[(0 ..)[{k}] else -1, {k} in 0 .., (0 ..).first else -1]}}"),
+        )
+    });
+    let run = |k: usize| {
+        let ran = interpreter(&srcs[&k], &[], &[]);
+        assert_eq!(ran.stderr, "");
+        assert_eq!(ran.stdout, format!("{{0 -> {k}, 1 -> true, 2 -> 0}}\n"));
+    };
+    scaling::check_order("`zedc run` of reads of `0 ..` at n", N_KERNEL, 0, run);
+}
+
 /// `(0 ..< n) >< (+)` in the kernel: the walk builds the range's entries.
 fn range_sum_term(n: usize) -> Term {
     fold(range_term(n), Term::PrimFn(Prim::Add), Some(lit(0)))

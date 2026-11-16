@@ -4037,6 +4037,14 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Range, [a, b]) if a.number_kind() == Some(0) && b.number_kind() == Some(0) => {
             range(a, b)?
         }
+        // `a ..`: kept as its low end. Complexity tradeoff (COMPLEXITY.md RANGE-open): the
+        // integers up to a key cannot be built for a set with no last entry, and a stream of
+        // them would make a read at `k` cost O(k - a); from the low end a read, `in` and
+        // `.first` cost O(1) (O(digits) for a wide integer), and nothing walks it (resolution
+        // admits only those reads; plan row RANGE-open-walk for the rest).
+        (Prim::RangeFrom, [a]) if a.number_kind() == Some(0) => {
+            Value::Family(Family::range_from(a.clone()))
+        }
         (Prim::FirstEntry, [Value::Family(f)]) => entry_tuple(f.end_entry(false)),
         (Prim::LastEntry, [Value::Family(f)]) => entry_tuple(f.end_entry(true)),
         (Prim::EntryAfter | Prim::EntryBefore, [Value::Family(f), Value::Tuple(e)])

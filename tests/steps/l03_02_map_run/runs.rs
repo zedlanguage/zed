@@ -8,7 +8,7 @@
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Family, Pattern, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
-use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable};
+use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
 use super::{program, run};
 
@@ -473,7 +473,73 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 (i(2), Value::Bool(true)),
             ]),
         ),
+        // Plan row RANGE-open: `a ..` is kept as its low end, `rangeFrom(a)`, and read by a
+        // key, by `in` and by `.first` in O(1), never walked; a key below `a` misses with
+        // `#outOfBounds`, since the keys are one interval with every key present.
+        (
+            "in_a_range_with_no_upper_end",
+            "${[3 in 3 .., 2 in 3 .., 1000000000000 in 3 .., -1 in -5 .., 3.5 in 3 ..]}",
+            family(
+                [
+                    has(lit(3), from(3)),
+                    has(lit(2), from(3)),
+                    has(lit(1_000_000_000_000_i64), from(3)),
+                    has(lit(-1), from(-5)),
+                    has(lit(Value::float(3.5)), from(3)),
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(k, t)| (i(k as i64), eval(&t).unwrap()))
+                .collect(),
+            ),
+        ),
+        (
+            "a_read_far_into_a_range_with_no_upper_end",
+            "${(3 ..)[1000000000000] else -1}",
+            or(at(from(3), lit(1_000_000_000_000_i64)), "outOfBounds", -1),
+        ),
+        (
+            "a_read_below_a_range_with_no_upper_end",
+            "${(3 ..)[2] is #outOfBounds}",
+            lit(eval(&at(from(3), lit(2))).unwrap() == Value::atom("outOfBounds")),
+        ),
+        (
+            "the_first_of_a_negative_range_with_no_upper_end",
+            "${(-7 ..).first else 0}",
+            or(prim(Prim::First, vec![from(-7)]), "none", 0),
+        ),
+        (
+            "a_range_with_no_upper_end_past_64_bits",
+            "${[100000000000000000000000 in 99999999999999999999999 .., \
+             (99999999999999999999999 ..)[100000000000000000000000] else 0]}",
+            {
+                let big = |s: &str| lit(Value::int(s.parse::<num_bigint::BigInt>().unwrap()));
+                let lo = || prim(Prim::RangeFrom, vec![big("99999999999999999999999")]);
+                let k = || big("100000000000000000000000");
+                let models = [has(k(), lo()), or(at(lo(), k()), "outOfBounds", 0)];
+                family(
+                    (models.iter().enumerate())
+                        .map(|(n, t)| (i(n as i64), eval(t).unwrap()))
+                        .collect(),
+                )
+            },
+        ),
     ]
+}
+
+/// `a ..`: `rangeFrom(a)`, the integers from `a` up.
+fn from(a: i64) -> Term {
+    prim(Prim::RangeFrom, vec![lit(a)])
+}
+
+/// `k in m`.
+fn has(k: Term, m: Term) -> Term {
+    prim(Prim::Has, vec![k, m])
+}
+
+/// `m[k]`.
+fn at(m: Term, k: Term) -> Term {
+    prim(Prim::At, vec![m, k])
 }
 
 /// `a ..< b`: the set of the integers `k` with `a <= k < b`.
@@ -556,6 +622,63 @@ fn reads_that_miss_give_the_miss_atoms() {
         ran.stdout,
         format!("{}\n", parts.join(" ").replace('\n', ""))
     );
+}
+
+#[test]
+fn a_range_with_no_upper_end_read_at_keys_from_stdin() {
+    // Plan row RANGE-open: with keys known only at run time, the reads do not fold at compile
+    // time, so `rangeFrom` itself runs, in the interpreter and in the executable, against the
+    // M0 model. `3 ..` and `0 ..< 10^12` are build-stage: the build keeps each as the call that
+    // makes it (`zedc_stage` `built_value`), since as a literal one has no last entry and the
+    // other 10^12 entries to write.
+    let body = "${[n in 3 .., (3 ..)[n] else -1, (n ..).first else 0, (n ..)[n + 5] else 0, \
+                4 in n .., (0 ..< 1000000000000)[n] else -1]}";
+    let src = dir("l03_02_map_run/open_stdin").join("open_stdin.zed");
+    let text = format!(
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = dir("l03_02_map_run/open_stdin").join("open_stdin");
+    built(&src, &exe);
+    for n in ["2", "3", "7", "-4", "1000000000000000000000"] {
+        let k = || lit(Value::int(n.parse::<num_bigint::BigInt>().unwrap()));
+        let from_k = || prim(Prim::RangeFrom, vec![k()]);
+        let models = [
+            has(k(), from(3)),
+            or(at(from(3), k()), "outOfBounds", -1),
+            or(prim(Prim::First, vec![from_k()]), "none", 0),
+            or(at(from_k(), bin(Prim::Add, k(), lit(5))), "outOfBounds", 0),
+            has(lit(4), from_k()),
+            or(
+                at(
+                    prim(Prim::Range, vec![lit(0), lit(1_000_000_000_000i64)]),
+                    k(),
+                ),
+                "outOfBounds",
+                -1,
+            ),
+        ];
+        let want = expected(&family(
+            (models.iter().enumerate())
+                .map(|(j, t)| (i(j as i64), eval(t).unwrap()))
+                .collect(),
+        ));
+        let stdin = format!("{n}\n");
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {n}"
+        );
+        assert_eq!(ran.stdout, want, "zedc run at {n}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {n}"
+        );
+        assert_eq!(ran.stdout, want, "executable at {n}");
+    }
 }
 
 #[test]

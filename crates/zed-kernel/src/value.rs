@@ -1185,6 +1185,28 @@ pub(crate) enum Entries {
     Map(btree::Map<Value, Value>),
     /// The integers of a span, each a key that maps to itself, as a set leaf does.
     Range(Arc<Span>),
+    /// The integers from the integer `lo` up, with no upper end, each a key that maps to
+    /// itself: `a ..` (plan row RANGE-open). It is read by a key, by `in` and by its first
+    /// entry, each O(1), and has no map: zedc admits `a ..` only where one of those reads it
+    /// (zedc-resolve), so a walk over it, which would not end, is a bug in zedc and stops with
+    /// [`walked_unbounded`].
+    From(Arc<Value>),
+}
+
+/// Stops at a walk over a range with no upper end, which never ends (`Entries::From`).
+fn walked_unbounded() -> ! {
+    panic!(
+        "a range with no upper end, `a ..`, is read only by a key, by `in` and by `.first`, \
+         and is never walked"
+    )
+}
+
+/// Whether the key `k` is one of the integers from `lo` up: an integer, `Int` or `Big`, not
+/// less than `lo`. Under the total order a number of another kind is never equal to an
+/// integer (`number_cmp`'s `then(number_kind)`), so `2.0` is not a key of `0 ..`, as it is of
+/// no span (`Span::find`). O(1) for a 64-bit key, O(digits) for a `Big`.
+fn from_holds(lo: &Value, k: &Value) -> bool {
+    k.number_kind() == Some(0) && cmp(k, lo) != Ordering::Less
 }
 
 impl Default for Entries {
@@ -1200,20 +1222,22 @@ impl Deref for Entries {
         match self {
             Entries::Map(m) => m,
             Entries::Range(s) => s.map(),
+            Entries::From(_) => walked_unbounded(),
         }
     }
 }
 
 impl std::ops::DerefMut for Entries {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        if let Entries::Range(s) = self {
+        match self {
             // A copy of a map costs O(1): it shares the nodes `Span::map` built.
-            let map = s.map().clone();
-            *self = Entries::Map(map);
+            Entries::Range(s) => *self = Entries::Map(s.map().clone()),
+            Entries::From(_) => walked_unbounded(),
+            Entries::Map(_) => {}
         }
         match self {
             Entries::Map(m) => m,
-            Entries::Range(_) => unreachable!("a range was replaced by its map above"),
+            _ => unreachable!("a range was replaced by its map above"),
         }
     }
 }
@@ -1466,10 +1490,36 @@ impl Family {
         }
     }
 
+    /// The set of the integers from the integer `lo` up, with no upper end, each key mapping to
+    /// itself (`Entries::From`): read by [`Family::lookup`], [`Family::contains`] and the first
+    /// entry, each O(1), and never walked.
+    pub fn range_from(lo: Value) -> Self {
+        debug_assert!(lo.number_kind() == Some(0), "a range starts at an integer");
+        Family(Entries::From(Arc::new(lo)), fresh_id(), 0)
+    }
+
     /// The two ends `lo` and `last` of a family made by [`Family::range`] and not changed since.
     pub fn span(&self) -> Option<(i64, i64)> {
         match &self.0 {
             Entries::Range(s) => Some((s.lo, s.last)),
+            Entries::Map(_) | Entries::From(_) => None,
+        }
+    }
+
+    /// The term that makes this family again in O(1), for a range kept as its ends:
+    /// `range(lo, last + 1)` (`lo ..< last + 1`, whose high end is `2^63` past `i64` for
+    /// `..= i64::MAX`) or `rangeFrom(lo)`; `None` for a family kept as its entries. The build
+    /// writes it where it would write the family as a literal, since a literal is written entry
+    /// by entry, O(n) for a range of n entries, and never ends for `a ..` (plan row RANGE-open).
+    pub fn made_by(&self) -> Option<crate::Term> {
+        use crate::Prim;
+        use crate::term::build::{lit, prim};
+        match &self.0 {
+            Entries::Range(s) => {
+                let high = Value::int(BigInt::from(s.last) + 1);
+                Some(prim(Prim::Range, vec![lit(Value::Int(s.lo)), lit(high)]))
+            }
+            Entries::From(lo) => Some(prim(Prim::RangeFrom, vec![lit(Value::clone(lo))])),
             Entries::Map(_) => None,
         }
     }
@@ -1592,6 +1642,7 @@ impl Family {
             // A key is its own value in a range; `find` reads the key's own kind, which `-0.0`
             // and `0.0` share, so `k.key()` is not needed.
             Entries::Range(s) => s.find(k).map(Value::Int),
+            Entries::From(lo) => from_holds(lo, k).then(|| k.clone()),
             Entries::Map(_) => self.get(k).cloned(),
         }
     }
@@ -1600,15 +1651,19 @@ impl Family {
     pub fn contains(&self, k: &Value) -> bool {
         match &self.0 {
             Entries::Range(s) => s.find(k).is_some(),
+            Entries::From(lo) => from_holds(lo, k),
             Entries::Map(_) => self.get(k).is_some(),
         }
     }
 
     /// The least entry of the top level (`last` false) or the greatest, copied: O(1) on a range.
+    /// A range with no upper end has no greatest entry, and zedc never asks it for one.
     pub fn end_entry(&self, last: bool) -> Option<(Value, Value)> {
         match (&self.0, last) {
             (Entries::Range(s), false) => Some((Value::Int(s.lo), Value::Int(s.lo))),
             (Entries::Range(s), true) => Some((Value::Int(s.last), Value::Int(s.last))),
+            (Entries::From(lo), false) => Some((Value::clone(lo), Value::clone(lo))),
+            (Entries::From(_), true) => walked_unbounded(),
             (Entries::Map(m), false) => m.get_min().cloned(),
             (Entries::Map(m), true) => m.get_max().cloned(),
         }
@@ -1619,6 +1674,7 @@ impl Family {
     pub fn entry_beside(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
         match &self.0 {
             Entries::Range(s) => s.beside(k, after).map(|i| (Value::Int(i), Value::Int(i))),
+            Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.beside(k, after).cloned(),
         }
     }
@@ -1697,6 +1753,7 @@ impl Family {
     pub fn len(&self) -> usize {
         match &self.0 {
             Entries::Range(s) => usize::try_from(s.count()).unwrap_or_else(|_| self.0.len()),
+            Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.len(),
         }
     }
@@ -1716,14 +1773,16 @@ impl Family {
     pub(crate) fn size(&self) -> u128 {
         match &self.0 {
             Entries::Range(s) => s.count(),
+            Entries::From(_) => walked_unbounded(),
             Entries::Map(m) => m.len() as u128,
         }
     }
 
-    /// Whether the family has no entries. A range is never empty (`Family::range`).
+    /// Whether the family has no entries. A range is never empty (`Family::range`,
+    /// `Family::range_from`).
     pub fn is_empty(&self) -> bool {
         match &self.0 {
-            Entries::Range(_) => false,
+            Entries::Range(_) | Entries::From(_) => false,
             Entries::Map(m) => m.is_empty(),
         }
     }
@@ -3602,6 +3661,48 @@ mod tests {
             assert!(lazy.iter().eq(built.iter()));
         }
         assert!(Family::range(3, 2).is_empty() && Family::range(3, 2).span().is_none());
+    }
+
+    #[test]
+    fn a_range_with_no_upper_end_reads_as_the_integers_from_its_low_end() {
+        // Plan row RANGE-open: `rangeFrom(lo)` answers a key, `in` and its first entry from
+        // `lo` alone, at small, 64-bit-edge and wider low ends, and at keys that are no
+        // integer.
+        let wide = Value::int(BigInt::from(i64::MAX) * 4);
+        let los = [
+            Value::Int(0),
+            Value::Int(-3),
+            Value::Int(i64::MAX),
+            Value::Int(i64::MIN),
+            wide.clone(),
+        ];
+        for lo in los {
+            let open = Family::range_from(lo.clone());
+            let mut keys = match lo {
+                Value::Int(n) => keys_near(&[n]),
+                _ => Vec::new(),
+            };
+            keys.extend([
+                lo.clone(),
+                wide.clone(),
+                Value::float(0.5),
+                Value::Bool(true),
+                Value::atom("a"),
+            ]);
+            for k in keys {
+                let holds = k.number_kind() == Some(0) && cmp(&k, &lo) != Ordering::Less;
+                assert_eq!(open.lookup(&k), holds.then(|| k.clone()), "{lo} .. at {k}");
+                assert_eq!(open.contains(&k), holds, "{lo} .. at {k}");
+            }
+            assert_eq!(open.end_entry(false), Some((lo.clone(), lo.clone())));
+            assert!(!open.is_empty() && open.span().is_none());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "is never walked")]
+    fn a_range_with_no_upper_end_is_never_walked() {
+        let _ = Family::range_from(Value::Int(0)).len();
     }
 
     #[test]

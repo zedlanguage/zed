@@ -123,15 +123,41 @@ fn foldl_and_foldr_take_a_start_value_and_a_function_of_two_parameters() {
 
 #[test]
 fn a_range_runs_over_integers() {
-    for (name, body, end, t) in [
-        ("range_float_low", "${0.5 ..< 3}", "low", "0.5"),
-        ("range_bool_high", "${0 ..< true}", "high", "true"),
-        ("range_string_high", "${0 ..= \"9\"}", "high", "\"9\""),
+    for (name, body, end, t, repair) in [
+        (
+            "range_float_low",
+            "${0.5 ..< 3}",
+            "low",
+            "0.5",
+            "as `0 ..< n`",
+        ),
+        (
+            "range_bool_high",
+            "${0 ..< true}",
+            "high",
+            "true",
+            "as `0 ..< n`",
+        ),
+        (
+            "range_string_high",
+            "${0 ..= \"9\"}",
+            "high",
+            "\"9\"",
+            "as `0 ..< n`",
+        ),
+        // Plan row RANGE-open: `a ..` has only a low end to give.
+        (
+            "open_range_float_low",
+            "${3 in 0.5 ..}",
+            "low",
+            "0.5",
+            "as `0 ..`",
+        ),
     ] {
         let e = refused(name, body);
         let want = format!("a range runs over integers, and its {end} end may be {t}");
         assert!(e.contains(&want), "{name}: {e}");
-        assert!(e.contains("as `0 ..< n`"), "{name}: {e}");
+        assert!(e.contains(repair), "{name}: {e}");
     }
     // A read of a range may miss, and its type says so: the miss is handled before a push
     // (pushes.rs).
@@ -140,15 +166,17 @@ fn a_range_runs_over_integers() {
 #[test]
 fn the_forms_not_built_are_refused_as_not_built() {
     // The messages name no step: the program's words only. The plan rows are named at the
-    // refusals: a range with no upper end (RANGE-open), metadata reads (META-read-run), `for`
-    // (FOR-one-generator) and `discard` (DISCARD-standalone) in zedc-resolve; a fold by a
+    // refusals: a range with no upper end other than read by a key, `in` or `.first`
+    // (RANGE-open-walk), metadata reads (META-read-run), `for` (FOR-one-generator) and
+    // `discard` (DISCARD-standalone) in zedc-resolve; a fold by a
     // function that owes a proof of associativity (REDUCE-by-function) in the checker. A
     // directional fold over a keyed level is built (FP-ops-run; l03_15a_fp_ops_run::cases).
     for (name, body, what) in [
         (
             "range_with_no_upper_end",
             "${0 ..}",
-            "a range with no upper end, `a ..`, is part of the Zed language",
+            "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, `k in a ..` or \
+             `(a ..).first`, is part of the Zed language",
         ),
         (
             "read",

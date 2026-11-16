@@ -1756,6 +1756,11 @@ impl Resolver<'_> {
                     this,
                 } => self.function(params, ports, body, this, &mut todo),
                 Task::Expr(e) => self.expr(e, &mut todo),
+                // `a ..` read by a key, by `in` or by `.first`: only its low end to resolve.
+                Task::OpenRead(e) => match &e.kind {
+                    ExprKind::Range(from, RangeEnd::Open) => todo.push(Task::Expr(from)),
+                    _ => self.expr(e, &mut todo),
+                },
                 Task::Ty(t) => self.ty(t, &mut todo),
                 Task::ParamTy(t) => match &t.kind {
                     TypeKind::Range { of, low, high } => {
@@ -2895,7 +2900,11 @@ impl Resolver<'_> {
                     }
                 }
                 todo.push(Task::Expr(b));
-                todo.push(Task::Expr(a));
+                if matches!(e.kind, ExprKind::Index(..)) {
+                    todo.push(Task::OpenRead(a));
+                } else {
+                    todo.push(Task::Expr(a));
+                }
             }
             ExprKind::Call {
                 callee,
@@ -3032,7 +3041,11 @@ impl Resolver<'_> {
                     return;
                 }
                 todo.push(Task::Member(e.span, name));
-                todo.push(Task::Expr(of));
+                if name == "first" {
+                    todo.push(Task::OpenRead(of));
+                } else {
+                    todo.push(Task::Expr(of));
+                }
             }
             ExprKind::Record(fields) => {
                 self.later(e.span, "a record display");
@@ -3068,17 +3081,22 @@ impl Resolver<'_> {
             // The forms below are compiled from a later step, and their parts are resolved here
             // as `match`'s are, so a name in them is recorded or reported. Step L3.2 compiles
             // the displays, `in`, `><` and the bounded ranges. A range with no upper end is
-            // read only by a generator that stops (DESIGN.md sec:grammar, rule Range), and
-            // generators are not built (plan row RANGE-open).
+            // read only by a generator that stops (DESIGN.md sec:grammar, rule Range); a key,
+            // `in` and `.first` read it without a walk and are built (plan row RANGE-open,
+            // `Task::OpenRead`), and generators are not built (plan row RANGE-open-walk).
             ExprKind::Range(from, to) => {
                 if to.bound().is_none() {
-                    self.later(e.span, "a range with no upper end, `a ..`,");
+                    self.later(
+                        e.span,
+                        "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, \
+                         `k in a ..` or `(a ..).first`,",
+                    );
                 }
                 todo.extend(to.bound().map(|b| Task::Expr(b)));
                 todo.push(Task::Expr(from));
             }
             ExprKind::In { of, set, .. } => {
-                todo.push(Task::Expr(set));
+                todo.push(Task::OpenRead(set));
                 todo.push(Task::Expr(of));
             }
             // An operator section as the operator of `><` is the operator itself, which names
@@ -3894,6 +3912,9 @@ enum Task<'a> {
         this: Option<Span>,
     },
     Expr(&'a Expr),
+    /// An expression that a key, `in` or `.first` reads, where a range with no upper end,
+    /// `a ..`, is admitted: these reads need no walk (plan row RANGE-open).
+    OpenRead(&'a Expr),
     Ty(&'a Type),
     /// A type name and the text it is written at: a struct pattern's, a method's receiver, a
     /// struct's imported fields, an applied type's.

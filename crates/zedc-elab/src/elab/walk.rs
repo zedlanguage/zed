@@ -218,6 +218,8 @@ enum Frame<'a> {
     /// `a ..< b` or `a ..= b` once both ends are elaborated: whether the high end is
     /// inclusive.
     Range(bool),
+    /// `a ..` once its low end is elaborated.
+    RangeFrom,
     /// An expression done, by its span: its term's nodes that have no site take this one
     /// (plan row RT-sites).
     Site(Span),
@@ -1076,7 +1078,13 @@ impl<'a> Elab<'a> {
                 let (hi, through) = match to {
                     RangeEnd::Below(b) => (b, false),
                     RangeEnd::Through(b) => (b, true),
-                    RangeEnd::Open => unreachable!("resolve rejects a range with no upper end"),
+                    // `a ..`, which resolution admits only where a key, `in` or `.first` reads
+                    // it: `rangeFrom(a)`, kept as its low end (plan row RANGE-open).
+                    RangeEnd::Open => {
+                        m.k(Frame::RangeFrom);
+                        m.seq(vec![&**from], false);
+                        return;
+                    }
                 };
                 m.k(Frame::Range(through));
                 m.seq(vec![&**from, &**hi], false);
@@ -2620,6 +2628,10 @@ impl<'a> Elab<'a> {
                     }
                     Term::Prim(Prim::Range, ts)
                 });
+                m.give(t);
+            }
+            Frame::RangeFrom => {
+                let t = all(m.got()).map(|ts| Term::Prim(Prim::RangeFrom, ts));
                 m.give(t);
             }
             Frame::Is(e) => {

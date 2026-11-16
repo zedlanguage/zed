@@ -210,6 +210,10 @@ pub enum Prim {
     /// `concat(pieces, sep: s)`: the strings of the family `pieces`, in key order, with `s`
     /// between each two; `""` for no pieces (DESIGN.md step L3.2).
     Join,
+    /// `rangeFrom(a)`: the set of the integers `a`, `a + 1`, …, with no upper end, each key
+    /// mapping to itself; `a ..` is `rangeFrom(a)` (DESIGN.md sec:grammar, rule Range). It is
+    /// read by a key, by `in` and by `first`, and never walked (plan row RANGE-open).
+    RangeFrom,
 }
 
 impl Prim {
@@ -219,7 +223,9 @@ impl Prim {
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
-            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines => Some(1),
+            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines | RangeFrom => {
+                Some(1)
+            }
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom | Entries => None,
@@ -313,6 +319,7 @@ impl Prim {
             Split => 75,
             Lines => 76,
             Join => 77,
+            RangeFrom => 78,
         }
     }
 }
