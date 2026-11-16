@@ -404,8 +404,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
 /// ends in a call of one of `writers`, the functions with an output port parameter, which every
 /// call fills with an output port ([`ports`] rejects any other argument there). The default of
 /// an `else` stands in for a failure and is no path of its own, as the repair `c*.m() else #ok;`
-/// shows. A block with no export writes when it holds a push or an expression statement, each
-/// checked where it stands.
+/// shows. A block with no export is not known to write, and is the part that ends a silent
+/// path.
 // Complexity tradeoff: each node on the paths is visited once, from an explicit stack, so the
 // check of one statement costs the size of its branches and exports, O(1) for a bare call; a
 // statement's paths are disjoint parts of its text, so a unit's statements cost O(size of the
@@ -453,15 +453,13 @@ pub fn silent_tail<'e>(
                 // (`zedc_syntax`'s `Builder::node`); only a function's or a `loop`'s body may
                 // export nothing, and neither is walked here. Test:
                 // `l01_19_whole_file_ports::ports::a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser`.
-                // Were it reached: a write on one branch of an `if` lies in that branch's block,
-                // which is no statement of this block, and a statement of this block that is an
-                // expression is accepted only if it writes on every one of its own paths
-                // (`Ck::expr_stmt` checks it where it stands). That the block then writes on
-                // every path also needs each of its statements to run whenever the block ends
-                // normally; that is not proved for a block that leaves early (a `while` or
-                // `until` guard, a failure that bubbles out), which no such block can hold today.
-                _ => (stmts.iter())
-                    .any(|s| matches!(s.kind, StmtKind::Push { .. } | StmtKind::Expr(_))),
+                // Were it reached, the block is not known to write, whatever it holds, and the
+                // statement is refused at it: that a push or an expression statement in it makes
+                // every path write needs each of its statements to run whenever the block ends,
+                // which is not proved for a block that leaves early (a `while` or `until` guard,
+                // a failure that bubbles out). Test:
+                // `check::ports::tests::a_block_that_exports_nothing_is_not_known_to_write`.
+                _ => false,
             },
             _ => false,
         };
@@ -494,5 +492,90 @@ fn what(k: Kind) -> &'static str {
         Kind::Field => "a field",
         Kind::Unit => "a unit",
         Kind::Port => unreachable!("an output port"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zedc_syntax::ast::Stmt;
+
+    fn at(start: usize) -> Span {
+        Span {
+            start,
+            end: start + 1,
+        }
+    }
+
+    /// The statement `kind` at `start`.
+    fn stmt(kind: StmtKind, start: usize) -> Stmt {
+        Stmt {
+            kind,
+            span: at(start),
+        }
+    }
+
+    /// A call at `start` of the function whose binder is 0, with no arguments.
+    fn call(start: usize) -> Expr {
+        Expr {
+            kind: ExprKind::Call {
+                callee: Box::new(Expr {
+                    kind: ExprKind::Name("say".into()),
+                    span: at(start),
+                }),
+                positional: Vec::new(),
+                named: Vec::new(),
+                curry: false,
+                infix: false,
+            },
+            span: at(start),
+        }
+    }
+
+    /// A block that exports nothing is not known to write, whatever it holds, so `silent_tail`
+    /// gives the block itself as the part that writes nothing (row SILENT-tail-no-export-safe).
+    /// The parser refuses such a block wherever this walk could meet it
+    /// (`l01_19_whole_file_ports::ports::a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser`),
+    /// so it is built here directly. A block that exports a call of a writer writes, which the
+    /// same tables show.
+    #[test]
+    fn a_block_that_exports_nothing_is_not_known_to_write() {
+        let mut res = Resolution::default();
+        for start in [0, 10, 20] {
+            res.uses
+                .insert(at(start), Ref::Bound([0].into_iter().collect()));
+        }
+        let writers: HashSet<usize> = [0].into_iter().collect();
+        let block = |stmts: Vec<Stmt>| Expr {
+            kind: ExprKind::Block(stmts),
+            span: at(100),
+        };
+        let push = || StmtKind::Push {
+            port: "out".into(),
+            value: Expr {
+                kind: ExprKind::Name("s".into()),
+                span: at(30),
+            },
+        };
+        for (name, e) in [
+            (
+                "a call of a writer",
+                block(vec![stmt(StmtKind::Expr(call(0)), 0)]),
+            ),
+            ("a push", block(vec![stmt(push(), 30)])),
+            (
+                "a call and a push",
+                block(vec![stmt(StmtKind::Expr(call(10)), 10), stmt(push(), 30)]),
+            ),
+            ("nothing", block(Vec::new())),
+        ] {
+            let tail = silent_tail(&e, &res, &writers);
+            assert!(
+                tail.is_some_and(|t| std::ptr::eq(t, &e)),
+                "{name}: {tail:?}"
+            );
+        }
+        let exported = block(vec![stmt(StmtKind::Return(vec![call(20)]), 20)]);
+        assert!(silent_tail(&exported, &res, &writers).is_none());
     }
 }
