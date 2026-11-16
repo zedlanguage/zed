@@ -51,10 +51,11 @@
 // call together (the points found are kept for the other symbols). Measured on the families
 // of step 1 (COMPLEXITY.md row PRES-pugh-work-budget).
 // Trigger: a holed disjunct (a stride, `x + 2 * y == 0`), or values each disjunction allows
-// through a different disjunct. Tests: `exact::tests`, zedc_preimage
-// `or_if_projections_keep_the_gaps_the_if_reading_shows`.
+// through a different disjunct. Tests: `exact::tests`; zedc_preimage
+// `or_if_projections_keep_the_gaps_the_if_reading_shows` needs the cover on the checker's
+// path and is kept out of the tree until row PRES-cover-wire puts it there
+// (/home/luke/Work/wt/failing-tests/FAIL-or-if-projection-not-exact.rs).
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -62,83 +63,34 @@ use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::Id;
+pub use super::meter::{
+    EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK, QUESTION_WORK,
+    SOLVER_UNIT,
+};
+use super::meter::{PIECE, Work};
 use super::{Atom, Con, Each, Factor, Formula, Lin, Model, Refusal, Rel};
 
 mod projection;
 pub use projection::{METHOD, Method};
-use projection::{Strided, Tail};
+use projection::{Strided, Tail, bounded, fin, holds_at, value};
 
-/// The work allowed to the cover of one symbol in `exact_each`. A unit is one value or residue
-/// the cover lists, or a hundredth of a constraint, term or row read ([`SOLVER_UNIT`]; each
-/// charging site says what it counts): a question of the solver is charged the constraints of the
-/// formula asked and the solver's own steps (`charge`), and a cell the constraints read to
-/// make it. Past it the symbol is refused with [`Refusal::Questions`]. The predicted work of
-/// a cover is 2 ms and 80 ns a unit of its CPU time, so 3,100,000 units are 250 ms (QUESTIONS
-/// A99): of 38,984 calls of `exact_each` in the step tests, run with no limit at loads of 65
-/// to 82 on 32 cores and measured whole (all their symbols' covers together), none took more
-/// CPU time than that, the closest 1.6 ms under it at 178,156 units (COMPLEXITY.md,
-/// PRES-pugh-work-budget). The 2 ms are two ticks of the clock read.
-// Complexity tradeoff: before PRES-pugh-work-budget a question was charged `size + 2` and its
-// run of the solver was not counted, so one question ran from 40 ms to more than 25 s
-// (`s22::chains_on_two_inputs_keep_their_boxes_at_50_and_51`) under a limit of 2·10^7. Naive
-// alternatives: time each question and stop at 250 ms, which makes the answer depend on the
-// machine and its load (deterministic checking forbids it); or keep the solver's coarser set
-// past the limit, which P197 and P13 forbid. Used: the solver charges its own steps (each
-// system solved, each row the Omega test makes, each canonical order, each row `live3`
-// reads, each probe, each search by halves) to the question's meter, a count the same on
-// every run, and stops at its next step once the meter is spent (`spent`); a question is
-// charged each constraint of its formula, which the checks before the solver's steps read at
-// about 4 µs each, a piece read by a residue question 16 units ([`PIECE`]), and each row an
-// exact elimination of a cell makes as it makes it. Cost: one thread-local read per charge.
-// Not proved: that 2 ms and 80 ns a unit bound the CPU time of every cover, at every load
-// and size of coefficient. It is measured, and the bound is loose for most covers: on the 185
-// calls past 3,100,000 units the CPU time per unit ran from 0.6 to 28 ns, median 16, and 139
-// of them took under 250 ms, so a cover refused at the limit may have needed far less
-// (COMPLEXITY.md, PRES-pugh-work-budget; the refit is row PRES-work-charge-fit).
-pub const EXACT_LIMIT: u64 = 3_100_000;
-
-thread_local! {
-    /// Test control: a work limit in place of [`EXACT_LIMIT`].
-    pub static EXACT_LIMIT_SET: Cell<Option<u64>> = const { Cell::new(None) };
-    /// Test control: the solver's answer as it is, with no cover (the answer before
-    /// PRES-project-exact-solver), for the tests that compare the two.
-    pub static EXACT_OFF: Cell<bool> = const { Cell::new(false) };
-    /// The questions `exact_each` has asked on this thread, read by tests.
-    pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
-    /// The work `exact_each` has used on this thread, read by tests and benchmarks.
-    pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
+/// [`super::project_each`] made exact by the cover of this module (Monniaux's model-guided
+/// projection with Pugh's exact projection of each implicant): each symbol's set is the exact
+/// projection, or refused past the cover's work limit ([`EXACT_LIMIT`]). With no memo.
+/// Not yet the path of [`super::project_each`]: on 2026-11-16 eight benchmarks that pass with
+/// the solver alone pass their limits with the cover (rows PRES-cover-bench-regressions and
+/// PRES-pugh-xr-rounds), so the checker asks the solver alone and this entry is the cover's
+/// for its own tests until those rows close. It is here, not in `presburger.rs`, so that the
+/// solver does not import the cover, which imports the solver (row MAIN-red-pugh-land): the
+/// solver is handed `exact_each` as the cover to run.
+pub fn project_each_exact(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    super::project_each_with(f, syms, Some(exact_each))
 }
 
-/// The units of work used and allowed.
-struct Work {
-    used: u64,
-    limit: u64,
-}
-
+/// The two charges of [`Work`] that ask the solver, here rather than in module `meter` with the
+/// rest of [`Work`], so that the meter imports nothing of the solver (row MAIN-red-pugh-land).
 impl Work {
-    fn charge(&mut self, units: u64) -> Result<(), Refusal> {
-        self.used = self.used.saturating_add(units);
-        EXACT_WORK.set(EXACT_WORK.get().saturating_add(units));
-        if self.used > self.limit {
-            return Err(Refusal::Questions);
-        }
-        Ok(())
-    }
-
-    /// Charges `rows` constraints or rows read whole (the formula read at a point, an
-    /// implicant's rows), [`SOLVER_UNIT`] each, where a value the cover lists costs tens of
-    /// nanoseconds; a question's formula is charged by [`Work::question`].
-    fn read(&mut self, rows: u64) -> Result<(), Refusal> {
-        self.charge(rows.saturating_mul(SOLVER_UNIT))
-    }
-
-    /// Charges the `rows` constraints of a question's formula, [`QUESTION_ROW`] each, before
-    /// the question is asked: the checks the solver makes before its own steps read them.
-    fn question(&mut self, rows: u64) -> Result<(), Refusal> {
-        self.charge(rows.saturating_mul(QUESTION_ROW))
-    }
-
-    /// [`super::satisfiable`] of `q`, its work counted by the solver's meter ([`charge`]) and
+    /// [`super::satisfiable`] of `q`, its work counted by the solver's meter (`meter::charge`) and
     /// charged here, the meter given the work left. A question that passes it is refused with
     /// [`Refusal::Questions`], whatever the solver answered after: an error the solver drops on
     /// its way (a search that reads a refusal as no point) could have changed that answer.
@@ -159,121 +111,6 @@ impl Work {
         self.read(rows.len() as u64)?;
         self.metered(|| super::eliminated_counted(rows, keep))
     }
-
-    /// `run`, its work counted by the solver's meter ([`charge`]) and charged here, the meter
-    /// given the work left: refused with [`Refusal::Questions`] where it passes the limit,
-    /// whatever `run` returned, since a step that reads a spent meter as no point (as
-    /// [`super::eliminated_whole`] and the solver's searches do) could have changed it.
-    fn metered<T>(&mut self, run: impl FnOnce() -> T) -> Result<T, Refusal> {
-        let left = self.limit.saturating_sub(self.used);
-        let outer = METER.replace(Some(Meter {
-            used: 0,
-            limit: left,
-        }));
-        let out = run();
-        let Meter { used, limit } = METER.get().expect("the meter set above");
-        // A meter open around this one (none is today: neither the solver nor an elimination
-        // asks a projection) is charged what this one used, in units, as it counts them.
-        METER.set(outer.map(|o| Meter {
-            used: o.used.saturating_add(used),
-            limit: o.limit,
-        }));
-        self.charge(used)?;
-        if used > limit {
-            return Err(Refusal::Questions);
-        }
-        Ok(out)
-    }
-}
-
-/// The solver's work while a question of the cover runs ([`Work::ask`]): units used and
-/// allowed.
-#[derive(Clone, Copy)]
-struct Meter {
-    used: u64,
-    limit: u64,
-}
-
-thread_local! {
-    /// The meter of the question running, if any.
-    static METER: Cell<Option<Meter>> = const { Cell::new(None) };
-    /// The units the questions of the cover have used on this thread, read by tests and
-    /// benchmarks.
-    pub static QUESTION_WORK: Cell<u64> = const { Cell::new(0) };
-    /// The units the fast paths of the cover ([`tried`]) have used on this thread, answered or
-    /// not, read by tests: counted in [`EXACT_WORK`] but not against a cover's limit.
-    pub static FAST_WORK: Cell<u64> = const { Cell::new(0) };
-}
-
-/// The units of [`EXACT_LIMIT`] one unit of the solver's work counts for: a row, term or
-/// constraint read by the solver costs about a hundred times a value or residue the cover
-/// lists (PRES-pugh-work-budget).
-pub const SOLVER_UNIT: u64 = 100;
-
-/// The units of [`EXACT_LIMIT`] one step of the solver counts for ([`charge`]), and the units
-/// one constraint of a question's formula counts for ([`Work::question`]): 100 each, the
-/// charges of PRES-pugh-work-budget. Seat Opus of PRES-pugh-xr round 3 fit 45 and 150 on the
-/// thread CPU time of whole covers (13,248 covers over 2 ms, loads 54 to 94: none over the
-/// prediction 2 ms + 80 ns a unit, least ratio 1.028, median 1.95), on a tree without that
-/// round's counted shadows (`Work::eliminate`). With those shadows also charged, 45 and 150
-/// refused `omega::twin_definitions_merge_in_time_near_linear`, which 100 and 100 answer, so
-/// the fit no longer described the charges in force and was not merged: the refit on the
-/// merged charges, per site, is open (PRES-work-charge-fit).
-// Complexity tradeoff: one factor for all solver steps and one for question rows is the
-// naive charge; a factor per site fit by a linear program held on the data it was fit on
-// and not on held-out data (round 3, least ratio 0.42 on the benchmarks), so a per-site fit
-// needs per-site timings (a batch of one site's steps between two reads of
-// `CLOCK_THREAD_CPUTIME_ID`, which reads to 1 ns at about 0.6 µs a read).
-pub(super) const SOLVER_STEP: u64 = 100;
-/// See [`SOLVER_STEP`].
-pub(super) const QUESTION_ROW: u64 = 100;
-
-/// The units a piece read by [`residues`] or [`outside`] is charged: its ends converted, two
-/// residues taken and a set joined or met, measured at 0.6 to 0.8 µs a piece where a unit
-/// of a cover costs at most 56 ns (s22 `remainder_splits_at_their_corners_keep_their_preimages`,
-/// PRES-pugh-work-budget), so 16, not the [`LISTED`] a listed value costs.
-const PIECE: u64 = 16;
-
-/// The units a value the cover lists is charged ([`projection::listed`]): the value made and
-/// pushed, about 150 ns, and its share of the sets built from the values listed after it (the
-/// list sorted into a set and joined to the cell, and the gap and the values found cut and
-/// joined by it), about 370 ns more, measured on a cover that lists 1,958,315 values at loads
-/// of 75 to 90 on 32 cores (s22 `split_pieces_reach_each_kind_of_touched`, PRES-pugh-xr
-/// round 3, F): 526 ns, so 7 units of 80 ns. With the round-3 fit of [`SOLVER_STEP`] (45) 7 was the least
-/// whole charge with no cover over its prediction: at 6 that cover took 1.006 times its prediction.
-/// With [`SOLVER_STEP`] at 100 that check is not repeated (PRES-work-charge-fit).
-// Complexity tradeoff: before, a listed value was charged 1 unit, which left the sets built
-// from the list uncounted, and that cover was refused at the limit after 1.5 s of CPU time,
-// six times the 250 ms the limit stands for (QUESTIONS A99). Naive alternative: charge each
-// set operation by the pieces it reads, one more charge at each of four sites for the same
-// count. Used: the count is the values listed, so each is charged its share where it is made.
-pub(super) const LISTED: u64 = 7;
-
-/// Charges `units` of the solver's work, [`SOLVER_STEP`] each, to the meter of the question
-/// running, and refuses with
-/// [`Refusal::Questions`] once it is past its limit; with no question running, as for every
-/// question but the cover's, it does nothing. A unit is one constraint, term or disjunct read
-/// by a step of the solver (each site says what it charges), and the units charged are a
-/// count, the same on every run.
-pub(super) fn charge(units: u64) -> Result<(), Refusal> {
-    match METER.get() {
-        None => Ok(()),
-        Some(Meter { used, limit }) => {
-            let used = used.saturating_add(units.saturating_mul(SOLVER_STEP));
-            METER.set(Some(Meter { used, limit }));
-            if used > limit {
-                Err(Refusal::Questions)
-            } else {
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Whether the question running is past its limit: a search that reads a refusal as no point
-/// stops at once, since the question's answer is then refused whatever it finds.
-pub(super) fn spent() -> bool {
-    METER.get().is_some_and(|m| m.used > m.limit)
 }
 
 /// The exact projection of `f` onto each of `syms`, from `found`, the solver's answer, each of
@@ -1262,22 +1099,6 @@ fn outside(
     Ok(IntervalSet::from_pieces(out))
 }
 
-/// The value of `l` at `m`, each atom absent from `m` zero and each product read as an atom of
-/// its own, as the solver reads its points.
-fn value(l: &Lin, m: &Model) -> Int {
-    let mut v = l.constant.clone();
-    for (a, k) in &l.terms {
-        if let Some(x) = m.get(a) {
-            v = &v + &(k * x);
-        }
-    }
-    v
-}
-
-fn fin(v: &Int) -> End {
-    End::Fin(Num::from(v))
-}
-
 /// The cell of the point `m` for the symbol `s`: values of `s` in `within` (the hull of the
 /// solver's answer), `m`'s among them, each with a point of `f`. Only `m`'s own value where
 /// `s` is a product or a factor of one, since the solver may read a product more tightly than
@@ -1584,52 +1405,6 @@ fn runs(
     Ok(Some(IntervalSet::from_pieces(pieces)))
 }
 
-/// The values of `s` that rows over `s` alone allow (each row with no atom holding or not).
-fn bounded(rows: &[Con], s: &Atom) -> IntervalSet {
-    let mut lo: Option<Int> = None;
-    let mut hi: Option<Int> = None;
-    for k in rows {
-        let Some(a) = k.lin.terms.get(s) else {
-            if !holds_at(k, &k.lin.constant) {
-                return IntervalSet::empty();
-            }
-            continue;
-        };
-        let c = &k.lin.constant;
-        let (l, u) = match k.rel {
-            // `a·s + c >= 0`: `s >= ceil(-c / a)` with `a` above zero, else `s <= floor(c / -a)`.
-            Rel::Ge if a.is_positive() => (Some(-&c.div_floor(a)), None),
-            Rel::Ge => (None, Some(c.div_floor(&-a))),
-            Rel::Eq => {
-                if !c.mod_floor(a).is_zero() {
-                    return IntervalSet::empty();
-                }
-                let v = -&c.div_floor(a);
-                (Some(v.clone()), Some(v))
-            }
-        };
-        if let Some(l) = l
-            && lo.as_ref().is_none_or(|x| &l > x)
-        {
-            lo = Some(l);
-        }
-        if let Some(u) = u
-            && hi.as_ref().is_none_or(|x| &u < x)
-        {
-            hi = Some(u);
-        }
-    }
-    if let (Some(l), Some(u)) = (&lo, &hi)
-        && l > u
-    {
-        return IntervalSet::empty();
-    }
-    IntervalSet::range(
-        lo.as_ref().map_or(End::NegInf, fin),
-        hi.as_ref().map_or(End::PosInf, fin),
-    )
-}
-
 /// The steps `k` at which `f` holds at the point `m + k·d`, each atom of the direction `d` moved
 /// by `k` times its step and every other atom at its value in `m`: each constraint becomes
 /// `a·k + r` (with `a` the sum of its coefficients times their steps and `r` its value at `m`),
@@ -1816,14 +1591,6 @@ fn holds_as(f: &Formula, m: &Model, memo: &mut HashMap<Id, bool>) -> bool {
     fold(f, key, memo, |c| holds_at(c, &value(&c.lin, m)), join)
 }
 
-/// Whether the constraint `c` holds where its form is `v`.
-fn holds_at(c: &Con, v: &Int) -> bool {
-    match c.rel {
-        Rel::Ge => !v.is_negative(),
-        Rel::Eq => v.is_zero(),
-    }
-}
-
 /// The negation of `c`, which fails at a point where its form is `v`: `-t - 1 >= 0` for
 /// `t >= 0`, and for `t == 0`, `t - 1 >= 0` or `-t - 1 >= 0` by the side of `v`.
 fn negated(c: &Con, v: &Int) -> Con {
@@ -1931,7 +1698,8 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Shared, member, project_each_exact};
+    use super::super::meter::SOLVER_STEP;
+    use super::super::{Shared, member};
     use super::*;
 
     /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new

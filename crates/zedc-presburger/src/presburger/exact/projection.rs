@@ -22,10 +22,10 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use zedc_int::int::Int;
-use zedc_lattice::interval::{End, IntervalSet};
+use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::super::{Atom, Con, Formula, Lin, Refusal, Rel};
-use super::{EXACT_QUESTIONS, LISTED, Work, bounded, fin};
+use super::super::meter::{EXACT_QUESTIONS, LISTED, Work};
+use super::super::{Atom, Con, Formula, Lin, Model, Refusal, Rel};
 
 /// The in-cell step for the values an implicant has without end.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -661,6 +661,80 @@ pub(super) fn rays(
     Ok(out)
 }
 
+// The four helpers below are used by the cover (`exact.rs`) as well as here. They are written
+// in this module, which `exact.rs` imports, so that this module imports nothing of `exact.rs`
+// (row MAIN-red-pugh-land: the two files were an import cycle).
+
+/// The value of `l` at `m`, each atom absent from `m` zero and each product read as an atom of
+/// its own, as the solver reads its points.
+pub(super) fn value(l: &Lin, m: &Model) -> Int {
+    let mut v = l.constant.clone();
+    for (a, k) in &l.terms {
+        if let Some(x) = m.get(a) {
+            v = &v + &(k * x);
+        }
+    }
+    v
+}
+
+pub(super) fn fin(v: &Int) -> End {
+    End::Fin(Num::from(v))
+}
+
+/// The values of `s` that rows over `s` alone allow (each row with no atom holding or not).
+pub(super) fn bounded(rows: &[Con], s: &Atom) -> IntervalSet {
+    let mut lo: Option<Int> = None;
+    let mut hi: Option<Int> = None;
+    for k in rows {
+        let Some(a) = k.lin.terms.get(s) else {
+            if !holds_at(k, &k.lin.constant) {
+                return IntervalSet::empty();
+            }
+            continue;
+        };
+        let c = &k.lin.constant;
+        let (l, u) = match k.rel {
+            // `a·s + c >= 0`: `s >= ceil(-c / a)` with `a` above zero, else `s <= floor(c / -a)`.
+            Rel::Ge if a.is_positive() => (Some(-&c.div_floor(a)), None),
+            Rel::Ge => (None, Some(c.div_floor(&-a))),
+            Rel::Eq => {
+                if !c.mod_floor(a).is_zero() {
+                    return IntervalSet::empty();
+                }
+                let v = -&c.div_floor(a);
+                (Some(v.clone()), Some(v))
+            }
+        };
+        if let Some(l) = l
+            && lo.as_ref().is_none_or(|x| &l > x)
+        {
+            lo = Some(l);
+        }
+        if let Some(u) = u
+            && hi.as_ref().is_none_or(|x| &u < x)
+        {
+            hi = Some(u);
+        }
+    }
+    if let (Some(l), Some(u)) = (&lo, &hi)
+        && l > u
+    {
+        return IntervalSet::empty();
+    }
+    IntervalSet::range(
+        lo.as_ref().map_or(End::NegInf, fin),
+        hi.as_ref().map_or(End::PosInf, fin),
+    )
+}
+
+/// Whether the constraint `c` holds where its form is `v`.
+pub(super) fn holds_at(c: &Con, v: &Int) -> bool {
+    match c.rel {
+        Rel::Ge => !v.is_negative(),
+        Rel::Eq => v.is_zero(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,15 +770,12 @@ mod tests {
         for v in lo..=hi {
             let mut idx = vec![-r; atoms.len()];
             loop {
-                let mut m = super::super::super::Model::new();
+                let mut m = Model::new();
                 m.insert(sym(s), Int::from(v));
                 for (a, x) in atoms.iter().zip(&idx) {
                     m.insert(a.clone(), Int::from(*x));
                 }
-                if rows
-                    .iter()
-                    .all(|k| super::super::holds_at(k, &super::super::value(&k.lin, &m)))
-                {
+                if rows.iter().all(|k| holds_at(k, &value(&k.lin, &m))) {
                     out.push(v);
                     break;
                 }

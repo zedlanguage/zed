@@ -108,6 +108,7 @@ pub mod extend;
 mod forced;
 mod formula;
 mod local;
+mod meter;
 mod modular;
 mod nesting;
 mod one_row;
@@ -701,11 +702,11 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
 
 fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
     // A question of the cover past its work limit is refused whatever it finds
-    // (`exact::Work::metered`), so no retry is made: each retry, of the factored form, of the
+    // (`meter::Work::metered`), so no retry is made: each retry, of the factored form, of the
     // form with the facts, of the old path ([`or_old`]), reran the steps before the search,
     // which the meter does not charge, and a refused question ran for seconds past its limit
     // (PRES-cover-bench-regressions). Outside the cover no meter runs and this never holds.
-    if exact::spent() {
+    if meter::spent() {
         return Err(Refusal::Questions);
     }
     match forced::forced(f, true) {
@@ -753,7 +754,7 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// [`satisfiable`] on one path ([`or_old`]).
 fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
     // As at [`satisfiable_written`]: a spent question is refused with no retry.
-    if exact::spent() {
+    if meter::spent() {
         return Err(Refusal::Questions);
     }
     if let Some(found) = modular_answer(f, true) {
@@ -873,7 +874,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     } else {
         ask(p, implied).or_else(|e| {
             // As at [`satisfiable_written`]: a spent question is refused with no retry.
-            if exact::spent() {
+            if meter::spent() {
                 return Err(e);
             }
             ask(absorbed(f, &[]).0, Vec::new())
@@ -9921,7 +9922,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
             // is made, and, below, the disjuncts of each disjunction read
             // (PRES-pugh-work-budget; the projection is made only when it is needed, so only
             // then charged).
-            exact::charge(1)?;
+            meter::charge(1)?;
             let mut added: Vec<Con> = Vec::new();
             // The disjunctions below, read before the next of `batch`, as a queue of all of them
             // would read them; the projection is of the atoms of the first alone, made when the
@@ -9929,12 +9930,12 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
             let mut queue: Vec<&[Rc<Parts>]> = vec![batch[i]];
             let mut ask = Some(kernel);
             'next: while let Some(ds) = queue.pop() {
-                exact::charge(ds.len() as u64)?;
+                meter::charge(ds.len() as u64)?;
                 let mut ask = ask.take();
                 let mut kernel = None;
                 if !valid {
                     let rows = ask.take().and_then(|k| k());
-                    exact::charge(rows.as_ref().map_or(0, Vec::len) as u64)?;
+                    meter::charge(rows.as_ref().map_or(0, Vec::len) as u64)?;
                     kernel = rows.map(Linked::of);
                 }
                 if !valid && kernel.is_none() {
@@ -9999,7 +10000,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                     // groups of the constraints taken, as before.
                     if let Some(k) = ask.take() {
                         let rows = k();
-                        exact::charge(rows.as_ref().map_or(0, Vec::len) as u64)?;
+                        meter::charge(rows.as_ref().map_or(0, Vec::len) as u64)?;
                         kernel = rows.map(Linked::of);
                     }
                     if let Some(k) = &kernel {
@@ -10427,7 +10428,7 @@ pub fn eliminated(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>
 }
 
 /// The same size-preserving exact shadow as `eliminated`, with generated rows charged.
-/// Only a caller inside `exact::Work::metered` may read this: a spent shadow returns
+/// Only a caller inside `meter::Work::metered` may read this: a spent shadow returns
 /// `None` internally, also the contradiction marker, and the enclosing meter must veto it.
 /// Pugh (CACM 1992), exact real/dark shadows: charging changes no elimination condition.
 /// Tradeoff: generated substitutions and bound pairs used to run outside the cover's
@@ -10447,7 +10448,7 @@ fn eliminated_small(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, charged: bool) -
 
 /// [`eliminated`] by [`shadow_whole`]: every exact elimination is done however many rows it
 /// makes, for the cells of [`exact`], which charge the rows made to their counted work as they
-/// are made (`exact::Work::metered`). Where that meter is spent the answer is the one for no
+/// are made (`meter::Work::metered`). Where that meter is spent the answer is the one for no
 /// point, which the cell never reads: it is refused whatever this returns.
 pub(super) fn eliminated_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
     match shadow_logged(&mut rows.iter(), keep, true, true, true, None) {
@@ -10705,7 +10706,7 @@ fn shadow_logged<'a>(
             else {
                 return false;
             };
-            if charged && exact::charge(d.rows.len() as u64).is_err() {
+            if charged && meter::charge(d.rows.len() as u64).is_err() {
                 return false;
             }
             let e = if e.lin.terms[&x].is_positive() {
@@ -10731,7 +10732,7 @@ fn shadow_logged<'a>(
             && (grow
                 || others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs
                 || eq_trial());
-        if charged && exact::spent() {
+        if charged && meter::spent() {
             return None;
         }
         // With `dark`, an atom is eliminated too when each pair of its bounds has, in its real
@@ -10757,7 +10758,7 @@ fn shadow_logged<'a>(
                 }
                 // This feasibility trial combines pairs before the actual elimination.
                 // Charge it separately: a rejected trial still did those combinations.
-                if charged && exact::charge((lows.len() * highs.len()) as u64).is_err() {
+                if charged && meter::charge((lows.len() * highs.len()) as u64).is_err() {
                     return None;
                 }
                 let (mut new_rows, mut new_terms) = (0, 0);
@@ -10799,7 +10800,7 @@ fn shadow_logged<'a>(
                 .expect("a unit equality of the atom");
             let e = taken.swap_remove(at);
             // Charged as the pairs below are, a row for each row the equality is put in.
-            if charged && exact::charge(taken.len() as u64).is_err() {
+            if charged && meter::charge(taken.len() as u64).is_err() {
                 return None;
             }
             // `x = -(e - x)` when its coefficient in `e` is 1; `e` is turned so that it is.
@@ -10827,11 +10828,11 @@ fn shadow_logged<'a>(
         // The rows made, each tidied; a row without atoms that is false shows that `rows` has
         // no point, whether the elimination is then done or not.
         // With `charged`, the pairs to be made charged first to the meter of the cover's work
-        // (`exact::Work::metered`): rows made without bound otherwise stop only at the limit
+        // (`meter::Work::metered`): rows made without bound otherwise stop only at the limit
         // checked after them. A spent meter gives `None`, which the cover never reads, its step
         // refused whatever this returns. Not for `shadow_whole`, whose callers read `None` as
         // no point and may run inside a question whose meter is spent.
-        if charged && exact::charge((lows.len() * highs.len()) as u64).is_err() {
+        if charged && meter::charge((lows.len() * highs.len()) as u64).is_err() {
             return None;
         }
         let mut made: Vec<Con> = Vec::with_capacity(lows.len() * highs.len());
@@ -10952,7 +10953,7 @@ fn by_halves_general<E>(
         // A question of the cover is charged the rows projected; past its limit the projection
         // is not made, which leaves the leaves to ask the solver, as for a projection that
         // found no point, and the question is refused (`exact::Work::ask`).
-        exact::charge(rows.len() as u64 + 1).ok()?;
+        meter::charge(rows.len() as u64 + 1).ok()?;
         // Each row once: a copy adds nothing to the system it is in, but it is projected again.
         // Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, the rows as given, which on
         // items that each bring and return one row over atoms all of them share (the inputs `n`, `m`
@@ -11325,7 +11326,7 @@ fn probe_kept_status(
             // A question of the cover is charged each round's constraints, and each disjunct
             // tested against each point found (PRES-pugh-work-budget).
             let disjuncts: usize = p.ors.iter().map(Vec::len).sum();
-            exact::charge((p.cons.len() + disjuncts * (1 + points.len())) as u64)?;
+            meter::charge((p.cons.len() + disjuncts * (1 + points.len())) as u64)?;
             let mut changed = match drop_by_bounds(&mut p, &|d| kept.contains(&d.id())) {
                 None => return Ok(None),
                 Some(c) => c,
@@ -12384,7 +12385,7 @@ fn search_by_halves(
         }
         // A question of the cover is charged each search's constraints and disjunctions; past
         // its limit the search finds no point, and the question is refused (`exact::Work::ask`).
-        exact::charge((q.cons.len() + q.ors.len()) as u64 + 1).ok()?;
+        meter::charge((q.cons.len() + q.ors.len()) as u64 + 1).ok()?;
         let (m, mut took) = pick_taking(&q, true).ok()?;
         took.extend(unit_took);
         let mut near = Near::default();
@@ -12437,8 +12438,8 @@ fn search_by_halves(
         .flat_map(|(i, o)| (0..o.len()).map(move |at| (i, at)))
         .collect();
     // A question of the cover past its limit is refused whatever the searches find, so they
-    // stop (`exact::spent`).
-    while !left.is_empty() && !(stop && hit.get()) && !exact::spent() {
+    // stop (`meter::spent`).
+    while !left.is_empty() && !(stop && hit.get()) && !meter::spent() {
         // One round: each disjunct no point holds is forced, but one whose bound of one atom
         // the bounds of one atom of those forced before it in the round exclude, which waits
         // for the next round: `y == 0` and `y == 10` of one disjunction are never forced
@@ -13924,7 +13925,7 @@ fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<M
     let raw_cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
     // A question of the cover is charged each system's constraints and terms
     // (PRES-pugh-work-budget).
-    exact::charge(raw_cons.iter().map(|c| c.lin.terms.len() as u64 + 1).sum())?;
+    meter::charge(raw_cons.iter().map(|c| c.lin.terms.len() as u64 + 1).sum())?;
     let reduced_buf: Vec<Con>;
     let cons: Vec<&Con> = if raw_cons
         .iter()
@@ -14514,7 +14515,7 @@ fn parts(
             Ok(None) => return Ok(None),
             Ok(Some(p)) => points.push((vs, p)),
             Err(r) => {
-                if exact::spent() {
+                if meter::spent() {
                     return Err(r);
                 }
                 refused = Some(least(refused, r));
@@ -15012,7 +15013,7 @@ fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Result<Canonical, Refusal> {
     // (PRES-pugh-work-budget). Stop before color refinement when admission fails; a
     // discarded charge used to run that O(t log t) pass after the question was refused.
     let terms: usize = cons.iter().map(|c| c.lin.terms.len()).sum();
-    exact::charge((n + cons.len() + terms) as u64)?;
+    meter::charge((n + cons.len() + terms) as u64)?;
     Ok(canonical_order(atoms, cons))
 }
 
@@ -15606,7 +15607,7 @@ impl System {
         // (PRES-pugh-work-budget). Do not normalize or index a row after admission
         // fails. This leaves a partial system, used only inside a metered question whose
         // answer is refused regardless of the solver's provisional result.
-        if exact::charge(r.a.len() as u64 + 1).is_err() {
+        if meter::charge(r.a.len() as u64 + 1).is_err() {
             return;
         }
         let r = match r.normal(false) {
@@ -16166,7 +16167,7 @@ impl System {
             with.iter().partition(|r| r.at(j).is_positive());
         for lo in &lowers {
             for hi in &uppers {
-                if exact::spent() {
+                if meter::spent() {
                     return with;
                 }
                 self.add(combine(lo, hi, j, dark));
@@ -16204,7 +16205,7 @@ fn apart(lowers: Vec<usize>, mut hi: Vec<usize>, beyond: usize) -> usize {
 fn relaxed_empty(gs: &System) -> bool {
     let mut sys = System::new(gs.vars.iter().map(|v| v.key));
     for (a, r) in &gs.rows {
-        if exact::spent() {
+        if meter::spent() {
             return false;
         }
         sys.add(Row {
@@ -16213,7 +16214,7 @@ fn relaxed_empty(gs: &System) -> bool {
         });
     }
     while !sys.empty {
-        if exact::spent() {
+        if meter::spent() {
             return false;
         }
         let Some((fill, js)) = sys.least(&[&sys.exact, &sys.inexact]) else {
@@ -16223,7 +16224,7 @@ fn relaxed_empty(gs: &System) -> bool {
             return box_empty(&sys);
         };
         for j in js {
-            if exact::spent() {
+            if meter::spent() {
                 return false;
             }
             sys.eliminate(j, false);
@@ -16784,8 +16785,8 @@ enum Leaf {
     Tied(Tied),
 }
 
-/// The units of the cover's work limit (`exact::EXACT_LIMIT`) charged for each row that
-/// `live3::decide` reads, before `exact::charge` multiplies by `SOLVER_STEP`.
+/// The units of the cover's work limit (`meter::EXACT_LIMIT`) charged for each row that
+/// `live3::decide` reads, before `meter::charge` multiplies by `SOLVER_STEP`.
 /// This is an empirical weight, not a bound for arbitrary coefficient sizes.
 const LIVE3_ROW: u64 = 64;
 
@@ -16902,7 +16903,7 @@ impl Omega {
                     ));
                 }
                 for (r, rel) in base {
-                    if exact::spent() {
+                    if meter::spent() {
                         break;
                     }
                     if *rel == Rel::Eq && r.a.len() == 1 {
@@ -16946,7 +16947,7 @@ impl Omega {
             }
         }
         for (r, rel) in base {
-            if exact::spent() {
+            if meter::spent() {
                 break;
             }
             match rel {
@@ -16994,7 +16995,7 @@ impl Omega {
             }
             // A question of the cover past its work limit (PRES-pugh-work-budget): its answer
             // is refused whatever this run finds, so it stops here.
-            if exact::spent() {
+            if meter::spent() {
                 return Leaf::Refused(Refusal::Questions);
             }
             // No step below chooses by the names of the variables: each takes what the
@@ -17184,7 +17185,7 @@ impl Omega {
                             if relaxed_empty(&self.sys) {
                                 return Leaf::Empty;
                             }
-                            if exact::spent() {
+                            if meter::spent() {
                                 return Leaf::Refused(Refusal::Questions);
                             }
                         }
@@ -17256,7 +17257,7 @@ impl Omega {
                 if relaxed_empty(&self.sys) {
                     return Leaf::Empty;
                 }
-                if exact::spent() {
+                if meter::spent() {
                     return Leaf::Refused(Refusal::Questions);
                 }
             }
@@ -17530,7 +17531,7 @@ impl Omega {
         // is row PRES-work-charge-fit. Stop before entering the indivisible call when
         // its charge exhausts the budget: metered() turns this apparent lack of a
         // point into Questions, so it can never prove an empty projection.
-        exact::charge(LIVE3_ROW * rows.len() as u64).ok()?;
+        meter::charge(LIVE3_ROW * rows.len() as u64).ok()?;
         let x = live3::decide(&rows, &vs)?;
         Some((vs, x))
     }
@@ -18061,7 +18062,7 @@ impl Omega {
         // pieces of zedc_presburger, zedc_preimage and l01_ (2026-11-14) gave the same
         // verdicts as before, apart from two snapshots that already failed on main.
         for r in rows {
-            if exact::spent() {
+            if meter::spent() {
                 return;
             }
             let loose = self.sys.loose.contains(&lesser(&r.a));
@@ -18276,27 +18277,23 @@ fn memo_off() -> bool {
         || UNIT_RESCAN.with(Cell::get)
         || HULL_BISECT.with(Cell::get)
         || ROW_ORDER_SCAN.with(Cell::get)
-        || exact::EXACT_OFF.with(Cell::get)
-        || exact::EXACT_LIMIT_SET.with(|c| c.get().is_some())
-}
-
-/// [`project_each`] made exact by the cover of module [`exact`] (Monniaux's model-guided
-/// projection with Pugh's exact projection of each implicant): each symbol's set is the exact
-/// projection, or refused past the cover's work limit ([`exact::EXACT_LIMIT`]). With no memo.
-/// Not yet the path of [`project_each`]: on 2026-11-16 eight benchmarks that pass with the
-/// solver alone pass their limits with the cover (rows PRES-cover-bench-regressions and
-/// PRES-pugh-xr-rounds), so the checker asks the solver alone and this entry is the cover's
-/// for its own tests until those rows close.
-pub fn project_each_exact(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, true)
+        || meter::EXACT_OFF.with(Cell::get)
+        || meter::EXACT_LIMIT_SET.with(|c| c.get().is_some())
 }
 
 /// [`project_each`] asked of the solver, with no memo.
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, false)
+    project_each_with(f, syms, None)
 }
 
-/// [`project_each_asked`], and with `cover` the cover of [`project_each_exact`].
+/// The cover that makes the solver's answer exact, given to [`project_each_with`] by
+/// [`exact::project_each_exact`] (`exact::exact_each`): the formula in the form of
+/// [`cover_input`], the symbols, and the solver's answer.
+type Cover = fn(&Formula, &[Atom], Each) -> Each;
+
+/// [`project_each_asked`], and with `cover` the cover of [`exact::project_each_exact`]. The
+/// cover is a parameter, not a call of module `exact`, so that this module does not import the
+/// cover, which imports this module (row MAIN-red-pugh-land, `s_01f_import_graph`).
 // Complexity tradeoff: a question refused in the first writing costs a second question of the
 // same size. Why: the solver chooses its order of elimination by the signs of the rows, so
 // which systems it refuses depends on them, and no check before the question tells which
@@ -18304,7 +18301,7 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 // the solver refuses with each equation in the sign of [`equation`]. Test:
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
-fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Refusal> {
+fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result<Each, Refusal> {
     // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
     // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
     // already used by decide visits each part/term through its incidence queues, O(n)
@@ -18329,7 +18326,7 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
     // 20 s where the order as written takes 0.09 s at m = 9600; row PRES-cover-canonical-row-sums).
     let ordered;
-    let f = if cover {
+    let f = if cover.is_some() {
         ordered = canonical_parts(f);
         &ordered
     } else {
@@ -18356,10 +18353,10 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     // The solver's answer holds every value with a point and may hold more; the cover of
     // module `exact` makes it the exact set.
     let solver = || {
-        if !cover {
+        let Some(cover) = cover else {
             return solver_found();
-        }
-        if !exact::EXACT_OFF.get()
+        };
+        if !meter::EXACT_OFF.get()
             && let Some(each) = certified_domains(f, syms)
         {
             return Ok(each);
@@ -18378,7 +18375,7 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
         // Complexity tradeoff: one more pass over `f` for each projection the cover checks,
         // O(n log n) in the size of `f` (`signed`, then `canonical_parts`), against handing the
         // cover `f` as ordered, which keeps each sign as written and lets the refusal depend on it.
-        solver_found().map(|e| exact::exact_each(&cover_input(f), syms, e))
+        solver_found().map(|e| cover(&cover_input(f), syms, e))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
@@ -25590,7 +25587,7 @@ fn find_probe_points(
         }
     }
     // A refused ordering means the question's meter is spent, so its answer is refused
-    // whatever the search finds: stop at once (as `exact::spent` asks), rather than
+    // whatever the search finds: stop at once (as `meter::spent` asks), rather than
     // `(false, false)`, which would fall back to `probe_kept`'s per-disjunct loop and do
     // that work after the refusal (PRES-pugh-xr round 3).
     let Ok((ord_atoms, col_map)) = colors_counted(&solve_cons) else {

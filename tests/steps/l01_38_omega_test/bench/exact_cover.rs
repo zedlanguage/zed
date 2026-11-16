@@ -6,7 +6,8 @@
 //! PRES-cover-time-per-unit closes.
 
 use zedc::store::interval::IntervalSet;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, member, project_each_exact};
+use zedc::store::presburger::exact::project_each_exact;
+use zedc::store::presburger::{Atom, Con, Formula, Lin, member};
 
 fn a(s: &str) -> Atom {
     Atom::Sym(s.into())

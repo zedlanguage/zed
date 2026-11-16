@@ -4,8 +4,8 @@
 //! tests of the solver's hull under the exact cover.
 
 use zed_kernel::{Prim, Shared, Term, Value};
-use zedc::store::presburger::exact::EXACT_OFF;
-use zedc::store::presburger::{Atom, Each, Formula, Refusal, project_each, project_each_exact};
+use zedc::store::presburger::exact::{EXACT_OFF, project_each_exact};
+use zedc::store::presburger::{Atom, Each, Formula, Refusal, project_each};
 
 use crate::instances::Rng;
 
