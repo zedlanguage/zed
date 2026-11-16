@@ -6,7 +6,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use zed_native::link::{Toolchain, build, driver_env, runtime_of};
+use zed_native::link::{Ld, Toolchain, build, driver_env, runtime_of};
 
 /// A directory of its own for test `name`, under this process's scratch directory
 /// ([`super::scratch`]), which no other process and no other test uses.
@@ -16,7 +16,8 @@ pub fn dir(name: &str) -> PathBuf {
     d
 }
 
-/// The system's C compiler driver and the runtime library built with this test executable.
+/// The system's C compiler driver, with the linker `zedc build` would choose from this
+/// process's `PATH`, and the runtime library built with this test executable.
 /// Cargo keeps a `libzed_native-<hash>.a` beside it for each set of features it has built
 /// zed-native with, and the newest need not be this build's, so the library is picked by the
 /// symbol it shares with this executable (`runtime_of`), not by its time.
@@ -27,6 +28,7 @@ pub fn toolchain() -> Toolchain {
         linker: "cc".into(),
         runtime,
         env: driver_env(),
+        ld: Ld::from_env(),
     }
 }
 

@@ -17,6 +17,7 @@ fn with_runtime(name: &str, runtime: &str, bytes: &str) -> Toolchain {
         linker: "cc".into(),
         runtime: path,
         env: zed_native::link::driver_env(),
+        ld: zed_native::link::Ld::from_env(),
     }
 }
 
@@ -175,6 +176,7 @@ fn a_missing_runtime_library_is_named() {
         linker: "cc".into(),
         runtime: dir("missing").join("libnone.a"),
         env: zed_native::link::driver_env(),
+        ld: zed_native::link::Ld::from_env(),
     };
     let (status, why) = Identity::of(&tools).expect_err("no library");
     assert_eq!(status, 1);

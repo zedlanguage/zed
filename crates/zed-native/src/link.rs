@@ -67,9 +67,9 @@ fn roots() -> impl Iterator<Item = &'static str> {
 /// only for a library a shared library needs that it found in no directory before them (a
 /// `zedc build` link read none, traced 2026-11-07); the library found that way is listed and
 /// hashed, and a change to them alone is a change of search path, the limit `kept` names.
-/// Not named: `PATH`, through which the driver may find its linker, since the linker's version
-/// enters the key in its place, and variables that change only the language of messages or
-/// where scratch files go.
+/// Not named: `PATH`, through which the driver may find its linker and through which [`Ld`] is
+/// chosen, since the linker's version and the flag [`Ld::flags`] enter the key in its place,
+/// and variables that change only the language of messages or where scratch files go.
 pub const DRIVER_ENV: &[&str] = &[
     "GCC_EXEC_PREFIX",
     "COMPILER_PATH",
@@ -102,6 +102,61 @@ pub struct Toolchain {
     /// environment, as [`driver_env`] gives them: every run of the driver has exactly these,
     /// so the key of a link names the environment the link had.
     pub env: Vec<(&'static str, Option<OsString>)>,
+    /// The linker the driver runs: LLD when `ld.lld` is on `PATH`, as [`Ld::on_path`] finds it.
+    pub ld: Ld,
+}
+
+/// The linker the driver runs for a link (LINK-lld-when-present).
+///
+/// LLD links a program in a third of the instructions GNU ld takes, and makes the prelinked
+/// runtime (`Prelinked`) in a third too; see the measurements at `Prelinked`. It is not a
+/// dependency of `zedc build`: where `ld.lld` is not on `PATH`, the driver's own linker links,
+/// as before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ld {
+    /// LLD, which a driver runs as `ld.lld` when given `-fuse-ld=lld`; GCC and Clang both take
+    /// the flag.
+    Lld,
+    /// The driver's own linker: GNU ld for GCC on Linux.
+    Driver,
+}
+
+impl Ld {
+    /// [`Ld::Lld`] if a directory of the search path `path` (`PATH`'s value) holds a file
+    /// `ld.lld` that may be run, else [`Ld::Driver`]. GCC looks for `ld.lld` in its own
+    /// directories and then on `PATH`, and a GCC built for Linux holds none in its own (Fedora's
+    /// GCC 16 holds none: run with a `PATH` without `ld.lld`, `-fuse-ld=lld` fails with
+    /// "cannot find 'ld'", 2026-11-16), so one found here is one the driver finds. An empty
+    /// entry of `path`, which a shell reads as the working directory, is skipped: a build
+    /// whose working directory holds an `ld.lld` links with its own linker, never with that
+    /// file. Linear in the entries of `path`, one `stat` each.
+    pub fn on_path(path: Option<&std::ffi::OsStr>) -> Ld {
+        use std::os::unix::fs::PermissionsExt as _;
+        let found = path.is_some_and(|path| {
+            std::env::split_paths(path)
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .any(|dir| {
+                    std::fs::metadata(dir.join("ld.lld"))
+                        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                })
+        });
+        if found { Ld::Lld } else { Ld::Driver }
+    }
+
+    /// The linker [`Ld::on_path`] finds on this process's `PATH`.
+    pub fn from_env() -> Ld {
+        Ld::on_path(std::env::var_os("PATH").as_deref())
+    }
+
+    /// The driver's flags that choose this linker, written after every other argument of a
+    /// run of the driver, so a driver that reads its first argument, as the tests' do, reads
+    /// the same one as before.
+    pub fn flags(self) -> &'static [&'static str] {
+        match self {
+            Ld::Lld => &["-fuse-ld=lld"],
+            Ld::Driver => &[],
+        }
+    }
 }
 
 impl Toolchain {
@@ -132,6 +187,7 @@ impl Toolchain {
             linker,
             runtime,
             env: driver_env(),
+            ld: Ld::from_env(),
         }
     }
 }
@@ -287,6 +343,7 @@ pub fn build(
             // `-Xlinker`, not `-Wl,`, which would split a path at its commas.
             .arg("-Xlinker")
             .arg(list)
+            .args(tools.ld.flags())
             .output()
     });
     let linker = tools.linker.to_string_lossy();
@@ -386,8 +443,22 @@ pub fn build(
 // 1.3 to 1.7 s (a whole build of l01_21's fahrenheit.zed, 1.05 to 1.83 s at load 61), a
 // 3.8-fold cut in the link's work, keeping the same sections but for a few
 // `Debug` functions. The first build after the runtime changes pays about 4.2 s more, once.
-// LLD links the library in 0.9 billion instructions and the prelinked object in 0.4 billion,
-// but would be a new dependency of every build, which is the author's decision.
+//
+// LLD, where `ld.lld` is on `PATH` ([`Ld`], LINK-lld-when-present). Measured 2026-11-16 at
+// load 33 to 34, instructions in user mode (`perf stat`), three runs each, the same counts to
+// three digits; the link of l01_21's fahrenheit.zed against the 226 MB library:
+//
+//   linker   input                          per link     one-time prelink (`-r`)
+//   GNU ld   the library                    3.88 billion
+//   GNU ld   prelinked by GNU ld (before)   1.04 billion    3.23 billion
+//   LLD      the library                    0.90 billion
+//   LLD      prelinked by LLD (chosen)      0.33 billion    1.03 billion
+//
+// So LLD links a prelinked object too, one it made: 2.7 times less work per link than LLD on
+// the library, and 3.2 times less than GNU ld's prelinked link, which stays the path where
+// `ld.lld` is not found. The prelink costs LLD about what one link of the library costs it, so
+// it is repaid at the second build. The executables (16.6 MB with LLD's prelinked object, 17.3
+// MB with GNU ld's) gave the same output byte for byte.
 struct Prelinked {
     /// The prelinked object.
     path: PathBuf,
@@ -475,6 +546,7 @@ fn prelink(
         .arg(&tools.runtime)
         .arg("-o")
         .arg(&unfinished)
+        .args(tools.ld.flags())
         .output();
     let linker = tools.linker.to_string_lossy();
     match made {
@@ -979,6 +1051,8 @@ pub struct Identity {
     pub runtime: blake3::Hash,
     /// The variables of [`DRIVER_ENV`] the driver runs with ([`Toolchain::env`]).
     pub env: Vec<(&'static str, Option<OsString>)>,
+    /// The linker the driver runs ([`Toolchain::ld`]).
+    pub ld: Ld,
 }
 
 impl Identity {
@@ -991,6 +1065,7 @@ impl Identity {
             let o = tools
                 .driver()
                 .arg(arg)
+                .args(tools.ld.flags())
                 .output()
                 .map_err(|e| not_run(&linker, &e))?;
             if !o.status.success() {
@@ -1022,6 +1097,7 @@ impl Identity {
             linker: [version("--version")?, version("-Wl,--version")?],
             runtime: hash_file(&tools.runtime).map_err(|e| (1, e))?,
             env: tools.env.clone(),
+            ld: tools.ld,
         })
     }
 
@@ -1057,8 +1133,9 @@ impl Identity {
 
     /// The key of the prelinked runtime (`Prelinked`) of the toolchain of this identity: a
     /// BLAKE3 hash of this identity and of the prelink's arguments other than the paths,
-    /// `PRELINK_FLAGS` and `roots`, each preceded by its length. The prelinked object's
-    /// file name holds it, and [`Identity::key`] takes it in place of these parts.
+    /// `PRELINK_FLAGS`, [`Ld::flags`] and `roots`, each preceded by its length. The prelinked
+    /// object's file name holds it, and [`Identity::key`] takes it in place of these parts. The
+    /// driver's own linker has no flags, so its key is the one it had before [`Ld`].
     pub fn prelink_key(&self) -> blake3::Hash {
         use std::os::unix::ffi::OsStrExt as _;
         let mut key = blake3::Hasher::new_derive_key(
@@ -1082,7 +1159,12 @@ impl Identity {
                 None => part(b"unset"),
             }
         }
-        for a in PRELINK_FLAGS.iter().copied().chain(roots()) {
+        for a in PRELINK_FLAGS
+            .iter()
+            .chain(self.ld.flags())
+            .copied()
+            .chain(roots())
+        {
             part(a.as_bytes());
         }
         key.finalize()

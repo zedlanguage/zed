@@ -13,6 +13,7 @@ mod cache;
 mod deps;
 mod identity;
 mod leftover;
+mod linkers;
 mod prelink;
 mod scaling;
 mod sources;

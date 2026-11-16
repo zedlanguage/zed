@@ -107,6 +107,73 @@ fn a_built_executable_runs() {
     assert_eq!(working(&d, "hello"), Vec::<String>::new());
 }
 
+/// The bytes of the section `.comment` of the executable `exe`, where LLD writes
+/// `Linker: LLD <version>` and GNU ld writes nothing of its own.
+fn comment(exe: &Path) -> Vec<u8> {
+    use object::{Object as _, ObjectSection as _};
+    let bytes = std::fs::read(exe).unwrap();
+    let elf = object::File::parse(&*bytes).unwrap();
+    elf.section_by_name(".comment")
+        .map(|s| s.data().unwrap().to_vec())
+        .unwrap_or_default()
+}
+
+/// `zedc build` links with LLD when `ld.lld` is on `PATH`, and with the driver's own linker
+/// when the user's `PATH` holds no `ld.lld` (LINK-lld-when-present): here a directory holding
+/// only `cc`, `ld` and `dd`, which a link needs. The two executables say the same.
+#[test]
+fn a_path_without_lld_links_with_the_drivers_linker() {
+    let d = dir().join("no_lld");
+    let bin = d.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let path = std::env::var_os("PATH").expect("a PATH");
+    let on_path = |name: &str| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(name))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| panic!("no {name} on PATH"))
+    };
+    assert_eq!(
+        zed_native::link::Ld::from_env(),
+        zed_native::link::Ld::Lld,
+        "ld.lld is on PATH (Fedora package lld), as the default build here needs"
+    );
+    for name in ["cc", "ld", "dd"] {
+        match std::os::unix::fs::symlink(on_path(name), bin.join(name)) {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => panic!("{name}: {e}"),
+            _ => {}
+        }
+    }
+    let src = d.join("greet.zed");
+    std::fs::write(
+        &src,
+        "main(m: MainArgs) {\n  m.stdout <- \"Good ${m.args[0] else \"day\"}\";\n}\n",
+    )
+    .unwrap();
+    let (lld, gnu) = (d.join("greet-lld"), d.join("greet-gnu"));
+    assert_eq!(
+        failed(&zedc_build(&src, &lld, &[])),
+        (Some(0), String::new())
+    );
+    let no_lld = [("PATH", bin.to_str().unwrap())];
+    assert_eq!(
+        failed(&zedc_build(&src, &gnu, &no_lld)),
+        (Some(0), String::new())
+    );
+    let by_lld = |exe: &Path| {
+        comment(exe)
+            .windows(b"Linker: LLD".len())
+            .any(|w| w == b"Linker: LLD")
+    };
+    assert_eq!((by_lld(&lld), by_lld(&gnu)), (true, false));
+    let says = |exe: &Path| {
+        let ran = Command::new(exe).args(["--", "evening"]).output().unwrap();
+        (ran.status.code(), String::from_utf8(ran.stdout).unwrap())
+    };
+    assert_eq!(says(&gnu), (Some(0), "Good evening\n".to_string()));
+    assert_eq!(says(&lld), says(&gnu));
+}
+
 #[test]
 fn a_missing_tool_is_a_usage_error_naming_it() {
     let d = dir();
