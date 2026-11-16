@@ -4031,7 +4031,10 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::EntryAfter | Prim::EntryBefore, [Value::Family(f), Value::Tuple(e)])
             if e.len() == 2 =>
         {
-            entry_tuple(f.entry_beside(&e[0], p == Prim::EntryAfter))
+            entry_tuple(
+                f.entry_beside(&e[0], p == Prim::EntryAfter)
+                    .map_err(|e| too_large(p, e))?,
+            )
         }
         (Prim::First | Prim::Last, [Value::Family(f)]) => leaf_at_end(f, p == Prim::Last),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),

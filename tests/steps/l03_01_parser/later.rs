@@ -24,8 +24,9 @@ fn each_form_names_the_step_that_compiles_it() {
             "f(x) = x..;",
             &[concat!(
                 zed_tests::not_yet!(
-                    "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, \
-                     `k in a ..` or `(a ..).first`,"
+                    "a range with no upper end, `a ..`, read other than by a key, by `in`, \
+                     or by `.first`, `.find(p)`, `.any(p)` or `.all(p)` after any number of \
+                     `.map(f)` and `.where(p)`,"
                 ),
                 " [x..]"
             )],

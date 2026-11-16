@@ -351,6 +351,47 @@ fn a_program_reading_a_range_with_no_upper_end_runs_in_constant_time() {
     scaling::check_order("`zedc run` of reads of `0 ..` at n", N_KERNEL, 0, run);
 }
 
+#[test]
+fn a_walk_over_a_range_with_no_upper_end_runs_in_n_log_n_time() {
+    // Plan row RANGE-open-walk: `zedc run` and the executable of a stream over `0 ..` whose
+    // deciding entry is the n-th, n read at run time so that nothing folds at compile time.
+    // Complexity tradeoff: the naive form builds each link's family over the whole range,
+    // which never ends; the walk asks n entries, each through both links on a one-entry
+    // family, O(1), and a step of the `gen` over its n frames, O(log n), so O(n log n), and
+    // reads nothing past the deciding entry.
+    let d = dir("l03_02_map_run/open_walk");
+    let src = d.join("open_walk.zed");
+    let body = "${[(0 ..).map(x -> x * 2).where(x -> x >= n).first else -1, \
+                (0 ..).any(x -> x == n), (0 ..).find(x -> x >= n) else -1]}";
+    let text = format!(
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = d.join("open_walk");
+    built(&src, &exe);
+    let want = |k: usize| format!("{{0 -> {}, 1 -> true, 2 -> {k}}}\n", 2 * k.div_ceil(2));
+    let run = |k: usize| {
+        let ran = interpreter(&src, &[], format!("{k}\n").as_bytes());
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    // Both run at the whole-path size: at the kernel size, 20,000 and 160,000, the
+    // executable alone took 36 s (measured 2026-11-16, load 147).
+    scaling::check(
+        "`zedc run` of walks over `0 ..` to the n-th entry",
+        N_PROGRAM,
+        run,
+    );
+    let run = |k: usize| {
+        let ran = executable(&exe, &[], format!("{k}\n").as_bytes());
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        "an executable of walks over `0 ..` to the n-th entry",
+        N_PROGRAM,
+        run,
+    );
+}
+
 /// `(0 ..< n) >< (+)` in the kernel: the walk builds the range's entries.
 fn range_sum_term(n: usize) -> Term {
     fold(range_term(n), Term::PrimFn(Prim::Add), Some(lit(0)))

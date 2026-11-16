@@ -426,8 +426,9 @@ fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
         (
             "f(x) = x ..;",
             zed_tests::not_yet(
-                "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, \
-                 `k in a ..` or `(a ..).first`,",
+                "a range with no upper end, `a ..`, read other than by a key, by `in`, \
+                 or by `.first`, `.find(p)`, `.any(p)` or `.all(p)` after any number of \
+                 `.map(f)` and `.where(p)`,",
             ) + " [x ..]",
         ),
     ];

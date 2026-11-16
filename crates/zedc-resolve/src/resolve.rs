@@ -591,6 +591,81 @@ pub fn prelude_layer(name: &str) -> Option<u32> {
         .map(|&(_, layer)| layer)
 }
 
+/// One link of a stream over a range with no upper end (plan row RANGE-open-walk): `s.map(f)`
+/// or `s.where(f)`, a call by `.`, not `?.`, of one positional argument and nothing else.
+pub struct StreamLink<'a> {
+    /// The receiver `s`.
+    pub of: &'a Expr,
+    /// The function.
+    pub f: &'a Expr,
+    /// Whether it is `where`.
+    pub filter: bool,
+    /// The member's name, `map` or `where`.
+    pub name: &'a str,
+    /// The member's span, where resolution records what the name finds.
+    pub member: Span,
+}
+
+/// `e` as a [`StreamLink`], if it has that form.
+pub fn stream_link(e: &Expr) -> Option<StreamLink<'_>> {
+    let ExprKind::Call {
+        callee,
+        positional,
+        named,
+        curry: false,
+        ..
+    } = &e.kind
+    else {
+        return None;
+    };
+    let ExprKind::Member {
+        of,
+        name,
+        safe: false,
+    } = &callee.kind
+    else {
+        return None;
+    };
+    match (name.as_str(), &positional[..]) {
+        ("map" | "where", [f]) if named.is_empty() => Some(StreamLink {
+            of,
+            f,
+            filter: name == "where",
+            name,
+            member: callee.span,
+        }),
+        _ => None,
+    }
+}
+
+/// `e` as a stream over a range with no upper end, `a ..` followed by any number of
+/// [`StreamLink`]s, `(a ..).where(p).map(f)`: the low end `a` and the links, the first applied
+/// first. `.first`, `.any`, `.all` and `.find` read such a stream entry by entry up to the
+/// deciding one, which resolution admits when every link names the prelude word (plan row
+/// RANGE-open-walk); elaboration builds that walk from this form, so the two agree on it.
+pub fn open_stream(mut e: &Expr) -> Option<(&Expr, Vec<StreamLink<'_>>)> {
+    let mut links = Vec::new();
+    loop {
+        if let ExprKind::Range(from, RangeEnd::Open) = &e.kind {
+            links.reverse();
+            return Some((from, links));
+        }
+        let link = stream_link(e)?;
+        e = link.of;
+        links.push(link);
+    }
+}
+
+/// What the member read `name` reads, when it reads every entry of its receiver and so never
+/// ends on a range with no upper end: `.count` and `.last`.
+fn unending_member(name: &str) -> Option<&'static str> {
+    match name {
+        "count" => Some("a count reads every entry"),
+        "last" => Some("the last entry comes after every other"),
+        _ => None,
+    }
+}
+
 /// Whether `name` is a prelude value word of any layer or a prelude type name.
 pub fn is_prelude_name(name: &str) -> bool {
     prelude_layer(name).is_some()
@@ -1205,6 +1280,12 @@ impl Resolver<'_> {
         }
     }
 
+    /// Whether `name` names here anything but a prelude word: a binding of the program, an
+    /// ambiguous pair or a unit. A method of that name is then not the prelude's.
+    fn binds(&self, name: &str) -> bool {
+        !matches!(self.find(name), None | Some(Found::Word(_)))
+    }
+
     /// What `name` names here, or `None`.
     fn find(&self, name: &str) -> Option<Found> {
         if let Some(v) = self.visible.get(name)
@@ -1771,6 +1852,21 @@ impl Resolver<'_> {
                 Task::OpenRead(e) => match &e.kind {
                     ExprKind::Range(from, RangeEnd::Open) => todo.push(Task::Expr(from)),
                     _ => self.expr(e, &mut todo),
+                },
+                // A stream over `a ..` read by `.first`, `.any`, `.all` or `.find`: a link
+                // naming the prelude's `map` or `where` is resolved as its call is, its receiver
+                // a stream again; a link naming a binding of the program is an ordinary call,
+                // whose receiver `a ..` is then refused, since that function may walk it.
+                Task::OpenStream(e) => match stream_link(e) {
+                    Some(l) if open_stream(e).is_some() && !self.binds(l.name) => {
+                        todo.push(Task::Expr(l.f));
+                        todo.push(Task::Member(l.member, l.name));
+                        todo.push(Task::OpenStream(l.of));
+                    }
+                    _ => match &e.kind {
+                        ExprKind::Range(from, RangeEnd::Open) => todo.push(Task::Expr(from)),
+                        _ => self.expr(e, &mut todo),
+                    },
                 },
                 Task::Ty(t) => self.ty(t, &mut todo),
                 Task::ParamTy(t) => match &t.kind {
@@ -2751,6 +2847,28 @@ impl Resolver<'_> {
     }
 
     /// The form `what`, which the parser builds and this zedc does not compile yet.
+    /// `what`, a read of a range with no upper end, `a ..`, or of a stream over one, that would
+    /// never end, `why` saying what it reads: refused, with the reads that do end as the repair
+    /// (plan row RANGE-open-walk).
+    fn unending(&mut self, span: Span, what: &str, why: &str) {
+        self.errors.push(Error {
+            row: None,
+            menu: String::new(),
+            span,
+            message: format!(
+                "{what} of a range with no upper end, `a ..`, would never end: {why}, and the \
+                 entries never run out"
+            ),
+            notes: vec![Note {
+                span,
+                text: "repair: give the range an upper end, as in `a ..< n`, or read it with \
+                       `.first`, `.find(p)`, `.any(p)` or `.all(p)`, which stop at the entry \
+                       that decides them"
+                    .into(),
+            }],
+        });
+    }
+
     fn later(&mut self, span: Span, what: &str) {
         self.errors.push(Error {
             row: None,
@@ -2886,10 +3004,17 @@ impl Resolver<'_> {
             | ExprKind::Rat(_)
             | ExprKind::Bool(_)
             | ExprKind::Atom(_) => {}
-            ExprKind::Str(parts) => todo.extend(parts.iter().rev().filter_map(|p| match p {
-                StrPart::Hole(h) => Some(Task::Expr(h)),
-                StrPart::Text(_) => None,
-            })),
+            ExprKind::Str(parts) => {
+                for p in parts.iter().rev() {
+                    let StrPart::Hole(h) = p else { continue };
+                    if open_stream(h).is_some() {
+                        self.unending(h.span, "printing", "the text of every entry is printed");
+                        todo.push(Task::OpenStream(h));
+                    } else {
+                        todo.push(Task::Expr(h));
+                    }
+                }
+            }
             ExprKind::Name(n) => {
                 if self.names_main(n) {
                     self.errors.push(main_value(e.span));
@@ -2909,6 +3034,18 @@ impl Resolver<'_> {
                         let r = self.region(vec![Handle::Bare(n.clone())]);
                         self.flow(other, r);
                     }
+                    if let ExprKind::Binary(op, ..) = &e.kind
+                        && (open_stream(a).is_some() || open_stream(b).is_some())
+                    {
+                        self.unending(
+                            e.span,
+                            &format!("`{}`", op.as_str()),
+                            "an equality compares every entry",
+                        );
+                        todo.push(Task::OpenStream(b));
+                        todo.push(Task::OpenStream(a));
+                        return;
+                    }
                 }
                 todo.push(Task::Expr(b));
                 if matches!(e.kind, ExprKind::Index(..)) {
@@ -2921,6 +3058,7 @@ impl Resolver<'_> {
                 callee,
                 positional,
                 named,
+                curry,
                 ..
             } => {
                 // Every function named `main` is a `main` (the builder gives it `main`'s
@@ -2965,6 +3103,22 @@ impl Resolver<'_> {
                         self.out
                             .uses
                             .insert(callee.span, Ref::Prelude(n.as_str().into()));
+                    }
+                    // The prelude's `.any(p)`, `.all(p)` and `.find(p)` over a stream on `a ..`,
+                    // which stop at the deciding entry (plan row RANGE-open-walk).
+                    ExprKind::Member {
+                        of,
+                        name,
+                        safe: false,
+                    } if matches!(name.as_str(), "any" | "all" | "find")
+                        && positional.len() == 1
+                        && named.is_empty()
+                        && !curry
+                        && open_stream(of).is_some()
+                        && !self.binds(name) =>
+                    {
+                        todo.push(Task::Member(callee.span, name));
+                        todo.push(Task::OpenStream(of));
                     }
                     _ => todo.push(Task::Expr(callee)),
                 }
@@ -3045,17 +3199,27 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(then));
                 todo.push(Task::Expr(cond));
             }
-            ExprKind::Member { of, name, .. } => {
+            ExprKind::Member { of, name, safe } => {
                 if let ExprKind::Name(q) = &of.kind
                     && self.qualified(q, of.span, name, e.span)
                 {
                     return;
                 }
+                if let Some(what) = unending_member(name)
+                    && !self.binds(name)
+                    && open_stream(of).is_some()
+                {
+                    self.unending(e.span, &format!("`.{name}`"), what);
+                    todo.push(Task::OpenStream(of));
+                    return;
+                }
                 todo.push(Task::Member(e.span, name));
-                if name == "first" {
-                    todo.push(Task::OpenRead(of));
-                } else {
-                    todo.push(Task::Expr(of));
+                // The prelude's `.first` only: a function of the program named `first` may
+                // walk its argument.
+                match (name == "first" && !self.binds(name), safe) {
+                    (true, false) => todo.push(Task::OpenStream(of)),
+                    (true, true) => todo.push(Task::OpenRead(of)),
+                    (false, _) => todo.push(Task::Expr(of)),
                 }
             }
             ExprKind::Record(fields) => {
@@ -3093,14 +3257,20 @@ impl Resolver<'_> {
             // as `match`'s are, so a name in them is recorded or reported. Step L3.2 compiles
             // the displays, `in`, `><` and the bounded ranges. A range with no upper end is
             // read only by a generator that stops (DESIGN.md sec:grammar, rule Range); a key,
-            // `in` and `.first` read it without a walk and are built (plan row RANGE-open,
-            // `Task::OpenRead`), and generators are not built (plan row RANGE-open-walk).
+            // `in` and `.first` read it without a walk (plan row RANGE-open, `Task::OpenRead`),
+            // and `.first`, `.find`, `.any` and `.all` walk a stream of `.map` and `.where` over
+            // it up to the deciding entry (plan row RANGE-open-walk, `Task::OpenStream`). The
+            // reads that never end are refused with their reason (`Resolver::unending`). A
+            // range bound to a name or passed to a function, and `for` over it, need the
+            // checker's type to say the keys have no upper end, and are not built (plan rows
+            // RANGE-open-names and FOR-one-generator).
             ExprKind::Range(from, to) => {
                 if to.bound().is_none() {
                     self.later(
                         e.span,
-                        "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, \
-                         `k in a ..` or `(a ..).first`,",
+                        "a range with no upper end, `a ..`, read other than by a key, by `in`, \
+                         or by `.first`, `.find(p)`, `.any(p)` or `.all(p)` after any number of \
+                         `.map(f)` and `.where(p)`,",
                     );
                 }
                 todo.extend(to.bound().map(|b| Task::Expr(b)));
@@ -3117,7 +3287,12 @@ impl Resolver<'_> {
                 if !matches!(op.kind, ExprKind::Section(..)) {
                     todo.push(Task::Expr(op));
                 }
-                todo.push(Task::Expr(of));
+                if open_stream(of).is_some() {
+                    self.unending(e.span, "`><`", "a fold reads every entry");
+                    todo.push(Task::OpenStream(of));
+                } else {
+                    todo.push(Task::Expr(of));
+                }
             }
             // The `as` binders name the source's levels and its value in the keys of the `into`
             // levels; the source and each `><` operator are read outside them (DESIGN.md
@@ -3926,6 +4101,10 @@ enum Task<'a> {
     /// An expression that a key, `in` or `.first` reads, where a range with no upper end,
     /// `a ..`, is admitted: these reads need no walk (plan row RANGE-open).
     OpenRead(&'a Expr),
+    /// An expression that `.first`, `.any`, `.all` or `.find` reads, where a stream over
+    /// `a ..` ([`open_stream`]) is admitted: these reads stop at the deciding entry (plan row
+    /// RANGE-open-walk).
+    OpenStream(&'a Expr),
     Ty(&'a Type),
     /// A type name and the text it is written at: a struct pattern's, a method's receiver, a
     /// struct's imported fields, an applied type's.

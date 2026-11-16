@@ -21,7 +21,7 @@ use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 use zedc_base::rejection::not_yet;
 use zedc_check::check::{self, Fit, Misfit};
 use zedc_resolve::resolve::topo::topo;
-use zedc_resolve::resolve::{Ref, prelude_layer};
+use zedc_resolve::resolve::{Ref, open_stream, prelude_layer};
 use zedc_stage::defs::Test;
 use zedc_syntax::ast::{
     BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, PortName, RangeEnd, Stmt, StmtKind,
@@ -208,6 +208,10 @@ enum Frame<'a> {
     /// `x.any(p)`, `x.all(p)` or `x.find(p)` once `p` is elaborated: `x`'s term (step
     /// L3.15a).
     Quantify(Term, Quantifier),
+    /// A stream over `a ..` read by `.first` (`None`) or a quantifier, once the range, each
+    /// link's function and the quantifier's are elaborated, in that order: whether each link
+    /// is `.where` (plan row RANGE-open-walk, `stream_term`).
+    Stream(Vec<bool>, Option<Quantifier>),
     /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
     /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings).
     Strings(Option<Term>, Prim),
@@ -1886,6 +1890,9 @@ impl<'a> Elab<'a> {
         member: Span,
         call: Call<'a>,
     ) {
+        if !safe && self.stream_read(m, of, name, member, &call) {
+            return;
+        }
         let mb = Member {
             name,
             safe,
@@ -1903,6 +1910,45 @@ impl<'a> Elab<'a> {
         };
         m.k(Frame::MemberOf(Box::new(mb)));
         m.stack.push(Job::Expr(of));
+    }
+
+    /// `s.first`, `s.any(p)`, `s.all(p)` or `s.find(p)` on `s` a stream over a range with no
+    /// upper end, `(a ..).where(q).map(f)` (`open_stream`, which resolution admitted), every
+    /// member the prelude's: the walk of `stream_term` begun, and `true`. `(a ..).first` with
+    /// no link is the range's low end (plan row RANGE-open) and any other read is elaborated
+    /// as written, `false`.
+    fn stream_read(
+        &mut self,
+        m: &mut M<'a>,
+        of: &'a Expr,
+        name: &str,
+        member: Span,
+        call: &Call<'a>,
+    ) -> bool {
+        let Some((_, links)) = open_stream(of) else {
+            return false;
+        };
+        let consumer = match (name, call.positional) {
+            ("first", []) if !links.is_empty() && call.span == member => None,
+            ("any" | "all" | "find", [_]) if call.named.is_empty() && !call.curry => {
+                Quantifier::of(name)
+            }
+            _ => return false,
+        };
+        let bound = |span: &Span| matches!(self.t.res.uses.get(span), Some(Ref::Bound(_)));
+        if bound(&member) || links.iter().any(|l| bound(&l.member)) {
+            return false;
+        }
+        let range = links.first().map_or(of, |l| l.of);
+        let parts = (std::iter::once(range).chain(links.iter().map(|l| l.f)))
+            .chain(call.positional.first())
+            .collect();
+        m.k(Frame::Stream(
+            links.iter().map(|l| l.filter).collect(),
+            consumer,
+        ));
+        m.seq(parts, false);
+        true
     }
 
     /// The call of [`Elab::member`], its receiver `x` elaborated.
@@ -2609,6 +2655,18 @@ impl<'a> Elab<'a> {
             }
             Frame::Quantify(x, q) => {
                 let t = m.t().map(|f| self.quantifier_term(x, f, q));
+                m.give(t);
+            }
+            Frame::Stream(filters, q) => {
+                let t = all(m.got()).map(|ts| {
+                    let mut ts = ts.into_iter();
+                    let src = ts.next().expect("the range");
+                    let fs = (filters.into_iter())
+                        .map(|w| (ts.next().expect("a link's function"), w))
+                        .collect();
+                    let consumer = q.map(|q| (q, ts.next().expect("the quantifier's function")));
+                    self.stream_term(src, fs, consumer)
+                });
                 m.give(t);
             }
             Frame::Zip(x) => {

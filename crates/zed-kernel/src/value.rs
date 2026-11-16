@@ -1458,11 +1458,20 @@ fn wide_beside(lo: &Value, last: &Value, k: &Value, after: bool) -> Option<Value
 /// where the system refuses the memory to build `x`'s parts (`Rat::built_parts`). O(digits of
 /// `x`).
 fn next_integer(k: &Value, after: bool) -> Option<Value> {
+    integer_beside(k, after)?.ok()
+}
+
+/// [`next_integer`], with the refusal of the memory to build `k`'s value kept apart from a `k`
+/// of no finite number (`None`).
+fn integer_beside(k: &Value, after: bool) -> Option<Result<Value, TooLarge>> {
     let kind = k.number_kind()?;
     let Exact::Finite(x) = k.exact() else {
         return None;
     };
-    let (n, d) = x.built_parts().ok()?;
+    let (n, d) = match x.built_parts() {
+        Ok(parts) => parts,
+        Err(e) => return Some(Err(e)),
+    };
     let (q, r) = (&*n / &*d, &*n % &*d);
     let q = BigInt::from(q);
     let floor = match x.is_negative() && !r.is_zero() {
@@ -1470,11 +1479,38 @@ fn next_integer(k: &Value, after: bool) -> Option<Value> {
         false if x.is_negative() => -q,
         false => q,
     };
-    Some(Value::int(match (after, kind) {
+    Some(Ok(Value::int(match (after, kind) {
         (true, _) => floor + 1,
         (false, 0) => floor - 1,
         (false, _) => floor,
-    }))
+    })))
+}
+
+/// [`Family::entry_beside`] on `Entries::From(lo)`, the integers `i >= lo`: the least of them
+/// greater than `k` under the total order (`after`), or the greatest less than it. Proof, for
+/// `after`: when `lo > k`, `lo` is the least entry and past `k`. Otherwise `lo <= k`, so every
+/// integer greater than `k` is greater than `lo` and an entry, and the answer is the least
+/// integer greater than `k`: [`next_integer`]'s, for `k` a number of finite value; none for a
+/// NaN, an infinity above every integer or a value of a kind ranked after the numbers, which
+/// lie above every integer (`scalar_cmp`'s kind order, `Exact`'s order); a `-inf` or a value of
+/// a kind ranked before them lies below `lo`, the first case. For its mirror: when `lo >= k` no
+/// entry is less than `k`. Otherwise `lo < k`, and the greatest integer less than `k` is at
+/// least `lo`: [`next_integer`]'s for `k` a number of finite value. For a `k` above every
+/// integer the entries less than it have no greatest, which only a walk from the far end
+/// would ask for; zedc starts such a walk at the last entry, which `end_entry` refuses first,
+/// so it never asks, and the call stops as a walk would ([`walked_unbounded`]). O(digits of
+/// `k`); [`TooLarge`] when the system refuses the memory to build `k`'s value.
+fn from_beside(lo: &Value, k: &Value, after: bool) -> Result<Option<Value>, TooLarge> {
+    match after {
+        true if past(lo, k, true) => return Ok(Some(lo.clone())),
+        false if !past(lo, k, false) => return Ok(None),
+        _ => {}
+    }
+    match integer_beside(k, after) {
+        Some(i) => i.map(Some),
+        None if after => Ok(None),
+        None => walked_unbounded(),
+    }
 }
 
 /// The border of [`past`] inside the wide span `lo ..= last` by binary search, for a key whose
@@ -1881,13 +1917,15 @@ impl Family {
 
     /// The entry of the top level just after key `k` (`after`) or just before it, copied, `k`
     /// held or not: O(log n) on a range, O(digits) on a wide one, which builds none of its
-    /// entries for it (`Span::beside`).
-    pub fn entry_beside(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
-        match &self.0 {
+    /// entries for it (`Span::beside`). On a range with no upper end, O(digits of `k`)
+    /// (`from_beside`, plan row RANGE-open-walk), and [`TooLarge`] when the system refuses the
+    /// memory to build `k`'s value.
+    pub fn entry_beside(&self, k: &Value, after: bool) -> Result<Option<(Value, Value)>, TooLarge> {
+        Ok(match &self.0 {
             Entries::Range(s) => s.beside(k, after).map(|i| (i.clone(), i)),
-            Entries::From(_) => walked_unbounded(),
+            Entries::From(lo) => from_beside(lo, k, after)?.map(|i| (i.clone(), i)),
             Entries::Map(m) => m.beside(k, after).cloned(),
-        }
+        })
     }
 
     /// The top-level entries, in key order.
@@ -3772,6 +3810,14 @@ mod bench;
 mod tests {
     use super::*;
 
+    impl Family {
+        /// [`Family::entry_beside`] at a key whose value these tests can always build.
+        fn beside_at(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
+            self.entry_beside(k, after)
+                .expect("the memory for the key's value")
+        }
+    }
+
     #[test]
     fn a_stop_for_memory_offers_repairs_and_no_other_error_does() {
         // No test of this crate sets a memory limit of `main`, so the limit's repairs (which
@@ -3862,8 +3908,8 @@ mod tests {
                 );
                 assert_eq!(lazy.contains(&k), built.get(&k).is_some(), "{k}");
                 for after in [false, true] {
-                    let want = built.entry_beside(&k, after);
-                    assert_eq!(lazy.entry_beside(&k, after), want, "{k}, after {after}");
+                    let want = built.beside_at(&k, after);
+                    assert_eq!(lazy.beside_at(&k, after), want, "{k}, after {after}");
                 }
             }
             for last_end in [false, true] {
@@ -3923,6 +3969,26 @@ mod tests {
                 let holds = k.number_kind() == Some(0) && cmp(&k, &lo) != Ordering::Less;
                 assert_eq!(open.lookup(&k), holds.then(|| k.clone()), "{lo} .. at {k}");
                 assert_eq!(open.contains(&k), holds, "{lo} .. at {k}");
+                // The entry after `k` is the one a span from `lo` reaching past `k` gives: a
+                // span's last end 3 above the greater of `lo` and `k`'s integer neighbor.
+                let reach = match next_integer(&k, true) {
+                    Some(top) if cmp(&top, &lo) != Ordering::Less => top,
+                    _ => lo.clone(),
+                };
+                let last = built_integer(&reach) + 3;
+                let span = Family::range_wide(built_integer(&lo), last);
+                // A key above every integer has no greatest entry below it in `lo ..`.
+                let above = next_integer(&k, true).is_none() && cmp(&k, &lo) == Ordering::Greater;
+                for after in [false, true] {
+                    if above && !after {
+                        continue;
+                    }
+                    assert_eq!(
+                        open.beside_at(&k, after),
+                        span.beside_at(&k, after),
+                        "{lo} .. beside {k}, after {after}"
+                    );
+                }
             }
             assert_eq!(open.end_entry(false), Some((lo.clone(), lo.clone())));
             assert!(!open.is_empty() && open.span().is_none());
@@ -3933,6 +3999,28 @@ mod tests {
     #[should_panic(expected = "is never walked")]
     fn a_range_with_no_upper_end_is_never_walked() {
         let _ = Family::range_from(Value::Int(0)).len();
+    }
+
+    /// The entries of `0 ..` below `+inf` have no greatest: only a walk from the far end asks
+    /// for it, and it stops as one.
+    #[test]
+    #[should_panic(expected = "is never walked")]
+    fn a_range_with_no_upper_end_has_no_last_entry_below_infinity() {
+        let _ = Family::range_from(Value::Int(0)).entry_beside(&Value::float(f64::INFINITY), false);
+    }
+
+    /// A step past a key whose value the system refuses the memory to build is that refusal,
+    /// not a stop: the key `10^(10^30)` kept as its power, far past any memory.
+    #[test]
+    fn a_step_past_a_key_too_large_to_build_is_refused() {
+        let huge = Value::power_text("10^1000000000000000000000000000000")
+            .expect("the power is kept")
+            .expect("a power");
+        assert!(
+            Family::range_from(Value::Int(0))
+                .entry_beside(&huge, true)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3980,9 +4068,9 @@ mod tests {
         assert!(all.contains(&Value::Int(0)));
         let at = |k: i64| Some((Value::Int(k), Value::Int(k)));
         assert_eq!(all.end_entry(true), at(i64::MAX));
-        assert_eq!(all.entry_beside(&Value::float(0.5), true), at(1));
-        assert_eq!(all.entry_beside(&Value::float(0.5), false), at(0));
-        assert_eq!(all.entry_beside(&Value::Int(i64::MAX), true), None);
+        assert_eq!(all.beside_at(&Value::float(0.5), true), at(1));
+        assert_eq!(all.beside_at(&Value::float(0.5), false), at(0));
+        assert_eq!(all.beside_at(&Value::Int(i64::MAX), true), None);
         assert_eq!(Family::range(i64::MIN, i64::MAX - 1).len(), usize::MAX);
         // The hash and the comparisons read the exact size, so none of them builds the map
         // either: against a copy, a range one shorter, and a small map.
@@ -4072,8 +4160,8 @@ mod tests {
                 assert_eq!(lazy.lookup(&k), built.get(&k).cloned(), "{at}");
                 assert_eq!(lazy.contains(&k), built.get(&k).is_some(), "{at}");
                 for after in [false, true] {
-                    let want = built.entry_beside(&k, after);
-                    assert_eq!(lazy.entry_beside(&k, after), want, "{at}, after {after}");
+                    let want = built.beside_at(&k, after);
+                    assert_eq!(lazy.beside_at(&k, after), want, "{at}, after {after}");
                 }
             }
             for last_end in [false, true] {
@@ -4145,28 +4233,22 @@ mod tests {
         assert_eq!(all.end_entry(true), at(&n));
         let half = |x: i64| Value::rat(Rat::new(BigInt::from(x), BigInt::from(2)).unwrap());
         let i = |x: i64| at(&BigInt::from(x));
-        assert_eq!(all.entry_beside(&Value::float(0.5), true), i(1));
-        assert_eq!(all.entry_beside(&Value::float(0.5), false), i(0));
-        assert_eq!(all.entry_beside(&half(-3), true), i(-1));
-        assert_eq!(all.entry_beside(&half(-3), false), i(-2));
-        assert_eq!(all.entry_beside(&Value::float(-2.0), false), i(-2));
-        assert_eq!(all.entry_beside(&Value::float(-2.0), true), i(-1));
+        assert_eq!(all.beside_at(&Value::float(0.5), true), i(1));
+        assert_eq!(all.beside_at(&Value::float(0.5), false), i(0));
+        assert_eq!(all.beside_at(&half(-3), true), i(-1));
+        assert_eq!(all.beside_at(&half(-3), false), i(-2));
+        assert_eq!(all.beside_at(&Value::float(-2.0), false), i(-2));
+        assert_eq!(all.beside_at(&Value::float(-2.0), true), i(-1));
+        assert_eq!(all.beside_at(&Value::Int(i64::MAX), true), at(&past_top(0)));
         assert_eq!(
-            all.entry_beside(&Value::Int(i64::MAX), true),
-            at(&past_top(0))
-        );
-        assert_eq!(
-            all.entry_beside(&Value::Int(i64::MIN), false),
+            all.beside_at(&Value::Int(i64::MIN), false),
             at(&past_bottom(0))
         );
-        assert_eq!(all.entry_beside(&v(&n), true), None);
-        assert_eq!(all.entry_beside(&v(&-&n), false), None);
-        assert_eq!(
-            all.entry_beside(&Value::float(f64::INFINITY), false),
-            at(&n)
-        );
-        assert_eq!(all.entry_beside(&Value::atom("a"), true), at(&-&n));
-        assert_eq!(all.entry_beside(&Value::str("a"), true), None);
+        assert_eq!(all.beside_at(&v(&n), true), None);
+        assert_eq!(all.beside_at(&v(&-&n), false), None);
+        assert_eq!(all.beside_at(&Value::float(f64::INFINITY), false), at(&n));
+        assert_eq!(all.beside_at(&Value::atom("a"), true), at(&-&n));
+        assert_eq!(all.beside_at(&Value::str("a"), true), None);
         let digest = |f: &Family| leaf_digest(&Value::Family(f.clone()));
         assert_eq!(digest(&all), digest(&all.clone()));
         assert!(families_eq(&all, &all.clone()));
@@ -4409,15 +4491,15 @@ mod tests {
                 };
                 let window = (!one).then_some(WINDOW);
                 for after in [false, true] {
-                    let got = lazy.entry_beside(&k, after).map(|(k, _)| k);
+                    let got = lazy.beside_at(&k, after).map(|(k, _)| k);
                     if let Some(set) = &wide_set {
-                        let want = set.entry_beside(&k, after).map(|(k, _)| k);
+                        let want = set.beside_at(&k, after).map(|(k, _)| k);
                         assert_eq!(got, want, "{at}, after {after}, the wide set");
                     }
                     match moved(&k, centre, to, window) {
                         Some(m) => {
                             by_set += 1;
-                            let small_answer = small.entry_beside(&m, after).map(|(k, _)| k);
+                            let small_answer = small.beside_at(&m, after).map(|(k, _)| k);
                             let (small_lo, small_last) =
                                 (Value::Int(off[0]), Value::Int(to_hi + off[1]));
                             assert_eq!(

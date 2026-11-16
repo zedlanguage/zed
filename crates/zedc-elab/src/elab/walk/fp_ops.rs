@@ -306,6 +306,104 @@ impl<'a> Elab<'a> {
         )
     }
 
+    /// A stream over a range with no upper end read up to its deciding entry (plan row
+    /// RANGE-open-walk): `src`, the range `a ..`, then the links `fs`, each `.map(f)` or, when
+    /// its flag is set, `.where(f)`, the first applied first, read by `consumer`: `.any(p)`,
+    /// `.all(p)` or `.find(p)`, or `.first` when `None`.
+    ///
+    /// The range is never built, so the links are applied to one entry at a time: the entry
+    /// `k: v` of `src` is the one-entry family `{0: v}`, and the links are applied to it by
+    /// `map_term` and `where_term` themselves. That gives what they give the whole family at
+    /// `k`, since both act on each top-level entry alone and keep its key (`map` builds the
+    /// entry at `k` from `x[k]` alone; `where` keeps or drops it by `f(x[k])` alone, and below
+    /// the top level keeps all), and no link passes the key to its function, so the key `0`
+    /// stands for `k` unseen. An entry the links drop gives the empty family, an entry they
+    /// keep a family of one entry, and a loose atom passes through every link.
+    ///
+    /// The consumer then walks `src` by `quantifier_term`, asking at each entry what that one
+    /// entry of the stream says. For `.any(p)`, `.all(p)` and `.find(p)`, it is the one-entry
+    /// family's own `.any(p)` (`.all(p)` for `.all`): `p` at a kept entry, at a dropped one the
+    /// start's answer, which goes on, and a loose atom, which stops; `.find`'s result is then
+    /// `src`'s key, the stream's too since every link keeps keys. For `.first`, it is whether
+    /// the entry is kept, the atom passing through; the `.find` of that is the key of the
+    /// first kept entry, and the result is `.first` of the one-entry family built again at
+    /// that key, as the links are pure. The walk stops at the deciding entry and never reads
+    /// past it (DESIGN.md sec:grammar, rule Range); without one it does not end, as the
+    /// program says.
+    // Complexity tradeoff: the naive form builds each link's family over the whole range,
+    // which on `a ..` never ends; the walk does O(links) work and the `gen`'s O(log k) step
+    // per entry asked, k the deciding entry's position, so O(k (links + log k)), and keeps
+    // the k frames. `.first` applies the links once more at the deciding entry, O(links).
+    pub(super) fn stream_term(
+        &mut self,
+        src: Term,
+        fs: Vec<(Term, bool)>,
+        consumer: Option<(Quantifier, Term)>,
+    ) -> Term {
+        let (s, gs): (Arc<str>, Vec<(Arc<str>, bool)>) = (
+            self.temp(),
+            fs.iter().map(|&(_, w)| (self.temp(), w)).collect(),
+        );
+        let walk = match consumer {
+            Some((q, p)) => {
+                let (gp, v) = (self.temp(), self.temp());
+                let inner = match q {
+                    Quantifier::All => Quantifier::All,
+                    Quantifier::Any | Quantifier::Find => Quantifier::Any,
+                };
+                let one = self.stream_links(&gs, var(&v));
+                let ask = self.quantifier_term(one, var(&gp), inner);
+                let h = Term::Lam(vec![v], Shared::new(ask));
+                let run = self.quantifier_term(var(&s), h, q);
+                Term::Let(gp, Shared::new(p), Shared::new(run))
+            }
+            None => {
+                let (v, one_n, k) = (self.temp(), self.temp(), self.temp());
+                let one = self.stream_links(&gs, var(&v));
+                let kept = Term::Match(
+                    Shared::new(var(&one_n)),
+                    vec![
+                        (KPattern::AnyAtom, var(&one_n)),
+                        (
+                            KPattern::Wild,
+                            not_at_end(Term::Prim(Prim::FirstEntry, vec![var(&one_n)])),
+                        ),
+                    ],
+                );
+                let h = Term::Lam(
+                    vec![v],
+                    Shared::new(Term::Let(one_n, Shared::new(one), Shared::new(kept))),
+                );
+                let found = self.quantifier_term(var(&s), h, Quantifier::Find);
+                let at = Term::Prim(Prim::Get, vec![var(&s), var(&k)]);
+                let again = self.stream_links(&gs, at);
+                let first = Term::Match(
+                    Shared::new(var(&k)),
+                    vec![
+                        (KPattern::AnyAtom, var(&k)),
+                        (KPattern::Wild, Term::Prim(Prim::First, vec![again])),
+                    ],
+                );
+                Term::Let(k, Shared::new(found), Shared::new(first))
+            }
+        };
+        // Each link's function is evaluated once, before the walk, in the order written.
+        let body = (gs.into_iter().zip(fs).rev()).fold(walk, |b, ((g, _), (f, _))| {
+            Term::Let(g, Shared::new(f), Shared::new(b))
+        });
+        Term::Let(s, Shared::new(src), Shared::new(body))
+    }
+
+    /// The links `gs` of [`Elab::stream_term`], by the names their functions are bound to,
+    /// applied to the one-entry family `{0: v}`.
+    fn stream_links(&mut self, gs: &[(Arc<str>, bool)], v: Term) -> Term {
+        let one = Term::Prim(Prim::Entries, vec![int(0), v]);
+        gs.iter().fold(one, |x, (g, filter)| match filter {
+            true => self.where_term(x, var(g)),
+            false => self.map_term(x, var(g)),
+        })
+    }
+
     /// `x.scan(op)` (step L5.3; DESIGN.md sec:reduction item 1): the family with `x`'s keys
     /// whose entry at the `i`-th key is the fold by `p` of the entries up to it, each such fold
     /// grouped as the kernel `fold` groups the whole level, by the canonical tree, so on floats

@@ -167,17 +167,18 @@ fn a_range_runs_over_integers() {
 #[test]
 fn the_forms_not_built_are_refused_as_not_built() {
     // The messages name no step: the program's words only. The plan rows are named at the
-    // refusals: a range with no upper end other than read by a key, `in` or `.first`
-    // (RANGE-open-walk), metadata reads (META-read-run), `for` (FOR-one-generator) and
+    // refusals: a range with no upper end other than read by a key, `in` or a stream read
+    // (RANGE-open-names), metadata reads (META-read-run), `for` (FOR-one-generator) and
     // `discard` (DISCARD-standalone) in zedc-resolve; a fold by a
     // function that owes a proof of associativity (REDUCE-by-function) in the checker. A
     // directional fold over a keyed level is built (FP-ops-run; l03_15a_fp_ops_run::cases).
     for (name, body, what) in [
         (
             "range_with_no_upper_end",
-            "${0 ..}",
-            "a range with no upper end, `a ..`, read other than as `(a ..)[k]`, `k in a ..` or \
-             `(a ..).first`, is part of the Zed language",
+            "${[0 ..]}",
+            "a range with no upper end, `a ..`, read other than by a key, by `in`, or by \
+             `.first`, `.find(p)`, `.any(p)` or `.all(p)` after any number of `.map(f)` and \
+             `.where(p)`, is part of the Zed language",
         ),
         (
             "read",
@@ -204,6 +205,56 @@ fn the_forms_not_built_are_refused_as_not_built() {
         let e = refused(name, body);
         assert!(e.contains(what), "{name}: {e}");
         assert!(e.contains("does not compile it yet"), "{name}: {e}");
+    }
+}
+
+#[test]
+fn reads_of_a_range_with_no_upper_end_that_never_end_are_refused() {
+    // Plan row RANGE-open-walk: a read of every entry of `a ..`, or of a stream over it, is
+    // refused before the program runs, with what it reads and the reads that end.
+    for (name, body, what) in [
+        ("open_count", "${(0 ..).count}", "`.count` of"),
+        (
+            "open_last",
+            "${(0 ..).where(x -> x > 3).last}",
+            "`.last` of",
+        ),
+        ("open_fold", "${(0 ..).map(x -> x * 2) >< (+)}", "`><` of"),
+        ("open_print", "${(0 ..).map(x -> x * 2)}", "printing of"),
+        ("open_equal", "${(1 ..) == (1 ..)}", "`==` of"),
+        ("open_unequal", "${(1 ..) != {1, 2}}", "`!=` of"),
+    ] {
+        let e = refused(name, body);
+        let want = format!("{what} a range with no upper end, `a ..`, would never end");
+        assert!(e.contains(&want), "{name}: {e}");
+        assert!(
+            e.contains("repair: give the range an upper end"),
+            "{name}: {e}"
+        );
+        assert!(!e.contains("does not compile it yet"), "{name}: {e}");
+    }
+}
+
+#[test]
+fn a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_upper_end() {
+    // `.first` and `.any` defined by the program may walk the whole range, so `a ..` passed
+    // to them is refused, as it is passed to any function.
+    for (name, body) in [
+        ("own_first", "${(0 ..).first}"),
+        ("own_any", "${(0 ..).any(x -> x > 3)}"),
+    ] {
+        let src = super::program(name, body);
+        let text = std::fs::read_to_string(&src).unwrap();
+        let own = "first(positional xs) = 0;\nany(positional xs, positional p) = true;\n";
+        std::fs::write(&src, format!("{own}{text}")).unwrap();
+        let ran = zed_tests::step_helpers::l01_36a_executables::interpreter(&src, &[], &[]);
+        assert_ne!(ran.status, 0, "{name}: {}", ran.stdout);
+        assert!(
+            ran.stderr
+                .contains("a range with no upper end, `a ..`, read other than"),
+            "{name}: {}",
+            ran.stderr
+        );
     }
 }
 

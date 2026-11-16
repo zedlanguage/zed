@@ -530,6 +530,127 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 )
             },
         ),
+        // Plan row RANGE-open-walk: `.map` and `.where` over `a ..` give a stream that `.first`,
+        // `.find`, `.any` and `.all` read entry by entry up to the deciding one. The read gives
+        // what it gives on any bounded range `a ..< b` that holds the deciding entry, since it
+        // reads no entry past it, so the model is the kernel terms of `map`, `where` and the
+        // read on such a range: `.first` and `.find` the first entry `where` keeps (`.find`
+        // gives the key, which is the value when no `.map` comes first), `.any(p)` whether
+        // `where(p)` keeps one, `.all(p)` whether `where(!p)` keeps none.
+        (
+            "the_first_of_a_stream_with_no_upper_end",
+            "${(-10 ..).where(x -> x mod 7 == 3).first else 0}",
+            or(
+                prim(
+                    Prim::First,
+                    vec![where_(range(-10, 10), |v| eq(modulo(v, lit(7)), lit(3)))],
+                ),
+                "none",
+                0,
+            ),
+        ),
+        (
+            "a_stream_mapped_then_kept",
+            "${(5 ..).map(x -> x * x).where(x -> x > 50).first else 0}",
+            or(
+                prim(
+                    Prim::First,
+                    vec![where_(map(range(5, 20), |v| mul(v.clone(), v)), |v| {
+                        lt(lit(50), v)
+                    })],
+                ),
+                "none",
+                0,
+            ),
+        ),
+        (
+            "a_stream_kept_twice_then_mapped",
+            "${(-10 ..).where(x -> x mod 2 == 0).where(x -> x > 3).map(x -> x - 1).first else 0}",
+            or(
+                prim(
+                    Prim::First,
+                    vec![map(
+                        where_(
+                            where_(range(-10, 10), |v| eq(modulo(v, lit(2)), lit(0))),
+                            |v| lt(lit(3), v),
+                        ),
+                        |v| sub(v, lit(1)),
+                    )],
+                ),
+                "none",
+                0,
+            ),
+        ),
+        (
+            "any_and_all_over_a_range_with_no_upper_end",
+            "${[(1 ..).any(x -> x * x > 1000), (0 ..).all(x -> x < 1000), \
+             (1 ..).map(x -> x * 2).any(x -> x == 64), \
+             (1 ..).where(x -> x > 5).all(x -> x < 9)]}",
+            {
+                let some = |m: Term| not(eq(count(m), lit(0)));
+                let none = |m: Term| eq(count(m), lit(0));
+                family(
+                    [
+                        some(where_(range(1, 40), |v| lt(lit(1000), mul(v.clone(), v)))),
+                        none(where_(range(0, 1001), |v| not(lt(v, lit(1000))))),
+                        some(where_(map(range(1, 40), |v| mul(v, lit(2))), |v| {
+                            eq(v, lit(64))
+                        })),
+                        none(where_(where_(range(1, 10), |v| lt(lit(5), v)), |v| {
+                            not(lt(v, lit(9)))
+                        })),
+                    ]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| (i(k as i64), eval(t).unwrap()))
+                    .collect(),
+                )
+            },
+        ),
+        (
+            "find_over_a_range_with_no_upper_end",
+            "${[(3 ..).map(x -> x * 3).find(x -> x mod 7 == 0) else -1, \
+             (3 ..).find(x -> x > 10) else -1]}",
+            family(
+                [
+                    or(
+                        prim(
+                            Prim::First,
+                            vec![where_(range(3, 30), |v| {
+                                eq(modulo(mul(v, lit(3)), lit(7)), lit(0))
+                            })],
+                        ),
+                        "none",
+                        -1,
+                    ),
+                    or(
+                        prim(Prim::First, vec![where_(range(3, 30), |v| lt(lit(10), v))]),
+                        "none",
+                        -1,
+                    ),
+                ]
+                .iter()
+                .enumerate()
+                .map(|(k, t)| (i(k as i64), eval(t).unwrap()))
+                .collect(),
+            ),
+        ),
+        (
+            "a_stream_past_64_bits",
+            "${(9223372036854775800 ..).where(x -> x mod 1000 == 7).first else 0}",
+            {
+                let lo = num_bigint::BigInt::from(9223372036854775800i64);
+                let keys = (0..2000).map(|d| &lo + d).collect::<Vec<_>>();
+                or(
+                    prim(
+                        Prim::First,
+                        vec![where_(ints(&keys), |v| eq(modulo(v, lit(1000)), lit(7)))],
+                    ),
+                    "none",
+                    0,
+                )
+            },
+        ),
         // Plan row RANGE-lazy-wide: a range with an end past `i64` is kept as its two ends too,
         // read, counted, tested and taken at its ends from them. The models are the integers
         // themselves, not a range. Just past `i64::MAX`, just below `i64::MIN`, across either
@@ -762,6 +883,55 @@ fn a_range_with_no_upper_end_read_at_keys_from_stdin() {
                 .map(|(j, t)| (i(j as i64), eval(t).unwrap()))
                 .collect(),
         ));
+        let stdin = format!("{n}\n");
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {n}"
+        );
+        assert_eq!(ran.stdout, want, "zedc run at {n}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {n}"
+        );
+        assert_eq!(ran.stdout, want, "executable at {n}");
+    }
+}
+
+#[test]
+fn the_first_prime_from_n_read_from_stdin() {
+    // Plan row RANGE-open-walk, the gallery's `(n ..).where(isPrime).first` (DESIGN.md
+    // sec:grammar, rule Range; there written with `for`, plan row FOR-one-generator), with `n`
+    // known only at run time, so the walk runs in the interpreter and in the executable, and
+    // `.find`, `.any` and `.all` of the same stream. The model is trial division in Rust; the
+    // walk stops at the first prime, `n` itself when `n` is prime.
+    let body = "${[(n ..).where(isPrime).first else 0, (n ..).find(isPrime) else 0, \
+                (n ..).map(x -> x * x).where(x -> x mod 10 == 9).any(x -> x > 100), \
+                (n ..).where(isPrime).all(x -> x < n + 3)]}";
+    let src = dir("l03_02_map_run/prime_stdin").join("prime_stdin.zed");
+    let text = format!(
+        "isPrime(positional k) = k >= 2 && (2 ..< k).where(d -> d * d <= k && k mod d == 0)\
+         .count == 0;\n\
+         main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = dir("l03_02_map_run/prime_stdin").join("prime_stdin");
+    built(&src, &exe);
+    // The `.any` stops at the first square past 100 that ends in 9, which always comes, so it
+    // gives `true`; the `.all` stops at the first prime from `n + 3` on, which always comes, so
+    // it gives `false`.
+    let prime = |k: i64| k >= 2 && (2..k).all(|d| d * d > k || k % d != 0);
+    for n in [-5i64, 0, 2, 14, 24, 89, 90, 1000] {
+        let p = (n..).find(|&k| prime(k)).unwrap();
+        let want = expected(&family(vec![
+            (i(0), i(p)),
+            (i(1), i(p)),
+            (i(2), Value::Bool(true)),
+            (i(3), Value::Bool(false)),
+        ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
         assert_eq!(
