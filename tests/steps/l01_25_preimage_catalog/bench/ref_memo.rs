@@ -84,7 +84,14 @@ scaling_tests! {
     normal_named_modguard_scales: "normal_named_modguard" at 16;
     normal_named_reflection_scales: "normal_named_reflection" at 16;
     normal_rel_guard_scales: "normal_rel_guard" at 16;
-    normal_round_down_scales: "normal_round_down" at 16;
+    // At 1024 (FAIL-ref-memo-round-down-ratio, COMPLEXITY.md K124): measured from 16 to 8192
+    // links, each link costs a + b log2 n instructions (a near 190,000, b near 32,500: the paths
+    // of the persistent partition tree), and for any a >= 0 the ratio at n and 8n,
+    // 8 (a + b log 8n) / (a + b log n), is at most 8 log(8n) / log n: 10.4 at 1024, 14.0 at 16.
+    // At 16 the test passed or failed on a alone (10.74 on 28fe3807f, 10.21 on ea99d8093 with a
+    // larger a) and let a walk of the whole tree at every link through (10.22); at 1024 it reads
+    // 9.59 and that walk fails it (10.61).
+    normal_round_down_scales: "normal_round_down" at 1024;
     normal_round_trip_scales: "normal_round_trip" at 16;
     // Four values demanded: 4n pieces. At 8 the answer-free work was 84% of the run.
     output_grid_scales: "output_grid" at 64;
