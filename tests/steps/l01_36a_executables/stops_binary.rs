@@ -221,6 +221,44 @@ fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
     }
 }
 
+#[test]
+fn a_bug_of_zedc_in_the_run_stops_the_run_not_the_build_stage_before_it() {
+    // `k` calls `sq` inside `map`, a family operation, so the build stage runs it as written
+    // under the program's definitions (zedc-stage's `Mixer::run_under`, which calls the
+    // kernel's `Evaluator::run_under`; seen with a probe printed there, 2026-11-15). That run
+    // is the build's, not the program's, and `ZEDC_TEST_BUG` stops only the program's run
+    // (plan row PROOF-run-under-test-bug): `zedc run`, which stages the program in the same
+    // process, reports the bug at the run of `main`, as the executable does, and not the
+    // kernel's check that a run under the definitions is never asked to stop. A stage that
+    // gave that run an evaluator set to stop made `zedc run` exit with 101 there, which this
+    // test caught.
+    let src = "sq(positional n: int) = n * n;\nk = [1, 2, 3].map(x -> sq(x));\n";
+    let rest = "    m.stderr <- String(k[0] else 0);\n";
+    let p = program("bug_staged", &format!("{src}{}", writes_then(rest)));
+    // The switch exists only where debug assertions are on (crates/zedc/src/run.rs).
+    if cfg!(debug_assertions) {
+        let ran = both_with(&p, Stdio::piped, &[("ZEDC_TEST_BUG", "1")]);
+        let stderr = String::from_utf8_lossy(&ran[0].2).into_owned();
+        assert!(!stderr.contains("run under globals"), "{stderr}");
+        agree(
+            "bug_staged",
+            &p,
+            ran,
+            (
+                Some(3),
+                "",
+                "the run stopped because of a bug in zedc, not in your program",
+            ),
+        );
+    }
+    agree(
+        "bug_staged",
+        &p,
+        both(&p, Stdio::piped),
+        (Some(0), "first line\n", "1\n"),
+    );
+}
+
 /// The program address the record of a run names, the run made by `cmd` (`zedc run …` or an
 /// executable) with `--record <rec>` added; the run writes `first line` and exits with 0.
 fn recorded(cmd: &[&str], rec: &Path) -> String {

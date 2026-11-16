@@ -676,6 +676,20 @@ impl Evaluator {
             self.trace.is_none(),
             "a run under globals records no provenance"
         );
+        // It does not stop where `ZEDC_TEST_BUG` stops the program's run
+        // ([`Evaluator::stop_if_test_bug`]): it runs the build stage's terms, not the program.
+        // Proof that no run reaches this with the flag set (plan row PROOF-run-under-test-bug):
+        // the flag is set only by `panic_on_run`, whose one caller (zedc's run.rs, the run of
+        // `main`) sets it on the evaluator of that run, which never runs under globals; the one
+        // caller of `run_under` (zedc-stage's `Mixer::run_under`) calls it on an evaluator it
+        // has just made by `Evaluator::new`, which leaves the flag unset. The assertion checks
+        // that this still holds for any new caller (test
+        // `a_run_under_globals_given_an_evaluator_set_to_stop_panics`).
+        #[cfg(debug_assertions)]
+        assert!(
+            !self.panic_on_run,
+            "a run under globals is never asked to stop (ZEDC_TEST_BUG stops the program's run)"
+        );
         match self.run_in(term, Some(globals), global_env(reads), false)? {
             Ran::Data(v) => Ok(v),
             Ran::Made(_) => unreachable!("a run expecting data gives data"),

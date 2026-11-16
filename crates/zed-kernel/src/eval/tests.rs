@@ -398,3 +398,28 @@ fn a_family_with_one_entry_changed_is_caught() {
     assert_ne!(mapped, built);
     assert_ne!(mapped.leaves(), built.leaves());
 }
+
+/// Plan row PROOF-run-under-test-bug: [`super::Evaluator::run_under`] runs the build stage's
+/// terms, never the program, so it does not stop where `ZEDC_TEST_BUG` asks the program's run
+/// to stop; its one caller, zedc-stage, gives it a fresh evaluator, and the debug assertion in
+/// it checks that no caller gives it one set to stop. This test gives it one and sees the
+/// assertion fire; the next shows that the same run on a fresh evaluator gives its value.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "a run under globals is never asked to stop")]
+fn a_run_under_globals_given_an_evaluator_set_to_stop_panics() {
+    let mut ev = super::Evaluator::new(super::World::new());
+    ev.panic_on_run();
+    let one = crate::Term::Lit(Value::Int(1));
+    let _ = ev.run_under(&one, &super::Globals::default(), &[]);
+}
+
+/// The run of [`a_run_under_globals_given_an_evaluator_set_to_stop_panics`] on a fresh
+/// evaluator, which gives its value.
+#[test]
+fn a_run_under_globals_on_a_fresh_evaluator_gives_its_value() {
+    let mut ev = super::Evaluator::new(super::World::new());
+    let one = crate::Term::Lit(Value::Int(1));
+    let got = ev.run_under(&one, &super::Globals::default(), &[]);
+    assert_eq!(got.expect("a literal"), Value::Int(1));
+}
