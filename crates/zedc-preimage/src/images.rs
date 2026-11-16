@@ -195,7 +195,7 @@ static PRIORITIES: Priorities = Priorities::new(6);
 
 /// The priority of `key`: the run's random polynomial of degree 4 at a random polynomial hash
 /// of the name's bytes ([`Priorities::hash`]). Distinct names have distinct streams and tie with
-/// probability at most `(L + 3)/2^64` a pair for names of `L` 32-bit halves; the priorities are
+/// probability at most `(S + 1)/p` a pair for names of `S` symbols; the priorities are
 /// otherwise 5-wise independent and uniform, and every node's depth is `O(log h)` in
 /// expectation for every set of names (Seidel and Aragon, "Randomized search trees",
 /// Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module

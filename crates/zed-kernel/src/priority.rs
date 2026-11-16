@@ -33,23 +33,29 @@
 //! makes two keys one point.
 //!
 //! Keys of more than a word ([`Priorities::hash`]) go to `q` through a second polynomial `g` of
-//! the same draw, evaluated at a random point `r`: the key's `Hash` stream as a sequence of
-//! 32-bit halves `a_1, ..., a_L`, then its length in bytes, gives
-//! `g = r^(L+2) + a_1 r^(L+1) + ... + a_L r^2 + len_lo r + len_hi`. Two distinct streams are two
-//! distinct polynomials in `r` (the leading 1 and the length keep a shorter stream from equaling
-//! a longer one), of degree at most `L + 2`, so they agree at a random `r` with probability at
-//! most `(L + 2)/p` (a nonzero polynomial of degree `D` has at most `D` roots). Given `g`, the
-//! keys whose `g` differ are distinct points of `q`, drawn independently of `r`. So a treap of
-//! `n` keys whose streams are at most `L` halves long and are distinct for distinct keys has
-//! `E[T] <= n(n - 1)(L + 3)/p`, below `2^-11 (L + 3)` for `n <= 2^26`, and the expected depth of
-//! every node is `O(log n)`.
+//! the same draw, evaluated at a random point `r`. The key's `Hash` stream is read as 64-bit
+//! words, the last completed with zero bytes, then its length in bytes as one more word; a word
+//! below `p - 1` is one symbol, and a word `w` of `p - 1` or more is the two symbols `p - 1`
+//! and `w - (p - 1)`. The symbols `s_1, ..., s_S` give `g = r^S + s_1 r^(S-1) + ... + s_S`.
+//! Two distinct streams are two distinct sequences of symbols (no word's symbols begin
+//! another's, so the words are read back from the symbols, and the length then says which
+//! bytes of the last word are the stream's), so two distinct polynomials in `r` (each has
+//! leading coefficient 1 at its own number of symbols), of degree at most `S`, and they agree
+//! at a random `r` with probability at most `S/p` (a nonzero polynomial of degree `D` has at
+//! most `D` roots). Given `g`, the keys whose `g` differ are distinct points of `q`, drawn
+//! independently of `r`. So a treap of `n` keys whose streams are at most `S` symbols long
+//! (at most `2(B/8 + 2)` for `B` bytes) and are distinct for distinct keys has
+//! `E[T] <= n(n - 1)(S + 1)/p`, below `2^-11 (S + 1)` for `n <= 2^26`, and the expected depth
+//! of every node is `O(log n)`.
 //!
 //! Nothing a program prints may depend on the draw (rule deterministic-checking): a treap that
 //! takes these priorities shows only its keys in order, never its shape. The draw is one for
 //! the process, so one set of keys still has one shape in every thread of a run. The
 //! environment variable `ZED_TREAP_SEED`, a decimal number, fixes the draw, to repeat a run's
 //! timing or to compare the output of two draws (test
-//! `the_output_is_the_same_under_two_draws_of_the_treap_priorities`).
+//! `the_output_is_the_same_under_two_draws_of_the_treap_priorities`). `tools/run_tests.sh
+//! --bench` sets it to 0 when it is unset, so that a benchmark's ratio is that of one draw,
+//! the same on every run, rather than a random variable.
 //!
 //! Not proved: the operating system's random bytes are taken as uniform and independent.
 
@@ -141,28 +147,43 @@ impl Priorities {
     }
 }
 
-/// `g` of a stream (module comment), read 32 bits at a time by Horner's rule.
+/// `g` of a stream (module comment), read a 64-bit word at a time by Horner's rule.
+// Complexity tradeoff: one multiplication modulo `p` per 8 bytes. Reading 32 bits at a time
+// needs no escape, since a half is below `p`, but takes two multiplications per 8 bytes: it
+// cost 4.5% of the instructions of `pncx_probe::pncx_wide_divisor_translation_scale`, whose
+// one divisor of 336,000 bits is hashed digit by digit.
 struct Stream {
     r: u64,
     acc: u64,
-    /// The bytes of the half not yet complete, the first in the low byte.
-    pending: u32,
+    /// The bytes of the word not yet complete, the first in the low byte.
+    pending: u64,
     filled: u32,
     len: u64,
 }
 
 impl Stream {
-    fn half(&mut self, a: u32) {
-        self.acc = add(mul(self.acc, self.r), u64::from(a));
+    fn symbol(&mut self, s: u64) {
+        self.acc = add(mul(self.acc, self.r), s);
     }
 
-    /// `g`: the last half, completed with zero bytes, then the length's two halves.
+    /// A word as symbols below `p`: itself when it is below `p - 1`, else `p - 1` and then
+    /// `w - (p - 1)`, at most 59. No word's symbols begin another's, so the words are read
+    /// back from the symbols.
+    fn word(&mut self, w: u64) {
+        if w >= P - 1 {
+            self.symbol(P - 1);
+            self.symbol(w - (P - 1));
+        } else {
+            self.symbol(w);
+        }
+    }
+
+    /// `g`: the last word, completed with zero bytes, then the length.
     fn end(mut self) -> u64 {
         if self.filled > 0 {
-            self.half(self.pending);
+            self.word(self.pending);
         }
-        self.half(self.len as u32);
-        self.half((self.len >> 32) as u32);
+        self.word(self.len);
         self.acc
     }
 }
@@ -172,20 +193,20 @@ impl std::hash::Hasher for Stream {
         self.len += bytes.len() as u64;
         let mut rest = bytes;
         while self.filled > 0 && !rest.is_empty() {
-            self.pending |= u32::from(rest[0]) << (8 * self.filled);
-            self.filled = (self.filled + 1) % 4;
+            self.pending |= u64::from(rest[0]) << (8 * self.filled);
+            self.filled = (self.filled + 1) % 8;
             rest = &rest[1..];
             if self.filled == 0 {
-                let a = std::mem::take(&mut self.pending);
-                self.half(a);
+                let w = std::mem::take(&mut self.pending);
+                self.word(w);
             }
         }
-        let (halves, tail) = rest.as_chunks::<4>();
-        for a in halves {
-            self.half(u32::from_le_bytes(*a));
+        let (words, tail) = rest.as_chunks::<8>();
+        for w in words {
+            self.word(u64::from_le_bytes(*w));
         }
         for &b in tail {
-            self.pending |= u32::from(b) << (8 * self.filled);
+            self.pending |= u64::from(b) << (8 * self.filled);
             self.filled += 1;
         }
     }
@@ -235,11 +256,15 @@ fn source(tag: u64) -> Box<dyn FnMut() -> u64> {
     })
 }
 
-/// `ZED_TREAP_SEED`, read once.
+/// `ZED_TREAP_SEED`, read once. In this crate's unit tests it is 0 when unset, so that a test of
+/// a treap's height checks one draw, the same on every run (a test asserts only what holds for
+/// the draw it checks).
 fn fixed_seed() -> Option<u64> {
     static SEED: OnceLock<Option<u64>> = OnceLock::new();
     *SEED.get_or_init(|| {
-        let s = std::env::var("ZED_TREAP_SEED").ok()?;
+        let Ok(s) = std::env::var("ZED_TREAP_SEED") else {
+            return cfg!(test).then_some(0);
+        };
         Some(
             s.trim().parse().unwrap_or_else(|_| {
                 panic!("ZED_TREAP_SEED is {s:?}, not a decimal number below 2^64")

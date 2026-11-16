@@ -81,6 +81,11 @@ path = "../../tests/steps/l01_29_diagnostics/run_stops_binary.rs"
 name = "pins_binary"
 path = "../../tests/steps/l02_08_import_pinning/pins_binary.rs"
 
+# zedc's output the same under two draws of the treap priorities (PERF-treap-seeded-priorities).
+[[test]]
+name = "treap_seeds_binary"
+path = "../../tests/steps/m0_09_kernel_evaluator/treap_seeds_binary.rs"
+
 [dependencies]
 # The key of a link: the content hashes of its object file and runtime library (L1.36b).
 blake3 = "1"

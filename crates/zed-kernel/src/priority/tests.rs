@@ -78,29 +78,30 @@ fn the_hash_of_a_stream_is_its_polynomial_however_it_is_written() {
     let bytes: Vec<u8> = (0..23u8)
         .map(|i| i.wrapping_mul(37).wrapping_add(11))
         .collect();
-    // The polynomial written out: a leading 1, the halves, the last padded with zeros, then
-    // the length's two halves.
-    let mut halves: Vec<u64> = bytes
-        .chunks(4)
+    // The polynomial written out: a leading 1, the words, the last padded with zeros, then the
+    // length. No word here is `P - 1` or more, so each is one symbol.
+    let mut words: Vec<u64> = bytes
+        .chunks(8)
         .map(|c| {
-            let mut w = [0; 4];
+            let mut w = [0; 8];
             w[..c.len()].copy_from_slice(c);
-            u64::from(u32::from_le_bytes(w))
+            u64::from_le_bytes(w)
         })
         .collect();
-    halves.extend([bytes.len() as u64, 0]);
-    let want = halves.iter().fold(1, |acc, &a| add(mul(acc, r), a));
-    for cuts in [&[23][..], &[1], &[3, 5], &[2, 7, 1], &[8]] {
+    words.push(bytes.len() as u64);
+    assert!(words.iter().all(|&w| w < P - 1));
+    let want = words.iter().fold(1, |acc, &a| add(mul(acc, r), a));
+    for cuts in [&[23][..], &[1], &[3, 5], &[2, 7, 1], &[8], &[9, 16]] {
         assert_eq!(g_of(r, &bytes, cuts), want, "{cuts:?}");
     }
 }
 
 #[test]
 fn streams_that_differ_only_in_length_or_trailing_zeros_hash_apart() {
-    // The leading 1 keeps a stream from equaling the same stream after zero halves, and the
-    // length keeps a stream from equaling it with zero bytes added to its last half.
+    // The leading 1 keeps a stream from equaling the same stream after zero words, and the
+    // length keeps a stream from equaling it with zero bytes added to its last word.
     let r = 0x0fed_cba9_8765_4321;
-    let streams: [&[u8]; 6] = [&[], &[0], &[0, 0, 0, 0], &[0, 0, 0, 0, 0], &[7], &[7, 0]];
+    let streams: [&[u8]; 6] = [&[], &[0], &[0; 8], &[0; 9], &[7], &[7, 0]];
     for (i, a) in streams.iter().enumerate() {
         for b in &streams[i + 1..] {
             assert_ne!(g_of(r, a, &[3]), g_of(r, b, &[3]), "{a:?} {b:?}");
@@ -109,8 +110,30 @@ fn streams_that_differ_only_in_length_or_trailing_zeros_hash_apart() {
 }
 
 #[test]
+fn a_word_of_p_minus_1_or_more_is_two_symbols_no_other_word_begins_with() {
+    let r = 0x2468_ace0_1357_9bdf;
+    let symbols = |ss: &[u64]| ss.iter().fold(1, |acc, &s| add(mul(acc, r), s));
+    let le = |ws: &[u64]| ws.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
+    // `P - 1`, `P` and `u64::MAX` are the escape and then their excess over `P - 1`.
+    for (w, rest) in [(P - 1, 0), (P, 1), (u64::MAX, 59)] {
+        assert_eq!(
+            g_of(r, &le(&[w]), &[8]),
+            symbols(&[P - 1, rest, 8]),
+            "{w:#x}"
+        );
+    }
+    // Words of one symbol below the escape, for comparison.
+    assert_eq!(g_of(r, &le(&[P - 2]), &[8]), symbols(&[P - 2, 8]));
+    // The word `P` and the two words `P - 1`, `1` are distinct streams with distinct symbols:
+    // the escape is never read as a word of its own.
+    let one = le(&[P]);
+    let two = le(&[P - 1, 1]);
+    assert_ne!(g_of(r, &one, &[3]), g_of(r, &two, &[3]));
+}
+
+#[test]
 fn equal_keys_take_equal_priorities_whatever_the_draw() {
-    // Every draw, the system's included: a priority is a function of the key.
+    // Every draw, the run's included: a priority is a function of the key.
     let drawn = Priorities::new(1);
     let a = fixed([1, 2, 3, 4, 5], 6);
     let b = fixed([5, 4, 3, 2, 1], 7);

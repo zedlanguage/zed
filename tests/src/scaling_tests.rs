@@ -392,6 +392,22 @@ fn run_tests_exports_the_settings_of_the_meter() {
     assert_eq!(exports, [zed_meter_settings::GLIBC_TUNABLES]);
 }
 
+/// `tools/run_tests.sh --bench` fixes the draw of the treap priorities when `ZED_TREAP_SEED` is
+/// unset, so that a benchmark measures the same draw on every run; a correctness run does not.
+#[test]
+fn run_tests_fixes_the_treap_draw_for_benchmarks_only() {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tools/run_tests.sh");
+    let text = std::fs::read_to_string(script).expect("tools/run_tests.sh");
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("ZED_TREAP_SEED=") && !l.starts_with('#'))
+        .collect();
+    assert_eq!(
+        lines,
+        [r#"[ "$run_kind" = test ] || export ZED_TREAP_SEED=${ZED_TREAP_SEED:-0}"#]
+    );
+}
+
 #[test]
 fn a_meter_counts_the_work_of_a_run_and_not_the_time_it_sleeps() {
     let mut meter = Meter::new();

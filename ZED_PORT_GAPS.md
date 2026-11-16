@@ -1453,7 +1453,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `i128::MIN` and `i128::MAX` as sentinels for the infinities among the summary's values, matched in patterns (`NEG \| POS if mul > 0`), with `checked_mul` and `checked_add` returning `None` to give the summary up when a finite value would reach a sentinel | `NEG`, `POS`, `finite`, `value_at`, `map_vals`, `make_node` | Machine integers | Zed's `int` is unbounded: the values are `int`, the infinities a tagged variant (`#negInf`, `#fin(int)`, `#posInf`), and no give-up is needed, at a cost in the bits of each value per node |
 | An `End` turned into a machine integer by `to_i128` with `expect`, after `in_range` checked every end | `small`, `key` | Machine integers; Abort on a broken invariant (gap 8) | With `int` ends no conversion is needed |
-| The priority of a piece mixed from both 64-bit halves of its `i128` end by `as u64` casts, `>>`, `^`, `wrapping_add` and `rotate_left` | `prio_of` | Bit operations (gap 4) | As gap 4, or a hash of the end's content digest (gap 1) |
+| The priority of a piece: its two ends hashed by `zed_kernel::priority` (since PERF-treap-seeded-priorities; before, mixed by casts, shifts and `rotate_left`) | `prio_of` | As the PERF-treap-seeded-priorities entries | As those entries |
 | A closure `impl FnOnce(i128) -> Option<i128>` passed to a free function that applies it to a finite end or returns the given infinity | `solve` | None | A function argument |
 
 ## Entries from T6 (`zed-kernel/src/types/bes.rs`, `rec.rs`, `empty.rs`)
@@ -2109,7 +2109,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| Hash-consed canonical treaps of divisors: nodes in a `Vec` addressed by `u32` numbers, found by `(divisor, left, right)` in a `HashMap` before they are made, priorities a fixed hash of the divisor (`BuildHasherDefault<DefaultHasher>::hash_one`), unions memoized by the pair of numbers, and ordered searches from a bound by recursion | `divisors::Sets`, `preimage::Defined::{meet, with_divisor, arm, shown_nonzero}` | Identity (gap 1); Mutation (the node table and memos) | A map from the content of a node to the node, its digest the key; the table and memos threaded as state, or a runtime intern table |
+| Hash-consed canonical treaps of divisors: nodes in a `Vec` addressed by `u32` numbers, found by `(divisor, left, right)` in a `HashMap` before they are made, priorities the divisor hashed by `zed_kernel::priority`, drawn once per run (PERF-treap-seeded-priorities), unions memoized by the pair of numbers, and ordered searches from a bound by recursion | `divisors::Sets`, `preimage::Defined::{meet, with_divisor, arm, shown_nonzero}` | Identity (gap 1); Mutation (the node table and memos) | A map from the content of a node to the node, its digest the key; the table and memos threaded as state, or a runtime intern table |
 | Structural numbering of formulas: a memo by `presburger::Id` and one by shape (`enum Shape { Con, Not, And, Or }` of child numbers), filled on an explicit stack | `preimage::FormulaNumbers`, used by `Walk::shared_call_key` | Identity (gap 1); Mutation | The formula's digest as the key, confirmed by contents |
 | `RefCell` and `Cell` captured by a closure passed to `map_cons`, to collect a failure and a substitution while the formula is rebuilt | `preimage::Defined::instance` | Mutation | A fold that returns the rebuilt formula with the failure flag |
 | `if matches!(p, IntDiv \| Mod) && let n = … && ….is_none()` (a let chain in an `if`) | `Walk::defined_at` | None | `if` on `p` then a `match` on the constant |
@@ -2741,7 +2741,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A persistent treap of `Rc` nodes, each holding the sum of its subtree, updated by split and join that copy one path | `images::Tree`, `images::set`, `split`, `without`, `join` | Shared immutable nodes and reference counts; Zed's values are immutable, but a tree with a monoid sum per node is not in the standard library | A persistent ordered map with a sum per subtree (a finger tree or a weight-balanced tree with a monoid annotation) |
 | The keys where two persistent maps differ, by `imbl`'s `diff`, which skips subtrees the two share by pointer | `images::updated`, `LetPa::changed_since` | Pointer equality of shared subtrees; Zed has no identity on values | A diff of persistent maps that compares shared nodes by identity in the runtime, or a log of the keys changed since a version |
-| A priority from the bytes of a name, FNV-1a mixed by splitmix64, with wrapping arithmetic | `images::prio` | Wrapping `u64` multiplication | `u64` words with wrapping operations (step L7.4c) |
+| A priority from a name, by `zed_kernel::priority` (since PERF-treap-seeded-priorities; before, FNV-1a mixed by splitmix64) | `images::prio` | As the PERF-treap-seeded-priorities entries | As those entries |
 
 ## Entries from LOAD-disj-residue (`crates/zedc-presburger/src/presburger/extend.rs`)
 
@@ -3691,7 +3691,7 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A persistent treap of `Option<Arc<Node>>` changed through `Arc::make_mut`, which copies a node on the path only when another hull shares it, and taken apart by `Option::take` and `Arc::try_unwrap` on removal | `Rows::get_mut`, `Rows::insert`, `Rows::remove`, `split`, `merge` | Mutation in place of a shared value | a persistent treap value whose insert and remove return the new tree; the runtime shares the subtrees off the path |
-| Priorities from `std`'s `DefaultHasher` of the pivot, mixed by splitmix64, so one set of pivots gives one shape | `prio_of` | Hashing input (gap 5) | any fixed hash of the atom's bytes; only that equal pivots get equal priorities matters |
+| Priorities from the pivot by `zed_kernel::priority` (since PERF-treap-seeded-priorities; before, `std`'s `DefaultHasher` mixed by splitmix64), so one set of pivots gives one shape in a run | `prio_of` | As the PERF-treap-seeded-priorities entries | As those entries; equal pivots must get equal priorities |
 | A difference of two treaps on two explicit `Vec` stacks of `Step::Tree` and `Step::Entry`, passing over a subtree both hold by `std::ptr::eq` and over a row both hold by `Arc::ptr_eq` before comparing it by value | `Rows::diff` | Identity (gap 1); mutation (gap 11) | recursion on the two trees with the runtime's identity shortcut on shared values; without one, a join costs the size of the hulls |
 
 ## Entries from MUTABLE-to-initial-facet (`crates/zedc-syntax/src/ast/initial.rs`)
@@ -4060,3 +4060,14 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 |---|---|---|---|
 | A `HashMap` from a shared subterm's id to the names its body reads, filled on first use and kept for the run, written through `&mut self` | `Machine::captures`, `Machine::made` (`Machine.reads`) | Identity (gap 1), mutation (gap 11) | The names read kept beside each lambda term when it is built, or a memo table threaded through the run |
 | `Rc::strong_count` read by a test to see that a value is released | `eval::tests::a_closure_holds_only_the_values_its_body_reads` | No reference counts in the language | A release observed by a foreign value's release function, or the runtime's live-cell count |
+
+## Entries from PERF-treap-seeded-priorities (`zed-kernel/src/priority.rs` and its nine users: `types/bdd/settings.rs`, `types/bucket.rs`, `zedc-preimage` `spans.rs`, `divisors.rs`, `images.rs`, `preimage.rs`, `zedc-presburger` `hull/rows.rs`, `extend/holes.rs`, `extend/images/intervals.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `static` per site holding a `OnceLock` of the draw, filled on first use, so the draw is one per process and shared by every thread | `Priorities`, `PRIORITIES` at each site | Global state, lazy cells (gap 3) | A value drawn at the start of `main` (or of the compiler's run) and passed to each treap's module, or a runtime constant of the run |
+| Five coefficients and a point read from `/dev/urandom` with `File::read_exact`, or made by splitmix64 from `ZED_TREAP_SEED` read by `std::env::var` | `priority::source`, `fixed_seed` | Command line (gap 6), OS input | An input port for random bytes and one for the environment, read once by `main`; the compiler's Zed source takes the draw as a parameter |
+| `cfg!(test)` to give the crate's unit tests seed 0 when the variable is unset | `fixed_seed` | Build-time configuration | The tests pass a fixed draw |
+| `u128` products reduced modulo `2^64 - 59` by two folds of the high word times 59 and one subtraction | `priority::mul`, `reduce`, `add` | Machine integers, bit operations (gap 4) | `(a * b) mod (2^64 - 59)` on `int`, the operands' ranges `int[0..<2^64 - 59]` letting the compiler pick the machine form |
+| `impl Hasher` whose `write` folds a key's `Hash` stream into a polynomial at the draw's point, 32 bits at a time, with `as_chunks::<4>` | `priority::Stream`, `Priorities::hash` | Hashing input (gap 5) | A fold over the key's canonical byte form (the content digest's input), which Zed gives each value |
+| An `AtomicU64` counter, `fetch_add` with `Relaxed`, numbering intervals in the order taken across threads (was a `thread_local!` sequence) | `intervals.rs` `prio_of`, `TAKEN` | Mutation, global state | A counter threaded through the module's state, or the interval's own content hashed by `Priorities::hash` |

@@ -16,8 +16,8 @@ use zedc_presburger::presburger::Lin;
 /// The priorities of the divisors, drawn once per run ([`zed_kernel::priority`]): the run's
 /// random polynomial of degree 4 at a random polynomial hash of the divisor's `Hash` stream
 /// ([`Priorities::hash`]). A `Lin`'s stream is its terms and constant, so distinct divisors
-/// have distinct streams and tie with probability at most `(L + 3)/2^64` a pair for streams of
-/// `L` 32-bit halves; the priorities are otherwise 5-wise independent and uniform, and every
+/// have distinct streams and tie with probability at most `(S + 1)/p` a pair for streams of
+/// `S` symbols; the priorities are otherwise 5-wise independent and uniform, and every
 /// node's depth is `O(log n)` in expectation for every set of divisors (Seidel and Aragon,
 /// "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in
 /// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen

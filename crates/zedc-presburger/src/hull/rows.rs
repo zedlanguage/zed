@@ -29,7 +29,7 @@ static PRIORITIES: Priorities = Priorities::new(9);
 
 /// The priority of a pivot: the run's random polynomial of degree 4 at a random polynomial hash
 /// of the pivot's `Hash` stream ([`Priorities::hash`]). Distinct pivots have distinct streams
-/// and tie with probability at most `(L + 3)/2^64` a pair for streams of `L` 32-bit halves; the
+/// and tie with probability at most `(S + 1)/p` a pair for streams of `S` symbols; the
 /// priorities are otherwise 5-wise independent and uniform, and every node's depth is
 /// `O(log n)` in expectation for every set of pivots (Seidel and Aragon, "Randomized search
 /// trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module

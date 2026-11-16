@@ -12279,6 +12279,15 @@ fn widen(vals: &mut (Val, Val), o: &(Val, Val)) {
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
 /// above them.
 fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Arc<PaNode> {
+    let prio = prio_of(&lo, &hi);
+    node_of(lo, hi, a, b, prio, left, right)
+}
+
+/// [`make_node`] with the priority given: a node rebuilt over new subtrees for the piece of a
+/// node keeps that node's priority, which is [`prio_of`] of the same ends, so the rebuilds of
+/// a split or a join hash nothing (the priority hash was 11% of the instructions of
+/// `bench::s22::chain_probe_all_scales` when every rebuild hashed again).
+fn node_of(lo: End, hi: End, a: Int, b: Int, prio: u64, left: Tree, right: Tree) -> Arc<PaNode> {
     let (u, v) = (value_at(&lo, &a, &b), value_at(&hi, &a, &b));
     let mut vals = if u <= v { (u, v) } else { (v, u) };
     let mut span = (lo.clone(), hi.clone());
@@ -12297,7 +12306,6 @@ fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Arc<P
         dense &= r.dense && next(&hi, &r.span.0);
         len += r.len;
     }
-    let prio = prio_of(&lo, &hi);
     Arc::new(PaNode {
         lo,
         hi,
@@ -12351,22 +12359,24 @@ fn join_treap(left: Tree, right: Tree) -> Tree {
             if l.prio >= r.prio {
                 let (ll, lr) = push_down(&l);
                 let nr = join_treap(lr, Some(r));
-                Some(make_node(
+                Some(node_of(
                     l.lo.clone(),
                     l.hi.clone(),
                     l.a.clone(),
                     l.b.clone(),
+                    l.prio,
                     ll,
                     nr,
                 ))
             } else {
                 let (rl, rr) = push_down(&r);
                 let nl = join_treap(Some(l), rl);
-                Some(make_node(
+                Some(node_of(
                     r.lo.clone(),
                     r.hi.clone(),
                     r.a.clone(),
                     r.b.clone(),
+                    r.prio,
                     nl,
                     rr,
                 ))
@@ -12426,10 +12436,10 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
     );
     if cut <= key(&lo) {
         let (ll, piece, lr) = split_around(left, cut);
-        (ll, piece, Some(make_node(lo, hi, a, b, lr, right)))
+        (ll, piece, Some(node_of(lo, hi, a, b, node.prio, lr, right)))
     } else if cut > key(&hi) {
         let (rl, piece, rr) = split_around(right, cut);
-        (Some(make_node(lo, hi, a, b, left, rl)), piece, rr)
+        (Some(node_of(lo, hi, a, b, node.prio, left, rl)), piece, rr)
     } else {
         (left, Some((lo, hi, a, b)), right)
     }

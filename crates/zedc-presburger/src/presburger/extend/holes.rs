@@ -37,7 +37,7 @@ static PRIORITIES: Priorities = Priorities::new(8);
 /// The priority of the interval `lo..=hi` of the base coordinate: the run's random polynomial
 /// of degree 4 at a random polynomial hash of its ends ([`Priorities::hash`]; `Int`'s stream is
 /// one-to-one, so distinct intervals have distinct streams and tie with probability at most
-/// `(L + 3)/2^64` a pair for streams of `L` 32-bit halves). The priorities are otherwise 5-wise
+/// `(S + 1)/p` a pair for streams of `S` symbols). The priorities are otherwise 5-wise
 /// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
 /// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3
 /// and section 6; the proof is in module [`zed_kernel::priority`]), where the fixed hash this

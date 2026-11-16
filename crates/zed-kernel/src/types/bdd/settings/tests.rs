@@ -109,3 +109,66 @@ fn shape(t: &Tree<Row>) -> String {
     }
     out
 }
+
+/// The number of nodes on the longest path from the root, walked from a stack.
+fn height(t: &Tree<Row>) -> usize {
+    let mut most = 0;
+    let mut stack: Vec<(&Node<Row>, usize)> = t.as_deref().map(|n| (n, 1)).into_iter().collect();
+    while let Some((n, d)) = stack.pop() {
+        most = most.max(d);
+        for c in [n.left.as_deref(), n.right.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            stack.push((c, d + 1));
+        }
+    }
+    most
+}
+
+/// The settings whose priorities rose with their order under the fixed hash that the drawn
+/// priorities replace (PERF-treap-seeded-priorities, COMPLEXITY.md K123), `mix(mix(17, d), v)`
+/// of the atom's digest `d`: the longest rising run among the settings of `0` to `2^16 - 1`, by
+/// patience sorting, has 506 settings (Erdős and Szekeres give about `2 sqrt(n)`), and under
+/// that hash their set was a path of 506 nodes. Under the drawn priorities it is a treap of
+/// independent priorities, and its height is checked against Seidel and Aragon's Lemma 4.8 at
+/// probability `1/n`, as `set/tests.rs` does. The unit tests of this crate fix the draw
+/// (`priority::fixed_seed`), so the height checked is that of one draw, the same on every run.
+#[test]
+fn settings_chosen_against_a_fixed_hash_give_a_logarithmic_height() {
+    let mut all: Vec<Key<Row>> = (0..1 << 16).map(|i| (atom(i), true)).collect();
+    all.sort();
+    let old: Vec<u64> = all
+        .iter()
+        .map(|k| mix(mix(17, k.0.digest()), u64::from(k.1)))
+        .collect();
+    let mut tails: Vec<usize> = Vec::new();
+    let mut prev = vec![usize::MAX; old.len()];
+    for i in 0..old.len() {
+        let j = tails.partition_point(|&t| old[t] < old[i]);
+        if j > 0 {
+            prev[i] = tails[j - 1];
+        }
+        if j == tails.len() {
+            tails.push(i)
+        } else {
+            tails[j] = i
+        }
+    }
+    let mut pick = vec![*tails.last().expect("settings")];
+    while prev[*pick.last().expect("a pick")] != usize::MAX {
+        pick.push(prev[*pick.last().expect("a pick")]);
+    }
+    let n = pick.len();
+    let t = from_keys(pick.iter().map(|&i| all[i].clone()).collect());
+    assert_eq!(len(&t), n);
+    let h = height(&t);
+    let ln_n = (n as f64).ln();
+    let c = (h as f64 - 1.0) / (2.0 * ln_n);
+    let ln_bound = 2f64.ln() + ln_n - c * (c / std::f64::consts::E).ln() * (ln_n - 1.0);
+    assert!(
+        c <= std::f64::consts::E || ln_bound >= -ln_n,
+        "{n} settings chosen against the fixed hash: height {h} nodes, c = {c:.2}, a \
+         probability below e^{ln_bound:.1} for independent priorities, under 1/n"
+    );
+}
