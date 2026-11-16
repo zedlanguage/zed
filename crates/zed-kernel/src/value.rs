@@ -1506,21 +1506,11 @@ impl Family {
         }
     }
 
-    /// The term that makes this family again in O(1), for a range kept as its ends:
-    /// `range(lo, last + 1)` (`lo ..< last + 1`, whose high end is `2^63` past `i64` for
-    /// `..= i64::MAX`) or `rangeFrom(lo)`; `None` for a family kept as its entries. The build
-    /// writes it where it would write the family as a literal, since a literal is written entry
-    /// by entry, O(n) for a range of n entries, and never ends for `a ..` (plan row RANGE-open).
-    pub fn made_by(&self) -> Option<crate::Term> {
-        use crate::Prim;
-        use crate::term::build::{lit, prim};
+    /// The low end `lo` of a family made by [`Family::range_from`] and not changed since.
+    pub fn open_lo(&self) -> Option<&Value> {
         match &self.0 {
-            Entries::Range(s) => {
-                let high = Value::int(BigInt::from(s.last) + 1);
-                Some(prim(Prim::Range, vec![lit(Value::Int(s.lo)), lit(high)]))
-            }
-            Entries::From(lo) => Some(prim(Prim::RangeFrom, vec![lit(Value::clone(lo))])),
-            Entries::Map(_) => None,
+            Entries::From(lo) => Some(lo),
+            Entries::Range(_) | Entries::Map(_) => None,
         }
     }
 

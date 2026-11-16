@@ -1338,7 +1338,7 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 
 /// The term the residual program holds for `v`, the value of a build-stage term: the literal,
 /// except for a range kept as its ends, which stays the call that makes it
-/// ([`zed_kernel::Family::made_by`]). Complexity tradeoff (COMPLEXITY.md RANGE-open): a range
+/// ([`zed_kernel::term::build::made_by`]). Complexity tradeoff (COMPLEXITY.md RANGE-open): a range
 /// as a literal is written entry by entry into ZIR and the executable, O(n) time and size for
 /// `0 ..< n` (`(0 ..< 10^12)[k]` with `k` read at run time would not build), and `a ..` has no
 /// last entry to reach; the call is O(1) to write, and makes the range in O(1) where it runs.
@@ -1346,7 +1346,7 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 /// its ends never needs.
 fn built_value(v: Value) -> Term {
     if let Value::Family(f) = &v
-        && let Some(t) = f.made_by()
+        && let Some(t) = zed_kernel::term::build::made_by(f)
     {
         return t;
     }

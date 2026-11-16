@@ -653,6 +653,21 @@ pub mod build {
     pub fn if_(c: Term, a: Term, b: Term) -> Term {
         Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
     }
+
+    /// The term that makes the family `f` again in O(1), for a range kept as its ends:
+    /// `range(lo, last + 1)` (`lo ..< last + 1`, whose high end is `2^63` past `i64` for
+    /// `..= i64::MAX`) or `rangeFrom(lo)`; `None` for a family kept as its entries. The build
+    /// writes it where it would write the family as a literal, since a literal is written entry
+    /// by entry, O(n) for a range of n entries, and never ends for `a ..` (plan row RANGE-open).
+    /// It is written here, not in module `value`, so that `value` names nothing of `term`.
+    pub fn made_by(f: &crate::Family) -> Option<Term> {
+        if let Some((lo, last)) = f.span() {
+            let high = Value::int(num_bigint::BigInt::from(last) + 1);
+            return Some(prim(Prim::Range, vec![lit(Value::Int(lo)), lit(high)]));
+        }
+        f.open_lo()
+            .map(|lo| prim(Prim::RangeFrom, vec![lit(Value::clone(lo))]))
+    }
 }
 
 /// A part of a term or pattern whose owner is being dropped (module `deep`): a term nested deep
