@@ -4935,11 +4935,11 @@ impl Cx<'_> {
                 .expect("the type being read is on the stack");
             if let Some(cs) = top.t.tuples.get(top.rows.len()) {
                 // No component read yet: the row is not started, and may be read already.
-                if top.row.is_empty() {
-                    if let Some(done) = rows.get(&cs.node()) {
-                        top.rows.push(done.clone());
-                        continue;
-                    }
+                if top.row.is_empty()
+                    && let Some(done) = rows.get(&cs.node())
+                {
+                    top.rows.push(done.clone());
+                    continue;
                 }
                 match cs.get(top.row.len()) {
                     Some(c) => stack.push(start(c)),
