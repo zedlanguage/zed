@@ -2700,3 +2700,60 @@ fn a_payload_less_many_cuts_is_the_difference_in_few_shapes() {
 }
 
 mod bench;
+
+/// A random payload item of data, `d` levels deep: literals, `int`, `bool`, an atom, tuples,
+/// payloads, unions and meets.
+fn random_item(r: &mut zed_tests::instances::Rng, d: usize) -> String {
+    match r.below(if d == 0 { 4 } else { 8 }) {
+        0 => r.below(3).to_string(),
+        1 => "int".into(),
+        2 => "bool".into(),
+        3 => "#c".into(),
+        4 => format!("({}, {})", random_item(r, d - 1), random_item(r, d - 1)),
+        5 => format!("#b({})", random_item(r, d - 1)),
+        6 => format!(
+            "(({}) | ({}))",
+            random_item(r, d - 1),
+            random_item(r, d - 1)
+        ),
+        _ => format!(
+            "(({}) & ({}))",
+            random_item(r, d - 1),
+            random_item(r, d - 1)
+        ),
+    }
+}
+
+/// A payload shape of data is within a union of shapes exactly when it less the union is
+/// empty. Where both sides have kernel types, `diff` takes the rest of each shape
+/// (`Comparing::shape_rest`) without first asking `sub_near` whether the union holds it
+/// (a3cee3606); this checks that the skip changes no answer, against the comparison, which
+/// does not go through `diff`. A new seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
+#[test]
+fn a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty() {
+    let (mut r, seed) = zed_tests::instances::Rng::fresh("a payload shape within a union");
+    let shape = |r: &mut zed_tests::instances::Rng| match r.below(2) {
+        0 => format!("#a({}, {})", random_item(r, 2), random_item(r, 2)),
+        _ => format!(
+            "#a({}, {}, {})",
+            random_item(r, 2),
+            random_item(r, 1),
+            random_item(r, 2)
+        ),
+    };
+    for _ in 0..1000 {
+        let p = shape(&mut r);
+        let k = 1 + r.below(6);
+        let u = (0..k)
+            .map(|_| shape(&mut r))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let (pt, ut) = (ty(&p), ty(&u));
+        assert_eq!(
+            pt.subtype(&ut),
+            pt.diff(&ut).is_empty(),
+            "{p} within {u}: {} (ZED_TEST_SEED={seed})",
+            pt.diff(&ut)
+        );
+    }
+}

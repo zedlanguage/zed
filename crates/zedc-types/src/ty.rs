@@ -8916,7 +8916,19 @@ impl<'m, 's> Comparing<'m, 's> {
                     // is not first compared with its near shapes. Complexity tradeoff: that
                     // comparison goes to the kernel's test of whether a set of tuples is
                     // empty, which grew past n^2 for n shapes each meeting the next
-                    // (FAIL-types-shape-rest-many-cuts, sampled).
+                    // (FAIL-types-shape-rest-many-cuts, sampled). Whether the skip can change an
+                    // answer: before, a yes of `sub_near` dropped the shape and anything else
+                    // went to `shape_rest`, as now, so the two differ only where `sub_near` says
+                    // yes. A yes is sound, so the exact rest is empty there, and `shape_rest`
+                    // gives its values and no other; it then gives no shape when each part it
+                    // keeps holds a value. A part is kept where `Ty::is_empty` is false, which
+                    // for these items rests on the kernel's search (`KType::is_empty`) and on
+                    // a row being void when a component lists no value ([`Row::new`]). Not
+                    // proved: that both are exact on the meets and differences of items of
+                    // data (PROOF-diff-exact-skip). Checked: the comparison and the difference
+                    // agree on 1,000 random payloads a run
+                    // (`kinds::a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty`;
+                    // 5,000 seeds once, 1,366 of them within, no disagreement).
                     let exact = s.0.exact.is_some() && cut.iter().all(|c| c.0.exact.is_some());
                     if exact_u && exact {
                         left.extend(self.shape_rest(s, &cut, solve).await);
