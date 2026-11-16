@@ -147,8 +147,10 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// (FAIL-types-equal-functions-subset-no, COMPLEXITY.md F124): with a tag the right side lacks
 /// the answer is a definite no, and without it a refusal. Each row `(h_i, #b_i)` meets both
 /// right rows of its `i`, and `(h_i, #a_i | #b_i)` both left rows, so the pairs of rows that
-/// meet form no stars and the equal functions are skipped ([`PlaceFns::starred`] in
-/// `crates/zedc-types/src/ty.rs`); until FAIL-types-loose-pairing-decided the right side was
+/// meet form no stars, and the pairs of rows the search finds outnumber the functions, so the
+/// equal functions are skipped ([`PlaceFns::starred`] in `crates/zedc-types/src/ty.rs`; since
+/// FAIL-types-loose-pairing-non-star the count alone decides that); until
+/// FAIL-types-loose-pairing-decided the right side was
 /// `(h_i, #a_i) | (f_i, #b_i) | (h_i, #b_i)`, whose rows meet one by one and are now paired,
 /// `functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time`. Small instances:
 /// `equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no` and

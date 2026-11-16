@@ -7669,7 +7669,7 @@ impl<'m, 's> Comparing<'m, 's> {
         // skipped pairs are the product of the functions at the spot, `n^2` comparisons of
         // functions for a union of `n` shapes on each side, each with its own function there.
         // Structure: two or more functions on each side at one place, one of `t`'s equal to
-        // one of `other`'s, the pairs of tuples that meet there forming no stars
+        // one of `other`'s, the pairs of tuples that meet there more than the functions there
         // ([`PlaceFns::starred`]), and the verdict false only for want of a skipped pair.
         // Tests: `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
         // `functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true`,
@@ -7684,7 +7684,10 @@ impl<'m, 's> Comparing<'m, 's> {
         // functions and the pairs of nodes that may share a value form stars
         // ([`PlaceFns::starred`]) has those pairs compared, as many as the functions, and none
         // skipped, so it is decided there: `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)`, with
-        // `f` fitting `g` and `h` fitting `f`, was refused.
+        // `f` fitting `g` and `h` fitting `f`, was refused. Since
+        // FAIL-types-loose-pairing-non-star, so is a spot whose pairs of nodes that may share a
+        // value are no more than its functions, though they form no stars:
+        // `(f, 1) | (h, 1 | 2) <: (g, 1 | 2) | (f, 1 | 2) | (h, 3)` was refused.
         let mut skipped = Merged::default();
         for (spot, fs) in left.spots(&whole.fns) {
             if let Some(pairs) = starred.get(&spot) {
@@ -8978,8 +8981,12 @@ fn met_at<'a, P: Addressed>(
 }
 
 /// The pairs of functions, one of a node of `left` and one of a node of `right` that may share
-/// a value with it ([`Near`]), each pair once, when those pairs form stars: in each pair, the
-/// function of one side meets no other function of the other side there. None otherwise.
+/// a value with it ([`Near`]), each pair once, when there are no more of them than functions of
+/// the two sides there. None otherwise. Where the pairs form stars (in each pair, the function
+/// of one side meets no other function of the other side there) they are never more; so are
+/// they where, say, each of two functions of one side meets each of two of the other
+/// (FAIL-types-loose-pairing-non-star: before, a spot not starred was paired by
+/// [`Forms::tied`] and refused).
 ///
 /// Why the pairs of nodes that may share a value are enough, at a spot where they are found:
 /// a function `g` of the expected side holds the mark of a function `f` of the side compared
@@ -8991,18 +8998,20 @@ fn met_at<'a, P: Addressed>(
 /// side compared reaches with them. Proof, at every kind of spot (rows and payloads, nested,
 /// shared, `_` on either side, marks a set of every name holds nested): COMPLEXITY.md,
 /// PROOF-star-pairs, direction 2, which rests on the place lemma ([`Forms::comp`]), the depth
-/// of a node ([`Forms::fns`]) and `Near` listing every node not [`apart`]. The early return on
-/// `most` fires only where the edges form no stars (the same section, "The pair count").
-/// Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
-/// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
+/// of a node ([`Forms::fns`]) and `Near` listing every node not [`apart`]; it uses only that
+/// every pair of nodes that may share a value is an edge, not the shape of the edges. The early
+/// return on `most` never fires where the edges form stars (the same section, "The pair
+/// count"). Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
+/// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`,
+/// `functions_at_one_place_whose_tuples_meet_two_each_are_decided`.
 ///
-/// Complexity tradeoff (COMPLEXITY.md F124): the pairs are as many as the functions at the
-/// spot at most, since in each pair one function is in that pair only, so they are counted as
-/// they are found, and more of them than the functions of the two sides proves the stars
-/// absent, with no more read. What is given up: where they do not form stars, as where each of
-/// two functions of one side meets each of two of the other, the spot is paired as before
-/// ([`Forms::tied`], [`Comparing::form_verdict`]). Why: pairing every function that meets
-/// every function of the other side, `(f_i, int)` against `(g_j, int)`, compares `n^2` pairs,
+/// Complexity tradeoff (COMPLEXITY.md F124): the pairs are counted as they are found, and more
+/// of them than the functions of the two sides ends the search with no more read, so a spot
+/// costs O(n) comparisons of functions. What is given up: where the near pairs outnumber the
+/// functions, as where each of three functions of one side meets each of three of the other,
+/// the spot is paired as before ([`Forms::tied`], [`Comparing::form_verdict`]). Why: pairing
+/// every function that meets every function of the other side, `(f_i, int)` against
+/// `(g_j, int)`, compares `n^2` pairs,
 /// and deciding whether each `f_i` fits some `g_j` is a containment join, which takes about
 /// `n^2` unless the Hitting Set conjecture fails (as for [`every_arrow_fits`]). Naive version:
 /// every pair at the spot compared, O(n^2); used: the nodes filed by their keys ([`Near`],
@@ -9015,23 +9024,15 @@ fn star_pairs<P: Placed>(
     let most: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
     let groups = Groups::new(left.iter().map(|(p, _)| *p), right.iter().map(|(p, _)| *p));
     let mut near = Near::new(&groups);
-    // The number of functions of the other side each node's functions meet.
-    let (mut met_l, mut met_r) = (vec![0; left.len()], vec![0; right.len()]);
     let (mut edges, mut pairs) = (Vec::new(), 0);
     for (l, (_, fs)) in left.iter().enumerate() {
         for r in near.of(l) {
-            let gs = right[r].1;
-            pairs += fs.len() * gs.len();
+            pairs += fs.len() * right[r].1.len();
             if pairs > most {
                 return None;
             }
-            met_l[l] += gs.len();
-            met_r[r] += fs.len();
             edges.push((l, r));
         }
-    }
-    if (edges.iter()).any(|&(l, r)| met_l[l] != 1 && met_r[r] != 1) {
-        return None;
     }
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -9047,14 +9048,16 @@ fn star_pairs<P: Placed>(
     Some(out)
 }
 
-/// The pairs of functions to compare at each spot whose nodes form stars ([`PlaceFns::starred`]).
+/// The pairs of functions to compare at each spot whose pairs of nodes that may share a value
+/// are no more than its functions ([`PlaceFns::starred`]).
 type Starred = HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>>;
 
 impl PlaceFns {
     /// For each spot where the side compared, `self`, and `whole`, the type compared with,
     /// both have two or more functions, the pairs [`star_pairs`] finds between the nodes of
     /// `self` there and those of `near`, `whole` or the part of it [`Comparing::near_form`]
-    /// reads, where they form stars. Such a spot is decided by comparing those pairs; at the
+    /// reads, where they are no more than the functions there (as where they form stars).
+    /// Such a spot is decided by comparing those pairs; at the
     /// others with two or more functions a side, [`Forms::tied`] and the skipping of
     /// [`Comparing::form_verdict`] apply.
     fn starred(&self, near: &PlaceFns, whole: &PlaceFns) -> Starred {
@@ -9549,7 +9552,8 @@ impl Forms {
     ///
     /// Since FAIL-types-loose-pairing-decided, a spot whose pairs of nodes that may share a
     /// value form stars ([`PlaceFns::starred`], `starred`) is not tied: those pairs are
-    /// compared, as many as the functions.
+    /// compared, as many as the functions. Since FAIL-types-loose-pairing-non-star, neither
+    /// is a spot where those pairs are no more than the functions, stars or not.
     fn tied(&self, left: &PlaceFns, right: &PlaceFns, starred: &Starred) -> Option<Spot> {
         // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
@@ -9577,11 +9581,14 @@ impl Forms {
     /// Complexity tradeoff (COMPLEXITY.md F124): one kernel comparison of the two forms, in the
     /// size of the two sides, and no function compared. What is given up: where those forms
     /// give true, the comparison is still refused, though one pairing may make it true, as
-    /// `(f, 1) | (h, 1 | 2) <: (g, 1 | 2) | (k, 1 | 2)` with `f` fitting `g` and `h` fitting
-    /// `k`; deciding it compares each function at the spot with each of the other side's
-    /// there, O(n^2) for `n` shapes a side. (`(f, 1) | (h, 2) <: (g, 1) | (k, 2)`, whose tuples
-    /// meet one by one, is not of the class since FAIL-types-loose-pairing-decided: its pairs
-    /// form stars, [`PlaceFns::starred`].) Naive version: those pairs compared,
+    /// `(f, int) | (h, int) | (e, int) <: (g, int) | (k, int) | (m, int)` with `f` fitting
+    /// `g`, `h` fitting `k` and `e` fitting `m`; deciding it compares each function at the
+    /// spot with each of the other side's there, O(n^2) for `n` shapes a side.
+    /// (`(f, 1) | (h, 2) <: (g, 1) | (k, 2)`, whose tuples meet one by one, is not of the
+    /// class since FAIL-types-loose-pairing-decided: its pairs form stars; nor, since
+    /// FAIL-types-loose-pairing-non-star, is `(f, 1) | (h, 1 | 2) <: (g, 1 | 2) | (k, 1 | 2)`,
+    /// whose 4 pairs are no more than its 4 functions, [`PlaceFns::starred`].) Naive version:
+    /// those pairs compared,
     /// O(n^2) comparisons of functions; used: one comparison of forms, O(size).
     fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
         if other.dynamic || !other.vars.is_empty() {

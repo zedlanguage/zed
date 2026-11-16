@@ -854,13 +854,14 @@ fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() 
             false,
         ),
         // Each of `(f, 1)` and `(h, 1 | 2)` meets both `(g, 1 | 2)` and `(f, 1 | 2)`, so the
-        // pairs do not form stars: `h` fits `f`, so true, but it is refused, the equal
-        // functions skipped as before.
+        // pairs do not form stars, but they are 4, no more than the 5 functions: they are
+        // compared, and `f` fits `g` and `h` fits `f`, so true (FAIL-types-loose-pairing-non-star;
+        // it was refused).
         (
             format!("({f}, 1) | ({h}, 1 | 2)"),
             format!("({g}, 1 | 2) | ({f}, 1 | 2) | ({h}, 3)"),
-            false,
             true,
+            false,
         ),
         // Every function equal to one at its place is matched by equality: true.
         (
@@ -2001,4 +2002,24 @@ fn a_function_in_a_result_holds_the_variable_at_the_binding_of_the_parameters() 
             true,
         ),
     ]);
+}
+
+/// Each tuple of the side compared meets two tuples expected, so the pairs of nodes that may
+/// share a value at the function's place form no stars; they are 4, no more than the 5
+/// functions there, so each pair is compared and the comparison decided
+/// (FAIL-types-loose-pairing-non-star; both were refused). With `h` = `int -> 1`, `(f, 1)` is
+/// in `(g, 1 | 2)` (`f` fits `g`) and `(h, 1 | 2)` in `(f, 1 | 2)` (`h` fits `f`): true. With
+/// `h` = `(int | String) -> int`, as the row was first written, `h` fits neither `f` nor `g`,
+/// since a domain is exact and `int | String` is not within `int` (DESIGN.md
+/// sec:type_language, FAIL-types-fn-param-exact-domain): a definite no.
+#[test]
+fn functions_at_one_place_whose_tuples_meet_two_each_are_decided() {
+    use zedc::check::read::parse_type;
+    let (f, g) = ("(int -> int)", "(int -> int | #a)");
+    for (h, holds) in [("(int -> 1)", true), ("((int | String) -> int)", false)] {
+        let a = parse_type(&format!("({f}, 1) | ({h}, 1 | 2)")).unwrap();
+        let b = parse_type(&format!("({g}, 1 | 2) | ({f}, 1 | 2) | ({h}, 3)")).unwrap();
+        assert_eq!(a.subtype(&b), holds, "h = {h}");
+        assert_eq!(a.refused(&b), "", "h = {h}");
+    }
 }
