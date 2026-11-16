@@ -1821,6 +1821,17 @@ struct Ck<'t, 'a> {
     /// by its span, `None` where its fold fails ([`Ck::int_exponent_at`]): read off the text
     /// alone, so it is kept across trials.
     int_exponents: HashMap<Span, Option<Value>>,
+    /// The span of the operand before the `.` of each member call `x.f(…)`, and before the
+    /// `><` of each fold `x >< f`, by the call's span: read off the text alone, so kept across
+    /// trials. A repair names the operand by its code from it ([`Ck::fold_subject`]; plan row
+    /// MSG-example-repairs).
+    receivers: HashMap<Span, Span>,
+    /// For the first parameter of each lambda given to `map`, `where`, `flatMap` or `group`
+    /// that stays generic ([`Ck::entry_param`]), by the parameter's span: the word, the span
+    /// of the receiver, and the receiver's type, whose entries the word gives the lambda. A note on the
+    /// parameter says what it is given, not `_`, the type of every value (A92; plan row
+    /// MSG-generic-operand-wording).
+    entry_params: HashMap<Span, (&'static str, Span, Ty)>,
     /// What the text gives at `rat` of each operation at `rat`, or in a class of literals, whose
     /// operands are literals and such operations, by its span ([`Ck::rat_folded`]): its value,
     /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
@@ -2135,6 +2146,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_refused: Vec::new(),
             lit_fits: HashMap::new(),
             int_exponents: HashMap::new(),
+            receivers: HashMap::new(),
+            entry_params: HashMap::new(),
             rat_folds: HashMap::new(),
             top_parts: Vec::new(),
             tail_reach: None,
@@ -2914,11 +2927,38 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Some(t) if ty == "int" => t.clone(),
                         _ => ty,
                     };
+                    // A lambda's parameter generic in what `map` and its kin give it is not
+                    // `_`, the type of every value (A92): it is named by what it is given
+                    // (plan row MSG-generic-operand-wording).
+                    // The parameter may hold loose atoms beside the variable, as where an
+                    // `else` reads it; they pass by the word as by any call (rule 6 of
+                    // sec:type_resolution), so the variable alone is tested.
+                    let given = match (ty.as_str(), kept) {
+                        ("_", Some(t)) if self.settled(t).without_loose().as_var().is_some() => {
+                            (self.entry_params.get(&self.t.res.binders[*id].span)).cloned()
+                        }
+                        _ => None,
+                    };
+                    let given = given.and_then(|(word, of, x)| {
+                        let entries = self.noted_entries(&x)?;
+                        let t = self.near(at, |ck| ck.show(&entries));
+                        let of = match self.operand_text(Some(of)) {
+                            Some(c) => format!("`{c}`"),
+                            None => format!("the family before `.{word}`"),
+                        };
+                        (t != "_").then(|| {
+                            format!(
+                                "`{name}` has a generic type here, and `{word}` gives it each \
+                                 entry of {of}, whose type is {t}"
+                            )
+                        })
+                    });
                     next.push(note(
                         span,
-                        match self.defined_open(*id) {
-                            false => format!("`{name}` is {ty} here"),
-                            true => format!(
+                        match (self.defined_open(*id), given) {
+                            (false, Some(text)) => text,
+                            (false, None) => format!("`{name}` is {ty} here"),
+                            (true, _) => format!(
                                 "`{name}` is read here; it is defined as an operation on \
                                  literals alone, so it takes the carrier of what it meets"
                             ),

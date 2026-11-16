@@ -462,7 +462,7 @@ fn a_misused_scan_or_chunk_by_is_rejected_in_plain_words() {
             // left fold `.reduce` is offered, which gives one value.
             (
                 "[1, 2].scan((a, b) -> a)",
-                "repair: scan by an operator section, `max` or `min` that combines two entries as the function does, as `xs.scan((+))`",
+                "repair: scan by an operator section, `max` or `min` that combines two entries as the function does, as `[1, 2].scan((+))`",
             ),
             (
                 "[1, 2].scan(1)",
@@ -670,6 +670,123 @@ fn a_string_word_on_a_generic_operand_names_the_operand() {
     );
 }
 
+/// A parameter of a lambda given to `map` on a receiver of known type is generic while the
+/// lambda's body is checked; the note on it says so and names what it ranges over, the entries
+/// of the receiver as the program wrote it, never `_`, which in Zed is the type of every value
+/// (author A92; plan row MSG-generic-operand-wording).
+#[test]
+fn a_generic_operand_is_not_shown_as_every_value() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat(l.split(\",\")));\n}\n";
+    let out = run("fp_ops/strings_generic_note", src, "", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
+    let want = "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, \
+                whose type is String";
+    assert!(out.stderr.contains(want), "{}", out.stderr);
+    // An `else` that reads the result lets loose atoms pass beside the variable, which also
+    // printed as `_`; the note is the same (zed/corpus/09-canonical-equal.zed has this form).
+    let src =
+        "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\" | \")[0] else \"\");\n}\n";
+    let out = run("fp_ops/strings_generic_note_else", src, "", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
+    assert!(out.stderr.contains(want), "{}", out.stderr);
+}
+
+/// A built-in word on a parameter whose type is not written is not compiled yet; the message
+/// names the operand by its code and calls its type generic, as the string words do, not a
+/// type parameter, which the program does not write (plan row MSG-generic-operand-wording).
+#[test]
+fn a_word_on_an_untyped_parameter_names_the_parameter() {
+    let src = "f(positional xs) = concat(xs);\nmain(m: MainArgs) {\n  m.stdout <- f([\"a\"]);\n}\n";
+    let out = run("fp_ops/generic_levels", src, "", &[]);
+    let want = "`concat` on `xs`, whose type is generic here, is part of";
+    assert!(
+        out.status != 0 && out.stderr.contains(want) && !out.stderr.contains("type parameter"),
+        "status {}\n{}",
+        out.status,
+        out.stderr
+    );
+}
+
+/// Each repair and headline of a misused fold, level word, string word or `++` writes the
+/// operands as the program wrote them where they are on one line, not invented names such as
+/// `xs` (plan row MSG-example-repairs).
+#[test]
+fn repairs_write_the_operands_as_the_program_wrote_them() {
+    saying(
+        "operand_repairs",
+        &[
+            ("[1, 2].sum(1)", "repair: write `[1, 2].sum`"),
+            ("[1, 2].map()", "as `[1, 2].map(f)`"),
+            ("[1, 2].map()", "repair: write `[1, 2].map(x -> …)`"),
+            (
+                "[1, 2].where(x -> x > 1, 2)",
+                "repair: write `[1, 2].where(x -> …)`",
+            ),
+            (
+                "[1, 2].foldl(0)",
+                "repair: write `[1, 2].foldl(init, (a, x) -> a + x)`",
+            ),
+            (
+                "[1, 2].foldr(0)",
+                "repair: write `[1, 2].foldr((x, a) -> x + a, init)`",
+            ),
+            (
+                "[1, 2].flatMap()",
+                "repair: write `[1, 2].flatMap(x -> [x, x + 1])`",
+            ),
+            ("[1, 2].group()", "repair: write `[1, 2].group(x -> …)`"),
+            ("[1, 2].count(1)", "repair: write `[1, 2].count`"),
+            ("[1, 2].first(1)", "repair: write `[1, 2].first`"),
+            ("[1, 2].reduce()", "repair: write `[1, 2].reduce((+))`"),
+            ("[1, 2].scan()", "repair: write `[1, 2].scan((+))`"),
+            (
+                "[1, 2].chunkBy()",
+                "repair: write `[1, 2].chunkBy(x -> x.id)`",
+            ),
+            ("[1, 2].any()", "repair: write `[1, 2].any(x -> x > 0)`"),
+            ("[1, 2].zip()", "repair: write `[1, 2].zip(ys)`"),
+            // A receiver that is not a name or a display is put in parentheses.
+            (
+                "([1] ++ [2]).count(1)",
+                "repair: write `([1] ++ [2]).count`",
+            ),
+            ("[1, 2].scan(1)", "as `[1, 2].scan((+))`"),
+            (
+                "[1, 2] >< ((a, b) -> a)",
+                "repair: fold left to right, which owes no law, as `[1, 2].foldl(init, (a, b) -> a)`",
+            ),
+            (
+                "[1, 2].reduce((-))",
+                "repair: fold left to right, as `[1, 2].foldl(init, (a, x) -> a - x)`",
+            ),
+            (
+                "[1, 2].reduce((-))",
+                "repair: fold right to left, as `[1, 2].foldr((x, a) -> x - a, init)`",
+            ),
+            (
+                "[1, 2] >< (-)",
+                "repair: fold left to right, as `[1, 2].foldl(init, (a, x) -> a - x)`",
+            ),
+            ("concat([[1], [2]])", "as `[[1], [2]] >< (++)`"),
+            (
+                "concat([\"a\"], sep: 1)",
+                "as `concat([\"a\"], sep: \", \")`",
+            ),
+            ("[\"a\"].concat(sep: 1)", "as `[\"a\"].concat(sep: \", \")`"),
+            ("\"a\".split(1)", "as `\"a\".split(\",\")`"),
+            ("split(\"a\", 1)", "as `split(\"a\", \",\")`"),
+            ("split([1, 2], \";\")", "as `split(\"a,b\", \";\")`"),
+            // A written separator that is empty is not copied: the repair would be rejected.
+            ("split(1, \"\")", "as `split(\"a,b\", \",\")`"),
+            ("(1).split(\"\")", "as `\"a,b\".split(\",\")`"),
+            ("1 ++ [2]", "as `[1] ++ [2]`"),
+            ("[2] ++ 1", "as `[2] ++ [1]`"),
+        ],
+    );
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {
@@ -690,7 +807,7 @@ fn a_misused_fold_or_end_is_rejected_in_plain_words() {
             ),
             (
                 "[1, 2].reduce((a, b) -> a)",
-                "repair: fold left to right, which owes no law, as `xs.foldl(init, (a, x) -> f(a, x))`",
+                "repair: fold left to right, which owes no law, as `[1, 2].foldl(init, (a, b) -> a)`",
             ),
             (
                 "[1, 2].reduce(1)",

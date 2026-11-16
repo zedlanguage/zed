@@ -134,21 +134,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `map`; any other value is rejected with `example`, the word on a family, as the repair.
     /// A class never reaches here: walk.rs's `Ck::level_word` takes the variables of `x` out
     /// first, each as a need ([`NeedKind::Level`]) or as the type it is resolved to; the
-    /// `Piece::Var` arm stays for a caller that did not. `None` after an error.
+    /// `Piece::Var` arm stays for a caller that did not, as `concat(xs)` in a function whose
+    /// parameter `xs` has no written type, and names the operand at `operand` by its code where
+    /// it is on one line. `None` after an error.
     pub(super) fn levels_of(
         &mut self,
         x: &Ty,
         word: &str,
         example: &str,
         span: Span,
+        operand: Option<Span>,
     ) -> Option<Vec<Arc<Sig>>> {
         let mut sigs = Vec::new();
         for p in x.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => sigs.push(sig),
                 Piece::Dyn => self.any(word, span),
+                // The program may write no type parameter, so the operand's type is called
+                // generic, as at `string_operand` (plan row MSG-generic-operand-wording).
                 Piece::Var(_) => {
-                    let what = format!("{word} on a value whose type is a type parameter");
+                    let what = match self.operand_text(operand) {
+                        Some(c) => format!("{word} on `{c}`, whose type is generic here,"),
+                        None => format!("{word} on a value whose type is generic here"),
+                    };
                     self.error(span, zedc_base::rejection::not_yet(&what));
                     return None;
                 }
@@ -189,7 +197,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `x.count`: the number of top-level entries, an `int`; a loose atom `x` passes through.
     pub(super) fn count_end(&mut self, x: &Ty, span: Span) -> Ty {
         let out = self.passing(x, "`count`", span, None);
-        match self.levels_of(x, "`count`", "[1, 2].count", span) {
+        match self.levels_of(x, "`count`", "[1, 2].count", span, None) {
             Some(_) => out.union(&Ty::carrier(Carrier::Int)),
             None => Ty::empty(),
         }
@@ -212,7 +220,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             "[3, 1, 4].first"
         };
         let out = self.passing(x, word, span, None);
-        let Some(top) = self.levels_of(x, word, example, span) else {
+        let Some(top) = self.levels_of(x, word, example, span, None) else {
             return Ty::empty();
         };
         let mut leaves = Ty::empty();
@@ -267,7 +275,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let example = format!("[1, 2].{name}({shape})");
-        let Some(sigs) = self.levels_of(x, word, &example, span) else {
+        let Some(sigs) = self.levels_of(x, word, &example, span, None) else {
             return Ty::empty();
         };
         let all = Self::entries_of(&sigs);
@@ -343,7 +351,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let form: FoldForm = FoldForm::Scan;
         let out = self.passing(x, form.word(), span, None);
         let example = format!("[1, 2, 3].scan({})", op.written());
-        let Some(sigs) = self.levels_of(x, form.word(), &example, span) else {
+        let Some(sigs) = self.levels_of(x, form.word(), &example, span, None) else {
             return Ty::empty();
         };
         let folded = fold(self, op, &x.without_loose(), span, site, form);
@@ -407,7 +415,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !self.takes_args(word, &fsig, 1, shape, at) {
             return None;
         }
-        let sigs = self.levels_of(x, word, "[1, 1, 2].chunkBy(x -> x)", span)?;
+        let sigs = self.levels_of(x, word, "[1, 1, 2].chunkBy(x -> x)", span, None)?;
         let entries = Self::entries_of(&sigs);
         let gives = match entries.lists_nothing() {
             true => Ty::empty(),
@@ -461,9 +469,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             "concat" => (args.first(), &args[1..]),
             _ => (None, &args[..]),
         };
-        for a in strings {
+        for (i, a) in strings.iter().enumerate() {
             out = out.union(&self.passing(&a.ty, &quoted, span, a.at));
-            if !self.string_operand(word, a, span) {
+            let i = i + usize::from(pieces.is_some());
+            if !self.string_operand(word, &args, i, span) {
                 return Ty::empty();
             }
         }
@@ -487,11 +496,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         out = out.union(&self.passing(&p.ty, &quoted, span, p.at));
         let example = "concat([\"a\", \"b\"], sep: \", \")";
-        let Some(sigs) = self.levels_of(&p.ty, &quoted, example, span) else {
+        let Some(sigs) = self.levels_of(&p.ty, &quoted, example, span, p.at) else {
             return Ty::empty();
         };
         let at = p.at.unwrap_or(span);
-        let code = self.code(p.at).map(str::trim).unwrap_or("xs");
+        // The pieces as the program wrote them, where on one line, else by the parameter's
+        // name in DESIGN step L3.2, `concat(pieces, sep: s)`, as at `strings_call`.
+        let code = match self.operand_text(p.at) {
+            Some(c) => postfix_subject(p.expr, &c),
+            None => "pieces".to_string(),
+        };
         let entries = Self::entries_of(&sigs);
         if !entries.loose_ty().lists_nothing() {
             let what = "`concat` of a family whose entries may be failure atoms";
@@ -543,9 +557,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         out.union(&Ty::carrier(Carrier::Str))
     }
 
-    /// Whether `a`, a string operand of the built-in `word` (`split`, `lines`, or the `sep`
-    /// of `concat`), may be only strings or loose atoms; any other value is rejected.
-    fn string_operand(&mut self, word: &str, a: &Arg<'a>, span: Span) -> bool {
+    /// Whether `args[i]`, a string operand of the built-in `word` (`split`, `lines`, or the
+    /// `sep` of `concat`) called at `span` with the operands `args`, may be only strings or
+    /// loose atoms; any other value is rejected.
+    fn string_operand(&mut self, word: &str, args: &[Arg<'a>], i: usize, span: Span) -> bool {
+        let a = &args[i];
         let at = a.at.unwrap_or(span);
         for p in a.ty.without_loose().pieces() {
             match p {
@@ -565,11 +581,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if self.subtype(&p.ty(), &Ty::carrier(Carrier::Str)) => {}
                 p => {
                     let t = self.text(&p.ty());
-                    let example = match word {
-                        "split" => "`\"a,b\".split(\",\")`",
-                        "lines" => "`\"a\\nb\".lines`",
-                        _ => "`concat(xs, sep: \", \")`",
-                    };
+                    let example = self.string_example(word, args, i, span);
                     self.error_offering(
                         at,
                         format!("`{word}` reads strings, and this value is {t}"),
@@ -580,6 +592,37 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         true
+    }
+
+    /// The call of `word` at `span` with `args[i]` replaced by an example string, for the
+    /// repair of an operand that is not one: the other operands as the program wrote them,
+    /// where on one line, else by their parameters' names in DESIGN step L3.2 (`s`, `pieces`),
+    /// and the call in the program's style, `w(…)` or `x.w(…)`, as at `strings_call` (plan row
+    /// MSG-example-repairs). `lines` has no other operand.
+    fn string_example(&self, word: &str, args: &[Arg<'a>], i: usize, span: Span) -> String {
+        let method =
+            !(self.operand_text(Some(span))).is_some_and(|c| c.starts_with(&format!("{word}(")));
+        let written = |j: usize, or: &str| match args.get(j).and_then(|a| self.operand_text(a.at)) {
+            Some(c) if j == 0 && method => postfix_subject(args[j].expr, &c),
+            Some(c) => c,
+            None => or.to_string(),
+        };
+        let (first, rest) = match (word, i) {
+            // An empty separator as written is not copied, since the repair would be rejected.
+            ("split", 0) => match written(1, "\",\"") {
+                sep if sep == "\"\"" => ("\"a,b\"".to_string(), "\",\"".to_string()),
+                sep => ("\"a,b\"".to_string(), sep),
+            },
+            ("split", _) => (written(0, "s"), "\",\"".to_string()),
+            ("lines", _) => ("\"a\\nb\"".to_string(), String::new()),
+            _ => (written(0, "pieces"), "sep: \", \"".to_string()),
+        };
+        match (method, rest.is_empty()) {
+            (true, true) => format!("`{first}.{word}`"),
+            (true, false) => format!("`{first}.{word}({rest})`"),
+            (false, true) => format!("`{word}({first})`"),
+            (false, false) => format!("`{word}({first}, {rest})`"),
+        }
     }
 
     /// Rejects the `split` at `span` of the string `s` by `sep`, a separator that is always the
@@ -635,9 +678,28 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The text of the operand at `at`, where it is on one line, for a message.
-    fn operand_text(&self, at: Option<Span>) -> Option<String> {
+    pub(in crate::check) fn operand_text(&self, at: Option<Span>) -> Option<String> {
         let c = self.code(at)?.trim();
         (!c.is_empty() && !c.contains('\n')).then(|| c.to_string())
+    }
+
+    /// The family at `at` as a repair writes it before `.` or `><`: the program's code, in
+    /// parentheses where it needs them ([`postfix_operand`]), where it is on one line; else
+    /// `xs`, the name DESIGN's method register gives a family (plan row MSG-example-repairs).
+    pub(in crate::check) fn subject_text(&self, at: Option<Span>) -> String {
+        (self.operand_text(at)).map_or_else(|| "xs".to_string(), |c| postfix_operand(&c))
+    }
+
+    /// [`Ck::subject_text`] of the family folded by the fold at `site` (`x.reduce(f)`,
+    /// `x.scan(f)`, `x.sum` or `x >< f`); `xs` for a call `sum(x)`, as its receiver is not
+    /// recorded.
+    pub(in crate::check) fn fold_subject(&self, site: Span) -> String {
+        self.subject_text(self.receivers.get(&site).copied())
+    }
+
+    /// The function at `at` as a repair writes it, where it is on one line; else `or`.
+    pub(in crate::check) fn function_text(&self, at: Option<Span>, or: &str) -> String {
+        self.operand_text(at).unwrap_or_else(|| or.to_string())
     }
 
     /// The bounds of the keys of the families `sigs` (DESIGN.md sec:type_language, the bound
@@ -768,7 +830,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let out =
             (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
         let mut sides: Vec<Vec<Arc<Sig>>> = Vec::new();
-        for a in [x, y] {
+        for (side, a) in [x, y].into_iter().enumerate() {
             let at = a.at.unwrap_or(span);
             let mut sigs = Vec::new();
             for p in a.ty.pieces() {
@@ -797,21 +859,37 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return Ty::empty();
                     }
                     Piece::Dyn => self.any(word, span),
+                    // As at `levels_of`: the program may write no type parameter.
                     Piece::Var(_) => {
-                        let what = "`++` on a value whose type is a type parameter";
-                        self.error(span, zedc_base::rejection::not_yet(what));
+                        let what = match self.operand_text(a.at) {
+                            Some(c) => format!("`++` on `{c}`, whose type is generic here,"),
+                            None => "`++` on a value whose type is generic here".to_string(),
+                        };
+                        self.error(span, zedc_base::rejection::not_yet(&what));
                         return Ty::empty();
                     }
                     p if p.is_atoms() => {}
                     p => {
                         let t = self.text(&p.ty());
+                        // The repair with both operands as the program wrote them, where on
+                        // one line, this one in a list (plan row MSG-example-repairs).
+                        let other = [x, y][1 - side];
+                        let this = self.operand_text(a.at).unwrap_or_else(|| "x".to_string());
+                        let other = match self.operand_text(other.at) {
+                            Some(c) => postfix_subject(other.expr, &c),
+                            None => "xs".to_string(),
+                        };
+                        let form = match side {
+                            0 => format!("[{this}] ++ {other}"),
+                            _ => format!("{other} ++ [{this}]"),
+                        };
                         self.error_offering(
                             at,
                             format!(
                                 "`++` joins two lists or two strings, and this value is {t}, \
                                  beside a list"
                             ),
-                            ["repair: put the value in a list, as `[x] ++ xs`".to_string()],
+                            [format!("repair: put the value in a list, as `{form}`")],
                         );
                         return Ty::empty();
                     }
@@ -883,10 +961,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let example = "[1, 2].zip([3, 4])";
         let out =
             (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
-        let Some(a) = self.levels_of(&x.ty, word, example, x.at.unwrap_or(span)) else {
+        let Some(a) = self.levels_of(&x.ty, word, example, x.at.unwrap_or(span), x.at) else {
             return Ty::empty();
         };
-        let Some(b) = self.levels_of(&y.ty, word, example, y.at.unwrap_or(span)) else {
+        let Some(b) = self.levels_of(&y.ty, word, example, y.at.unwrap_or(span), y.at) else {
             return Ty::empty();
         };
         if a.is_empty() || b.is_empty() {

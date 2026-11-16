@@ -3310,16 +3310,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let es = entries.iter().flat_map(|(k, v)| [k, v]).collect();
                 self.display_step(m, Box::new(DisplayF::new(Display::Map, es)));
             }
-            ExprKind::Reduce { of, op: f } => match f.kind {
-                ExprKind::Section(op, _) => {
-                    m.k(Frame::Reduce(Reducer::Op(op), e.span));
-                    m.job(Job::Expr(of));
+            ExprKind::Reduce { of, op: f } => {
+                self.receivers.insert(e.span, of.span);
+                match f.kind {
+                    ExprKind::Section(op, _) => {
+                        m.k(Frame::Reduce(Reducer::Op(op), e.span));
+                        m.job(Job::Expr(of));
+                    }
+                    _ => {
+                        m.k(Frame::ReduceBy(of, e.span, f.span));
+                        m.job(Job::Expr(f));
+                    }
                 }
-                _ => {
-                    m.k(Frame::ReduceBy(of, e.span, f.span));
-                    m.job(Job::Expr(f));
-                }
-            },
+            }
             ExprKind::In { of, set, .. } => {
                 m.k(Frame::InKey(set, e.span, of.span));
                 m.job(Job::Expr(of));
@@ -3756,13 +3759,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // holds no class that resolves back to it (it is built before the class is resolved), so
     // the recursion ends, as at `map_end`.
     fn word_entries(&mut self, x: &Ty, span: Span) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut out = Ty::empty();
         for p in x.pieces() {
             let t = match p {
-                Piece::Fn(sig) if sig.data => Ty::union_all(sig.arrows.iter().map(|a| &a.result))
-                    .without(&misses)
-                    .without_loose(),
+                Piece::Fn(sig) if sig.data => Self::family_entries(&sig),
                 Piece::Dyn => Ty::dynamic(),
                 Piece::Var(v) => {
                     let r = self.class_root(&v);
@@ -3777,6 +3777,36 @@ impl<'t, 'a> Ck<'t, 'a> {
             out = out.union(&t);
         }
         out
+    }
+
+    /// The entries of the family `sig` as [`Self::word_entries`] gives them: without the
+    /// misses `#notFound` and `#outOfBounds` and without the loose atoms.
+    fn family_entries(sig: &Sig) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        (Ty::union_all(sig.arrows.iter().map(|a| &a.result)))
+            .without(&misses)
+            .without_loose()
+    }
+
+    /// [`Self::word_entries`] for a message: no need is made, and a class not yet resolved
+    /// gives `None`, so checking goes as if the message were not written.
+    // Complexity tradeoff: as `word_entries`, O(arrows of `x`) and one recursion per resolved
+    // class, paid per note written, not per call site.
+    pub(in crate::check) fn noted_entries(&self, x: &Ty) -> Option<Ty> {
+        let mut out = Ty::empty();
+        for p in x.pieces() {
+            let t = match p {
+                Piece::Fn(sig) if sig.data => Self::family_entries(&sig),
+                Piece::Dyn => Ty::dynamic(),
+                Piece::Var(v) => match self.class_root(&v) {
+                    Some(r) => self.noted_entries(self.classes[r].resolved.as_ref()?)?,
+                    None => Ty::dynamic(),
+                },
+                _ => Ty::empty(),
+            };
+            out = out.union(&t);
+        }
+        Some(out)
     }
 
     /// The type the first parameter of `f`, the function given to `map`, `where`, `flatMap` or
@@ -3801,6 +3831,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => false,
         });
         (open && params.first().is_some_and(|p| p.ty.is_none())).then(|| self.word_entries(x, span))
+    }
+
+    /// Records, for a note on it, that `word` on the receiver `of` of type `x` gives the first
+    /// parameter of `f` the entries of `x`, where `f` is a lambda generic in it
+    /// ([`Self::lambda_entries`] gave `None` and the parameter has no written type). The
+    /// entries are found only when the note is written ([`Self::noted_entries`], no need).
+    // Complexity tradeoff: finding the entries here, as `lambda_entries` does where it
+    // applies, would cost O(arrows of `x`) at every such call site, though only a site in an
+    // error's derivation reads them; recording `x` costs O(1) (its members are shared), and
+    // the O(arrows) is paid per note written.
+    fn entry_param(&mut self, word: &'static str, x: &Ty, of: &Expr, f: &Expr) {
+        let ExprKind::Lambda { params, .. } = &f.kind else {
+            return;
+        };
+        if let Some(p) = params
+            .first()
+            .filter(|p| p.ty.is_none() && p.tuple.is_none())
+        {
+            self.entry_params.insert(p.span, (word, of.span, x.clone()));
+        }
     }
 
     /// The function `f` given to `map`, `where`, `flatMap` or `group`, as an argument: a lambda
@@ -4225,8 +4275,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     values = values.union(&all.without(&misses));
                 }
                 Piece::Dyn => self.any(word, span),
+                // As at `levels_of`: the program may write no type parameter. Not reached by a
+                // test: a variable's level returns above.
                 Piece::Var(_) => {
-                    let what = format!("{word} on a value whose type is a type parameter");
+                    let what = format!("{word} on a value whose type is generic here");
                     self.error(span, zedc_base::rejection::not_yet(&what));
                     return Ty::empty();
                 }
@@ -4320,11 +4372,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// all, as `1` in `p.scan(1)`, is told so, as `map` tells it: no zedc compiles that fold.
     /// `at` is `f`'s span; errors about the fold itself are placed at `span`, the call's.
     fn reduce_by(&mut self, f: &Ty, span: Span, at: Span, form: FoldForm) -> Option<Reducer> {
+        let s = self.fold_subject(span);
         let (word, shape) = match form {
-            FoldForm::Infix => ("`><`", "`xs >< (+)`"),
-            FoldForm::Reduce => ("`reduce`", "`xs.reduce((+))`"),
-            FoldForm::Sum => ("`sum`", "`xs.sum`"),
-            FoldForm::Scan => ("`scan`", "`xs.scan((+))`"),
+            FoldForm::Infix => ("`><`", format!("`{s} >< (+)`")),
+            FoldForm::Reduce => ("`reduce`", format!("`{s}.reduce((+))`")),
+            FoldForm::Sum => ("`sum`", format!("`{s}.sum`")),
+            FoldForm::Scan => ("`scan`", format!("`{s}.scan((+))`")),
         };
         // The test `map_end` makes: neither one function nor a class a function may still
         // flow into (a parameter `f` of `h(f, m) = m.reduce(f)` whose type is not written,
@@ -4353,11 +4406,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         "repair: scan by an operator section, `max` or `min` that combines \
                          two entries as the function does, as {shape}"
                     ),
-                    FoldForm::Infix | FoldForm::Reduce | FoldForm::Sum => {
+                    // The function as the program wrote it, where on one line, without the
+                    // parentheses `x >< ((a, b) -> a)` needs.
+                    FoldForm::Infix | FoldForm::Reduce | FoldForm::Sum => format!(
                         "repair: fold left to right, which owes no law, as \
-                         `xs.foldl(init, (a, x) -> f(a, x))`"
-                            .to_string()
-                    }
+                         `{s}.foldl(init, {})`",
+                        unparen(&self.function_text(Some(at), "(a, x) -> f(a, x)"))
+                    ),
                 };
                 self.error_offering(
                     span,
@@ -4820,6 +4875,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         ) = op
         {
             let o = b.as_str();
+            let s = self.fold_subject(site);
             self.error_offering(
                 span,
                 format!(
@@ -4828,8 +4884,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     form.word()
                 ),
                 [
-                    format!("repair: fold left to right, as `xs.foldl(init, (a, x) -> a {o} x)`"),
-                    format!("repair: fold right to left, as `xs.foldr((x, a) -> x {o} a, init)`"),
+                    format!("repair: fold left to right, as `{s}.foldl(init, (a, x) -> a {o} x)`"),
+                    format!("repair: fold right to left, as `{s}.foldr((x, a) -> x {o} a, init)`"),
                 ],
             );
             return Ty::empty();
@@ -7391,6 +7447,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             curry,
             span,
         } = s;
+        self.receivers.insert(span, of.span);
         if safe {
             let atoms = x.ty.loose_ty();
             x = Arg::of(x.ty.without_loose());
@@ -7445,10 +7502,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(t);
                         }
                         _ => {
+                            let s = self.subject_text(Some(of.span));
                             self.error_offering(
                                 span,
                                 "`.sum` of a family takes no arguments".to_string(),
-                                ["repair: write `xs.sum`".to_string()],
+                                [format!("repair: write `{s}.sum`")],
                             );
                             m.ty(Ty::empty());
                         }
@@ -7474,17 +7532,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
+                        if first.is_none() {
+                            let word = if name == "map" { "map" } else { "where" };
+                            self.entry_param(word, &x.ty, of, f);
+                        }
                         m.k(Frame::MapFn(x.ty, span, name == "where"));
                         self.word_fn(m, f, first);
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             format!(
                                 "`{name}` takes one function, passed by position, as \
-                                 `xs.{name}(f)`"
+                                 `{s}.{name}(f)`"
                             ),
-                            [format!("repair: write `xs.{name}(x -> …)`")],
+                            [format!("repair: write `{s}.{name}(x -> …)`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7500,9 +7563,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.job(Job::Arg(init, Want::default()));
                         }
                         _ => {
+                            let s = self.subject_text(Some(of.span));
                             let shape = match name {
-                                "foldl" => "`xs.foldl(init, (a, x) -> a + x)`",
-                                _ => "`xs.foldr((x, a) -> x + a, init)`",
+                                "foldl" => format!("`{s}.foldl(init, (a, x) -> a + x)`"),
+                                _ => format!("`{s}.foldr((x, a) -> x + a, init)`"),
                             };
                             self.error_offering(
                             span,
@@ -7518,15 +7582,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
+                        if first.is_none() {
+                            self.entry_param("flatMap", &x.ty, of, f);
+                        }
                         m.k(Frame::FlatMap(x.ty, span));
                         self.word_fn(m, f, first);
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
-                            "`flatMap` takes one function, passed by position, as `xs.flatMap(f)`"
-                                .to_string(),
-                            ["repair: write `xs.flatMap(x -> [x, x + 1])`".to_string()],
+                            format!(
+                                "`flatMap` takes one function, passed by position, as \
+                                 `{s}.flatMap(f)`"
+                            ),
+                            [format!("repair: write `{s}.flatMap(x -> [x, x + 1])`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7539,17 +7609,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                             "group" => self.lambda_entries(&x.ty, f, span),
                             _ => None,
                         };
+                        if name == "group" && first.is_none() {
+                            self.entry_param("group", &x.ty, of, f);
+                        }
                         m.k(Frame::Group(x.ty, of.span, span, name == "rekey"));
                         self.word_fn(m, f, first);
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             format!(
                                 "`{name}` takes one function, passed by position, as \
-                                 `xs.{name}(f)`"
+                                 `{s}.{name}(f)`"
                             ),
-                            [format!("repair: write `xs.{name}(x -> …)`")],
+                            [format!("repair: write `{s}.{name}(x -> …)`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7568,10 +7642,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(t);
                         }
                         _ => {
+                            let s = self.subject_text(Some(of.span));
                             self.error_offering(
                                 span,
                                 format!("`{name}` takes no arguments"),
-                                [format!("repair: write `xs.{name}`")],
+                                [format!("repair: write `{s}.{name}`")],
                             );
                             m.ty(Ty::empty());
                         }
@@ -7591,10 +7666,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     },
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             "`reduce` takes one operator, passed by position".to_string(),
-                            ["repair: write `xs.reduce((+))`".to_string()],
+                            [format!("repair: write `{s}.reduce((+))`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7615,10 +7691,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     },
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             "`scan` takes one operator, passed by position".to_string(),
-                            ["repair: write `xs.scan((+))`".to_string()],
+                            [format!("repair: write `{s}.scan((+))`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7629,12 +7706,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.job(Job::Arg(f, Want::default()));
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
-                            "`chunkBy` takes one function, passed by position, as \
-                             `xs.chunkBy(f)`"
-                                .to_string(),
-                            ["repair: write `xs.chunkBy(x -> x.id)`".to_string()],
+                            format!(
+                                "`chunkBy` takes one function, passed by position, as \
+                                 `{s}.chunkBy(f)`"
+                            ),
+                            [format!("repair: write `{s}.chunkBy(x -> x.id)`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7646,13 +7725,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.job(Job::Arg(f, Want::default()));
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             format!(
                                 "`{name}` takes one function, passed by position, as \
-                                 `xs.{name}(f)`"
+                                 `{s}.{name}(f)`"
                             ),
-                            [format!("repair: write `xs.{name}(x -> x > 0)`")],
+                            [format!("repair: write `{s}.{name}(x -> x > 0)`")],
                         );
                         m.ty(Ty::empty());
                     }
@@ -7673,10 +7753,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.job(Job::Arg(y, Want::default()));
                     }
                     _ => {
+                        let s = self.subject_text(Some(of.span));
                         self.error_offering(
                             span,
                             "`zip` takes one family, passed by position".to_string(),
-                            ["repair: write `xs.zip(ys)`".to_string()],
+                            [format!("repair: write `{s}.zip(ys)`")],
                         );
                         m.ty(Ty::empty());
                     }
