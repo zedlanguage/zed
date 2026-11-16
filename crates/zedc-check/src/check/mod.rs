@@ -4251,6 +4251,39 @@ impl<'t, 'a> Ck<'t, 'a> {
         root
     }
 
+    /// The entries of the family `sig` as `Ck::word_entries` (walk.rs) gives them: without
+    /// the misses `#notFound` and `#outOfBounds` and without the loose atoms. Written here,
+    /// with [`Self::noted_entries`], so the note on a generic lambda parameter in this file
+    /// calls nothing in `walk.rs`, which would close an import cycle (step S.1f, plan row
+    /// S1F-check-limits-fp-ops-cycle).
+    fn family_entries(sig: &Sig) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        (Ty::union_all(sig.arrows.iter().map(|a| &a.result)))
+            .without(&misses)
+            .without_loose()
+    }
+
+    /// `Ck::word_entries` (walk.rs) for a message: no need is made, and a class not yet
+    /// resolved gives `None`, so checking goes as if the message were not written.
+    // Complexity tradeoff: as `word_entries`, O(arrows of `x`) and one recursion per resolved
+    // class, paid per note written, not per call site.
+    fn noted_entries(&self, x: &Ty) -> Option<Ty> {
+        let mut out = Ty::empty();
+        for p in x.pieces() {
+            let t = match p {
+                Piece::Fn(sig) if sig.data => Self::family_entries(&sig),
+                Piece::Dyn => Ty::dynamic(),
+                Piece::Var(v) => match self.class_root(&v) {
+                    Some(r) => self.noted_entries(self.classes[r].resolved.as_ref()?)?,
+                    None => Ty::dynamic(),
+                },
+                _ => Ty::empty(),
+            };
+            out = out.union(&t);
+        }
+        Some(out)
+    }
+
     /// The class `t` is, if it is one and nothing else.
     // Complexity tradeoff (FAIL-if-chain-params-quadratic): naive version, every piece of `t`
     // collected, O(k) for a type of k variables, and a walk of k nested `if`s, whose branches
@@ -10938,6 +10971,15 @@ impl<'a> Ck<'_, 'a> {
     fn code(&self, at: Option<Span>) -> Option<&'a str> {
         let at = at?;
         self.t.text?.get(at.start..at.end)
+    }
+
+    /// The text of the operand at `at`, where it is on one line, for a message. Written here,
+    /// beside [`Self::code`], for the note on a generic lambda parameter in this file: in
+    /// `walk/fp_ops.rs` the call would close an import cycle (step S.1f, plan row
+    /// S1F-check-limits-fp-ops-cycle).
+    fn operand_text(&self, at: Option<Span>) -> Option<String> {
+        let c = self.code(at)?.trim();
+        (!c.is_empty() && !c.contains('\n')).then(|| c.to_string())
     }
 
     /// Whether `a` and `b` are reads of one binding, so one value: `x` and `x` in `x * x`.

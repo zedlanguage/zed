@@ -826,12 +826,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
     }
 
-    /// The text of the operand at `at`, where it is on one line, for a message.
-    pub(in crate::check) fn operand_text(&self, at: Option<Span>) -> Option<String> {
-        let c = self.code(at)?.trim();
-        (!c.is_empty() && !c.contains('\n')).then(|| c.to_string())
-    }
-
     /// The family at `at` as a repair writes it before `.` or `><`: the program's code, in
     /// parentheses where it needs them ([`postfix_operand`]), where it is on one line; else
     /// `xs`, the name DESIGN's method register gives a family (plan row MSG-example-repairs).

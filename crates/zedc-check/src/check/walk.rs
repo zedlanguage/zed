@@ -3874,36 +3874,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// The entries of the family `sig` as [`Self::word_entries`] gives them: without the
-    /// misses `#notFound` and `#outOfBounds` and without the loose atoms.
-    fn family_entries(sig: &Sig) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-        (Ty::union_all(sig.arrows.iter().map(|a| &a.result)))
-            .without(&misses)
-            .without_loose()
-    }
-
-    /// [`Self::word_entries`] for a message: no need is made, and a class not yet resolved
-    /// gives `None`, so checking goes as if the message were not written.
-    // Complexity tradeoff: as `word_entries`, O(arrows of `x`) and one recursion per resolved
-    // class, paid per note written, not per call site.
-    pub(in crate::check) fn noted_entries(&self, x: &Ty) -> Option<Ty> {
-        let mut out = Ty::empty();
-        for p in x.pieces() {
-            let t = match p {
-                Piece::Fn(sig) if sig.data => Self::family_entries(&sig),
-                Piece::Dyn => Ty::dynamic(),
-                Piece::Var(v) => match self.class_root(&v) {
-                    Some(r) => self.noted_entries(self.classes[r].resolved.as_ref()?)?,
-                    None => Ty::dynamic(),
-                },
-                _ => Ty::empty(),
-            };
-            out = out.union(&t);
-        }
-        Some(out)
-    }
-
     /// The type the first parameter of `f`, the function given to `map`, `where`, `flatMap` or
     /// `group` on a receiver of type `x`, is checked at: the entries of `x`
     /// ([`Self::word_entries`]) where `f` is a lambda whose first parameter has no written type
