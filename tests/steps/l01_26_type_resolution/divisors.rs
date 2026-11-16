@@ -122,12 +122,13 @@ fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
 
 /// A square is never below 0 (DESIGN.md L1.25, sec:constraints), so `x * x + 1` at any `x` in a
 /// range is at least 1 and adds no `#divByZero`; the product of `x` with another name in the
-/// same range may be below 0, and `x * y + 1` may be 0.
+/// same range may be below 0, and `x * y + 1` may be 0. The result prints as its hull (row
+/// RANGE-result-hull): `x * x + 1` is in `1..=17`, so `100 div` it is in `5..=100`.
 #[test]
 fn a_square_plus_one_is_no_zero_divisor() {
     assert_eq!(
         sig("f(x: int[-3..=4]) = 100 div (x * x + 1);\n", "f"),
-        "(x: int[-3..=4]) -> int"
+        "(x: int[-3..=4]) -> int[5..=100]"
     );
     assert_eq!(
         sig(

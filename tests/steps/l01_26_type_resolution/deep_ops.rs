@@ -304,7 +304,7 @@ fn debug_writes_what_a_derived_debug_writes() {
     assert!(s.starts_with("Sig { params: [SParam { name: \"x\""), "{s}");
     assert!(s.contains("arrows: [Arrow { params: [Ty { set: "), "{s}");
     assert!(
-        s.ends_with(", needs: [], own: {}, held: {}, named: 0, facts: _ }"),
+        s.ends_with(", needs: [], own: {}, held: {}, named: 0, hull: None, facts: _ }"),
         "{s}"
     );
 }
