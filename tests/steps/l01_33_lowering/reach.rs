@@ -10,7 +10,7 @@ use zed_kernel::{Evaluator, Family, GuardPos, Pattern, Prim, Term, Value, World}
 use zed_tests::kernel::{fam, fix_defined, fold};
 use zedc::zir::lower::{lower, raise};
 use zedc::zir::text::parse;
-use zedc::zir::{Region, op_name};
+use zedc::zir::{Op, Region, Src, op_name};
 
 use super::count;
 
@@ -201,6 +201,70 @@ fn a_read_in_a_function_lowers_outside_the_function() {
         assert_eq!(ports_in_bodies(&g), 0, "{k}");
         same(t);
     }
+}
+
+/// A read of a port that the term also pushes to stays where it is written (row
+/// PROOF-read-hoist-no-earlier-push). DESIGN sec:ports: "a read reads the port's state when it
+/// runs", so a read made after a push to its port, as `@after(a) s = fs["a.txt"]` after
+/// `a = fs["a.txt"] <- x`, sees the push, and one made before it does not; one read node
+/// placed outside a function called on both sides of the push would give both calls the
+/// state before it. So the function takes the port's state and the call after the push takes
+/// the state the push gives; in a family the read is refused as a push there is (QUESTIONS
+/// A108); and a function that reads such a port, used as a value, names it.
+#[test]
+fn a_read_of_a_port_the_term_pushes_to_stays_in_place() {
+    // `let r = λ(m). f in (r(2), f <- "x", r(3))`: `r(3)` reads after the push.
+    let t = let_(
+        "r",
+        lam(&["m"], read("f")),
+        prim(
+            Prim::Tuple,
+            vec![
+                app(var("r"), vec![lit(2)]),
+                push("f", lit("x")),
+                app(var("r"), vec![lit(3)]),
+            ],
+        ),
+    );
+    let g = lower(&t).unwrap();
+    let text = zedc::zir::text::print(&g);
+    assert!(
+        !g.nodes.iter().any(|n| matches!(n.op, Op::Read(_))),
+        "the read is placed outside `r`: {text}"
+    );
+    let w = g
+        .nodes
+        .iter()
+        .position(|n| matches!(n.op, Op::Push(_)))
+        .unwrap();
+    let after = g
+        .nodes
+        .iter()
+        .rposition(|n| op_name(&n.op) == "apply")
+        .unwrap();
+    assert!(
+        g.nodes[after].inputs.contains(&Src::Out(w, 1)),
+        "the call after the push takes the state it gives: {text}"
+    );
+    let in_family = prim(
+        Prim::Tuple,
+        vec![push("f", lit("x")), fam(set(), "i", read("f"))],
+    );
+    assert_eq!(
+        lower(&in_family).unwrap_err(),
+        refused("f", "inside a loop or a family", "the loop or family")
+    );
+    let echo = lam(
+        &["p"],
+        prim(Prim::Tuple, vec![push("g", var("p")), read("f")]),
+    );
+    let as_value = let_(
+        "echo",
+        echo,
+        prim(Prim::Tuple, vec![push("f", lit("x")), var("echo")]),
+    );
+    let e = lower(&as_value).unwrap_err();
+    assert!(e.contains("reads or pushes the ports `g`, `f`,"), "{e}");
 }
 
 #[test]

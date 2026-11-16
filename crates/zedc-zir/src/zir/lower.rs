@@ -18,20 +18,22 @@
 //!   `match` and `port` regions carry state (step L1.31), so a `match` or `if` whose arms touch
 //!   different ports passes each port's state through the arm that does not touch it, and the
 //!   root region is a `port` region when the term uses a port and a `function` region when not.
-//!   A read inside a loop or family body (`fix`, `gen`, `fam`) or a function's body, where no
-//!   state edge of its port enters, is placed just outside the outermost such body and its
-//!   value captured, since a read gives the same value wherever it runs (`Lower::read_frame`
-//!   has the proof), and later such reads of the port placed in that region take the same
-//!   node; a push there is refused.
+//!   A read of a port the term never pushes to, inside a loop or family body (`fix`, `gen`,
+//!   `fam`) or a function's body, where no state edge of its port enters, is placed just
+//!   outside the outermost such body and its value captured, since such a read gives the same
+//!   value wherever it runs (`Lower::read_frame` has the proof), and later such reads of the
+//!   port placed in that region take the same node; a push there is refused, and so is a read
+//!   of a port the term pushes to, which stays where it is written.
 //! - **A function that pushes to a port threads its state.** A `let`-bound lambda whose body
-//!   pushes to a port, or calls such a function, is inlined at its call when its name occurs
-//!   once in the term. Otherwise it is one `lambda` node whose region takes a state argument
-//!   for each of those ports after its parameters and returns their states after its value,
-//!   and each call is an `apply` that passes the current states in and takes the new ones
-//!   out. So each body is lowered once, and a chain of such functions, each calling the one
-//!   before twice, is linear in size, not exponential as inlining every call would make it
-//!   (DESIGN.md Part G). Used as a value, such a function is an error, since a call through
-//!   an unknown function could not thread the states.
+//!   pushes to a port, or reads a port the term pushes to, or calls such a function, is
+//!   inlined at its call when its name occurs once in the term. Otherwise it is one `lambda`
+//!   node whose region takes a state argument for each of those ports after its parameters
+//!   and returns their states after its value, and each call is an `apply` that passes the
+//!   current states in and takes the new ones out. So each body is lowered once, and a chain
+//!   of such functions, each calling the one before twice, is linear in size, not
+//!   exponential as inlining every call would make it (DESIGN.md Part G). Used as a value,
+//!   such a function is an error, since a call through an unknown function could not thread
+//!   the states.
 //! - **CSE by content address.** A node is entered in its region under the key of its
 //!   canonical form ([`super::canon::node_key`], hashed from the keys of its regions, so
 //!   equal keys mean equal normal forms of the one-node regions holding the nodes), and a
@@ -178,6 +180,9 @@ struct Lower<'t> {
     fresh: usize,
     /// How often each name occurs in the term, binders of the same name counted together.
     uses: HashMap<Arc<str>, usize>,
+    /// The ports the term pushes to anywhere. A read of one of them is never placed outside a
+    /// body ([`Lower::read_frame`]), and a lambda that reads one takes its state ([`Use`]).
+    pushed: HashSet<Arc<str>>,
     /// The [`Uses`] of each lambda body met so far, by occurrence id.
     bodies: Bodies,
     places: Places,
@@ -192,8 +197,9 @@ struct Lower<'t> {
     site: Option<Span>,
 }
 
-/// What a lambda body uses from outside it: a port it pushes to, or a name free in it. A port
-/// it only reads is not a use: the read is placed outside the body ([`Lower::read_frame`]).
+/// What a lambda body uses from outside it: a port it pushes to, a port it reads that the term
+/// pushes to somewhere, or a name free in it. A port it only reads, and that the term never
+/// pushes to, is not a use: the read is placed outside the body ([`Lower::read_frame`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Use {
     Port(Arc<str>),
@@ -284,16 +290,20 @@ pub fn lower(t: &Term) -> Result<Region, String> {
 // (`l01_36a_executables::sites::lowering_with_sites_scales`, 2026-11-13).
 pub fn lower_sited(t: &Term, sites: Option<&Sites>) -> Result<(Region, Vec<Option<Span>>), String> {
     let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
-    let places = Places::new(t, &mut |s| {
-        if let Term::Var(x) = s {
-            *uses.entry(x.clone()).or_default() += 1;
+    let mut pushed: HashSet<Arc<str>> = HashSet::new();
+    let places = Places::new(t, &mut |s| match s {
+        Term::Var(x) => *uses.entry(x.clone()).or_default() += 1,
+        Term::Push(p, _) => {
+            pushed.insert(p.clone());
         }
+        _ => {}
     });
     let mut l = Lower {
         frames: vec![Frame::new(RegionKind::Function, Vec::new())],
         scope: Scope::new(),
         fresh: 0,
         uses,
+        pushed,
         bodies: HashMap::new(),
         places,
         refused: None,
@@ -527,25 +537,65 @@ impl<'t> Lower<'t> {
     /// or the root ends the walk, and [`Lower::state`] refuses a read in a recursive function
     /// with its wording, as before.
     ///
+    /// Not called for a read of a port the term also pushes to: that read stays where it is
+    /// written, and a lambda holding it takes the port's state ([`Use`]). DESIGN sec:ports:
+    /// "Since a read reads the port's state when it runs", a read that a dependency path orders
+    /// after a push sees it, as in the menu `a = fs["a.txt"] <- x; @after(a) s = fs["a.txt"]`,
+    /// and sec:robustness: "a read never takes an answer from a request sent before a write it
+    /// follows". Placing such a read at a function's definition could put it before a push
+    /// made between the definition and a call (row PROOF-read-hoist-no-earlier-push, test
+    /// `l01_33_lowering::reach::a_read_of_a_port_the_term_pushes_to_stays_in_place`).
+    ///
+    /// So the proof below needs the premise that no operation of the run writes the port
+    /// read. It holds for every port a read of this zedc reaches, by kind (DESIGN sec:ports;
+    /// zedc's `run::Ports`, kinds `Lines`, `CommandLine`, `Env`, `Files`):
+    /// - `m.stdin` (`Lines`): "The struct fixes each field's direction, so `m.stdin <- x;` is
+    ///   rejected at the push"; its entries are written by the environment and keyed by line
+    ///   number, so entry `k` is the same whenever it is read.
+    /// - `m.args` (`CommandLine`) and `m.env` (`Env`): given when the run starts; DESIGN
+    ///   defines no write of either (`#all`: "every two operations commute, as for a clock,
+    ///   `env`, …"), and a child's environment is the option `env:` of `spawn`, not a write.
+    /// - `main::files` (`Files`): DESIGN does define writes, "written as `fs[path] <- v` (L7)",
+    ///   and a read ordered after one sees it (above), so the premise fails in DESIGN. In this
+    ///   zedc a keyed push is refused before lowering ("this version of zedc does not compile
+    ///   it yet", test `a_keyed_write_to_main_files_is_a_later_step_in_main_and_outside_it` in
+    ///   `l01_19_whole_file_ports::outside`), and when it lowers it is a push to the port, so
+    ///   the check of `pushed` above keeps such a read in place. Nothing else of the run writes
+    ///   a file: this zedc has no `spawn`, `run`, foreign library, store or socket (zedc-resolve
+    ///   `test_ports`), and a write to standard output read back through a second path to the
+    ///   same file is "the order of operations on one file reached by two paths", which DESIGN
+    ///   lists as allowed nondeterminism (sec:ports, "Determinism contract").
+    ///
+    /// Port kinds this zedc does not compile break the premise or the sharing, by DESIGN:
+    /// a process's `p.stdout` reads what an earlier push to `p.stdin` gave it (the `sort -u`
+    /// example), and a later `run` reads files the program wrote; two calls of a foreign
+    /// library not marked `@stateless` are ordered (`#none`), and sec:robustness says "A read
+    /// on a `#none` port, a foreign call not marked `@stateless`, and a write are never
+    /// shared"; a socket's replies "depend on the order of its requests"; and `now()` and
+    /// `randomBytes(n)` ask the outside at each call, so two calls must not share one node.
+    /// None of them reaches this lowering as a `read` of a port the term never pushes to, and
+    /// the row that compiles them must keep their reads in place (plan row
+    /// FILES-read-after-write).
+    ///
     /// Proof that placing the read outside the bodies keeps the program's value and effects
-    /// (row FAIL-build-port-read-in-map): a `read` node gives, for an input port, the port's
-    /// value, which is fixed for the whole wave before the run starts (`World::inputs`); for a
-    /// lookup port such as `main::files`, a word naming the port (`Word::SOURCE`), not an
-    /// answer: the port is asked where the program looks up a key (`Get`), which stays inside
-    /// the body, and the world asks it at most once per key and keeps the answer
-    /// (`World::reads`, or the port itself when it `keeps_answers`), as `zedc run` does
-    /// (zed-kernel `Evaluator::check_impure`). So the read gives the same value at the new
-    /// place as at every element of the body, and running it once where the body ran it once
-    /// per element, or where the body ran zero times, changes no value. A read pushes nothing,
-    /// so it changes no output, and it is placed in the outer region before the node of the
-    /// body, after every node already there, so the order of that region's effects is kept.
-    /// A read of a port the run does not bind fails, but the run binds every port the root
-    /// region takes, and `state` threads the read's port to the root as before. A function's
-    /// body runs where it is called, with the values of the program at its definition, and the
-    /// read gives the same value at the definition as at every call, so a read in a function
-    /// is placed at the definition by the same argument. A push, and a read in a recursive
-    /// function, is not covered by this proof and stays refused (QUESTIONS A108 for a push in
-    /// a family).
+    /// (row FAIL-build-port-read-in-map), given that premise: a `read` node gives, for an input
+    /// port, the port's value, which is fixed for the whole wave before the run starts
+    /// (`World::inputs`); for a lookup port such as `main::files`, a word naming the port
+    /// (`Word::SOURCE`), not an answer: the port is asked where the program looks up a key
+    /// (`Get`), which stays inside the body, and the world asks it at most once per key and
+    /// keeps the answer (`World::reads`, or the port itself when it `keeps_answers`), as
+    /// `zedc run` does (zed-kernel `Evaluator::check_impure`). So the read gives the same value
+    /// at the new place as at every element of the body, and running it once where the body
+    /// ran it once per element, or where the body ran zero times, changes no value. A read
+    /// pushes nothing, so it changes no output, and it is placed in the outer region before
+    /// the node of the body, after every node already there, so the order of that region's
+    /// effects is kept. A read of a port the run does not bind fails, but the run binds every
+    /// port the root region takes, and `state` threads the read's port to the root as before.
+    /// A function's body runs where it is called, with the values of the program at its
+    /// definition, and the read gives the same value at the definition as at every call, so a
+    /// read in a function is placed at the definition by the same argument. A push, and a read
+    /// in a recursive function, is not covered by this proof and stays refused (QUESTIONS A108
+    /// for a push in a family).
     // Complexity tradeoff: the naive walk goes from `k` down the frame stack at every read,
     // O(d) per read and O(n·d) for n reads in a body d frames deep. Here each frame keeps the
     // answer for each port once found (`Frame::reads`): the walk stops at the first frame that
@@ -558,7 +608,9 @@ impl<'t> Lower<'t> {
     // into the bodies below, one per read, Θ(d²) arguments; here the reads of one port placed
     // in one region share its first read node (`Frame::hoisted`, by the proof above), so each
     // body takes one argument for it, O(d). Tradeoff: one map entry per frame per port read in
-    // it. Nothing is refused. Test
+    // it. The ports the term pushes to (`Lower::pushed`) are gathered by the walk that numbers
+    // the subterms, which already visits each once, so they cost O(1) per push and one hash
+    // lookup per read. Nothing is refused. Test
     // `l01_33_lowering::bench::scaling::reads_in_a_deep_nest_of_families_scale`.
     fn read_frame(&mut self, k: usize, p: &Arc<str>) -> usize {
         let mut j = k;
@@ -792,10 +844,11 @@ impl<'t> Lower<'t> {
         Ok(s)
     }
 
-    /// The ports `b`, a lambda body, reads or pushes, itself or by calling a function free in
-    /// it that does, in the order of their first use in the text.
+    /// The ports whose state `b`, a lambda body, takes: those it pushes to, and those it reads
+    /// that the term pushes to somewhere ([`Use`]), itself or by calling a function free in it
+    /// that does, in the order of their first use in the text.
     fn ports(&mut self, b: At<'_>) -> Vec<Arc<str>> {
-        let uses = body_uses(b, &mut self.bodies, &self.places);
+        let uses = body_uses(b, &mut self.bodies, &self.places, &self.pushed);
         let mut out: Vec<Arc<str>> = Vec::new();
         let mut seen: HashSet<Arc<str>> = HashSet::new();
         for u in uses.iter() {
@@ -1086,8 +1139,14 @@ impl<'t> Lower<'t> {
             Term::Read(p) => {
                 // Inside a loop or family body the read is placed outside the outermost such
                 // body (`read_frame`, which proves it keeps the value), and its value is
-                // brought in as a capture where it is used.
-                let k = self.read_frame(at, p);
+                // brought in as a capture where it is used. A read of a port the term also
+                // pushes to stays where it is written, after the pushes its state follows
+                // (`read_frame` says why).
+                let k = if self.pushed.contains(p) {
+                    at
+                } else {
+                    self.read_frame(at, p)
+                };
                 if k < at
                     && let Some(v) = self.frames[k].hoisted.get(p)
                 {
@@ -1593,7 +1652,7 @@ fn names(p: &Pattern) -> Vec<Arc<str>> {
 // handed up from the bodies directly inside it. Tradeoff: the uses of every lambda body are
 // held until the lowering ends. Nothing is refused. Test
 // `l01_33_lowering::bench::scaling::lowering_lambdas_bound_by_nested_lets_scales`.
-fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places) -> Uses {
+fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places, pushed: &HashSet<Arc<str>>) -> Uses {
     if let Some(u) = bodies.get(&b.id) {
         return u.clone();
     }
@@ -1614,7 +1673,7 @@ fn body_uses(b: At<'_>, bodies: &mut Bodies, places: &Places) -> Uses {
                     walks.push(UseWalk::new(inner));
                 }
             },
-            Some(v) => w.visit(v, places),
+            Some(v) => w.visit(v, places, pushed),
             None => {
                 let w = walks.pop().expect("a walk");
                 let u: Uses = w.out.into();
@@ -1689,7 +1748,7 @@ impl<'t> UseWalk<'t> {
     }
 
     /// Does `v`, or schedules the visits of its parts; [`Visit::Lam`] is [`body_uses`]'s.
-    fn visit(&mut self, v: Visit<'t>, places: &Places) {
+    fn visit(&mut self, v: Visit<'t>, places: &Places, pushed: &HashSet<Arc<str>>) {
         let here = match v {
             Visit::Term(t) => t,
             Visit::Under(xs, t) => {
@@ -1709,6 +1768,7 @@ impl<'t> UseWalk<'t> {
         match here.t {
             Term::Lit(_) | Term::PrimFn(_) => {}
             Term::Var(x) => self.add(Use::Free(x.clone())),
+            Term::Read(q) if pushed.contains(q) => self.add(Use::Port(q.clone())),
             Term::Read(_) => {}
             Term::Lam(ps, b) => self.todo.push(Visit::Lam(ps, p(0, b))),
             Term::Let(x, e, b) => {
