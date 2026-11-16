@@ -4063,10 +4063,13 @@ pub enum NeedKind {
         /// FAIL-elab-named-call-generic-param). `None` for an application a prelude word
         /// makes, as `map`'s of its function, which places its arguments itself.
         ///
-        /// Complexity tradeoff: two calls of one value with the same argument types are two
-        /// needs, met once each at each call of the generic function, O(sites × calls), the
-        /// work of checking each call site of the body once per call; one need for both, as
-        /// before this field, met once per call, cannot say which site a signature belongs to.
+        /// Complexity tradeoff: the checker's table of needs met (`Class::known` in
+        /// `zedc-check`) leaves this field out of its key, so two calls of one value with the
+        /// same argument types are one need, met once per call of the generic function, and
+        /// the later call gets the earlier's signature when the check ends, O(1) each (row
+        /// TEST-call-site-need-key). Keyed with it, as at first, they were two needs, met at
+        /// each call, O(sites × calls). The field stays in the need's own equality, which a
+        /// `Sig`'s needs and their interning use.
         site: Option<Span>,
     },
     /// A use, `what`, that takes data: the value holds no function. The use does with the

@@ -1396,8 +1396,11 @@ struct Class {
     // new use, O(n) a use and O(n^2) for n uses of one class (a parameter destructured into n
     // names). Used: a hash map by kind, O(1) a use plus hashing the kind; classes merge the
     // smaller map into the larger. Tradeoff: one entry per distinct use beside `uses`.
-    /// With each result, the span of the use that recorded it ([`Ck::same_use`]).
-    known: HashMap<(NeedKind, bool), (Ty, Span)>,
+    /// With each result, the span of the use that recorded it ([`Ck::same_use`]) and, for a
+    /// call need, the call in the text it stands for. A call need is keyed without that call
+    /// ([`site_free`]): two calls of the value with arguments alike are one use, whose
+    /// signature is recorded at the first call and given to the other ([`Ck::alike_calls`]).
+    known: HashMap<(NeedKind, bool), (Ty, Span, Option<Span>)>,
     /// The index in `uses` of each `NeedKind::Order` use by its word, its side and its site:
     /// the uses of one site are one use, of the union of their other operands joined one
     /// shape per length, as `min` and `max` join them (DESIGN.md sec:reduction, item 5).
@@ -1758,6 +1761,16 @@ struct Ck<'t, 'a> {
     /// first is one of the second, as both are the one need of one class, so
     /// [`Ck::finish`] gives the second each entry of the first in [`Info::fold_reads`].
     same_use: Vec<(Span, Span)>,
+    /// Each call in the text whose call need met one its class had recorded for another call
+    /// with arguments alike, with that call (`Ck::need`): `g(x: v)` twice in one body, or once
+    /// in a body and once in a function it calls with `g`. The need is checked once, and its
+    /// replays record the signature at the first call only; [`Ck::settle_calls`] gives it to
+    /// the second. Undone with a trial, whose classes may hold what the walk's do not.
+    alike_calls: Vec<(Span, Span)>,
+    /// Each signature recorded at a call through a value ([`Ck::record_call`]), in the order
+    /// recorded; undone with a trial. [`Ck::settle_calls`] compares those of each call in the
+    /// order of the text.
+    call_records: Vec<CallRecord<'a>>,
     /// Each call whose result holds a function with needs, or which leaves parameters open:
     /// a function passed to it may be called after it returns
     /// ([`Info::escaping_calls`]).
@@ -1900,6 +1913,8 @@ struct Ck<'t, 'a> {
     /// [`Self::outside`] does not keep. Of uses alike, those all of them hold. A parameter's
     /// class that may take other values carries an argument's atoms in its type variable, so
     /// [`Self::generalize`] removes these from the uses that hold it ([`Self::strip_widened`]).
+    /// Keyed by the use without the call it stands for ([`site_free`]), as a class's
+    /// [`Class::known`] is, since calls alike are one use.
     widened_only: HashMap<NeedKind, Vec<KType>>,
     /// The loose atoms each call gives from outside, by its span, as [`Self::try_outside`]
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
@@ -2208,6 +2223,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_chain: Vec::new(),
             fold_uses: HashSet::new(),
             same_use: Vec::new(),
+            alike_calls: Vec::new(),
+            call_records: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
             folds: BTreeMap::new(),
@@ -2418,14 +2435,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             .iter()
             .map(|(t, at)| self.widened_atoms(t, *at))
             .collect();
-        match self.widened_only.get_mut(kind) {
+        let kind = site_free(kind);
+        match self.widened_only.get_mut(&*kind) {
             Some(old) => {
                 for (o, n) in old.iter_mut().zip(&w) {
                     *o = &*o & n;
                 }
             }
             None => {
-                self.widened_only.insert(kind.clone(), w);
+                self.widened_only.insert(kind.into_owned(), w);
             }
         }
     }
@@ -2449,7 +2467,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the variable carries the atoms the parameter's argument holds at each call, and the
     /// atoms its handling added to the parameter's type in the body are none of them.
     fn strip_widened(&self, n: Need, strip: &[(usize, KType)]) -> Need {
-        let Some(w) = self.widened_only.get(&n.kind) else {
+        if self.widened_only.is_empty() {
+            return n;
+        }
+        let Some(w) = self.widened_only.get(&*site_free(&n.kind)) else {
             return n;
         };
         let cut = |t: &Ty, w: &KType| {
@@ -2748,6 +2769,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes,
             also: Vec::new(),
             lits: Vec::new(),
+            unordered: false,
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
@@ -4677,6 +4699,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// once for each signature that holds them. Each message then writes the definitions its
     /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
     fn finish(&mut self) {
+        // Before the classes' types are put in the signatures recorded at calls, which then
+        // include those given to calls alike.
+        self.settle_calls();
         // Each fold takes the identity of its one carrier. A fold of a generic function
         // checked at two carriers where any of them has an identity cannot elaborate to one
         // fold: that fold cannot give `-inf` at `f64` and `#empty` at `int`, and an empty
@@ -6428,6 +6453,45 @@ struct Mark {
     log: usize,
     errors: usize,
     top_parts: usize,
+    alike_calls: usize,
+    call_records: usize,
+}
+
+/// A signature recorded at a call through a value ([`Ck::record_call`]): the call in the text
+/// it is recorded at, `site`; the call it was found at, `at`, the site itself where the walk
+/// met the function there (`direct`), else the call of a generic function whose need the
+/// site's call is; and the call's callee and arguments, which give its shape (`CallShape`).
+pub(super) struct CallRecord<'a> {
+    site: Span,
+    at: Span,
+    direct: bool,
+    sig: Arc<Sig>,
+    what: Rc<str>,
+    receiver: bool,
+    args: Rc<Args<'a>>,
+    curry: bool,
+}
+
+/// The use `kind` without the call in the text it stands for, if it is a call need: the key
+/// of uses alike ([`Class::known`], [`Ck::widened_only`]). Borrowed, with no copy, for every
+/// other use.
+fn site_free(kind: &NeedKind) -> Cow<'_, NeedKind> {
+    match kind {
+        NeedKind::Call {
+            what,
+            positional,
+            named,
+            curry,
+            site: Some(_),
+        } => Cow::Owned(NeedKind::Call {
+            what: what.clone(),
+            positional: positional.clone(),
+            named: named.clone(),
+            curry: *curry,
+            site: None,
+        }),
+        _ => Cow::Borrowed(kind),
+    }
 }
 
 /// Sets `$map[$key]` to `$value`, removing it for `None`, and gives the value it replaces.
@@ -6532,6 +6596,8 @@ impl Ck<'_, '_> {
             log: self.log.len(),
             errors: self.errors.len(),
             top_parts: self.top_parts.len(),
+            alike_calls: self.alike_calls.len(),
+            call_records: self.call_records.len(),
         }
     }
 
@@ -6543,6 +6609,8 @@ impl Ck<'_, '_> {
         }
         self.errors.truncate(m.errors);
         self.top_parts.truncate(m.top_parts);
+        self.alike_calls.truncate(m.alike_calls);
+        self.call_records.truncate(m.call_records);
     }
 }
 
@@ -7673,6 +7741,11 @@ struct Found {
     /// part of a value ([`Ck::reject_lits`], [`Info::reported_literals`]); empty for an error
     /// that reports only what lies in its span.
     lits: Vec<Span>,
+    /// Whether it refuses a call of a generic function whose function the body's call cannot
+    /// be built for, found in the order the checker meets the calls: raised then, so a trial
+    /// sees it, and found again in the order of the text by [`Ck::settle_calls`], which
+    /// drops this one.
+    unordered: bool,
 }
 
 impl Found {
@@ -12740,6 +12813,8 @@ mod tests {
             log: 0,
             errors: 0,
             top_parts: 0,
+            alike_calls: 0,
+            call_records: 0,
         });
         assert!(ck.info.passes.is_empty());
     }

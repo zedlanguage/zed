@@ -117,8 +117,9 @@ fn functions_passed_through_generic_parameters_to_partial_slots_scale() {
 /// function passed down a chain of n generic functions to such a call; and one function passed
 /// to a body of n calls of it by name (FAIL-elab-named-call-generic-param): each call need
 /// carries its call's place in the body, and each meeting of it at a call of the generic
-/// function records the signature there or compares it with the one recorded, by a hash lookup
-/// and O(parameters + arguments), so checking and elaborating the whole is linear. Besides its
+/// function records the signature there, by a hash lookup and O(parameters + arguments), and
+/// the recordings are compared once at the end (row TEST-call-site-need-key), O(k log k), so
+/// checking and elaborating the whole is n log n at most. Besides its
 /// ratio: the program elaborates at each size. Small instance:
 /// `function_variance::a_named_call_of_a_generic_parameter_runs`.
 #[test]
@@ -184,6 +185,38 @@ fn functions_passed_by_defaults_else_and_generic_values_to_partial_slots_scale()
                 .all(|k| u.get(&format!("{k}{last}")).is_some()),
             "{what} at {m}"
         );
+    });
+}
+
+/// One generic body with n named calls of its parameter, all with arguments of one type, called
+/// at n places, each with a function of its own of one type (row TEST-call-site-need-key):
+/// each call of the body meets the body's needs for its function, and n calls in the body with
+/// arguments of one type are one need (`Class::known` keys a call need without its call), so
+/// the whole is linear; keyed with it, as at commit 69526a75a, they were n needs at each of
+/// the n calls, n·n in all (ratio 44 at 8n). Besides its ratio: the program elaborates at each
+/// size. Small instances: `function_variance::named_calls_with_arguments_alike_run` and
+/// `function_variance::the_earlier_call_is_the_first_in_the_text`.
+#[test]
+fn many_calls_of_a_body_with_many_named_calls_scale() {
+    let what = "one generic body with n named calls of its parameter, called at n places";
+    let make = |n: usize| {
+        let mut src = String::from("many(g, v: int) = 0");
+        for _ in 0..n {
+            src.push_str(" + g(x: v)");
+        }
+        src.push_str(";\n");
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nc{i}(y: int) = many(g: s{i}, v: y);\n"
+            ));
+        }
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
     });
 }
 

@@ -7014,7 +7014,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shape = CallShape::of(receiver.is_some(), &args, curry);
             for g in f.fns.iter().skip(1) {
                 if let Some(why) = unaligned(first, g, &shape) {
-                    self.unaligned_call(&what, first, g, why, false, span);
+                    self.unaligned_call(&what, first, g, why, false, None, span);
                     break;
                 }
             }
@@ -7163,7 +7163,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the first one's places ([`unaligned`]); one that does not is refused at the call that
     /// passes it. [`Self::put`] drops a replay's writes, so this one is logged directly, as
     /// [`Self::coerce_forwarded`] logs its, and a trial that is undone undoes it.
+    ///
+    /// Which call is "the first" is the order of the text, not the order the checker meets
+    /// the calls in, which follows what each definition uses: each recording is kept
+    /// ([`Ck::call_records`]) and [`Self::settle_calls`] compares them when the check ends.
+    /// The error found here, against the one met first, is raised all the same, so that a
+    /// trial sees that its call fails, and dropped then ([`Found::unordered`]): whether any
+    /// two disagree does not depend on the order, as [`unaligned`] tests equalities.
     fn record_call(&mut self, s: &CallValueF<'a>, site: Span, sig: Arc<Sig>) {
+        self.call_records.push(CallRecord {
+            site,
+            at: s.span,
+            direct: self.replaying == 0,
+            sig: sig.clone(),
+            what: s.what.clone(),
+            receiver: s.receiver.is_some(),
+            args: s.args.clone(),
+            curry: s.curry,
+        });
         if self.replaying == 0 {
             self.put(Undo::Call(site, Some(sig)));
             return;
@@ -7171,7 +7188,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(had) = self.info.calls.get(&site).cloned() {
             let shape = CallShape::of(s.receiver.is_some(), &s.args, s.curry);
             if let Some(why) = unaligned(&had, &sig, &shape) {
-                self.unaligned_call(&s.what, &had, &sig, why, true, s.span);
+                self.unaligned_call(&s.what, &had, &sig, why, true, None, s.span);
+                (self.errors.last_mut().expect("the error just raised")).unordered = true;
             }
             return;
         }
@@ -7183,7 +7201,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of signature `t`, which one built call cannot both call right, for the reason `why`.
     /// With `earlier`, `w` is `t` at this call of a generic function and `r` at an earlier
     /// one, and the call through `w` is the one in the generic body; without it, `w`'s own
-    /// type is a union of the two.
+    /// type is a union of the two. A note points at the earlier call `first`, if given.
+    #[allow(clippy::too_many_arguments)]
     fn unaligned_call(
         &mut self,
         w: &str,
@@ -7191,6 +7210,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         t: &Sig,
         why: Unaligned,
         earlier: bool,
+        first: Option<Span>,
         span: Span,
     ) {
         let w = callee(w);
@@ -7232,7 +7252,93 @@ impl<'t, 'a> Ck<'t, 'a> {
             "{subject}, {reason}. {}",
             zedc_base::rejection::not_yet("One call through a value that may be either function")
         );
-        self.error_offering(span, message, [repair]);
+        let mut notes = self.derive(&[span]);
+        if let Some(at) = first {
+            notes.push(Note {
+                span: at,
+                text: format!("the earlier call, where {w} is a function of type `{a}`"),
+            });
+        }
+        notes.push(Note { span, text: repair });
+        self.error_with(span, message, notes);
+    }
+
+    /// Settles the signatures recorded at calls through values once the walk is done. Each
+    /// call alike to an earlier one in its class ([`Ck::alike_calls`]) gets the signature
+    /// recorded there, if it has none of its own. Then the signatures recorded at each call
+    /// of a generic body are compared in the order of the text ([`Ck::call_records`]): the
+    /// reference is one the walk met at the call itself, or else the one found at the call of
+    /// the generic function first in the text; each other one that [`unaligned`] parts from
+    /// it is refused at its call, with a note at the reference's call. These replace the
+    /// errors the walk found in its own order ([`Found::unordered`]); one is refused where
+    /// the walk refused one, since the test is of equalities.
+    ///
+    /// Complexity tradeoff: one pass over the recorded signatures, grouped by call, O(k log k)
+    /// for k recordings, sorted for an order that does not depend on hashing; the calls alike
+    /// get their signatures by a walk over the pairs from each call that has one, each call
+    /// set once, O(p) for p pairs. Naive version: compare every two recordings of a call,
+    /// O(k²), to name each disagreeing pair; the equalities make one reference enough.
+    pub(super) fn settle_calls(&mut self) {
+        let pairs = std::mem::take(&mut self.alike_calls);
+        let mut later: HashMap<Span, Vec<Span>> = HashMap::new();
+        for (l, f) in pairs {
+            later.entry(f).or_default().push(l);
+        }
+        let mut ready: Vec<Span> = (later.keys())
+            .filter(|f| self.info.calls.contains_key(f))
+            .copied()
+            .collect();
+        ready.sort_unstable();
+        while let Some(f) = ready.pop() {
+            let Some(ls) = later.remove(&f) else {
+                continue;
+            };
+            let sig = self.info.calls[&f].clone();
+            for l in ls {
+                if let Entry::Vacant(at) = self.info.calls.entry(l) {
+                    at.insert(sig.clone());
+                    ready.push(l);
+                }
+            }
+        }
+        // No call refused in the walk's order means every recording agrees with the first met
+        // at its call, and so with each other: nothing to refuse in the text's order.
+        if !self.errors.iter().any(|e| e.unordered) {
+            self.call_records.clear();
+            return;
+        }
+        self.errors.retain(|e| !e.unordered);
+        let records = std::mem::take(&mut self.call_records);
+        let mut by_site: HashMap<Span, Vec<usize>> = HashMap::new();
+        for (i, c) in records.iter().enumerate() {
+            by_site.entry(c.site).or_default().push(i);
+        }
+        let mut sites: Vec<(Span, Vec<usize>)> = by_site.into_iter().collect();
+        sites.sort_unstable_by_key(|(site, _)| *site);
+        for (_, ids) in sites {
+            // The first recorded among the direct ones, else the first in the text; `ids` is
+            // in the order recorded, so a tie keeps the first recorded.
+            let reference = (ids.iter().copied())
+                .find(|&i| records[i].direct)
+                .unwrap_or_else(|| {
+                    (ids.iter().copied())
+                        .min_by_key(|&i| records[i].at)
+                        .expect("a call with a record")
+                });
+            let r = &records[reference];
+            let mut seen: HashSet<(Span, *const Sig)> = HashSet::new();
+            for &i in &ids {
+                let t = &records[i];
+                if t.direct || i == reference || !seen.insert((t.at, Arc::as_ptr(&t.sig))) {
+                    continue;
+                }
+                let shape = CallShape::of(t.receiver, &t.args, t.curry);
+                if let Some(why) = unaligned(&r.sig, &t.sig, &shape) {
+                    let first = (!r.direct).then_some(r.at);
+                    self.unaligned_call(&t.what, &r.sig, &t.sig, why, true, first, t.at);
+                }
+            }
+        }
     }
 
     /// The error of a call at `span` of `w`, a value of the type shown as `shown` that is not
@@ -10996,6 +11102,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         if data && self.classes[r].data {
             return Ty::empty();
         }
+        // A call need is keyed without its call in the text (`Class::known`): calls of the value
+        // with arguments alike are one use, checked once at each call of a generic function.
+        // Complexity tradeoff: the key with the call (commit 69526a75a) made n calls alike in
+        // a body n needs, each met at each of the body's c calls, O(n·c); keyed without it they
+        // are one need, met c times, O(n + c), and each other call gets the first's signature
+        // once, when the check ends ([`Ck::settle_calls`]), O(1) per call. That holds because
+        // two calls alike have one shape, the argument count, names and `...` (all part of
+        // the key), and stand on one class, so the functions that reach one reach the other:
+        // what is recorded at the first is what would be recorded at the second.
+        let mut kind = kind;
+        let site = match &mut kind {
+            NeedKind::Call { site, .. } => site.take(),
+            _ => None,
+        };
         let key = (kind, gives);
         #[cfg(any(test, feature = "forward-probe"))]
         self.probe_need(r, &key, span);
@@ -11010,24 +11130,33 @@ impl<'t, 'a> Ck<'t, 'a> {
         // way, a walk of the generic body's text at each call for the uses, costs O(b) per
         // call for a body of size b.
         if matches!(key.0, NeedKind::Call { .. }) {
-            let first = self.classes[r].known.get(&key).map_or(span, |&(_, f)| f);
+            let first = self.classes[r].known.get(&key).map_or(span, |&(_, f, _)| f);
             let spans = spans.filter(|_| !self.trying);
             self.call_written
                 .entry(first)
                 .or_default()
                 .push((span, spans));
         }
-        if let Some((result, first)) = self.classes[r].known.get(&key) {
+        if let Some((result, first, at)) = self.classes[r].known.get(&key) {
+            let (result, first, at) = (result.clone(), *first, *at);
             // An equal narrowing of a value other than a bare name leaves the result unplaced.
             if matches!(key.0, NeedKind::Narrow(_)) && !self.narrow_names.contains(&span) {
-                self.narrow_names.remove(first);
+                self.narrow_names.remove(&first);
             }
-            if !self.trying && *first != span {
-                self.same_use.push((span, *first));
+            if !self.trying && first != span {
+                self.same_use.push((span, first));
             }
-            return result.clone();
+            if let (Some(later), Some(at)) = (site, at)
+                && later != at
+            {
+                self.alike_calls.push((later, at));
+            }
+            return result;
         }
-        let (kind, _) = key;
+        let (mut kind, _) = key;
+        if let NeedKind::Call { site: s, .. } = &mut kind {
+            *s = site;
+        }
         if let NeedKind::Order {
             word, first, other, ..
         } = &kind
@@ -11062,9 +11191,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         class.uses.push((seq, need.clone()));
         let given = result.clone().unwrap_or_else(Ty::empty);
-        class
-            .known
-            .insert((need.kind.clone(), gives), (given, span));
+        let key = (site_free(&need.kind).into_owned(), gives);
+        class.known.insert(key, (given, span, site));
         class.data |= data;
         for v in &flowed {
             self.check_on(&need, &v.ty, v.at, Some(v));

@@ -210,6 +210,132 @@ fn a_call_one_signature_cannot_place_for_every_function_is_refused() {
     }
 }
 
+/// Calls by name in one generic body whose arguments are alike are one use of the parameter,
+/// checked once at each call of the body; each is still built by the signature of the function
+/// passed (row TEST-call-site-need-key). So is a call alike to one a function the body calls
+/// makes, and that function called alone.
+#[test]
+fn named_calls_with_arguments_alike_run() {
+    runs_to(
+        "small(x: int) = x + 1;\ncall(g, v: int) = g(x: v) * 10 + g(x: v);\na = call(g: small, v: 3);\n",
+        "a",
+        "44",
+    );
+    runs_to(
+        "small(x: int) = x + 1;\nh0(g, v: int) = g(x: v);\nh1(g, v: int) = h0(g: g, v: v) * 10 + g(x: v);\na = h1(g: small, v: 3);\n",
+        "a",
+        "44",
+    );
+    runs_to(
+        "small(x: int) = x + 1;\nh0(g, v: int) = g(x: v);\nh1(g, v: int) = h0(g: g, v: v) * 10 + g(x: v);\na = h0(g: small, v: 1) + h1(g: small, v: 3);\n",
+        "a",
+        "46",
+    );
+    // Two functions, each placing the arguments in the same order, at two calls.
+    runs_to(
+        "f(a: int, b: int) = a - b;\ng(a: int, b: int) = a * 10 + b;\ncall(k, v: int) = k(b: v, a: 5) * 1000 + k(b: v, a: 5);\na = call(k: f, v: 2) + call(k: g, v: 2);\n",
+        "a",
+        "55055",
+    );
+}
+
+/// The call of a generic function that passes a function its body's call cannot be built for
+/// is the one later in the text than the first call; the message names the first call's type,
+/// and a note points at that call. The order the checker meets the calls in, which follows
+/// what each definition uses and not the text, does not change which call is refused (row
+/// TEST-call-site-need-key). Each program gives the same answer checked alone, after the
+/// others, and after the others in reverse order.
+#[test]
+fn the_earlier_call_is_the_first_in_the_text() {
+    let head = "f(a: int, b: int) = a - b;\nf2(a: int, b: int) = a + b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, b: 2);\n";
+    let ab = "(a: int, b: int) -> int";
+    let ba = "(b: int, a: int) -> int";
+    // The rest of the program; the calls refused; the type and the call the message names.
+    let cases: [(&str, &[&str], &str, &str); 8] = [
+        (
+            "x = call(k: f);\ny = call(k: g);\nz = call(k: f2);\n",
+            &["call(k: g)"],
+            ab,
+            "call(k: f)",
+        ),
+        (
+            "x = call(k: g);\ny = call(k: f);\nz = call(k: f2);\n",
+            &["call(k: f)", "call(k: f2)"],
+            ba,
+            "call(k: g)",
+        ),
+        (
+            "y = x + call(k: g);\nx = call(k: f);\n",
+            &["call(k: f)"],
+            ba,
+            "call(k: g)",
+        ),
+        (
+            "x = call(k: f);\ny = x + call(k: g);\n",
+            &["call(k: g)"],
+            ab,
+            "call(k: f)",
+        ),
+        (
+            "v() = u() + call(k: f);\nu() = call(k: g);\n",
+            &["call(k: g)"],
+            ab,
+            "call(k: f)",
+        ),
+        (
+            "a = call(k: g) * 100 + call(k: f);\n",
+            &["call(k: f)"],
+            ba,
+            "call(k: g)",
+        ),
+        (
+            "z = y + call(k: f2);\ny = x + call(k: g);\nx = call(k: f);\n",
+            &["call(k: g)"],
+            ab,
+            "call(k: f2)",
+        ),
+        (
+            "z = y + call(k: g);\ny = x + call(k: f2);\nx = call(k: f);\n",
+            &["call(k: f2)", "call(k: f)"],
+            ba,
+            "call(k: g)",
+        ),
+    ];
+    let srcs: Vec<String> = cases.iter().map(|c| format!("{head}{}", c.0)).collect();
+    for (src, (_, refused, ty, first)) in srcs.iter().zip(&cases) {
+        let (info, _) = super::info(src);
+        let at = |start: usize, end: usize| &src[start..end];
+        let mut got: Vec<&str> = (info.errors.iter())
+            .map(|e| at(e.span.start, e.span.end))
+            .collect();
+        got.sort_unstable();
+        let mut want = refused.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "{src}: {:?}", info.errors);
+        for e in &info.errors {
+            let named = format!("and at an earlier call one of type `{ty}`");
+            assert!(e.message.contains(&named), "{src}: {}", e.message);
+            assert!(
+                (e.notes.iter()).any(|n| at(n.span.start, n.span.end) == *first
+                    && n.text
+                        == format!("the earlier call, where `k` is a function of type `{ty}`")),
+                "{src}: {:?}",
+                e.notes
+            );
+        }
+    }
+    let answer = |src: &str| zedc::run::load(src.as_bytes()).err();
+    let alone: Vec<Option<String>> = (srcs.iter().cloned())
+        .map(|src| std::thread::spawn(move || answer(&src)).join().unwrap())
+        .collect();
+    let batch: Vec<Option<String>> = srcs.iter().map(|src| answer(src)).collect();
+    let mut reversed: Vec<Option<String>> = srcs.iter().rev().map(|src| answer(src)).collect();
+    reversed.reverse();
+    assert_eq!(alone, batch, "alone, then in a batch");
+    assert_eq!(alone, reversed, "alone, then in a reversed batch");
+    assert!(alone.iter().all(Option::is_some));
+}
+
 /// A call through a partial slot of a value outside the domain of the function passed misses
 /// with `#notFound`, which the caller handles (DESIGN.md sec:type_language, "Morphism types
 /// carry two domain bounds": a key in `U` only yields `V | #notFound`); within the domain the

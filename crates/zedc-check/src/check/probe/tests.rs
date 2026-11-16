@@ -41,9 +41,7 @@ fn a_call_of_a_generic_function_on_parameters_is_admitted_and_kept() {
 }
 
 /// A second `m.map(f)` after the call of `h0` is a need equal to the one the forward
-/// recorded on `m`'s class: eager finds it in `known`, so D must force there. (A map need
-/// and not a call need: a call need's key holds the place of its call in the body, so
-/// `f(x)` in `h1` is a different key from `f(x)` in `h0`, FAIL-elab-named-call-generic-param.)
+/// recorded on `m`'s class: eager finds it in `known`, so D must force there.
 #[test]
 fn a_need_equal_to_a_deferred_one_collides() {
     let r = report(
