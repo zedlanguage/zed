@@ -818,7 +818,11 @@ impl Periodic {
 // values of each kept piece between the rays listed, each charged [`LISTED`]
 // (`projection::listed`). In all O((p + k) log p + k·L) for k kept pieces and L the largest
 // lcm, where before O(q log q).
-fn ended(found: IntervalSet, mut kept: Vec<Kept>, work: &mut Work) -> Result<(IntervalSet, bool), Refusal> {
+fn ended(
+    found: IntervalSet,
+    mut kept: Vec<Kept>,
+    work: &mut Work,
+) -> Result<(IntervalSet, bool), Refusal> {
     if kept.is_empty() {
         return Ok((found, false));
     }
@@ -844,8 +848,10 @@ fn ended(found: IntervalSet, mut kept: Vec<Kept>, work: &mut Work) -> Result<(In
         (l, u) => (l.flatten(), u.flatten()),
     };
     let between = IntervalSet::range(
-        l.as_ref().map_or(End::NegInf, |l| fin(&(l + &Int::from(1)))),
-        u.as_ref().map_or(End::PosInf, |u| fin(&(u - &Int::from(1)))),
+        l.as_ref()
+            .map_or(End::NegInf, |l| fin(&(l + &Int::from(1)))),
+        u.as_ref()
+            .map_or(End::PosInf, |u| fin(&(u - &Int::from(1)))),
     );
     let mut pieces: Vec<(End, End)> = found.meet(&between).into_pieces();
     if let Some(l) = &l {
@@ -862,7 +868,14 @@ fn ended(found: IntervalSet, mut kept: Vec<Kept>, work: &mut Work) -> Result<(In
             let (End::Fin(a), End::Fin(b)) = (a, b) else {
                 unreachable!("a kept piece between the rays is bounded");
             };
-            projection::listed(&Int::from(a), &Int::from(b), &k.step, &k.have, work, &mut pieces)?;
+            projection::listed(
+                &Int::from(a),
+                &Int::from(b),
+                &k.step,
+                &k.have,
+                work,
+                &mut pieces,
+            )?;
         }
     }
     Ok((IntervalSet::from_pieces(pieces), true))
@@ -945,7 +958,10 @@ fn ray_from(
             Some(s) if *s < lcm => s.clone(),
             _ => lcm.clone(),
         };
-        let n = count.to_i128().and_then(|n| u64::try_from(n).ok()).unwrap_or(u64::MAX);
+        let n = count
+            .to_i128()
+            .and_then(|n| u64::try_from(n).ok())
+            .unwrap_or(u64::MAX);
         work.charge(n / 64 + 1)?;
         let q = Periodic {
             step: k.step.clone(),
@@ -2339,14 +2355,38 @@ mod tests {
                 }
             }
         }
-        let p = Formula::And(super::super::Shared::new(vec![
+        // Two equal parts under two parents are one node. (Under one parent a repeated part
+        // is kept once, so `p || q` itself is `p`.)
+        let p = Formula::Or(super::super::Shared::new(vec![
             ge(&[("x", 1)], 0),
             ge(&[("y", 1)], 0),
         ]));
-        let q = Formula::And(super::super::Shared::new(p.kids().to_vec()));
-        let f = Formula::Or(super::super::Shared::new(vec![p, q]));
+        let q = Formula::Or(super::super::Shared::new(p.kids().to_vec()));
+        let under = |part: Formula, z: i64| {
+            Formula::And(super::super::Shared::new(vec![part, ge(&[("z", 1)], z)]))
+        };
+        let f = Formula::Or(super::super::Shared::new(vec![
+            under(p.clone(), 0),
+            under(q.clone(), 1),
+        ]));
         let g = super::super::canonical_parts(&f);
-        assert_eq!(Id::any(&g.kids()[0]), Id::any(&g.kids()[1]));
+        let inner = |k: &Formula| {
+            let parts: Vec<_> = k
+                .kids()
+                .iter()
+                .filter(|c| !matches!(c, Formula::Con(_)))
+                .cloned()
+                .collect();
+            assert_eq!(parts.len(), 1, "{k:?}");
+            Id::any(&parts[0])
+        };
+        assert_eq!(g.kids().len(), 2, "{g:?}");
+        assert_eq!(inner(&g.kids()[0]), inner(&g.kids()[1]));
+        let pq = super::super::canonical_parts(&Formula::Or(super::super::Shared::new(vec![
+            p.clone(),
+            q,
+        ])));
+        assert_eq!(pq, super::super::canonical_parts(&p));
     }
 
     /// A disjunct with a stride keeps its holes: `x != 1 || x + 2 * y == 0` (the shape of the
@@ -2545,15 +2585,26 @@ mod tests {
                                 })
                             })
                             .collect();
-                        let e = |x: i64| if x < -12 { period(x) } else { x <= 12 && listed[(x + 12) as usize] };
+                        let e = |x: i64| {
+                            if x < -12 {
+                                period(x)
+                            } else {
+                                x <= 12 && listed[(x + 12) as usize]
+                            }
+                        };
                         // The rule: `d` the least value where `E` and its period differ (one
                         // above 4 at the latest), `l` the greatest value of `E` below it, then
                         // `(-inf, l]` and `E` above `l`.
-                        let d = (-12..=12).find(|&x| e(x) != period(x)).expect("a difference");
+                        let d = (-12..=12)
+                            .find(|&x| e(x) != period(x))
+                            .expect("a difference");
                         let l = (-12..d).rev().find(|&x| e(x)).expect("a value below");
                         let points = |from: i64| {
                             IntervalSet::from_pieces(
-                                (from..=12).filter(|&x| e(x)).map(|x| (End::of(x), End::of(x))).collect(),
+                                (from..=12)
+                                    .filter(|&x| e(x))
+                                    .map(|x| (End::of(x), End::of(x)))
+                                    .collect(),
                             )
                         };
                         let want = IntervalSet::range(End::NegInf, End::of(l)).join(&points(l + 1));
@@ -2570,7 +2621,10 @@ mod tests {
                                 step: Int::from(step),
                                 have: (0..step).map(period).collect(),
                             }];
-                            let mut work = Work { used: 0, limit: u64::MAX };
+                            let mut work = Work {
+                                used: 0,
+                                limit: u64::MAX,
+                            };
                             assert_eq!(
                                 ended(points(cut + 1), kept, &mut work),
                                 Ok((want.clone(), true)),
@@ -3122,14 +3176,19 @@ mod tests {
         assert_eq!(project(&f_flip, "b"), exact_b);
         let q_flip = EXACT_QUESTIONS.replace(0);
         let loop_flip = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
-        println!("questions and loop work: same=({q_same}, {loop_same}), flip=({q_flip}, {loop_flip})");
+        println!(
+            "questions and loop work: same=({q_same}, {loop_same}), flip=({q_flip}, {loop_flip})"
+        );
 
         for limit in [loop_same, loop_flip] {
             EXACT_LIMIT_SET.set(Some(limit));
             let same = project_each_exact(&f_same, &[a("b")]).unwrap().0;
             let flip = project_each_exact(&f_flip, &[a("b")]).unwrap().0;
             EXACT_LIMIT_SET.set(None);
-            assert_eq!(same, flip, "one equation written with the other sign, limit {limit}");
+            assert_eq!(
+                same, flip,
+                "one equation written with the other sign, limit {limit}"
+            );
         }
 
         // Case A-2: `x >= 0` scaled to `2 * x >= 0` keeps the same cover input.
@@ -3152,7 +3211,10 @@ mod tests {
             let unit = project_each_exact(&g(1), &[a("x")]).unwrap().0;
             let scaled = project_each_exact(&g(2), &[a("x")]).unwrap().0;
             EXACT_LIMIT_SET.set(None);
-            assert_eq!(scaled, unit, "2x >= 0 and x >= 0 are one row, limit {limit:?}");
+            assert_eq!(
+                scaled, unit,
+                "2x >= 0 and x >= 0 are one row, limit {limit:?}"
+            );
         }
         assert_eq!(
             project_each_exact(&g(1), &[a("x")]).unwrap().0,
@@ -3178,7 +3240,7 @@ mod tests {
         f.map_cons(&|c| {
             Formula::Con(Con {
                 lin: c.lin.times(k),
-                rel: c.rel.clone(),
+                rel: c.rel,
             })
         })
     }
@@ -3275,7 +3337,9 @@ mod tests {
                     if let (Ok((a, ca)), Ok((b, cb))) = (&first, other) {
                         for (s, (x, y)) in a.iter().zip(b).enumerate() {
                             if let (Ok(x), Ok(y)) = (x, y)
-                                && (x != y || ca.contains(&Refusal::Repeats) != cb.contains(&Refusal::Repeats))
+                                && (x != y
+                                    || ca.contains(&Refusal::Repeats)
+                                        != cb.contains(&Refusal::Repeats))
                             {
                                 differ.push(format!(
                                     "round {round} limit {limit:?} symbol {s}: {x} {ca:?} and {y} {cb:?}: {f} and {name}"
@@ -3298,7 +3362,10 @@ mod tests {
                     repeats += usize::from(kept);
                     match &want {
                         Some(want) if got != &want[s] => {
-                            wrong.push(format!("round {round} symbol {s}: {got} not {}: {f}", want[s]));
+                            wrong.push(format!(
+                                "round {round} symbol {s}: {got} not {}: {f}",
+                                want[s]
+                            ));
                         }
                         Some(_) => {}
                         None => {

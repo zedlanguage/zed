@@ -63,3 +63,42 @@ fn the_cover_is_of_order_n_in_its_answer_and_in_its_questions() {
         assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
     });
 }
+
+/// The answer for a set with holes without end (PRES-cover-tail-writing, `exact::ended`): the
+/// even integers and the `n + 1` odd values `4z + 1`, z in `0..=n`, agree with their period, the
+/// evens, below 0 and above `4n + 1`, so the answer is `(-inf, 0]`, the set exactly between, and
+/// `[4n + 2, +inf)`, with the cause `Repeats`. The walks of `ended` pass the pieces of the set
+/// between and list the values of the tails kept there: of order n.
+#[test]
+fn the_answer_for_holes_without_end_is_of_order_n_in_its_exceptions() {
+    use zed_tests::scaling;
+    use zedc::store::interval::End;
+    use zedc::store::presburger::Refusal;
+    let make = |n: usize| {
+        let n = n as i64;
+        Formula::or(vec![
+            Formula::Con(Con::eq(&l("x"), &l("y").times(2))),
+            Formula::and(vec![
+                Formula::Con(Con::eq(&l("x"), &l("z").times(4).plus(&Lin::constant(1)))),
+                member(&a("z"), &IntervalSet::of(0, n)),
+            ]),
+        ])
+    };
+    let want = |n: i64| {
+        let mut pieces = vec![(End::NegInf, End::of(0))];
+        pieces.extend(
+            (1..=4 * n + 1)
+                .filter(|v| v % 2 == 0 || v % 4 == 1)
+                .map(|v| (End::of(v), End::of(v))),
+        );
+        pieces.push((End::of(4 * n + 2), End::PosInf));
+        IntervalSet::from_pieces(pieces)
+    };
+    let small = project_each_exact(&make(4), &[a("x")]);
+    assert_eq!(small, Ok((vec![Ok(want(4))], vec![Refusal::Repeats])));
+    let inputs = scaling::inputs(400, make);
+    scaling::check_order("exact cover: evens and n odd exceptions", 400, 1, |n| {
+        let r = std::hint::black_box(project_each_exact(&inputs[&n], &[a("x")]));
+        assert_eq!(r, Ok((vec![Ok(want(n as i64))], vec![Refusal::Repeats])));
+    });
+}

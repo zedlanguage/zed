@@ -18391,7 +18391,16 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result
     // Writings with other parts, such as a shared part taken out by hand, are other inputs:
     // there the answer, where given, is still one (the exact set, or for holes without end the
     // set `exact::ended` reads from it), while whether a limit refuses it depends on the work
-    // each writing needs.
+    // each writing needs. Proof, by the step that answers: the contradiction check answers
+    // only an empty set, which is exact; `one_row` only a box and one row whose equation has
+    // coefficients 1 and -1, where each atom's values are one range, given exactly
+    // (`OneRow::project`); `row_sums` a unique point or the exact join of rows over atoms in
+    // finite unions of ranges; `certified_domains` only difference rows and forests it
+    // certifies exact (its proof). Each of these answers the exact set `E`, a finite union of
+    // ranges, with no cause, and none can answer where `E` has holes without end, as no finite
+    // union of ranges is such a set. Any other answer is the cover's: `E`, or with holes
+    // without end the set `exact::ended` reads from `E` alone, with the cause `Repeats`. So
+    // every writing that is answered gets one set and one cause, functions of `E`.
     // The solver alone keeps `f` as written, as before the cover: `canonical_parts` cost
     // `l01_38_omega_test::bench::disj_groups::row_sums::
     // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
