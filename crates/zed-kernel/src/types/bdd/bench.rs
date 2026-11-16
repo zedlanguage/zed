@@ -264,13 +264,23 @@ fn parity_built_a_literal_at_a_time_scales() {
     // only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G
     // instructions to 1.48G and 15.31G (10.3 times), 221M and 2.31G bytes to 138M and 1.39G
     // (10.1 times), and 10.4 s to 7.0 s at load 11 to 22.
+    //
+    // The bound is proved for these inputs (author decision P300: an `O(n log n)` method read at
+    // or under `8 ln(8n)/ln n`, 10.40 at 1,024): a set insert into a treap whose priorities are
+    // drawn (module `priority`) walks one path, of expected depth at most `T0 + n(n - 1)/p +
+    // 2c H_n` (COMPLEXITY K123), and `T0`, the atoms whose digest another atom of the set shares,
+    // is 0 here, which the assertion below checks on every input.
     let n = 1 << 10;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
             .map(|j| {
-                (0..m as u64)
-                    .map(|i| Part::literal(atom(j * SHAPE_STRIDE + 16 * m as u64 + i)))
-                    .collect::<Vec<_>>()
+                let rows: Vec<Row> = (0..m as u64)
+                    .map(|i| atom(j * SHAPE_STRIDE + 16 * m as u64 + i))
+                    .collect();
+                let digests: std::collections::BTreeSet<u64> =
+                    rows.iter().map(|r| r.digest()).collect();
+                assert_eq!(digests.len(), m, "atoms of one digest");
+                rows.into_iter().map(Part::literal).collect::<Vec<_>>()
             })
             .collect::<Vec<_>>()
     });
