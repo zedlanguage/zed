@@ -1024,6 +1024,30 @@ fn a_memo_filled_by_the_first_run_of_each_size_scales_as_its_first_runs_do() {
     );
 }
 
+/// A run at 8n whose first run does work the later runs skip, as one filling a memo in its
+/// input does, is measured in the state the run at n is measured in whenever the cold run
+/// would raise the note at [`PREFERRED`] or fail: 8n runs again, and the second run at n is
+/// compared with the least of the two (PERF-permission-reverse-first-run). Here the warm runs
+/// are 1000 and 8000 passes, 8 times; the cold run at 8n takes 10,000, 10 times the warm run at
+/// n, so before this the check passed with a note at 10.0. A cold run at 8n under the note is
+/// not run again, since the least of two could only be lower.
+#[test]
+fn a_cold_run_at_8n_at_the_note_is_measured_again_warm() {
+    static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut meter = Meter {
+        read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
+        unit: "passes",
+        instructions: true,
+    };
+    let cold_small = |i: usize| if i == 0 { 1250 } else { 1000 };
+    let cold_large = |i: usize| if i == 0 { 10_000 } else { 8000 };
+    let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, cold_small, cold_large);
+    assert_eq!((message, smalls, larges), (None, 2, 2));
+    let under_note = |i: usize| if i == 0 { 8900 } else { 8000 };
+    let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, cold_small, under_note);
+    assert_eq!((message, smalls, larges), (None, 2, 1));
+}
+
 /// A comparison of two runs that are not one pass at n and 8n holds its ratio to the limit
 /// given, in the check of the first runs and in that of the runs measured: a ratio equal to
 /// it passes, one over it fails with the reason given, whichever check it is over in.

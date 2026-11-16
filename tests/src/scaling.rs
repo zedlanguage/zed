@@ -414,7 +414,8 @@ impl Meter {
     /// The one run at 8n is cold while the run at n follows the warm-up, so a memo filled by the
     /// first run of each size (one the process keeps, or one in the test's input) counts at 8n
     /// only. A count of instructions therefore runs 8n a second time when the comparison of the
-    /// first is over the limit, and takes the least of the two (FAIL-scaling-cold-8n-bytes; see
+    /// first is over the limit, or at the note of [`PREFERRED`] or over it, and takes the least
+    /// of the two (FAIL-scaling-cold-8n-bytes, PERF-permission-reverse-first-run; see
     /// [`Meter::again_when_over`]).
     fn repeats(&self) -> (usize, usize) {
         if self.instructions {
@@ -434,8 +435,8 @@ impl Meter {
         }
     }
 
-    /// Whether a comparison whose one run at the larger size is over the limit runs that size
-    /// once more and takes the least of the two: on a count of instructions, which takes one run
+    /// Whether a comparison whose one run at the larger size is over the limit, or at the note
+    /// of [`PREFERRED`] or over it, runs that size once more and takes the least of the two: on a count of instructions, which takes one run
     /// of each size (see [`Meter::repeats`]). Processor time already takes the fastest of five.
     pub(crate) fn again_when_over(&self) -> bool {
         self.instructions
@@ -912,16 +913,36 @@ fn compare_by_dyn(
         // again only when the comparison of its first run is over the limit, in work or in
         // bytes, and take the least of the two. Its verdict is that of the least of two runs at
         // 8n always, since the least is never over when the first is not, and a passing check
-        // still costs 10 times the time at n; only a check over on its cold run costs 18. A
-        // passing check prints and records the ratio of the cold run at 8n, at most a little over
-        // that of the least of two.
+        // still costs 10 times the time at n; only a check over on its cold run costs 18.
+        //
+        // The same holds for the note at [`PREFERRED`] (PERF-permission-reverse-first-run): a
+        // warm run at n against a cold run at 8n compares two states, and a memo in the test's
+        // input that the first run of each size fills in linear time put a linear check over
+        // the note. The reverse case of l01_26's
+        // `the_permission_of_an_overload_is_checked_in_linear_time` read 10.45 times: 38.26M
+        // instructions on the second run at n against 399.8M on the first at 8n, while the first
+        // runs took 50.0M and 399.8M (8.0 times) and the second runs 38.26M and 305.9M (8.0
+        // times; load 27 to 57, 2026-11-15). So 8n runs again also when the work of its first
+        // run is at the note or over it, and the ratio printed, noted, recorded and held is then of the second run at n against the
+        // least of the two at 8n. The verdict and the note are those of always taking the
+        // least of two runs at 8n: the least is never at or over a bound the first run is under.
+        // Only a check at the note or over it on its cold run costs 18 times the time at n; one
+        // under the note costs 10 and prints and records the ratio of the cold run at 8n, which
+        // may be a little over that of the least of two but is under the note either way. The
+        // trigger changes no verdict and no note, so it is not a threshold in the sense of the
+        // standing rule (no-thresholds): it only saves the second run at 8n where it cannot
+        // change the outcome. A bound given by the test prints no note, so it runs again at its
+        // limit only.
+        let note = match bound {
+            Bound::Order(power) => PREFERRED * scale(power),
+            Bound::Given(..) => f64::INFINITY,
+        };
         let over_now = |large: &Work| {
             let bytes = large_bytes.get().max(1) as f64 / small_bytes.get().max(1) as f64;
+            let units = large.units as f64 / small.units as f64;
             (measures == Measures::Both && over(bytes, limit))
-                || over(
-                    large.units as f64 / small.units as f64,
-                    limit * meter.allowance(),
-                )
+                || over(units, limit * meter.allowance())
+                || units >= note * meter.allowance()
         };
         if meter.again_when_over() && over_now(&large) {
             let again = meter.work(run_large);
