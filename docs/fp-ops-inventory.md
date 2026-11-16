@@ -206,4 +206,10 @@ FP-ops-order (`sort`, `.orderedValues`, `take`, `drop`, `slice`, `takeWhile`, `.
 `.maxBy`, the reverse of an order), FP-ops-concat-zip (`++`, `zip`) and FP-ops-scan (`scan`,
 `.chunkBy`).
 
+Built by FP-ops-scan (2026-11-16): `x.scan(op)` by the operators `.reduce` takes, each entry
+the fold of its prefix grouped by the canonical tree of DESIGN sec:reduction item 1, so the
+last entry is `x >< op` on floats too; `.chunkBy(f)` with the runs of equal `f` value under
+their index and the entries keeping their keys. `scanr` (a scan reading the reverse of an
+order) waits on FP-ops-order.
+
 The status of each of these is in the plan rows and in STATUS.md.

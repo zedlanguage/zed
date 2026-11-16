@@ -1,10 +1,15 @@
 //! The standard operations on one level of a family that plan row FP-ops-run (author P229)
 //! builds into zedc as `map` is (plan row MAP-pure-zed): `.count`, `.sum` and `.reduce(op)`,
 //! the quantifiers `.any`, `.all` and `.find` (step L3.15a), and `.first` and `.last`
-//! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic").
+//! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic"); and, by plan row
+//! FP-ops-scan, `.scan(op)` and `.chunkBy(f)` (step L5.3).
 
 use super::remap::Apply;
 use crate::check::*;
+
+/// `Ck::fold_level`, the check of the fold of one level, passed in by walk.rs as `Apply` is.
+pub(in crate::check) type FoldLevel<'t, 'a> =
+    fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span, Span, FoldForm) -> Ty;
 
 /// A quantifier of step L3.15a.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,5 +269,129 @@ impl<'t, 'a> Ck<'t, 'a> {
         out.union(&answer)
             .union(&gives.loose_ty())
             .union(&all.loose_ty())
+    }
+
+    /// `x.scan(op)`, `op` the operator section or the word `max` or `min` (step L5.3; the
+    /// method register's `scan` row; DESIGN.md sec:type_language, the `m.scan(op)` row): each
+    /// family `x` may be, with the same keys, each entry the fold by `op` of the entries up to
+    /// it in key order. `op` is checked as the fold `x >< op` is (`fold`, `Ck::fold_level`,
+    /// passed in by walk.rs): the operators whose associativity is built in, on the entries
+    /// they take. A prefix holds its own entry, so it is never empty and no entry is `#empty`;
+    /// each arrow keeps its keys and its misses, so the bounds ride through as at `map`. A
+    /// loose atom `x` may be passes through.
+    // Complexity tradeoff: the type is one fold check and one copy of each family's arrows,
+    // O(arrows), as `map_end` makes; typing each prefix apart would cost a check per entry for
+    // the same type, since every prefix folds entries of one type.
+    pub(super) fn scan_end(
+        &mut self,
+        x: &Ty,
+        op: Reducer,
+        span: Span,
+        fold: FoldLevel<'t, 'a>,
+    ) -> Ty {
+        // Typed so that the import graph of step S.1f reads `form.word()` as `FoldForm::word`,
+        // not as `Ck::word` of walk.rs, which would close a cycle walk.rs -> fp_ops.rs.
+        let form: FoldForm = FoldForm::Scan;
+        let out = self.passing(x, form.word(), span, None);
+        let example = format!("[1, 2, 3].scan({})", op.written());
+        let Some(sigs) = self.levels_of(x, form.word(), &example, span) else {
+            return Ty::empty();
+        };
+        let folded = fold(self, op, &x.without_loose(), span, span, form);
+        // `fold_level` gives the type of no value only after its error: a fold it accepts gives
+        // the carrier, or `#empty` for a family with no entries.
+        if folded.lists_nothing() {
+            return Ty::empty();
+        }
+        // The `#empty` `fold_level` adds for a level that may be empty; no entry is an atom,
+        // since `fold_level` takes only entries of the operator's carrier.
+        let entry = folded.without(&KType::atom("empty"));
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut families = Ty::empty();
+        for sig in sigs {
+            let mut s = (*sig).clone();
+            for a in &mut s.arrows {
+                a.result = entry.union(&Ty::set(&a.result.atoms() & &misses));
+            }
+            s.word = None;
+            s.needs = Vec::new();
+            s.note_held();
+            families = families.union(&Ty::func(Arc::new(s)));
+        }
+        out.union(&families)
+    }
+
+    /// `x.chunkBy(f)`, `f` checked (step L5.3; DESIGN.md sec:type_language, the `m.chunkBy(f)`
+    /// row): the maximal runs of entries, in key order, on which `f` gives one value, each run
+    /// under its index from 0, each entry kept under its own key: `[1, 1, 2].chunkBy(x -> x)`
+    /// is `{0 -> {0 -> 1, 1 -> 1}, 1 -> {2 -> 2}}`. The result is `int ->? F`, `F` each family
+    /// `x` may be with every key now optional, as after `where`. Gives the result and what `f`
+    /// gives, which walk.rs checks is data, since the run's end is found by comparing it with
+    /// `==`; `None` after an error. A loose atom `x` may be passes through. `apply` is
+    /// `Ck::apply`, passed in by walk.rs.
+    // Complexity tradeoff: one application of `f` to the union of the entries and one copy of
+    // each family's arrows, O(arrows); the tighter guarantee of the bound table (each run holds
+    // at least one entry, the runs are `0 ..< runs`) is not tracked by these types, which the
+    // table allows ("else empty"), so the outer arrow is partial.
+    pub(super) fn chunk_by_end(
+        &mut self,
+        x: &Ty,
+        f: Arg<'a>,
+        span: Span,
+        apply: Apply<'t, 'a>,
+    ) -> Option<(Ty, Ty)> {
+        let word = "`chunkBy`";
+        let shape = "x -> x.id";
+        let at = f.at.unwrap_or(span);
+        let out = self.passing(x, word, span, None);
+        let Some(fsig) = only_fn(&f.ty) else {
+            let t = self.text(&f.ty);
+            self.error_offering(
+                at,
+                format!("{word} takes a function, and this value is {t}"),
+                [format!(
+                    "repair: pass a function of one parameter, as `{shape}`"
+                )],
+            );
+            return None;
+        };
+        if !self.takes_args(word, &fsig, 1, shape, at) {
+            return None;
+        }
+        let sigs = self.levels_of(x, word, "[1, 1, 2].chunkBy(x -> x)", span)?;
+        let entries = Self::entries_of(&sigs);
+        let gives = match entries.lists_nothing() {
+            true => Ty::empty(),
+            false => {
+                let what = Label::Text("the function given to `chunkBy`");
+                apply(self, what, &fsig, vec![Some(Arg::of(entries))], false, span).0
+            }
+        };
+        let not_found = Ty::set(KType::atom("notFound"));
+        let mut runs = Ty::empty();
+        for sig in sigs {
+            let mut s = (*sig).clone();
+            for a in &mut s.arrows {
+                a.result = a.result.union(&not_found);
+            }
+            s.dense = false;
+            s.word = None;
+            s.needs = Vec::new();
+            s.note_held();
+            runs = runs.union(&Ty::func(Arc::new(s)));
+        }
+        // The runs are ranked from 0, so the keys are one integer interval, as a range's from
+        // `0` are (`Ck::range_end`).
+        let int = Ty::carrier(Carrier::Int);
+        let mut outer = Sig::one(
+            super::super::positional(1),
+            vec![int],
+            runs.union(&not_found),
+        );
+        outer.arrows[0].partial = true;
+        outer.data = true;
+        outer.dense = true;
+        outer.note_held();
+        Some((out.union(&Ty::func(Arc::new(outer))), gives))
     }
 }

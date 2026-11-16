@@ -209,6 +209,157 @@ fn first_and_last_are_the_ends_in_key_order() {
     );
 }
 
+/// Step L5.3: `scan` is the family of prefix folds, and its last entry is the fold; `.chunkBy`
+/// groups runs of equal key, each run under its index, the entries keeping their keys.
+#[test]
+fn scan_and_chunk_by() {
+    prints(
+        "scan",
+        &[
+            ("[1, 2, 3].scan((+)) == [1, 3, 6]", "true"),
+            ("[4, 1, 7, 2].scan((+)).last == [4, 1, 7, 2] >< (+)", "true"),
+            ("[4, 1, 7, 2].scan(max).last == [4, 1, 7, 2] >< max", "true"),
+            (
+                "[1, 1, 2, 1].chunkBy(x -> x) == {0 -> {0 -> 1, 1 -> 1}, 1 -> {2 -> 2}, 2 -> {3 -> 1}}",
+                "true",
+            ),
+        ],
+    );
+}
+
+/// Step L5.3: a scan keeps the keys of its family, in key order; each entry is the fold of
+/// its prefix by the operator; an empty family is its own scan.
+#[test]
+fn a_scan_keeps_the_keys_and_folds_each_prefix() {
+    prints(
+        "scan_more",
+        &[
+            ("[3, 1, 4, 1, 5].scan(min) == [3, 1, 1, 1, 1]", "true"),
+            ("[3, 1, 4, 1, 5].scan(max) == [3, 3, 4, 4, 5]", "true"),
+            ("[1, 2, 3, 4].scan((*)) == [1, 2, 6, 24]", "true"),
+            (
+                "[true, true, false, true].scan((&&)) == [true, true, false, false]",
+                "true",
+            ),
+            (
+                "[false, true, false].scan((||)) == [false, true, true]",
+                "true",
+            ),
+            (
+                "{\"b\" -> 2, \"a\" -> 5, \"c\" -> 7}.scan((+)) == {\"a\" -> 5, \"b\" -> 7, \"c\" -> 14}",
+                "true",
+            ),
+            ("[7].scan((+)) == [7]", "true"),
+            ("{}.scan((+)).count", "0"),
+            ("{}.scan(max).count", "0"),
+            ("[1, 2].where(x -> x > 5).scan((+)).count", "0"),
+            ("[1, 2, 3, 4, 5, 6, 7].scan((+)).last", "28"),
+            ("[2, 4, 6].reduce((+)) == [2, 4, 6].scan((+)).last", "true"),
+            (
+                "[5, 7, 9].where(x -> x > 5).scan((+)) == {1 -> 7, 2 -> 16}",
+                "true",
+            ),
+        ],
+    );
+}
+
+/// sec:reduction item 1: a float scan's entry `i` is the canonical-tree fold of entries
+/// `0..=i`, the grouping `x >< (+)` uses, and not the left fold. On `[1e16, 1, 1, 1]` the tree
+/// of all four is `(1e16 + 1) + (1 + 1)`, which is `1e16 + 2`, while the left fold adds each
+/// `1` to `1e16` alone and rounds it away each time, giving `1e16`; the tree of the first
+/// three, `(1e16 + 1) + 1`, is the left fold's grouping, so those agree.
+#[test]
+fn a_float_scan_rounds_each_prefix_as_its_fold_does() {
+    let x = "[10000000000000000.0, 1.0, 1.0, 1.0]";
+    let three = "[10000000000000000.0, 1.0, 1.0]";
+    let left = "foldl(0.0, (a, v) -> a + v)";
+    prints(
+        "scan_float",
+        &[
+            (&format!("{x}.scan((+))[3] == {x} >< (+)"), "true"),
+            (&format!("{x}.scan((+))[3] == {x}.{left}"), "false"),
+            (&format!("{x}.scan((+))[2] == {three} >< (+)"), "true"),
+            (&format!("{x}.scan((+))[2] == {three}.{left}"), "true"),
+            ("[1.5, 2.5, 3.0].scan((+)) == [1.5, 4.0, 7.0]", "true"),
+        ],
+    );
+}
+
+/// Step L5.3: `chunkBy` splits where `f`'s value changes, the last run included; a run
+/// keeps the keys of its entries; an empty family has no runs.
+#[test]
+fn chunk_by_splits_where_the_value_changes() {
+    prints(
+        "chunk",
+        &[
+            (
+                "[1, 2, 3].chunkBy(x -> 0) == {0 -> {0 -> 1, 1 -> 2, 2 -> 3}}",
+                "true",
+            ),
+            (
+                "[1, 2, 3].chunkBy(x -> x) == {0 -> {0 -> 1}, 1 -> {1 -> 2}, 2 -> {2 -> 3}}",
+                "true",
+            ),
+            (
+                "[1, 3, 6, 4, 5].chunkBy(x -> x > 3) == {0 -> {0 -> 1, 1 -> 3}, 1 -> {2 -> 6, 3 -> 4, 4 -> 5}}",
+                "true",
+            ),
+            (
+                "[1, 3, 6, 2, 5].chunkBy(x -> x > 3) == {0 -> {0 -> 1, 1 -> 3}, 1 -> {2 -> 6}, 2 -> {3 -> 2}, 3 -> {4 -> 5}}",
+                "true",
+            ),
+            (
+                "{\"c\" -> 1, \"a\" -> 1, \"b\" -> 2}.chunkBy(x -> x) == {0 -> {\"a\" -> 1}, 1 -> {\"b\" -> 2}, 2 -> {\"c\" -> 1}}",
+                "true",
+            ),
+            ("[1, 2].where(x -> x > 5).chunkBy(x -> x).count", "0"),
+            ("{}.chunkBy(x -> x).count", "0"),
+            // An atom `f` gives is compared as data, as `group`'s keys are.
+            (
+                "[1, 2, 3].chunkBy(x -> ({1 -> 0})[x]) == {0 -> {0 -> 1}, 1 -> {1 -> 2, 2 -> 3}}",
+                "true",
+            ),
+            ("[4, 4, 5].chunkBy(x -> x).count", "2"),
+            ("[4, 4, 5].chunkBy(x -> x)[0] == {0 -> 4, 1 -> 4}", "true"),
+            ("[4, 4, 5].chunkBy(x -> x)[2] == #outOfBounds", "true"),
+            (
+                "[4, 4, 5].chunkBy(x -> x > 4).map(r -> r.sum) == [8, 5]",
+                "true",
+            ),
+        ],
+    );
+}
+
+/// The misuses of `scan` and `chunkBy`, each named in the program's own words.
+#[test]
+fn a_misused_scan_or_chunk_by_is_rejected_in_plain_words() {
+    saying(
+        "scan",
+        &[
+            ("[1, 2].scan()", "`scan` takes one operator"),
+            (
+                "[1, 2].scan((-))",
+                "`.scan` folds in any grouping, and `-` is not associative",
+            ),
+            (
+                "[1, 2].scan((a, b) -> a)",
+                "a scan `.scan` by a function other than",
+            ),
+            ("(3).scan((+))", "`.scan` reads the entries of a family"),
+            ("[1, 2].chunkBy()", "`chunkBy` takes one function"),
+            ("[1, 2].chunkBy(3)", "`chunkBy` takes a function"),
+            (
+                "[1, 2].chunkBy((a, b) -> a)",
+                "`chunkBy` calls its function with one argument",
+            ),
+            (
+                "(3).chunkBy(x -> x)",
+                "`chunkBy` reads the entries of a family",
+            ),
+        ],
+    );
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {

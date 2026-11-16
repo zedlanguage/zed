@@ -303,4 +303,250 @@ impl<'a> Elab<'a> {
             Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
         )
     }
+
+    /// `x.scan(op)` (step L5.3; DESIGN.md sec:reduction item 1): the family with `x`'s keys
+    /// whose entry at the `i`-th key is the fold by `p` of the entries up to it, each such fold
+    /// grouped as the kernel `fold` groups the whole level, by the canonical tree, so on floats
+    /// too the last entry is `x >< op` and every entry is the fold of its prefix. The walk is
+    /// a `gen` over the entries in key order; each frame is `(e, s, k, y)`: `e` the entry to
+    /// take next, or `()` past the end; `s` the stack of the blocks the entries so far make;
+    /// `k` and `y` the key of the entry just taken and the fold up to it. The result is the
+    /// frames reindexed to `k -> y`. A loose atom `x` passes through, and an empty `x` is its
+    /// own scan.
+    // The canonical tree (DESIGN.md sec:reduction item 1; `CanonicalTree` in the kernel's
+    // exact.rs) folds `n` entries as R(n) = R(n - p) ⊕ B(p), `p` the lowest set bit of `n`, and
+    // a block of `2^j` entries as its left half ⊕ its right half. After `n` entries the stack
+    // holds one block per set bit of `n`, the greatest at the bottom, each node
+    // `(size, B, R, below)` with `B` the block's fold and `R` the fold of every entry up to
+    // its end, R(n) for the top node. Taking entry `n + 1` pushes its leaf and merges the top
+    // two blocks while their sizes are equal, which is the carry of adding 1 to `n`, so the
+    // blocks are those of n + 1 with each merge `left ⊕ right`; then the new top's
+    // `R = below.R ⊕ B` is R(n + 1) by the recurrence, since its block is B(p).
+    // Complexity tradeoff: each entry costs one entry step, O(log n), and its merges; a merge
+    // removes a block, so over the walk the merges number fewer than n, and the folds by `p`
+    // fewer than 2n: O(n log n) with n outer frames and fewer than 2n inner ones. The naive
+    // form, one kernel `fold` per prefix, gives the same values in O(n²) folds; a serial
+    // left fold, O(n) folds, would round floats otherwise than `x >< op` does, against item 1.
+    pub(super) fn scan_term(&mut self, x: Term, p: Prim) -> Term {
+        let (xs, e0, n0, fr, n, gn, q, y) = (
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+        );
+        let frame = |entry: Term, node: &Arc<str>| {
+            tuple(vec![
+                Term::Prim(Prim::EntryAfter, vec![var(&xs), entry.clone()]),
+                var(node),
+                part(entry, 0),
+                part(var(node), 2),
+            ])
+        };
+        let first = frame(var(&e0), &n0);
+        let init = Term::Let(
+            n0,
+            Shared::new(self.scan_push(part(var(&e0), 1), tuple(Vec::new()), p)),
+            Shared::new(first),
+        );
+        let entry = part(var(&fr), 0);
+        let next = frame(entry.clone(), &n);
+        let pushed = self.scan_push(part(entry.clone(), 1), part(var(&fr), 1), p);
+        let step = Term::Let(n, Shared::new(pushed), Shared::new(next));
+        let frames = Term::Gen {
+            init: Shared::new(init),
+            step: Shared::new(Term::Lam(vec![fr.clone()], Shared::new(step))),
+            guard: Shared::new(Term::Lam(vec![fr], Shared::new(not_at_end(entry)))),
+            pos: GuardPos::Before,
+        };
+        let scan = Term::Reindex {
+            family: Shared::new(var(&gn)),
+            kf: Shared::new(Term::Lam(
+                vec![q.clone(), y.clone()],
+                Shared::new(part(var(&y), 2)),
+            )),
+            vf: Shared::new(Term::Lam(vec![q, y.clone()], Shared::new(part(var(&y), 3)))),
+            witness: zed_kernel::term::Witness::Residue,
+        };
+        let run = Term::Let(gn, Shared::new(frames), Shared::new(scan));
+        let nonempty = Term::Match(
+            Shared::new(var(&e0)),
+            vec![
+                (KPattern::Tuple(Vec::new()), var(&xs)),
+                (KPattern::Wild, run),
+            ],
+        );
+        let body = Term::Match(
+            Shared::new(var(&xs)),
+            vec![
+                (KPattern::AnyAtom, var(&xs)),
+                (
+                    KPattern::Wild,
+                    Term::Let(
+                        e0,
+                        Shared::new(Term::Prim(Prim::FirstEntry, vec![var(&xs)])),
+                        Shared::new(nonempty),
+                    ),
+                ),
+            ],
+        );
+        Term::Let(xs, Shared::new(x), Shared::new(body))
+    }
+
+    /// The stack of [`Self::scan_term`] after the leaf `v` is taken onto `stack`: a `gen`
+    /// whose frames are `(size, B, below)`, from `(1, v, stack)`, each step folding the top
+    /// node's block with `B`, `top.B ⊕ B` at twice the size, while the top's size is `size`;
+    /// then the new node `(size, B, R, below)`, `R` being `B` on an empty stack and
+    /// `below.R ⊕ B` on another.
+    fn scan_push(&mut self, v: Term, stack: Term, p: Prim) -> Term {
+        let (st, ig, m, below) = (self.temp(), self.temp(), self.temp(), self.temp());
+        let op = |a: Term, b: Term| Term::Prim(p, vec![a, b]);
+        let top = part(var(&st), 2);
+        let step = tuple(vec![
+            Term::Prim(Prim::Add, vec![part(var(&st), 0), part(var(&st), 0)]),
+            op(part(top.clone(), 1), part(var(&st), 1)),
+            part(top.clone(), 3),
+        ]);
+        let guard = Term::Match(
+            Shared::new(top.clone()),
+            vec![
+                (KPattern::Tuple(Vec::new()), Term::Lit(Value::Bool(false))),
+                (
+                    KPattern::Wild,
+                    Term::Prim(Prim::Eq, vec![part(top, 0), part(var(&st), 0)]),
+                ),
+            ],
+        );
+        let merges = Term::Gen {
+            init: Shared::new(tuple(vec![int(1), v, stack])),
+            step: Shared::new(Term::Lam(vec![st.clone()], Shared::new(step))),
+            guard: Shared::new(Term::Lam(vec![st], Shared::new(guard))),
+            pos: GuardPos::Before,
+        };
+        let block = part(var(&m), 1);
+        let prefix = Term::Match(
+            Shared::new(var(&below)),
+            vec![
+                (KPattern::Tuple(Vec::new()), block.clone()),
+                (KPattern::Wild, op(part(var(&below), 2), block.clone())),
+            ],
+        );
+        let node = tuple(vec![part(var(&m), 0), block, prefix, var(&below)]);
+        Term::Let(
+            ig.clone(),
+            Shared::new(merges),
+            Shared::new(Term::Let(
+                m.clone(),
+                Shared::new(last_frame(&ig)),
+                Shared::new(Term::Let(
+                    below,
+                    Shared::new(part(var(&m), 2)),
+                    Shared::new(node),
+                )),
+            )),
+        )
+    }
+
+    /// `x.chunkBy(f)` (step L5.3; DESIGN.md sec:type_language, the `m.chunkBy(f)` row): the
+    /// widening `reindex` `(k, v) ↦ ((run(k), k), v)`, `run` numbering from 0 the maximal runs
+    /// of entries, in key order, at which `f` gives one value. The runs are found by a `gen`
+    /// over the entries in key order; each frame is `(e, r, w, k, v)`: `e` the entry to take
+    /// next, or `()` past the end; `k -> v` the entry just taken, `w` what `f` gives at it and
+    /// `r` its run, the run before it when `w` is `==` to that entry's value, else the next.
+    /// `==` takes an atom as data, as `group`'s keys do. A loose atom `x` passes through, and
+    /// an empty `x` has no runs, so it is its own result.
+    // Complexity tradeoff: n entry steps and one `reindex` of n frames, O(n log n), with one
+    // call of `f` per entry. The naive form, a `group` by `f` and then a split of each group
+    // where its keys are not adjacent, needs the rank of each key, O(n log n) too, with a
+    // second pass.
+    pub(super) fn chunk_by_term(&mut self, x: Term, f: Term) -> Term {
+        let (xs, g, e0, fr, w, gn, q, y) = (
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+        );
+        let frame = |entry: Term, run: Term| {
+            tuple(vec![
+                Term::Prim(Prim::EntryAfter, vec![var(&xs), entry.clone()]),
+                run,
+                var(&w),
+                part(entry.clone(), 0),
+                part(entry, 1),
+            ])
+        };
+        let gives = |entry: Term| Term::App(Shared::new(var(&g)), vec![part(entry, 1)]);
+        let init = Term::Let(
+            w.clone(),
+            Shared::new(gives(var(&e0))),
+            Shared::new(frame(var(&e0), int(0))),
+        );
+        let entry = part(var(&fr), 0);
+        let run = part(var(&fr), 1);
+        let same = Term::Prim(Prim::Eq, vec![var(&w), part(var(&fr), 2)]);
+        let next_run = Term::Match(
+            Shared::new(same),
+            vec![
+                (KPattern::Lit(Value::Bool(true)), run.clone()),
+                (KPattern::Wild, Term::Prim(Prim::Add, vec![run, int(1)])),
+            ],
+        );
+        let step = Term::Let(
+            w.clone(),
+            Shared::new(gives(entry.clone())),
+            Shared::new(frame(entry.clone(), next_run)),
+        );
+        let frames = Term::Gen {
+            init: Shared::new(init),
+            step: Shared::new(Term::Lam(vec![fr.clone()], Shared::new(step))),
+            guard: Shared::new(Term::Lam(vec![fr], Shared::new(not_at_end(entry)))),
+            pos: GuardPos::Before,
+        };
+        let key = Term::Prim(Prim::Path, vec![part(var(&y), 1), part(var(&y), 3)]);
+        let chunks = Term::Reindex {
+            family: Shared::new(var(&gn)),
+            kf: Shared::new(Term::Lam(vec![q.clone(), y.clone()], Shared::new(key))),
+            vf: Shared::new(Term::Lam(vec![q, y.clone()], Shared::new(part(var(&y), 4)))),
+            witness: zed_kernel::term::Witness::Residue,
+        };
+        let run = Term::Let(gn, Shared::new(frames), Shared::new(chunks));
+        let nonempty = Term::Match(
+            Shared::new(var(&e0)),
+            vec![
+                (KPattern::Tuple(Vec::new()), var(&xs)),
+                (KPattern::Wild, run),
+            ],
+        );
+        let body = Term::Match(
+            Shared::new(var(&xs)),
+            vec![
+                (KPattern::AnyAtom, var(&xs)),
+                (
+                    KPattern::Wild,
+                    Term::Let(
+                        e0,
+                        Shared::new(Term::Prim(Prim::FirstEntry, vec![var(&xs)])),
+                        Shared::new(nonempty),
+                    ),
+                ),
+            ],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
+    }
+}
+
+/// The tuple of `parts`.
+fn tuple(parts: Vec<Term>) -> Term {
+    Term::Prim(Prim::Tuple, parts)
 }

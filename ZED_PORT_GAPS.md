@@ -3989,6 +3989,12 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `HashSet<Span>` of the `.sum` calls on a family, filled by the checker and read by `contains` in the elaborator | `Info::family_sums`, `Ck::member_end`, `member_call` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` in the checker's findings, as for `main_pushes` |
 | `match` on a `(Prim, &[Value])` pair with slice patterns and a guard (`[Value::Family(f), Value::Tuple(e)] if e.len() == 2`) | `prim_on` in `eval.rs` | None | a `match` on the tuple of the primitive and its arguments, with the length in the pattern |
 
+## Entries from FP-ops-scan (`crates/zedc-check/src/check/walk/fp_ops.rs`, `walk.rs`; `crates/zedc-elab/src/elab/walk/fp_ops.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A method of the checker passed as a plain function pointer `fn(&mut Ck, Reducer, &Ty, Span, Span, FoldForm) -> Ty` (the type `FoldLevel`), so that `walk/fp_ops.rs` calls `Ck::fold_level` of `walk.rs` without importing it, which would close an import cycle between the two modules | `Ck::scan_end`, called from the `ScanFn` frame and the `scan` arm of `walk.rs` | None | a function value passed as an argument, as `apply` is passed to `quantifier_end` |
+
 ## Entries from REDUCE-generic-identity (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `crates/zedc-elab/src/elab/instances.rs`, `walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |

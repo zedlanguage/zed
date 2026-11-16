@@ -60,6 +60,23 @@ fn find(m: Term, p: impl Fn(Term) -> Term, d: i64) -> Term {
     or(least_key(kept), "empty", lit(d))
 }
 
+/// `m.chunkBy(f)` on a list (DESIGN.md sec:type_language, the `m.chunkBy(f)` row): the
+/// reindex `(t, v) ↦ ((run(t), t), v)`, `run(t)` the number of keys `j` in `1..=t` at which
+/// `f` gives a value other than at `j - 1`.
+fn chunk_by(m: Term, f: impl Fn(Term) -> Term + Copy) -> Term {
+    shared(m, |m| {
+        let run = |t: Term| {
+            count(discard_with(m.clone(), |p, v| {
+                let j = key(p, 0);
+                let before = f(get(m.clone(), sub(j.clone(), lit(1))));
+                and(and(lt(lit(0), j.clone()), le(j, t)), not(eq(f(v), before)))
+            }))
+        };
+        let kf = func(|[p, _]| path(vec![run(key(p.clone(), 0)), key(p, 0)]));
+        reindex(m.clone(), kf, func(|[_, v]| v))
+    })
+}
+
 /// The cases: a name, the expression a program writes, and its model.
 fn cases() -> Vec<(&'static str, &'static str, Term)> {
     let xs = || list(&[3, 1, 4, 1, 5]);
@@ -140,6 +157,31 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "foldr_in_order",
             "${[3, 1, 4, 1, 5].foldr((x, a) -> a * 10 + x, 0)}",
             foldr(xs(), func(|[x, a]| add(mul(a, lit(10)), x)), lit(0)),
+        ),
+        (
+            "scan_by_plus",
+            "${[3, 1, 4, 1, 5].scan((+))}",
+            scan(xs(), func(|[a, b]| add(a, b))),
+        ),
+        (
+            "scan_by_max",
+            "${[3, 1, 4, 1, 5].scan(max)}",
+            scan(xs(), func(|[a, b]| bin(Prim::Max, a, b))),
+        ),
+        (
+            "scan_of_a_map",
+            "${{\"b\" -> 2, \"a\" -> 5, \"c\" -> 7}.scan((*))}",
+            shared(ab(), |m| {
+                fam_with(m.clone(), |k| {
+                    let upto = discard_with(m, |p, _| not(lt(k, key(p, 0))));
+                    fold(upto, func(|[a, b]| mul(a, b)), None)
+                })
+            }),
+        ),
+        (
+            "chunk_by_a_test",
+            "${[3, 1, 4, 1, 5].chunkBy(x -> x > 3)}",
+            chunk_by(xs(), big),
         ),
     ]
 }

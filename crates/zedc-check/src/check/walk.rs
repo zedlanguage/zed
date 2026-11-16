@@ -425,6 +425,12 @@ pub(super) enum Frame<'a> {
     /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
     /// span (`reduce_by`).
     ReduceFn(Ty, Span),
+    /// `x.scan(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
+    /// span (step L5.3; `reduce_by`, then `scan_end`).
+    ScanFn(Ty, Span),
+    /// `x.chunkBy(f)`, waiting for `f`: `x`'s type and the call's span (step L5.3;
+    /// `chunk_by_end`).
+    ChunkBy(Ty, Span),
     /// `m >< op`, waiting for `m`: the operator and the span of the reduction.
     Reduce(Reducer, Span),
     /// `m >< f`, `f` not an operator section, waiting for `f`: `m` and the span of the
@@ -1115,6 +1121,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_ty();
                 let t = match self.reduce_by(&f, span, FoldForm::Reduce) {
                     Some(r) => self.family_fold(r, &x, span, FoldForm::Reduce),
+                    None => Ty::empty(),
+                };
+                m.ty(t);
+            }
+            Frame::ScanFn(x, span) => {
+                let f = m.take_ty();
+                let t = match self.reduce_by(&f, span, FoldForm::Scan) {
+                    Some(r) => self.scan_end(&x, r, span, Self::fold_level),
+                    None => Ty::empty(),
+                };
+                m.ty(t);
+            }
+            Frame::ChunkBy(x, span) => {
+                let f = m.take_arg();
+                let at = f.at.unwrap_or(span);
+                let t = match self.chunk_by_end(&x, f, span, Self::apply) {
+                    Some((t, gives)) => {
+                        // The run ends where the function's value changes, found by `==`, so
+                        // the value is data, as a key `group` makes is.
+                        let w = gives.without_loose();
+                        self.data(&w, "`chunkBy`", DataUse::Compare, at, at, Some(span));
+                        t
+                    }
                     None => Ty::empty(),
                 };
                 m.ty(t);
@@ -7321,6 +7350,44 @@ impl<'t, 'a> Ck<'t, 'a> {
                             span,
                             "`reduce` takes one operator, passed by position".to_string(),
                             ["repair: write `xs.reduce((+))`".to_string()],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                // `.scan(op)` and `.chunkBy(f)` (step L5.3, plan row FP-ops-scan), built in as
+                // `reduce` and the quantifiers are.
+                Some(_) if name == "scan" => match (positional, named, curry) {
+                    ([f], [], false) => match f.kind {
+                        ExprKind::Section(op, _) => {
+                            let t = self.scan_end(&x.ty, Reducer::Op(op), span, Self::fold_level);
+                            m.ty(t);
+                        }
+                        _ => {
+                            m.k(Frame::ScanFn(x.ty, span));
+                            m.job(Job::Expr(f));
+                        }
+                    },
+                    _ => {
+                        self.error_offering(
+                            span,
+                            "`scan` takes one operator, passed by position".to_string(),
+                            ["repair: write `xs.scan((+))`".to_string()],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                Some(_) if name == "chunkBy" => match (positional, named, curry) {
+                    ([f], [], false) => {
+                        m.k(Frame::ChunkBy(x.ty, span));
+                        m.job(Job::Arg(f, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            "`chunkBy` takes one function, passed by position, as \
+                             `xs.chunkBy(f)`"
+                                .to_string(),
+                            ["repair: write `xs.chunkBy(x -> x.id)`".to_string()],
                         );
                         m.ty(Ty::empty());
                     }

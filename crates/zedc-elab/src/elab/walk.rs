@@ -201,6 +201,8 @@ enum Frame<'a> {
     FoldDir(Term, bool),
     /// `x.group(f)`, `f` being elaborated: the term of `x` (`group_term`).
     Group(Term),
+    /// `x.chunkBy(f)`, `f` being elaborated: the term of `x` (`chunk_by_term`, step L5.3).
+    ChunkBy(Term),
     /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
     Fold(Prim, Span),
     /// `x.any(p)`, `x.all(p)` or `x.find(p)` once `p` is elaborated: `x`'s term (step
@@ -2243,6 +2245,34 @@ impl<'a> Elab<'a> {
                         return;
                     }
                 },
+                // `.scan(op)` (step L5.3, plan row FP-ops-scan), its operator found as
+                // `reduce`'s is.
+                Some(_) if name == "scan" => match call.positional {
+                    [op] if call.named.is_empty() && !call.curry => {
+                        let t =
+                            (self.reducer_prim(op, call.span)).map(|p| self.scan_term(receiver, p));
+                        m.k(Frame::MemberEnd(wrap));
+                        m.give(t);
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
+                // `.chunkBy(f)` (step L5.3, plan row FP-ops-scan), built in as `group` is.
+                Some(_) if name == "chunkBy" => match call.positional {
+                    [f] if call.named.is_empty() && !call.curry => {
+                        m.k(Frame::MemberEnd(wrap));
+                        m.k(Frame::ChunkBy(receiver));
+                        m.stack.push(Job::Expr(f));
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
                 // The quantifiers of step L3.15a, built in as `map` is.
                 Some(_) if let Some(q) = Quantifier::of(name) => match call.positional {
                     [f] if call.named.is_empty() && !call.curry => {
@@ -2508,6 +2538,10 @@ impl<'a> Elab<'a> {
             }
             Frame::Group(x) => {
                 let t = m.t().map(|f| self.group_term(x, f));
+                m.give(t);
+            }
+            Frame::ChunkBy(x) => {
+                let t = m.t().map(|f| self.chunk_by_term(x, f));
                 m.give(t);
             }
             Frame::Remap(e) => {

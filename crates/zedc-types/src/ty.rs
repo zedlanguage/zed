@@ -3851,6 +3851,9 @@ pub enum FoldForm {
     Reduce,
     /// `x.sum` on a family, `x >< (+)` (the method register's `sum` row).
     Sum,
+    /// `x.scan(op)`, the family of the folds of `x`'s prefixes (the method register's `scan`
+    /// row), each of which is checked as the fold `x >< op` is.
+    Scan,
 }
 
 impl FoldForm {
@@ -3860,6 +3863,7 @@ impl FoldForm {
             FoldForm::Infix => "`><`",
             FoldForm::Reduce => "`.reduce`",
             FoldForm::Sum => "`.sum`",
+            FoldForm::Scan => "`.scan`",
         }
     }
 
@@ -3869,6 +3873,7 @@ impl FoldForm {
             FoldForm::Infix => "a fold `><`",
             FoldForm::Reduce => "a fold `.reduce`",
             FoldForm::Sum => "a fold `.sum`",
+            FoldForm::Scan => "a scan `.scan`",
         }
     }
 
@@ -3878,6 +3883,7 @@ impl FoldForm {
             FoldForm::Infix => format!("a fold `><` by `{written}`"),
             FoldForm::Reduce => format!("a fold `.reduce({written})`"),
             FoldForm::Sum => "a fold `.sum`".to_string(),
+            FoldForm::Scan => format!("a scan `.scan({written})`"),
         }
     }
 
@@ -3887,6 +3893,7 @@ impl FoldForm {
             FoldForm::Infix => format!("{{0 -> 1, 1 -> 2}} >< {written}"),
             FoldForm::Reduce => format!("{{0 -> 1, 1 -> 2}}.reduce({written})"),
             FoldForm::Sum => "{0 -> 1, 1 -> 2}.sum".to_string(),
+            FoldForm::Scan => format!("{{0 -> 1, 1 -> 2}}.scan({written})"),
         }
     }
 }

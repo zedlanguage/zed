@@ -198,6 +198,65 @@ fn the_elaborated_quantifier_decided_at_a_fixed_entry_costs_the_same_at_8n() {
     );
 }
 
+/// The term zedc elaborates the definition `q` in `src` to, run with `xs` bound to the n
+/// entries of [`entries`] at each size, as in
+/// [`the_elaborated_quantifier_decided_at_a_fixed_entry_costs_the_same_at_8n`].
+fn elaborated(src: &str) -> HashMap<usize, Term> {
+    let unit = elab(src).unwrap_or_else(|e| panic!("{e:?}"));
+    let def = |name: &str| unit.defs.iter().find(|d| d.name == name).unwrap();
+    let (xs, q) = (def("xs").kernel.clone(), def("q").term.clone());
+    scaling::inputs(N_KERNEL, |k| {
+        with_prelude(Term::Let(xs.clone(), rc(entries(k)), q.clone()))
+    })
+}
+
+/// Plan row FP-ops-scan: the scan walks the entries once, each step an entry step,
+/// O(log n), and the merges of the canonical tree's blocks, fewer than n over the walk, so
+/// the whole is O(n log n). The frames number fewer than 3n: n of the walk, and for each
+/// entry one inner frame for its leaf and one per merge.
+#[test]
+fn the_elaborated_scan_runs_in_n_log_n() {
+    let terms = elaborated("xs = [0, 1, 2];\nq = xs.scan((+)).last;");
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        assert_eq!(v, Value::Int((k as i64) * (k as i64 - 1) / 2));
+    };
+    scaling::check(
+        "the elaborated `xs.scan((+)).last` over n entries",
+        N_KERNEL,
+        run,
+    );
+    ratio(
+        "the elaborated `xs.scan((+)).last` over n entries, instructions",
+        N_KERNEL,
+        1,
+        run,
+    );
+}
+
+/// Plan row FP-ops-scan: `chunkBy` walks the entries once, one call of `f` and one entry
+/// step each, then reindexes the n frames, O(n log n) in all.
+#[test]
+fn the_elaborated_chunk_by_runs_in_n_log_n() {
+    // Each entry is its own run, so the outer level has n keys, the most it can have.
+    let terms = elaborated("xs = [0, 1, 2];\nq = xs.chunkBy(x -> x).count;");
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        assert_eq!(v, Value::Int(k as i64));
+    };
+    scaling::check(
+        "the elaborated `xs.chunkBy(f).count` over n entries",
+        N_KERNEL,
+        run,
+    );
+    ratio(
+        "the elaborated `xs.chunkBy(f).count` over n entries, instructions",
+        N_KERNEL,
+        1,
+        run,
+    );
+}
+
 #[test]
 fn a_foldl_walk_runs_in_n_log_n() {
     let terms = scaling::inputs(N_KERNEL, |k| foldl_term(entries(k)));
@@ -272,6 +331,16 @@ fn the_words_on_a_keyed_display_run_in_n_log_n() {
             let sum = k * (k - 1) / 2;
             format!("{k} {sum} false true true {} {sum} {sum}\n", k - 1)
         },
+    );
+}
+
+/// Plan row FP-ops-scan: `.scan` and `.chunkBy` through `zedc run`.
+#[test]
+fn scan_and_chunk_by_on_a_keyed_display_run_in_n_log_n() {
+    whole_path(
+        "scans",
+        "${XS.scan((+)).last} ${XS.scan(max).last} ${XS.chunkBy(x -> x < 5).count}",
+        |k| format!("{} {} 2\n", k * (k - 1) / 2, k - 1),
     );
 }
 
