@@ -421,28 +421,58 @@ enum Item {
     Morphisms(Part<Morphism>, bool),
 }
 
-/// An item's key: its contents, with a diagram node by its interned id.
+/// An item's key: its contents, a diagram too. A diagram's interned id is its contents only
+/// among the diagrams of one thread (`bdd::Tables`): a type whose unfoldings were made on two
+/// threads, or made again on another after the end of a unit (`rec::unfold::Env::forget`),
+/// holds equal diagrams of two ids, which keyed by id were two items, and printed with one
+/// definition fewer than when made on one thread (item PERF-print-by-name-after-plain). Two
+/// keys of one node still compare in O(1): the order of two diagrams reads their digests and
+/// stops at a cell of one id (`order` in module `types`).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Key {
     Ty(Ctx, Type),
-    TupleNode(Ctx, usize, u64),
-    TupleExpr(Ctx, usize, Part<Row>, bool),
-    MorphismNode(u64),
-    MorphismExpr(Part<Morphism>, bool),
+    Tuples(Ctx, usize, Part<Row>, bool),
+    Morphisms(Part<Morphism>, bool),
+}
+
+/// Hashes the contents' name-free digests, never the names-aware ones or an expression's id:
+/// two keys equal have equal name-free digests in every mode of the order, since
+/// [`Type::cmp`] and the order of two expressions answer equal only on the same node or on
+/// tied digests, and `digests_cmp` ties only on equal name-free digests whether names are left
+/// out ([`super::hash::blind`]) or compared first ([`names_first`]). The names-aware digest
+/// differs between two types `blind` finds equal.
+impl std::hash::Hash for Key {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        fn expr<A: super::bdd::Literal>(p: &Part<A>, h: &mut impl std::hash::Hasher) {
+            match p {
+                Part::Bdd(b) => b.digest().hash(h),
+                Part::Expr(e) => e.digest.hash(h),
+            }
+        }
+        std::mem::discriminant(self).hash(h);
+        match self {
+            Key::Ty(c, t) => {
+                c.hash(h);
+                t.digest().hash(h);
+            }
+            Key::Tuples(c, n, p, not) => {
+                (c, n, not).hash(h);
+                expr(p, h);
+            }
+            Key::Morphisms(p, not) => {
+                not.hash(h);
+                expr(p, h);
+            }
+        }
+    }
 }
 
 impl Item {
     fn key(&self) -> Key {
         match self {
             Item::Ty(c, t) => Key::Ty(c.clone(), t.clone()),
-            Item::Tuples(c, n, p, not) => match p.view() {
-                Ok(b) => Key::TupleNode(c.clone(), *n, node_id(b)),
-                Err(_) => Key::TupleExpr(c.clone(), *n, p.clone(), *not),
-            },
-            Item::Morphisms(p, not) => match p.view() {
-                Ok(b) => Key::MorphismNode(node_id(b)),
-                Err(_) => Key::MorphismExpr(p.clone(), *not),
-            },
+            Item::Tuples(c, n, p, not) => Key::Tuples(c.clone(), *n, p.clone(), *not),
+            Item::Morphisms(p, not) => Key::Morphisms(p.clone(), *not),
         }
     }
 }
@@ -467,13 +497,19 @@ fn signed<A: super::bdd::Literal>(p: &Part<A>, not: bool) -> (Part<A>, bool) {
     }
 }
 
-fn node_id<A: super::bdd::Literal>(b: &Bdd<A>) -> u64 {
-    b.branch().map_or_else(u64::from, |(id, ..)| id)
-}
-
 #[derive(Default)]
 struct Printer<'s> {
-    index: BTreeMap<Key, usize>,
+    /// Each item's node, by its key.
+    // Complexity tradeoff (PERF-print-by-name-after-plain): an ordered map took O(log n)
+    // comparisons of keys per reference, each reading a node's digests, out of cache once the
+    // map is large: `Type::cmp` and the map's search were a sixth of a print of a ring of
+    // 16,000 parts, and grew 13 times from 2,000. Used: a hash of the name-free digests
+    // ([`Key`]'s `Hash`), O(1) expected per reference. Nothing reads the map in order: its
+    // one iteration ([`Printer::remember`]) puts each key into an ordered table of its own.
+    // In the build with short addresses, where a digest keeps 8 bits, the keys of a large
+    // print share 256 hashes and a lookup compares the keys of its bucket, as the ordered map
+    // there compared the keys whose digests tie.
+    index: crate::digest::DigestMap<Key, usize>,
     texts: Vec<Option<Text>>,
     uses: Vec<u32>,
     /// A recursive type, named however often it is used: its context, its name and the

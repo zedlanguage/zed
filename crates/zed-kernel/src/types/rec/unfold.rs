@@ -100,6 +100,7 @@ impl Env {
             judged: OnceLock::new(),
             diagonal_empty: OnceLock::new(),
             part_names: Mutex::default(),
+            nodes: Mutex::default(),
         }
     }
 
@@ -115,19 +116,22 @@ impl Env {
     }
 
     /// Member `i`: a recursive member is a node that unfolds to its body, made when first read
-    /// in a unit, and kept, by the instance, until the unit ends. Another thread that made it
-    /// at the same time may have kept its own first, which is then the one.
+    /// in a unit, or the one still held from an earlier unit ([`Env::node`]), and kept, by the
+    /// instance, until the unit ends. Another thread that made it at the same time may have
+    /// kept its own first, which is then the one.
     fn member(self: &Arc<Env>, i: usize) -> Type {
         if let Some(t) = &*self.cell(i) {
             return t.clone();
         }
         // A plain member is set when the instance is made, so this one is recursive.
-        let (e, named) = (self.clone(), self.clone());
-        let made = Type::rec(
-            Key::new(self.clone(), At::Member(i)),
-            move || named.name(i),
-            move || eval(&e.group().0.bodies[i], &e),
-        );
+        let made = self.node(At::Member(i), || {
+            let (e, named) = (self.clone(), self.clone());
+            Type::rec(
+                Key::new(self.clone(), At::Member(i)),
+                move || named.name(i),
+                move || eval(&e.group().0.bodies[i], &e),
+            )
+        });
         let kept = self.cell(i).get_or_insert_with(|| made.clone()).clone();
         if kept.node_addr() == made.node_addr() {
             self.register();
@@ -146,19 +150,61 @@ impl Env {
         }
     }
 
-    /// Drops the recursive members it keeps, and their unfoldings, which hold the members: what
-    /// is not held elsewhere is dropped. A member held elsewhere unfolds again when read, to the
-    /// members made again then.
+    /// The node of the recursive member or part at `at`: the one still held, by anyone, or else
+    /// `make()`, kept weakly as the node of `at`. Since every node of `at` unfolds to the same
+    /// type, one node per place while it is held keeps a type printed the same however often
+    /// its unfoldings were forgotten: before, a member held past the end of its unit (`R` held
+    /// `R0` in `R = R0 \ Never`) and the one made again in its cycle were two nodes, which the
+    /// printer, keying a diagram by the nodes in its rows, wrote apart, with one definition
+    /// fewer than in the first print.
+    fn node(&self, at: At, make: impl FnOnce() -> Type) -> Type {
+        let nodes = || self.nodes.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(n) = nodes().get(&at).and_then(Weak::upgrade) {
+            return Type(n);
+        }
+        // Made outside the lock; another thread that made one at the same time and kept it
+        // first gives the one kept.
+        let made = make();
+        let kept = {
+            let mut nodes = nodes();
+            match nodes.get(&at).and_then(Weak::upgrade) {
+                Some(n) => Type(n),
+                None => {
+                    nodes.insert(at, Arc::downgrade(&made.0));
+                    made.clone()
+                }
+            }
+        };
+        drop(made);
+        kept
+    }
+
+    /// Drops the recursive members it keeps, and the unfoldings of its members and parts still
+    /// alive, which hold the members and one another: what is not held elsewhere is dropped. A
+    /// member or part held elsewhere unfolds again when read, and stays the node of its place.
+    // Complexity tradeoff (PERF-print-by-name-after-plain): forgetting the members' unfoldings
+    // alone is O(members), but left a cycle of parts' unfoldings (`R0 = (#a, #a | R1)` keeps
+    // `#a | R1` as a part whose unfolding holds the row of the next part), which kept the
+    // instance and its group for the rest of the process once a print had unfolded the parts.
+    // Used: every member and part is kept weakly by place ([`Env::nodes`]), and those alive are
+    // forgotten here too, O(places alive or dead in the map) time per end of a unit that
+    // registered the instance, at most the members and parts of the group's bodies, and a weak
+    // handle each, which keeps a dropped node's allocation, not its contents, until this sweep.
     fn forget(&self) {
         let plain = &self.group().0.plain;
         let kept: Vec<Type> = (0..self.members.len())
             .filter(|&i| !plain[i])
             .filter_map(|i| self.cell(i).take())
             .collect();
-        for m in &kept {
-            m.forget_unfolding();
+        let alive: Vec<Type> = {
+            let mut nodes = self.nodes.lock().unwrap_or_else(PoisonError::into_inner);
+            nodes.retain(|_, n| n.strong_count() > 0);
+            nodes.values().filter_map(Weak::upgrade).map(Type).collect()
+        };
+        for t in &alive {
+            t.forget_unfolding();
         }
-        drop(kept);
+        drop((kept, alive));
     }
 
     /// The name of definition `i` at the arguments: `Tree(int)`.
@@ -323,10 +369,19 @@ fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
     if eager(e) {
         return eval(e, env);
     }
-    let (named, at) = (e.clone(), env.clone());
-    let key = Key::new(env.clone(), At::Part(e.at));
-    let (e, env) = (e.clone(), env.clone());
-    Type::rec(key, move || at.part_name(&named), move || eval(&e, &env))
+    let part = env.node(At::Part(e.at), || {
+        let (named, at) = (e.clone(), env.clone());
+        let key = Key::new(env.clone(), At::Part(e.at));
+        let (e, made_in) = (e.clone(), env.clone());
+        Type::rec(
+            key,
+            move || at.part_name(&named),
+            move || eval(&e, &made_in),
+        )
+    });
+    // Its unfolding, made in this unit, is forgotten at its end ([`Env::forget`]).
+    env.register();
+    part
 }
 
 /// Whether `e`, a part directly below an expression of shape `parent`, is kept unevaluated

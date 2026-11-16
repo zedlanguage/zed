@@ -283,6 +283,28 @@ pub(super) fn part_ring(k: usize) -> Type {
         .remove(0)
 }
 
+/// Item PERF-print-by-name-after-plain: a type prints the same text wherever its diagrams were
+/// made. [`part_cycle`] made on a thread of its own, or [`part_ring`] printed again on a later
+/// thread after the end of the unit that unfolded it, holds equal diagrams made on two threads,
+/// whose interned ids differ; the printer keyed a diagram by its id, so the type's root and the
+/// equal row inside its cycle were two items, the root left without a definition.
+#[test]
+fn a_type_prints_the_same_wherever_its_diagrams_were_made() {
+    let on_a_thread = |f: &(dyn Fn() -> String + Sync)| {
+        std::thread::scope(|s| s.spawn(f).join()).expect("printed")
+    };
+    let by_name = |t: &Type| t.surface_by_name(super::At::Any).to_string();
+    for k in [1, 2, 3, 5] {
+        let here = by_name(&part_cycle(k));
+        let apart = std::thread::scope(|s| s.spawn(|| part_cycle(k)).join()).expect("made");
+        assert_eq!(on_a_thread(&|| by_name(&apart)), here, "{k}");
+        let ring = part_ring(k);
+        let first = on_a_thread(&|| by_name(&ring));
+        assert_eq!(on_a_thread(&|| by_name(&ring)), first, "{k}");
+        assert_eq!(by_name(&ring), first, "{k}");
+    }
+}
+
 /// Item FAIL-print-height-cycle-seed: [`part_cycle`] and [`part_ring`] written by name end,
 /// each part on the cycle defined; before, the printer stopped in `heights`, which found a
 /// cycle with no recursive type with a definition on it. The benchmark

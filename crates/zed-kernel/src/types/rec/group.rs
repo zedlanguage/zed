@@ -549,6 +549,7 @@ impl Group {
             judged: OnceLock::new(),
             diagonal_empty: OnceLock::new(),
             part_names: Mutex::default(),
+            nodes: Mutex::default(),
         });
         // A plain member names only plain members, each set before it. A recursive member is
         // made when first read ([`Env::member`]).
@@ -878,6 +879,40 @@ mod tests {
             env.upgrade().is_some(),
             "held by its cycle until the unit ends"
         );
+        Type::forget_emptiness();
+        assert!(env.upgrade().is_none(), "freed at the end of the unit");
+        assert!(!instanced(number));
+        assert!(!grouped(digest));
+    }
+
+    #[test]
+    fn an_instance_whose_parts_were_unfolded_is_freed_at_the_end_of_its_unit() {
+        // Item PERF-print-by-name-after-plain: with `a0`, `a1` the atoms `#RecPartCycle0` and
+        // `#RecPartCycle1`, `RecPartCycle0 = (a0, a0 | RecPartCycle1)` and
+        // `RecPartCycle1 = (a1, a1 | RecPartCycle0)` keep each `ai | …` as a part, whose unfolding holds the row of the next part: the
+        // parts' unfoldings make a cycle of their own, which does not pass through the members.
+        // The end of the unit forgot only the members' unfoldings, so a type printed plain,
+        // which unfolds its parts, kept its instance and group for the rest of the process.
+        let k = 2;
+        let defs = (0..k)
+            .map(|i| {
+                let a = || Expr::Type(Type::atom(&format!("RecPartCycle{i}")));
+                Def {
+                    name: format!("RecPartCycle{i}"),
+                    params: vec![],
+                    body: Expr::Tuple(vec![
+                        a(),
+                        Expr::Union(vec![a(), Expr::Ref((i + 1) % k, vec![])]),
+                    ]),
+                }
+            })
+            .collect();
+        let g = Group::new(defs).expect("a recursive group");
+        let (number, digest) = (g.0.number, g.0.digest);
+        let t = g.instance(vec![]);
+        assert!(!t[0].surface().root.is_empty());
+        let env = env_of(&t[0]);
+        drop((g, t));
         Type::forget_emptiness();
         assert!(env.upgrade().is_none(), "freed at the end of the unit");
         assert!(!instanced(number));

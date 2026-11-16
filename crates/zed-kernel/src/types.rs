@@ -7182,6 +7182,14 @@ pub mod rec {
         /// numbers (`Node::at`), which the name of a part around them holds rather than spells
         /// out again (`unfold::Env::part_name`).
         part_names: Mutex<HashMap<u32, super::Rope>>,
+        /// The node of each recursive member and part kept unevaluated made at these arguments,
+        /// held weakly: while one is held, by anyone, it is the one node of its place, so a
+        /// member or part made again after the end of a unit is the node still held, not a copy
+        /// beside it (`unfold::Env::node`). The end of a unit forgets the unfoldings of those
+        /// alive, since a part's unfolding holds the parts of the body below it, and the parts
+        /// of a cycle of definitions hold one another without passing through a member
+        /// (`unfold::Env::forget`).
+        nodes: Mutex<HashMap<At, std::sync::Weak<super::Node>>>,
     }
 
     impl Env {
@@ -7263,7 +7271,7 @@ pub mod rec {
     }
 
     /// Which type of an instance a key names.
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     enum At {
         /// The member of this index.
         Member(usize),
