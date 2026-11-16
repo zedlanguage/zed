@@ -4,7 +4,7 @@
 |---|---|---|---|
 | L1 | — | — | `main`, `MainArgs`, `files`, `Never`, `U8String`, `Utf8String`, `Utf16String`, `Utf32String`, `Files`, `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shl`, `shr`, `popCount`, `leadingZeros`, `trailingZeros`, `rotl`, `rotr`, `f64Bits`, `f32Bits`, `f16Bits`, `bf16Bits`, `f16`, `bf16`, `mulHi`, `bitReverse`, `byteSwap`, `pdep`, `pext`, `funnelShl`, `funnelShr`, `char8`, `char16`, `char32`, `utf8`, `fromUtf8`, `CommandLine` |
 | L2 | `@hash`, `@nonblocking` | — | `build` |
-| L3 | — | — | `main::args`, `map`, `where`, `foldl`, `foldr`, `reduce`, `any`, `all`, `find`, `split`, `lines`, `concat`, `fam`, `discard`, `fold`, `reindex`, `gen` |
+| L3 | — | — | `main::args`, `map`, `where`, `foldl`, `foldr`, `reduce`, `any`, `all`, `find`, `split`, `lines`, `concat`, `#emptySeparator`, `""`, `fam`, `discard`, `fold`, `reindex`, `gen` |
 | L4 | — | — | `rekey`, `group`, `flatMap`, `tag`, `#collision` |
 | L5 | — | — | `sort`, `orderedValues`, `scan`, `Seq`, `zip`, `patch`, `join`, `diff`, `first`, `last`, `minBy`, `maxBy`, `slice`, `take`, `drop`, `takeWhile`, `chunkBy`, `upTo`, `from`, `#assertEmpty` |
 | L6 | — | — | `fix`, `.fold`, `::frames`, `Ast`, `Facet`, `Lattice`, `Reduction`, `Store`, `Rejection`, `Interval`, `Congruence`, `Bound` |
