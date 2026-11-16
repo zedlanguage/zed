@@ -18,6 +18,7 @@ mod divisors;
 mod docs;
 mod exact_casts;
 mod fits;
+mod function_variance;
 mod given;
 mod handled;
 mod held_functions;
