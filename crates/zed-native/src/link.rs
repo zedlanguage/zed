@@ -42,6 +42,22 @@ const SYSTEM_LIBS: &[&str] = &[
 /// long and wrote 41 MB in place of 14 MB.
 const LINK_FLAGS: &[&str] = &["-Wl,--gc-sections"];
 
+/// The flags of the link that makes the prelinked runtime ([`prelinked`]) from the runtime
+/// library, before `-Wl,-u,<symbol>` for each symbol of [`roots`]: a relocatable link (`-r`)
+/// that keeps only the sections those symbols reach (`--gc-sections`), with no C start files
+/// or system libraries (`-nostdlib`), which the link of each program adds.
+const PRELINK_FLAGS: &[&str] = &["-r", "-nostdlib", "-Wl,--gc-sections"];
+
+/// The symbols of the runtime library that a program's object file can name: each runtime
+/// hook ([`crate::hooks::HOOKS`]) and `zed_main`, which the program's `main` calls
+/// ([`crate::exe`]). The prelinked runtime keeps what they reach.
+fn roots() -> impl Iterator<Item = &'static str> {
+    crate::hooks::HOOKS
+        .iter()
+        .map(|&(name, _, _)| name)
+        .chain(["zed_main"])
+}
+
 /// The environment variables that the C compiler driver or its linker reads and that can change
 /// which files a link reads or what it writes: GCC's `GCC_EXEC_PREFIX`, `COMPILER_PATH` and
 /// `LIBRARY_PATH` (Clang reads the last two too), and the linker's `LD_RUN_PATH`,
@@ -237,6 +253,7 @@ pub fn build(
         return Ok(());
     }
     sweep(out);
+    let runtime = prelinked(tools, &identity, out)?;
     let scratch = Scratch::new(out)?;
     // The linker's output takes `out`'s name, and the files beside it that name with a suffix,
     // so no output name meets another file here.
@@ -263,7 +280,7 @@ pub fn build(
             .arg("-o")
             .arg(&linked_at)
             .arg(&at)
-            .arg(&tools.runtime)
+            .arg(&runtime.path)
             .args(SYSTEM_LIBS)
             .args(LINK_FLAGS)
             .arg(format!("-Wl,--build-id=0x{}", partial.to_hex()))
@@ -302,7 +319,9 @@ pub fn build(
             ),
         )
     })?;
-    let inputs = Inputs::of(dependencies(&listed), &[&at, &tools.runtime]).map_err(|e| {
+    // The prelinked runtime is made from the runtime library alone by a link that the key
+    // names in full ([`Identity::key`]), so it is skipped as the library is.
+    let inputs = Inputs::of(dependencies(&listed), &[&at, &tools.runtime, &runtime.path]).map_err(|e| {
         (
             1,
             format!(
@@ -341,6 +360,177 @@ pub fn build(
         |from: &Path, to: &Path| std::fs::rename(from, to).map_err(|e| unwritable(to, &e, out));
     rename(&linked_at, out)?;
     rename(&record_at, &Record::path(out))
+}
+
+/// The runtime library prelinked (PERF-link-archive): one relocatable object file holding only
+/// the sections of the library that [`roots`] reach, made by the driver with [`PRELINK_FLAGS`]
+/// once for each [`Identity::prelink_key`] and kept, which each link takes in place of the
+/// library.
+///
+/// It is kept beside the library as `<library>.<hash of the library>.<key>.o`, both in
+/// hexadecimal; when that directory cannot be written, as for an installed library, beside
+/// `out`. Each toolchain that links with one library has an object of its own there, made
+/// once. The build that makes one holds the lock file `<library>.prelink.lock` of that
+/// directory, so one build at a time makes one; it writes the object under another name and
+/// renames it, so a build that reads the object, which takes no lock, reads all of it or finds
+/// none. The maker then removes the objects made from other bytes of the library, which Cargo
+/// replaced since, and the unfinished files of makers that were stopped, which no maker writes
+/// while it holds the lock. A build still running with the library it replaced, which finds its
+/// object removed before its linker opens it, fails, and the next build links again.
+//
+// Complexity tradeoff: the library is the whole compiler (227 MB). A link of the library
+// itself reads its symbol index, loads every member a program reaches and drops the unreached
+// sections again: about 4.0 billion instructions and 1.3 to 3.7 s with GNU ld 2.46 (measured
+// 2026-11-15, load 75 to 95). That work depends on the runtime and the linker alone, so it is
+// done once and kept: the prelinked object (49 MB) links in about 1.0 billion instructions and
+// 1.3 to 1.7 s (a whole build of l01_21's fahrenheit.zed, 1.05 to 1.83 s at load 61), a
+// 3.8-fold cut in the link's work, keeping the same sections but for a few
+// `Debug` functions. The first build after the runtime changes pays about 4.2 s more, once.
+// LLD links the library in 0.9 billion instructions and the prelinked object in 0.4 billion,
+// but would be a new dependency of every build, which is the author's decision.
+struct Prelinked {
+    /// The prelinked object.
+    path: PathBuf,
+}
+
+/// The prelinked runtime of `tools` for the build of `out`, made if it is not there; see
+/// [`Prelinked`].
+fn prelinked(
+    tools: &Toolchain,
+    identity: &Identity,
+    out: &Path,
+) -> Result<Prelinked, (u8, String)> {
+    let dir_of = |p: &Path| match p.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let library = tools.runtime.file_name().unwrap_or_default().to_owned();
+    let mut lock_name = library.clone();
+    lock_name.push(".prelink.lock");
+    let mut name = library.clone();
+    name.push(format!(
+        ".{}.{}.o",
+        identity.runtime.to_hex(),
+        identity.prelink_key().to_hex()
+    ));
+    let mut refused = None;
+    for dir in [dir_of(&tools.runtime), dir_of(out)] {
+        let path = dir.join(&name);
+        if path.is_file() {
+            return Ok(Prelinked { path });
+        }
+        let lock_path = dir.join(&lock_name);
+        let lock = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(lock) => lock,
+            Err(e) => {
+                refused = Some(unwritable(&lock_path, &e, out));
+                continue;
+            }
+        };
+        // Released when `lock` is dropped, on every path out.
+        lock.lock().map_err(|e| unwritable(&lock_path, &e, out))?;
+        if path.is_file() {
+            return Ok(Prelinked { path });
+        }
+        match prelink(tools, identity, &dir, &library, &path, out)? {
+            Ok(()) => return Ok(Prelinked { path }),
+            Err(e) => refused = Some(e),
+        }
+    }
+    Err(refused.unwrap_or_else(|| (1, format!("zedc could not build {}", out.display()))))
+}
+
+/// Makes the prelinked object `path` in `dir` from the runtime library of `tools`, whose file
+/// name is `library` and whose hash is in `identity`, with the lock of `dir` held; then removes
+/// the prelinked objects in `dir` made from other bytes of that library, and the unfinished
+/// files of stopped makers. One read of the directory: linear in its entries. `Ok(Err(why))`
+/// if no file can be made in `dir`, as when its permissions or a read-only file system refuse
+/// it, which the lock file, made before, need not show.
+fn prelink(
+    tools: &Toolchain,
+    identity: &Identity,
+    dir: &Path,
+    library: &std::ffi::OsStr,
+    path: &Path,
+    out: &Path,
+) -> Result<Result<(), (u8, String)>, (u8, String)> {
+    let mut unfinished = path.as_os_str().to_owned();
+    unfinished.push(format!(".{}", std::process::id()));
+    let unfinished = PathBuf::from(unfinished);
+    if let Err(e) = std::fs::File::create(&unfinished) {
+        return Ok(Err(unwritable(&unfinished, &e, out)));
+    }
+    // Not a stage of the build's report: it is made for many builds, by the first that needs
+    // it, and the report's link row counts this build's link alone.
+    let made = tools
+        .driver()
+        .args(PRELINK_FLAGS)
+        .args(roots().map(|r| format!("-Wl,-u,{r}")))
+        .arg(&tools.runtime)
+        .arg("-o")
+        .arg(&unfinished)
+        .output();
+    let linker = tools.linker.to_string_lossy();
+    match made {
+        Err(e) => return Err(not_run(&linker, &e)),
+        Ok(o) if !o.status.success() => {
+            let _ = std::fs::remove_file(&unfinished);
+            return Err((
+                1,
+                format!(
+                    "zedc could not prelink the runtime library {} for {}: the linker \
+                     `{linker}` failed ({}). Repair: check that `{linker}` links C programs and \
+                     takes -r, or name another C compiler in the environment variable CC. The \
+                     linker printed:\n{}",
+                    tools.runtime.display(),
+                    out.display(),
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim_end()
+                ),
+            ));
+        }
+        Ok(_) => {}
+    }
+    std::fs::rename(&unfinished, path).map_err(|e| unwritable(path, &e, out))?;
+    // Best effort: what is left takes room but blocks no build.
+    let mut prefix = library.to_owned();
+    prefix.push(".");
+    let runtime = identity.runtime.to_hex();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(Ok(()));
+    };
+    for entry in entries.flatten() {
+        let entry_name = entry.file_name();
+        let Some(rest) = entry_name
+            .as_encoded_bytes()
+            .strip_prefix(prefix.as_encoded_bytes())
+        else {
+            continue;
+        };
+        // `<library hash>.<key>.o`, or that and `.<pid>` for an unfinished file.
+        let hex64 = |b: &[u8]| b.len() == 64 && b.iter().all(u8::is_ascii_hexdigit);
+        let (Some(made_from), Some(key), Some(tail)) =
+            (rest.get(..64), rest.get(65..129), rest.get(129..))
+        else {
+            continue;
+        };
+        let finished = tail == b".o";
+        let unfinished = tail
+            .strip_prefix(b".o.")
+            .is_some_and(|pid| !pid.is_empty() && pid.iter().all(u8::is_ascii_digit));
+        let ours = hex64(made_from) && rest[64] == b'.' && hex64(key) && (finished || unfinished);
+        let stale = made_from != runtime.as_bytes() || unfinished;
+        if ours && stale && entry.path() != path {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(Ok(()))
 }
 
 /// The error of a file `path` of the build of `out` that could not be written.
@@ -772,9 +962,9 @@ fn not_run(linker: &str, e: &std::io::Error) -> (u8, String) {
 /// - The linker is named by what its driver writes to standard output for `--version` and
 ///   for `-Wl,--version`: the driver's version and, through it, the linker's. Two spawns
 ///   that do no work, under 5 ms together.
-/// - The runtime library is named by the BLAKE3 hash of its bytes: about 0.1 s for its
-///   117 MB, once per build. Its [`BUILD`] is not enough, since it names the crate's Cargo
-///   configuration and not its source.
+/// - The runtime library is named by the BLAKE3 hash of its bytes: 0.11 to 0.20 s for its
+///   227 MB (measured 2026-11-15, load 78), once per build. Its [`BUILD`] is not enough, since
+///   it names the crate's Cargo configuration and not its source.
 /// - The driver's environment is named by the values of [`DRIVER_ENV`] it runs with.
 ///
 /// The other files the linker reads, the system libraries in `SYSTEM_LIBS`, the C start
@@ -846,21 +1036,41 @@ impl Identity {
     /// (DESIGN.md sec:theories, the trusted base). Linear in the bytes of `object` and in the
     /// number of `inputs`.
     pub fn key(&self, object: &[u8], inputs: &[blake3::Hash]) -> blake3::Hash {
-        use std::os::unix::ffi::OsStrExt as _;
         let mut key = blake3::Hasher::new_derive_key(
-            "zed-native 2026-11-07 the key of a link and the files it read",
+            "zed-native 2026-11-15 the key of a link and the files it read",
         );
         let mut part = |bytes: &[u8]| {
             key.update(&bytes.len().to_le_bytes());
             key.update(bytes);
         };
         part(object);
+        part(self.prelink_key().as_bytes());
+        for a in SYSTEM_LIBS.iter().chain(LINK_FLAGS) {
+            part(a.as_bytes());
+        }
+        part(&inputs.len().to_le_bytes());
+        for input in inputs {
+            part(input.as_bytes());
+        }
+        key.finalize()
+    }
+
+    /// The key of the prelinked runtime (`Prelinked`) of the toolchain of this identity: a
+    /// BLAKE3 hash of this identity and of the prelink's arguments other than the paths,
+    /// `PRELINK_FLAGS` and `roots`, each preceded by its length. The prelinked object's
+    /// file name holds it, and [`Identity::key`] takes it in place of these parts.
+    pub fn prelink_key(&self) -> blake3::Hash {
+        use std::os::unix::ffi::OsStrExt as _;
+        let mut key = blake3::Hasher::new_derive_key(
+            "zed-native 2026-11-15 the key of a prelinked runtime library",
+        );
+        let mut part = |bytes: &[u8]| {
+            key.update(&bytes.len().to_le_bytes());
+            key.update(bytes);
+        };
         part(self.runtime.as_bytes());
         for v in &self.linker {
             part(v);
-        }
-        for a in SYSTEM_LIBS.iter().chain(LINK_FLAGS) {
-            part(a.as_bytes());
         }
         for (name, value) in &self.env {
             part(name.as_bytes());
@@ -872,9 +1082,8 @@ impl Identity {
                 None => part(b"unset"),
             }
         }
-        part(&inputs.len().to_le_bytes());
-        for input in inputs {
-            part(input.as_bytes());
+        for a in PRELINK_FLAGS.iter().copied().chain(roots()) {
+            part(a.as_bytes());
         }
         key.finalize()
     }

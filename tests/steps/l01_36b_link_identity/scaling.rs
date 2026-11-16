@@ -57,7 +57,13 @@ pub(super) fn builds_run_the_driver_the_same_times(name: &str, sizes: &[usize]) 
                 Link::Kept => identity.to_vec(),
             }
         };
-        assert_eq!(runs(&log), expect(first), "the first build at size {m}");
+        // A link prelinks the runtime library (`-r`) first if no build has done so for this
+        // toolchain yet: at most once in a run of the tests, whichever build comes first.
+        let mut ran = runs(&log);
+        if first == Link::Ran && ran.get(2).map(String::as_str) == Some("-r") {
+            ran.remove(2);
+        }
+        assert_eq!(ran, expect(first), "the first build at size {m}");
         assert_eq!(link(&src, &out, &tools), Link::Kept);
         assert_eq!(
             runs(&log),
