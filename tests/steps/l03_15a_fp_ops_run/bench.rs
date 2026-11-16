@@ -17,7 +17,7 @@ use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold, hold_linear};
 
 use super::program;
-use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, value, with_prelude};
 use zed_tests::step_helpers::l01_36a_executables::interpreter;
 
 /// Entries of a kernel run.
@@ -476,6 +476,67 @@ fn concat_of_n_pieces_runs_in_linear_time() {
         "the kernel run of `concat(pieces, sep: \", \")` over n pieces",
         N_TEXT,
         1,
+        run,
+    );
+}
+
+/// Calls of a generic function, or links of a chain of them, of the checked benchmarks below.
+const N_CALLS: usize = 100;
+
+/// `split`, `concat` and `lines` on a generic function's parameters, each operand checked at
+/// each call by one need (plan row FP-ops-generic-strings).
+const STRINGS: &str = "w(positional s, positional d) = \
+                       (s.split(d).count, concat(s.split(d), sep: d), s.lines.count);\n";
+
+#[test]
+fn n_calls_of_a_generic_function_of_the_string_words_run_in_linear_time() {
+    // The calls alternate two separators and strings, so each call's need is checked on its
+    // own types (plan row FP-ops-generic-strings).
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = w(\"a,b,{i}\", \",\");\n"),
+                _ => format!("x{i} = w(\"a b {i}\", \" \");\n"),
+            })
+            .collect::<String>();
+        format!("{STRINGS}{calls}")
+    });
+    let run = |n: usize| {
+        let i = n - 1;
+        assert_eq!(
+            value(&srcs[&n], &format!("x{i}")),
+            format!("(3, \"a b {i}\", 1)")
+        );
+    };
+    scaling::check(
+        "n calls of a generic function of `split`, `concat` and `lines`, alternately at two \
+         separators, whole path",
+        N_CALLS,
+        run,
+    );
+}
+
+#[test]
+fn a_chain_of_n_generic_functions_passing_on_the_string_words_runs_in_linear_time() {
+    // `w`'s need waits on `g0`'s parameters, and each `g{i}` passes it on, so it is checked
+    // once at each of the two calls at the chain's top (plan row FP-ops-generic-strings).
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("g{i}(positional s, positional d) = g{}(s, d);\n", i - 1))
+            .collect::<String>();
+        let top = n - 1;
+        format!(
+            "{STRINGS}g0(positional s, positional d) = w(s, d);\n{chain}\
+             a = (g{top}(\"a,b\", \",\"), g{top}(\"x y\", \" \"));\n"
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "a"), "((2, \"a,b\", 1), (2, \"x y\", 1))");
+    };
+    scaling::check(
+        "a chain of n generic functions passing a string and a separator to `split`, `concat` \
+         and `lines`, whole path",
+        N_CALLS,
         run,
     );
 }
