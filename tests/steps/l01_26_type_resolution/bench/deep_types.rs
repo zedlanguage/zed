@@ -6,7 +6,7 @@
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
-use zedc::check::ty::Ty;
+use zedc::check::ty::{Sig, Ty};
 
 use super::super::deep_types::{
     chain, expected, hashes, levels, replaced_each_way, same, shared, tuples, z,
@@ -104,20 +104,41 @@ fn plain(a: &Ty, b: &Ty) -> bool {
         && (a.tuples.iter().zip(&b.tuples)).all(|(x, y)| all(x, y))
         && a.fns.len() == b.fns.len()
         && (a.fns.iter().zip(&b.fns)).all(|(x, y)| {
-            x.params == y.params
-                && x.arrows.len() == y.arrows.len()
-                && (x.arrows.iter().zip(&y.arrows)).all(|(p, q)| {
+            // Every field of the signature, in the order they are declared, as the derived
+            // `==` takes them; the pattern names each, so a field added to `Sig` stops this
+            // from compiling until it is compared here too. `facts` is a cache, not part of
+            // the value. Before (FAIL-shallow-eq-three-levels), `dense` and `hull` were left
+            // out, so once `==` compared `hull` (RANGE-result-hull) it did more than this.
+            let Sig {
+                params,
+                arrows,
+                bounds,
+                data,
+                dense,
+                word,
+                needs,
+                own,
+                held,
+                named,
+                hull,
+                facts: _,
+            } = &**x;
+            *params == y.params
+                && arrows.len() == y.arrows.len()
+                && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
                     all(&p.params, &q.params)
                         && plain(&p.result, &q.result)
                         && p.partial == q.partial
                 })
-                && x.bounds == y.bounds
-                && x.data == y.data
-                && x.word == y.word
-                && x.needs == y.needs
-                && x.own == y.own
-                && x.held == y.held
-                && x.named == y.named
+                && *bounds == y.bounds
+                && *data == y.data
+                && *dense == y.dense
+                && *word == y.word
+                && *needs == y.needs
+                && *own == y.own
+                && *held == y.held
+                && *named == y.named
+                && *hull == y.hull
         })
         && a.vars == b.vars
         && a.dynamic == b.dynamic
