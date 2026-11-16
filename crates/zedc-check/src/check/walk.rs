@@ -17593,7 +17593,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `small` of `twice(g) = g(x: small)`, the argument each use the need stands for writes
     /// ([`Ck::call_written`]), whose value no type the body is checked for changes. Else
     /// `None`, and a function the argument passes to a partial slot is refused.
-    fn need_arg_via(&self, n: &Need, p: usize, t: &Ty) -> Option<Rc<[Span]>> {
+    fn need_arg_via(&mut self, n: &Need, p: usize, t: &Ty) -> Option<Rc<[Span]>> {
         if t.as_var().is_some() {
             let frame = self.call_frames.last()?;
             return match frame.place(t)? {
@@ -17604,10 +17604,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         if t.holds_vars() {
             return None;
         }
+        // One list per need and argument, made again only when uses were recorded since
+        // ([`Ck::call_written_via`]): the uses of a need are only ever added to.
         let uses = self.call_written.get(&n.span)?;
-        (uses.iter())
+        if let Some((len, via)) = self.call_written_via.get(&(n.span, p))
+            && *len == uses.len()
+        {
+            return via.clone();
+        }
+        let via: Option<Rc<[Span]>> = (uses.iter())
             .map(|(_, w)| w.as_ref().and_then(|w| w.get(p).copied().flatten()))
-            .collect()
+            .collect();
+        let len = uses.len();
+        (self.call_written_via).insert((n.span, p), (len, via.clone()));
+        via
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose

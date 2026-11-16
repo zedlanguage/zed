@@ -1498,6 +1498,10 @@ struct FoldChecks {
 /// and the spans of the arguments it writes.
 type WrittenUses = Vec<(Span, Option<Rc<[Option<Span>]>>)>;
 
+/// The argument each use of a call need writes at one parameter ([`Ck::call_written_via`]):
+/// the number of uses when made, and the list.
+type WrittenVia = (usize, Option<Rc<[Span]>>);
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1665,6 +1669,13 @@ struct Ck<'t, 'a> {
     /// same at every run of the body, so a function it passes to a partial slot is rebuilt
     /// where the use writes it.
     call_written: HashMap<Span, WrittenUses>,
+    /// For argument `p` of the call need kept at a span ([`Self::call_written`]): the number of
+    /// uses recorded when the list was made, and the argument each of them writes
+    /// ([`Self::need_arg_via`]). Complexity tradeoff: n calls of a generic body meet each of its
+    /// call needs, and the n calls alike in it are one need of n uses (row
+    /// TEST-call-site-need-key), so a list made at each meeting is n·n spans in all; made once
+    /// and shared, it is O(n), and again O(uses) only when uses were recorded since.
+    call_written_via: HashMap<(Span, usize), WrittenVia>,
     /// The spans of the `else` expressions whose left side is the bare name of a variable, as
     /// `x else x`, kept for a narrowing need only while every equal use of it is one
     /// ([`Self::need`]). [`Self::meet`] places the result of such a narrowing where the
@@ -2196,6 +2207,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             default_ints: HashMap::new(),
             default_reads: HashMap::new(),
             call_written: HashMap::new(),
+            call_written_via: HashMap::new(),
             narrow_names: HashSet::new(),
             call_spans: None,
             next_found: 0,
