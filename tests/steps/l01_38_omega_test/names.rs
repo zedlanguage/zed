@@ -606,30 +606,59 @@ fn cycle_both_ways(n: usize) -> Vec<Row> {
     rows
 }
 
+/// The cycle of three turned one way with each variable doubled: the pairs `{0, 1}`,
+/// `{2, 3}`, `{4, 5}`, and `-x[a] + 3·x[b] - 10 >= 0` for each `a` of a pair and `b` of the
+/// next. Every variable has two rows of each sign, so its elimination adds no terms, and
+/// occurs alike. Its symmetries turn the cycle and swap the two variables of any pair, each
+/// pair on its own: no swap of two variables of different pairs maps the rows onto
+/// themselves, and with one variable fixed, and then one of the next pair, the last pair
+/// is still alike, so `System::symmetries`, which fixes two variables at most, finds none,
+/// and the tie is refused. Summing the rows gives `4·Σ x >= 120`; `x = (5, 5, ...)` is a
+/// point.
+fn doubled_cycle() -> Vec<Row> {
+    let mut rows = Vec::new();
+    for k in 0..3 {
+        for a in [2 * k, 2 * k + 1] {
+            for b in [(2 * k + 2) % 6, (2 * k + 3) % 6] {
+                let mut c = vec![0; 6];
+                c[a] = -1;
+                c[b] = 3;
+                rows.push(ge(&c, -10));
+            }
+        }
+    }
+    rows
+}
+
 #[test]
 fn a_tie_that_shares_a_row_is_refused() {
-    let rows = cycle_both_ways(4);
-    assert!(holds(&rows, &[5, 5, 5, 5]));
-    let Err(Refusal::Tie(t)) = decide(&formula(&rows, &[0, 1, 2, 3])) else {
-        panic!("the cycle of four both ways is refused with a tie");
+    let rows = doubled_cycle();
+    assert!(holds(&rows, &[5, 5, 5, 5, 5, 5]));
+    let got = decide(&formula(&rows, &[0, 1, 2, 3, 4, 5]));
+    let Err(Refusal::Tie(t)) = got else {
+        panic!("the doubled cycle is refused with a tie: {got:?}");
     };
     let mut vars = t.vars.clone();
     vars.sort();
-    assert_eq!(vars, ["v0", "v1", "v2", "v3"]);
+    assert_eq!(vars, ["v0", "v1", "v2", "v3", "v4", "v5"]);
     // Each row written with its terms in the order of the canonical form.
     let mut shared = t.rows.clone();
     shared.sort();
     assert_eq!(
         shared,
         [
-            "-v0 + 3 * v1 - 10 >= 0",
+            "-v0 + 3 * v2 - 10 >= 0",
             "-v0 + 3 * v3 - 10 >= 0",
-            "-v1 + 3 * v2 - 10 >= 0",
-            "-v3 + 3 * v2 - 10 >= 0",
-            "3 * v0 - v1 - 10 >= 0",
-            "3 * v0 - v3 - 10 >= 0",
-            "3 * v1 - v2 - 10 >= 0",
-            "3 * v3 - v2 - 10 >= 0",
+            "-v2 + 3 * v4 - 10 >= 0",
+            "-v2 + 3 * v5 - 10 >= 0",
+            "-v3 + 3 * v4 - 10 >= 0",
+            "-v3 + 3 * v5 - 10 >= 0",
+            "-v4 + 3 * v1 - 10 >= 0",
+            "-v5 + 3 * v1 - 10 >= 0",
+            "3 * v0 - v4 - 10 >= 0",
+            "3 * v0 - v5 - 10 >= 0",
+            "3 * v2 - v1 - 10 >= 0",
+            "3 * v3 - v1 - 10 >= 0",
         ]
     );
     let message = Refusal::Tie(t).to_string();
@@ -639,11 +668,11 @@ fn a_tie_that_shares_a_row_is_refused() {
         ),
         "{message}"
     );
-    assert!(message.contains("`-v0 + 3 * v1 - 10 >= 0`"), "{message}");
+    assert!(message.contains("`-v0 + 3 * v3 - 10 >= 0`"), "{message}");
     // Under every naming, the same refusal.
     assert_eq!(
-        namings(&rows, 4).into_keys().collect::<Vec<_>>(),
-        ["Err(Tie, 4 variables)"]
+        namings(&rows, 6).into_keys().collect::<Vec<_>>(),
+        ["Err(Tie, 6 variables)"]
     );
 }
 
@@ -694,9 +723,9 @@ fn a_tie_that_a_swap_maps_onto_itself_is_decided() {
             "seed {seed:#x}"
         );
     }
-    // The cycle of `a_tie_that_shares_a_row_is_refused` is the control: its symmetries turn
-    // and reflect the cycle, no swap of two of its variables maps its rows onto themselves,
-    // and fixing one variable leaves its two neighbors alike, so its tie is still refused.
+    // The doubled cycle of `a_tie_that_shares_a_row_is_refused` is the control: no swap of
+    // two of its variables maps its rows onto themselves, and fixing two variables still
+    // leaves two alike, so its tie is still refused.
 }
 
 #[test]
@@ -728,18 +757,95 @@ fn a_tie_that_only_a_rotation_maps_onto_itself_is_decided() {
             "capped at {top}"
         );
     }
-    // Cycles of five and six turn the same way, and the first tie is taken. Eliminating one
-    // variable joins its two rows into one row with other coefficients, so the four or five
-    // left have no symmetry that maps one onto another, yet they still tie on the solver's
-    // key: that second tie is refused, under every naming tried.
-    let (mut rng, seed) = Rng::fresh("a tie that only a rotation maps onto itself");
-    for n in [5, 6] {
-        let seen = sampled_namings(&cycle(n), n, &mut rng, 60);
+    // Cycles of five and six, whose second tie has no symmetry, are in
+    // `a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided`.
+}
+
+#[test]
+fn a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided() {
+    // FAIL-tie-cycle-reflected-and-second-tie. Each row `-x[a] + 3·x[b] - 10 >= 0` of these
+    // cycles, summed, gives `Σ x >= 5·n`, so with every variable capped at 4 there is no
+    // point, and at 5 there is one.
+    let capped = |mut rows: Vec<Row>, n: usize, top: i64| {
+        for i in 0..n {
+            let mut c = vec![0; n];
+            c[i] = -1;
+            rows.push(ge(&c, top));
+        }
+        rows
+    };
+    // Turned both ways, the cycle of four is a square: fixing `x[0]` leaves its two
+    // neighbors alike, and fixing one of them as well tells every variable apart.
+    for (top, want) in [(4, "Ok(false)"), (5, "Ok(true)")] {
+        let rows = capped(cycle_both_ways(4), 4, top);
         assert_eq!(
-            seen.into_keys().collect::<Vec<_>>(),
-            [format!("Err(Tie, {} variables)", n - 1)],
-            "n = {n}, seed {seed:#x}"
+            namings(&rows, 4).into_keys().collect::<Vec<_>>(),
+            [want],
+            "capped at {top}"
         );
+    }
+    let (mut rng, seed) = Rng::fresh("a longer cycle one way is decided");
+    for n in [5, 6] {
+        // One way: the first tie is taken by a turn of the cycle; eliminating one variable
+        // joins its two rows, and the variables left tie on the solver's key with no
+        // symmetry between them. Refining the keys by the rows tells them apart.
+        // Both ways: the polygon of `n` sides, as the square.
+        for rows in [cycle(n), cycle_both_ways(n)] {
+            assert!(holds(&rows, &vec![5; n]));
+            for (top, want) in [(4, "Ok(false)"), (5, "Ok(true)")] {
+                let seen = sampled_namings(&capped(rows.clone(), n, top), n, &mut rng, 60);
+                assert_eq!(
+                    seen.into_keys().collect::<Vec<_>>(),
+                    [want],
+                    "n = {n}, capped at {top}, seed {seed:#x}"
+                );
+            }
+        }
+    }
+    // With coefficients 2 and 3, `3·x[b] - 2·x[a] >= 1`, no elimination is exact, so the
+    // splinter search reads the ties taken (`broken_swap`). Summed, the rows give `Σ x >= n`
+    // (one way) or `2·Σ x >= 2·n` (both ways): capped at 0 there is no point, at 1 the point
+    // `(1, 1, ...)`.
+    let dark = |n: usize, both: bool| {
+        let mut rows = Vec::new();
+        for i in 0..n {
+            let pairs = if both {
+                vec![(i, (i + 1) % n), ((i + 1) % n, i)]
+            } else {
+                vec![(i, (i + 1) % n)]
+            };
+            for (a, b) in pairs {
+                let mut c = vec![0; n];
+                c[a] = -2;
+                c[b] = 3;
+                rows.push(ge(&c, -1));
+            }
+        }
+        rows
+    };
+    for n in [4, 5, 6] {
+        for both in [false, true] {
+            for (top, want) in [(0, "Ok(false)"), (1, "Ok(true)")] {
+                let rows = capped(dark(n, both), n, top);
+                let seen = if n == 4 {
+                    namings(&rows, n)
+                } else {
+                    sampled_namings(&rows, n, &mut rng, 60)
+                };
+                // Both ways with no point, the tie is taken and the splinters then outgrow
+                // the solver's bound, under every naming alike (FAIL-dark-cycle-both-ways-growth).
+                let want = if both && top == 0 {
+                    "Err(Growth)"
+                } else {
+                    want
+                };
+                assert_eq!(
+                    seen.into_keys().collect::<Vec<_>>(),
+                    [want],
+                    "n = {n}, both ways {both}, capped at {top}, seed {seed:#x}"
+                );
+            }
+        }
     }
 }
 
@@ -1062,32 +1168,41 @@ pub(super) fn one_class_of_equalities(n: usize) -> Formula {
     Formula::and(fs)
 }
 
-/// A unit whose `main` calls `ok(a, b, c, d) = -a + 3·b >= 10 && -b + 3·a >= 10 && ...`, the
-/// cycle of four both ways over the parameters named by `names`, each declared `int` (the
-/// checker asks a linear question only of a function whose parameters are all `int`), and
-/// prints whether it held.
-fn cycle_unit(names: [&str; 4]) -> Vec<u8> {
-    let [a, b, c, d] = names;
+/// A unit whose `main` calls `ok(a, b, c, d, e, f) = 3 * c - a >= 10 && ...`, the rows of
+/// [`doubled_cycle`] over the parameters named by `names`, each declared `int` (the checker
+/// asks a linear question only of a function whose parameters are all `int`), and prints
+/// whether it held.
+fn cycle_unit(names: [&str; 6]) -> Vec<u8> {
+    let mut conds = Vec::new();
+    for k in 0..3 {
+        for a in [2 * k, 2 * k + 1] {
+            for b in [(2 * k + 2) % 6, (2 * k + 3) % 6] {
+                conds.push(format!("3 * {} - {} >= 10", names[b], names[a]));
+            }
+        }
+    }
+    let params: Vec<String> = names.iter().map(|n| format!("{n}: int")).collect();
+    let args: Vec<String> = names.iter().map(|n| format!("{n}: x")).collect();
     format!(
-        "ok({a}: int, {b}: int, {c}: int, {d}: int) = 3 * {b} - {a} >= 10 && 3 * {c} - {b} >= 10 && 3 * {d} - {c} >= 10 \
-         && 3 * {a} - {d} >= 10 && 3 * {a} - {b} >= 10 && 3 * {b} - {c} >= 10 && 3 * {c} - {d} >= 10 \
-         && 3 * {d} - {a} >= 10;\nmain(m: MainArgs) {{\n  x = int(m.stdin[0] else \
-         \"0\") else 0;\n  held = if ok({a}: x, {b}: x, {c}: x, {d}: x) {{ \"in\" }} else {{ \"out\" }};\n  \
-         m.stdout <- \"${{held}}\";\n}}\n"
+        "ok({}) = {};\nmain(m: MainArgs) {{\n  x = int(m.stdin[0] else \"0\") else 0;\n  \
+         held = if ok({}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{held}}\";\n}}\n",
+        params.join(", "),
+        conds.join(" && "),
+        args.join(", "),
     )
     .into_bytes()
 }
 
 #[test]
 fn batch_and_single_file_checking_agree_on_a_tie() {
-    let first = cycle_unit(["p", "q", "r", "s"]);
+    let first = cycle_unit(["p", "q", "r", "s", "t", "u"]);
     let alone = {
         let src = first.clone();
         std::thread::spawn(move || zedc::run::load(&src).err())
             .join()
             .unwrap()
     };
-    let message = alone.clone().expect("the cycle of four is rejected");
+    let message = alone.clone().expect("the doubled cycle is rejected");
     eprintln!("{message}");
     assert!(
         message.contains(
@@ -1097,8 +1212,8 @@ fn batch_and_single_file_checking_agree_on_a_tie() {
     );
     // After other units on one thread, among them the same cycle under other names.
     let others = [
-        cycle_unit(["s", "r", "q", "p"]),
-        cycle_unit(["b", "d", "a", "c"]),
+        cycle_unit(["u", "t", "s", "r", "q", "p"]),
+        cycle_unit(["b", "d", "f", "a", "c", "e"]),
         first.clone(),
     ];
     let batch: Vec<Option<String>> = others.iter().map(|u| zedc::run::load(u).err()).collect();
@@ -1592,28 +1707,29 @@ fn a_tie_that_every_swap_maps_onto_itself_is_renamed() {
 
 #[test]
 fn a_refusal_of_a_renamed_formula_names_the_variables_as_written() {
-    // The cycle of four both ways ties under every naming, and a disjunction tells its
-    // variables apart, so the formula is renamed; the refusal of the cycle is written over the
-    // names given.
+    // The doubled cycle ([`doubled_cycle`]) ties under every naming, and a disjunction tells
+    // its variables apart, so the formula is renamed; the refusal of the cycle is written over
+    // the names given.
     let sys: Disjunctive = (
-        cycle_both_ways(4),
+        doubled_cycle(),
         vec![vec![
-            vec![ge(&[1, -1, 0, 0], 1000)],
-            vec![ge(&[0, 0, 1, -2], 1000)],
+            vec![ge(&[1, -1, 0, 0, 0, 0], 1000)],
+            vec![ge(&[0, 0, 1, -2, 0, 0], 1000)],
         ]],
     );
-    let Err(Refusal::Tie(t)) = decide(&disjunctive_formula(&sys, &[0, 1, 2, 3])) else {
-        panic!("the cycle of four is refused with a tie");
+    let got = decide(&disjunctive_formula(&sys, &[0, 1, 2, 3, 4, 5]));
+    let Err(Refusal::Tie(t)) = got else {
+        panic!("the doubled cycle is refused with a tie: {got:?}");
     };
     let mut vars = t.vars.clone();
     vars.sort();
-    assert_eq!(vars, ["v0", "v1", "v2", "v3"]);
+    assert_eq!(vars, ["v0", "v1", "v2", "v3", "v4", "v5"]);
     let message = Refusal::Tie(t).to_string();
     assert!(!message.contains('#'), "{message}");
     assert!(message.contains("10 >= 0"), "{message}");
     assert_eq!(
-        answers_under_every_naming(&sys, 4),
-        ["Err(Tie, 4 variables)"]
+        answers_under_every_naming(&sys, 6),
+        ["Err(Tie, 6 variables)"]
     );
 }
 
@@ -1739,13 +1855,13 @@ pub(super) fn separate_pairs(n: usize) -> Formula {
     Formula::and(fs)
 }
 
-/// The tied cycle of four both ways ([`cycle_both_ways`]) with every variable at most `top`,
-/// variable `i` named `v{name[i]}`. Summing the cycle's rows gives `2·Σ x >= 40`, so with
-/// `top <= 4`, where `Σ x <= 16`, it has no point; the solver refuses it for its tie.
+/// The tied doubled cycle ([`doubled_cycle`]) with every variable at most `top`, variable `i`
+/// named `v{name[i]}`. Summing its rows gives `4·Σ x >= 120`, so with `top <= 4`, where
+/// `Σ x <= 24`, it has no point; the solver refuses it for its tie.
 fn capped_cycle(top: i64, name: &[usize]) -> Formula {
-    let mut rows = cycle_both_ways(4);
-    for i in 0..4 {
-        let mut c = vec![0; 4];
+    let mut rows = doubled_cycle();
+    for i in 0..6 {
+        let mut c = vec![0; 6];
         c[i] = -1;
         rows.push(ge(&c, top));
     }
@@ -1754,12 +1870,12 @@ fn capped_cycle(top: i64, name: &[usize]) -> Formula {
 
 #[test]
 fn a_disjunct_the_solver_refuses_is_not_taken_for_a_point() {
-    // `(C4 && x <= 4) || (C4 && x <= 3)`: neither disjunct has a point, and the solver
-    // refuses both, so settling removes neither. The answer must not be `true` (verifier of
-    // NAME-ties repair 3 found `decide` gave `Ok(true)` while `satisfiable` refused): it is
-    // refused, by `decide` and `satisfiable` alike, under every naming.
+    // `(C && x <= 4) || (C && x <= 3)`, `C` the doubled cycle: neither disjunct has a point,
+    // and the solver refuses both, so settling removes neither. The answer must not be `true`
+    // (verifier of NAME-ties repair 3 found `decide` gave `Ok(true)` while `satisfiable`
+    // refused): it is refused, by `decide` and `satisfiable` alike, under every naming.
     let mut seen = BTreeMap::new();
-    each_permutation(4, |perm| {
+    each_permutation(6, |perm| {
         let f = Formula::or(vec![capped_cycle(4, perm), capped_cycle(3, perm)]);
         let d = decide(&f);
         let s = satisfiable(&f);
@@ -1772,15 +1888,15 @@ fn a_disjunct_the_solver_refuses_is_not_taken_for_a_point() {
 
 #[test]
 fn a_refused_disjunct_beside_one_with_a_point_gives_one_answer() {
-    // `y` in `[0, 9]` and `(C4 && x <= 3) || (1 <= y <= 2)`: the second disjunct has a point
-    // and the first is refused. The disjunction is linked to no other, so the formula has a point,
-    // under every naming of the cycle and whether `y` sorts before or after it; `satisfiable`
-    // must not take the refused disjunct because its name comes first.
+    // `y` in `[0, 9]` and `(C && x <= 3) || (1 <= y <= 2)`, `C` the doubled cycle: the second
+    // disjunct has a point and the first is refused. The disjunction is linked to no other, so
+    // the formula has a point, under every naming of the cycle and whether `y` sorts before or
+    // after it; `satisfiable` must not take the refused disjunct because its name comes first.
     for y in ["a", "z"] {
         let v = Lin::atom(Atom::Sym(y.into()));
         let k = Lin::constant;
         let mut seen = BTreeMap::new();
-        each_permutation(4, |perm| {
+        each_permutation(6, |perm| {
             let f = Formula::and(vec![
                 Formula::Con(Con::ge(&v, &k(0))),
                 Formula::Con(Con::ge(&k(9), &v)),

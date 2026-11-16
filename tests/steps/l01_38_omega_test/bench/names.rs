@@ -206,21 +206,34 @@ fn one_way_cycle(n: usize) -> Formula {
     )
 }
 
-/// `decide` on a cycle of `n` variables turned one way (FAIL-alone-point-refused-at-model): all
-/// `n` tie at the first step, no swap maps the rows onto themselves, and `System::symmetries`
-/// finds the turn of the cycle; one variable is eliminated, and the `n - 1` left tie again with
-/// no symmetry, which one more refinement shows, and are refused. So the run holds the swap
-/// checks and at most log2 n + 2 refinements of the rows, each O(N log N).
+/// [`one_way_cycle`] with every variable at most `top`. Summing the cycle's rows gives
+/// `2·Σ v >= 10·n`, so at `top = 4` it has no point.
+fn capped_one_way_cycle(n: usize, top: i64) -> Formula {
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{i}").into()));
+    let caps = (0..n).map(|i| Formula::Con(Con::ge(&Lin::constant(top), &v(i))));
+    Formula::and(std::iter::once(one_way_cycle(n)).chain(caps).collect())
+}
+
+/// `decide` on a cycle of `n` variables turned one way (FAIL-alone-point-refused-at-model,
+/// FAIL-tie-cycle-reflected-and-second-tie): all `n` tie at the first step, no swap maps the
+/// rows onto themselves, and `System::symmetries` finds the turn of the cycle; one variable is
+/// eliminated, and the `n - 1` left, a path, tie again with no symmetry. `System::rekey`
+/// refines the keys by the rows once, which tells every variable of the path apart, and the
+/// keys stay told apart to the end, so no later step ties. So the run holds the swap checks,
+/// at most 2·log2 n + 2 refinements of the rows for the symmetries and one for the rekey, each
+/// O(N log N). Capped at 4 the cycle has no point, which only the whole elimination shows.
 #[test]
 fn decide_on_a_cycle_turned_one_way_scales() {
     let n = 500;
     let (small, large) = (one_way_cycle(n), one_way_cycle(n * scaling::FACTOR));
     for (f, m) in [(&small, n), (&large, n * scaling::FACTOR)] {
-        match decide(f) {
-            Err(Refusal::Tie(t)) => assert_eq!(t.vars.len(), m - 1, "n = {m}"),
-            a => panic!("n = {m}: {a:?}"),
-        }
+        assert_eq!(decide(f), Ok(true), "n = {m}");
+        assert_eq!(decide(&capped_one_way_cycle(m, 4)), Ok(false), "n = {m}");
     }
+    let (small, large) = (
+        capped_one_way_cycle(n, 4),
+        capped_one_way_cycle(n * scaling::FACTOR, 4),
+    );
     scaling::check("decide on a cycle turned one way", n, |m| {
         let f = if m == n { &small } else { &large };
         let _ = std::hint::black_box(decide(f));

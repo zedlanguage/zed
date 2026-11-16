@@ -29,19 +29,34 @@ pub(super) fn kernel_name(out: &str) -> Option<&str> {
     })
 }
 
-/// `ok` over `x, y, z, w`, a cycle `3 * next - this >= 10` both ways, whose question the solver
-/// refuses (l01_38_presburger::checker, "tie"), with its parameters named by `names`. The
-/// cycle one way alone is decided, through its rotation. They are declared `int`, since the
-/// question is asked only of a function whose parameters take only `int`s, and bare literals
-/// leave the carrier open.
-fn tie(names: [&str; 4]) -> String {
-    let [x, y, z, w] = names;
-    format!(
-        "ok({x}: int, {y}: int, {z}: int, {w}: int) = 3 * {y} - {x} - 10 >= 0 && 3 * {z} - {y} \
-         - 10 >= 0 && 3 * {w} - {z} - 10 >= 0 && 3 * {x} - {w} - 10 >= 0 && 3 * {x} - {y} - 10 \
-         >= 0 && 3 * {y} - {z} - 10 >= 0 && 3 * {z} - {w} - 10 >= 0 && 3 * {w} - {x} - 10 >= \
-         0;\n"
-    )
+/// `ok` over six names in three pairs, `x, y`, then `z, w`, then `u, v`, a cycle
+/// `3 * next - this >= 10` from each name to each name of the next pair, whose question the
+/// solver refuses (l01_38_presburger::checker, "tie"), with its parameters named by `names`.
+/// The cycle of four both ways, used here before, is decided now
+/// (FAIL-tie-cycle-reflected-and-second-tie). They are declared `int`, since the question is
+/// asked only of a function whose parameters take only `int`s, and bare literals leave the
+/// carrier open.
+fn tie(names: [&str; 6]) -> String {
+    let pairs = [
+        [names[0], names[1]],
+        [names[2], names[3]],
+        [names[4], names[5]],
+    ];
+    let mut rows = Vec::new();
+    for k in 0..3 {
+        for a in pairs[k] {
+            for b in pairs[(k + 1) % 3] {
+                rows.push(format!("3 * {b} - {a} - 10 >= 0"));
+            }
+        }
+    }
+    let params = names.map(|p| format!("{p}: int")).join(", ");
+    format!("ok({params}) = {};\n", rows.join(" && "))
+}
+
+/// The arguments `p: a` for each of `names`.
+fn args(names: [&str; 6]) -> String {
+    names.map(|p| format!("{p}: a")).join(", ")
 }
 
 /// A unit of `defs` whose `main` calls `ok` at `args`.
@@ -65,15 +80,16 @@ fn the_kernel_name_finder_finds_one_and_skips_the_source() {
 
 #[test]
 fn a_refused_question_names_the_parameters_as_written_when_another_function_shares_them() {
-    let alone = calling(&tie(["x", "y", "z", "w"]), "x: a, y: a, z: a, w: a");
+    let names = ["x", "y", "z", "w", "u", "v"];
+    let alone = calling(&tie(names), &args(names));
     let shared = calling(
-        &format!("{}other(x, y) = x > y;\n", tie(["x", "y", "z", "w"])),
-        "x: a, y: a, z: a, w: a",
+        &format!("{}other(x, y) = x > y;\n", tie(names)),
+        &args(names),
     );
     let (alone, shared) = (rejected(&alone), rejected(&shared));
     assert_eq!(kernel_name(&shared), None, "{shared}");
     assert!(
-        shared.contains("the constraints: x <= 3 * y - 10"),
+        shared.contains("the constraints: x <= 3 * z - 10 && 3 * w >= x + 10"),
         "{shared}"
     );
     // The message, without the address that hashes the whole unit, is that of `ok` alone.
@@ -88,13 +104,11 @@ fn a_refused_question_names_the_parameters_as_written_when_another_function_shar
 
 #[test]
 fn a_parameter_named_like_a_prelude_word_is_named_as_written() {
-    let out = rejected(&calling(
-        &tie(["min", "len", "abs", "w"]),
-        "min: a, len: a, abs: a, w: a",
-    ));
+    let names = ["min", "len", "abs", "w", "u", "v"];
+    let out = rejected(&calling(&tie(names), &args(names)));
     assert_eq!(kernel_name(&out), None, "{out}");
     assert!(
-        out.contains("the constraints: 3 * len >= min + 10"),
+        out.contains("the constraints: 3 * abs >= min + 10 && min <= 3 * w - 10"),
         "{out}"
     );
 }
@@ -111,11 +125,11 @@ fn a_division_the_constraints_define_names_its_operand_as_written() {
 
 #[test]
 fn each_overload_asks_its_own_question() {
-    // `ok` over four names is refused at its own line; the overload `ok(x)` after it, over a
+    // `ok` over six names is refused at its own line; the overload `ok(x)` after it, over a
     // decided question, asks its own and is not asked the other's.
     let src = format!(
         "{}ok(x) = x > 2;\nmain(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n",
-        tie(["x", "y", "z", "w"])
+        tie(["x", "y", "z", "w", "u", "v"])
     );
     let out = rejected(&src);
     assert_eq!(kernel_name(&out), None, "{out}");

@@ -130,16 +130,41 @@ fn repaired_beside(defs: &str, repair: &str, args: &str) -> String {
     }
 }
 
-/// A refused `ok` over `x, y, z, w`, its conditions in two parts.
+/// A refused `ok` over `params`, its conditions in two parts.
 struct Refused {
     name: &'static str,
+    params: &'static str,
     rows: [&'static str; 2],
+}
+
+impl Refused {
+    /// The definition `ok(params) = rows;`.
+    fn def(&self) -> String {
+        format!(
+            "ok({}) = {} && {};",
+            self.params, self.rows[0], self.rows[1]
+        )
+    }
+
+    /// The arguments of a call of `ok` that passes `a` to each parameter.
+    fn args(&self) -> String {
+        args_of(self.params)
+    }
+}
+
+/// The arguments `p: a` for each parameter `p` of `params`.
+fn args_of(params: &str) -> String {
+    (params.split(", "))
+        .map(|p| format!("{p}: a"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 const REFUSED: [Refused; 3] = [
     // Growth: no elimination keeps the four rows within their count.
     Refused {
         name: "growth",
+        params: "x, y, z, w",
         rows: [
             "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 \
              >= 0",
@@ -150,54 +175,70 @@ const REFUSED: [Refused; 3] = [
     // variables left.
     Refused {
         name: "shadows",
+        params: "x, y, z, w",
         rows: [
             "9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * \
              y - 2 * z + 8 * w - 1 >= 0",
             "-9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0",
         ],
     },
-    // Tie: the cycle `3 * next - this >= 10` and the same cycle turned the other way, whose
-    // four names occur alike and share rows. Each part alone is decided: its symmetries turn
-    // the cycle, and fixing one name tells the other three apart (System::symmetries), but
-    // both ways round the symmetries also reflect it, and fixing one name leaves its two
-    // neighbors alike (FAIL-alone-point-refused-at-model).
+    // Tie: the cycle `3 * next - this >= 10` over three pairs, `x, y`, then `z, w`, then
+    // `u, v`, each name with a row to each name of the next pair, whose six names occur alike
+    // and share rows. Its symmetries turn the cycle and swap the names of any pair, but no
+    // swap of two names of different pairs maps the rows onto themselves, and fixing one name
+    // and then one of the next pair leaves the last pair alike, past the two names
+    // System::symmetries fixes (FAIL-tie-cycle-reflected-and-second-tie). The cycle of four
+    // both ways, refused here before, is decided now. Each part alone is decided.
     Refused {
         name: "tie",
+        params: "x, y, z, w, u, v",
         rows: [
-            "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * w - z - 10 >= 0 && 3 * x - w - 10 >= 0",
-            "3 * x - y - 10 >= 0 && 3 * y - z - 10 >= 0 && 3 * z - w - 10 >= 0 && 3 * w - x - 10 >= 0",
+            "3 * z - x - 10 >= 0 && 3 * w - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * w - y - 10 \
+             >= 0 && 3 * u - z - 10 >= 0 && 3 * v - z - 10 >= 0",
+            "3 * u - w - 10 >= 0 && 3 * v - w - 10 >= 0 && 3 * x - u - 10 >= 0 && 3 * y - u - 10 \
+             >= 0 && 3 * x - v - 10 >= 0 && 3 * y - v - 10 >= 0",
         ],
     },
 ];
 
-/// The menu a refused `ok(x, y, z, w)` with conditions `body` prints at L1, numbered after its
-/// note of constraints and placed, as that note is, at the body, which begins at column 38 of
-/// line 1, after `ok(x: int, y: int, z: int, w: int) = ` ([`program`]): a value stated for
-/// `v`, the order `a <= b` when one is given, and the conditions split into `split` (DESIGN.md
-/// sec:diagnostics, row "Linear question outside the polynomial fragment").
-fn menu(v: &str, order: Option<(&str, &str)>, body: &str, split: [&str; 2]) -> String {
-    const P: &str = "x: int, y: int, z: int, w: int";
-    const HEAD: &str = "ok(x: int, y: int, z: int, w: int) = ";
+/// The menu a refused `ok(params)` with conditions `body` prints at L1, numbered after its
+/// note of constraints and placed, as that note is, at the body, which begins on line 1 after
+/// `ok(x: int, y: int, …) = ` ([`program`]): a value stated for `v`, the order `a <= b` when
+/// one is given, and the conditions split into `split` (DESIGN.md sec:diagnostics, row
+/// "Linear question outside the polynomial fragment").
+fn menu(
+    params: &str,
+    v: &str,
+    order: Option<(&str, &str)>,
+    body: &str,
+    split: [&str; 2],
+) -> String {
+    let p = (params.split(", "))
+        .map(|p| format!("{p}: int"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let head = format!("ok({p}) = ");
+    let column = head.len() + 1;
     let mut lines = vec![format!(
         "repair: if `{v}` is meant to take only one value in `ok`, state that value, and the \
-         checker removes `{v}` from the question: `{HEAD}{v} == 0 && {body};`, with the value in \
+         checker removes `{v}` from the question: `{head}{v} == 0 && {body};`, with the value in \
          place of `0`"
     )];
     if let Some((a, b)) = order {
         lines.push(format!(
             "repair: if `{a} <= {b}` is meant to hold in `ok`, state it, and the checker can tell \
-             `{a}` and `{b}` apart: `{HEAD}{a} <= {b} && {body};`"
+             `{a}` and `{b}` apart: `{head}{a} <= {b} && {body};`"
         ));
     }
     lines.push(format!(
         "repair: split the conditions between two functions, `ok1` and `ok2`, and where `ok` \
          is called, call `ok1(…) && ok2(…)` with the same arguments; each asks a smaller \
          question, and a function whose body joins them asks the joined question again: \
-         `ok1({P}) = {};` and `ok2({P}) = {};`",
+         `ok1({p}) = {};` and `ok2({p}) = {};`",
         split[0], split[1]
     ));
     (lines.iter().enumerate())
-        .map(|(i, l)| format!("[{}] 1:38: {l}", i + 2))
+        .map(|(i, l)| format!("[{}] 1:{column}: {l}", i + 2))
         .collect::<Vec<_>>()
         .join("\n  ")
 }
@@ -232,12 +273,32 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
                                 with the rest";
     // (name, parameters, the definition of `ok`, the cause's opening words, whether `ok` holds
     // at input 0 and at input 5, the variables of the order repair if it is offered).
-    let both = |r: &Refused| format!("ok(x, y, z, w) = {} && {};", r.rows[0], r.rows[1]);
     let cases = [
-        ("growth", "x, y, z, w", both(&REFUSED[0]), GROWTH.to_string(), ["out\n", "out\n"], None),
-        ("shadows", "x, y, z, w", both(&REFUSED[1]), SHADOWS.to_string(), ["out\n", "out\n"], None),
-        // At x = y = z = w = 5 the cycle holds (3 * 5 - 5 = 10).
-        ("tie", "x, y, z, w", both(&REFUSED[2]), TIE.to_string(), ["out\n", "in\n"], Some(("w", "x"))),
+        (
+            "growth",
+            REFUSED[0].params,
+            REFUSED[0].def(),
+            GROWTH.to_string(),
+            ["out\n", "out\n"],
+            None,
+        ),
+        (
+            "shadows",
+            REFUSED[1].params,
+            REFUSED[1].def(),
+            SHADOWS.to_string(),
+            ["out\n", "out\n"],
+            None,
+        ),
+        // With every name 5 the cycle holds (3 * 5 - 5 = 10).
+        (
+            "tie",
+            REFUSED[2].params,
+            REFUSED[2].def(),
+            TIE.to_string(),
+            ["out\n", "in\n"],
+            Some(("u", "x")),
+        ),
         // Four names in 0..=2 that differ pairwise: no point, which the search through the
         // disjunctions of `!=` does not settle.
         (
@@ -272,14 +333,17 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
         // repairs rewrite the value it returns and keep the rest of the block.
         (
             "tie-block",
-            "x, y, z, w",
-            "ok(x, y, z, w) {\n  t = 3 * y - x - 10;\n  return t >= 0 && 3 * z - y - 10 >= 0 && 3 * w \
-             - z - 10 >= 0 && 3 * x - w - 10 >= 0 && 3 * x - y - 10 >= 0 && 3 * y - z - 10 >= 0 \
-             && 3 * z - w - 10 >= 0 && 3 * w - x - 10 >= 0;\n}"
-                .to_string(),
+            REFUSED[2].params,
+            format!(
+                "ok({}) {{\n  t = 3 * z - x - 10;\n  return t >= 0{};\n}}",
+                REFUSED[2].params,
+                (REFUSED[2].rows.join(" && "))
+                    .strip_prefix("3 * z - x - 10 >= 0")
+                    .expect("the first row")
+            ),
             TIE.to_string(),
             ["out\n", "in\n"],
-            Some(("w", "x")),
+            Some(("u", "x")),
         ),
     ];
     for (name, params, def, cause, outs, order) in cases {
@@ -344,18 +408,20 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
 /// rule of the syntax table).
 #[test]
 fn the_split_repair_names_functions_the_program_does_not_define() {
-    let [first, second] = REFUSED[2].rows;
-    let def = format!("ok(x, y, z, w) = {first} && {second};");
-    let args = "x: a, y: a, z: a, w: a";
+    let tie = &REFUSED[2];
+    let (def, args) = (tie.def(), tie.args());
+    let args = args.as_str();
+    let own = |f: &str, body: &str| format!("{f}({}) = {body};\n", tie.params);
     let cases = [
-        ("taken-1", "ok1(x, y, z, w) = x <= y;\n", ["ok2", "ok3"]),
+        ("taken-1", own("ok1", "x <= y"), ["ok2", "ok3"]),
         (
             "taken-2",
-            "ok1(x, y, z, w) = x <= y;\nok2(x, y, z, w) = y <= z;\n",
+            own("ok1", "x <= y") + &own("ok2", "y <= z"),
             ["ok3", "ok4"],
         ),
     ];
     for (name, defs, [a, b]) in cases {
+        let defs = defs.as_str();
         let printed = rejection(name, &program(&format!("{defs}{def}"), args));
         let menu = repairs(&printed);
         let split = *menu.last().expect("a menu");
@@ -380,7 +446,7 @@ fn the_split_repair_names_functions_the_program_does_not_define() {
         let heads: Vec<&str> = (definitions(split).iter())
             .map(|d| d.split_once(" = ").expect("a definition").0)
             .collect();
-        let want = [a, b].map(|f| format!("{f}(x: int, y: int, z: int, w: int)"));
+        let want = [a, b].map(|f| format!("{f}(x: int, y: int, z: int, w: int, u: int, v: int)"));
         assert_eq!(heads, want, "{name}: {split}");
     }
 }
@@ -399,11 +465,11 @@ fn the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define()
     use zedc::resolve::Ref;
     use zedc::unit::{Memory, Package, load};
 
-    let [first, second] = REFUSED[2].rows;
-    let pricing = int_defs(&format!("ok(x, y, z, w) = {first} && {second};"));
-    let own = "ok1(x: int, y: int, z: int, w: int) = x <= y;\n\
-               ok2(x: int, y: int, z: int, w: int) = y <= z;\n";
-    let all = "x: a, y: a, z: a, w: a";
+    let pricing = int_defs(&REFUSED[2].def());
+    let own = "ok1(x: int, y: int, z: int, w: int, u: int, v: int) = x <= y;\n\
+               ok2(x: int, y: int, z: int, w: int, u: int, v: int) = y <= z;\n";
+    let all = REFUSED[2].args();
+    let all = all.as_str();
     let app = |imports: &str, test: &str| {
         format!(
             "{imports}{own}main(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
@@ -595,7 +661,13 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
              x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
              z <= 12 * y + 31\n  {}",
             head_in(&src),
-            menu("x", None, &REFUSED[0].rows.join(" && "), REFUSED[0].rows)
+            menu(
+                REFUSED[0].params,
+                "x",
+                None,
+                &REFUSED[0].rows.join(" && "),
+                REFUSED[0].rows
+            )
         )
     );
 }
@@ -634,12 +706,10 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
     // `other` and `first` bind `x` and `w` too, so elaboration renames `ok`'s parameters
     // `x@k` and `w@k`; the message names them `x` and `w`, as `ok` wrote them, in the order
     // it prints them with no other function in the unit (item NAME-at-print).
-    let [first, second] = REFUSED[2].rows;
+    let tie = &REFUSED[2];
     let src = program(
-        &format!(
-            "ok(x, y, z, w) = {first} && {second};\nother(x) = x > 2;\nfirst(w, x1) = w > x1;"
-        ),
-        "x: a, y: a, z: a, w: a",
+        &format!("{}\nother(x) = x > 2;\nfirst(w, x1) = w > x1;", tie.def()),
+        &tie.args(),
     );
     assert_eq!(
         rejection("tie-alone", &src),
@@ -647,25 +717,29 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
             "{}to find whole numbers that meet these \
              conditions, the checker removes one variable at a time, putting in place of the \
              conditions on it conditions on the variables left. Its next step must choose among \
-             the variables `w`, `x`, `z`, `y`, which occur alike in the conditions (with the \
-             same coefficients, in conditions that are alike) and share the conditions \
-             `-w + 3 * x - 10 >= 0`, `-w + 3 * z - 10 >= 0`, `3 * w - x - 10 >= 0`, \
-             `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, `3 * x - y - 10 >= 0`, \
-             `3 * z - y - 10 >= 0`, `-z + 3 * y - 10 >= 0`, so only their names could order \
-             them, and the checker never lets a name change an answer. The checker stopped \
-             there, with no values found and none ruled out.\n  \
-             [1] 1:38: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
-             && w <= 3 * x - 10 && 3 * x >= y + 10 && 3 * y >= z + 10 && w <= 3 * z - 10 && 3 \
-             * w >= x + 10\n  {}",
+             the variables `u`, `x`, `y`, `w`, `z`, `v`, which occur alike in the conditions \
+             (with the same coefficients, in conditions that are alike) and share the \
+             conditions `-u + 3 * x - 10 >= 0`, `-u + 3 * y - 10 >= 0`, `3 * u - w - 10 >= 0`, \
+             `3 * u - z - 10 >= 0`, `3 * x - v - 10 >= 0`, `-x + 3 * w - 10 >= 0`, \
+             `-x + 3 * z - 10 >= 0`, `3 * y - v - 10 >= 0`, `-y + 3 * w - 10 >= 0`, \
+             `-y + 3 * z - 10 >= 0`, `-w + 3 * v - 10 >= 0`, `-z + 3 * v - 10 >= 0`, so only \
+             their names could order them, and the checker never lets a name change an answer. \
+             The checker stopped there, with no values found and none ruled out.\n  \
+             [1] 1:54: the constraints: x <= 3 * z - 10 && 3 * w >= x + 10 && y <= 3 * z - 10 \
+             && 3 * w >= y + 10 && 3 * u >= z + 10 && 3 * v >= z + 10 && 3 * u >= w + 10 && 3 \
+             * v >= w + 10 && u <= 3 * x - 10 && u <= 3 * y - 10 && v <= 3 * x - 10 && v <= 3 * \
+             y - 10\n  {}",
             head_in(&src),
             menu(
-                "w",
-                Some(("w", "x")),
-                &format!("{first} && {second}"),
+                tie.params,
+                "u",
+                Some(("u", "x")),
+                &tie.rows.join(" && "),
                 [
-                    "3 * w - z - 10 >= 0 && 3 * z - w - 10 >= 0",
-                    "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * x - w - 10 >= 0 && 3 * x \
-                     - y - 10 >= 0 && 3 * y - z - 10 >= 0 && 3 * w - x - 10 >= 0"
+                    "3 * u - z - 10 >= 0 && 3 * u - w - 10 >= 0 && 3 * y - u - 10 >= 0",
+                    "3 * z - x - 10 >= 0 && 3 * w - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * w \
+                     - y - 10 >= 0 && 3 * v - z - 10 >= 0 && 3 * v - w - 10 >= 0 && 3 * x - u - \
+                     10 >= 0 && 3 * x - v - 10 >= 0 && 3 * y - v - 10 >= 0"
                 ]
             )
         )
@@ -694,7 +768,13 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
              x + 6 * z <= 4 * y + 22\n  {}",
             head_in(&src),
-            menu("x", None, &REFUSED[1].rows.join(" && "), REFUSED[1].rows)
+            menu(
+                REFUSED[1].params,
+                "x",
+                None,
+                &REFUSED[1].rows.join(" && "),
+                REFUSED[1].rows
+            )
         )
     );
 }
@@ -741,30 +821,31 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
     // cause and the constraints it prints are those of `ok` with `base`'s rows written in it.
     // But for the tie: `main` passes `ok` a local, so `ok`'s parameters join no class with
     // `base`'s, and `ok`'s call of `base` binds `base`'s canonical atoms to `ok`'s
-    // (LOAD-chain-affine). The question is then over eight variables and four equalities, whose
-    // structure tells every variable apart, and the solver decides it (it holds, at 5 for all
-    // four) with no choice falling to a name; written over four names alike, the rows tie and
-    // are refused. The answer is the same under renamings of the four names, both ways round,
-    // checked below; `ok` is false at 3.
-    const ARGS: &str = "x: a, y: a, z: a, w: a";
+    // (LOAD-chain-affine). The question is then over twice as many variables, with one
+    // equality per parameter, whose structure tells every variable apart, and the solver
+    // decides it (it holds, at 5 for all six) with no choice falling to a name; written over
+    // six names alike, the rows tie and are refused. The answer is the same under renamings of
+    // the six names, checked below; `ok` is false at 3.
     for r in &REFUSED {
         let [first, second] = r.rows;
+        let (params, args) = (r.params, r.args());
+        let passed = (params.split(", "))
+            .map(|p| format!("{p}: {p}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let called = program(
-            &format!(
-                "base(x, y, z, w) = {first};\nok(x, y, z, w) = base(x: x, y: y, z: z, w: w) && \
-                 {second};"
-            ),
-            ARGS,
+            &format!("base({params}) = {first};\nok({params}) = base({passed}) && {second};"),
+            &args,
         );
-        let written = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
+        let written = program(&r.def(), &args);
         if r.name == "tie" {
-            // `src` with the names x, y, z, w renamed to `to`, where they stand alone.
-            let renamed = |src: &str, to: [&str; 4]| {
+            // `src` with the names x, y, z, w, u, v renamed to `to`, where they stand alone.
+            let renamed = |src: &str, to: [&str; 6]| {
                 let mut out = String::new();
                 let cs: Vec<char> = src.chars().collect();
                 for (i, &c) in cs.iter().enumerate() {
                     let alone = |j: Option<&char>| !j.is_some_and(|c| c.is_alphanumeric());
-                    match "xyzw".find(c) {
+                    match "xyzwuv".find(c) {
                         Some(k)
                             if alone(i.checked_sub(1).map(|j| &cs[j])) && alone(cs.get(i + 1)) =>
                         {
@@ -776,10 +857,11 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
                 out
             };
             for (i, to) in [
-                ["x", "y", "z", "w"],
-                ["w", "z", "y", "x"],
-                ["p4", "p3", "p2", "p1"],
-                ["p1", "p2", "p3", "p4"],
+                ["x", "y", "z", "w", "u", "v"],
+                ["v", "u", "w", "z", "y", "x"],
+                ["p6", "p5", "p4", "p3", "p2", "p1"],
+                ["p1", "p2", "p3", "p4", "p5", "p6"],
+                ["p2", "p4", "p6", "p1", "p3", "p5"],
             ]
             .into_iter()
             .enumerate()
@@ -824,12 +906,12 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
     // its relation is read over `tie`'s parameters; what the checker prints for `ok` is what it
     // prints when `ok` states the same constraints over its own parameters, with no call.
     let [first, second] = REFUSED[2].rows;
-    // `rows` with each of `x`, `y`, `z` and `w` replaced by its argument in `args`.
-    let substituted = |rows: &str, args: [&str; 4]| -> String {
+    // `rows` with each of `x`, `y`, `z`, `w`, `u` and `v` replaced by its argument in `args`.
+    let substituted = |rows: &str, args: [&str; 6]| -> String {
         let mut out = String::new();
         let mut prev = ' ';
         for ch in rows.chars() {
-            match "xyzw".find(ch).filter(|_| !prev.is_alphanumeric()) {
+            match "xyzwuv".find(ch).filter(|_| !prev.is_alphanumeric()) {
                 Some(i) => out.push_str(&format!("({})", args[i])),
                 None => out.push(ch),
             }
@@ -849,28 +931,32 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let tie = format!("tie(x, y, z, w) = {first} && {second};");
-    for (i, args) in [["b", "c", "d", "a"], ["b + 1", "c", "d - 2", "a"]]
-        .into_iter()
-        .enumerate()
+    let tie = format!("tie({}) = {first} && {second};", REFUSED[2].params);
+    let own = args_of("a, b, c, d, e, f");
+    for (i, args) in [
+        ["b", "c", "d", "a", "f", "e"],
+        ["b + 1", "c", "d - 2", "a", "f", "e"],
+    ]
+    .into_iter()
+    .enumerate()
     {
         let call_body = format!(
-            "tie(x: {}, y: {}, z: {}, w: {})",
-            args[0], args[1], args[2], args[3]
+            "tie(x: {}, y: {}, z: {}, w: {}, u: {}, v: {})",
+            args[0], args[1], args[2], args[3], args[4], args[5]
         );
-        let call = format!("ok(a, b, c, d) = {call_body};");
+        let call = format!("ok(a, b, c, d, e, f) = {call_body};");
         let alone = format!(
-            "ok(a, b, c, d) = {} && {};",
+            "ok(a, b, c, d, e, f) = {} && {};",
             substituted(first, args),
             substituted(second, args)
         );
         let through = printed(
             &format!("coordinates-call-{i}"),
-            &program(&format!("{tie}\n{call}"), "a: a, b: a, c: a, d: a"),
+            &program(&format!("{tie}\n{call}"), &own),
         );
         let expected = printed(
             &format!("coordinates-alone-{i}"),
-            &program(&format!("{tie}\n{alone}"), "a: a, b: a, c: a, d: a"),
+            &program(&format!("{tie}\n{alone}"), &own),
         );
         assert_eq!(
             unwritten(&stated(&through)),
@@ -891,13 +977,13 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
         for r in menu {
             let def = (r.split('`').skip(1).step_by(2))
                 .find(|c| {
-                    c.starts_with("ok(a: int, b: int, c: int, d: int) = ")
+                    c.starts_with("ok(a: int, b: int, c: int, d: int, e: int, f: int) = ")
                         && c.ends_with(&format!("{call_body};"))
                 })
                 .unwrap_or_else(|| panic!("no rewritten call in {r}"));
             let o = run(
                 &format!("coordinates-repaired-{i}"),
-                &program(&format!("{tie}\n{def}"), "a: a, b: a, c: a, d: a"),
+                &program(&format!("{tie}\n{def}"), &own),
                 "3\n",
                 &[],
             );
