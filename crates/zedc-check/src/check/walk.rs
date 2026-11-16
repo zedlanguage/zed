@@ -28,6 +28,7 @@ mod fp_ops;
 mod remap;
 
 use fp_ops::Quantifier;
+use zedc_resolve::resolve::STRING_CALLS;
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -422,6 +423,9 @@ pub(super) enum Frame<'a> {
     /// `x.any(p)`, `x.all(p)` or `x.find(p)`, waiting for `p`: `x`'s type, the quantifier
     /// and the call's span (step L3.15a; `quantifier_end`).
     Quantify(Ty, Quantifier, Span),
+    /// `split`, `lines` or `concat`, an operand being checked (plan row FP-ops-strings;
+    /// `strings_end`).
+    Strings(Box<StringsF<'a>>),
     /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
     /// span (`reduce_by`).
     ReduceFn(Ty, Span),
@@ -718,6 +722,16 @@ pub(super) struct MemberF<'a> {
     positional: &'a [Expr],
     named: &'a [(String, Expr)],
     curry: bool,
+    span: Span,
+}
+
+/// A call of `split`, `lines` or `concat` (plan row FP-ops-strings), its operands checked
+/// one at a time: `got` the operands checked so far, the receiver of `x.w(…)` first, and
+/// `todo` those still to check, in reverse order.
+pub(super) struct StringsF<'a> {
+    word: &'a str,
+    got: Vec<Arg<'a>>,
+    todo: Vec<&'a Expr>,
     span: Span,
 }
 
@@ -1116,6 +1130,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_arg();
                 let t = self.quantifier_end(&x, f, q, span, Self::apply);
                 m.ty(t);
+            }
+            Frame::Strings(mut s) => {
+                let a = m.take_arg();
+                s.got.push(a);
+                self.strings_step(m, s);
             }
             Frame::ReduceFn(x, span) => {
                 let f = m.take_ty();
@@ -6076,6 +6095,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let args = Args::of(positional, named);
             return self.call_sig(m, sig, true, None, args, curry, None, span, what);
         }
+        // `split(s, sep)`, `lines(s)` and `concat(pieces, sep: s)` (plan row FP-ops-strings),
+        // where the name is the prelude's: built in, as `map` is.
+        if let ExprKind::Name(w) = &callee.kind
+            && STRING_CALLS.contains(&w.as_str())
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+        {
+            return self.strings_call(m, w, None, positional, named, curry, span);
+        }
         m.k(Frame::Callee {
             callee,
             positional,
@@ -7410,11 +7437,82 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.ty(Ty::empty());
                     }
                 },
+                // `s.split(sep)`, `s.lines` and `xs.concat(sep: s)` (plan row FP-ops-strings),
+                // built in as `map` is.
+                Some(_) if STRING_CALLS.contains(&name) => {
+                    self.strings_call(m, name, Some(x), positional, named, curry, span)
+                }
                 // Elaboration rejects the rest: a prelude word of a later layer, a field read,
                 // or a call of a function in no scope. Never, the type of no value, keeps the
                 // uses of the result from reporting that error again as their own.
                 _ => m.ty(Ty::empty()),
             },
+        }
+    }
+
+    /// `split`, `lines` or `concat` (plan row FP-ops-strings, step L3.2), as `w(…)` or, with
+    /// `receiver` checked, `x.w(…)`: `split` takes the string and the separator, `lines` the
+    /// string, and `concat` the pieces and an optional `sep`, the pieces by position and `sep`
+    /// by name. Any other shape is rejected with the call's form as the repair.
+    #[allow(clippy::too_many_arguments)]
+    fn strings_call(
+        &mut self,
+        m: &mut M<'a>,
+        word: &'a str,
+        receiver: Option<Arg<'a>>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) {
+        let given = usize::from(receiver.is_some()) + positional.len();
+        let fits = !curry
+            && match word {
+                "split" => given == 2 && named.is_empty(),
+                "lines" => given == 1 && named.is_empty(),
+                _ => given == 1 && named.iter().all(|(n, _)| n == "sep") && named.len() <= 1,
+            };
+        if !fits {
+            let (shape, form) = match word {
+                "split" => (
+                    "a string and a separator, passed by position",
+                    "`s.split(\",\")`",
+                ),
+                "lines" => ("one string", "`s.lines`"),
+                _ => (
+                    "a family of strings, and an optional separator `sep:` by name",
+                    "`concat(xs, sep: \", \")`",
+                ),
+            };
+            self.error_offering(
+                span,
+                format!("`{word}` takes {shape}"),
+                [format!("repair: write {form}")],
+            );
+            return m.ty(Ty::empty());
+        }
+        let mut todo: Vec<&'a Expr> = named.iter().map(|(_, e)| e).collect();
+        todo.extend(positional.iter().rev());
+        let s = StringsF {
+            word,
+            got: receiver.into_iter().collect(),
+            todo,
+            span,
+        };
+        self.strings_step(m, Box::new(s));
+    }
+
+    /// The next operand of `s`, or with every operand checked the call's type.
+    fn strings_step(&mut self, m: &mut M<'a>, mut s: Box<StringsF<'a>>) {
+        match s.todo.pop() {
+            Some(e) => {
+                m.k(Frame::Strings(s));
+                m.job(Job::Arg(e, Want::default()));
+            }
+            None => {
+                let t = self.strings_end(s.word, s.got, s.span);
+                m.ty(t);
+            }
         }
     }
 

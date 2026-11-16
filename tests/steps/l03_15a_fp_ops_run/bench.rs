@@ -344,6 +344,90 @@ fn scan_and_chunk_by_on_a_keyed_display_run_in_n_log_n() {
     );
 }
 
+/// Characters of a string a string function reads (plan row FP-ops-strings).
+const N_TEXT: usize = 100_000;
+
+/// The first `n` characters of a text holding empty pieces between commas and every line end:
+/// `\n`, `\r\n`, a lone `\r`, and two line ends in a row.
+fn text(n: usize) -> String {
+    "ab,,c\r\nd\re\n\n,x".chars().cycle().take(n).collect()
+}
+
+fn str_term(x: &str) -> Term {
+    lit(Value::str(x))
+}
+
+/// Step L3.2's test: the join law `concat(s.split(sep), sep: sep) == s` on generated strings
+/// of n and 8n characters, each split and joined in O(n).
+#[test]
+fn split_then_concat_gives_the_text_back_in_linear_time() {
+    for sep in [",", "\r\n", ""] {
+        let terms = scaling::inputs(N_TEXT, |k| {
+            let pieces = Term::Prim(Prim::Split, vec![str_term(&text(k)), str_term(sep)]);
+            let term = Term::Prim(Prim::Join, vec![pieces, str_term(sep)]);
+            (term, Value::str(&text(k)))
+        });
+        let run = |k: usize| {
+            let (term, want) = &terms[&k];
+            assert_eq!(&eval(term).unwrap(), want);
+        };
+        scaling::check_order(
+            &format!(
+                "the kernel run of `concat(s.split({sep:?}), sep: {sep:?})` over n characters"
+            ),
+            N_TEXT,
+            1,
+            run,
+        );
+    }
+}
+
+#[test]
+fn lines_runs_in_linear_time() {
+    let terms = scaling::inputs(N_TEXT, |k| {
+        Term::Prim(
+            Prim::Count,
+            vec![Term::Prim(Prim::Lines, vec![str_term(&text(k))])],
+        )
+    });
+    // Each cycle of 14 characters holds four line ends, the last two in a row.
+    let run = |k: usize| match eval(&terms[&k]).unwrap() {
+        Value::Int(c) => assert!((c as usize).abs_diff(4 * k / 14) <= 4, "{c} lines"),
+        v => panic!("a count {v:?}"),
+    };
+    scaling::check_order(
+        "the kernel run of `s.lines` over n characters",
+        N_TEXT,
+        1,
+        run,
+    );
+}
+
+/// Step L3.2's test: n and 8n pieces joined in O(n) in all.
+#[test]
+fn concat_of_n_pieces_runs_in_linear_time() {
+    let terms = scaling::inputs(N_TEXT, |k| {
+        let pieces = (0..k as i64).map(|x| {
+            (
+                Value::Int(x),
+                Value::str(if x % 3 == 0 { "" } else { "ab" }),
+            )
+        });
+        let pieces = lit(Value::Family(Family::of(pieces.collect::<Vec<_>>())));
+        Term::Prim(Prim::Join, vec![pieces, str_term(", ")])
+    });
+    let run = |k: usize| match eval(&terms[&k]).unwrap() {
+        Value::Str(s) => assert_eq!(s.len(), 2 * (k - k.div_ceil(3)) + 2 * (k - 1)),
+        v => panic!("a string {v:?}"),
+    };
+    scaling::check_order(
+        "the kernel run of `concat(pieces, sep: \", \")` over n pieces",
+        N_TEXT,
+        1,
+        run,
+    );
+}
+
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries
 /// takes n + 1 frames, so the frames at 8n are near 8 times those at n.
 #[test]

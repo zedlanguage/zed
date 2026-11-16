@@ -5,7 +5,10 @@
 //! register's `sum` and `reduce` rows); `.any(p)` and `.all(p)` are `p` mapped over the
 //! entries and folded by `||` and `&&` (step L3.15a, for a `p` that never fails); `.find(p)` is
 //! the least key `p` holds at, or `#none`; `.first` and `.last` are the entries at the least
-//! and greatest key; `.foldl` and `.foldr` are the folds of zed_tests::kernel.
+//! and greatest key; `.foldl` and `.foldr` are the folds of zed_tests::kernel. The models of
+//! `split` and `lines` are the families of strings step L3.2 gives, and `concat(m, sep: s)` is
+//! `m` reduced by `(a, b) -> a ++ s ++ b` with `""` for an empty `m`, so no model uses the
+//! primitives it checks.
 
 use zed_kernel::term::build::{let_, lit, var};
 use zed_kernel::{Family, Pattern, Prim, Term, Value, eval};
@@ -75,6 +78,19 @@ fn chunk_by(m: Term, f: impl Fn(Term) -> Term + Copy) -> Term {
         let kf = func(|[p, _]| path(vec![run(key(p.clone(), 0)), key(p, 0)]));
         reindex(m.clone(), kf, func(|[_, v]| v))
     })
+}
+
+/// `[s0, s1, …]`: strings keyed by position from 0, the model of what `split` and `lines` give.
+fn strings(xs: &[&str]) -> Term {
+    let entries = (xs.iter().enumerate()).map(|(k, &x)| (i(k as i64), s(x)));
+    lit(Value::Family(Family::of(entries.collect::<Vec<_>>())))
+}
+
+/// `concat(m, sep: sep)`: `m` reduced by `(a, b) -> a ++ sep ++ b`, an associative operator,
+/// with `""` as the reduction of an empty family (step L3.2).
+fn joined(m: Term, sep: &str) -> Term {
+    let op = func(|[a, b]| bin(Prim::Concat, bin(Prim::Concat, a, lit(s(sep))), b));
+    fold(m, op, Some(lit(s(""))))
 }
 
 /// The cases: a name, the expression a program writes, and its model.
@@ -183,11 +199,39 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "${[3, 1, 4, 1, 5].chunkBy(x -> x > 3)}",
             chunk_by(xs(), big),
         ),
+        (
+            "concat_without_sep",
+            "${concat([\"p\", \"q\", \"r\"])}",
+            joined(strings(&["p", "q", "r"]), ""),
+        ),
+        (
+            "split_keeps_empty_pieces",
+            "${concat(\"a,,b,\".split(\",\"), sep: \"|\")}",
+            joined(strings(&["a", "", "b", ""]), "|"),
+        ),
+        (
+            "split_by_the_empty_separator",
+            "${concat(\"hé€\".split(\"\"), sep: \".\")}",
+            joined(strings(&["h", "é", "€"]), "."),
+        ),
+        (
+            "lines_at_each_line_end",
+            "${concat(\"a\\r\\nb\\rc\\n\\nd\\n\".lines, sep: \"|\")}",
+            joined(strings(&["a", "b", "c", "", "d"]), "|"),
+        ),
+        (
+            "count_of_lines",
+            "${\"x\\n\".lines.count}",
+            count(strings(&["x"])),
+        ),
     ]
 }
 
+/// What `${…}` prints of the model's value: a string as its characters, without the quotes of
+/// its literal, and any other value as it is written.
 fn expected(model: &Term) -> String {
     match eval(model) {
+        Ok(Value::Str(s)) => format!("{s}\n"),
         Ok(v) => format!("{v}\n"),
         Err(e) => panic!("the model failed: {e:?}"),
     }

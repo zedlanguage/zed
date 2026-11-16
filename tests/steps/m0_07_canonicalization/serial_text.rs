@@ -246,6 +246,9 @@ pub(super) mod m07 {
             EntryBefore => "the entry before a given one of a level in key order",
             First => "`f.first`",
             Last => "`f.last`",
+            Split => "`split`",
+            Lines => "`lines`",
+            Join => "`concat`",
         }
     }
 

@@ -199,6 +199,17 @@ pub enum Prim {
     First,
     /// `f.last`: the leaf at the greatest keypath of `f`, or `#none`.
     Last,
+    /// `split(s, sep)`: the pieces of the string `s` between the occurrences of `sep`, each
+    /// kept, empty ones included, as a family keyed from 0 in order (DESIGN.md step L3.2). An
+    /// empty `sep` gives each character of `s` as a piece, and `[""]` for an empty `s`.
+    Split,
+    /// `lines(s)`: the lines of the string `s`, each ended by `\n`, `\r\n` or a lone `\r`, with
+    /// no empty line after a line end at the end of `s`, as a family keyed from 0 in order
+    /// (DESIGN.md step L3.2, sec:codecs).
+    Lines,
+    /// `concat(pieces, sep: s)`: the strings of the family `pieces`, in key order, with `s`
+    /// between each two; `""` for no pieces (DESIGN.md step L3.2).
+    Join,
 }
 
 impl Prim {
@@ -208,7 +219,7 @@ impl Prim {
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
-            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last => Some(1),
+            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines => Some(1),
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom | Entries => None,
@@ -299,6 +310,9 @@ impl Prim {
             EntryBefore => 72,
             First => 73,
             Last => 74,
+            Split => 75,
+            Lines => 76,
+            Join => 77,
         }
     }
 }

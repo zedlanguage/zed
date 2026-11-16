@@ -208,6 +208,9 @@ enum Frame<'a> {
     /// `x.any(p)`, `x.all(p)` or `x.find(p)` once `p` is elaborated: `x`'s term (step
     /// L3.15a).
     Quantify(Term, Quantifier),
+    /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
+    /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings).
+    Strings(Option<Term>, Prim),
     /// A remap once its source and its levels' expressions are elaborated, in that order.
     Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
@@ -1447,6 +1450,15 @@ impl<'a> Elab<'a> {
             self.call_with(m, Callee::Declared(id, f), None, call);
             return;
         }
+        // `split(s, sep)`, `lines(s)` and `concat(pieces, sep: s)` where the name is the
+        // prelude's (plan row FP-ops-strings), built in as `map` is.
+        if let ExprKind::Name(n) = &callee.kind
+            && let Some(p) = fp_ops::strings_prim(n)
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+        {
+            self.strings(m, None, p, call);
+            return;
+        }
         // A lambda bound in a block takes the body made at this call's identities
         // (`Elab::name`).
         if self.instanced(callee).is_some() {
@@ -1454,6 +1466,32 @@ impl<'a> Elab<'a> {
         }
         m.k(Frame::CallOf(call));
         m.stack.push(Job::Expr(callee));
+    }
+
+    /// `split`, `lines` or `concat`, the prim `p`, with `receiver` the term of `x` in
+    /// `x.w(…)`: the operands by position, then `sep` by name ([`Frame::Strings`]). The checker
+    /// rejected any other shape, so none reaches here; one that does gives no term.
+    fn strings(&mut self, m: &mut M<'a>, receiver: Option<Term>, p: Prim, call: Call<'a>) {
+        let given = usize::from(receiver.is_some()) + call.positional.len();
+        let fits = !call.curry
+            && match p {
+                Prim::Split => given == 2 && call.named.is_empty(),
+                Prim::Lines => given == 1 && call.named.is_empty(),
+                _ => {
+                    given == 1
+                        && call.named.iter().all(|(n, _)| n == "sep")
+                        && call.named.len() <= 1
+                }
+            };
+        if !fits {
+            m.give(None);
+            return;
+        }
+        let exprs = (call.positional.iter())
+            .chain(call.named.iter().map(|(_, e)| e))
+            .collect();
+        m.k(Frame::Strings(receiver, p));
+        m.seq(exprs, false);
     }
 
     /// An atom with a payload, `#name(a, b)` by position or `#name(f: a)` by name.
@@ -2286,6 +2324,13 @@ impl<'a> Elab<'a> {
                         return;
                     }
                 },
+                // `s.split(sep)`, `s.lines` and `xs.concat(sep: s)` (plan row FP-ops-strings),
+                // built in as `map` is; the checker rejects any other argument list.
+                Some(_) if let Some(p) = fp_ops::strings_prim(name) => {
+                    m.k(Frame::MemberEnd(wrap));
+                    self.strings(m, Some(receiver), p, call);
+                    return;
+                }
                 Some(_) => not_yet(&format!("the prelude word `{name}`")),
                 // A literal has no fields, so `.name` can only call a function `name`, and
                 // none is in scope: the resolver's short headline, the rule in a note
@@ -2515,6 +2560,13 @@ impl<'a> Elab<'a> {
                 let t = m.t().map(|f| match filter {
                     true => self.where_term(x, f),
                     false => self.map_term(x, f),
+                });
+                m.give(t);
+            }
+            Frame::Strings(receiver, p) => {
+                let t = all(m.got()).map(|ts| {
+                    let args = receiver.into_iter().chain(ts).collect();
+                    fp_ops::strings_term(p, args)
                 });
                 m.give(t);
             }

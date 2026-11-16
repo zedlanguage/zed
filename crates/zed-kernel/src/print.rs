@@ -212,6 +212,9 @@ fn name(p: Prim) -> &'static str {
         EntryBefore => "entryBefore",
         First => "first",
         Last => "last",
+        Split => "split",
+        Lines => "lines",
+        Join => "concat",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

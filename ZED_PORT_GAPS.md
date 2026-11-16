@@ -3995,6 +3995,14 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 |---|---|---|---|
 | A method of the checker passed as a plain function pointer `fn(&mut Ck, Reducer, &Ty, Span, Span, FoldForm) -> Ty` (the type `FoldLevel`), so that `walk/fp_ops.rs` calls `Ck::fold_level` of `walk.rs` without importing it, which would close an import cycle between the two modules | `Ck::scan_end`, called from the `ScanFn` frame and the `scan` arm of `walk.rs` | None | a function value passed as an argument, as `apply` is passed to `quantifier_end` |
 
+## Entries from FP-ops-strings (`crates/zed-kernel/src/words.rs`, `eval.rs`; `crates/zedc-resolve/src/resolve.rs`; `crates/zedc-check/src/check/walk.rs`, `walk/fp_ops.rs`, `mod.rs`; `crates/zedc-elab/src/elab/walk.rs`, `walk/fp_ops.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `FnMut` closure that pushes each line into a `Vec` it borrows mutably, called by the line reader block by block | `words::lines` | Mutation (gap 11); a closure holding a mutable borrow | the reader's decode as a function from the blocks to the family of lines, a fold over the blocks whose accumulator is the lines so far and the unfinished line |
+| A `for` loop over the entries that reassigns `out: Option<Text>` and returns early at an entry that is not a string | `words::join` | Mutation (gap 11); early return from a loop | `pieces.foldl` with the joined text as the accumulator, and the entries' type checked first (`pieces is [Utf8String]`) |
+| A continuation frame holding a `Vec<&Expr>` of the arguments still to check, popped one per step, and a `Vec<Arg>` of those checked, pushed one per step | `StringsF`, `Ck::strings_call`, `strings_step` | Mutation (gap 11) | the arguments checked by a `map` over the call's argument list, as the checker's other calls are at the port |
+
 ## Entries from REDUCE-generic-identity (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `crates/zedc-elab/src/elab/instances.rs`, `walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |

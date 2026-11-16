@@ -303,6 +303,108 @@ fn utf8(s: &Text) -> Family {
     )
 }
 
+/// The family of `pieces` keyed from 0 in order, as an array is.
+// Complexity tradeoff: the keys are made in increasing order, and the ordered map is built from
+// that sorted run in O(n) for n pieces, not by n inserts, O(n log n). Tradeoff: none.
+fn rank(pieces: impl Iterator<Item = Value>) -> Family {
+    Family::from_map(
+        (0i64..)
+            .zip(pieces)
+            .map(|(i, v)| (Value::Int(i), v))
+            .collect(),
+    )
+}
+
+/// `split(s, sep)`: the pieces of `s` between the occurrences of `sep`, found left to right
+/// without overlap, every piece kept, empty ones included, so `concat(s.split(sep), sep: sep)`
+/// is `s` (DESIGN.md step L3.2). An empty `sep` gives each character of `s` as a piece, and
+/// `[""]` for an empty `s`, so `"".split(sep)` is `[""]` for every `sep`.
+// Complexity tradeoff: the naive search tests `sep` at each offset of `s`, O(n·m) for n bytes
+// of `s` and m of `sep`. Used: the standard library's `str::split`, the Two-Way search
+// (Crochemore and Perrin, "Two-way string-matching", JACM 38(3), 1991), O(n + m) in all, then
+// one copy of each piece, O(n) bytes in all, and the rank built from the sorted keys, O(k) for k
+// pieces. Tradeoff: a string held as joined blocks is first written out into one buffer,
+// O(n) more memory for the time of the call, since the search reads one `&str`; a search across
+// block edges would avoid the copy at the cost of a matcher of its own.
+pub(crate) fn split(s: &Text, sep: &Text) -> Result<Value, KernelError> {
+    let too_large = |bytes| KernelError::StringCopyTooLarge { op: "split", bytes };
+    let flat = s.try_flat().map_err(|_| too_large(s.len()))?;
+    let sep = sep.try_flat().map_err(|_| too_large(sep.len()))?;
+    // The pieces are copies of the text, at most `s.len()` bytes in all.
+    room(
+        BigUint::from(s.len()) << 3u32,
+        BigUint::from(s.len()) << 3u32,
+    )
+    .map_err(|_| too_large(s.len()))?;
+    let pieces: Vec<Value> = match (&*sep, flat.is_empty()) {
+        ("", true) => vec![Value::str("")],
+        ("", false) => flat
+            .char_indices()
+            .map(|(i, c)| Value::str(&flat[i..i + c.len_utf8()]))
+            .collect(),
+        (sep, _) => flat.split(sep).map(Value::str).collect(),
+    };
+    Ok(Value::Family(rank(pieces.into_iter())))
+}
+
+/// `lines(s)`: the lines of `s`, each ended by `\n`, `\r\n` or a lone `\r` and kept without it,
+/// with no empty line after a line end at the end of `s` (DESIGN.md step L3.2, sec:codecs), as
+/// [`crate::lines::LineReader`] reads text, here block by block.
+// Complexity tradeoff: the naive version writes the text out and splits it three times, once
+// per line end. Used: the line reader over the text's blocks, O(n) for n bytes with one test
+// per byte; a line that lies inside one block is copied once, and one that crosses blocks is
+// joined in the reader's buffer and copied again, so each byte is copied at most twice. The rank
+// is built from the sorted keys, O(k) for k lines. Tradeoff: none.
+pub(crate) fn lines(s: &Text) -> Result<Value, KernelError> {
+    room(
+        BigUint::from(s.len()) << 3u32,
+        BigUint::from(s.len()) << 3u32,
+    )
+    .map_err(|_| KernelError::StringCopyTooLarge {
+        op: "lines",
+        bytes: s.len(),
+    })?;
+    let mut out = Vec::new();
+    // Each line is the bytes of whole characters: the blocks are UTF-8 text, and the reader
+    // cuts them only at `\r` and `\n`, which in UTF-8 occur only as those characters.
+    let mut give = |l: &[u8]| {
+        out.push(Value::str(
+            std::str::from_utf8(l).expect("lines cut at line ends are UTF-8"),
+        ))
+    };
+    let mut reader = crate::lines::LineReader::new();
+    for block in s.chunks() {
+        reader.read(block.as_bytes(), &mut give);
+    }
+    reader.finish(give);
+    Ok(Value::Family(rank(out.into_iter())))
+}
+
+/// `concat(pieces, sep: s)`: the strings of the family `pieces`, in key order, with `sep`
+/// between each two, and `""` for none (DESIGN.md step L3.2); `None` when an entry is not a
+/// string.
+// Complexity tradeoff: the naive join writes each piece onto the end of one buffer copied at
+// each step, O(n²) for n bytes, or writes them all out at once, O(n) but a copy of every byte.
+// Used: a chain of `++` joins on the result of the one before, each sharing its parts and
+// building O(1) nodes amortized for a piece held as one block, O(log m) for one held as m
+// blocks, so O(k) for k one-block pieces in all, no byte copied but up to `LEAF` at a join
+// (text.rs). Tradeoff: the result is held as a tree of the pieces, which a reader of one `&str`
+// writes out at its call.
+pub(crate) fn join(pieces: &Family, sep: &Text) -> Result<Option<Value>, KernelError> {
+    let mut out: Option<Text> = None;
+    for (_, v) in pieces.iter() {
+        let Value::Str(piece) = v else {
+            return Ok(None);
+        };
+        out = Some(match out {
+            None => piece.clone(),
+            Some(acc) if sep.is_empty() => Text::join(&acc, piece)?,
+            Some(acc) => Text::join(&Text::join(&acc, sep)?, piece)?,
+        });
+    }
+    Ok(Some(Value::Str(out.unwrap_or_else(|| "".into()))))
+}
+
 /// The string the values of `f`, read in key order, encode as UTF-8, or `#badUtf8` when they
 /// are not well-formed: an overlong form, a surrogate, a scalar past `0x10FFFF`, or a truncated
 /// or stray continuation byte (the Unicode Standard, table 3-7, as [`std::str::from_utf8`] checks it). An

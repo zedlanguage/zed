@@ -2,7 +2,9 @@
 //! zedc as `map` is: the folds `x >< op`, `x.reduce(op)` and `x.sum`; `foldl` and `foldr`; and
 //! the quantifiers `.any`, `.all` and `.find` (step L3.15a). The serial ones walk the level in
 //! key order with the kernel's entry steps (`firstEntry`, `entryAfter`, and from the far end
-//! `lastEntry`, `entryBefore`), each frame of a `gen` holding the entry it reached.
+//! `lastEntry`, `entryBefore`), each frame of a `gen` holding the entry it reached. And the
+//! string functions `split`, `lines` and `concat` (plan row FP-ops-strings), one kernel prim
+//! each.
 
 use std::sync::Arc;
 
@@ -549,4 +551,25 @@ impl<'a> Elab<'a> {
 /// The tuple of `parts`.
 fn tuple(parts: Vec<Term>) -> Term {
     Term::Prim(Prim::Tuple, parts)
+}
+
+/// The prim of `split`, `lines` or `concat` (plan row FP-ops-strings), by its prelude word.
+pub(super) fn strings_prim(word: &str) -> Option<Prim> {
+    match word {
+        "split" => Some(Prim::Split),
+        "lines" => Some(Prim::Lines),
+        "concat" => Some(Prim::Join),
+        _ => None,
+    }
+}
+
+/// `split(s, sep)`, `lines(s)` or `concat(pieces, sep: s)` (plan row FP-ops-strings, step
+/// L3.2), from the operands in that order, the receiver of `x.w(…)` first: the kernel's prim,
+/// with `sep` `""` when `concat` is given none. The checker accepted only these shapes. A loose
+/// atom operand passes through the prim, as through any.
+pub(super) fn strings_term(p: Prim, mut args: Vec<Term>) -> Term {
+    if p == Prim::Join && args.len() == 1 {
+        args.push(Term::Lit(Value::str("")));
+    }
+    Term::Prim(p, args)
 }

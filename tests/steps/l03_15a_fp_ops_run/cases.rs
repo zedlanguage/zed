@@ -360,6 +360,57 @@ fn a_misused_scan_or_chunk_by_is_rejected_in_plain_words() {
     );
 }
 
+/// Step L3.2: `split` keeps every piece; `lines` ends a line at `\n`, `\r\n` and a lone `\r`
+/// and keeps no empty line after the last line end; `concat(pieces, sep: s)` on strings, `sep`
+/// `""` when not given, with the join law `concat(s.split(sep), sep: sep) == s` (QUESTIONS
+/// A105, answered B); `concat` of a family of families is rejected, its repair `xss >< (++)`.
+#[test]
+fn split_lines_and_concat() {
+    prints(
+        "strings",
+        &[
+            ("\"\".split(\" \") == [\"\"]", "true"),
+            ("\"a  b\".split(\" \") == [\"a\", \"\", \"b\"]", "true"),
+            ("\"a,b,\".split(\",\") == [\"a\", \"b\", \"\"]", "true"),
+            ("\"ab\".split(\"\") == [\"a\", \"b\"]", "true"),
+            ("\"\".split(\"\") == [\"\"]", "true"),
+            ("\"a,b\".split(\",\")[1] else \"none\"", "b"),
+            ("\"a,b\".split(\",\")[2] else \"none\"", "none"),
+            ("\"a\\nb\".lines[-1] else \"none\"", "none"),
+            ("\"a\\rb\".lines == [\"a\", \"b\"]", "true"),
+            ("\"a\\r\\nb\".lines == [\"a\", \"b\"]", "true"),
+            ("\"a\\n\\rb\".lines == [\"a\", \"\", \"b\"]", "true"),
+            ("\"a\\r\\r\\n\".lines == [\"a\", \"\"]", "true"),
+            ("\"\".lines == []", "true"),
+            ("\"\\n\".lines == [\"\"]", "true"),
+            ("\"a\\n\".lines == [\"a\"]", "true"),
+            ("\"a\\n\".split(\"\\n\") == [\"a\", \"\"]", "true"),
+            ("concat([\"a\", \"\", \"bc\"])", "abc"),
+            ("concat(\"x,y\".split(\",\"))", "xy"),
+            ("concat([\"a\", \"b\"], sep: \", \")", "a, b"),
+            ("concat([\"a\", \"\", \"b\"], sep: \",\")", "a,,b"),
+            ("concat([\"a\"], sep: \",\")", "a"),
+            ("concat([]) == \"\"", "true"),
+            ("concat([], sep: \",\") == \"\"", "true"),
+            (
+                "concat(\"a,,b,\".split(\",\"), sep: \",\") == \"a,,b,\"",
+                "true",
+            ),
+            ("concat(\"\".split(\",\"), sep: \",\") == \"\"", "true"),
+        ],
+    );
+    saying(
+        "strings",
+        &[
+            ("concat([[1], [2]])", ">< (++)"),
+            ("concat([1, 2])", "concat([1, 2].map(x -> String(x)))"),
+            ("[1, 2].split(\",\")", "`split` reads strings"),
+            ("\"a\".split()", "`split` takes"),
+            ("concat([\"a\"], by: \",\")", "`concat` takes"),
+        ],
+    );
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {

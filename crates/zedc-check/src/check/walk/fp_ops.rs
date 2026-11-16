@@ -1,8 +1,9 @@
 //! The standard operations on one level of a family that plan row FP-ops-run (author P229)
 //! builds into zedc as `map` is (plan row MAP-pure-zed): `.count`, `.sum` and `.reduce(op)`,
 //! the quantifiers `.any`, `.all` and `.find` (step L3.15a), and `.first` and `.last`
-//! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic"); and, by plan row
-//! FP-ops-scan, `.scan(op)` and `.chunkBy(f)` (step L5.3).
+//! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic"); by plan row
+//! FP-ops-scan, `.scan(op)` and `.chunkBy(f)` (step L5.3); and the string functions `split`,
+//! `lines` and `concat` of plan row FP-ops-strings (step L3.2).
 
 use super::remap::Apply;
 use crate::check::*;
@@ -393,5 +394,112 @@ impl<'t, 'a> Ck<'t, 'a> {
         outer.dense = Dense::Ranks;
         outer.note_held();
         Some((out.union(&Ty::func(Arc::new(outer))), gives))
+    }
+
+    /// `split(s, sep)`, `lines(s)` or `concat(pieces, sep: s)` (plan row FP-ops-strings, step
+    /// L3.2), each operand checked: `args` holds them in that order, `sep` of `concat` last
+    /// when it is given. Each string operand must be a string, and the pieces of `concat` a
+    /// family of strings; a family of families is rejected with `xss >< (++)` as the repair
+    /// (author A105). `split` and `lines` give the rank `0 ..< n` of strings, `concat` a
+    /// string. A loose atom of an operand passes through, as through any call.
+    pub(super) fn strings_end(&mut self, word: &str, args: Vec<Arg<'a>>, span: Span) -> Ty {
+        let quoted = format!("`{word}`");
+        let mut out = Ty::empty();
+        let (pieces, strings) = match word {
+            "concat" => (args.first(), &args[1..]),
+            _ => (None, &args[..]),
+        };
+        for a in strings {
+            out = out.union(&self.passing(&a.ty, &quoted, span, a.at));
+            if !self.string_operand(word, a, span) {
+                return Ty::empty();
+            }
+        }
+        let Some(p) = pieces else {
+            return out.union(&strings_rank());
+        };
+        out = out.union(&self.passing(&p.ty, &quoted, span, p.at));
+        let example = "concat([\"a\", \"b\"], sep: \", \")";
+        let Some(sigs) = self.levels_of(&p.ty, &quoted, example, span) else {
+            return Ty::empty();
+        };
+        let at = p.at.unwrap_or(span);
+        let code = self.code(p.at).map(str::trim).unwrap_or("xs");
+        let entries = Self::entries_of(&sigs);
+        if !entries.loose_ty().lists_nothing() {
+            let what = "`concat` of a family whose entries may be failure atoms";
+            self.error(at, zedc_base::rejection::not_yet(what));
+            return Ty::empty();
+        }
+        for e in entries.pieces() {
+            match e {
+                Piece::Fn(sig) if sig.data => {
+                    let t = self.text(&p.ty);
+                    self.error_offering(
+                        at,
+                        format!(
+                            "`concat` joins a family of strings, and this value is {t}, a \
+                             family of families"
+                        ),
+                        [format!(
+                            "repair: join the inner families first, as `{code} >< (++)`"
+                        )],
+                    );
+                    return Ty::empty();
+                }
+                Piece::Dyn => self.any(&quoted, span),
+                Piece::Var(_) => {
+                    let what = "`concat` of a family whose entry type is a type parameter";
+                    self.error(at, zedc_base::rejection::not_yet(what));
+                    return Ty::empty();
+                }
+                e if self.subtype(&e.ty(), &Ty::carrier(Carrier::Str)) => {}
+                e => {
+                    let t = self.text(&e.ty());
+                    self.error_offering(
+                        at,
+                        format!("`concat` joins strings, and an entry of this family is {t}"),
+                        [format!(
+                            "repair: make each entry a string, as \
+                             `concat({code}.map(x -> String(x)))`"
+                        )],
+                    );
+                    return Ty::empty();
+                }
+            }
+        }
+        out.union(&Ty::carrier(Carrier::Str))
+    }
+
+    /// Whether `a`, a string operand of the built-in `word` (`split`, `lines`, or the `sep`
+    /// of `concat`), may be only strings or loose atoms; any other value is rejected.
+    fn string_operand(&mut self, word: &str, a: &Arg<'a>, span: Span) -> bool {
+        let at = a.at.unwrap_or(span);
+        for p in a.ty.without_loose().pieces() {
+            match p {
+                Piece::Dyn => self.any(&format!("`{word}`"), span),
+                Piece::Var(_) => {
+                    let what = format!("`{word}` on a value whose type is a type parameter");
+                    self.error(at, zedc_base::rejection::not_yet(&what));
+                    return false;
+                }
+                p if self.subtype(&p.ty(), &Ty::carrier(Carrier::Str)) => {}
+                p => {
+                    let t = self.text(&p.ty());
+                    let example = match word {
+                        "split" => "`\"a,b\".split(\",\")`",
+                        "lines" => "`\"a\\nb\".lines`",
+                        _ => "`concat(xs, sep: \", \")`",
+                    };
+                    self.error_offering(
+                        at,
+                        format!("`{word}` reads strings, and this value is {t}"),
+                        [format!("repair: pass a string, as {example}")],
+                    );
+                    return false;
+                }
+            }
+        }
+        true
     }
 }

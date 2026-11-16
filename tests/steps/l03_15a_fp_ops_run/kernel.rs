@@ -1,6 +1,7 @@
 //! The kernel primitives of plan row FP-ops-run, each on its own: the four entry steps that
 //! walk a level in key order (`firstEntry`, `lastEntry`, `entryAfter`, `entryBefore`), and
-//! `first` and `last`, the leaf at the least and greatest keypath.
+//! `first` and `last`, the leaf at the least and greatest keypath; and the string functions of
+//! plan row FP-ops-strings, `split`, `lines` and `concat`.
 
 use zed_kernel::term::build::lit;
 use zed_kernel::{Family, Prim, Term, Value, eval};
@@ -147,4 +148,79 @@ fn an_empty_level_gives_none() {
 fn a_tuple_entry_is_a_leaf() {
     let f = fam(vec![(int(0), pair(int(1), int(2)))]);
     assert_eq!(run(Prim::First, vec![f]), pair(int(1), int(2)));
+}
+
+/// `[s0, s1, …]`: strings keyed by position from 0, as `split` and `lines` give them.
+fn strings(xs: &[&str]) -> Value {
+    fam((xs.iter().enumerate())
+        .map(|(k, x)| (int(k as i64), s(x)))
+        .collect())
+}
+
+/// `split` (plan row FP-ops-strings): every piece, empty ones included; an empty separator
+/// splits into characters, and `""` split by anything is `[""]`, so the join law holds there
+/// too.
+#[test]
+fn split_keeps_every_piece() {
+    let split = |x: &str, sep: &str| run(Prim::Split, vec![s(x), s(sep)]);
+    assert_eq!(split("", " "), strings(&[""]));
+    assert_eq!(split("a  b", " "), strings(&["a", "", "b"]));
+    assert_eq!(split("a,b,", ","), strings(&["a", "b", ""]));
+    assert_eq!(split(",", ","), strings(&["", ""]));
+    assert_eq!(split("a::b", "::"), strings(&["a", "b"]));
+    assert_eq!(split("abc", "x"), strings(&["abc"]));
+    assert_eq!(split("aaa", "aa"), strings(&["", "a"]));
+    assert_eq!(split("hé€", ""), strings(&["h", "é", "€"]));
+    assert_eq!(split("", ""), strings(&[""]));
+}
+
+/// `lines`: a line ends at `\n`, `\r\n` and a lone `\r`, and no empty line follows a line end
+/// at the end of the text (step L3.2's cases, and a `\r\n` that is the last two bytes).
+#[test]
+fn lines_ends_a_line_at_each_line_end() {
+    let lines = |x: &str| run(Prim::Lines, vec![s(x)]);
+    assert_eq!(lines("a\rb"), strings(&["a", "b"]));
+    assert_eq!(lines("a\r\nb"), strings(&["a", "b"]));
+    assert_eq!(lines("a\n\rb"), strings(&["a", "", "b"]));
+    assert_eq!(lines("a\r\r\n"), strings(&["a", ""]));
+    assert_eq!(lines(""), strings(&[]));
+    assert_eq!(lines("\n"), strings(&[""]));
+    assert_eq!(lines("a\n"), strings(&["a"]));
+    assert_eq!(lines("a\r\n"), strings(&["a"]));
+    assert_eq!(lines("a\r"), strings(&["a"]));
+    assert_eq!(lines("\n\n"), strings(&["", ""]));
+}
+
+/// `concat(pieces, sep: s)`: the pieces in key order with `s` between each two, and the join
+/// law over `split` on a set of texts with the separator in every place.
+#[test]
+fn concat_joins_in_key_order_and_undoes_split() {
+    let join = |f: Value, sep: &str| run(Prim::Join, vec![f, s(sep)]);
+    assert_eq!(join(strings(&["a", "", "b"]), ","), s("a,,b"));
+    assert_eq!(join(strings(&["a", "b"]), ""), s("ab"));
+    assert_eq!(join(strings(&[]), ","), s(""));
+    assert_eq!(join(strings(&["x"]), ","), s("x"));
+    // Key order, not the order written.
+    let backward = fam(vec![(int(1), s("b")), (int(0), s("a"))]);
+    assert_eq!(join(backward, "-"), s("a-b"));
+    for text in ["", ",", ",,", "a", "a,", ",a", "a,,b,", "é,€,"] {
+        for sep in [",", ",,", "a"] {
+            let pieces = run(Prim::Split, vec![s(text), s(sep)]);
+            assert_eq!(join(pieces, sep), s(text), "{text:?} by {sep:?}");
+        }
+    }
+}
+
+/// A loose atom operand is the result; `concat` of a family with an entry that is not a
+/// string is refused, as a primitive given the wrong kind of value is.
+#[test]
+fn string_functions_pass_atoms_and_refuse_other_entries() {
+    let a = Value::atom("bad");
+    assert_eq!(run(Prim::Split, vec![a.clone(), s(",")]), a);
+    assert_eq!(run(Prim::Split, vec![s("x"), a.clone()]), a);
+    assert_eq!(run(Prim::Lines, vec![a.clone()]), a);
+    assert_eq!(run(Prim::Join, vec![a.clone(), s(",")]), a);
+    let ints = fam(vec![(int(0), int(1))]);
+    let t = Term::Prim(Prim::Join, vec![lit(ints), lit(s(","))]);
+    assert!(eval(&t).is_err(), "concat of ints");
 }

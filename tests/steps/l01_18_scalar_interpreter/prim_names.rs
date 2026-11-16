@@ -11,9 +11,9 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// The primitives no program names by a word of its own: elaboration builds them from other
 /// forms (a tuple, a component `p[0]`, an atom, a display, a read of a family whose keys are one integer
 /// interval, a method `.count`, `.first`, `.last`, a step of a walk in key order), or they belong
-/// to later layers. A refusal names them by the form DESIGN.md writes, or else as the kernel's
-/// printer writes them.
-const UNNAMED: [Prim; 17] = [
+/// to later layers, as the string functions `split`, `lines` and `concat` of layer 3 do. A
+/// refusal names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
+const UNNAMED: [Prim; 20] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -31,6 +31,9 @@ const UNNAMED: [Prim; 17] = [
     Prim::EntryBefore,
     Prim::First,
     Prim::Last,
+    Prim::Split,
+    Prim::Lines,
+    Prim::Join,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.

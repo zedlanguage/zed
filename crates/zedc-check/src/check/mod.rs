@@ -3485,8 +3485,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         };
         let (w, x) = match (&callee.kind, &positional[..]) {
+            // `lines(s)` of step L3.2 is a word of a later layer the call names, which
+            // [`word_sig`] does not type.
             (ExprKind::Name(w), [x]) => match self.t.res.uses.get(&callee.span) {
-                Some(Ref::Prelude(_)) => (w, x.span),
+                Some(Ref::Prelude(_))
+                    if !zedc_resolve::resolve::STRING_CALLS.contains(&w.as_str()) =>
+                {
+                    (w, x.span)
+                }
                 _ => return None,
             },
             (
@@ -10152,6 +10158,20 @@ fn int_cast_sig(c: Carrier, proof: IntCast) -> Arc<Sig> {
 /// that is not a byte.
 fn bytes() -> Ty {
     Ty::set(KType::partial(KType::int(), KType::int()))
+}
+
+/// The type of the pieces `split` and `lines` give (plan row FP-ops-strings): the rank
+/// `0 ..< n` of strings, `n` not known to the type, so the arrow is partial, `int ->? String`,
+/// and a read outside it misses with `#outOfBounds` ([`Sig::dense`]), as a `Lines` input of
+/// [`port`] does.
+fn strings_rank() -> Ty {
+    let result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));
+    let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], result);
+    sig.arrows[0].partial = true;
+    sig.data = true;
+    sig.dense = true;
+    sig.note_held();
+    Ty::func(Arc::new(sig))
 }
 
 /// The primitive of the bit word `w`, if it is one (step L1.39a).

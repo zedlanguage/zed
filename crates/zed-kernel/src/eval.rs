@@ -4097,6 +4097,12 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
             | Prim::FromUtf8,
             [x],
         ) => crate::words::word(p, x)?,
+        (Prim::Split, [Str(s), Str(sep)]) => crate::words::split(s, sep)?,
+        (Prim::Lines, [Str(s)]) => crate::words::lines(s)?,
+        (Prim::Join, [Value::Family(f), Str(sep)]) => match crate::words::join(f, sep)? {
+            Some(v) => v,
+            None => return ty(vals),
+        },
         _ if crate::bits::is_bit_word(p) => crate::bits::word(p, vals)?,
         (Prim::Sum, [Value::Tuple(items)]) => {
             if items.iter().any(|v| matches!(v, Value::Atom(_))) {

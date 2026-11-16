@@ -39,13 +39,29 @@ inputs and checks the rejections; `kernel.rs` tests the six primitives on their 
 | Rejections of `scan` and `chunkBy` in the program's words: given nothing; `scan` by a non-associative operator or by a lambda (not built, REDUCE-by-function); `chunkBy` given a value that is not a function or a function of two arguments; either on a value with no entries | `cases::a_misused_scan_or_chunk_by_is_rejected_in_plain_words` |
 | Scaling: the elaborated scan (fewer than 2n folds by the canonical tree) and chunkBy, O(n log n); both through `zedc run` on a keyed display | `bench::the_elaborated_scan_runs_in_n_log_n`, `bench::the_elaborated_chunk_by_runs_in_n_log_n`, `bench::scan_and_chunk_by_on_a_keyed_display_run_in_n_log_n` |
 
+Code under test, piece 2 (plan row FP-ops-strings): `s.split(sep)`, `s.lines` and
+`concat(pieces, sep: s)` of step L3.2, as the kernel primitives `split`, `lines` and `concat`
+(`crates/zed-kernel/src/words.rs`, codes 75 to 77), resolved as prelude calls
+(`zedc-resolve`, `STRING_CALLS`), checked by `strings_end` in
+`crates/zedc-check/src/check/walk/fp_ops.rs` and elaborated by `strings_term` in
+`crates/zedc-elab/src/elab/walk/fp_ops.rs`.
+
+| Case | Covering test, or the reason none is needed |
+|---|---|
+| `split` keeps every piece, empty ones included: the empty string, two separators in a row, a separator at the end, an overlapping separator (`"aaa".split("aa")`), a separator longer than the text, the empty separator (one piece per `char32`, `"".split("")` is `[""]`), multibyte characters | `kernel::split_keeps_every_piece`; `cases::split_lines_and_concat`; `runs` cases `split_keeps_empty_pieces`, `split_by_the_empty_separator` |
+| `lines` ends a line at `\n`, `\r\n` and a lone `\r`, `\r` then `\r\n`, `\n` then `\r`, no empty line after a line end at the end, `""` has no line | `kernel::lines_ends_a_line_at_each_line_end`; `cases::split_lines_and_concat`; `runs` cases `lines_at_each_line_end`, `count_of_lines` |
+| `concat` in key order, keys not `0, 1, …`, `sep` given or not, empty family, one piece; the join law `concat(s.split(sep), sep: sep) == s` over a grid of texts and separators | `kernel::concat_joins_in_key_order_and_undoes_split`; `cases::split_lines_and_concat`; `runs` case `concat_without_sep` |
+| A loose atom in an operand passes; a family entry that is not a string is refused | `kernel::string_functions_pass_atoms_and_refuse_other_entries` |
+| `concat` of a family of families is rejected with the repair `xss >< (++)` | `cases::split_lines_and_concat` (its `saying` case) |
+| The join law on generated strings of n and 8n characters, O(n); `lines` over n characters; `concat` of n pieces | `bench::split_then_concat_gives_the_text_back_in_linear_time`, `bench::lines_runs_in_linear_time`, `bench::concat_of_n_pieces_runs_in_linear_time` |
+| The results are a rank of strings: a read by an integer key that misses is `#outOfBounds` | `cases::split_lines_and_concat`: `"a,b".split(",")[1] else "none"` is `b`, and reads at 2 and at -1 miss; a read with no `else` pushed to `m.stdout` is rejected as `String \| #outOfBounds`, seen 2026-11-16 |
+
 ## Not built yet, each with its plan row
 
 The tests below fail until their row lands; they are the specification of those rows.
 
 | Test | Words | Row |
 |---|---|---|
-| `cases::split_lines_and_concat` | `split`, `lines`, `concat(…, sep:)` | FP-ops-strings |
 | `cases::order_and_positional_selection` | `sort`, `asc`/`desc`, `.orderedValues`, `take`, `drop`, `slice`, `takeWhile`, `.minBy`, `.maxBy` | FP-ops-order |
 | `cases::reverse_order_take_gives_the_last_entries` | the reverse of an order (step L5.1c) | FP-ops-order |
 | `cases::concatenation_zip_and_its_law` | `++` on lists, `zip` | FP-ops-concat-zip |

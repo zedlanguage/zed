@@ -594,6 +594,12 @@ pub fn is_prelude_name(name: &str) -> bool {
 /// only elsewhere, where this zedc does not take it ([`main_args_elsewhere`]).
 const MAIN_ARGS: &str = "MainArgs";
 
+/// The string words of step L3.2 a call names, which resolve as prelude words when called
+/// (`concat(xs, sep: ",")`, `split(s, ",")`, `lines(s)`) though their layer is 3, since the
+/// checker and the elaborator build each call (plan row FP-ops-strings). A use that is not a
+/// call is refused as any word of a later layer is.
+pub const STRING_CALLS: [&str; 3] = ["concat", "split", "lines"];
+
 /// The layer of the prelude type `name` of a later layer, if it is one.
 fn later_type_layer(name: &str) -> Option<u32> {
     LATER_TYPES
@@ -2929,6 +2935,17 @@ impl Resolver<'_> {
                 // and not as a value, which [`Resolver::main_value`] would reject again.
                 match &callee.kind {
                     ExprKind::Name(n) if calls_main => self.name(n, callee.span),
+                    // The string words of step L3.2 the checker and the elaborator build from a
+                    // call (plan row FP-ops-strings); a use of one that is not a call is a word
+                    // of a later layer still.
+                    ExprKind::Name(n)
+                        if STRING_CALLS.contains(&n.as_str())
+                            && matches!(self.find(n), Some(Found::Word(_))) =>
+                    {
+                        self.out
+                            .uses
+                            .insert(callee.span, Ref::Prelude(n.as_str().into()));
+                    }
                     _ => todo.push(Task::Expr(callee)),
                 }
             }

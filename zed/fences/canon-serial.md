@@ -141,6 +141,9 @@
 | the entry before a given one of a level in key order | 72 |
 | `f.first` | 73 |
 | `f.last` | 74 |
+| `split` | 75 |
+| `lines` | 76 |
+| `concat` | 77 |
 | Witness | Tag | Fields in order |
 | Residue | 0 | — |
 | Catalog | 1 | `name: string` |
