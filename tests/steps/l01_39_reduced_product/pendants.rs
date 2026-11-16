@@ -306,30 +306,25 @@ fn scope(boxes: &BTreeMap<String, Vec<Piece>>) -> Scope {
     s
 }
 
-/// What [`points`] finds within one range of the hubs: the hull of each name and the exact set
-/// of its values (for a `z` its hull again unless asked for), or `None` where there is no point.
+/// What [`points`] finds within the range of the hubs: the hull of each name and the exact
+/// set of its values taken there (for a `z` its hull again unless asked for), or `None` where
+/// there is no point.
 type Found = Option<BTreeMap<String, (IntervalSet, IntervalSet)>>;
 
 /// Over the integer points of `cons` within `boxes` (one piece each), what [`Found`] holds,
 /// with the hubs (the names other than `z1`, `z2`, ...) enumerated within their boxes and
-/// `-near..=near`, then within `-far..=far` (`near <= far`). Each `z` is mentioned with
-/// coefficient one or minus one, at most two to a constraint and then with opposite signs,
-/// so for the hubs' values the `z` constraints are integer difference constraints, which
-/// shortest paths from a source solve exactly: each `z` takes every integer from minus its
-/// distance to the source to its distance from it. An unbounded end is `End::NegInf` or
-/// `End::PosInf`.
+/// `-far..=far`. Each `z` is mentioned with coefficient one or minus one, at most two to a
+/// constraint and then with opposite signs, so for the hubs' values the `z` constraints are
+/// integer difference constraints, which shortest paths from a source solve exactly: each
+/// `z` takes every integer from minus its distance to the source to its distance from it. An
+/// unbounded end is `End::NegInf` or `End::PosInf`. Every value found is taken; a finite end
+/// found may lie short of the name's end, which [`brute`] decides.
 ///
-/// One pass over the wider range serves both, a point counted for the narrower one where
-/// each hub lies within it, and each `z` keeps the least and greatest end it took, its exact
-/// set of values only with `exact`. Two passes, and a set of the ranges of each `z` added to
-/// at every point, took 15 s over the 24 rows of [`REFUSED`] (TEST-bench-move-l0139). It is
-/// still `O(far^hubs · z^3)`, as a brute force is.
-fn points(
-    cons: &[Cmp],
-    boxes: &BTreeMap<String, Piece>,
-    (near, far): (i64, i64),
-    exact: bool,
-) -> [Found; 2] {
+/// Each `z` keeps the least and greatest end it took, its exact set of values only with
+/// `exact`. Two passes, and a set of the ranges of each `z` added to at every point, took 15 s
+/// over the 24 rows of [`REFUSED`] (TEST-bench-move-l0139). It is still `O(far^hubs · z^3)`,
+/// as a brute force is.
+fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) -> Found {
     const INF: i64 = i64::MAX / 4;
     let hubs: Vec<&String> = boxes.keys().filter(|n| !n.starts_with('z')).collect();
     let zs: Vec<&String> = boxes.keys().filter(|n| n.starts_with('z')).collect();
@@ -387,15 +382,12 @@ fn points(
     // Each hub value taken, by its place in the hub's range, for each range; and the
     // distinct ranges each `z` takes, for each range, joined once at the end: joining sets
     // at each of the up to 151^3 points took 35 s on one row (TEST-split-slow).
-    let mut hub_seen: [Vec<Vec<bool>>; 2] = std::array::from_fn(|_| {
-        ranges
-            .iter()
-            .map(|(l, h)| vec![false; (h - l + 1).max(0) as usize])
-            .collect()
-    });
-    let mut z_hull: [Vec<Option<(i64, i64)>>; 2] = [vec![None; zs.len()], vec![None; zs.len()]];
-    let mut z_seen: [Vec<HashSet<(i64, i64)>>; 2] =
-        std::array::from_fn(|_| vec![HashSet::new(); zs.len()]);
+    let mut hub_seen: Vec<Vec<bool>> = ranges
+        .iter()
+        .map(|(l, h)| vec![false; (h - l + 1).max(0) as usize])
+        .collect();
+    let mut z_hull: Vec<Option<(i64, i64)>> = vec![None; zs.len()];
+    let mut z_seen: Vec<HashSet<(i64, i64)>> = vec![HashSet::new(); zs.len()];
     let mut v = vec![0i64; hubs.len()];
     let mut d = vec![vec![INF; size]; size];
     let at_hubs =
@@ -448,104 +440,362 @@ fn points(
         if (0..size).any(|i| d[i][i] < 0) {
             continue;
         }
-        let in_near = v.iter().all(|x| x.abs() <= near);
-        for which in [0, 1].into_iter().filter(|&w| w == 1 || in_near) {
-            for (i, (l, _)) in ranges.iter().enumerate() {
-                hub_seen[which][i][(v[i] - l) as usize] = true;
-            }
-            for (i, h) in z_hull[which].iter_mut().enumerate() {
-                let (lo, hi) = (-d[i][src], d[src][i]);
-                *h = Some(h.map_or((lo, hi), |(l, u)| (l.min(lo), u.max(hi))));
-                if exact {
-                    z_seen[which][i].insert((lo, hi));
-                }
+        for (i, (l, _)) in ranges.iter().enumerate() {
+            hub_seen[i][(v[i] - l) as usize] = true;
+        }
+        for (i, h) in z_hull.iter_mut().enumerate() {
+            let (lo, hi) = (-d[i][src], d[src][i]);
+            *h = Some(h.map_or((lo, hi), |(l, u)| (l.min(lo), u.max(hi))));
+            if exact {
+                z_seen[i].insert((lo, hi));
             }
         }
     }
     // The union of the ranges, and its hull, which is the hull of the hulls taken one at a
     // time.
-    let found = |which: usize| -> Found {
-        let mut seen: Vec<Vec<(i64, i64)>> = (hub_seen[which].iter().zip(&ranges))
-            .map(|(taken, (l, _))| {
-                let at = taken.iter().enumerate().filter(|(_, t)| **t);
-                at.map(|(j, _)| (l + j as i64, l + j as i64)).collect()
-            })
-            .collect();
-        seen.extend(z_seen[which].iter().zip(&z_hull[which]).map(|(s, h)| {
-            let mut s: Vec<(i64, i64)> = if exact {
-                s.iter().copied().collect()
-            } else {
-                h.iter().copied().collect()
-            };
-            s.sort_unstable();
-            s
-        }));
-        if seen.iter().all(Vec::is_empty) {
-            return None;
-        }
-        let out = seen.iter().map(|s| {
-            let exact = s.iter().fold(IntervalSet::empty(), |e, (l, h)| {
-                e.join(&IntervalSet::range(
-                    fin(*l, End::NegInf),
-                    fin(*h, End::PosInf),
-                ))
-            });
-            (exact.hull(), exact)
+    let mut seen: Vec<Vec<(i64, i64)>> = (hub_seen.iter().zip(&ranges))
+        .map(|(taken, (l, _))| {
+            let at = taken.iter().enumerate().filter(|(_, t)| **t);
+            at.map(|(j, _)| (l + j as i64, l + j as i64)).collect()
+        })
+        .collect();
+    seen.extend(z_seen.iter().zip(&z_hull).map(|(s, h)| {
+        let mut s: Vec<(i64, i64)> = if exact {
+            s.iter().copied().collect()
+        } else {
+            h.iter().copied().collect()
+        };
+        s.sort_unstable();
+        s
+    }));
+    if seen.iter().all(Vec::is_empty) {
+        return None;
+    }
+    let out = seen.iter().map(|s| {
+        let exact = s.iter().fold(IntervalSet::empty(), |e, (l, h)| {
+            e.join(&IntervalSet::range(
+                fin(*l, End::NegInf),
+                fin(*h, End::PosInf),
+            ))
         });
-        Some(
-            hubs.iter()
-                .chain(zs.iter())
-                .map(|n| (*n).clone())
-                .zip(out)
-                .collect(),
-        )
-    };
-    [found(0), found(1)]
+        (exact.hull(), exact)
+    });
+    Some(
+        hubs.iter()
+            .chain(zs.iter())
+            .map(|n| (*n).clone())
+            .zip(out)
+            .collect(),
+    )
 }
 
-/// `x`, found with the hubs enumerated within a range, with each outer end opened where it
-/// differs from that of `y`, found within a wider one: an end that moves with the range is
-/// no end.
-fn widened(x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
-    let (Some(first), Some(last)) = (x.first(), x.last()) else {
-        return x.clone();
+/// The rational points of `cons` within `boxes` as rows `(a, b)`, each `a · x <= b`, over the
+/// names of `boxes` in order.
+fn lp_rows(cons: &[Cmp], boxes: &BTreeMap<String, Piece>) -> Vec<(Vec<i64>, i64)> {
+    let names: Vec<&String> = boxes.keys().collect();
+    let k = names.len();
+    let col = |m: &str| {
+        names
+            .iter()
+            .position(|x| *x == m)
+            .expect("a name with a box")
     };
-    let same = |e: &End, f: Option<&End>| f == Some(e);
-    let lo = if same(&first.0, y.first().map(|p| &p.0)) {
-        first.0.clone()
-    } else {
-        End::NegInf
-    };
-    let hi = if same(&last.1, y.last().map(|p| &p.1)) {
-        last.1.clone()
-    } else {
-        End::PosInf
-    };
-    x.join(&IntervalSet::range(lo, first.1.clone()))
-        .join(&IntervalSet::range(last.0.clone(), hi))
+    let mut rows = Vec::new();
+    for c in cons {
+        let mut a = vec![0i64; k];
+        for (m, x) in &c.terms {
+            a[col(m)] = *x;
+        }
+        // `a · x + constant >= 0` is `-a · x <= constant`; an equation is also
+        // `a · x <= -constant`.
+        rows.push((a.iter().map(|x| -x).collect(), c.constant));
+        if c.eq {
+            rows.push((a, -c.constant));
+        }
+    }
+    for (i, (lo, hi)) in boxes.values().enumerate() {
+        let unit = |s: i64| (0..k).map(|j| if j == i { s } else { 0 }).collect();
+        if let Some(h) = hi {
+            rows.push((unit(1), *h));
+        }
+        if let Some(l) = lo {
+            rows.push((unit(-1), -l));
+        }
+    }
+    rows
 }
 
-/// The ranges `(near, far)` [`brute`] enumerates the hubs within on random parts.
-const WIDE: (i64, i64) = (50, 75);
+/// What [`lp_max`] finds of the greatest value of an objective over the rational points of
+/// some rows: none, as there is no point; none, as it grows without bound; or the floor of it.
+#[derive(Debug)]
+enum Lp {
+    Empty,
+    Unbounded,
+    Max(Num),
+}
 
-/// The ranges [`brute`] enumerates the hubs within on the rows of [`REFUSED`]. The widest
+/// The greatest value of `objective · x` over the rational `x` with `a · x <= b` for each row
+/// `(a, b)`, by the simplex method, in two phases where some `b` is negative: the auxiliary
+/// problem of Chvátal (1983, ch. 3) adds `x0 >= 0` to every row as `a · x - x0 <= b`, pivots it
+/// in at the row of least `b`, which makes every right side at least 0, and minimizes it; there
+/// is a point where its least value is 0. Each `x` is free, the difference of two columns
+/// `u - v`.
+///
+/// The tableau is kept in integers by integer pivoting (Edmonds 1967; Bareiss 1968; as in
+/// lrs, Avis 2000): each entry over the common denominator `den`, the last pivot, and the new
+/// entry `(t[p][q] · t[i][j] - t[i][q] · t[p][j]) / den`, which divides exactly since every
+/// entry is a minor of the starting tableau. After the one pivot on a negative entry (`x0`
+/// entering) every entry and `den` are negated, which leaves each value the same, so `den` is
+/// positive and the signs of the entries are those of the values. Bland's rule (the least
+/// column of negative reduced cost enters; ties of the ratio test go to the least basic
+/// column) ends each phase (Bland 1977). `x0` is column 0, so on a tie it leaves first: its
+/// value falls to 0 only on a pivot where its row ties for the least ratio, so phase one,
+/// which stops when `x0` leaves, ends with `x0` out of the basis wherever there is a point, and
+/// phase two never lets it in. In `Num`, whole numbers of any size, nothing overflows.
+///
+/// Complexity tradeoff: a brute force over the rational points has no end; the simplex
+/// method takes at most C(cols, rows) pivots of `O(rows · cols)` each, in practice a few
+/// pivots on the at most 3 + 6 names and some 40 rows of a random part. Fourier-Motzkin
+/// elimination of the other names would be shorter to write but can square the rows at each
+/// of up to 8 eliminations.
+fn lp_max(rows: &[(Vec<i64>, i64)], objective: &[i64]) -> Lp {
+    /// Pivots on `t[p][q]`, `p` a constraint row (from 2).
+    fn pivot(t: &mut [Vec<Num>], den: &mut Num, basis: &mut [usize], p: usize, q: usize) {
+        let pv = t[p][q].clone();
+        let (top, rest) = t.split_at_mut(p);
+        let (row_p, bottom) = rest.split_first_mut().expect("the pivot row");
+        for row in top.iter_mut().chain(bottom.iter_mut()) {
+            let f = row[q].clone();
+            for (x, y) in row.iter_mut().zip(row_p.iter()) {
+                *x = (&(&pv * &*x) - &(&f * y)).div_floor(den);
+            }
+        }
+        *den = pv;
+        basis[p - 2] = q;
+        if den.signum() < 0 {
+            for x in t.iter_mut().flatten() {
+                *x = -&*x;
+            }
+            *den = -&*den;
+        }
+    }
+    /// Runs the simplex method on objective row `obj` over columns `cols`, until no column
+    /// enters (`true`), no row bounds the entering column (`false`), or `stop` holds (`true`).
+    fn run(
+        t: &mut [Vec<Num>],
+        den: &mut Num,
+        basis: &mut [usize],
+        obj: usize,
+        cols: std::ops::Range<usize>,
+        stop: impl Fn(&[usize]) -> bool,
+    ) -> bool {
+        let rhs = t[0].len() - 1;
+        while !stop(basis) {
+            let Some(q) = cols.clone().find(|&j| t[obj][j].signum() < 0) else {
+                return true;
+            };
+            // The ratio test: the least `t[i][rhs] / t[i][q]` over `t[i][q] > 0`, compared by
+            // cross products (both positive).
+            let mut best: Option<usize> = None;
+            for i in 2..t.len() {
+                if t[i][q].signum() <= 0 {
+                    continue;
+                }
+                best = Some(best.map_or(i, |b| {
+                    let (x, y) = (&t[i][rhs] * &t[b][q], &t[b][rhs] * &t[i][q]);
+                    if x < y || (x == y && basis[i - 2] < basis[b - 2]) {
+                        i
+                    } else {
+                        b
+                    }
+                }));
+            }
+            let Some(p) = best else {
+                return false;
+            };
+            pivot(t, den, basis, p, q);
+        }
+        true
+    }
+    let k = objective.len();
+    let m = rows.len();
+    // Columns: `x0`, `u` (k), `v` (k), one slack per row, the right side. Row 0 is the
+    // objective of phase two, `z - objective · (u - v) = 0`; row 1 that of phase one,
+    // `w + x0 = 0`, `w = -x0` maximized; then a row `a · (u - v) - x0 + slack = b` for each row.
+    let width = 2 * k + m + 2;
+    let rhs = width - 1;
+    let num = Num::from;
+    let mut t: Vec<Vec<Num>> = vec![vec![num(0); width]; m + 2];
+    for (j, c) in objective.iter().enumerate() {
+        t[0][1 + j] = num(-c);
+        t[0][1 + k + j] = num(*c);
+    }
+    t[1][0] = num(1);
+    for (i, (a, b)) in rows.iter().enumerate() {
+        let r = &mut t[i + 2];
+        r[0] = num(-1);
+        for (j, x) in a.iter().enumerate() {
+            r[1 + j] = num(*x);
+            r[1 + k + j] = num(-x);
+        }
+        r[1 + 2 * k + i] = num(1);
+        r[rhs] = num(*b);
+    }
+    let mut basis: Vec<usize> = (0..m).map(|i| 1 + 2 * k + i).collect();
+    let mut den = num(1);
+    // `min_by_key` gives the first of the least.
+    if let Some(p) = (2..m + 2)
+        .filter(|&i| t[i][rhs].signum() < 0)
+        .min_by_key(|&i| t[i][rhs].clone())
+    {
+        pivot(&mut t, &mut den, &mut basis, p, 0);
+        let out = |b: &[usize]| !b.contains(&0);
+        assert!(
+            run(&mut t, &mut den, &mut basis, 1, 0..rhs, out),
+            "phase one is bounded by 0"
+        );
+        if !out(&basis) {
+            // Optimal with `x0` in the basis, so at a value above 0 (see above).
+            assert!(t[1][rhs].signum() < 0, "x0 leaves when it reaches 0");
+            return Lp::Empty;
+        }
+    }
+    if !run(&mut t, &mut den, &mut basis, 0, 1..rhs, |_| false) {
+        return Lp::Unbounded;
+    }
+    Lp::Max(t[0][rhs].div_floor(&den))
+}
+
+/// `Ok` where each hub lies within `-far..=far` at every rational point of `rows` (over the
+/// names of `boxes`, from [`lp_rows`]), or there is none: then [`points`], which visits every
+/// integer point with the hubs in that range, visited every integer point of `rows`, so a value
+/// it did not find there has no point. Otherwise a description of a hub that reaches beyond.
+fn hubs_within(
+    rows: &[(Vec<i64>, i64)],
+    boxes: &BTreeMap<String, Piece>,
+    far: i64,
+) -> Result<(), String> {
+    let unit = |m: &str, s: i64| -> Vec<i64> {
+        boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
+    };
+    for h in boxes.keys().filter(|h| !h.starts_with('z')) {
+        for s in [1, -1] {
+            match lp_max(rows, &unit(h, s)) {
+                Lp::Empty => return Ok(()),
+                Lp::Max(g) if g <= Num::from(far) => {}
+                other => return Err(format!("{s} * {h} reaches {other:?}, beyond {far}")),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The ends and holes of `hull` and `set`, the values of `n` found by [`points`] in one
+/// disjunct (`cons` within `boxes`) with the hubs within `-far..=far`, decided. Where every
+/// hub lies in that range at every rational point of the disjunct ([`hubs_within`]), what
+/// `points` found is exact. Otherwise each end and hole is decided alone. An end found is
+/// taken, so the name's end lies at or beyond it. It is the end where it is the end of the
+/// name's box, or where the floor of the greatest rational value ([`lp_max`]) equals it. Where
+/// the rational values grow without bound, so do the integer ones (Meyer 1974: the integer
+/// points of a rational polyhedron, when there are any, and `points` found one, have the same
+/// recession cone as the polyhedron), and the end is opened, the set taking every value beyond
+/// its last piece found; where the values beyond keep a period (an odd name, say), that set is
+/// wider than the exact one, as with the rule this replaces. Otherwise the rational points past the end are bounded, and where
+/// [`hubs_within`] holds of them, the end is the end: at each hub point each `z` takes exactly
+/// the range shortest paths give, so an integer point past the end would have been found. A
+/// hole of `set` is a hole where [`hubs_within`] holds of the rational points with `n` in it.
+/// An end or hole none of these decides is a gap of this brute force, reported, not guessed.
+/// The rule these replace opened every end found that moved between two ranges of the hubs,
+/// and so opened `z3 <= 13` of seed 894 case 15, reached only with `a >= 33` and `b <= -60`
+/// (FAIL-pendants-oracle-seed-894); it did not check holes.
+fn decided_ends(
+    (hull, set): (IntervalSet, IntervalSet),
+    n: &str,
+    cons: &[Cmp],
+    boxes: &BTreeMap<String, Piece>,
+    far: i64,
+) -> (IntervalSet, IntervalSet) {
+    let (Some(first), Some(last)) = (set.first(), set.last()) else {
+        return (hull, set);
+    };
+    let rows = lp_rows(cons, boxes);
+    if hubs_within(&rows, boxes, far).is_ok() {
+        return (hull, set);
+    }
+    let unit = |m: &str, s: i64| -> Vec<i64> {
+        boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
+    };
+    // Each hole between two pieces found, `[b + 1, a - 1]` between `[.., b]` and `[a, ..]`.
+    for (p, q) in set.pieces().zip(set.pieces().skip(1)) {
+        let (End::Fin(b), End::Fin(a)) = (&p.1, &q.0) else {
+            panic!("pieces with a hole between them have finite ends: {set:?}");
+        };
+        let (b, a) = (b.to_i64().expect("a value"), a.to_i64().expect("a value"));
+        let mut within = rows.clone();
+        within.push((unit(n, -1), -(b + 1)));
+        within.push((unit(n, 1), a - 1));
+        if let Err(why) = hubs_within(&within, boxes, far) {
+            panic!(
+                "the brute force cannot decide the hole {}..={} of {n}: in it {why}, within \
+                 {cons:?} {boxes:?}",
+                b + 1,
+                a - 1
+            );
+        }
+    }
+    let (lo, hi) = boxes[n];
+    let end = |found: &End, bound: Option<i64>, sign: i64, inf: End| -> End {
+        let End::Fin(e) = found else {
+            return found.clone();
+        };
+        let e = e.to_i64().expect("an end found within the boxes");
+        if bound == Some(e) {
+            return found.clone();
+        }
+        match lp_max(&rows, &unit(n, sign)) {
+            Lp::Unbounded => return inf,
+            Lp::Max(f) if f == Num::from(sign * e) => return found.clone(),
+            Lp::Max(f) if f > Num::from(sign * e) => {}
+            other => panic!("{other:?} over {n} at {cons:?} {boxes:?}, with {e} found"),
+        }
+        // The rational points with `sign · n >= sign · e + 1`, and the range of each hub there.
+        let mut past = rows.clone();
+        past.push((unit(n, -sign), -(sign * e + 1)));
+        if let Err(why) = hubs_within(&past, boxes, far) {
+            panic!(
+                "the brute force cannot decide the end {e} of {n}: past it {why}, within \
+                 {cons:?} {boxes:?}"
+            );
+        }
+        found.clone()
+    };
+    let l = end(&first.0, lo, -1, End::NegInf);
+    let h = end(&last.1, hi, 1, End::PosInf);
+    let set = set
+        .join(&IntervalSet::range(l.clone(), first.1.clone()))
+        .join(&IntervalSet::range(last.0.clone(), h.clone()));
+    (IntervalSet::range(l, h), set)
+}
+
+/// The range `-far..=far` [`brute`] enumerates the hubs within on random parts.
+const WIDE: i64 = 75;
+
+/// The range [`brute`] enumerates the hubs within on the rows of [`REFUSED`]. The widest
 /// reach a row needs is that of row 18, whose `z4 <= -4` holds at `a = -22`, `b = -3`,
 /// `c = 45` alone: `a + 2 * b + c <= 17` (from `z3 <= 9`), `a <= 3 * b - 13` and `b <= -3` give
-/// `z4 = 2 * a + b + c - 2 <= a - b + 15 <= 2 * b + 2 <= -4`. Within -30..=30 or -40..=40 the
-/// brute force reads that end as none. With [`WIDE`] the brute force took 12 s over the 24
-/// rows, with these and only the hulls kept 4 s (TEST-bench-move-l0139).
-const NARROW: (i64, i64) = (46, 56);
+/// `z4 = 2 * a + b + c - 2 <= a - b + 15 <= 2 * b + 2 <= -4`. With [`WIDE`] the brute force took
+/// 12 s over the 24 rows, with this and only the hulls kept 4 s (TEST-bench-move-l0139).
+const NARROW: i64 = 56;
 
 /// The exact projection of the part onto each name by brute force: in each disjunct (a
 /// choice of an arm of each disjunction and of a piece of each box), the hull of the name's
 /// values and the set of them, and over the disjuncts the union of each. The hubs are
-/// enumerated within `-near..=near` and `-far..=far`, `reach` ([`WIDE`] or [`NARROW`]): an
-/// outer end that differs between the two is no end, so every finite end of a name must be
-/// reached with each hub within `-near..=near`. The set of a `z` is its hull unless `exact`.
+/// enumerated within `-far..=far`, `far` [`WIDE`] or [`NARROW`], and each end found is decided
+/// by [`decided_ends`]. The set of a `z` is its hull unless `exact`.
 fn brute(
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
-    reach: (i64, i64),
+    far: i64,
     exact: bool,
 ) -> BTreeMap<String, (String, String)> {
     let mut terms: Vec<(Vec<Cmp>, BTreeMap<String, Piece>)> = vec![(Vec::new(), BTreeMap::new())];
@@ -583,24 +833,22 @@ fn brute(
         .map(|n| (n.clone(), (IntervalSet::empty(), IntervalSet::empty())))
         .collect();
     for (cs, b) in &terms {
-        let [near, far] = points(cs, b, reach, exact);
-        let Some(near) = near else {
-            assert!(
-                far.is_none(),
-                "a point only with the wider hubs: {cs:?} {b:?}"
-            );
+        let Some(found) = points(cs, b, far, exact) else {
+            // No integer point with the hubs within `-far..=far`; none at all where every
+            // rational point has them there.
+            if let Err(why) = hubs_within(&lp_rows(cs, b), b, far) {
+                panic!(
+                    "the brute force cannot decide that a disjunct has no point: {why}, within \
+                     {cs:?} {b:?}"
+                );
+            }
             continue;
         };
-        let far = far.expect("the wider enumeration holds the narrower");
-        for (n, (hull, exact)) in near {
+        for (n, x) in found {
             let o = out.get_mut(&n).expect("a name");
-            // Within the name's box in this disjunct, which a far end may reach only with
-            // hubs beyond either range.
-            let (l, h) = b[&n];
-            let end = |e: Option<i64>, inf: End| e.map_or(inf, |v| End::Fin(Num::from(v)));
-            let within = IntervalSet::range(end(l, End::NegInf), end(h, End::PosInf));
-            o.0 = o.0.join(&widened(&hull, &far[&n].0).meet(&within));
-            o.1 = o.1.join(&widened(&exact, &far[&n].1).meet(&within));
+            let (hull, set) = decided_ends(x, &n, cs, b, far);
+            o.0 = o.0.join(&hull);
+            o.1 = o.1.join(&set);
         }
     }
     out.into_iter()
@@ -2227,6 +2475,23 @@ fn a_refused_part_keeps_a_sound_box() {
 #[test]
 fn a_refused_joined_part_keeps_a_sound_box() {
     check_refused_case(12, 296, true, (1, 6, 2));
+}
+
+/// Case 15 of seed 894, each part two joined (FAIL-pendants-oracle-seed-894):
+/// `z0 >= z3 + 8` with `z0 <= 21` gives `z3 <= 13`, the cover's answer `[-1,13]`. Brute force
+/// found `z3 = 13` with the hubs within one range and not within the other, and so opened the
+/// end to the box's `19`, and failed the sound cover; [`decided_ends`] keeps it. The set, which
+/// [`check_refused`] holds the cover to, is the hull, so a cover that misses any of `-1..=13`
+/// still fails.
+#[test]
+fn an_end_that_moves_between_ranges_of_the_hubs_is_decided_not_opened() {
+    let (items, bs) = random_case(894, 15, true);
+    let z3 = &brute_sets(&items, &bs)["z3"];
+    assert_eq!(
+        (&z3.0, &z3.1),
+        (&shown_set("[-1,13]"), &shown_set("[-1,13]"))
+    );
+    check_refused_case(894, 15, true, (1, 1, 1));
 }
 
 /// Case 77 of seed 576410681482475148: the solver alone refuses no name; the cover refuses
