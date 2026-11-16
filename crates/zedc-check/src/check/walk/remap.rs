@@ -410,6 +410,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             .to_string()
     }
 
+    /// The binder of the parameter declared a partial map ([`Ck::param_keys`]) of a function
+    /// being checked that the name `e` reads. Kept here, beside the remap that marks such a
+    /// parameter, and not in walk.rs, which this module must not name (row
+    /// S1F-remap-keyed-param-cycle: walk.rs and fp_ops.rs import this module).
+    pub(in crate::check) fn keyed_param(&self, e: &Expr) -> Option<usize> {
+        let ExprKind::Name(_) = &e.kind else {
+            return None;
+        };
+        match self.t.res.uses.get(&e.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 && self.param_keys.contains_key(&ids[0]) => {
+                Some(ids[0])
+            }
+            _ => None,
+        }
+    }
+
     /// The key binder `e` names, by its place in the `as` pattern of `s`.
     fn key_binder(&self, s: &RemapF<'a>, e: &Expr) -> Option<usize> {
         let ExprKind::Name(_) = &e.kind else {

@@ -12852,20 +12852,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.error_with(at, format!("{takes}: `{code}` may not be one"), notes);
     }
 
-    /// The binder of the parameter declared a partial map ([`Ck::param_keys`]) of a function
-    /// being checked that the name `e` reads.
-    pub(super) fn keyed_param(&self, e: &Expr) -> Option<usize> {
-        let ExprKind::Name(_) = &e.kind else {
-            return None;
-        };
-        match self.t.res.uses.get(&e.span) {
-            Some(Ref::Bound(ids)) if ids.len() == 1 && self.param_keys.contains_key(&ids[0]) => {
-                Some(ids[0])
-            }
-            _ => None,
-        }
-    }
-
     /// The code at `span` with its part at `at` annotated with the type `shown`, as
     /// `popCount(n : int)`; the part alone where `at` does not lie in `span`, and `… : int`
     /// where the checker has no code. A literal whose type shows as the literal itself is
