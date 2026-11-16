@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Surface, TextPlace, Type, Universe};
+use zed_kernel::types::{Surface, TextPlace, Type, Universe, Verdict};
 use zed_kernel::value::Value;
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
@@ -234,8 +234,9 @@ fn read(s: &Surface) -> Type {
     t
 }
 
-/// Panics unless `t` prints as text the parser accepts and that reads back as `t`.
-fn round_trip(t: &Type) -> Surface {
+/// The text `t` prints as, checked to be exact and accepted by the parser, and the type it reads
+/// back as.
+fn printed(t: &Type) -> (Surface, Type) {
     let s = t.surface();
     assert!(s.exact, "{s}");
     accepts(&s.root, "Type").unwrap();
@@ -243,6 +244,12 @@ fn round_trip(t: &Type) -> Surface {
         accepts(&format!("type {name} = {body};"), "Unit").unwrap();
     }
     let back = read(&s);
+    (s, back)
+}
+
+/// Panics unless `t` prints as text the parser accepts and that reads back as `t`.
+fn round_trip(t: &Type) -> Surface {
+    let (s, back) = printed(t);
     assert!(
         back.subtype(t) && t.subtype(&back),
         "{s} reads back as another type"
@@ -375,10 +382,76 @@ impl Seed {
 fn formulas_read_back(cases: u64) {
     let (mut rng, _) = zed_tests::instances::Rng::fresh("formulas over rows read back");
     for _ in 0..cases {
-        let mut seed = Seed(rng.next_u64());
-        let w = 1 + seed.next(3) as usize;
-        round_trip(&seed.formula(w, 3));
+        formula_reads_back(rng.next_u64());
     }
+}
+
+/// One value of each class of values that the cells of [`Seed::cell`] tell apart: each cell is
+/// a union of these classes (`int` of the first four, `_` of all eight), so a tuple of width `w`
+/// over them stands for every tuple of its classes, and two formulas over rows of width `w`
+/// that agree on all `8^w` such tuples are the same type.
+fn one_of_each_class() -> [Value; 8] {
+    [
+        Value::Int(0),
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::atom("a"),
+        Value::atom("b"),
+    ]
+}
+
+/// Panics unless the formula of `seed` prints as text that reads back as the same type.
+///
+/// The types are compared value by value over [`one_of_each_class`], which decides it, and not
+/// by `subtype` both ways: emptiness of a difference of such formulas is decided only up to the
+/// refusals of the kernel (`Refusal::SharedCells`, the Orthogonal Vectors pattern, COMPLEXITY.md
+/// K1 and K2), and a refused difference counts as inhabited, so `subtype` answered false for a
+/// type that reads back exactly (FAIL-surface-rows-read-back-seed). Neither difference may be
+/// shown inhabited, since a value the kernel builds for it would be a value told apart.
+fn formula_reads_back(seed: u64) {
+    let mut f = Seed(seed);
+    let w = 1 + f.next(3) as usize;
+    let t = f.formula(w, 3);
+    let (s, back) = printed(&t);
+    let classes = one_of_each_class();
+    let mut tuples = vec![Vec::new()];
+    for _ in 0..w {
+        tuples = tuples
+            .into_iter()
+            .flat_map(|v: Vec<Value>| {
+                classes.iter().map(move |c| {
+                    let mut v = v.clone();
+                    v.push(c.clone());
+                    v
+                })
+            })
+            .collect();
+    }
+    for v in tuples.into_iter().map(Value::tuple) {
+        assert_eq!(
+            t.contains(&v),
+            back.contains(&v),
+            "seed {seed}: {s} reads back as another type, which differs at {v:?}"
+        );
+    }
+    for d in [&t - &back, &back - &t] {
+        assert_ne!(
+            d.verdict(),
+            Verdict::Inhabited,
+            "seed {seed}: {s} reads back as another type"
+        );
+    }
+}
+
+/// FAIL-surface-rows-read-back-seed (ZED_TEST_SEED=6724589714250113931): the formula of this
+/// seed, of width 3, reads back exactly, but `t - back` is refused (`SharedCells(0)`), so
+/// `back.subtype(t)` held and `t.subtype(back)` did not.
+#[test]
+fn a_formula_whose_difference_with_its_reading_is_refused_reads_back() {
+    formula_reads_back(16351997439233441925);
 }
 
 /// Small instance of
