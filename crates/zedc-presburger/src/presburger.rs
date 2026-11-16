@@ -10020,7 +10020,14 @@ impl Near {
 #[derive(Default)]
 struct Linked {
     cons: Vec<Con>,
-    ids: BTreeMap<Atom, usize>,
+    // Complexity tradeoff: naive version, a `BTreeMap`, O(log a) comparisons of names per
+    // lookup for `a` atoms; [`linked_to`] builds a `Linked` at each range of [`by_halves`], so
+    // on a chain of `n` guarded steps those comparisons were a factor that grew with `n`
+    // (PERF-guards-nesting-ratio). Used: a hash map, O(1) expected per lookup. No reader
+    // depends on its order: [`BaseGroups::roots_of`] sorts the roots, and the other walk over it
+    // collects into a `BTreeSet`. Bench
+    // `l01_38_omega_test::bench::names::decide_scales_over_guards_told_apart_by_their_nesting`.
+    ids: FxHashMap<Atom, usize>,
     parent: Vec<usize>,
     /// At each root, its constraints.
     held: Vec<Vec<usize>>,
@@ -10762,9 +10769,14 @@ fn by_halves_general<E>(
         // to project, O(k²) for k items: 42 ms of leaf projections at 512 items, 1.5 ms at 64. Used:
         // a hash set of the rows, O(rows) expected per projection, which is already the cost of
         // [`linked_to`]. Test: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
-        let mut seen: HashSet<Con> = HashSet::with_capacity(rows.len());
-        let rows: Vec<Con> = (rows.into_iter())
-            .filter(|c| seen.insert(c.clone()))
+        // The set holds references, so no row is copied (PERF-guards-nesting-ratio: a copy of
+        // each row at each level of the halving).
+        let first: Vec<bool> = {
+            let mut seen: HashSet<&Con> = HashSet::with_capacity(rows.len());
+            rows.iter().map(|c| seen.insert(c)).collect()
+        };
+        let rows: Vec<Con> = (rows.into_iter().zip(first))
+            .filter_map(|(c, first)| first.then_some(c))
             .collect();
         let atoms: HashSet<&Atom> = keep[l..r].iter().flatten().collect();
         let near = linked_to(rows, atoms.iter().copied());
@@ -10797,8 +10809,14 @@ fn by_halves_general<E>(
                 .rposition(|g| g.sys.is_some())
                 .map_or(0, |j| j + 1);
             for j in from..path.len() {
+                // A second half is the last range to read its parent's system, which is then
+                // moved rather than copied (PERF-guards-nesting-ratio). The parent keeps
+                // `Some(None)`, so it still counts as projected, and no leaf reads it again.
                 let rows = match j {
                     0 => root.take(),
+                    _ if path[j].r == path[j - 1].r => {
+                        path[j - 1].sys.as_mut().and_then(Option::take)
+                    }
                     _ => path[j - 1].sys.clone().flatten(),
                 };
                 path[j].sys = Some(rows.and_then(|rows| project(rows, path[j].l, path[j].r)));
