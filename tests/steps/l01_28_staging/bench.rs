@@ -8,5 +8,6 @@ mod dag;
 mod ends;
 mod ids;
 mod print;
+mod refold;
 mod scaling;
 mod store;

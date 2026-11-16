@@ -3482,11 +3482,13 @@ impl Mixer {
                     let y = done.pop().expect("the second branch");
                     let x = done.pop().expect("the first branch");
                     let built = self.build_from(t, vec![c, x, y]);
+                    let built = self.refold(built);
                     done.push(built);
                 }
                 Mix::Build(t, k) => {
                     let parts = done.split_off(done.len() - k);
                     let built = self.build_from(t, parts);
+                    let built = self.refold(built);
                     done.push(built);
                 }
                 Mix::Store(id, names) => {
@@ -3633,6 +3635,64 @@ impl Mixer {
             _ => {
                 todo.push(Mix::Build(t, parts.len()));
                 todo.extend(parts.into_iter().rev().map(|(s, _)| Mix::Part(s)));
+            }
+        }
+    }
+
+    /// `built`, a term [`Mixer::build_from`] built from its mixed parts, evaluated when mixing
+    /// has made it build-stage and each of its parts is a literal, a name or a primitive
+    /// (plan row STAGE-refold-mixed). `!(d && b)`, with `d` the build-stage `#divByZero` and
+    /// `b` read from a port, is not build-stage as written, so [`Mixer::enter`] mixes it part
+    /// by part: `d && b` is `if d { b } else { false }`, whose condition mixes to
+    /// `#divByZero`, so the `!` is built as `!#divByZero`, which this evaluates as `enter`
+    /// evaluates a build-stage term, by [`Mixer::eval`] with the same check that its form
+    /// shows that it ends. An evaluation that fails leaves the term as built and reports it,
+    /// as `enter` does.
+    ///
+    /// Why the value is the one the run gives (proof): mixing replaces each part by a term of
+    /// the same value under the scope's bindings, so `built` has the value of the term as
+    /// written wherever the run reaches it. [`Mixer::build`] holds that `built` reads no port,
+    /// no binding the build does not know and no name but a prelude word, which is the
+    /// condition under which `enter` evaluates a term at build: what `built` reads has the
+    /// same value at build as at run, so `built` does too. A read `built` no longer makes is
+    /// kept by `keep_cut_reads`, as for any term `enter` evaluates.
+    // Complexity tradeoff: naive, evaluate each built term that is build-stage whatever its
+    // parts are; a part whose evaluation failed is a compound term, so each term above it on
+    // a chain of n would evaluate it again, O(n²) on the chain. Used: only a term whose parts
+    // are each a literal, a name or a primitive is evaluated, so the evaluation reads O(parts)
+    // of the term plus what a prelude word it calls computes, which the run computes too;
+    // a term that evaluates is a literal to the term above it, and one that fails is a
+    // compound part, which stops every term above it from being evaluated. Each built term
+    // costs O(parts) more, O(n) over the whole term. What is given up: a term with a failed
+    // compound part is not evaluated even where its failure would not be read, as in
+    // `if false { stop } else { 1 }` built with `stop` left to run; such a term already
+    // failed to evaluate at its part. Test:
+    // `l01_28_staging::bench::refold::nots_around_a_mixed_term_stage_in_linear_time`.
+    fn refold(&mut self, built: Out) -> Out {
+        let Mixed::Inline(t) = &built.term else {
+            return built;
+        };
+        let leaf = |t: &Term| matches!(t, Term::Lit(_) | Term::Var(_) | Term::PrimFn(_));
+        if matches!(t, Term::Lam(..)) || !subs(t).iter().all(|(p, _, _)| leaf(p.term)) {
+            return built;
+        }
+        let sum = built.sum;
+        let names = self
+            .maps
+            .restrict(&self.frees.sets, self.scope.top, sum.free);
+        if !self.build(sum, names) {
+            return built;
+        }
+        // Each part was entered, and `enter` counted what it reads as taken, so nothing more
+        // is read here.
+        match self.eval(t, sum.free) {
+            Ok(v) => Out {
+                term: Mixed::Inline(Term::Lit(v)),
+                sum: Summary::default(),
+            },
+            Err(why) => {
+                self.report.left.push((Shared::new(t.clone()), why));
+                built
             }
         }
     }

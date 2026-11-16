@@ -14,6 +14,7 @@ mod ends;
 mod ids;
 mod mix;
 mod print;
+mod refold;
 mod scaling;
 mod store;
 mod trick;

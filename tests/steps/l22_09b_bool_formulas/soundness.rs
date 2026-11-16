@@ -28,6 +28,9 @@
 
 use std::ffi::OsString;
 
+use zed_kernel::{Term, Value};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+
 use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 use zed_tests::step_helpers::l01_36a_executables::{Ran, built, dir, executable, interpreter};
 
@@ -316,42 +319,114 @@ main(m: MainArgs) {
 }
 ";
 
-/// The text of `main` in `src` after partial evaluation, the program `zedc run` runs and
+/// The term of `main` in `src` after partial evaluation, the program `zedc run` runs and
 /// `zedc build` compiles (`zedc::run::Program::stage`).
-fn staged_main(src: &str) -> String {
+fn staged_main(src: &str) -> Term {
     let (staged, _) = zedc::run::load(src.as_bytes()).unwrap().stage();
     let main = staged.unit().defs.iter().find(|d| d.name == "main");
-    main.expect("main").term.to_string()
+    (*main.expect("main").term).clone()
+}
+
+/// Each term in `t`, `t` first, a part held in several places once for each place.
+fn subterms(t: &Term) -> Vec<&Term> {
+    let (mut out, mut todo) = (Vec::new(), vec![t]);
+    while let Some(t) = todo.pop() {
+        out.push(t);
+        match t {
+            Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
+            Term::Lam(_, b) | Term::Push(_, b) => todo.push(b),
+            Term::App(f, args) => {
+                todo.push(f);
+                todo.extend(args);
+            }
+            Term::Prim(_, args) => todo.extend(args),
+            Term::Let(_, e, b) => todo.extend([&**e, &**b]),
+            Term::If(c, x, y) => todo.extend([&**c, &**x, &**y]),
+            Term::Match(s, arms) => {
+                todo.push(s);
+                todo.extend(arms.iter().map(|(_, b)| b));
+            }
+            other => panic!("a staged `main` of this file holds no {other}"),
+        }
+    }
+    out
+}
+
+/// Whether `t` is the literal `v`.
+fn is(t: &Term, v: &Value) -> bool {
+    matches!(t, Term::Lit(w) if w == v)
+}
+
+/// Whether `t` reads the name `b`.
+fn is_b(t: &Term) -> bool {
+    matches!(t, Term::Var(x) if &**x == "b")
+}
+
+/// Whether `t`'s parts are all literals, so the build would evaluate it (plan row
+/// STAGE-refold-mixed): a call, a primitive, an `if` or a `match` whose parts are known.
+fn foldable(t: &Term) -> bool {
+    let lit = |t: &Term| matches!(t, Term::Lit(_));
+    match t {
+        Term::Prim(_, args) => args.iter().all(lit),
+        Term::App(f, args) => matches!(**f, Term::Var(_) | Term::PrimFn(_)) && args.iter().all(lit),
+        Term::If(c, ..) | Term::Match(c, _) => lit(c),
+        _ => false,
+    }
 }
 
 #[test]
 fn partial_evaluation_folds_d_before_either_engine_runs() {
     // Each `${…}` of `CONSTANT_OPERANDS` reads only `d` and literals, so the build evaluates
-    // it whole, by the kernel's evaluator, and both engines only push the text.
+    // `main`'s text whole, by the kernel's evaluator, and both engines only push the text.
     let main = staged_main(CONSTANT_OPERANDS);
-    assert!(!main.contains("dz("), "{main}");
+    let parts = subterms(&main);
     assert!(
-        main.contains("\"1 9 2 0 3 9 4 1 5 9 6 9 7 9 8 9 9 9 10 9 11 1 12 0 13 9\""),
+        !parts
+            .iter()
+            .any(|t| matches!(t, Term::Var(x) if &**x == "dz")),
         "{main}"
     );
+    let text = Value::str("1 9 2 0 3 9 4 1 5 9 6 9 7 9 8 9 9 9 10 9 11 1 12 0 13 9");
+    assert!(parts.iter().any(|t| is(t, &text)), "{main}");
     // In `MIXED_OPERANDS` the build evaluates `d` and mixes each `if` the elaborator wrote for
-    // an `&&` or `||` around it: `d && b` and `d || b` become `#divByZero`, while `b && d` and
-    // `b || d` keep `b` first, to be read at run time.
+    // an `&&` or `||` around it: `d && b` and `d || b` become `#divByZero`, and each term
+    // around them that mixing leaves with literal parts is evaluated, so items 1, 3, 5, 6 and
+    // 9 are the text `9` (7 and 8 are decided by their literal operand); `b && d` and `b || d`
+    // keep `b` first, to be read at run time.
     let main = staged_main(MIXED_OPERANDS);
-    assert!(!main.contains("dz("), "{main}");
+    let parts = subterms(&main);
     assert!(
-        main.contains("\"1 \" ++ String(match #divByZero {"),
+        !parts
+            .iter()
+            .any(|t| matches!(t, Term::Var(x) if &**x == "dz")),
         "{main}"
     );
+    let left: Vec<String> = parts
+        .iter()
+        .filter(|t| foldable(t))
+        .map(|t| t.to_string())
+        .collect();
+    assert!(left.is_empty(), "{left:?} in {main}");
+    for text in ["1 9 ", "3 9", "5 9", "6 9", "7 1", "8 0", "9 9"] {
+        assert!(
+            parts.iter().any(|t| is(t, &Value::str(text))),
+            "{text:?} in {main}"
+        );
+    }
+    let dz = Value::atom("divByZero");
+    let b_and_d = |t: &&Term| matches!(t, Term::If(c, x, y) if is_b(c) && is(x, &dz) && is(y, &Value::Bool(false)));
+    let b_or_d = |t: &&Term| matches!(t, Term::If(c, x, y) if is_b(c) && is(x, &Value::Bool(true)) && is(y, &dz));
+    // `b && d` in items 2 and 10, `b || d` in item 4.
+    assert_eq!(parts.iter().copied().filter(b_and_d).count(), 2, "{main}");
+    assert_eq!(parts.iter().copied().filter(b_or_d).count(), 1, "{main}");
+    // Negative control: no `if` has `#divByZero` as its condition, which a swap of `b && d`
+    // to `d && b` before mixing would give, and no `if` reads `#divByZero` before `b`.
     assert!(
-        main.contains("\"3 \" ++ String(match #divByZero {"),
+        !parts
+            .iter()
+            .any(|t| matches!(t, Term::If(c, ..) if is(c, &dz))),
         "{main}"
     );
-    assert!(
-        main.contains("if b { #divByZero } else { false }"),
-        "{main}"
-    );
-    assert!(main.contains("if b { true } else { #divByZero }"), "{main}");
 }
 
 #[test]
@@ -365,4 +440,97 @@ fn mixed_operands_keep_their_order() {
             (&["f"], "1 9 2 0 3 9 4 9 5 9 6 9 7 1 8 0 9 9 10 1"),
         ],
     );
+}
+
+/// Four functions of a `bool` parameter `x` and a divisor `y`, each called with `x` both
+/// `false` and `true`, so the Trick (`zedc::stage::split`) splits each on `x`, and a remix
+/// (`zedc::stage::Remix::mix`, step L25.8) mixes each with `x` unknown. `(5 div y) > 0` fails
+/// where `y` is 0, and is read first in `second` and `later`.
+const SPLIT_OPERANDS: &str = "\
+first(x: bool, y: int) = x && (5 div y) > 0;
+second(x: bool, y: int) = (5 div y) > 0 && x;
+either(x: bool, y: int) = x || (5 div y) > 0;
+later(x: bool, y: int) = (5 div y) > 0 || x;
+calls(y: int) = ((first(x: false, y: y) || first(x: true, y: y)) || (second(x: false, y: y) || second(x: true, y: y))) || ((either(x: false, y: y) || either(x: true, y: y)) || (later(x: false, y: y) || later(x: true, y: y)));
+";
+
+/// What the function `f` of `unit` gives at `x` and `y`, by the kernel's evaluator.
+fn call(unit: &zedc::elab::Unit, f: &str, x: bool, y: i64) -> Value {
+    let f = unit.get(f).unwrap();
+    let t = Term::App(
+        zed_kernel::Shared::new(f),
+        vec![Term::Lit(Value::Bool(x)), Term::Lit(Value::Int(y))],
+    );
+    zed_kernel::Evaluator::new(zed_kernel::World::new())
+        .run(&with_prelude(t))
+        .unwrap()
+}
+
+/// `unit` with the term of `f` replaced by `t`.
+fn with_term(unit: &zedc::elab::Unit, f: &str, t: Term) -> zedc::elab::Unit {
+    let mut u = unit.clone();
+    u.defs.iter_mut().find(|d| d.name == f).unwrap().term = zed_kernel::Shared::new(t);
+    u
+}
+
+#[test]
+fn the_trick_and_a_remix_keep_the_order_of_the_operands() {
+    use zedc::stage::{Domain, Remix, split};
+    let u = elab(SPLIT_OPERANDS).unwrap();
+    let (_, mut remix) = Remix::new(&u);
+    for f in ["first", "second", "either", "later"] {
+        let (lam, report) =
+            split(&u, f, 0, &Domain::Type(zed_kernel::types::Type::bool())).unwrap();
+        assert!(report.left.is_empty(), "{f}: {:?}", report.left);
+        let Term::Lam(_, body) = &lam else {
+            panic!("{f}: {lam}")
+        };
+        let Term::Match(_, arms) = &**body else {
+            panic!("{f}: {lam}")
+        };
+        // One arm per value of `x`, then the general body.
+        assert_eq!(arms.len(), 3, "{f}: {lam}");
+        // An arm whose literal `x` decides the term without `y` is that literal; every other
+        // arm still divides by `y` first, so it is not a literal (no absorption of
+        // `(5 div y) > 0 && false` to `false`).
+        for (p, arm) in &arms[..2] {
+            let decides = match (f, p) {
+                ("first", zed_kernel::Pattern::Lit(Value::Bool(false))) => Some(false),
+                ("either", zed_kernel::Pattern::Lit(Value::Bool(true))) => Some(true),
+                _ => None,
+            };
+            match decides {
+                Some(v) => assert!(
+                    matches!(arm, Term::Lit(Value::Bool(w)) if *w == v),
+                    "{f}: {lam}"
+                ),
+                None => assert!(!matches!(arm, Term::Lit(_)), "{f}: {lam}"),
+            }
+        }
+        let original = &u.defs.iter().find(|d| d.name == f).unwrap().term;
+        let remixed = remix.mix(original);
+        for (how, staged) in [
+            ("split", with_term(&u, f, lam.clone())),
+            ("remix", with_term(&u, f, remixed)),
+        ] {
+            for x in [false, true] {
+                for y in [0, 1] {
+                    assert_eq!(
+                        call(&staged, f, x, y),
+                        call(&u, f, x, y),
+                        "{how} {f}({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+    // The written order, at `y == 0`: `x` first decides where it can, `(5 div y) > 0` first
+    // fails whatever `x` is.
+    let at = |f, x| call(&u, f, x, 0);
+    assert_eq!(at("first", false), Value::Bool(false));
+    assert_eq!(at("either", true), Value::Bool(true));
+    for x in [false, true] {
+        assert_eq!(at("second", x), Value::atom("divByZero"), "second({x}, 0)");
+        assert_eq!(at("later", x), Value::atom("divByZero"), "later({x}, 0)");
+    }
 }
