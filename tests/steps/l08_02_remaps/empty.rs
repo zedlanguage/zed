@@ -1488,8 +1488,8 @@ fn the_words_that_take_a_function_take_a_function_parameter() {
 }
 
 /// Row FAIL-map-generic-parameter-function: the function a call passes to such a parameter is
-/// checked as a written one is: `where` needs a `bool` of it. A fold over a family of known
-/// type by such a parameter is refused by name (plan row FAIL-fold-unknown-fn-known-family).
+/// checked as a written one is: `where` needs a `bool` of it, and a fold a function of two
+/// parameters.
 #[test]
 fn a_function_parameter_of_those_words_is_checked_at_each_call() {
     rejected(
@@ -1497,8 +1497,94 @@ fn a_function_parameter_of_those_words_is_checked_at_each_call() {
         &["`where` does not take int, only bool"],
     );
     rejected(
-        "h(positional f) = [1, 2, 3].foldl(0, f);\na = h((a, x) -> a + x);\n",
-        &["`foldl` over a family of known type by a parameter whose type is not written"],
+        "h(positional f) = [1, 2, 3].foldl(0, f);\na = h(x -> x);\n",
+        &["`foldl` calls its function with 2 arguments, and this function takes 1"],
+    );
+}
+
+/// Row FAIL-fold-unknown-fn-known-family: `x.foldl(init, f)` folds the entries of `x` by `f`
+/// from `init` (DESIGN.md sec:reduction, the `foldl`/`foldr` row); with `x` a family of known
+/// type and `f` a parameter whose type is not written, the fold is checked at each call, where
+/// `f` is known.
+#[test]
+fn a_fold_over_a_known_family_by_a_function_parameter_runs() {
+    prints(
+        "h(positional f) = [1, 2, 3].foldl(0, f);\na = h((a, x) -> a * 10 + x);\n",
+        "a",
+        "123",
+    );
+    prints(
+        "h(positional f) = [1, 2, 3].foldr(f, 0);\na = h((x, a) -> a * 10 + x);\n",
+        "a",
+        "321",
+    );
+    prints(
+        "h(positional f) = [1.5, 2.5].foldl(0.0, f);\na = h((a, x) -> a + x);\n",
+        "a",
+        "4.0",
+    );
+}
+
+/// Row FAIL-map-lambda-calls-param-entry: `m.map(g)` applies `g` to each entry (DESIGN.md
+/// sec:values_morphisms), and a parameter with no written type is inferred, so a lambda that
+/// calls a parameter `f` on each entry of a parameter `m` runs at each call.
+#[test]
+fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs() {
+    prints(
+        "h(positional f, positional m) = m.map(x -> f(x));\na = h(x -> x + 1, {\"k\" -> 1})[\"k\"];\n",
+        "a",
+        "2",
+    );
+    prints(
+        "h(positional f, positional m) = m.map(x -> f(x));\n\
+         a = { p = h(x -> (z -> z + x), {\"k\" -> 1}); p[\"k\"](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f, positional m) = m.map(x -> f(x));\n\
+         k(positional g) = h(x -> g(x), {\"k\" -> 1});\n\
+         a = k(y -> y + 1)[\"k\"];\n",
+        "a",
+        "2",
+    );
+    // A family with needs built by `map` from a parameter's results, holding a lambda that
+    // calls `k`'s parameter.
+    prints(
+        "h(positional f, positional m) = m.map(x -> f(x));\n\
+         k(positional g) = h(x -> (z -> g(z + x)), {\"k\" -> 1});\n\
+         a = { p = k(y -> y + 1); p[\"k\"](2) };\n",
+        "a",
+        "4",
+    );
+}
+
+/// Row FAIL-map-lambda-calls-param-entry, the other words that pass each entry of a parameter
+/// to a lambda calling a parameter: `where`, `flatMap` and `group` run at each call too, and a
+/// function that does not take the entries is rejected at the call, naming the entry's type
+/// where it named `_` before.
+#[test]
+fn the_other_words_by_a_lambda_calling_a_parameter_run() {
+    prints(
+        "h(positional f, positional m) = m.where(x -> f(x));\n\
+         a = h(x -> x > 0, {\"k\" -> 1, \"j\" -> -1})[\"k\"] else 0;\n",
+        "a",
+        "1",
+    );
+    prints(
+        "h(positional f, positional m) = m.flatMap(x -> f(x));\na = h(x -> [x, x + 1], [1, 2])[1][1];\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f, positional m) = m.group(x -> f(x));\n\
+         a = h(x -> x > 1, {\"k\" -> 1, \"j\" -> 3})[true][\"j\"] else 0;\n",
+        "a",
+        "3",
+    );
+    rejected(
+        "h(positional f, positional m) = m.map(x -> f(x));\na = h(x -> x + 1, {\"k\" -> \"s\"});\n",
+        &["`f` does not take (\"s\")"],
     );
 }
 

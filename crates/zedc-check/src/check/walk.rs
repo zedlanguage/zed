@@ -3119,7 +3119,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 self.tuple_step(m, Box::new(s));
             }
-            ExprKind::Lambda { params, body } => self.lambda(m, params, body),
+            ExprKind::Lambda { params, body } => self.lambda(m, params, body, None),
             ExprKind::Is { of, .. } => {
                 m.k(Frame::Const(Ty::carrier(Carrier::Bool)));
                 m.job(Job::Expr(of));
@@ -3449,6 +3449,79 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
+    /// The entries of `x` as `map`, `where`, `flatMap` and `group` pass them to their
+    /// function: each family's entries without the misses `#notFound` and `#outOfBounds` and
+    /// without the loose atoms, which pass by a function as by any call (rule 6 of
+    /// sec:type_resolution). A class not yet resolved takes the use as a need
+    /// ([`NeedKind::Entries`]) and gives its result, a class bound at each call before any use
+    /// recorded after it (FAIL-map-lambda-calls-param-entry); a value of type `_` gives `_`.
+    /// Anything else gives nothing: the word reports it.
+    // Complexity tradeoff: one union over the arrows of `x`'s families, O(arrows), as
+    // `map_end` makes, and one need or one recursion per class of `x`; a resolved class's type
+    // holds no class that resolves back to it (it is built before the class is resolved), so
+    // the recursion ends, as at `map_end`.
+    fn word_entries(&mut self, x: &Ty, span: Span) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut out = Ty::empty();
+        for p in x.pieces() {
+            let t = match p {
+                Piece::Fn(sig) if sig.data => Ty::union_all(sig.arrows.iter().map(|a| &a.result))
+                    .without(&misses)
+                    .without_loose(),
+                Piece::Dyn => Ty::dynamic(),
+                Piece::Var(v) => {
+                    let r = self.class_root(&v);
+                    match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                        Some((_, Some(t))) => self.word_entries(&t, span),
+                        Some((r, None)) => self.need(r, NeedKind::Entries, true, span),
+                        None => Ty::dynamic(),
+                    }
+                }
+                _ => Ty::empty(),
+            };
+            out = out.union(&t);
+        }
+        out
+    }
+
+    /// The type the first parameter of `f`, the function given to `map`, `where`, `flatMap` or
+    /// `group` on a receiver of type `x`, is checked at: the entries of `x`
+    /// ([`Self::word_entries`]) where `f` is a lambda whose first parameter has no written type
+    /// and `x` holds a class not yet resolved; `None` otherwise, and the lambda is generic in
+    /// it. On such a receiver a generic parameter `y` has no tie to the entries: a use of it in
+    /// the body, as `f(y)` for a parameter `f` of the enclosing function, would be met at each
+    /// call with `y` unbound, read as `_`, before the receiver's need binds it
+    /// (FAIL-map-lambda-calls-param-entry). On a receiver of known type the lambda stays
+    /// generic and is applied to the entries, as before.
+    // Complexity tradeoff: a scan of `x`'s pieces, O(pieces), and `word_entries` where it
+    // applies, recorded once per call site of the word.
+    fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span) -> Option<Ty> {
+        let ExprKind::Lambda { params, .. } = &f.kind else {
+            return None;
+        };
+        let open = x.pieces().into_iter().any(|p| match p {
+            Piece::Var(v) => {
+                (self.class_root(&v)).is_some_and(|r| self.classes[r].resolved.is_none())
+            }
+            _ => false,
+        });
+        (open && params.first().is_some_and(|p| p.ty.is_none())).then(|| self.word_entries(x, span))
+    }
+
+    /// The function `f` given to `map`, `where`, `flatMap` or `group`, as an argument: a lambda
+    /// with its first parameter of type `first` where [`Self::lambda_entries`] gives one, else
+    /// as any argument.
+    fn word_fn(&mut self, m: &mut M<'a>, f: &'a Expr, first: Option<Ty>) {
+        match (&f.kind, first) {
+            (ExprKind::Lambda { params, body }, Some(t)) => {
+                m.k(Frame::ArgOf(f));
+                m.k(Frame::Seen(f));
+                self.lambda(m, params, body, Some(t));
+            }
+            _ => m.job(Job::Arg(f, Want::default())),
+        }
+    }
+
     /// The keys of `group`'s result `out` are what `f` gives, so they must be data: a function
     /// as a key leaves the kernel's reindex nothing to compare (plan row
     /// FAIL-group-key-function). A class, as what a parameter `f` gives, keeps a need until its
@@ -3773,7 +3846,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// level folds, its entries taken in key order (plan row FP-ops-run), a rank by its index. A
     /// loose atom `x` passes through, as at `map`. A value whose type is a class (a parameter
     /// of a generic function, or of a lambda checked before its argument) takes the fold as a
-    /// need, checked on each type that flows into the class, as `><` does.
+    /// need, checked on each type that flows into the class, as `><` does; a function whose type
+    /// is a class, on a receiver of known type, takes it as a need on the function's class.
     // Complexity tradeoff: each round applies `f` once to the accumulator type, and the rounds
     // stop when the type settles; a naive check would apply `f` once per entry. At most
     // `Carrier::ALL.len() + 1` rounds run (below).
@@ -3787,49 +3861,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A function not yet known, as a parameter `f` of `h(f, m) = m.foldl(0, f)` whose type
         // is not written, is a class; on a receiver that is a class too, the need on the
         // receiver below holds it, and is met where both are known (FAIL-map-generic-
-        // parameter-function).
+        // parameter-function); on a receiver of known type, the need is on the function's
+        // class, below (FAIL-fold-unknown-fn-known-family).
         let f_class = only_fn(&f.ty).is_none() && self.class_of_ty(&f.ty).is_some();
-        let x_class = matches!(
-            (x.pieces().as_slice(), x.fns.is_empty()),
-            ([Piece::Var(_)], true)
-        );
         let fsig = match only_fn(&f.ty) {
             Some(fsig) => Some(fsig),
-            None if f_class && x_class => None,
-            None if f_class => {
-                // The accumulator's type is found by applying `f` until it settles (below),
-                // which a function not yet known cannot do: plan row
-                // FAIL-fold-unknown-fn-known-family.
-                let what = format!(
-                    "{word} over a family of known type by a parameter whose type is not written"
-                );
-                // The repair's type: the accumulator is `init`'s carriers and the entry what
-                // the receiver's arrows give, as the fold below reads them.
-                let entry = Ty::union_all(
-                    x.pieces()
-                        .iter()
-                        .filter_map(|p| match p {
-                            Piece::Fn(sig) if sig.data => Some(sig),
-                            _ => None,
-                        })
-                        .flat_map(|sig| sig.arrows.iter().map(|a| &a.result)),
-                )
-                .without(&misses);
-                let (acc, entry) = (self.text(&init.carriers()), self.text(&entry.carriers()));
-                let ty = match right {
-                    false => format!("({acc}, {entry}) -> {acc}"),
-                    true => format!("({entry}, {acc}) -> {acc}"),
-                };
-                self.error_offering(
-                    f.at.unwrap_or(span),
-                    zedc_base::rejection::not_yet(&what),
-                    [format!(
-                        "repair: write the type of `{}`, as `{ty}`",
-                        self.src_text(f.at.unwrap_or(span))
-                    )],
-                );
-                return Ty::empty();
-            }
+            None if f_class => None,
             None => {
                 let t = self.text(&f.ty);
                 self.error_offering(
@@ -3863,14 +3900,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let kind = NeedKind::Fold {
                         tys: vec![init.clone(), f.ty.clone()],
                         right,
+                        by: false,
                     };
                     self.need(r, kind, true, span)
                 }
                 None => Ty::dynamic(),
             };
         }
-        // `fsig` is none only where `x_class` holds, the test just above, which returned.
-        let fsig = fsig.expect("a function, or a class receiver handled above");
         let mut values = Ty::empty();
         for p in x.pieces() {
             match p {
@@ -3902,6 +3938,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // A function not yet known, as `f` in `h(f) = [1, 2, 3].foldl(0, f)`, on a receiver
+        // that is a family of known type: the fold, which applies `f` until the accumulator
+        // settles (below), is a need on `f`'s class, met with the receiver's type where `f`
+        // is known, as at a call `h((a, x) -> a * 10 + x)` (row
+        // FAIL-fold-unknown-fn-known-family). `fsig` is none only where `f_class` holds, as the
+        // match above shows, and a receiver that is a class returned above.
+        let Some(fsig) = fsig else {
+            let k = (self.class_of_ty(&f.ty)).expect("`f_class` holds where `fsig` is none");
+            let kind = NeedKind::Fold {
+                tys: vec![init.clone(), x.clone()],
+                right,
+                by: true,
+            };
+            return out.union(&self.need(k, kind, true, span));
+        };
         // The accumulator's type: `init`'s carriers, joined with the carriers of what `f`
         // gives, until `f` gives nothing outside it. A scalar's carriers settle within one
         // round per carrier; a round past that adds only deeper tuples or payloads, which
@@ -6940,8 +6991,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // Zed needs what plan row MAP-pure-zed records.
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
+                        let first = self.lambda_entries(&x.ty, f, span);
                         m.k(Frame::MapFn(x.ty, span, name == "where"));
-                        m.job(Job::Arg(f, Want::default()));
+                        self.word_fn(m, f, first);
                     }
                     _ => {
                         self.error_offering(
@@ -6983,8 +7035,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // `map` is.
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
+                        let first = self.lambda_entries(&x.ty, f, span);
                         m.k(Frame::FlatMap(x.ty, span));
-                        m.job(Job::Arg(f, Want::default()));
+                        self.word_fn(m, f, first);
                     }
                     _ => {
                         self.error_offering(
@@ -6999,8 +7052,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // `group` and `rekey` (step L4.1, sec:grouping), built in as `map` is.
                 Some(_) if name == "group" || name == "rekey" => match (positional, named, curry) {
                     ([f], [], false) => {
+                        // `rekey` is refused whatever its arguments, so its lambda is generic.
+                        let first = match name {
+                            "group" => self.lambda_entries(&x.ty, f, span),
+                            _ => None,
+                        };
                         m.k(Frame::Group(x.ty, of.span, span, name == "rekey"));
-                        m.job(Job::Arg(f, Want::default()));
+                        self.word_fn(m, f, first);
                     }
                     _ => {
                         self.error_offering(
@@ -7109,8 +7167,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// A lambda with no expected type: its parameters positional, typed by their
-    /// annotations; one without is generic, as a declared function's.
-    fn lambda(&mut self, m: &mut M<'a>, params: &'a [Param], body: &'a Expr) {
+    /// annotations; one without is generic, as a declared function's. With `first`, the first
+    /// parameter, when it has no written type, is of type `first` ([`Self::lambda_sig`]).
+    fn lambda(&mut self, m: &mut M<'a>, params: &'a [Param], body: &'a Expr, first: Option<Ty>) {
         let names = params
             .iter()
             .map(|p| SParam {
@@ -7120,7 +7179,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 range: None,
             })
             .collect();
-        self.lambda_sig(m, params.iter().map(Some), &[], names, body);
+        self.lambda_sig(m, params.iter().map(Some), &[], names, body, first);
     }
 
     /// The types written for the parameters `params` of a lambda, as [`Self::lambda_sig`]
@@ -7141,8 +7200,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The signature of a lambda checked as a declared function's body is: each parameter of
     /// `slots` typed by its annotation, one without a type variable its uses constrain, and a
     /// slot no parameter takes a type variable nothing constrains; each parameter of `extra`
-    /// typed by its default; the signature's parameters are `names`. Its function type is the
-    /// result of the jobs pushed.
+    /// typed by its default; the signature's parameters are `names`. With `first`, the first
+    /// slot, when its parameter has no written type, is of type `first` in place of a new
+    /// variable. Its function type is the result of the jobs pushed.
     fn lambda_sig(
         &mut self,
         m: &mut M<'a>,
@@ -7150,6 +7210,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         extra: &[&'a Param],
         names: Vec<SParam>,
         body: &'a Expr,
+        mut first: Option<Ty>,
     ) {
         self.level += 1;
         let level = self.level;
@@ -7160,9 +7221,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
         for p in slots {
             let declared = p.and_then(|p| p.ty.as_ref());
-            let t = match declared {
-                Some(t) => self.written(t, true),
-                None => Ty::var(format!("${}", self.class()).into()),
+            let t = match (declared, first.take()) {
+                (Some(t), _) => self.written(t, true),
+                (None, Some(t)) => t,
+                (None, None) => Ty::var(format!("${}", self.class()).into()),
             };
             let id = p.map(|p| self.id(p.span, &p.name));
             if let Some(id) = id {
@@ -7298,7 +7360,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 order,
                 extra,
             });
-            return self.lambda_sig(m, slots.into_iter(), &defaults, names, body);
+            return self.lambda_sig(m, slots.into_iter(), &defaults, names, body, None);
         }
         // A bounded variable of `e` no parameter holds is fixed by no argument: the lambda may
         // return any carrier of its bound.
@@ -10166,6 +10228,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
+            NeedKind::Entries => self.word_entries(&on, span),
             NeedKind::SumMethod { site, beside } => self.sum_beside(&on, beside, span, *site),
             NeedKind::Map { f, filter } => {
                 let f = Arg::of(self.bound(f, binds));
@@ -10180,10 +10243,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.remap_met(*at, &src)
             }
             NeedKind::Reduce(op, site, form) => self.fold_level(*op, &on, span, *site, *form),
-            NeedKind::Fold { tys, right } => {
+            NeedKind::Fold {
+                tys,
+                right,
+                by: false,
+            } => {
                 let init = self.bound(&tys[0], binds);
                 let f = Arg::of(self.bound(&tys[1], binds));
                 self.fold_dir_end(&on, &init, f, span, *right)
+            }
+            NeedKind::Fold {
+                tys,
+                right,
+                by: true,
+            } => {
+                let init = self.bound(&tys[0], binds);
+                let x = self.bound(&tys[1], binds);
+                self.fold_dir_end(&x, &init, Arg::of(on.clone()), span, *right)
             }
             NeedKind::NoInt(d) => {
                 self.no_int(&on, d, span);

@@ -939,6 +939,46 @@ fn group_by_a_function_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row FAIL-fold-unknown-fn-known-family: `foldl` over a list of n entries by a parameter with
+/// no written type: one need NeedKind::Fold on `f`'s class, met once at the call, where the
+/// accumulator is found and the kernel folds the n entries. Small instances:
+/// `empty::a_fold_over_a_known_family_by_a_function_parameter_runs`.
+#[test]
+fn fold_of_a_known_family_by_a_function_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "h(positional f) = {}.foldl(0, f);\na = h((a, x) -> a + x);\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n * (n - 1) / 2).to_string());
+    scaling::check(
+        "foldl of n entries by a function parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+/// Row FAIL-map-lambda-calls-param-entry: `map` of a parameter `m` holding n entries by a
+/// lambda that calls a parameter `f`: the need "the entries of `m`", recorded before the
+/// lambda, is met once at the call, and so is the call of `f` on them; the kernel maps the n
+/// entries. Small instances: `empty::map_of_a_parameter_by_a_lambda_calling_a_parameter_runs`.
+#[test]
+fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "h(positional f, positional m) = m.map(x -> f(x));\na = h(x -> x + 1, {}).sum;\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n * (n + 1) / 2).to_string());
+    scaling::check(
+        "map of n entries of a parameter by a lambda calling a parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row FAIL-group-key-function: n families nested, each keyed by a call of the parameter `f`:
 /// the call meets each key's data need once, no longer deferred as a lambda's parameter.
 /// Small instances: `empty::a_key_made_by_a_function_is_data_at_each_call`.

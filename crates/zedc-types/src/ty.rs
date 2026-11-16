@@ -1572,10 +1572,16 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             });
             parts.extend([Dbg::Text(", curry: "), Dbg::Leaf(curry), Dbg::Text(" }")]);
         }
-        NeedKind::Fold { tys, right } => {
+        NeedKind::Fold { tys, right, by } => {
             parts.push(Dbg::Text("Fold { tys: "));
             debug_list(parts, "[", tys, "]", |p, t| p.push(Dbg::Ty(t)));
-            parts.extend([Dbg::Text(", right: "), Dbg::Leaf(right), Dbg::Text(" }")]);
+            parts.extend([
+                Dbg::Text(", right: "),
+                Dbg::Leaf(right),
+                Dbg::Text(", by: "),
+                Dbg::Leaf(by),
+                Dbg::Text(" }"),
+            ]);
         }
         NeedKind::Into { what, ty } => parts.extend([
             Dbg::Text("Into { what: "),
@@ -1617,6 +1623,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Sum
+        | NeedKind::Entries
         | NeedKind::Reduce(..)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
@@ -3750,6 +3757,13 @@ pub enum NeedKind {
     Power(Arc<PowerUse>),
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
+    /// The entries of the value, a family: what `map`, `where`, `flatMap` and `group` pass
+    /// their function, the misses `#notFound` and `#outOfBounds` and the loose atoms left out,
+    /// as those words leave them out. Recorded on a receiver whose type is a class before a
+    /// lambda with no written parameter type is checked, so that the lambda's parameter is
+    /// this use's result and is bound before any use the lambda's body makes of it (plan row
+    /// FAIL-map-lambda-calls-param-entry).
+    Entries,
     /// `v.sum` written at the span, on a value whose type is a type parameter: a family
     /// folds its one level by `(+)`, as [`NeedKind::Reduce`] does, and a tuple is summed as
     /// [`NeedKind::Sum`] sums it (DESIGN.md, the method register: `tot = xs.sum; // = xs >< (+)`).
@@ -3808,12 +3822,17 @@ pub enum NeedKind {
     Reduce(Reducer, Span, FoldForm),
     /// `v.foldl(init, f)`, or `v.foldr(f, init)` when `right` is set: the value is a rank whose
     /// entries `f` folds from `init`, and the use gives the accumulator (step L3.3; DESIGN.md
-    /// sec:reduction). `tys` is the types of `init` and of `f`, in that order.
+    /// sec:reduction). `tys` is the types of `init` and of `f`, in that order; with `by` set
+    /// the value is `f` instead, a function not yet known that folds a receiver of known type,
+    /// and `tys` is the types of `init` and of the receiver (row
+    /// FAIL-fold-unknown-fn-known-family).
     Fold {
-        /// The types of the start value and of the function.
+        /// The types of the start value and of the function, or with `by`, of the receiver.
         tys: Vec<Ty>,
         /// Whether the use is `foldr`.
         right: bool,
+        /// Whether the value is the function, not the receiver.
+        by: bool,
     },
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
@@ -4170,9 +4189,10 @@ impl Need {
                     rank: *rank,
                 },
                 NeedKind::Reduce(op, site, form) => NeedKind::Reduce(*op, *site, *form),
-                NeedKind::Fold { tys, right } => NeedKind::Fold {
+                NeedKind::Fold { tys, right, by } => NeedKind::Fold {
                     tys: tys.iter().map(&mut f).collect(),
                     right: *right,
+                    by: *by,
                 },
                 NeedKind::Destructure { i, n } => NeedKind::Destructure { i: *i, n: *n },
                 NeedKind::Call {
@@ -4190,6 +4210,7 @@ impl Need {
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
+                NeedKind::Entries => NeedKind::Entries,
                 NeedKind::SumMethod { site, beside } => NeedKind::SumMethod {
                     site: *site,
                     beside: beside.clone(),
@@ -4246,6 +4267,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::Entries
             | NeedKind::SumMethod { .. }
             | NeedKind::Into { .. }
             | NeedKind::Reduce(..)
@@ -4277,6 +4299,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
@@ -4312,6 +4335,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
