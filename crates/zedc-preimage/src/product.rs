@@ -12665,6 +12665,9 @@ impl Scope {
     }
 
     fn project_part(&mut self, part: &Formula) {
+        #[cfg(feature = "counts")]
+        super::preimage::counts::PARTS_PROJECTED
+            .set(super::preimage::counts::PARTS_PROJECTED.get() + 1);
         if let Some(out) = self.project_by_pendants(part) {
             for (n, x) in out {
                 if let Some(p) = self.names.get_mut(&n) {

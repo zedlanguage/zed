@@ -213,16 +213,10 @@ fn census(units: &[(String, String)]) -> String {
 /// 41, 18 s of it one unit of 165 KB (`l01_26_type_resolution::scaling`, ArrowMeet), and the
 /// pieces of 20 units it was split into first took up to 30 s each, run together at load 33.
 /// Pieces of 10 units put the large units of `l01_26` and `l01_29` in different pieces.
-/// Piece 4 is split once more: its units 47, 48 and 49, from `l01_29_diagnostics` (15, 42 and
-/// 78 KB), took 8.4, 3.8 and 8.9 s at load 55, so each is a piece of its own.
+/// Piece 4 was split once more while its units 47, 48 and 49, from `l01_29_diagnostics` (15,
+/// 42 and 78 KB), took 8.4, 3.8 and 8.9 s at load 55; since PERF-refused-site-constant the
+/// whole piece takes about 5 s at load 25, and it is one piece again.
 const PIECES: usize = 12;
-
-/// The units at `units` among the 10 of piece 4.
-fn piece_4(units: std::ops::Range<usize>) -> &'static [(String, String)] {
-    let piece = programs::piece(4, PIECES);
-    assert_eq!(piece.len(), 10, "piece 4 of the programs holds 10 units");
-    &piece[units]
-}
 
 #[test]
 fn programs_0() {
@@ -246,22 +240,7 @@ fn programs_3() {
 
 #[test]
 fn programs_4() {
-    insta::assert_snapshot!(census(piece_4(0..7)));
-}
-
-#[test]
-fn programs_4_unit_7() {
-    insta::assert_snapshot!(census(piece_4(7..8)));
-}
-
-#[test]
-fn programs_4_unit_8() {
-    insta::assert_snapshot!(census(piece_4(8..9)));
-}
-
-#[test]
-fn programs_4_unit_9() {
-    insta::assert_snapshot!(census(piece_4(9..10)));
+    insta::assert_snapshot!(programs_piece(4));
 }
 
 #[test]

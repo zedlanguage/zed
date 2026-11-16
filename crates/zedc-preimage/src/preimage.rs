@@ -11264,6 +11264,7 @@ pub mod counts {
         pub(crate) static INPUTS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static TERM_READS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static EVALUATIONS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static PARTS_PROJECTED: Cell<u64> = const { Cell::new(0) };
     }
 
     /// The nodes `LetPa::sum` has entered on this thread since it started.
@@ -11305,6 +11306,13 @@ pub mod counts {
     /// roots of an obligation's equation is evaluated once at each root (ROOTS-listed).
     pub fn evaluations() -> u64 {
         EVALUATIONS.get()
+    }
+
+    /// The blocks of a scope's relation projected onto their names (`Scope::project_part`) on
+    /// this thread since it started: a term read again in the scope of one node, at another
+    /// place, projects none (PERF-refused-site-constant).
+    pub fn parts_projected() -> u64 {
+        PARTS_PROJECTED.get()
     }
 }
 

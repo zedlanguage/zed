@@ -598,4 +598,37 @@ fn the_bounds_of_a_refusal_do_not_depend_on_the_order_it_was_met_in() {
     assert_eq!(bounds(&none.join(&l)), "`v: int[0..=3]`");
 }
 
+/// PERF-refused-site-constant: one function that divides `n` times by `a` under four linear
+/// conditions the solver refuses, each division its own warning.
+fn divisions_by_one_name(n: usize) -> String {
+    let guard = "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z \
+                 - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && 0 - 8 * w - 5 * x + 12 \
+                 * y - z + 31 >= 0";
+    let sum = vec!["100 div a"; n].join(" + ");
+    format!(
+        "f(a: int, x: int, y: int, z: int, w: int) =\n  if a - w - x - y - z >= 0 && {guard} {{ \
+         {sum} }} else {{ 0 }};\nmain() {{\n}}\n"
+    )
+}
+
+/// The blocks of relations projected while `src` is loaded, on this thread.
+fn parts_projected(src: &str) -> u64 {
+    let before = zedc::store::preimage::counts::parts_projected();
+    if let Err(e) = zedc::run::load(src.as_bytes()) {
+        panic!("rejected: {e}");
+    }
+    zedc::store::preimage::counts::parts_projected() - before
+}
+
+/// A term read again in the scope of one node, at another place, is the read already made
+/// there: the second to eighth `100 div a` under the refused conditions project no block of
+/// the relation that the first did not (PERF-refused-site-constant), while each still has its
+/// warning (`m0_12_refusal_census::bench`).
+#[test]
+fn reads_of_one_term_under_refused_tests_settle_once() {
+    let one = parts_projected(&divisions_by_one_name(1));
+    assert!(one > 0, "the conditions are projected");
+    assert_eq!(parts_projected(&divisions_by_one_name(8)), one);
+}
+
 mod bench;

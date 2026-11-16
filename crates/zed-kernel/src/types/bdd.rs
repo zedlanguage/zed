@@ -1901,7 +1901,9 @@ impl<A: Literal> Part<A> {
         };
         let mut exprs: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
         let mut nodes: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
-        let mut stack: Vec<(Arc<Expr<A>>, Option<Vec<Part<A>>>)> = vec![(root.clone(), None)];
+        // An expression, with its cluster's operands once they are found.
+        type Pending<A> = (Arc<Expr<A>>, Option<Vec<Part<A>>>);
+        let mut stack: Vec<Pending<A>> = vec![(root.clone(), None)];
         while let Some((e, ops)) = stack.pop() {
             let Some(ops) = ops else {
                 if exprs.contains_key(&e.id) {

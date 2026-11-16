@@ -49,8 +49,10 @@ fn guarded_divisions(n: usize) -> String {
 /// with their size, but the checker's work on them is linear in the number of refused sites
 /// (in this census, about 67 million instructions per guarded function and 13 million per
 /// refused site in one function, 2026-11-15, ratios 7.95 and 4.66 at load 68): a unit's time
-/// follows its refusals, not its bytes. Each form is held linear here; the constant per refused
-/// site is item PERF-refused-site-constant.
+/// follows its refusals, not its bytes. Each form is held linear here. PERF-refused-site-constant
+/// (2026-11-16) halved the cost of each refused site in one function, a read of one term at one
+/// node being made once (6.5 million, ratio 3.38); the constant per guarded function is item
+/// PERF-guarded-function-constant.
 #[test]
 fn refused_guarded_divisions_scale_linearly() {
     for (what, make) in [

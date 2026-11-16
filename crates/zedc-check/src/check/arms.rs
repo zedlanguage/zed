@@ -48,8 +48,9 @@ use zed_kernel::{Prim, Shared, Term};
 
 use zedc_lattice::cell::Premises;
 use zedc_lattice::interval::IntervalSet;
+use zedc_preimage::address::Address;
 use zedc_preimage::preimage::LetPa;
-use zedc_preimage::product::{Product, Scope};
+use zedc_preimage::product::{Product, RootFailure, Scope};
 use zedc_syntax::ast::{BinaryOp, Expr};
 use zedc_syntax::lex::Span;
 
@@ -67,6 +68,20 @@ pub(super) enum Node<'a> {
     },
     /// Either of two scopes: the join of their cases.
     Join(usize, usize),
+}
+
+/// The key of a read of a term in the scope of a node ([`Arms::reads`]): the node, the
+/// term's binders and calls, and the term's content address.
+pub(super) type ReadKey = (usize, Vec<usize>, Vec<usize>, Address);
+
+/// A read of a term in the scope of a node ([`Arms::reads`]): the term, the node's scope told
+/// of the term's binders and calls and settled on its names, and, once asked, what reading the
+/// term forward and whether it may be 0 gave.
+pub(super) struct Read {
+    pub(super) term: Term,
+    pub(super) settled: Scope,
+    pub(super) forward: Option<(Product, Scope)>,
+    pub(super) zero: Option<(bool, imbl::OrdSet<RootFailure>)>,
 }
 
 /// An expression as a kernel term the reduced product reads, and the names in it bound by a
@@ -314,6 +329,11 @@ pub(super) struct Arms<'a> {
     /// What [`Ck::ints_here`](super::Ck::ints_here) read of each expression from its parts, by
     /// span and node.
     pub(super) part_ints: HashMap<(Span, usize), IntervalSet>,
+    /// Each term read in the scope of a node ([`Ck::read_in_scope_at`](super::Ck::read_in_scope_at)),
+    /// by the node, the term's binders and calls and its content address, each term of one
+    /// address kept apart: two reads of one term in one node's scope, at two places, are one
+    /// read.
+    pub(super) reads: BTreeMap<ReadKey, Vec<Read>>,
     /// For each binder a term has called, the definition its calls are kept as ([`Called`]),
     /// or none when they are not; none also while its body is being translated, so a call
     /// of it within its own body stays a name of its own.
@@ -355,6 +375,7 @@ impl<'a> Arms<'a> {
             summaries: HashMap::new(),
             here_ints: HashMap::new(),
             part_ints: HashMap::new(),
+            reads: BTreeMap::new(),
             called: HashMap::new(),
             int_scopes: HashMap::new(),
             implicit: Vec::new(),

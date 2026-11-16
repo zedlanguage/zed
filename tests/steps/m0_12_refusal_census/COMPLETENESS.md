@@ -13,7 +13,7 @@ behavior on inputs the census itself does not hold.
 |---|---|
 | The refusals of every enabled fence of the spec and the README | `enabled_fences` (snapshot) |
 | The refusals of every step unit `tests/steps/**/*.zed` | `step_units` (snapshot) |
-| The refusals of the 120 units of `programs.txt`, in 12 pieces, piece 4 split in four | `programs_0` to `programs_11`, `programs_4_unit_7` to `programs_4_unit_9` (snapshots) |
+| The refusals of the 120 units of `programs.txt`, in 12 pieces | `programs_0` to `programs_11` (snapshots) |
 | A refusal whose phrase lies in a step or the menu, not the message: the reason takes that step or menu | reached by the census snapshots (the ` \| ` parts of their reasons) |
 | A rejection of the front: `run::load` reports each of its messages | reached by every rejected unit of the census |
 | Each kind found by its phrase; an undecided text of kind `Other`; a text that is no refusal | `kinds_are_found_by_their_phrases` |

@@ -20,6 +20,7 @@ use zed_kernel::Shared;
 use zed_kernel::limits::{Kill, MainLimits};
 use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
+use zedc_preimage::address::Address;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 
@@ -8317,17 +8318,22 @@ impl<'a> Ck<'_, 'a> {
     /// the read of the expression, so each is placed where that is read, once, and a read
     /// inside a name's value asks those the value asked where it is bound.
     fn read_in_scope_at(&mut self, e: &'a Expr, at: Option<Span>) -> (Product, Scope) {
-        let t = self.term_for(e, Reading::Operand);
-        let here = self.arms.here();
-        let mut wanted = vec![Item::Scope(here)];
-        wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
-        self.settle(wanted);
-        let s = self.arms.scopes[here].clone().expect("settled");
-        let before = s.refusals.clone();
-        let mut s = self.with_bound(s, &t.binders, &t.calls);
-        s.eager_on(&t.term);
-        let p = product::forward(&t.term, &mut s);
+        let (key, i) = self.read_here(e);
+        let r = &mut self.arms.reads.get_mut(&key).expect("a kept read")[i];
+        let (p, s) = match &r.forward {
+            Some(f) => f.clone(),
+            None => {
+                let mut s = r.settled.clone();
+                let p = product::forward(&r.term, &mut s);
+                r.forward = Some((p.clone(), s.clone()));
+                (p, s)
+            }
+        };
         if let Some(at) = at {
+            let before = (self.arms.scopes[key.0].as_ref())
+                .expect("settled")
+                .refusals
+                .clone();
             self.place_refusals(at, &before, &s.refusals);
         }
         (p, s)
@@ -8337,15 +8343,69 @@ impl<'a> Ck<'_, 'a> {
     /// which a written constraint gave neither `true` nor `false` ([`Scope::zero_reached`]).
     /// The questions the read refuses are those [`Ck::read_in_scope`] placed for `e` already.
     fn zero_reached_here(&mut self, e: &'a Expr) -> (bool, imbl::OrdSet<RootFailure>) {
+        let (key, i) = self.read_here(e);
+        let r = &mut self.arms.reads.get_mut(&key).expect("a kept read")[i];
+        if r.zero.is_none() {
+            r.zero = Some(r.settled.zero_reached(&r.term, &Premises::new()));
+        }
+        r.zero.clone().expect("just kept")
+    }
+
+    /// The read of `e` in the scope of the node the walk is in ([`arms::Arms::reads`]), by its key
+    /// and its place among the reads of terms of that key: the node's scope told of the
+    /// binders and calls `e` reads ([`Ck::with_bound`]) and settled on its names
+    /// ([`Scope::eager_on`]), made at the first read of a term equal to `e`'s in that scope.
+    ///
+    /// The read is the same at every place: the scope of a node is set once
+    /// ([`Ck::compute`]), as is each binder's value ([`Item::Bound`]), its summary
+    /// ([`Ck::summarized`]), its scope name ([`arms::var`], one per binder) and the
+    /// definition a call is kept as ([`Ck::translate_called`], final once the term that calls
+    /// it is made), and the scope's own steps read nothing but the scope and the term. So the
+    /// key and an equal term give an equal scope, and what [`product::forward`] and
+    /// [`Scope::zero_reached`] give of it is kept with it. The refusals a read adds are placed
+    /// at each read's own place ([`Ck::place_refusals`]) by the caller.
+    ///
+    /// Complexity tradeoff: naive version, each read clones the node's scope, binds the term's
+    /// binders and calls, settles its names and reads it: under `k` refused tests every read
+    /// settles the same refused blocks again, so a function under four refused conditions
+    /// that divides `n` times by one name settles and projects them about `3 n` times
+    /// (PERF-refused-site-constant: 13 million instructions per division in the census).
+    /// Used: one read per node and equal term, found by its content address in O(log r) for
+    /// `r` reads kept plus the term's size for the address, and the terms of one address
+    /// compared with `==` (two terms that differ only in a binder's name share an address and
+    /// are read apart). Tradeoffs: memory of one scope (sharing its maps with the node's) for
+    /// each distinct read; a term read once costs its address more. Tests:
+    /// `l01_39_reduced_product::refused::reads_of_one_term_under_refused_tests_settle_once` and
+    /// `m0_12_refusal_census::bench::refused_guarded_divisions_scale_linearly`.
+    fn read_here(&mut self, e: &'a Expr) -> (arms::ReadKey, usize) {
         let t = self.term_for(e, Reading::Operand);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
         self.settle(wanted);
+        let key = (
+            here,
+            t.binders.clone(),
+            t.calls.clone(),
+            Address::of(&t.term),
+        );
+        if let Some(i) =
+            (self.arms.reads.get(&key)).and_then(|v| v.iter().position(|r| r.term == t.term))
+        {
+            return (key, i);
+        }
         let s = self.arms.scopes[here].clone().expect("settled");
         let mut s = self.with_bound(s, &t.binders, &t.calls);
         s.eager_on(&t.term);
-        s.zero_reached(&t.term, &Premises::new())
+        let kept = self.arms.reads.entry(key.clone()).or_default();
+        kept.push(arms::Read {
+            term: t.term.clone(),
+            settled: s,
+            forward: None,
+            zero: None,
+        });
+        let i = kept.len() - 1;
+        (key, i)
     }
 
     /// Rejects the division at `span` by `b`, an int divisor that is 0 at the root `f.root`
