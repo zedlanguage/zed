@@ -4,6 +4,7 @@
 //! whole part on random parts where neither refuses, and on a program where the answer
 //! changed.
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -698,9 +699,12 @@ fn hubs_within(
 /// name's box, or where the floor of the greatest rational value ([`lp_max`]) equals it. Where
 /// the rational values grow without bound, so do the integer ones (Meyer 1974: the integer
 /// points of a rational polyhedron, when there are any, and `points` found one, have the same
-/// recession cone as the polyhedron), and the end is opened, the set taking every value beyond
-/// its last piece found; where the values beyond keep a period (an odd name, say), that set is
-/// wider than the exact one, as with the rule this replaces. Otherwise the rational points past the end are bounded, and where
+/// recession cone as the polyhedron), and the end is opened: the hull is exact, but the values
+/// beyond the last piece found need not all be taken (`z0 == 2 * a + 1` takes only the odd
+/// values; `100 * b <= a <= 100 * b + 1` with `b >= 0` takes `0, 1, 100, 101, 200, ...`). The
+/// set returned holds every value beyond (`upper` below), and those values are proved taken
+/// only by a step of the cone, as follows. Otherwise the rational points past the end are
+/// bounded, and where
 /// [`hubs_within`] holds of them, the end is the end: at each hub point each `z` takes exactly
 /// the range shortest paths give, so an integer point past the end would have been found. A
 /// hole of `set` is a hole where [`hubs_within`] holds of the rational points with `n` in it.
@@ -708,19 +712,37 @@ fn hubs_within(
 /// The rule these replace opened every end found that moved between two ranges of the hubs,
 /// and so opened `z3 <= 13` of seed 894 case 15, reached only with `a >= 33` and `b <= -60`
 /// (FAIL-pendants-oracle-seed-894); it did not check holes.
+///
+/// Returns the hull, `lower` and `upper`: `lower` holds only values proved taken and `upper`
+/// every value taken, so the exact set lies between them, and is each of them where they are
+/// equal. `lower` is the set found, with an opened end's piece where a step proves it. Proof
+/// of the step: write the disjunct's rows ([`lp_rows`]) as `A · x <= b`, and its recession
+/// cone as `A · x <= 0`, the same rows with each constant and each finite end of a box 0
+/// (`steps` gives the values of `n` at the integer points of the cone that [`points`] finds).
+/// Let `r` be such a point with `n(r) = t`, `1 <= t <= len` for the upper end, where the last
+/// piece found is `[p, p + len - 1]` (`len` unbounded where `p` is `-inf`). Each value of that
+/// piece is taken at an integer point `x0` (every value [`points`] finds is taken), and for
+/// each whole `q >= 0`, `A · (x0 + q · r) = A · x0 + q · A · r <= b`, so `x0 + q · r` is an
+/// integer point of the disjunct with `n = n(x0) + q · t`. A value `w >= p` is
+/// `p + s + q · t` with `0 <= s < t <= len`, so `p + s` lies in the piece and `w` is taken:
+/// every value from `p` on is. The lower end is the same with `-t`. Where no such `r` is found
+/// (none exists for `z0 == 2 * a + 1`, whose piece is one value and whose cone has `t = 2`
+/// only), the piece stays out of `lower`, and a check that reads these sets says it cannot
+/// decide, rather than call an answer exact or unsound on a set it has not proved.
 fn decided_ends(
     (hull, set): (IntervalSet, IntervalSet),
     n: &str,
     cons: &[Cmp],
     boxes: &BTreeMap<String, Piece>,
     far: i64,
-) -> (IntervalSet, IntervalSet) {
+    steps: impl Fn(&str) -> IntervalSet,
+) -> (IntervalSet, IntervalSet, IntervalSet) {
     let (Some(first), Some(last)) = (set.first(), set.last()) else {
-        return (hull, set);
+        return (hull, set.clone(), set);
     };
     let rows = lp_rows(cons, boxes);
     if hubs_within(&rows, boxes, far).is_ok() {
-        return (hull, set);
+        return (hull, set.clone(), set);
     }
     let unit = |m: &str, s: i64| -> Vec<i64> {
         boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
@@ -744,17 +766,34 @@ fn decided_ends(
         }
     }
     let (lo, hi) = boxes[n];
-    let end = |found: &End, bound: Option<i64>, sign: i64, inf: End| -> End {
+    // The end decided, and whether every value of the piece at it is proved taken: always but
+    // for an opened end, where a step of the cone proves it (see above). `piece` is the piece
+    // found at the end, `sign` 1 for the upper end and -1 for the lower.
+    let end = |found: &End, bound: Option<i64>, sign: i64, inf: End, piece: &(End, End)| {
         let End::Fin(e) = found else {
-            return found.clone();
+            return (found.clone(), true);
         };
         let e = e.to_i64().expect("an end found within the boxes");
         if bound == Some(e) {
-            return found.clone();
+            return (found.clone(), true);
         }
         match lp_max(&rows, &unit(n, sign)) {
-            Lp::Unbounded => return inf,
-            Lp::Max(f) if f == Num::from(sign * e) => return found.clone(),
+            Lp::Unbounded => {
+                // The steps `t` that prove it, `1 <= sign · t <= len`.
+                let len = match piece {
+                    (End::Fin(p), End::Fin(q)) => {
+                        let len = q.to_i64().expect("a value") - p.to_i64().expect("a value");
+                        End::of(len + 1)
+                    }
+                    _ => End::PosInf,
+                };
+                let proving = match sign {
+                    1 => IntervalSet::range(End::of(1), len),
+                    _ => IntervalSet::range(-&len, End::of(-1)),
+                };
+                return (inf, !steps(n).meet(&proving).is_empty());
+            }
+            Lp::Max(f) if f == Num::from(sign * e) => return (found.clone(), true),
             Lp::Max(f) if f > Num::from(sign * e) => {}
             other => panic!("{other:?} over {n} at {cons:?} {boxes:?}, with {e} found"),
         }
@@ -767,14 +806,21 @@ fn decided_ends(
                  {cons:?} {boxes:?}"
             );
         }
-        found.clone()
+        (found.clone(), true)
     };
-    let l = end(&first.0, lo, -1, End::NegInf);
-    let h = end(&last.1, hi, 1, End::PosInf);
-    let set = set
-        .join(&IntervalSet::range(l.clone(), first.1.clone()))
-        .join(&IntervalSet::range(last.0.clone(), h.clone()));
-    (IntervalSet::range(l, h), set)
+    let (l, low_proved) = end(&first.0, lo, -1, End::NegInf, first);
+    let (h, high_proved) = end(&last.1, hi, 1, End::PosInf, last);
+    let low = IntervalSet::range(l.clone(), first.1.clone());
+    let high = IntervalSet::range(last.0.clone(), h.clone());
+    let upper = set.join(&low).join(&high);
+    let mut lower = set.clone();
+    if low_proved {
+        lower = lower.join(&low);
+    }
+    if high_proved {
+        lower = lower.join(&high);
+    }
+    (IntervalSet::range(l, h), lower, upper)
 }
 
 /// The range `-far..=far` [`brute`] enumerates the hubs within on random parts.
@@ -791,13 +837,15 @@ const NARROW: i64 = 56;
 /// choice of an arm of each disjunction and of a piece of each box), the hull of the name's
 /// values and the set of them, and over the disjuncts the union of each. The hubs are
 /// enumerated within `-far..=far`, `far` [`WIDE`] or [`NARROW`], and each end found is decided
-/// by [`decided_ends`]. The set of a `z` is its hull unless `exact`.
+/// by [`decided_ends`]. The set is given by two bounds, `lower`, values proved taken, and
+/// `upper`, which holds every value taken; the set is exact where they are equal. The sets of a
+/// `z` are its hull unless `exact`, and then only the hull is meant to be read.
 fn brute(
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
     far: i64,
     exact: bool,
-) -> BTreeMap<String, (String, String)> {
+) -> BTreeMap<String, Bruted> {
     let mut terms: Vec<(Vec<Cmp>, BTreeMap<String, Piece>)> = vec![(Vec::new(), BTreeMap::new())];
     for i in items {
         let arms = match i {
@@ -828,11 +876,34 @@ fn brute(
             })
             .collect();
     }
-    let mut out: BTreeMap<String, (IntervalSet, IntervalSet)> = bs
+    let mut out: BTreeMap<String, (IntervalSet, IntervalSet, IntervalSet)> = bs
         .keys()
-        .map(|n| (n.clone(), (IntervalSet::empty(), IntervalSet::empty())))
+        .map(|n| {
+            let e = IntervalSet::empty();
+            (n.clone(), (e.clone(), e.clone(), e))
+        })
         .collect();
     for (cs, b) in &terms {
+        // The integer points of the disjunct's recession cone ([`decided_ends`]), found once
+        // and only where an end is opened.
+        let cone: OnceCell<Found> = OnceCell::new();
+        let steps = |n: &str| {
+            let found = cone.get_or_init(|| {
+                let cs0: Vec<Cmp> = (cs.iter())
+                    .map(|c| Cmp {
+                        constant: 0,
+                        ..c.clone()
+                    })
+                    .collect();
+                let b0 = (b.iter())
+                    .map(|(m, (l, h))| (m.clone(), (l.map(|_| 0), h.map(|_| 0))))
+                    .collect();
+                points(&cs0, &b0, far, true)
+            });
+            found
+                .as_ref()
+                .map_or(IntervalSet::empty(), |f| f[n].1.clone())
+        };
         let Some(found) = points(cs, b, far, exact) else {
             // No integer point with the hubs within `-far..=far`; none at all where every
             // rational point has them there.
@@ -846,15 +917,20 @@ fn brute(
         };
         for (n, x) in found {
             let o = out.get_mut(&n).expect("a name");
-            let (hull, set) = decided_ends(x, &n, cs, b, far);
+            let (hull, lower, upper) = decided_ends(x, &n, cs, b, far, steps);
             o.0 = o.0.join(&hull);
-            o.1 = o.1.join(&set);
+            o.1 = o.1.join(&lower);
+            o.2 = o.2.join(&upper);
         }
     }
     out.into_iter()
-        .map(|(n, (h, e))| (n, (show(&h), show(&e))))
+        .map(|(n, (h, l, u))| (n, (show(&h), show(&l), show(&u))))
         .collect()
 }
+
+/// What [`brute`] gives each name, shown: its hull, the values proved taken, and a set that
+/// holds every value taken.
+type Bruted = (String, String, String);
 
 /// The projection by pendants of the part, each name met with its box, or `None` where the
 /// route is not taken.
@@ -1028,13 +1104,13 @@ fn check(rows: &[(&str, &str, &str)]) {
             .collect();
         let hulls: BTreeMap<String, String> = brute(&items, &bs, NARROW, false)
             .into_iter()
-            .map(|(n, (h, _))| (n, h))
+            .map(|(n, (h, _, _))| (n, h))
             .collect();
         let cover_wrong = covered.as_ref().is_some_and(|c| *c != want);
         if hulls != want || got.as_ref() != Some(&want) || cover_wrong {
             let sets: BTreeMap<String, String> = brute(&items, &bs, NARROW, true)
                 .into_iter()
-                .map(|(n, (_, e))| (n, e))
+                .map(|(n, (_, l, u))| (n, if l == u { u } else { format!("{l} to {u}") }))
                 .collect();
             wrong.push(format!(
                 "{part}\n  boxes {bx}\n  hulls {hulls:?}\n  sets  {sets:?}\n  hung  {got:?}\n  cover {covered:?}\n  want  {want:?}"
@@ -1244,28 +1320,51 @@ fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
     pendants_against_whole(r, seed);
 }
 
-/// Whether the answer for one name is the exact set of its values or a sound set wider
-/// than it. A wider answer is wrong (author P197) and is counted, not yet failed, until
-/// PRES-switchover-not-race.
+/// Whether the answer for one name is the exact set of its values, a sound set wider than
+/// it, or the set brute force found to hold every value without proving it exact
+/// ([`decided_ends`]), so sound and perhaps wider. A wider answer is wrong (author P197) and is
+/// counted, not yet failed, until PRES-switchover-not-race.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Precision {
     Exact,
     Wider,
+    Sound,
 }
 
-/// How `answer` for `name` stands to `exact`, the set of its values by brute force: the
-/// same, wider, or an error if it misses a value (unsound).
-fn precision(name: &str, answer: &IntervalSet, exact: &IntervalSet) -> Result<Precision, String> {
-    if exact.meet(answer) != *exact {
+/// How `answer` for `name` stands to the set of its values, which brute force bounds by
+/// `lower`, values proved taken, and `upper`, which holds every value taken ([`brute`]):
+/// - it misses a value of `lower`: an error, unsound;
+/// - it holds `upper` and more: wider, since each value outside `upper` is taken nowhere;
+/// - it is `upper` and `upper` is `lower`: exact;
+/// - it is `upper` and `upper` is not proved exact: sound only, not called exact;
+/// - else (it holds `lower` and misses some of `upper`): an error, as brute force cannot
+///   decide whether it is sound.
+fn precision(
+    name: &str,
+    answer: &IntervalSet,
+    lower: &IntervalSet,
+    upper: &IntervalSet,
+) -> Result<Precision, String> {
+    if lower.meet(answer) != *lower {
         Err(format!(
             "{name}: {} misses values of {} (unsound)",
             show(answer),
-            show(exact)
+            show(lower)
         ))
-    } else if answer == exact {
+    } else if upper.meet(answer) != *upper {
+        Err(format!(
+            "{name}: {} holds {}, the values proved taken, and misses some of {}, which holds \
+             every value but is not proved exact (not decided)",
+            show(answer),
+            show(lower),
+            show(upper)
+        ))
+    } else if answer != upper {
+        Ok(Precision::Wider)
+    } else if lower == upper {
         Ok(Precision::Exact)
     } else {
-        Ok(Precision::Wider)
+        Ok(Precision::Sound)
     }
 }
 
@@ -1290,8 +1389,8 @@ fn compared(
     let mut differ = Vec::new();
     let mut faults = Vec::new();
     for (n, r) in route {
-        let exact = shown_set(&truth[n].1);
-        let judge = |x: &str| precision(n, &shown_set(x), &exact);
+        let (lower, upper) = (shown_set(&truth[n].1), shown_set(&truth[n].2));
+        let judge = |x: &str| precision(n, &shown_set(x), &lower, &upper);
         match (judge(r), judge(&whole[n])) {
             (Ok(p), Ok(q)) if *r != whole[n] => differ.push((n.clone(), p, q)),
             (Ok(_), Ok(_)) => {}
@@ -2184,7 +2283,7 @@ fn row_hulls() -> BTreeMap<String, IntervalSet> {
     let (part, bx, _) = WRITTEN[3];
     brute(&parse(part), &boxes(bx), WIDE, false)
         .into_iter()
-        .map(|(n, (h, _))| (n, shown_set(&h)))
+        .map(|(n, (h, _, _))| (n, shown_set(&h)))
         .collect()
 }
 
@@ -2256,7 +2355,7 @@ fn check_refused(
     order: &mut Rng,
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
-    hulls: impl FnOnce() -> BTreeMap<String, (IntervalSet, IntervalSet)>,
+    hulls: impl FnOnce() -> BTreeMap<String, (IntervalSet, IntervalSet, IntervalSet)>,
     count: &mut RefusedCount,
     wrong: &mut Vec<String>,
 ) {
@@ -2270,12 +2369,24 @@ fn check_refused(
     let hulls = hulls();
     if cover_refused {
         for (n, (x, _)) in &covered {
-            let e = &hulls[n].1;
-            if x.meet(e) != *e {
+            // A set that misses a value proved taken is unsound; one that holds those but
+            // misses some of a set brute force found to hold every value, not proved exact,
+            // is not decided, and fails too rather than pass unchecked ([`decided_ends`]).
+            let (_, lower, upper) = &hulls[n];
+            if x.meet(lower) != *lower {
                 wrong.push(format!(
                     "{label}: {f}\n  boxes {bs:?}\n  under the cover {n} = {} misses {}",
                     show(x),
-                    show(e)
+                    show(lower)
+                ));
+            } else if x.meet(upper) != *upper {
+                wrong.push(format!(
+                    "{label}: {f}\n  boxes {bs:?}\n  under the cover {n} = {} holds {}, the \
+                     values proved taken, but not all of {}: brute force cannot decide whether \
+                     it is sound",
+                    show(x),
+                    show(lower),
+                    show(upper)
                 ));
             }
         }
@@ -2361,18 +2472,19 @@ fn refused_alike(
 fn brute_hulls(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, IntervalSet> {
     brute(items, bs, WIDE, false)
         .into_iter()
-        .map(|(n, (h, _))| (n, shown_set(&h)))
+        .map(|(n, (h, _, _))| (n, shown_set(&h)))
         .collect()
 }
 
-/// Each name's hull and its exact set of values from [`brute`].
+/// Each name's hull, the values proved taken and a set that holds every value taken, from
+/// [`brute`].
 fn brute_sets(
     items: &[Item],
     bs: &BTreeMap<String, Vec<Piece>>,
-) -> BTreeMap<String, (IntervalSet, IntervalSet)> {
+) -> BTreeMap<String, (IntervalSet, IntervalSet, IntervalSet)> {
     brute(items, bs, WIDE, true)
         .into_iter()
-        .map(|(n, (h, e))| (n, (shown_set(&h), shown_set(&e))))
+        .map(|(n, (h, l, u))| (n, (shown_set(&h), shown_set(&l), shown_set(&u))))
         .collect()
 }
 
@@ -2487,10 +2599,8 @@ fn a_refused_joined_part_keeps_a_sound_box() {
 fn an_end_that_moves_between_ranges_of_the_hubs_is_decided_not_opened() {
     let (items, bs) = random_case(894, 15, true);
     let z3 = &brute_sets(&items, &bs)["z3"];
-    assert_eq!(
-        (&z3.0, &z3.1),
-        (&shown_set("[-1,13]"), &shown_set("[-1,13]"))
-    );
+    let want = shown_set("[-1,13]");
+    assert_eq!((&z3.0, &z3.1, &z3.2), (&want, &want, &want));
     check_refused_case(894, 15, true, (1, 1, 1));
 }
 
@@ -3039,6 +3149,221 @@ fn the_comparison_of_projections_catches_unsound_answers_and_counts_wider_ones()
     );
 }
 
+/// The sets [`brute`] gives each name of a part, `upper` as an answer [`compared`] takes,
+/// with `lower` and `upper` for the assertions.
+#[allow(clippy::type_complexity)]
+fn brute_answer(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+) -> (BTreeMap<String, String>, BTreeMap<String, (String, String)>) {
+    let truth = brute(items, bs, WIDE, true);
+    let answer = (truth.iter())
+        .map(|(n, (_, _, u))| (n.clone(), u.clone()))
+        .collect();
+    let bounds = (truth.into_iter())
+        .map(|(n, (_, l, u))| (n, (l, u)))
+        .collect();
+    (answer, bounds)
+}
+
+/// How [`compared`] judges `x` for `name` against the sets brute force finds for the rest of
+/// the part: each other name is given that set both ways.
+fn judged(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    name: &str,
+    x: &str,
+) -> Result<Vec<(String, Precision, Precision)>, String> {
+    let (truth, _) = brute_answer(items, bs);
+    let mut answer = truth.clone();
+    answer.insert(name.to_string(), x.to_string());
+    compared(items, bs, &answer, &truth)
+}
+
+/// Negative controls of the brute-force check (TEST-pendants-brute-force-catches-unsound) on
+/// case 15 of seed 894, each part two joined, where `z3` takes every value of `[-1,13]` and its
+/// upper end `13` is decided by the simplex's maximum and its lower end `-1` likewise
+/// ([`an_end_that_moves_between_ranges_of_the_hubs_is_decided_not_opened`]): an end one too
+/// narrow at either side, a hole that is not a hole, and the empty set are each caught as
+/// unsound by [`compared`] and by [`precision`]; the set itself is exact.
+#[test]
+fn the_brute_force_check_rejects_a_narrow_end_a_false_hole_and_the_empty_set() {
+    let (items, bs) = random_case(894, 15, true);
+    let (_, bounds) = brute_answer(&items, &bs);
+    assert_eq!(bounds["z3"], ("[-1,13]".to_string(), "[-1,13]".to_string()));
+    let exact = shown_set("[-1,13]");
+    for x in ["[-1,12]", "[0,13]", "[-1,5 7,13]", "[-1,-1 1,13]", "[]"] {
+        let got = judged(&items, &bs, "z3", x);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("(unsound)")),
+            "z3 = {x}: want unsound, got {got:?}"
+        );
+        let got = precision("z3", &shown_set(x), &exact, &exact);
+        assert!(got.is_err(), "z3 = {x}: want unsound, got {got:?}");
+    }
+    let got = judged(&items, &bs, "z3", "[-1,13]");
+    assert_eq!(got, Ok(Vec::new()));
+    let got = judged(&items, &bs, "z3", "[-2,13]");
+    assert_eq!(
+        got,
+        Ok(vec![("z3".to_string(), Precision::Wider, Precision::Exact)])
+    );
+}
+
+/// A periodic name given its hull, bounded: in part 52 of seed 12035647242373093243,
+/// `2 * b + 2 * c + z3 == 7` makes `z3` odd, `{1, 3, 5}`, and its hull `[1,5]` is judged wider,
+/// not exact; the exact set is exact.
+#[test]
+fn the_brute_force_check_counts_the_hull_of_a_bounded_periodic_name_wider() {
+    let (items, bs, _, route, all) = answers(12035647242373093243, 52);
+    let mut hull = route.clone();
+    hull.insert("z3".to_string(), "[1,5]".to_string());
+    assert_eq!(
+        compared(&items, &bs, &hull, &all),
+        Ok(vec![("z3".to_string(), Precision::Wider, Precision::Exact)])
+    );
+    let (_, bounds) = brute_answer(&items, &bs);
+    let odd = "[1,1 3,3 5,5]".to_string();
+    assert_eq!(bounds["z3"], (odd.clone(), odd));
+}
+
+/// A name unbounded on one side whose values beyond the range brute force enumerates keep a
+/// period or a gap: `z0 == 2 * a + 1` takes the odd values from 1 on (or, within
+/// `z0 <= 0`, from -1 down), and `100 * b <= a <= 100 * b + 1` with `b >= 0` takes
+/// `0, 1, 100, 101, ...`. Brute force opens the end, and the set it opens holds every value
+/// but is wider than the exact set, which no finite union of ranges is. Before the check
+/// read the values proved taken, an answer equal to that opened set was judged exact; now it
+/// is judged sound only, the hull is wider, a set that misses a value found is unsound, and
+/// a set that holds the values found but stops at the range enumerated is not decided.
+#[test]
+fn the_brute_force_check_does_not_call_an_opened_periodic_or_gapped_set_exact() {
+    // The odd values from 1 to 151, found with `a` in `0..=75`.
+    let odd: Vec<String> = (0..=75).map(|k| format!("{0},{0}", 2 * k + 1)).collect();
+    let found = format!("[{}]", odd.join(" "));
+    let opened = format!("[{} 151,inf]", odd[..75].join(" "));
+    let missing = format!("[{} 151,inf]", odd[1..75].join(" "));
+    let items = parse("z0 == 2 * a + 1");
+    let bs = boxes("a=[-inf,inf] z0=[0,inf]");
+    let got = judged(&items, &bs, "z0", &opened);
+    assert_eq!(got, Ok(Vec::new()), "the opened set is sound");
+    let (_, bounds) = brute_answer(&items, &bs);
+    let (lower, upper) = (shown_set(&bounds["z0"].0), shown_set(&bounds["z0"].1));
+    let got = precision("z0", &shown_set(&opened), &lower, &upper);
+    assert_eq!(
+        got,
+        Ok(Precision::Sound),
+        "the opened set is not called exact"
+    );
+    assert_eq!(bounds["z0"], (found.clone(), opened.clone()));
+    for (x, want) in [
+        (opened.as_str(), Ok(Precision::Sound)),
+        ("[1,inf]", Ok(Precision::Wider)),
+        ("[0,inf]", Ok(Precision::Wider)),
+    ] {
+        let got = judged(&items, &bs, "z0", x).map(|d| d.first().map(|(_, p, _)| *p));
+        let want = want.map(|p| (p != Precision::Sound).then_some(p));
+        assert_eq!(got, want, "z0 = {x}");
+        let got = precision("z0", &shown_set(x), &shown_set(&found), &shown_set(&opened));
+        assert_eq!(got, want.map(|p| p.unwrap_or(Precision::Sound)), "z0 = {x}");
+    }
+    for (x, says) in [
+        (missing.as_str(), "(unsound)"),
+        ("[]", "(unsound)"),
+        (found.as_str(), "(not decided)"),
+        ("[1,149]", "(unsound)"),
+    ] {
+        let got = judged(&items, &bs, "z0", x);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains(says)),
+            "z0 = {x}: want {says}, got {got:?}"
+        );
+    }
+    // The lower end alike.
+    let bs = boxes("a=[-inf,inf] z0=[-inf,0]");
+    let (_, bounds) = brute_answer(&items, &bs);
+    let (lower, upper) = (shown_set(&bounds["z0"].0), shown_set(&bounds["z0"].1));
+    assert_eq!(
+        upper.meet(&shown_set("[-inf,-148]")),
+        shown_set("[-inf,-149]")
+    );
+    assert_eq!(lower.first(), Some(&(End::of(-149), End::of(-149))));
+    assert_eq!(
+        precision("z0", &upper, &lower, &upper),
+        Ok(Precision::Sound)
+    );
+    // A gap: `a` takes `0, 1` within the range and `100, 101, ...` beyond it, and `b` every
+    // value from 0 on, but only 0 within the range; neither is proved, so neither is exact.
+    let items = parse("100 * b <= a && a <= 100 * b + 1");
+    let bs = boxes("a=[-inf,inf] b=[0,inf]");
+    let (truth, bounds) = brute_answer(&items, &bs);
+    assert_eq!(bounds["a"], ("[0,1]".to_string(), "[0,inf]".to_string()));
+    assert_eq!(bounds["b"], ("[0,0]".to_string(), "[0,inf]".to_string()));
+    assert_eq!(
+        compared(&items, &bs, &truth, &truth),
+        Ok(Vec::new()),
+        "the opened sets are sound"
+    );
+    for n in ["a", "b"] {
+        let (l, u) = &bounds[n];
+        let got = precision(n, &shown_set(u), &shown_set(l), &shown_set(u));
+        assert_eq!(got, Ok(Precision::Sound), "{n}");
+    }
+}
+
+/// An opened end that a step of the recession cone proves ([`decided_ends`]) keeps an exact
+/// set: `z0 == a + 1` (step 1) takes every value from 0 on, and `z0 == 2 * a + b` with
+/// `a >= 0` and `b` in `0..=1` (step 2 only, within a last piece found of 152 values) takes
+/// every value from 0 on; on the lower side `z0 == a - 1` within `z0 <= 0` takes every value
+/// from 0 down. Each such set is judged exact, and one value fewer unsound.
+#[test]
+fn an_opened_end_proved_by_a_step_of_the_cone_is_exact() {
+    for (part, bx, name, want, fewer) in [
+        (
+            "z0 == a + 1",
+            "a=[-inf,inf] z0=[0,inf]",
+            "z0",
+            "[0,inf]",
+            "[0,1 3,inf]",
+        ),
+        (
+            "z0 == 2 * a + b",
+            "a=[0,inf] b=[0,1] z0=[-inf,inf]",
+            "z0",
+            "[0,inf]",
+            "[0,1 3,inf]",
+        ),
+        (
+            "z0 == a - 1",
+            "a=[-inf,inf] z0=[-inf,0]",
+            "z0",
+            "[-inf,0]",
+            "[-inf,-1]",
+        ),
+        (
+            "z0 == 2 * a + b",
+            "a=[0,inf] b=[0,1] z0=[-inf,inf]",
+            "a",
+            "[0,inf]",
+            "[1,inf]",
+        ),
+    ] {
+        let (items, bs) = (parse(part), boxes(bx));
+        let (_, bounds) = brute_answer(&items, &bs);
+        assert_eq!(
+            bounds[name],
+            (want.to_string(), want.to_string()),
+            "{part} {name}"
+        );
+        let x = shown_set(want);
+        assert_eq!(precision(name, &x, &x, &x), Ok(Precision::Exact), "{part}");
+        let got = judged(&items, &bs, name, fewer);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("(unsound)")),
+            "{part}: {name} = {fewer}: want unsound, got {got:?}"
+        );
+    }
+}
+
 /// `z0 <= z5 + 5 && !(2 * a + b + c == z5 + 6) && b <= c + z2 - 8`, where the first two hold
 /// at every point of the boxes (`z0` in `[-4,-3]`, `z5 == -2`, `a <= -3`, `b <= 1`, `c` in
 /// `[2,4]`): the projection by pendants (`Scope::unbounded_unit`) answers `b`, `c` and `z2`
@@ -3074,11 +3399,18 @@ fn projections_by_pendants_and_of_the_whole_part_are_exact_on_the_parity_seeds()
         let truth = brute(&items, &bs, WIDE, true);
         for (side, answer) in [("by pendants", &route), ("whole", &all)] {
             for (n, x) in answer {
-                let exact = shown_set(&truth[n].1);
-                if shown_set(x) != exact {
+                let (lower, upper) = (shown_set(&truth[n].1), shown_set(&truth[n].2));
+                if lower != upper {
+                    wrong.push(format!(
+                        "seed {seed} part {part}: brute force has not proved the set of {n} \
+                         exact, {} to {}; {f}",
+                        show(&lower),
+                        show(&upper)
+                    ));
+                } else if shown_set(x) != upper {
                     wrong.push(format!(
                         "seed {seed} part {part} {side}: {n} is {x}, not the exact set {}; {f}",
-                        show(&exact)
+                        show(&upper)
                     ));
                 }
             }
