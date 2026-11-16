@@ -159,6 +159,97 @@ fn decide_on_separate_tied_disjunctions_scales() {
     });
 }
 
+/// The cycle `v_i + 20 >= v_(i+1)` over `v0` to `v3` with `v0 + v1 + v2 + v3 >= 20` as the base,
+/// and one disjunction of `k` disjuncts, the `j`-th the cycle's rows and `u_j >= 0`. Each
+/// disjunct holds at the base's point, so `settle_as_sets` marks it proven, while a solve of its
+/// own rows is refused with a tie (FAIL-omega-alone-retry-scaling).
+fn disjuncts_a_solve_refuses(k: usize) -> Formula {
+    let c = Lin::constant;
+    let v: Vec<Lin> = (0..4)
+        .map(|i| Lin::atom(Atom::Sym(format!("v{i}").into())))
+        .collect();
+    let sum = v.iter().fold(c(0), |s, x| s.plus(x));
+    let cyc: Vec<Formula> = (0..4)
+        .map(|i| Formula::Con(Con::ge(&v[i].plus(&c(20)), &v[(i + 1) % 4])))
+        .collect();
+    let ds = (0..k)
+        .map(|j| {
+            let u = Lin::atom(Atom::Sym(format!("u{j}").into()));
+            let mut d = cyc.clone();
+            d.push(Formula::Con(Con::ge(&u, &c(0))));
+            Formula::and(d)
+        })
+        .collect();
+    Formula::and(vec![Formula::Con(Con::ge(&sum, &c(20))), Formula::or(ds)])
+}
+
+#[test]
+fn decide_on_disjuncts_a_solve_refuses_scales() {
+    let n = 400;
+    let (small, large) = (
+        disjuncts_a_solve_refuses(n),
+        disjuncts_a_solve_refuses(n * scaling::FACTOR),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    scaling::check_order("decide on disjuncts a solve refuses", n, 1, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
+#[test]
+fn satisfiable_past_disjuncts_a_solve_refuses_scales() {
+    // `Alone::point` tries each of the k disjuncts with the group's rows, and `solve` refuses
+    // each: k solves of a group of constant size. The answer is a refusal now
+    // (FAIL-alone-point-refused-at-model); a point, once found, must hold.
+    let n = 400;
+    let (small, large) = (
+        disjuncts_a_solve_refuses(n),
+        disjuncts_a_solve_refuses(n * scaling::FACTOR),
+    );
+    for f in [&small, &large] {
+        if let Ok(Some(m)) = satisfiable(f) {
+            assert!(f.holds(&m), "{m:?}");
+        }
+    }
+    scaling::check_order("a point past disjuncts a solve refuses", n, 1, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(satisfiable(f));
+    });
+}
+
+/// [`disjuncts_a_solve_refuses`] with `k` rows more in the disjunction's group,
+/// `v0 - 20 <= w_i <= v0 + 20`: with them `solve` answers the first disjunct `Alone::point`
+/// tries, so the group of `O(k)` rows is solved once, not `k` times (FAIL-omega-alone-retry-scaling).
+fn disjuncts_with_loose_rows(k: usize) -> Formula {
+    let c = Lin::constant;
+    let v0 = Lin::atom(Atom::Sym("v0".into()));
+    let mut fs = vec![disjuncts_a_solve_refuses(k)];
+    for i in 0..k {
+        let w = Lin::atom(Atom::Sym(format!("w{i}").into()));
+        fs.push(Formula::Con(Con::ge(&w, &v0.plus(&c(-20)))));
+        fs.push(Formula::Con(Con::ge(&v0.plus(&c(20)), &w)));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn satisfiable_on_disjuncts_with_loose_rows_scales() {
+    let n = 400;
+    let (small, large) = (
+        disjuncts_with_loose_rows(n),
+        disjuncts_with_loose_rows(n * scaling::FACTOR),
+    );
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order("a point of disjuncts with loose rows", n, 1, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(satisfiable(f));
+    });
+}
+
 #[test]
 fn satisfiable_on_separate_tied_disjunctions_scales() {
     // The points `settle_tied` builds with `want` through `alone` and `Alone::point`, which
