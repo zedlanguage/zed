@@ -542,6 +542,14 @@ fn formulas_900_1081_and_1892_of_seed_0x1380_do_not_depend_on_the_order_of_their
     }
 }
 
+/// The 40 formulas of seed 14679032855417384215, on which the counted budget of the exact cover
+/// (a3d05518d) refused one order of a formula and answered the other: the refusal decision
+/// read work that depended on the order of the parts (PRES-cover-order-refusals).
+#[test]
+fn the_40_formulas_of_seed_14679032855417384215_do_not_depend_on_the_order_of_their_disjuncts() {
+    reordered_formulas_agree(&mut Rng::new(14679032855417384215), 0, 40);
+}
+
 /// `Σ x[i] >= 0` with `x[i] == x[i+1] + 1`: one long row, each equality substituted into it.
 pub(super) fn tied_sum(n: usize) -> Formula {
     let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
