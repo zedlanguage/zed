@@ -1094,6 +1094,20 @@ fn finding_the_boxes_of_nested_meets_scales() {
     });
 }
 
+/// [`nested_meets`] at `n` and `8n`, built before the runs: listed, `n + 2` values, which are
+/// one-tuples nested up to `n` deep, order `n²` in all (power 2). Measured at 32 and 256: 0.13G
+/// and 8.57G instructions, 65.9 times, 4.7 s (debug build, load 66, 2026-11-15). Before
+/// PERF-list-nested-meets each tuple was read again to its bottom at each level, order `n³`,
+/// and this test ran past its 45 s limit. At 64 and 512 it took 27 s, over the 20 s piece limit.
+#[test]
+fn listing_nested_meets_scales() {
+    let n = 32;
+    let nested = scaling::inputs(n, nested_meets);
+    scaling::check_order("listing nested meets", n, 2, |n| {
+        assert_eq!(nested[&n].each_value().map(|v| v.count()), Some(n + 2))
+    });
+}
+
 /// [`split_row`] at `n` and `8n`, built before the runs: the row is within the rows it splits
 /// into, proved by splitting it at its first column (COMPLEXITY.md K120). Unsplit, the row met
 /// each of the `n` rows, and each pair met each shape of the column, `n²` pairs, and the proof

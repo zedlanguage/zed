@@ -2183,6 +2183,8 @@ impl Type {
         Some(Values {
             makers,
             numbers,
+            known: RefCell::default(),
+            chains: Chains::default(),
             given: 0,
         })
     }
@@ -2421,12 +2423,21 @@ impl Type {
     /// apart, three allocation orders, one thread against a fresh thread per query) and
     /// `membership_of_a_value_whose_halves_share_scales`.
     pub fn contains(&self, v: &Value) -> bool {
+        self.contains_kept(v, &mut HashMap::new())
+    }
+
+    /// [`Type::contains`], with the tests kept in `known` across calls, `v`'s own among them.
+    /// An id is never given twice in the process (`Items::id`), so a kept test stays true of
+    /// its sequence whether or not the sequence is still held.
+    fn contains_kept(&self, v: &Value, known: &mut HashMap<(Type, Id), bool>) -> bool {
         let first = match self.member(v) {
             Member::Known(b) => return b,
             Member::Tuple(ty, xs) => (ty, xs),
         };
         let key = |t: &Type, xs: &Items| (t.clone(), xs.id());
-        let mut known = HashMap::new();
+        if let Some(&b) = known.get(&key(&first.0, first.1)) {
+            return b;
+        }
         let mut todo: Vec<(Type, &Items)> = vec![first];
         loop {
             let (ty, xs) = todo.last().expect("the first test ends the loop");
@@ -2454,10 +2465,10 @@ impl Type {
                 continue;
             }
             let (ty, xs) = todo.pop().expect("the loop read the top of the stack");
+            known.insert(key(&ty, xs), fits);
             if todo.is_empty() {
                 return fits;
             }
-            known.insert(key(&ty, xs), fits);
         }
     }
 
@@ -3904,6 +3915,20 @@ pub struct Values {
     makers: Vec<Maker>,
     /// The number of each value the makers made.
     numbers: Numbers,
+    /// The membership tests of the values made in the types of rows, kept for the whole
+    /// listing ([`Type::contains_kept`]). A value of depth `k` tested in a type of depth `k`
+    /// reads the tests of its components kept from the level below, so a row's test of a value
+    /// costs its length, not its depth.
+    // Complexity tradeoff (PERF-list-nested-meets): a test per check, kept for that check alone,
+    // walked each value to its bottom, O(k) for a value of depth k; `n` nested meets list `k`
+    // values at each depth `k`, each tested so, O(n³) in all for the O(n²) values listed. Kept
+    // for the listing, a test of a type and a sequence is made once: O(1) amortized per row
+    // and component, O(n²) here. Cost: one entry per type and sequence tested, memory of the
+    // order of the tests made.
+    known: RefCell<HashMap<(Type, Id), bool>>,
+    /// The kinds chains of the tuples the makers' indexes read, one table for all of them
+    /// ([`Chains`]).
+    chains: Chains,
     /// How many values of the listed type have been given.
     given: usize,
 }
@@ -4765,34 +4790,166 @@ enum Kind {
     Other,
 }
 
-/// The kinds of `x` and of its first components, depth by depth.
-fn kinds(x: &Value) -> Vec<Kind> {
-    let mut out = Vec::new();
-    let mut x = x;
-    loop {
-        out.push(match x {
-            Value::Bool(_) => Kind::Bool,
-            Value::Int(_) | Value::Big(_) => Kind::Int,
-            Value::Rat(_) => Kind::Rat,
-            Value::Float(_) => Kind::Float,
-            Value::Float32(_) => Kind::Float32,
-            Value::Str(_) => Kind::Str,
-            Value::Atom(_) => Kind::Atom,
-            Value::Tuple(items) => Kind::Tuple(items.len()),
-            Value::Path(_) | Value::Family(_) => Kind::Other,
-        });
-        match x {
-            Value::Tuple(items) if !items.is_empty() => x = &items[0],
-            _ => return out,
+/// The kind of `x` itself.
+fn kind(x: &Value) -> Kind {
+    match x {
+        Value::Bool(_) => Kind::Bool,
+        Value::Int(_) | Value::Big(_) => Kind::Int,
+        Value::Rat(_) => Kind::Rat,
+        Value::Float(_) => Kind::Float,
+        Value::Float32(_) => Kind::Float32,
+        Value::Str(_) => Kind::Str,
+        Value::Atom(_) => Kind::Atom,
+        Value::Tuple(items) => Kind::Tuple(items.len()),
+        Value::Path(_) | Value::Family(_) => Kind::Other,
+    }
+}
+
+/// The kinds of a value and of its first components, depth by depth, as a number given by
+/// [`Chains`]: equal chains have equal numbers within one table.
+type Chain = usize;
+
+/// The kinds chains of the values a [`RowIndex`] reads, each numbered once, and what is
+/// derived from them, kept for as long as the table: a value's chain and innermost first
+/// component, and whether a type holds a value of a chain none of whose components is a key
+/// of it ([`kind_status`]). Every index read with one table numbers chains alike, so a
+/// listing keeps one for all its makers ([`Values`]).
+// Complexity tradeoff (PERF-list-nested-meets): the chain was a vector of kinds made for each
+// tuple checked, its innermost first component found by walking down again, and the statuses
+// made for each new chain with a memo kept for that chain alone, each O(k) for a value of
+// depth k; `n` nested meets check O(n²) tuples, the maker at depth `k` about `k` of depths up
+// to `k`, so O(n³) in all. Numbered, a value's chain
+// is its first component's with one kind more, read by the tuple's id, and a status of a type
+// and a chain reads those of the types below on the chain below, each made once per table:
+// O(1) amortized per tuple and per status. Cost: one entry per tuple read and per status
+// made, never dropped before the table. With the memo of `Values::known` and the length-1
+// parts of [`kind_status`]: bench `l01_23_subtyping::scaling::bench::listing_nested_meets_scales`,
+// sizes 32 and 256, 65.9 times the instructions (power 2, debug build, load 66, 2026-11-15);
+// before, the same bench ran past its 45 s limit.
+#[derive(Default)]
+struct Chains {
+    /// Per chain, its first kind and the chain below it, if any.
+    table: Vec<(Kind, Option<Chain>)>,
+    /// Per chain, its number of kinds.
+    lens: Vec<usize>,
+    /// The number of each chain in `table`.
+    ids: HashMap<(Kind, Option<Chain>), Chain>,
+    /// Per tuple with components, by its id, its chain and its innermost first component. An
+    /// id is never given twice in the process (`Items::id`), so an entry stays true of its
+    /// sequence whether or not the sequence is still held.
+    of: HashMap<Id, (Chain, Value)>,
+    /// Per type and chain, [`kind_status`] of the type on the chain's kinds.
+    status: HashMap<(Type, Chain), Option<bool>>,
+}
+
+impl Chains {
+    /// The number of the chain whose first kind is `kind`, above the chain `below`.
+    fn intern(&mut self, kind: Kind, below: Option<Chain>) -> Chain {
+        let next = self.table.len();
+        let id = *self.ids.entry((kind.clone(), below)).or_insert(next);
+        if id == next {
+            self.table.push((kind, below));
+            self.lens.push(below.map_or(1, |b| self.lens[b] + 1));
         }
+        id
+    }
+
+    /// The chain of `x` and its innermost first component: the first component of each tuple
+    /// with components along the way, down to a value that is no such tuple. A tuple read before
+    /// is not walked again, and the walk is a loop, never a recursion.
+    fn descent(&mut self, x: &Value) -> (Chain, Value) {
+        let mut path: Vec<&Items> = Vec::new();
+        let mut x = x;
+        let (mut chain, leaf) = loop {
+            match x {
+                Value::Tuple(items) if !items.is_empty() => {
+                    if let Some((c, leaf)) = self.of.get(&items.id()) {
+                        break (*c, leaf.clone());
+                    }
+                    path.push(items);
+                    x = &items[0];
+                }
+                _ => break (self.intern(kind(x), None), x.clone()),
+            }
+        };
+        for items in path.into_iter().rev() {
+            chain = self.intern(Kind::Tuple(items.len()), Some(chain));
+            self.of.insert(items.id(), (chain, leaf.clone()));
+        }
+        (chain, leaf)
+    }
+
+    /// Whether `chain` is that of a scalar ([`whole`]).
+    fn whole(&self, chain: Chain) -> bool {
+        matches!(
+            self.table[chain],
+            (
+                Kind::Bool
+                    | Kind::Int
+                    | Kind::Rat
+                    | Kind::Float
+                    | Kind::Float32
+                    | Kind::Str
+                    | Kind::Tuple(0),
+                None
+            )
+        )
+    }
+
+    /// [`kind_status`] of `t` on the kinds of `chain`, the first columns read on the chain
+    /// below. Each status needs only those of a shorter chain, so the work ends; it is done
+    /// with a stack of its own, never a recursion, and each status once.
+    fn status(&mut self, t: &Type, chain: Chain) -> Option<bool> {
+        let mut stack: Vec<(Type, Chain)> = vec![(t.clone(), chain)];
+        while let Some((t, c)) = stack.last().cloned() {
+            if self.status.contains_key(&(t.clone(), c)) {
+                stack.pop();
+                continue;
+            }
+            let (kind, below) = self.table[c].clone();
+            // The first columns `kind_status` reads, on the chain below, made first.
+            let mut missing = false;
+            if let (Kind::Tuple(len), Some(b)) = (&kind, below)
+                && let Some(part) = t.p().tuples.lens.get(len)
+            {
+                for r in part.distinct_atoms() {
+                    if !self.status.contains_key(&(r[0].clone(), b)) {
+                        stack.push((r[0].clone(), b));
+                        missing = true;
+                    }
+                }
+            }
+            if missing {
+                continue;
+            }
+            let status = &self.status;
+            let s = kind_status(&t, &kind, |f| {
+                below.and_then(|b| status.get(&(f.clone(), b)).copied().flatten())
+            });
+            self.status.insert((t, c), s);
+            stack.pop();
+        }
+        self.status[&(t.clone(), chain)]
+    }
+
+    /// The number of kinds in `chain`.
+    fn len(&self, chain: Chain) -> usize {
+        self.lens[chain]
     }
 }
 
 /// Whether `t` holds a value of kind `kind` none of whose components is a key of `t`, when the
 /// kind decides it; `first` gives the same for a first column of `t` and the next kind. A
 /// tuple outside every first column of its tuple types is in `t` as the part is with every
-/// tuple type false; one in the first column of a part's only tuple type, of length 1, is in
-/// it as its component is in that column; any other is not decided by kinds.
+/// tuple type false. A tuple of length 1 is in a tuple type `(c,)` exactly when its component
+/// is in `c`, so where `first` decides every first column, it is in `t` as the part is with
+/// each tuple type taken as `first` gives for its column. Any other is not decided by kinds.
+// Complexity tradeoff (PERF-list-nested-meets): of the parts of length 1, only one of a single
+// tuple type was decided, and each tuple of a part of more was read on its spine, a class per
+// spine, made by erasing the tuple and testing it in each open row, O(k) for a tuple of depth k:
+// `n` nested meets `((t,) | (k,)) & ((t | int,) | (int,))` list O(n²) tuples of depths up to n,
+// each its own spine, O(n³) in all. Decided by kinds, the tuples of one chain of kinds are one
+// class, and the status costs the part's evaluation once per type and chain ([`Chains`]).
 fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> Option<bool> {
     let p = t.p();
     match kind {
@@ -4813,12 +4970,8 @@ fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> 
                 let firsts: Vec<Option<bool>> = rows.iter().map(|r| first(&r[0])).collect();
                 if firsts.iter().all(|s| *s == Some(false)) {
                     Some(part.eval(&|_| false))
-                } else if *len == 1
-                    && rows.len() == 1
-                    && part.eval(&|_| true)
-                    && !part.eval(&|_| false)
-                {
-                    firsts[0]
+                } else if *len == 1 && firsts.iter().all(Option::is_some) {
+                    Some(part.eval(&|r: &Row| first(&r[0]) == Some(true)))
                 } else {
                     None
                 }
@@ -4852,11 +5005,12 @@ impl Keyed {
     }
 
     /// The positions of the filed tuple types under a key of the tuple `v`, at any depth,
-    /// sorted and distinct. A key is a scalar, a bare atom or the empty tuple, so of a
+    /// sorted and distinct, `leaves` holding the innermost first component of each component
+    /// ([`Chains::descent`]). A key is a scalar, a bare atom or the empty tuple, so of a
     /// column's components at each depth only the innermost can be one.
-    fn at(&self, v: &[Value]) -> Vec<usize> {
+    fn at(&self, v: &[Value], leaves: &[&Value]) -> Vec<usize> {
         let mut at = Vec::new();
-        self.extend_at(v, false, &mut at);
+        self.extend_at(v, leaves, false, &mut at);
         at.sort_unstable();
         at.dedup();
         at
@@ -4864,21 +5018,14 @@ impl Keyed {
 
     /// Adds to `at` the positions [`Keyed::at`] gives, unsorted; with `tuples`, only those
     /// under a key of a column whose component is a tuple with components.
-    fn extend_at(&self, v: &[Value], tuples: bool, at: &mut Vec<usize>) {
-        for (by, x) in self.by.iter().zip(v) {
+    fn extend_at(&self, v: &[Value], leaves: &[&Value], tuples: bool, at: &mut Vec<usize>) {
+        for ((by, x), leaf) in self.by.iter().zip(v).zip(leaves) {
             let by: &BTreeMap<Value, Vec<usize>> = by;
             if by.is_empty() || tuples && whole(x) {
                 continue;
             }
             // No key is a tuple with components, so only the last component is looked up.
-            let mut x = x;
-            while let Value::Tuple(items) = x {
-                match items.first() {
-                    Some(c) => x = c,
-                    None => break,
-                }
-            }
-            at.extend(by.get(x).into_iter().flatten());
+            at.extend(by.get(*leaf).into_iter().flatten());
         }
     }
 }
@@ -5132,8 +5279,8 @@ struct ClassKey {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Shape {
     /// The kinds of the components along first components, in the columns an open row has
-    /// ([`kinds`]), when they decide every open row.
-    Kinds(Vec<Vec<Kind>>),
+    /// ([`Chains::descent`]), when they decide every open row.
+    Kinds(Vec<Option<Chain>>),
     /// The tuple's spine, when the kinds leave an open row unknown.
     Spine(Spine),
 }
@@ -5183,12 +5330,15 @@ struct RowIndex {
     /// region 0, held by none of them.
     regions: Vec<BTreeMap<Value, usize>>,
     /// Whether an open row has a column at each position: a tuple's kinds are those of
-    /// those columns' components ([`kinds`]).
+    /// those columns' components' chains ([`Chains::descent`]).
     read: Vec<bool>,
     /// Per kinds of tuples, the open rows' values on a tuple of them with no key of theirs,
     /// when the kinds decide it ([`kind_status`]), the columns a row absorbs left out where
-    /// their component is a scalar.
-    by_kinds: HashMap<Vec<Vec<Kind>>, Vec<Option<bool>>>,
+    /// their component is a scalar. The chains are numbered by the table the index is read
+    /// with, always the same one.
+    by_kinds: HashMap<Vec<Option<Chain>>, Vec<Option<bool>>>,
+    /// The table [`RowIndex::holds`] reads the chains with; [`RowIndex::holds_in`] is given one.
+    chains: Chains,
     /// Per class, the open rows' values on a tuple of it with no key of theirs, and the part
     /// restricted to ranges of `rows`.
     classes: BTreeMap<ClassKey, Class>,
@@ -5744,20 +5894,6 @@ struct Class {
     known: HashMap<Vec<(usize, bool)>, bool>,
 }
 
-/// Whether the kinds `chain` of a component are those of a scalar ([`whole`]).
-fn whole_kinds(chain: &[Kind]) -> bool {
-    matches!(
-        chain,
-        [Kind::Bool
-            | Kind::Int
-            | Kind::Rat
-            | Kind::Float
-            | Kind::Float32
-            | Kind::Str
-            | Kind::Tuple(0)]
-    )
-}
-
 impl RowIndex {
     fn new(len: usize, part: &Part<Row>, filer: &mut Filer) -> RowIndex {
         let mut rows = part.distinct_atoms();
@@ -5875,6 +6011,7 @@ impl RowIndex {
             regions,
             read,
             by_kinds: HashMap::new(),
+            chains: Chains::default(),
             classes: BTreeMap::new(),
             places: HashMap::new(),
             changes: vec![0; rows_len],
@@ -5884,46 +6021,21 @@ impl RowIndex {
 
     /// The open rows' values on a tuple of the kinds `class` with no key of theirs, where the
     /// kinds decide them, leaving out the columns a row absorbs whose component is a scalar.
-    /// Each column's types are made to the depth of the kinds and read deepest first, each
-    /// type once per column and depth for all the open rows.
-    fn by_kinds(&mut self, class: &[Vec<Kind>]) -> Vec<Option<bool>> {
-        let mut memo: Vec<HashMap<(usize, Type), Option<bool>>> =
-            vec![HashMap::new(); self.read.len()];
+    /// Each column's types are made to the depth of the kinds, for [`place_regions`], and a
+    /// type's status on a chain is read from `chains`, made once per table.
+    fn by_kinds(&mut self, class: &[Option<Chain>], chains: &mut Chains) -> Vec<Option<bool>> {
         self.open
             .iter_mut()
             .map(|row| {
                 let mut value = Some(true);
                 for (j, levels) in row.levels.iter_mut().enumerate() {
-                    let (chain, memo) = (&class[j], &mut memo[j]);
-                    if row.absorbs[j] && whole_kinds(chain) {
-                        continue;
-                    }
-                    while levels.len() < chain.len() {
-                        let mut next: Vec<Type> = Vec::new();
-                        let mut here: HashSet<Type> = HashSet::new();
-                        for t in levels.last().expect("the column type is at depth 0") {
-                            firsts(t, false, &mut Vec::new(), |c| {
-                                if here.insert(c.clone()) {
-                                    next.push(c.clone());
-                                }
-                            });
-                        }
-                        if next.is_empty() {
-                            break;
-                        }
-                        levels.push(next);
-                    }
-                    for k in (0..levels.len().min(chain.len())).rev() {
-                        for t in &levels[k] {
-                            if memo.contains_key(&(k, t.clone())) {
-                                continue;
-                            }
-                            let first = |c: &Type| memo.get(&(k + 1, c.clone())).copied().flatten();
-                            let s = kind_status(t, &chain[k], first);
-                            memo.insert((k, t.clone()), s);
-                        }
-                    }
-                    let s = memo.get(&(0, levels[0][0].clone())).copied().flatten();
+                    // Every column of an open row is read (`RowIndex::new`), so `class[j]` is
+                    // a chain; were it not, the kinds would not decide the row.
+                    let s = match class[j] {
+                        None => None,
+                        Some(chain) if row.absorbs[j] && chains.whole(chain) => continue,
+                        Some(chain) => Self::status(levels, chain, chains),
+                    };
                     value = match (value, s) {
                         (Some(false), _) | (_, Some(false)) => Some(false),
                         (None, _) | (_, None) => None,
@@ -5933,6 +6045,27 @@ impl RowIndex {
                 value
             })
             .collect()
+    }
+
+    /// The status of a column type, `levels[0][0]`, on `chain` ([`Chains::status`]), after
+    /// making the column's types to the chain's depth.
+    fn status(levels: &mut Vec<Vec<Type>>, chain: Chain, chains: &mut Chains) -> Option<bool> {
+        while levels.len() < chains.len(chain) {
+            let mut next: Vec<Type> = Vec::new();
+            let mut here: HashSet<Type> = HashSet::new();
+            for t in levels.last().expect("the column type is at depth 0") {
+                firsts(t, false, &mut Vec::new(), |c| {
+                    if here.insert(c.clone()) {
+                        next.push(c.clone());
+                    }
+                });
+            }
+            if next.is_empty() {
+                break;
+            }
+            levels.push(next);
+        }
+        chains.status(&levels[0][0], chain)
     }
 
     /// Whether the tuple `v` is in the part indexed; `fits` tells whether a row holds `v`. The
@@ -5960,17 +6093,28 @@ impl RowIndex {
     // no more than filing its rows by it ([`RowIndex::new`]); the verdicts are the same either
     // way.
     fn holds(&mut self, v: &[Value], fits: impl Fn(&Row) -> bool) -> bool {
-        let mut at = self.keyed.at(v);
-        self.absorbed.extend_at(v, true, &mut at);
+        let mut chains = std::mem::take(&mut self.chains);
+        let holds = self.holds_in(v, &mut chains, fits);
+        self.chains = chains;
+        holds
+    }
+
+    /// [`RowIndex::holds`], the chains read with `chains`, which every call on this index is
+    /// given: a listing's makers share one ([`Values`]).
+    fn holds_in(&mut self, v: &[Value], chains: &mut Chains, fits: impl Fn(&Row) -> bool) -> bool {
+        let descents: Vec<(Chain, Value)> = v.iter().map(|x| chains.descent(x)).collect();
+        let leaves: Vec<&Value> = descents.iter().map(|(_, leaf)| leaf).collect();
+        let mut at = self.keyed.at(v, &leaves);
+        self.absorbed.extend_at(v, &leaves, true, &mut at);
         at.sort_unstable();
         at.dedup();
-        let kinds: Vec<Vec<Kind>> = v
+        let kinds: Vec<Option<Chain>> = descents
             .iter()
             .zip(&self.read)
-            .map(|(x, &read)| if read { kinds(x) } else { Vec::new() })
+            .map(|(&(c, _), &read)| read.then_some(c))
             .collect();
         if !self.by_kinds.contains_key(&kinds) {
-            let decided = self.by_kinds(&kinds);
+            let decided = self.by_kinds(&kinds, chains);
             self.by_kinds.insert(kinds.clone(), decided);
         }
         let RowIndex {
@@ -6150,7 +6294,13 @@ impl Maker {
     // of a tuple of L literals (PERF-tuple-print). Resumed, each component is checked once on
     // entering the box and once per position past it, O(L) per tuple made. Test:
     // l01_23_subtyping::listing::listing_one_wide_tuple_scales; COMPLEXITY.md K116.
-    fn step(makers: &mut [Maker], numbers: &mut Numbers, me: usize) -> Result<(), Need> {
+    fn step(
+        makers: &mut [Maker],
+        numbers: &mut Numbers,
+        known: &RefCell<HashMap<(Type, Id), bool>>,
+        chains: &mut Chains,
+        me: usize,
+    ) -> Result<(), Need> {
         let (below, rest) = makers.split_at_mut(me);
         let m = &mut rest[0];
         match std::mem::replace(&mut m.at, At::Start(0)) {
@@ -6206,10 +6356,12 @@ impl Maker {
                     r.iter()
                         .zip(makers)
                         .zip(cols.iter().zip(&v))
-                        .all(|((t, &by), (&c, x))| by == Some(c) || t.contains(x))
+                        .all(|((t, &by), (&c, x))| {
+                            by == Some(c) || t.contains_kept(x, &mut known.borrow_mut())
+                        })
                 };
                 let index = m.by_value.get_mut(&row.len()).expect("an index per length");
-                if index.holds(&v, fits) {
+                if index.holds_in(&v, chains, fits) {
                     m.made.push(Value::tuple(v));
                     m.ids.push(numbers.tuple(key));
                 }
@@ -6251,7 +6403,10 @@ impl Values {
                     stack.pop();
                 }
                 Err(_) => {
-                    if let Err(need) = Maker::step(&mut self.makers, &mut self.numbers, m) {
+                    let (known, chains) = (&self.known, &mut self.chains);
+                    if let Err(need) =
+                        Maker::step(&mut self.makers, &mut self.numbers, known, chains, m)
+                    {
                         stack.push(need);
                     }
                 }

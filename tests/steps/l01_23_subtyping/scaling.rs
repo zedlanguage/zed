@@ -1173,14 +1173,25 @@ fn nested_meets(n: usize) -> Type {
     })
 }
 
-/// Small instance of `bench::finding_the_boxes_of_nested_meets_scales`: a few nested meets are
-/// finite and list their `n + 2` values.
+/// Small instance of `bench::finding_the_boxes_of_nested_meets_scales` and
+/// `bench::listing_nested_meets_scales`: a few nested meets are finite and list their `n + 2`
+/// values, `T(k-1)`'s each in a one-tuple and `(k + 2,)`.
 #[test]
 fn a_few_nested_meets_are_finite_and_listed() {
-    for n in [0, 1, 2, 5, 40] {
+    let one = |v: Value| Value::tuple(vec![v]);
+    let mut expected = vec![Value::Int(0), Value::Int(1)];
+    for n in 0..=40 {
+        if n > 0 {
+            expected = expected.into_iter().map(one).collect();
+            expected.push(one(Value::Int(n as i64 + 1)));
+        }
         let t = nested_meets(n);
         assert!(t.finite(), "n = {n}");
-        assert_eq!(t.each_value().map(|v| v.count()), Some(n + 2), "n = {n}");
+        let mut listed: Vec<Value> = t.each_value().expect("listed").collect();
+        listed.sort();
+        let mut want = expected.clone();
+        want.sort();
+        assert_eq!(listed, want, "n = {n}");
     }
 }
 
