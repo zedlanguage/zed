@@ -14801,22 +14801,22 @@ impl Shared {
         // the order left, each after those inside it. A node is on top when no row or
         // function holds it in this text; a part on top is entered even if settled, so a type
         // written on its own is written as before, not as one reference. A node is below a
-        // part when a row or function holds it, at any depth; a part none of whose places is
-        // below another is not placed (`placed` below).
+        // part when a row or function not on top holds it, at any depth: a part on top is
+        // written in full, never by reference, so what it holds is not below a part by it. A
+        // part none of whose places is below another is not placed (`placed` below).
         let (mut rows, mut sigs, mut shapes) = (HashMap::new(), HashMap::new(), HashSet::new());
         let mut order: Vec<Node<'_>> = Vec::new();
         // Each node with whether it is left, on top and below a part.
         let mut stack: Vec<(Node<'_>, bool, bool, bool)> = vec![(first, false, true, false)];
-        // The start is written in full, never by reference, so what it holds is not below a
-        // part by it.
-        let mut at_start = true;
         defs::with_kept_of(|settled: &mut Settled| {
             while let Some((node, left, top, below)) = stack.pop() {
                 if left {
                     order.push(node);
                     continue;
                 }
-                let inside = !std::mem::take(&mut at_start);
+                // What a row or function holds is below a part unless that row or function
+                // is on top.
+                let inside = !top;
                 // A row or a function is left, below the nodes it holds on the stack, after
                 // them; the order among those is not read.
                 match node {
