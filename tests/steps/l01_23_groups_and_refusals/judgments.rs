@@ -6,6 +6,7 @@
 use super::bes_families::{FAMILIES, G, K, family, reference};
 use std::collections::BTreeMap;
 
+use zed_kernel::Value;
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
@@ -548,6 +549,47 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_la
     // (`ts[137] <: ts[33]`) hold. The count is the same under every draw of the treaps'
     // priorities (`ZED_TREAP_SEED` 0, 1 and 2).
     assert_eq!(order_free(10511391382961984112), 39);
+}
+
+/// The two queries of the fixed seed above that PERF-set-digest-shape-free turned from refused
+/// to holding, 52 (`ts[137] <: ts[142]`) and 78 (`ts[137] <: ts[33]`), checked without the
+/// emptiness search (plan row CHECK-judgments-ts137-empty). The corpus draws
+/// `ts[137] = morphism(ts[47], ts[47], ts[27])`, an exact morphism, with
+/// `ts[27] = ts[10] & ts[18]` and `ts[18] = ts[11] & ts[1]`: `ts[1]` is the integer `0` and
+/// `ts[11]` (`residue(3, 2)`) holds only `#nil` and `#cons` atoms, so their meet holds no value
+/// and the value type is empty. `ts[47] = ts[44] & ts[33]` with `ts[44] = ts[8] - ts[36]`,
+/// `ts[36] = ts[7] - ts[1]`, `ts[33] = ts[29] - ts[26]` and `ts[29] = ts[11] | ts[10]`; the
+/// list `[1, 0]` is in it: its second item from the end is 1 (`nth_from_end(2)`), its last is
+/// not (`nth_from_end(1)`), its length 2 is 2 modulo 3 (`residue(3, 2)`), and it is no tuple
+/// (`ts[26]` is a pair). A morphism type whose guarantee holds a key and whose value type is
+/// empty holds no morphism, as no value can be given at that key (`types/empty.rs`, module
+/// documentation), so `ts[137]` is empty and is a subtype of every type: both queries hold.
+/// The membership test `Type::contains` evaluates the one value, and the value type's
+/// emptiness is its form (`Type::lists_nothing`), neither of them the search.
+#[test]
+fn the_morphism_the_fixed_seed_proves_empty_has_a_key_in_its_guarantee_and_no_value() {
+    let mut rng = Rng::new(10511391382961984112);
+    let ts = corpus(&mut rng, 150);
+    let morphism = Type::morphism(ts[47].clone(), ts[47].clone(), ts[27].clone());
+    assert!(ts[137] == morphism, "{} is not {morphism}", ts[137]);
+    assert!(ts[18] == &ts[11] & &ts[1] && ts[27] == &ts[10] & &ts[18]);
+    assert!(ts[27].lists_nothing(), "{}", ts[27]);
+    let list = |xs: &[i64]| {
+        (xs.iter().rev()).fold(Value::atom("nil"), |tl, &x| {
+            Value::atom_with("cons", vec![Value::Int(x), tl])
+        })
+    };
+    let key = list(&[1, 0]);
+    assert!(ts[47].contains(&key), "[1, 0] in {}", ts[47]);
+    // The same key read part by part, so a wrong part fails here by name.
+    assert!(ts[8].contains(&key) && !ts[36].contains(&key) && ts[44].contains(&key));
+    assert!(ts[11].contains(&key) && !ts[26].contains(&key) && ts[33].contains(&key));
+    for b in [142, 33] {
+        Type::forget_emptiness();
+        assert!(ts[137].subtype(&ts[b]), "ts[137] <: ts[{b}]");
+    }
+    Type::forget_emptiness();
+    assert_eq!(ts[137].verdict(), Verdict::Empty);
 }
 
 /// Asks `QUERIES` queries `a <: b` on the corpus of `seed` one at a time with the kept results
