@@ -723,7 +723,9 @@ fn one_variable_takes_n_members_in_linear_time() {
 
 /// n shapes of variables with the result `(P0,)`, fitting themselves renamed: `P0` is pinned,
 /// and the first free shape's variable takes the other n - 1 members.
-// 1x measured 1064 ms (ns=1064127643) at load 34 on 2026-11-14; 8.77 times the instructions at 8n.
+// 1x measured 1730 ms (ns=1730231536) at n = 15000, load 59, on 2026-11-15; 8.43 times the
+// instructions at 8n (3.00G and 25.31G); the piece took 19.1 s. Halved from n = 30000, where it
+// took 20.5 s at load 23 against the 20 s limit (PERF-shapes-one-pinned-time).
 // Before FAIL-types-binding-union-copied, 56.5 times at n = 1000.
 #[test]
 fn n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time() {
