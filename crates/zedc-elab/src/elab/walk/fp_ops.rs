@@ -546,6 +546,75 @@ impl<'a> Elab<'a> {
             Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
         )
     }
+
+    /// `body` over `a` and `b` bound to two fresh names, each a family by then: a loose atom of
+    /// `a`, and then one of `b`, is the result instead (DESIGN.md sec:types, "Loose atoms").
+    fn over_two(
+        &mut self,
+        a: Term,
+        b: Term,
+        body: impl FnOnce(&Arc<str>, &Arc<str>) -> Term,
+    ) -> Term {
+        let (xs, ys) = (self.temp(), self.temp());
+        let inner = body(&xs, &ys);
+        let inner = Term::Match(
+            Shared::new(var(&ys)),
+            vec![(KPattern::AnyAtom, var(&ys)), (KPattern::Wild, inner)],
+        );
+        let inner = Term::Match(
+            Shared::new(var(&xs)),
+            vec![(KPattern::AnyAtom, var(&xs)), (KPattern::Wild, inner)],
+        );
+        Term::Let(
+            xs,
+            Shared::new(a),
+            Shared::new(Term::Let(ys, Shared::new(b), Shared::new(inner))),
+        )
+    }
+
+    /// `a ++ b` on two lists (step L5.2): `a`'s entries and then `b`'s, the key `k` of `b`
+    /// moved to `n + k`, `n` being `a.count`; the union of `a` and `fam k in n ..< n + m:
+    /// b[k - n]`, whose keys are disjoint from `a`'s.
+    // Complexity tradeoff: the `fam` asks m reads of `b`, O(m log m), and the union adds its
+    // m entries to `a`'s tree, O(m log(n + m)), sharing `a` without a copy; rebuilding the
+    // result entry by entry, the naive form, is O((n + m) log(n + m)) and copies `a`.
+    pub(super) fn list_concat_term(&mut self, a: Term, b: Term) -> Term {
+        let (n, k) = (self.temp(), self.temp());
+        self.over_two(a, b, |xs, ys| {
+            let count = |t: &Arc<str>| Term::Prim(Prim::Count, vec![var(t)]);
+            let end = Term::Prim(Prim::Add, vec![var(&n), count(ys)]);
+            let moved = Term::Fam {
+                domain: Shared::new(Term::Prim(Prim::Range, vec![var(&n), end])),
+                var: k.clone(),
+                body: Shared::new(Term::Prim(
+                    Prim::Get,
+                    vec![var(ys), Term::Prim(Prim::Sub, vec![var(&k), var(&n)])],
+                )),
+            };
+            Term::Let(
+                n.clone(),
+                Shared::new(count(xs)),
+                Shared::new(Term::Prim(Prim::Union, vec![var(xs), moved])),
+            )
+        })
+    }
+
+    /// `a.zip(b)` (step L5.2): the family over `a`'s keys whose entry at `k` is the pair
+    /// `(a[k], b[k])`. The checker proved both operands hold the same keys.
+    // Complexity tradeoff: `fam` over `a`'s n keys reads each side once per key, O(n log n);
+    // a merge walk of both sides in key order would be O(n), but the checker's proof that the
+    // keys are equal makes the reads never miss, and the `fam` form is the one `map` uses.
+    pub(super) fn zip_term(&mut self, a: Term, b: Term) -> Term {
+        let k = self.temp();
+        self.over_two(a, b, |xs, ys| {
+            let get = |t: &Arc<str>| Term::Prim(Prim::Get, vec![var(t), var(&k)]);
+            Term::Fam {
+                domain: Shared::new(var(xs)),
+                var: k.clone(),
+                body: Shared::new(Term::Prim(Prim::Tuple, vec![get(xs), get(ys)])),
+            }
+        })
+    }
 }
 
 /// The tuple of `parts`.

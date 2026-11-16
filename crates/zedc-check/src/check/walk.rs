@@ -426,6 +426,8 @@ pub(super) enum Frame<'a> {
     /// `split`, `lines` or `concat`, an operand being checked (plan row FP-ops-strings;
     /// `strings_end`).
     Strings(Box<StringsF<'a>>),
+    /// `x.zip(y)`, waiting for `y`: `x` and the call's span (step L5.2; `zip_end`).
+    Zip(Box<Arg<'a>>, Span),
     /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type, the call's
     /// span and `f`'s (`reduce_by`).
     ReduceFn(Ty, Span, Span),
@@ -1141,6 +1143,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let a = m.take_arg();
                 s.got.push(a);
                 self.strings_step(m, s);
+            }
+            Frame::Zip(x, span) => {
+                let y = m.take_arg();
+                let t = self.zip_end(&x, &y, span);
+                m.ty(t);
             }
             Frame::ReduceFn(x, span, at) => {
                 let f = m.take_ty();
@@ -5679,6 +5686,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         b: &'a Expr,
         span: Span,
     ) -> Ty {
+        // `++` where an operand may be a family joins lists (step L5.2); on two strings it is
+        // the operator of `op_sig`.
+        if op == BinaryOp::Concat && [&x.ty, &y.ty].iter().any(|t| t.fns.iter().any(|s| s.data)) {
+            return self.list_concat_end(&x, &y, span);
+        }
         // An operand that is a literal without a suffix is generic: it takes the carrier of the
         // other operand, at run time where that is a type variable (step L1.26a). Under `==`
         // it follows as any literal.
@@ -7619,6 +7631,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if STRING_CALLS.contains(&name) => {
                     self.strings_call(m, name, Some(x), positional, named, curry, span)
                 }
+                // `x.zip(y)` (step L5.2), built in as `map` is.
+                Some(_) if name == "zip" => match (positional, named, curry) {
+                    ([y], [], false) => {
+                        let x = Arg {
+                            at: Some(of.span),
+                            ..x
+                        };
+                        m.k(Frame::Zip(Box::new(x), span));
+                        m.job(Job::Arg(y, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            "`zip` takes one family, passed by position".to_string(),
+                            ["repair: write `xs.zip(ys)`".to_string()],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
                 // Elaboration rejects the rest: a prelude word of a later layer, a field read,
                 // or a call of a function in no scope. Never, the type of no value, keeps the
                 // uses of the result from reporting that error again as their own.

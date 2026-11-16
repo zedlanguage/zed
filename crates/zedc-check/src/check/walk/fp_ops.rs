@@ -2,8 +2,9 @@
 //! builds into zedc as `map` is (plan row MAP-pure-zed): `.count`, `.sum` and `.reduce(op)`,
 //! the quantifiers `.any`, `.all` and `.find` (step L3.15a), and `.first` and `.last`
 //! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic"); by plan row
-//! FP-ops-scan, `.scan(op)` and `.chunkBy(f)` (step L5.3); and the string functions `split`,
-//! `lines` and `concat` of plan row FP-ops-strings (step L3.2).
+//! FP-ops-scan, `.scan(op)` and `.chunkBy(f)` (step L5.3); the string functions `split`,
+//! `lines` and `concat` of plan row FP-ops-strings (step L3.2); and, by plan row
+//! FP-ops-concat-zip, `a ++ b` on lists and `a.zip(b)` (step L5.2).
 
 use super::remap::Apply;
 use crate::check::*;
@@ -11,6 +12,26 @@ use crate::check::*;
 /// `Ck::fold_level`, the check of the fold of one level, passed in by walk.rs as `Apply` is.
 pub(in crate::check) type FoldLevel<'t, 'a> =
     fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span, Span, FoldForm) -> Ty;
+
+/// The source text `c` of an operand, put in parentheses unless `.count` or `[i]` can follow
+/// it as written: every character outside brackets is part of a name or a `.`, as in `xs`,
+/// `m.lines`, `xs.where(f)`, `[1, 2]` or `(0 ..< 3)`.
+fn postfix_operand(c: &str) -> String {
+    let mut depth = 0i32;
+    let mut plain = true;
+    for ch in c.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if depth == 0 => plain &= ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '.'),
+            _ => {}
+        }
+    }
+    match plain {
+        true => c.to_string(),
+        false => format!("({c})"),
+    }
+}
 
 /// A quantifier of step L3.15a.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -505,5 +526,216 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         true
+    }
+
+    /// The text of the operand at `at`, where it is on one line, for a message.
+    fn operand_text(&self, at: Option<Span>) -> Option<String> {
+        let c = self.code(at)?.trim();
+        (!c.is_empty() && !c.contains('\n')).then(|| c.to_string())
+    }
+
+    /// The bounds of the keys of the families `sigs` (DESIGN.md sec:type_language, the bound
+    /// table): `L`, the keys each of them surely holds, and `U`, the keys any of them may
+    /// hold. A key is sure where its arrow is not partial and gives no miss, as for a list
+    /// display; a range, a `Lines` input or a `where` result guarantees no key. `sigs` is not
+    /// empty.
+    // Complexity tradeoff: one union per arrow and one meet per family, linear in the arrows;
+    // the pairwise test of each family of one operand against each of the other's, which
+    // `zip_end` would need without these two bounds, is quadratic in the families.
+    fn key_bounds(sigs: &[Arc<Sig>]) -> (Ty, Ty) {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let sure = |s: &Sig| {
+            Ty::union_all(
+                (s.arrows.iter())
+                    .filter(|a| !a.partial && (&a.result.atoms() & &misses) == KType::empty())
+                    .map(|a| &a.params[0]),
+            )
+        };
+        let may = |s: &Sig| Ty::union_all(s.arrows.iter().map(|a| &a.params[0]));
+        let mut l = sure(&sigs[0]);
+        for s in &sigs[1..] {
+            l = Ty::meet(&l, &sure(s));
+        }
+        let each: Vec<Ty> = sigs.iter().map(|s| may(s)).collect();
+        let u = Ty::union_all(each.iter());
+        (l, u)
+    }
+
+    /// The number of entries every family of `sigs` holds, where their key bounds are one
+    /// finite set of integers, as for list displays: `[1, 2] ++ [3]` is then `(0 | 1 | 2) ->
+    /// int` with each key sure. `None` where the count is not known.
+    fn known_count(sigs: &[Arc<Sig>]) -> Option<usize> {
+        let (l, u) = Self::key_bounds(sigs);
+        let ints = Ty::carrier(Carrier::Int);
+        (u.subtype(&ints) && u.subtype(&l))
+            .then(|| u.set.ints_listed().map(|v| v.len()))
+            .flatten()
+    }
+
+    /// `a ++ b` where an operand may be a family (step L5.2; DESIGN.md sec:joins, ordered
+    /// concatenation): each family must be a list, its keys the ranks `0 ..< n`, and the
+    /// result is the list of `a`'s entries and then `b`'s, the keys of `b` moved up by
+    /// `a.count`. A loose atom of either operand passes through, `a`'s first. With every count
+    /// known the keys are `0 ..< n + m`, each sure; otherwise the result is `int ->? V`, as a
+    /// range is. A string beside a list, or a family whose keys are not ranks, as a `where`
+    /// result, is rejected.
+    pub(super) fn list_concat_end(&mut self, x: &Arg<'a>, y: &Arg<'a>, span: Span) -> Ty {
+        let word = "`++`";
+        let out =
+            (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
+        let mut sides: Vec<Vec<Arc<Sig>>> = Vec::new();
+        for a in [x, y] {
+            let at = a.at.unwrap_or(span);
+            let mut sigs = Vec::new();
+            for p in a.ty.pieces() {
+                match p {
+                    // `{}` holds no key, the ranks `0 ..< 0`.
+                    Piece::Fn(sig)
+                        if sig.data
+                            && (sig.dense || sig.arrows.iter().all(|a| a.params[0].is_empty())) =>
+                    {
+                        sigs.push(sig)
+                    }
+                    Piece::Fn(sig) if sig.data => {
+                        let t = self.text(&Ty::func(sig));
+                        self.error_offering(
+                            at,
+                            format!(
+                                "`++` joins lists, whose keys are the ranks `0`, `1`, …, and \
+                                 this family is {t}, whose keys are not ranks"
+                            ),
+                            ["repair: join lists, as `[1, 2] ++ [3]`".to_string()],
+                        );
+                        return Ty::empty();
+                    }
+                    Piece::Dyn => self.any(word, span),
+                    Piece::Var(_) => {
+                        let what = "`++` on a value whose type is a type parameter";
+                        self.error(span, zedc_base::rejection::not_yet(what));
+                        return Ty::empty();
+                    }
+                    p if p.is_atoms() => {}
+                    p => {
+                        let t = self.text(&p.ty());
+                        self.error_offering(
+                            at,
+                            format!(
+                                "`++` joins two lists or two strings, and this value is {t}, \
+                                 beside a list"
+                            ),
+                            ["repair: put the value in a list, as `[x] ++ xs`".to_string()],
+                        );
+                        return Ty::empty();
+                    }
+                }
+            }
+            sides.push(sigs);
+        }
+        let [a, b] = <[_; 2]>::try_from(sides).expect("two operands");
+        if a.is_empty() || b.is_empty() {
+            return out;
+        }
+        let values = Self::entries_of(&a).union(&Self::entries_of(&b));
+        let sig = match (Self::known_count(&a), Self::known_count(&b)) {
+            (Some(n), Some(m)) => {
+                let keys: Vec<Ty> = (0..(n + m) as i64)
+                    .map(|i| Ty::lit(&Value::Int(i)))
+                    .collect();
+                Sig::one(positional(1), vec![Ty::union_all(keys.iter())], values)
+            }
+            _ => {
+                let found = values.union(&Ty::set(KType::atom("notFound")));
+                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
+                sig.arrows[0].partial = true;
+                sig
+            }
+        };
+        let mut sig = sig;
+        sig.data = true;
+        sig.dense = true;
+        sig.note_held();
+        if !self.trying {
+            self.info.list_concats.insert(span);
+        }
+        out.union(&Ty::func(Arc::new(sig)))
+    }
+
+    /// `a.zip(b)` (step L5.2; DESIGN.md sec:joins): the equality join on keys,
+    /// `joinR(#assertEmpty, #keep, #assertEmpty)`, the family of the pairs `(a[k], b[k])`. Its
+    /// two asserted-empty regions, the keys `a` may hold that `b` may lack and the reverse,
+    /// must be proved empty: `U_a ⊆ L_b` and `U_b ⊆ L_a` (DESIGN.md sec:type_language, "One
+    /// rule for every join"). An assertion not proved is a static error, which names one key
+    /// the bounds admit into the region (sec:diagnostics, "Undischarged region assertion"):
+    /// `[1, 2].zip([1])` holds key `1` on one side only, and a zip of two `Lines` inputs is
+    /// rejected too, since nothing shows their counts equal. Proved, the four bounds are one
+    /// set, so the result's keys are sure. A loose atom of either operand passes through.
+    // Complexity tradeoff: the bounds over all the families each operand may be, two
+    // subtype tests and one diff for the message, linear in the arrows (`key_bounds`).
+    pub(super) fn zip_end(&mut self, x: &Arg<'a>, y: &Arg<'a>, span: Span) -> Ty {
+        let word = "`zip`";
+        let example = "[1, 2].zip([3, 4])";
+        let out =
+            (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
+        let Some(a) = self.levels_of(&x.ty, word, example, x.at.unwrap_or(span)) else {
+            return Ty::empty();
+        };
+        let Some(b) = self.levels_of(&y.ty, word, example, y.at.unwrap_or(span)) else {
+            return Ty::empty();
+        };
+        if a.is_empty() || b.is_empty() {
+            return out;
+        }
+        let (la, ua) = Self::key_bounds(&a);
+        let (lb, ub) = Self::key_bounds(&b);
+        let texts = [self.operand_text(x.at), self.operand_text(y.at)];
+        let names = [
+            (texts[0].as_ref())
+                .map_or("the family before `.zip`".to_string(), |c| format!("`{c}`")),
+            (texts[1].as_ref()).map_or("the argument of `zip`".to_string(), |c| format!("`{c}`")),
+        ];
+        // The ranks both lists hold, offered where both operands' keys are integers.
+        let ints = Ty::carrier(Carrier::Int);
+        let ranks = (ua.subtype(&ints) && ub.subtype(&ints)).then(|| {
+            let [p, q] = [0, 1].map(|i| {
+                (texts[i].as_deref()).map_or(["xs", "ys"][i].to_string(), postfix_operand)
+            });
+            format!(
+                "repair: pair the ranks both lists hold, as \
+                 `(0 ..< min({p}.count, {q}.count)).map(i -> ({p}[i], {q}[i]))`"
+            )
+        });
+        for (from, (l_from, u_from, l_to, u_to)) in [(&la, &ua, &lb, &ub), (&lb, &ub, &la, &ua)]
+            .into_iter()
+            .enumerate()
+        {
+            if self.subtype(u_from, l_to) {
+                continue;
+            }
+            let region = u_from.diff(l_to);
+            let one = (region.set.values_listed()).and_then(|vs| vs.into_iter().next());
+            let (a, b) = (&names[from], &names[1 - from]);
+            let head = "`zip` pairs the entries at equal keys, and";
+            let message = match &one {
+                Some(v) if l_from.contains(v) && !u_to.contains(v) => {
+                    let key = self.text(&Ty::lit(v));
+                    format!("{head} key {key} is in {a} but not in {b}")
+                }
+                Some(v) => {
+                    let key = self.text(&Ty::lit(v));
+                    format!("{head} nothing shows that key {key} of {a} is in {b}")
+                }
+                None => format!("{head} nothing shows that each key of {a} is in {b}"),
+            };
+            let same = "repair: give both operands the same keys, as `[1, 2].zip([3, 4])`";
+            let menu = std::iter::once(same.to_string()).chain(ranks);
+            self.error_offering(span, message, menu);
+            return Ty::empty();
+        }
+        let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
+        let mut sig = Sig::one(positional(1), vec![ua], pair);
+        sig.data = true;
+        sig.dense = a.iter().all(|s| s.dense) || b.iter().all(|s| s.dense);
+        sig.note_held();
+        out.union(&Ty::func(Arc::new(sig)))
     }
 }

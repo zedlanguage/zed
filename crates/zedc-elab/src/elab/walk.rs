@@ -211,6 +211,8 @@ enum Frame<'a> {
     /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
     /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings).
     Strings(Option<Term>, Prim),
+    /// `x.zip(y)` once `y` is elaborated: `x`'s term (step L5.2).
+    Zip(Term),
     /// A remap once its source and its levels' expressions are elaborated, in that order.
     Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
@@ -2339,6 +2341,19 @@ impl<'a> Elab<'a> {
                     self.strings(m, Some(receiver), p, call);
                     return;
                 }
+                // `x.zip(y)` (step L5.2); the checker rejects any other argument list.
+                Some(_) if name == "zip" => match call.positional {
+                    [y] if call.named.is_empty() && !call.curry => {
+                        m.k(Frame::MemberEnd(wrap));
+                        m.k(Frame::Zip(receiver));
+                        m.stack.push(Job::Expr(y));
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
                 Some(_) => not_yet(&format!("the prelude word `{name}`")),
                 // A literal has no fields, so `.name` can only call a function `name`, and
                 // none is in scope: the resolver's short headline, the rule in a note
@@ -2594,6 +2609,10 @@ impl<'a> Elab<'a> {
             }
             Frame::Quantify(x, q) => {
                 let t = m.t().map(|f| self.quantifier_term(x, f, q));
+                m.give(t);
+            }
+            Frame::Zip(x) => {
+                let t = m.t().map(|y| self.zip_term(x, y));
                 m.give(t);
             }
             Frame::Group(x) => {
@@ -3039,6 +3058,9 @@ impl<'a> Elab<'a> {
         };
         let [a, b]: [Option<Term>; 2] = got.try_into().expect("two operands");
         let (a, b) = (a?, b?);
+        if *op == BinaryOp::Concat && self.info.list_concats.contains(&e.span) {
+            return Some(self.list_concat_term(a, b));
+        }
         let t = |v: bool| Term::Lit(Value::Bool(v));
         let p = match *op {
             BinaryOp::Or => return Some(if_(a, t(true), b)),

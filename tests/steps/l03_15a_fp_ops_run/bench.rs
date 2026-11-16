@@ -257,6 +257,57 @@ fn the_elaborated_chunk_by_runs_in_n_log_n() {
     );
 }
 
+/// The term zedc elaborates `q` to, with `xs` and `ys` the n entries `{0 -> 0, …}`, run at n
+/// and 8n and held under the limit for n log n work; `want(n)` is `q`'s value.
+fn elaborated_on_two_lists(what: &str, q: &str, want: impl Fn(usize) -> Value + Sync) {
+    // `xs` and `ys` are displays here, each bound at each run to the n entries around `q`'s
+    // own term, as in the quantifier test above.
+    let unit = elab(&format!("xs = [0, 1, 2];\nys = [0, 1, 2];\nq = {q};"))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let def = |name: &str| unit.defs.iter().find(|d| d.name == name).unwrap();
+    let (xs, ys, q) = (
+        def("xs").kernel.clone(),
+        def("ys").kernel.clone(),
+        def("q").term.clone(),
+    );
+    let terms = scaling::inputs(N_KERNEL, |k| {
+        let inner = Term::Let(ys.clone(), rc(entries(k)), q.clone());
+        with_prelude(Term::Let(xs.clone(), rc(entries(k)), rc(inner)))
+    });
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        assert_eq!(v, want(k));
+    };
+    scaling::check(what, N_KERNEL, run);
+    ratio(&format!("{what}, instructions"), N_KERNEL, 1, run);
+}
+
+/// Step L5.2: `xs ++ ys` adds the m entries of `ys` to `xs`'s tree, O(m log(n + m)); the sum
+/// reads every entry, so a result missing or misplacing one fails.
+#[test]
+fn a_concatenation_runs_in_n_log_n() {
+    elaborated_on_two_lists(
+        "the elaborated `(xs ++ ys).foldl(0, (a, x) -> (a * 3 + x) mod 1000003)` over n \
+         entries each",
+        "(xs ++ ys).foldl(0, (a, x) -> (a * 3 + x) mod 1000003)",
+        |k| {
+            let fold = |a: i64, x: i64| (a * 3 + x) % 1_000_003;
+            let one = (0..k as i64).fold(0, fold);
+            Value::Int((0..k as i64).fold(one, fold))
+        },
+    );
+}
+
+/// Step L5.2: `xs.zip(ys)` reads both sides at each of the n keys, O(n log n).
+#[test]
+fn a_zip_runs_in_n_log_n() {
+    elaborated_on_two_lists(
+        "the elaborated `xs.zip(ys).map(p -> p[0] * p[1]).sum` over n entries each",
+        "xs.zip(ys).map(p -> p[0] * p[1]).sum",
+        |k| Value::Int((0..k as i64).map(|x| x * x).sum()),
+    );
+}
+
 #[test]
 fn a_foldl_walk_runs_in_n_log_n() {
     let terms = scaling::inputs(N_KERNEL, |k| foldl_term(entries(k)));
@@ -426,6 +477,14 @@ fn concat_of_n_pieces_runs_in_linear_time() {
         1,
         run,
     );
+}
+
+/// Step L5.2 through `zedc run`: a `zip` of two keyed displays of n entries with the same keys.
+#[test]
+fn a_zip_of_keyed_displays_runs_in_n_log_n() {
+    whole_path("zip", "${XS.zip(XS).map(p -> p[0] + p[1]).sum}", |k| {
+        format!("{}\n", k * (k - 1))
+    });
 }
 
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries

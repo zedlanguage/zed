@@ -10,7 +10,7 @@
 //! `m` reduced by `(a, b) -> a ++ s ++ b` with `""` for an empty `m`, so no model uses the
 //! primitives it checks.
 
-use zed_kernel::term::build::{let_, lit, var};
+use zed_kernel::term::build::{if_, let_, lit, var};
 use zed_kernel::{Family, Pattern, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable};
@@ -91,6 +91,44 @@ fn strings(xs: &[&str]) -> Term {
 fn joined(m: Term, sep: &str) -> Term {
     let op = func(|[a, b]| bin(Prim::Concat, bin(Prim::Concat, a, lit(s(sep))), b));
     fold(m, op, Some(lit(s(""))))
+}
+
+/// `a ++ b` on two lists whose leaves are at `depth`, as (sec:joins) defines it: both operands
+/// injected into disjoint ordered ranges, the leaf at keypath `(t, k, …)` of the tagged pair
+/// `{0 -> a, 1 -> b}` moved to `(k, …)` for `a` and `(count(a) + k, …)` for `b`. An entry that
+/// is an empty family has no leaf, so the cases hold none.
+fn concat(a: Term, b: Term, depth: i64) -> Term {
+    shared(a, |a| {
+        let tagged = fam_with(lit(Value::Family(Family::set([0i64, 1]))), |t| {
+            if_(eq(t, lit(0)), a.clone(), b)
+        });
+        let kf = func(|[p, _]| {
+            let rank = if_(
+                eq(key(p.clone(), 0), lit(0)),
+                key(p.clone(), 1),
+                add(count(a), key(p.clone(), 1)),
+            );
+            path(
+                std::iter::once(rank)
+                    .chain((2..=depth).map(|i| key(p.clone(), i)))
+                    .collect(),
+            )
+        });
+        reindex(tagged, kf, func(|[_, v]| v))
+    })
+}
+
+/// `a.zip(b)` as (sec:joins) defines it: the middle region of the equality join on keys, the
+/// keys of `a` that `b` holds, each with the pair of the two entries.
+fn zip(a: Term, b: Term) -> Term {
+    shared(a, |a| {
+        shared(b, |b| {
+            let both = discard_with(a.clone(), |p, _| found(get(b.clone(), key(p, 0))));
+            fam_with(both, |k| {
+                Term::Prim(Prim::Tuple, vec![get(a, k.clone()), get(b, k)])
+            })
+        })
+    })
 }
 
 /// The cases: a name, the expression a program writes, and its model.
@@ -224,7 +262,57 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "${\"x\\n\".lines.count}",
             count(strings(&["x"])),
         ),
+        (
+            "concat_of_two_lists",
+            "${[3, 1, 4, 1, 5] ++ [9, 2]}",
+            concat(xs(), list(&[9, 2]), 1),
+        ),
+        (
+            "concat_with_an_empty_list",
+            "${{} ++ [3, 1, 4, 1, 5] ++ {}}",
+            concat(concat(list(&[]), xs(), 1), list(&[]), 1),
+        ),
+        (
+            "concat_of_nested_lists",
+            "${[[1, 2]] ++ [[3], [4, 5]]}",
+            concat(
+                lit(Value::Family(Family::of(vec![(i(0), nested(&[1, 2]))]))),
+                lit(Value::Family(Family::of(vec![
+                    (i(0), nested(&[3])),
+                    (i(1), nested(&[4, 5])),
+                ]))),
+                2,
+            ),
+        ),
+        (
+            "zip_of_two_lists",
+            "${[3, 1, 4, 1, 5].zip([5, 6, 7, 8, 9])}",
+            zip(xs(), list(&[5, 6, 7, 8, 9])),
+        ),
+        (
+            "zip_of_two_maps",
+            "${{\"b\" -> 2, \"a\" -> 5, \"c\" -> 7}.zip({\"c\" -> 1, \"a\" -> 2, \"b\" -> 3})}",
+            zip(ab(), named(&[("c", 1), ("a", 2), ("b", 3)])),
+        ),
+        (
+            "zip_then_map_is_zip_with",
+            "${[3, 1, 4, 1, 5].zip([5, 6, 7, 8, 9]).map(p -> p[0] * p[1])}",
+            map(zip(xs(), list(&[5, 6, 7, 8, 9])), |p| {
+                mul(nth(p.clone(), 0), nth(p, 1))
+            }),
+        ),
+        (
+            "zip_of_a_concatenation",
+            "${([3, 1] ++ [4]).zip([1, 2, 3])}",
+            zip(concat(list(&[3, 1]), list(&[4]), 1), list(&[1, 2, 3])),
+        ),
     ]
+}
+
+/// The list `[x0, x1, …]` as a value, for an entry of a nested list.
+fn nested(xs: &[i64]) -> Value {
+    let entries = (xs.iter().enumerate()).map(|(k, &x)| (i(k as i64), i(x)));
+    Value::Family(Family::of(entries.collect::<Vec<_>>()))
 }
 
 /// What `${…}` prints of the model's value: a string as its characters, without the quotes of

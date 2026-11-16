@@ -563,3 +563,126 @@ fn a_misused_fold_or_end_is_rejected_in_plain_words() {
         ],
     );
 }
+
+/// Step L5.2: `++` is offset concatenation on rank keys; `zip` is the equality join on ranks,
+/// and its two projections give back both operands. Unequal keyspaces are rejected.
+#[test]
+fn concatenation_zip_and_its_law() {
+    prints(
+        "zip",
+        &[
+            ("[1, 2] ++ [3] == [1, 2, 3]", "true"),
+            ("[1, 2].zip([10, 20]) == [(1, 10), (2, 20)]", "true"),
+            (
+                "[1, 2].zip([10, 20]).map(p -> p[0] + p[1]) == [11, 22]",
+                "true",
+            ),
+            (
+                "[1, 2, 3].zip([4, 5, 6]).map(p -> p[0]) == [1, 2, 3] && \
+                 [1, 2, 3].zip([4, 5, 6]).map(p -> p[1]) == [4, 5, 6]",
+                "true",
+            ),
+        ],
+    );
+    rejected("zip", &["[1, 2].zip([1])"]);
+}
+
+/// Step L5.2: `++` on lists of any entries, nested lists (an empty entry kept), ranges from 0,
+/// the empty family `{}`, and chains; on two strings it still joins the strings.
+#[test]
+fn concatenation_joins_lists_in_order() {
+    prints(
+        "concat",
+        &[
+            ("[[1]] ++ [[], [2]] == [[1], [], [2]]", "true"),
+            ("([[1]] ++ [[], [2]]).count", "3"),
+            ("(0 ..< 3) ++ [7] == [0, 1, 2, 7]", "true"),
+            ("{} ++ [1] == [1]", "true"),
+            ("[1] ++ {} == [1]", "true"),
+            ("({} ++ {}).count", "0"),
+            ("([1] ++ [2]) ++ ([3] ++ [4]) == [1, 2, 3, 4]", "true"),
+            ("[1] ++ ([2] ++ [3]) == ([1] ++ [2]) ++ [3]", "true"),
+            ("([\"a\"] ++ [\"b\"]).last", "b"),
+            ("\"ab\" ++ \"c\"", "abc"),
+        ],
+    );
+}
+
+/// Step L5.2: `zip` after `++`, of keyed families with equal keys, of empty families, and
+/// nested.
+#[test]
+fn zip_pairs_equal_keys() {
+    prints(
+        "zip_more",
+        &[
+            ("[1, 2].zip([1] ++ [2]) == [(1, 1), (2, 2)]", "true"),
+            ("([1] ++ [2]).zip([3, 4]) == [(1, 3), (2, 4)]", "true"),
+            (
+                "{\"a\" -> 1}.zip({\"a\" -> 2}) == {\"a\" -> (1, 2)}",
+                "true",
+            ),
+            ("{}.zip({}).count", "0"),
+            ("[1].zip([2]).zip([3]) == [((1, 2), 3)]", "true"),
+        ],
+    );
+}
+
+/// The misuses of `++` and `zip`, each named in the program's own words: unequal keys, with
+/// the key that is on one side only; a family whose keys are not ranks; a string beside a
+/// list; a wrong argument list.
+#[test]
+fn a_misused_concatenation_or_zip_is_rejected_in_plain_words() {
+    saying(
+        "zip",
+        &[
+            (
+                "[1, 2].zip([1])",
+                "`zip` pairs the entries at equal keys, and key 1 is in `[1, 2]` but not in `[1]`",
+            ),
+            ("[1].zip([1, 2])", "key 1 is in `[1, 2]` but not in `[1]`"),
+            (
+                "{\"a\" -> 1}.zip({\"b\" -> 2})",
+                "key \"a\" is in `{\"a\" -> 1}` but not in `{\"b\" -> 2}`",
+            ),
+            (
+                "[1, 2].zip([3])",
+                "`(0 ..< min([1, 2].count, [3].count)).map(i -> ([1, 2][i], [3][i]))`",
+            ),
+            (
+                "[1, 2].where(x -> x > 1) ++ [1]",
+                "`++` joins lists, whose keys are the ranks",
+            ),
+            ("\"a\" ++ [1]", "`++` joins two lists or two strings"),
+            ("[1, 2].zip()", "`zip` takes one family, passed by position"),
+            ("(3).zip([1])", "`zip` reads the entries of a family"),
+        ],
+    );
+}
+
+/// Step L5.2 on a `Lines` input, whose count is known only at run time: `++` gives the lines
+/// and then the list; a `zip` with it is rejected, since nothing shows the counts equal, and
+/// the offered repair, the ranks both hold, compiles and runs.
+#[test]
+fn concatenation_and_zip_on_input_lines() {
+    let cases = [
+        ("m.stdout <- m.stdin ++ [\"z\"];", "a\nb\nz\n", 0),
+        ("m.stdout <- \"${(m.stdin ++ [\"z\"]).count}\";", "3\n", 0),
+        ("m.stdout <- m.stdin.zip([\"q\"]).map(p -> p[0]);", "", 1),
+        (
+            "m.stdout <- \"${(0 ..< min(m.stdin.count, [\"q\"].count)).map(i -> \
+             (m.stdin[i], [\"q\"][i]))}\";",
+            "{0 -> (\"a\", \"q\")}\n",
+            0,
+        ),
+    ];
+    for (i, (body, want, status)) in cases.iter().enumerate() {
+        let src = format!("main(m: MainArgs) {{\n  {body}\n}}\n");
+        let out = run(&format!("fp_ops/lines_{i}"), &src, "a\nb\n", &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (*status, *want),
+            "{body}\n{}",
+            out.stderr
+        );
+    }
+}

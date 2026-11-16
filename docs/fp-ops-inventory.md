@@ -212,4 +212,9 @@ last entry is `x >< op` on floats too; `.chunkBy(f)` with the runs of equal `f` 
 their index and the entries keeping their keys. `scanr` (a scan reading the reverse of an
 order) waits on FP-ops-order.
 
+Built by FP-ops-concat-zip (2026-11-16): `++` on lists and `a.zip(b)`, so `zipWith` and
+`unzip` above are compositions that run. A `zip` the checker cannot show has equal keyspaces on
+both sides is refused, with a repair over the ranks both lists hold (rows ZIP-count-facts and
+RANGE-literal-keys widen what it can show).
+
 The status of each of these is in the plan rows and in STATUS.md.

@@ -4003,6 +4003,13 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `for` loop over the entries that reassigns `out: Option<Text>` and returns early at an entry that is not a string | `words::join` | Mutation (gap 11); early return from a loop | `pieces.foldl` with the joined text as the accumulator, and the entries' type checked first (`pieces is [Utf8String]`) |
 | A continuation frame holding a `Vec<&Expr>` of the arguments still to check, popped one per step, and a `Vec<Arg>` of those checked, pushed one per step | `StringsF`, `Ck::strings_call`, `strings_step` | Mutation (gap 11) | the arguments checked by a `map` over the call's argument list, as the checker's other calls are at the port |
 
+## Entries from FP-ops-concat-zip (`crates/zedc-check/src/check/walk/fp_ops.rs`, `walk.rs`, `mod.rs`; `crates/zedc-elab/src/elab/walk/fp_ops.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashSet<Span>` of the `++` expressions on lists, filled by the checker and read by `contains` in the elaborator | `Info::list_concats`, `Ck::list_concat_end`, `Elab::binary` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` in the checker's findings, as for `family_sums` |
+| A `for` loop over the characters of an operand's text with a depth counter changed in place, to decide whether the text needs parentheses before `.count` | `postfix_operand` | Mutation (gap 11) | a `foldl` over the characters with the depth and the verdict as its accumulator |
+
 ## Entries from REDUCE-generic-identity (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `crates/zedc-elab/src/elab/instances.rs`, `walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |
