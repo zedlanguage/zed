@@ -129,8 +129,8 @@ impl<'a> Elab<'a> {
     // terms read is a keypath (TEST-generic-sum-branches), by the places one is made:
     // (a) the kernel's `reindex` passes one as the first argument of its key map and value
     // map, and `discard` as the first argument of its selector. The only such maps are built
-    // by elaboration (`where_term`, `remap_term`, `group_term` in `walk.rs`), which bind that
-    // argument to a temporary (`Elab::temp`) that no name in the source resolves to, and
+    // by elaboration (`where_term` in this file, `remap_term` and `group_term` in `walk.rs`),
+    // which bind that argument to a temporary (`Elab::temp`) that no name in the source resolves to, and
     // read it only under `PathKey` and `PathLen`, which give one of its keys and its length.
     // (b) `Prim::Path` is written only as the body of such a key map, and the kernel takes
     // the key map's result apart into keys (`key_of`, `placed` in `eval.rs`). (c) The ZIR
@@ -392,6 +392,84 @@ impl<'a> Elab<'a> {
             Term::Let(g, Shared::new(f), Shared::new(b))
         });
         Term::Let(s, Shared::new(src), Shared::new(body))
+    }
+
+    /// `x.map(f)` with `x` and `f` elaborated (step L3.2, DESIGN.md sec:keypaths): the
+    /// identity-keypath `reindex` of `map`, one level, as `fam` over `x`'s keys whose entry at
+    /// `k` is `f(x[k])`; a nested value is passed to `f` whole. A loose atom `x` passes
+    /// through. Written here rather than in `walk.rs`, which calls it, so that this file calls
+    /// nothing written in `walk.rs` and the two are not an import cycle (step S.1f, plan row
+    /// S1F-check-limits-fp-ops-cycle).
+    // Complexity tradeoff: `fam` over the top-level keys does one `get` per key, O(n log n)
+    // for n entries over the ordered map; the general `reindex` (step L4.2) walks every leaf
+    // keypath and suits a keypath map, which `map` does not need.
+    pub(super) fn map_term(&mut self, x: Term, f: Term) -> Term {
+        let (xs, g, k) = (self.temp(), self.temp(), self.temp());
+        let entry = Term::Prim(Prim::Get, vec![Term::Var(xs.clone()), Term::Var(k.clone())]);
+        let fam = Term::Fam {
+            domain: Shared::new(Term::Var(xs.clone())),
+            var: k,
+            body: Shared::new(Term::App(Shared::new(Term::Var(g.clone())), vec![entry])),
+        };
+        let body = Term::Match(
+            Shared::new(Term::Var(xs.clone())),
+            vec![
+                (KPattern::AnyAtom, Term::Var(xs.clone())),
+                (KPattern::Wild, fam),
+            ],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
+    }
+
+    /// `x.where(f)`: the kernel's `discard(x, sel)` (DESIGN.md sec:kernel), with `sel` testing
+    /// `f` on the entries of `x`'s top level only. `discard` descends into a kept sub-family
+    /// and asks `sel` again at each of its entries, so `sel` keeps every entry below the top
+    /// level unasked. A loose atom `x` passes through, as at `map`. Written here for the same
+    /// reason as [`Elab::map_term`].
+    // Complexity tradeoff: `discard` rebuilds each kept sub-family entry by entry, O(leaves of
+    // x) where a top-level filter needs only O(top-level entries); a kernel filter of one level
+    // would remove that walk. Kept, since `discard` is the kernel's one filtering form.
+    pub(super) fn where_term(&mut self, x: Term, f: Term) -> Term {
+        let (xs, g, p, v) = (self.temp(), self.temp(), self.temp(), self.temp());
+        let top = Term::Prim(
+            Prim::Eq,
+            vec![
+                Term::Prim(Prim::PathLen, vec![Term::Var(p.clone())]),
+                Term::Lit(Value::Int(1)),
+            ],
+        );
+        let ask = Term::App(
+            Shared::new(Term::Var(g.clone())),
+            vec![Term::Var(v.clone())],
+        );
+        let sel = Term::Lam(
+            vec![p, v],
+            Shared::new(Term::If(
+                Shared::new(top),
+                Shared::new(ask),
+                Shared::new(Term::Lit(Value::Bool(true))),
+            )),
+        );
+        let kept = Term::Discard {
+            family: Shared::new(Term::Var(xs.clone())),
+            sel: Shared::new(sel),
+        };
+        let body = Term::Match(
+            Shared::new(Term::Var(xs.clone())),
+            vec![
+                (KPattern::AnyAtom, Term::Var(xs.clone())),
+                (KPattern::Wild, kept),
+            ],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
     }
 
     /// The links `gs` of [`Elab::stream_term`], by the names their functions are bound to,
