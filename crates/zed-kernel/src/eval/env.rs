@@ -7,7 +7,8 @@ use std::rc::Rc;
 // step S.1f); `eval.rs` instantiates it at its `Binding`, and monomorphization gives the same code.
 
 /// The names in scope, in a persistent ordered map: binding a name and looking one up cost
-/// `O(log n)` in the names in scope, and a closure's copy of its environment costs `O(1)`.
+/// `O(log n)` in the names in scope, and a copy of an environment costs `O(1)`. A closure
+/// keeps only the bindings its body reads (`Machine::captures` in eval.rs).
 /// A binding replaces an outer one of the same name.
 // Complexity tradeoff (COMPLEXITY.md K8): the naive environment is a list of frames walked on
 // each lookup, O(depth), so O(n·depth) for `n` reads, and a closure copies it, O(names). Used:
@@ -142,10 +143,15 @@ impl<'t, B: Clone> Node<'t, B> {
 
 /// The binding of `name` in `env`.
 pub(super) fn get<'e, 't, B>(env: &'e Env<'t, B>, name: &str) -> Option<&'e B> {
+    entry(env, name).map(|(_, b)| b)
+}
+
+/// The binding of `name` in `env`, with the name as `env` holds it, which outlives `env`.
+pub(super) fn entry<'e, 't, B>(env: &'e Env<'t, B>, name: &str) -> Option<(&'t str, &'e B)> {
     let mut at = env.as_deref();
     while let Some(node) = at {
         at = match name.cmp(node.name) {
-            Ordering::Equal => return Some(&node.binding),
+            Ordering::Equal => return Some((node.name, &node.binding)),
             Ordering::Less => node.left.as_deref(),
             Ordering::Greater => node.right.as_deref(),
         };

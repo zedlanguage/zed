@@ -4053,3 +4053,10 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `[lib] test = false` and the crate's tests moved to an integration test, since the unit-test binary of the crate that defines `#[global_allocator]` does not export `__rust_alloc` and libstd.so's allocations miss the count | `crates/zed-alloc-count/Cargo.toml`, `tests/zed_alloc_count.rs` | Build configuration | None needed: Zed's runtime has one allocator, the same in tests and programs |
 | `#[doc(hidden)] pub` on functions exported only for the integration test | `zed_alloc_count::measuring`, `meter::owner` | Privacy (as the `#[doc(hidden)]` row of the privacy entry) | Ordinary exports |
 | `pub fn work_on_the_c_heap`, called from another crate to count work on the C library's `malloc` rather than the meter's heap | `scaling::Meter::work_on_the_c_heap`, `zed_benches::runs` | Foreign library (the C allocator) | The benchmark harness counts on the runtime's allocator; there is one |
+
+## Entries from CLOSURE-captures-read-only (`zed-kernel/src/eval.rs` `Machine::captures`, `eval/env.rs` `entry`, `eval/made.rs` `reads`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` from a shared subterm's id to the names its body reads, filled on first use and kept for the run, written through `&mut self` | `Machine::captures`, `Machine::made` (`Machine.reads`) | Identity (gap 1), mutation (gap 11) | The names read kept beside each lambda term when it is built, or a memo table threaded through the run |
+| `Rc::strong_count` read by a test to see that a value is released | `eval::tests::a_closure_holds_only_the_values_its_body_reads` | No reference counts in the language | A release observed by a foreign value's release function, or the runtime's live-cell count |

@@ -18,7 +18,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::term::{Prim, Shared, Term};
+use crate::term::{FixKind, Prim, Shared, Term};
 use crate::value::{Fields, HeldFamily, Value};
 
 /// A value a run gives, functions and all: its nodes, each part before the value that holds
@@ -155,9 +155,16 @@ pub(super) fn reads(body: &Shared) -> Vec<Arc<str>> {
                     push(i);
                 }
             }
-            Term::Fix { init, step, .. } => {
+            Term::Fix {
+                init, step, kind, ..
+            } => {
                 push(init);
                 push(step);
+                // A lattice ascent's join is a function of its scope too (row
+                // CLOSURE-captures-read-only: a name only it reads was missed).
+                if let FixKind::Lattice { join } = kind {
+                    push(join);
+                }
             }
             Term::Gen {
                 init, step, guard, ..

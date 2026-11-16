@@ -8,6 +8,7 @@ mod bench;
 mod binders;
 mod borrow;
 mod callee_no_plan;
+mod captures;
 mod cells;
 mod chains;
 mod checks;

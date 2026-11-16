@@ -251,3 +251,46 @@ fn closures_capturing_closures_1250_deep_are_called_and_dropped_on_a_2_mib_stack
     });
     assert_eq!(v, zed_kernel::value::Value::from(7i64));
 }
+
+// Row CLOSURE-captures-read-only: the kernel evaluator gives a closure the bindings of the
+// names its body reads, O(r log n) for r names read in a scope of n, where it kept the whole
+// scope in O(1). n closures, each made in a scope of n names and reading one, cost O(n log n)
+// in all, the order of binding the n names, and hold O(n) memory.
+
+/// n closures made and called in a scope of n names. Small instance:
+/// `captures::closures_made_in_a_scope_of_many_names_hold_the_one_they_read`.
+#[test]
+fn closures_made_in_a_scope_of_n_names_scale() {
+    let n = 20_000;
+    let terms = inputs(n, |d| super::captures::closures_in_scope(d, true));
+    check_order(
+        "n closures made and called in a scope of n names",
+        n,
+        1,
+        |d| {
+            Evaluator::new(World::new()).run(&terms[&d]).unwrap();
+        },
+    );
+}
+
+/// n closures made in a scope of n names and given back apart from the run: the time, and the
+/// bytes the run holds at its peak and leaves in its value. Small instance:
+/// `captures::closures_made_in_a_scope_of_many_names_hold_the_one_they_read`.
+#[test]
+fn closures_kept_from_a_scope_of_n_names_scale() {
+    let n = 20_000;
+    let terms = inputs(n, |d| super::captures::closures_in_scope(d, false));
+    let run = |d: usize| Evaluator::new(World::new()).run_made(&terms[&d]).unwrap();
+    check_order("n closures kept from a scope of n names", n, 1, |d| {
+        run(d);
+    });
+    let live = |d: usize| zed_alloc_count::live(|| run(d)).1;
+    let (small, large) = (live(n), live(FACTOR * n));
+    let what = format!(
+        "n closures kept from a scope of n names: sizes {n} and {}",
+        FACTOR * n
+    );
+    zed_tests::scaling::hold(&what, "peak bytes", small.peak, large.peak, 1);
+    let net = |l: zed_alloc_count::Live| u64::try_from(l.net).unwrap();
+    zed_tests::scaling::hold(&what, "bytes kept", net(small), net(large), 1);
+}

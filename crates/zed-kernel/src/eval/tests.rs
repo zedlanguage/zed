@@ -414,6 +414,112 @@ fn a_run_under_globals_given_an_evaluator_set_to_stop_panics() {
     let _ = ev.run_under(&one, &super::Globals::default(), &[]);
 }
 
+/// Row CLOSURE-captures-read-only (DESIGN.md sec:generations, "A closure holds only the values
+/// it reads"): a lambda made where `a` and `b` are bound, each to a closure the test holds too,
+/// keeps alive the one its body reads, a nested lambda's body included, and lets the other go
+/// while the new closure lives. The count of the test's reference shows which are held: 2 held,
+/// 1 not. The machine kept the whole scope before (2 for both).
+#[test]
+fn a_closure_holds_only_the_values_its_body_reads() {
+    use super::{Closure, Drops, HashMap, Machine, Rc, V, bind};
+    use crate::term::build::{lam, var};
+    let unit = crate::Shared::new(crate::Term::Lit(Value::Int(0)));
+    // The lambda, and whether `a` and `b` are kept. The terms outlive the closures made of them.
+    let cases = [
+        (lam(&["x"], var("a")), true, false),
+        (lam(&["x"], lam(&["y"], var("a"))), true, false),
+        (lam(&["x"], var("b")), false, true),
+        (lam(&["x"], var("x")), false, false),
+    ];
+    let mut ev = super::Evaluator::new(super::World::new());
+    let drops: Rc<Drops<'_>> = Rc::default();
+    let value = || {
+        Rc::new(Closure {
+            params: &[],
+            body: &unit,
+            at: 0,
+            env: None,
+            drops: drops.clone(),
+        })
+    };
+    let (a, b) = (value(), value());
+    for (term, keeps_a, keeps_b) in &cases {
+        let mut machine = Machine {
+            ev: &mut ev,
+            frames: Vec::new(),
+            drops: drops.clone(),
+            globals: None,
+            made: HashMap::new(),
+            short_paths: Vec::new(),
+            failed: None,
+            vals: Vec::new(),
+            reads: HashMap::new(),
+        };
+        let env = bind(None, "a", V::Closure(a.clone()), None);
+        let env = bind(env, "b", V::Closure(b.clone()), None);
+        let Ok(V::Closure(made)) = machine.run(term, env) else {
+            panic!("a lambda gives a closure");
+        };
+        let what = crate::print::pretty(term, 80);
+        assert_eq!(Rc::strong_count(&a), 1 + usize::from(*keeps_a), "a, {what}");
+        assert_eq!(Rc::strong_count(&b), 1 + usize::from(*keeps_b), "b, {what}");
+        drop(made);
+        assert_eq!(
+            (Rc::strong_count(&a), Rc::strong_count(&b)),
+            (1, 1),
+            "{what}"
+        );
+    }
+}
+
+/// A closure that keeps only what its body reads still runs: a nested lambda reads a name of
+/// the outermost scope, and a lattice `fix` inside a lambda reads its join from the scope, a
+/// name nothing else in the lambda reads (row CLOSURE-captures-read-only: the names read
+/// missed the join before, [`super::made::reads`]).
+#[test]
+fn a_closure_that_keeps_what_it_reads_runs() {
+    use crate::term::build::{app, lam, let_, lit, prim, var};
+    use crate::term::{Evidence, FixKind, Prim, Shared, Term};
+    let nested = let_(
+        "a",
+        lit(1i64),
+        let_(
+            "b",
+            lit(2i64),
+            app(
+                app(
+                    lam(
+                        &["x"],
+                        lam(&["y"], prim(Prim::Add, vec![var("a"), var("y")])),
+                    ),
+                    vec![lit(0i64)],
+                ),
+                vec![lit(10i64)],
+            ),
+        ),
+    );
+    let mut ev = super::Evaluator::new(super::World::new());
+    assert_eq!(ev.run(&nested).expect("a sum"), Value::Int(11));
+    let set = |xs: &[i64]| lit(Value::Family(Family::set(xs.iter().copied())));
+    let ascent = Term::Fix {
+        init: Shared::new(set(&[1])),
+        step: Shared::new(lam(&["r"], set(&[2]))),
+        this: "this".into(),
+        key: "k".into(),
+        kind: FixKind::Lattice {
+            join: Shared::new(var("u")),
+        },
+        ev: Evidence::new(),
+    };
+    let joined = let_(
+        "u",
+        Term::PrimFn(Prim::Union),
+        app(lam(&["x"], ascent), vec![lit(0i64)]),
+    );
+    let want = Value::Family(Family::set([1i64, 2]));
+    assert_eq!(ev.run(&joined).expect("a set"), want);
+}
+
 /// The run of [`a_run_under_globals_given_an_evaluator_set_to_stop_panics`] on a fresh
 /// evaluator, which gives its value.
 #[test]
