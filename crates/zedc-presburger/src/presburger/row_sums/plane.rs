@@ -72,10 +72,13 @@ enum Role {
     Alone,
 }
 
-/// Each wanted atom's set of values over the points of the rows, as `Plan::project` gives it;
-/// `None` where the rows are not of the class the module note names, a polygon's projection
-/// is not shown exact there, or the polygons would pass [`allowance`] (or `limit`, the join's
-/// work limit, where it is the smaller), so that the join answers instead.
+/// Each wanted atom's set of values over the points of rows of the shape `shape` that have no
+/// plan of the join (`Plan::of`: a key past 2^62), where the solver answers otherwise; `None`
+/// where a polygon's projection is not shown exact or the enumeration would pass its
+/// allowance, a node and a polygon ([`NODE_UNITS`] and [`Shape::leaf_units`]) for each range
+/// of each atom of a row and one more for each such atom, so that the solver answers instead.
+/// Where the rows have a plan, `Plan::project` runs the polygons after the join's prefix
+/// tables, allowed the units those cost; the proof of that bound is there.
 // Complexity tradeoff: the join of row sums builds the table of the pairs of values of the two
 // atoms, O(m_x·m_y / 64) word steps for ranges of m_x and m_y values, and its work passed
 // `JOIN_LIMIT` (a refusal) at m = 512 (FAIL-join-pair-table); the `chain` family of l01_39
@@ -86,49 +89,23 @@ enum Role {
 // union of the pieces costs O(P log P) for P polygons. Nothing depends on the widths of the
 // ranges. The polygons alone can be more than the join's work: with `d == x + y`, `x` and `y`
 // each over 64 ranges of one value three apart and `d` over every other value, they visit
-// 20,480 nodes where the join spends 16,498 units (`grid(3, 64, 1)` in the tests of
-// `row_sums`, 2026-11-15). So the enumeration is counted and stops past the allowance; the
-// join, exact, answers then, as it did before this route (PROOF-plane-route-bounds). The
-// allowance is a weak lower bound on the join: on `grid(1, 64, 40)` the polygons answer from
-// 8,192 nodes, past the allowance of 132, and the join stops at its limit, so `project`
-// refuses where the route alone would answer; a stronger proved bound on the join is
-// PERF-plane-allowance-join-bound. The count covers every node of the
-// enumeration, each box and each range of a defined atom tried in it, so P is at most the
-// allowance, and the cost here O(A·(w·h^2 + log r)) for an allowance A and w wanted atoms;
-// the h^2 is PERF-plane-shadow-pairs.
-pub(super) fn project(rows: &Rows, want: &[bool], limit: u64) -> Option<Vec<Option<IntervalSet>>> {
-    let mut left = allowance(rows).min(limit);
-    polygons(rows, want, &mut left)
+// 20,480 nodes where the join spends 15,416 units (`grid(3, 64, 1)` in the tests of
+// `row_sums`). So the enumeration is charged in the join's units and stops past its
+// allowance; the join, or here the solver, exact, answers then (PROOF-plane-route-bounds).
+// With no plan the allowance is the formula's size in nodes, as before
+// PERF-plane-allowance-join-bound, a cost every method pays to read the formula.
+pub(super) fn project(
+    shape: &Shape,
+    rows: &Rows,
+    want: &[bool],
+) -> Option<Vec<Option<IntervalSet>>> {
+    let per_range = NODE_UNITS.saturating_add(shape.leaf_units(want));
+    let mut left = ranges(rows).saturating_mul(per_range);
+    shape.polygons(rows, want, &mut left)
 }
 
-/// The nodes the enumeration of [`polygons`] may visit before the join answers instead: one
-/// more than its number of ranges for each atom of a row.
-///
-/// Proof that the polygons are then never more than the join's work (PROOF-plane-route-bounds,
-/// author P246), in units of `Work`, by the three ways the join can end:
-/// - It has a plan and answers. `Plan::build` puts each atom of a row in a group (an atom of
-///   no row is `free`), and `Plan::project` runs `Plan::forward` first, which, for each atom
-///   of each group, calls `Plan::add` and then charges one unit (`work.spend(1)` on the window).
-///   `add` charges each range of the atom at least one unit: a range of one value at offset 0
-///   by `work.spend(t.words() + 1)`, any other by `work.shift`, which spends `s.words() + 1`.
-///   So the join spends at least this allowance, and the polygons, at most the nodes, are no
-///   more.
-/// - It has a plan and stops at its limit: it spent the limit, and `project` takes the smaller
-///   of the allowance and the limit.
-/// - It has no plan (`Stop::NoPlan`, a key past 2^62): the join spends nothing and the solver
-///   answers. Then the bound is the formula's size: each range is an arm of a disjunction, or
-///   the bounds of an atom, that `Rows::of` read, and each row has an atom, so the allowance
-///   is at most twice the conjuncts and arms read, a cost every method pays.
-///
-/// The two facts of the first case, each atom of a row in a group and each atom charged its
-/// ranges plus one before the join can stop early, are checked by debug assertions in
-/// `Plan::build` (`Plan::covers`) and `Plan::forward` in every test that runs a join, and on a
-/// case of each kind by `every_plan_meets_the_facts_the_allowance_rests_on`
-/// (TEST-plane-allowance-invariants).
-///
-/// What the proof leaves out: a node here costs the shadows of its polygon, O(w·h^2) above,
-/// where a unit of the join costs O(1); that factor is PERF-plane-shadow-pairs.
-pub(super) fn allowance(rows: &Rows) -> u64 {
+/// One more than its number of ranges for each atom of a row.
+fn ranges(rows: &Rows) -> u64 {
     let mut used = vec![false; rows.atoms.len()];
     for row in &rows.rows {
         for &(j, _) in &row.terms {
@@ -141,144 +118,225 @@ pub(super) fn allowance(rows: &Rows) -> u64 {
         .sum()
 }
 
-/// One node of the enumeration taken from `left`; `None` where none is left.
-fn visit(left: &mut u64) -> Option<()> {
-    *left = left.checked_sub(1)?;
+/// The units of `Work` charged for a node of the enumeration ([`Shape::polygons`]), and for
+/// each half-plane and each pair of a lower and an upper side in each shadow of a leaf
+/// ([`Shape::leaf_units`]): their measured time over the join's fastest time per unit, on one
+/// build at one load (A96, PERF-plane-shadow-pairs), rounded up. Measured 2026-11-15, debug
+/// build, load 41–46, by a probe on `tests::bench::padded` (0 to 128 half-planes more, half
+/// lower sides and half upper): the join's prefix tables 5.2 to 6.0 ns per unit (7,544,198
+/// units in 40.2 ms; 1,838,557 in 9.5 ms; 31,020,579 in 185.8 ms), and the whole join down to
+/// 3.67 ns per unit in another run; a leaf with a point, three shadows, at most 225·h + 18·p
+/// ns for h half-planes and p pairs (1,118 ns at h = 6, 3,122 at 14, 15,023 at 38, 110,582 at
+/// 134), so 75 ns a half-plane and 6 a pair per shadow; a node at most 162 ns (3.32 ms for
+/// 20,480 nodes and 4,096 leaves), taken as 100. Each is charged at 2.5 ns per unit, below
+/// the join's fastest. `tests::bench::the_route_and_the_join_on_both_sides_of_the_allowance`
+/// prints both times per unit on each run.
+// Complexity tradeoff: the alternative PERF-plane-shadow-pairs names, each shadow in
+// O(h log h) by sorting the sides by slope, was not taken: h is fixed by the formula (4, one
+// per row that defines no atom, two per defined atom), and the charge per pair makes the
+// pairs' cost count against the same allowance as the join's own work; at h = 134 the pairs
+// are about 70% of a leaf's time.
+const NODE_UNITS: u64 = 40;
+const HALF_UNITS: u64 = 30;
+const PAIR_UNITS: u64 = 3;
+
+/// `units` taken from `left`; `None` where they are not left, with nothing taken.
+fn visit(left: &mut u64, units: u64) -> Option<()> {
+    *left = left.checked_sub(units)?;
     Some(())
 }
 
-/// [`project`] with `left` nodes of the enumeration allowed, the nodes visited taken from it:
-/// a box, or a range of a defined atom tried in a box.
+/// [`Shape::polygons`] of the rows' shape, `None` where they have none.
+#[cfg(test)]
 pub(super) fn polygons(
     rows: &Rows,
     want: &[bool],
     left: &mut u64,
 ) -> Option<Vec<Option<IntervalSet>>> {
-    let n = rows.atoms.len();
-    let mut uses = vec![0usize; n];
-    for row in &rows.rows {
-        for &(j, _) in &row.terms {
-            uses[j] += 1;
+    Shape::of(rows)?.polygons(rows, want, left)
+}
+
+/// The rows read as polygons over two atoms (module note): each atom's role, the half-planes
+/// of the rows that define no atom, and each defined atom's form with its ranges.
+pub(super) struct Shape<'a> {
+    ax: usize,
+    ay: usize,
+    roles: Vec<Role>,
+    halves: Vec<Half>,
+    ranged: Vec<(Form, &'a [(i128, i128)])>,
+}
+
+impl<'a> Shape<'a> {
+    /// The shape of `rows`; `None` where they are not of the class the module note names.
+    pub(super) fn of(rows: &'a Rows) -> Option<Shape<'a>> {
+        let n = rows.atoms.len();
+        let mut uses = vec![0usize; n];
+        for row in &rows.rows {
+            for &(j, _) in &row.terms {
+                uses[j] += 1;
+            }
         }
-    }
-    // Each equation defines its first atom that appears in it alone with coefficient 1 or -1.
-    let mut defines: Vec<Option<(usize, i128)>> = vec![None; rows.rows.len()];
-    let mut defined = vec![false; n];
-    for (r, row) in rows.rows.iter().enumerate() {
-        if row.eq
-            && let Some(&(j, c)) = (row.terms.iter()).find(|&&(j, c)| uses[j] == 1 && c.abs() == 1)
-        {
-            defines[r] = Some((j, c));
-            defined[j] = true;
+        // Each equation defines its first atom that appears in it alone with coefficient 1 or -1.
+        let mut defines: Vec<Option<(usize, i128)>> = vec![None; rows.rows.len()];
+        let mut defined = vec![false; n];
+        for (r, row) in rows.rows.iter().enumerate() {
+            if row.eq
+                && let Some(&(j, c)) =
+                    (row.terms.iter()).find(|&&(j, c)| uses[j] == 1 && c.abs() == 1)
+            {
+                defines[r] = Some((j, c));
+                defined[j] = true;
+            }
         }
-    }
-    let mut axes: Vec<usize> = (0..n).filter(|&j| uses[j] > 0 && !defined[j]).collect();
-    axes.sort_unstable();
-    let [ax, ay] = axes[..] else {
-        return None;
-    };
-    let mut roles = vec![Role::Alone; n];
-    roles[ax] = Role::Axis(0);
-    roles[ay] = Role::Axis(1);
-    // Each row as a form over the two axes, its defined atom put aside.
-    let mut halves = Vec::new();
-    let mut ranged: Vec<(Form, &[(i128, i128)])> = Vec::new();
-    for (r, row) in rows.rows.iter().enumerate() {
-        let mut f = Form {
-            a: 0,
-            b: 0,
-            c: row.k,
+        let mut axes: Vec<usize> = (0..n).filter(|&j| uses[j] > 0 && !defined[j]).collect();
+        axes.sort_unstable();
+        let [ax, ay] = axes[..] else {
+            return None;
         };
-        for &(j, c) in &row.terms {
-            if j == ax {
-                f.a = c;
-            } else if j == ay {
-                f.b = c;
+        let mut roles = vec![Role::Alone; n];
+        roles[ax] = Role::Axis(0);
+        roles[ay] = Role::Axis(1);
+        // Each row as a form over the two axes, its defined atom put aside.
+        let mut halves = Vec::new();
+        let mut ranged: Vec<(Form, &[(i128, i128)])> = Vec::new();
+        for (r, row) in rows.rows.iter().enumerate() {
+            let mut f = Form {
+                a: 0,
+                b: 0,
+                c: row.k,
+            };
+            for &(j, c) in &row.terms {
+                if j == ax {
+                    f.a = c;
+                } else if j == ay {
+                    f.b = c;
+                }
             }
-        }
-        match defines[r] {
-            // `s·d + f == 0`, so `d == -s·f`.
-            Some((d, s)) => {
-                let s = -s;
-                let g = Form {
-                    a: s.checked_mul(f.a)?,
-                    b: s.checked_mul(f.b)?,
-                    c: s.checked_mul(f.c)?,
-                };
-                roles[d] = Role::Defined(g);
-                ranged.push((g, &rows.domains[d]));
-            }
-            None => {
-                halves.push(Half {
-                    a: f.a,
-                    b: f.b,
-                    c: f.c,
-                });
-                if row.eq {
+            match defines[r] {
+                // `s·d + f == 0`, so `d == -s·f`.
+                Some((d, s)) => {
+                    let s = -s;
+                    let g = Form {
+                        a: s.checked_mul(f.a)?,
+                        b: s.checked_mul(f.b)?,
+                        c: s.checked_mul(f.c)?,
+                    };
+                    roles[d] = Role::Defined(g);
+                    ranged.push((g, &rows.domains[d]));
+                }
+                None => {
                     halves.push(Half {
-                        a: f.a.checked_neg()?,
-                        b: f.b.checked_neg()?,
-                        c: f.c.checked_neg()?,
+                        a: f.a,
+                        b: f.b,
+                        c: f.c,
                     });
+                    if row.eq {
+                        halves.push(Half {
+                            a: f.a.checked_neg()?,
+                            b: f.b.checked_neg()?,
+                            c: f.c.checked_neg()?,
+                        });
+                    }
                 }
             }
         }
+        Some(Shape {
+            ax,
+            ay,
+            roles,
+            halves,
+            ranged,
+        })
     }
-    let mut pieces: Vec<Vec<(End, End)>> = vec![Vec::new(); n];
-    let mut any = false;
-    for &bx in &rows.domains[ax] {
-        for &by in &rows.domains[ay] {
-            visit(left)?;
-            let mut polygon = halves.clone();
-            polygon.extend([
-                Half {
-                    a: 1,
-                    b: 0,
-                    c: bx.0.checked_neg()?,
-                },
-                Half {
-                    a: -1,
-                    b: 0,
-                    c: bx.1,
-                },
-                Half {
-                    a: 0,
-                    b: 1,
-                    c: by.0.checked_neg()?,
-                },
-                Half {
-                    a: 0,
-                    b: -1,
-                    c: by.1,
-                },
-            ]);
-            any |= cases(
-                want,
-                &roles,
-                &ranged,
-                (bx, by),
-                &mut polygon,
-                &mut pieces,
-                left,
-            )?;
+
+    /// The units of `Work` charged for a leaf of the enumeration, a polygon whose wanted atoms'
+    /// values are found: the shadows [`polygon_pieces`] asks for (the first axis, and each wanted
+    /// second axis or defined atom), each of `h` half-planes sorted by side and at most
+    /// `⌊h/2⌋·⌈h/2⌉` pairs of a lower and an upper side, for `h` those of the box, the rows that
+    /// define no atom and two for each defined atom.
+    fn leaf_units(&self, want: &[bool]) -> u64 {
+        let h = (self.halves.len() + 4 + 2 * self.ranged.len()) as u64;
+        let pairs = (h / 2) * h.div_ceil(2);
+        let shadows = 1
+            + (want.iter().zip(&self.roles))
+                .filter(|(w, r)| **w && matches!(r, Role::Axis(1) | Role::Defined(_)))
+                .count() as u64;
+        shadows.saturating_mul(HALF_UNITS * h + PAIR_UNITS * pairs)
+    }
+
+    /// [`project`] with `left` units of `Work` allowed, those of the enumeration taken from it:
+    /// [`NODE_UNITS`] for each node, a box or a range of a defined atom tried in a box, and
+    /// [`Shape::leaf_units`] for each polygon projected.
+    pub(super) fn polygons(
+        &self,
+        rows: &Rows,
+        want: &[bool],
+        left: &mut u64,
+    ) -> Option<Vec<Option<IntervalSet>>> {
+        let n = rows.atoms.len();
+        let (ax, ay, roles) = (self.ax, self.ay, &self.roles[..]);
+        let leaf = self.leaf_units(want);
+        let mut pieces: Vec<Vec<(End, End)>> = vec![Vec::new(); n];
+        let mut any = false;
+        // One polygon, the rows' half-planes then the box's and those of each defined atom's
+        // range, written over from box to box; and the shadows' lists, cleared for each.
+        let mut polygon = self.halves.clone();
+        let mut scratch = Scratch::default();
+        for &bx in &rows.domains[ax] {
+            for &by in &rows.domains[ay] {
+                visit(left, NODE_UNITS)?;
+                polygon.truncate(self.halves.len());
+                polygon.extend([
+                    Half {
+                        a: 1,
+                        b: 0,
+                        c: bx.0.checked_neg()?,
+                    },
+                    Half {
+                        a: -1,
+                        b: 0,
+                        c: bx.1,
+                    },
+                    Half {
+                        a: 0,
+                        b: 1,
+                        c: by.0.checked_neg()?,
+                    },
+                    Half {
+                        a: 0,
+                        b: -1,
+                        c: by.1,
+                    },
+                ]);
+                any |= cases(
+                    want,
+                    roles,
+                    &self.ranged,
+                    (bx, by),
+                    &mut polygon,
+                    &mut pieces,
+                    &mut scratch,
+                    (left, leaf),
+                )?;
+            }
         }
-    }
-    let mut sets = vec![None; n];
-    for (a, w) in want.iter().enumerate() {
-        if !*w {
-            continue;
+        let mut sets = vec![None; n];
+        for (a, w) in want.iter().enumerate() {
+            if !*w {
+                continue;
+            }
+            sets[a] = Some(match roles[a] {
+                Role::Alone if any => IntervalSet::from_pieces(
+                    (rows.domains[a].iter())
+                        .map(|&(l, h)| (fin(l), fin(h)))
+                        .collect(),
+                ),
+                Role::Alone => IntervalSet::empty(),
+                _ => IntervalSet::from_pieces(std::mem::take(&mut pieces[a])),
+            });
         }
-        sets[a] = Some(match roles[a] {
-            Role::Alone if any => IntervalSet::from_pieces(
-                (rows.domains[a].iter())
-                    .map(|&(l, h)| (fin(l), fin(h)))
-                    .collect(),
-            ),
-            Role::Alone => IntervalSet::empty(),
-            _ => IntervalSet::from_pieces(std::mem::take(&mut pieces[a])),
-        });
+        Some(sets)
     }
-    Some(sets)
 }
 
 fn fin(v: i128) -> End {
@@ -286,9 +344,10 @@ fn fin(v: i128) -> End {
 }
 
 /// The polygons of one box: for each defined atom in turn, one for each of its ranges that
-/// meets the form's values over the box, each a node taken from `left`. Adds each wanted
-/// atom's values to `pieces`; whether any polygon has a point, or `None` where a projection
-/// is not shown exact or no node is left.
+/// meets the form's values over the box, each a node of [`NODE_UNITS`] taken from `left`, and
+/// each polygon `leaf` units. Adds each wanted atom's values to `pieces`; whether any polygon
+/// has a point, or `None` where a projection is not shown exact or the units are not left.
+#[allow(clippy::too_many_arguments)]
 fn cases(
     want: &[bool],
     roles: &[Role],
@@ -296,17 +355,19 @@ fn cases(
     bx: ((i128, i128), (i128, i128)),
     polygon: &mut Vec<Half>,
     pieces: &mut [Vec<(End, End)>],
-    left: &mut u64,
+    scratch: &mut Scratch,
+    (left, leaf): (&mut u64, u64),
 ) -> Option<bool> {
     let Some(((g, ranges), rest)) = ranged.split_first() else {
-        return polygon_pieces(want, roles, polygon, pieces);
+        visit(left, leaf)?;
+        return polygon_pieces(want, roles, polygon, pieces, scratch);
     };
     let (lo, hi) = g.hull(bx.0, bx.1)?;
     // The ranges are sorted and disjoint: those that meet `[lo, hi]` are one run.
     let from = ranges.partition_point(|r| r.1 < lo);
     let mut any = false;
     for &(l, h) in ranges[from..].iter().take_while(|r| r.0 <= hi) {
-        visit(left)?;
+        visit(left, NODE_UNITS)?;
         let len = polygon.len();
         polygon.push(Half {
             a: g.a,
@@ -318,7 +379,16 @@ fn cases(
             b: g.b.checked_neg()?,
             c: h.checked_sub(g.c)?,
         });
-        let found = cases(want, roles, rest, bx, polygon, pieces, left);
+        let found = cases(
+            want,
+            roles,
+            rest,
+            bx,
+            polygon,
+            pieces,
+            scratch,
+            (left, leaf),
+        );
         polygon.truncate(len);
         any |= found?;
     }
@@ -331,9 +401,10 @@ fn polygon_pieces(
     roles: &[Role],
     polygon: &[Half],
     pieces: &mut [Vec<(End, End)>],
+    scratch: &mut Scratch,
 ) -> Option<bool> {
     // The first axis's values: empty if and only if the polygon has no integer point.
-    let Some(xs) = shadow(polygon, 1, 0)? else {
+    let Some(xs) = shadow(polygon, 1, 0, scratch)? else {
         return Some(false);
     };
     for (a, w) in want.iter().enumerate() {
@@ -342,7 +413,7 @@ fn polygon_pieces(
         }
         let (lo, hi) = match roles[a] {
             Role::Axis(0) => xs,
-            Role::Axis(_) => shadow(polygon, 0, 1)??,
+            Role::Axis(_) => shadow(polygon, 0, 1, scratch)??,
             Role::Defined(g) => {
                 if g.a == 0 && g.b == 0 {
                     (g.c, g.c)
@@ -352,7 +423,7 @@ fn polygon_pieces(
                     if gcd(g.a.unsigned_abs(), g.b.unsigned_abs()) != 1 {
                         return None;
                     }
-                    let (l, h) = shadow(polygon, g.a, g.b)??;
+                    let (l, h) = shadow(polygon, g.a, g.b, scratch)??;
                     (l.checked_add(g.c)?, h.checked_add(g.c)?)
                 }
             }
@@ -365,14 +436,29 @@ fn polygon_pieces(
 
 /// The values of `p = a·x + b·y` (`a` and `b` coprime) over the integer points of `polygon`:
 /// `Some(None)` where there are none, `None` where the elimination is not shown exact (module
-/// note) or a number passes `i128`.
-fn shadow(polygon: &[Half], a: i128, b: i128) -> Option<Option<(i128, i128)>> {
+/// note) or a number passes `i128`. The lists of `scratch` are cleared and written here.
+// Complexity tradeoff: O(h^2) for h half-planes, the pairs of Fourier-Motzkin elimination,
+// charged in units by `Shape::leaf_units`. Sorting the bounds by slope would find the two
+// vertices of the extreme values in O(h log h) (PERF-plane-shadow-pairs), but the exactness
+// test of each pair (module note) and the overflow checks of each would then be argued apart;
+// h is fixed for a formula (4 + its rows + 2 per defined atom, 7 on the `chain` family), so the
+// pairs are a constant of the formula and the charge covers them. The three lists were made
+// per shadow, three allocations, about half of a node's time; they are now cleared and reused.
+fn shadow(
+    polygon: &[Half],
+    a: i128,
+    b: i128,
+    scratch: &mut Scratch,
+) -> Option<Option<(i128, i128)>> {
     // `s·a + t·b == 1`; `q = u·x + v·y` with `(u, v) = (-t, s)` completes `p` to a unimodular
     // basis, whose inverse is `x = v·p - b·q`, `y = -u·p + a·q`.
     let (s, t) = bezout(a, b)?;
     let (u, v) = (t.checked_neg()?, s);
     // Each half-plane `A·p + B·q + C >= 0`, put by the sign of `B`.
-    let (mut free, mut lower, mut upper) = (Vec::new(), Vec::new(), Vec::new());
+    let Scratch { free, lower, upper } = scratch;
+    free.clear();
+    lower.clear();
+    upper.clear();
     for h in polygon {
         let big_a = h.a.checked_mul(v)?.checked_sub(h.b.checked_mul(u)?)?;
         let big_b = h.b.checked_mul(a)?.checked_sub(h.a.checked_mul(b)?)?;
@@ -383,8 +469,8 @@ fn shadow(polygon: &[Half], a: i128, b: i128) -> Option<Option<(i128, i128)>> {
             _ => upper.push(row),
         }
     }
-    for &(al, bl, cl) in &lower {
-        for &(au, bu, cu) in &upper {
+    for &(al, bl, cl) in lower.iter() {
+        for &(au, bu, cu) in upper.iter() {
             if bl != 1 && bu != -1 {
                 return None;
             }
@@ -396,7 +482,7 @@ fn shadow(polygon: &[Half], a: i128, b: i128) -> Option<Option<(i128, i128)>> {
     }
     // `A·p + C >= 0` for each.
     let (mut lo, mut hi): (Option<i128>, Option<i128>) = (None, None);
-    for (pa, pc) in free {
+    for &(pa, pc) in free.iter() {
         match pa.signum() {
             0 if pc < 0 => return Some(None),
             0 => {}
@@ -413,6 +499,15 @@ fn shadow(polygon: &[Half], a: i128, b: i128) -> Option<Option<(i128, i128)>> {
     // The box bounds the polygon, so both ends are found (module note); else the join answers.
     let (lo, hi) = (lo?, hi?);
     Some((lo <= hi).then_some((lo, hi)))
+}
+
+/// The lists [`shadow`] writes, kept from one shadow to the next: the half-planes free of the
+/// eliminated coordinate and the conditions of the pairs, and the lower and upper bounds.
+#[derive(Default)]
+struct Scratch {
+    free: Vec<(i128, i128)>,
+    lower: Vec<(i128, i128, i128)>,
+    upper: Vec<(i128, i128, i128)>,
 }
 
 /// `(s, t)` with `s·a + t·b == 1`, for `a` and `b` coprime (extended Euclid).
@@ -502,8 +597,8 @@ mod tests {
 
     /// Random rows over two atoms `x` and `y`, with up to two atoms an equation defines and one
     /// atom of no row, each atom over up to three ranges: wherever the polygons answer, with no
-    /// allowance, each set is that of the points, and so wherever `project` answers, whose
-    /// answers are those within its allowance. The counts are printed, not asserted, since they
+    /// allowance, each set is that of the points, and so wherever `project` (the allowance of
+    /// rows with no plan) answers, whose answers are those within its allowance. The counts are printed, not asserted, since they
     /// depend on the draws (PROOF-plane-route-bounds): at this seed the polygons answer 2,962
     /// of 6,000, 1,666 of those with no point and 349 with a defined atom and a point, and
     /// decline the rest (a pair `2·y >= ..`, `-3·y >= ..`; a defined atom `2·x + 2·y`; an
@@ -582,8 +677,9 @@ mod tests {
                 }
                 None => declined += 1,
             }
-            // Within the allowance, the answer is the one above or none.
-            if let Some(sets) = project(&rows, &want, u64::MAX) {
+            // Within the allowance of rows with no plan, the answer is the one above or none.
+            let shape = Shape::of(&rows);
+            if let Some(sets) = shape.and_then(|s| project(&s, &rows, &want)) {
                 assert_eq!(Some(sets), all, "case {case}");
                 route += 1;
                 route_defined += usize::from(n_def > 0);
@@ -598,7 +694,8 @@ mod tests {
 
     /// The question of each test of the `chain` family of l01_39 (`x + c·y >= 1` or
     /// `y - x >= c`, with `a == x + y`) is answered here, at every width: its eliminations all
-    /// have a side of coefficient 1.
+    /// have a side of coefficient 1. With no allowance: whether `row_sums::project` takes them
+    /// is the allowance's matter (`Plan::project`).
     #[test]
     fn the_chain_questions_are_answered() {
         for m in [8i128, 64, 512, 1 << 40] {
@@ -624,7 +721,7 @@ mod tests {
                     ],
                     empty: false,
                 };
-                let sets = project(&rows, &[true; 3], u64::MAX).expect("answered");
+                let sets = polygons(&rows, &[true; 3], &mut { u64::MAX }).expect("answered");
                 assert!(
                     sets.iter()
                         .all(|s| s.as_ref().is_some_and(|s| s.len() <= 2))

@@ -483,19 +483,24 @@ pub(super) fn project(
         (each, Vec::new())
     };
     // Two atoms besides those an equation defines: the polygons' projections, whose cost does
-    // not grow with the widths of the ranges, where they are shown exact and number no more
-    // than the join's work (`plane::allowance`); else the join. The test controls of the
-    // join's limit ask for the join itself, so they skip this.
+    // not grow with the widths of the ranges, where they are shown exact and cost no more than
+    // the join's work (`Plan::project`, `plane::project`); else the join. The test controls of
+    // the join's limit ask for the join itself, so they skip this.
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
-    if !join_asked && let Some(sets) = plane::project(&rows, &want, JOIN_LIMIT) {
-        return Ok(each_of(sets));
-    }
-    let answer = join_run(&rows, &want, move |plan, rows, want, work| {
-        Some(each_of(plan.project(rows, want, work)?))
+    let shape = if join_asked {
+        None
+    } else {
+        plane::Shape::of(&rows)
+    };
+    let answer = join_run(&rows, &want, |plan, rows, want, work| {
+        plan.project(rows, want, work, shape.as_ref())
     });
     match answer {
-        Ok(t) => Ok(t),
-        Err(Stop::NoPlan) => old(),
+        Ok(sets) => Ok(each_of(sets)),
+        Err(Stop::NoPlan) => match shape.and_then(|s| plane::project(&s, &rows, &want)) {
+            Some(sets) => Ok(each_of(sets)),
+            None => old(),
+        },
         // Complexity tradeoff: the solver's projection here is the union of the hulls of its
         // disjuncts, coarser than the exact set (FAIL-projection-not-exact: `[1, 5]` where the
         // set is {1, 3, 5}); a refusal keeps the written conditions, which is sound, where a
@@ -570,6 +575,10 @@ fn after_stop<T>(old: impl FnOnce() -> Result<T, Refusal>) -> Result<T, Refusal>
 // to 250 ms over its worst time per unit.
 pub const JOIN_LIMIT: u64 = 20_000_000;
 
+/// The polygons' allowance in a route (that of their last try), the units of all their tries,
+/// and whether they answered.
+pub type Route = (u64, u64, bool);
+
 thread_local! {
     /// Test control: the solver alone, with the join not run, for the tests that compare the
     /// two (PRES-overlap-fast). Kept here and re-exported by the parent, which does not read
@@ -584,6 +593,9 @@ thread_local! {
     /// The units the last join on this thread spent and whether it answered; `None` where
     /// the last formula of the class had no plan.
     pub static JOINED: Cell<Option<(u64, bool)>> = const { Cell::new(None) };
+    /// The last polygons `Plan::project` tried on this thread: the allowance of their last
+    /// try, the units of all their tries, and whether they answered.
+    pub static ROUTE: Cell<Option<Route>> =const { Cell::new(None) };
     /// Set while the solver runs after a join that stopped ([`after_stop`]).
     static AFTER_STOP: Cell<bool> = const { Cell::new(false) };
 }
@@ -2871,35 +2883,11 @@ impl Plan {
             joins.fused.push(f);
             joins.at[i + 1].fuse = Some(Fuse::Second);
         }
-        let plan = Plan {
+        Some(Plan {
             groups,
             joins,
             free,
-        };
-        // The first of the two facts the proof of `plane::allowance` rests on, checked
-        // wherever the tests plan a join (TEST-plane-allowance-invariants).
-        debug_assert!(plan.covers(rows), "an atom of a row in no group, or in two");
-        Some(plan)
-    }
-
-    /// Whether each atom of a row lies in exactly one group, and each other atom is `free`:
-    /// the first fact the proof of `plane::allowance` rests on, read from the rows' terms, not
-    /// from the signatures the groups are made from.
-    // Complexity tradeoff: O(a + t) for a atoms and t terms, no more than `build` itself.
-    fn covers(&self, rows: &Rows) -> bool {
-        let mut used = vec![false; rows.atoms.len()];
-        for row in &rows.rows {
-            for &(j, _) in &row.terms {
-                used[j] = true;
-            }
-        }
-        let mut seen = vec![0usize; rows.atoms.len()];
-        for &a in &self.groups.atoms {
-            seen[a] += 1;
-        }
-        (seen.iter().zip(&used)).all(|(&s, &u)| s == usize::from(u))
-            && self.free.iter().all(|&a| !used[a])
-            && self.free.len() + self.groups.atoms.len() == rows.atoms.len()
+        })
     }
 }
 
@@ -3276,38 +3264,53 @@ impl Plan {
     /// The forward pass, or `None` where the allowance runs out; `Some(None)` where the rows
     /// have no point.
     fn forward(&self, rows: &Rows, work: &mut Work) -> Option<Option<Tables>> {
-        let mut prefix: Vec<Set> = Vec::with_capacity(self.groups.atoms.len() + self.len());
-        for (i, g) in (0..self.len()).map(|i| self.group(i)).enumerate() {
-            debug_assert_eq!(prefix.len(), self.table(i));
-            prefix.push(Set::one(0));
-            for k in 0..g.atoms.len() {
-                let charged = work.left;
-                let mut next = self.add(prefix.last()?, g.ranges(rows, k), g.delta(k), work)?;
-                let (lo, hi) = g.window(k + 1);
-                work.spend(1)?;
-                // The second fact the proof of `plane::allowance` rests on, checked wherever
-                // the tests run a join (TEST-plane-allowance-invariants): each atom of a group
-                // is charged at least one unit per range and one more before the pass can stop
-                // early (an empty layer, below), its share of the allowance; with the first
-                // fact ([`Plan::covers`]) the shares sum to the allowance.
-                debug_assert!(
-                    charged - work.left > rows.domains[g.atoms[k]].len() as u64,
-                    "atom {} charged {} units for {} ranges",
-                    g.atoms[k],
-                    charged - work.left,
-                    rows.domains[g.atoms[k]].len()
-                );
-                if (next.min())
-                    .zip(next.max())
-                    .is_some_and(|(a, b)| a < lo || b > hi)
-                {
-                    work.spend(next.words() + 1)?;
-                    next.keep(lo, hi);
-                }
-                next = Set::settled(next.lit, next.fill);
-                prefix.push(next);
+        let prefix = self.prefixes(rows, work)?;
+        self.layers(prefix, work)
+    }
+
+    /// The first part of the forward pass: each group's prefix tables, from `Set::one(0)`,
+    /// atom by atom ([`Plan::step`]), with no early end but a stop at the limit (`None`).
+    fn prefixes(&self, rows: &Rows, work: &mut Work) -> Option<Vec<Set>> {
+        let firsts = self.firsts(rows, work)?;
+        self.rest(rows, firsts, work)
+    }
+
+    /// The prefix tables' first part: each group's `Set::one(0)` and its table of its first
+    /// atom, group by group; `None` at the limit. [`Plan::rest`] builds the others. Each
+    /// step's charge depends only on the table before it in its group, so the units of the two
+    /// parts together are those of the tables built group by group, the order of the join.
+    fn firsts(&self, rows: &Rows, work: &mut Work) -> Option<Vec<Vec<Set>>> {
+        let mut tabs = Vec::with_capacity(self.len());
+        for g in (0..self.len()).map(|i| self.group(i)) {
+            let mut t = Vec::with_capacity(g.atoms.len() + 1);
+            t.push(Set::one(0));
+            if !g.atoms.is_empty() {
+                let next = self.step(rows, g, 0, &t[0], work)?;
+                t.push(next);
             }
+            tabs.push(t);
         }
+        Some(tabs)
+    }
+
+    /// The prefix tables after [`Plan::firsts`], in the order `Plan::table` reads them;
+    /// `None` at the limit.
+    fn rest(&self, rows: &Rows, tabs: Vec<Vec<Set>>, work: &mut Work) -> Option<Vec<Set>> {
+        let mut prefix: Vec<Set> = Vec::with_capacity(self.groups.atoms.len() + self.len());
+        for (i, mut t) in tabs.into_iter().enumerate() {
+            let g = self.group(i);
+            debug_assert_eq!(prefix.len(), self.table(i));
+            for k in t.len() - 1..g.atoms.len() {
+                let next = self.step(rows, g, k, t.last()?, work)?;
+                t.push(next);
+            }
+            prefix.append(&mut t);
+        }
+        Some(prefix)
+    }
+
+    /// The rest of the forward pass, from the prefix tables: the layers of the join.
+    fn layers(&self, prefix: Vec<Set>, work: &mut Work) -> Option<Option<Tables>> {
         let mut layers = vec![Set::one(0)];
         let mut met = Vec::with_capacity(self.len());
         for i in 0..self.len() {
@@ -3357,12 +3360,33 @@ impl Plan {
         }))
     }
 
+    /// The table of group `g`'s first k + 1 atoms from `t`, that of its first k: atom k added
+    /// ([`Plan::add`]), then kept to the window of the sums the atoms after it can complete.
+    fn step(&self, rows: &Rows, g: Group, k: usize, t: &Set, work: &mut Work) -> Option<Set> {
+        let mut next = self.add(t, g.ranges(rows, k), g.delta(k), work)?;
+        let (lo, hi) = g.window(k + 1);
+        work.spend(1)?;
+        if (next.min())
+            .zip(next.max())
+            .is_some_and(|(a, b)| a < lo || b > hi)
+        {
+            work.spend(next.words() + 1)?;
+            next.keep(lo, hi);
+        }
+        Some(Set::settled(next.lit, next.fill))
+    }
+
     /// `t` with the atom of step `st` added: the union over its values v of `t` shifted by v's
     /// key. A range of n values is added by doubling: the shifts by 1, 2, 4, .. steps, merged,
     /// in `bits(n - 1)` rounds (each value is reached by the binary digits of its distance
     /// from the range's first).
     // Complexity tradeoff: value by value costs n shifts and unions of the table for a range
-    // of n values; doubling costs log n.
+    // of n values; doubling costs log n. The ranges' sets are merged as a binary counter
+    // merges (each set enters at level 0; two sets of one level are merged into one of the
+    // next), so each word is merged O(log r) times for r ranges, O(N log r) for N words in
+    // all, with at most log r sets held at once. Merged one at a time into one growing set,
+    // as before PERF-plane-allowance-join-bound, each range cost the words of the union so
+    // far, O(r·N): 53 times the instructions at 8n on the ranges of `grid(1, n, 40)`.
     fn add(
         &self,
         t: &Set,
@@ -3370,32 +3394,37 @@ impl Plan {
         delta: i64,
         work: &mut Work,
     ) -> Option<Set> {
-        let mut acc: Option<Cow<Set>> = None;
+        let mut levels: Vec<(u32, Cow<Set>)> = Vec::new();
         for (_, off, n) in ranges {
-            if off == 0 && n == 1 {
+            let mut part = if off == 0 && n == 1 {
                 // `t` itself, charged as its copy.
                 work.spend(t.words() + 1)?;
-                acc = Some(match acc {
-                    None => Cow::Borrowed(t),
-                    Some(a) => Cow::Owned(work.union(&a, t)?),
-                });
-                continue;
-            }
-            let mut u = work.shift(t, off)?;
-            let mut done = 1;
-            while done < n {
-                let s = done.min(n - done);
-                u = work.union_shifted(&u, s * delta)?;
-                if u.lit.words.len() >= MIN_FILL {
-                    work.spend(u.words() + 1)?;
-                    u = Set::settled(u.lit, u.fill);
+                (0, Cow::Borrowed(t))
+            } else {
+                let mut u = work.shift(t, off)?;
+                let mut done = 1;
+                while done < n {
+                    let s = done.min(n - done);
+                    u = work.union_shifted(&u, s * delta)?;
+                    if u.lit.words.len() >= MIN_FILL {
+                        work.spend(u.words() + 1)?;
+                        u = Set::settled(u.lit, u.fill);
+                    }
+                    done += s;
                 }
-                done += s;
+                (0, Cow::Owned(u))
+            };
+            while let Some((level, a)) = levels.pop_if(|(level, _)| *level == part.0) {
+                part = (level + 1, Cow::Owned(work.union(&a, &part.1)?));
             }
-            acc = Some(Cow::Owned(match acc {
-                None => u,
-                Some(a) => work.union(&a, &u)?,
-            }));
+            levels.push(part);
+        }
+        let mut acc: Option<Cow<Set>> = None;
+        while let Some((_, a)) = levels.pop() {
+            acc = Some(match acc {
+                None => a,
+                Some(b) => Cow::Owned(work.union(&a, &b)?),
+            });
         }
         Some(acc.map_or_else(Set::default, Cow::into_owned))
     }
@@ -3574,16 +3603,75 @@ impl Plan {
         Some(())
     }
 
-    /// Each wanted atom's set of values over the points of the rows.
+    /// Each wanted atom's set of values over the points of the rows. With `shape`, the rows
+    /// read as polygons (`plane::Shape`), the polygons are tried twice: after the first table
+    /// of each group (`Plan::firsts`), allowed the units L those cost, then after the rest
+    /// (`Plan::rest`), allowed the units P of all the tables less what the first try spent;
+    /// where either part stops at the limit, the try after it is allowed all the units `work`
+    /// had. Where they decline, the join goes on from the same tables.
+    ///
+    /// Proof that the polygons, where they answer, cost no more than the join they replace,
+    /// in units of `Work` (PROOF-plane-route-bounds, PERF-plane-allowance-join-bound, author
+    /// P246). The join with no polygons is this function with `shape` `None`: it builds the
+    /// same prefix tables first, by the same code, whose charges depend only on the table
+    /// before in the same group (never on what is left or on the order of the groups), and
+    /// neither part has an early end but a stop at the limit. So where the tables are built,
+    /// the join spends at least P, and the polygons, charged at most L ≤ P in the first try
+    /// and at most P less that in the second, cost no more; where a part stops, the join
+    /// stops too (a refusal) having spent its limit, and the polygons are charged at most that
+    /// limit over both tries. A shape that declines without running out declines again at the
+    /// same point in the second try, so that try costs at most what the first spent.
+    /// The polygons' units are their measured cost in the join's units (`plane::NODE_UNITS`
+    /// and the constants beside it, A96), not counted steps: a node of theirs and a unit of
+    /// the join are measured on the same build by
+    /// `tests::bench::the_route_and_the_join_on_both_sides_of_the_allowance`.
+    // Complexity tradeoff: before PERF-plane-allowance-join-bound the polygons ran before the
+    // join, allowed a bound read from the plan (the first atom's table of each group and the
+    // ranges after it, 198,275 units on `grid(1, 64, 40)`), each node charged one unit; the
+    // bound was below their need where only they answer, and a node cost about 300 units of
+    // time, so a formula past the join's limit took them up to 40 s. Here the allowance is the
+    // join's own first part, never paid twice: where the polygons answer, the time is at most
+    // twice the tables' (theirs and the polygons'); where they decline, the join's time plus
+    // at most the tables' again, at most twice the join's; where the tables stop, the
+    // polygons may take up to the limit's time again, so a refusal takes at most twice the
+    // join's limit. One try after all the tables was the first form; on l01_39's `chain`
+    // family, whose questions the polygons answer from about 2,300 units each where the
+    // tables cost about 86,000 (9,240,944 against 245,868 units over the bench's 107), it
+    // raised `chain_scales` from 9.19 to 9.67 times the instructions at 8n; the first try
+    // after the first tables answers those before the rest are built.
     fn project(
         &self,
         rows: &Rows,
         want: &[bool],
         work: &mut Work,
+        shape: Option<&plane::Shape>,
     ) -> Option<Vec<Option<IntervalSet>>> {
         let fin = |v: i128| End::Fin(Num::from(v));
         let mut sets: Vec<Option<IntervalSet>> = vec![None; rows.atoms.len()];
-        let Some(t) = self.forward(rows, work)? else {
+        let before = work.left;
+        // The polygons' units so far, and the most the tables built so far allow them.
+        let mut spent = 0;
+        let tried = |allowed: u64, spent: &mut u64| {
+            let shape = shape?;
+            let mut left = allowed - *spent;
+            let got = shape.polygons(rows, want, &mut left);
+            *spent = allowed - left;
+            ROUTE.with(|r| r.set(Some((allowed, *spent, got.is_some()))));
+            got
+        };
+        let firsts = self.firsts(rows, work);
+        let allowed = before - if firsts.is_some() { work.left } else { 0 };
+        if let Some(got) = tried(allowed, &mut spent) {
+            return Some(got);
+        }
+        let prefix = self.rest(rows, firsts?, work);
+        let more = before - if prefix.is_some() { work.left } else { 0 };
+        if more > allowed
+            && let Some(got) = tried(more, &mut spent)
+        {
+            return Some(got);
+        }
+        let Some(t) = self.layers(prefix?, work)? else {
             for (a, w) in want.iter().enumerate() {
                 if *w {
                     sets[a] = Some(IntervalSet::empty());
@@ -4051,7 +4139,7 @@ mod tests {
         Some((sets.into_iter().map(|s| s.expect("a set")).collect(), units))
     }
 
-    /// Each atom's set by the polygons with no allowance, and the nodes they visited; `None`
+    /// Each atom's set by the polygons with no allowance, and the units they spent; `None`
     /// where they decline.
     pub(super) fn by_polygons(rows: &Rows) -> Option<(Vec<IntervalSet>, u64)> {
         let mut left = u64::MAX;
@@ -4087,12 +4175,24 @@ mod tests {
         }
     }
 
-    /// The bound `plane::allowance` proves, checked on the families of [`grid`] on both sides
-    /// of it (PROOF-plane-route-bounds): wherever the join answers, it spends at least the
-    /// allowance; the polygons with no allowance and the join give the same sets; and where
-    /// `plane::project` answers, its sets are those, from no more nodes than the join spent.
-    /// Some of these the polygons alone would answer from more nodes than the join's units
-    /// (the claim the allowance replaces did not hold), and some the route takes.
+    /// `project` of `rows` onto every atom, with the record of the polygons it tried
+    /// ([`ROUTE`]): the sets, `None` where it refuses, and the allowance, the units spent and
+    /// whether they answered; the record `None` where it tried none.
+    pub(super) fn by_default(rows: Rows) -> (Option<Vec<IntervalSet>>, Option<Route>) {
+        let syms = rows.atoms.clone();
+        ROUTE.with(|r| r.set(None));
+        let got = project(rows, &syms, || Err(Refusal::Work)).ok();
+        let sets = got.map(|g| g.0.into_iter().map(|s| s.expect("a set")).collect());
+        (sets, ROUTE.with(Cell::get))
+    }
+
+    /// The bound `Plan::project` proves, checked on the families of [`grid`] on both sides of
+    /// it (PROOF-plane-route-bounds): wherever the join answers, it spends at least the
+    /// polygons' allowance; the polygons with no allowance and the join give the same sets;
+    /// over their tries in `project` the polygons spend at most the allowance, and they
+    /// decline only where their units with no allowance did not fit in it. Some of these the
+    /// polygons alone would answer at more units than the join's (so the allowance is needed),
+    /// and some the polygons take.
     #[test]
     fn the_polygons_of_the_route_are_never_more_than_the_join_spends() {
         let (mut taken, mut past) = (0, 0);
@@ -4100,26 +4200,28 @@ mod tests {
             for r in [1, 2, 3, 4, 6, 8, 16, 64] {
                 for w in [1, 5, 40] {
                     let what = format!("family {family}, r = {r}, w = {w}");
-                    let rows = grid(family, r, w);
-                    let allowed = plane::allowance(&rows);
-                    let want = vec![true; rows.atoms.len()];
-                    let routed = plane::project(&rows, &want, JOIN_LIMIT);
-                    let (all, nodes) = by_polygons(&rows).expect("shown exact");
-                    let (joined, units) = by_join(rows).expect("a plan");
+                    let (all, cost) = by_polygons(&grid(family, r, w)).expect("shown exact");
+                    let (sets, route) = by_default(grid(family, r, w));
+                    let sets = sets.expect("an answer");
+                    let (joined, units) = by_join(grid(family, r, w)).expect("a plan");
+                    let (allowed, spent, answered) = route.expect("the polygons tried");
                     assert!(
                         allowed <= units,
                         "{what}: allowance {allowed}, join {units}"
                     );
                     assert_eq!(all, joined, "{what}");
-                    match routed {
-                        Some(sets) => {
-                            taken += 1;
-                            assert!(nodes <= units, "{what}: {nodes} nodes, join {units}");
-                            assert_eq!(sets, (all.into_iter().map(Some).collect::<Vec<_>>()));
-                        }
-                        None => assert!(nodes > allowed, "{what}: {nodes} nodes, {allowed}"),
+                    assert_eq!(sets, joined, "{what}");
+                    // Over both tries the polygons spend at most the allowance; a first try
+                    // that ran out spends again in the second, so an answer spends at least
+                    // `cost`, and a decline means `cost` did not fit in what was left.
+                    assert!(spent <= allowed, "{what}: {spent} units, {allowed}");
+                    if answered {
+                        taken += 1;
+                        assert!(cost <= spent, "{what}: {cost} units, {spent} spent");
+                    } else {
+                        assert!(cost + spent > allowed, "{what}: {cost}, {spent}, {allowed}");
                     }
-                    past += usize::from(nodes > units);
+                    past += usize::from(cost > units);
                 }
             }
         }
@@ -4128,8 +4230,9 @@ mod tests {
 
     /// Seeded random rows over `x` and `y` with two or three defined atoms, the ranges up to
     /// 300 values wide for `x` and `y` and 1,500 for the defined atoms, too wide to try every
-    /// point: wherever both answer, the polygons with no allowance, the route and the join give
-    /// the same sets, and wherever the join answers it spends at least the allowance. The
+    /// point: wherever they answer, the polygons with no allowance, `project` and the join with
+    /// no limit give the same sets, and wherever the join answers it spends at least the
+    /// polygons' allowance in `project`, and at least their units where they answer there. The
     /// counts of each are printed, not asserted, since they depend on the draws.
     #[test]
     fn the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms() {
@@ -4150,7 +4253,7 @@ mod tests {
             }
             out
         };
-        let (mut polygons, mut routed, mut joined, mut both) = (0, 0, 0, 0);
+        let (mut polygons, mut routed, mut joined, mut both, mut refused) = (0, 0, 0, 0, 0);
         let draws = 400;
         for case in 0..draws {
             let n_def = 2 + (case % 2);
@@ -4177,189 +4280,198 @@ mod tests {
                 rows.push((terms, next(41) as i128 - 20, true));
             }
             let make = || rows_of(domains.clone(), rows.clone());
-            let want = vec![true; 2 + n_def];
-            let all = by_polygons(&make()).map(|(s, _)| s);
-            let route = plane::project(&make(), &want, JOIN_LIMIT);
-            let allowed = plane::allowance(&make());
+            let all = by_polygons(&make());
+            let (sets, route) = by_default(make());
             let join = by_join(make());
             polygons += usize::from(all.is_some());
-            routed += usize::from(route.is_some());
+            let answered = route.is_some_and(|r| r.2);
+            routed += usize::from(answered);
+            refused += usize::from(sets.is_none());
+            if let (Some(all), Some(sets)) = (&all, &sets) {
+                assert_eq!(&all.0, sets, "case {case}");
+            }
             if let Some((joined_sets, units)) = join {
                 joined += 1;
-                assert!(
-                    allowed <= units,
-                    "case {case}: allowance {allowed}, join {units}"
-                );
+                match &sets {
+                    Some(sets) => assert_eq!(sets, &joined_sets, "case {case}"),
+                    // A refusal is the join's past its limit.
+                    None => assert!(units > JOIN_LIMIT, "case {case}: refused at {units}"),
+                }
+                if let Some((allowed, spent, answered)) = route {
+                    assert!(
+                        allowed <= units,
+                        "case {case}: allowance {allowed}, join {units}"
+                    );
+                    if answered {
+                        assert!(spent <= units, "case {case}: {spent} units, join {units}");
+                    }
+                }
                 if let Some(all) = &all {
                     both += 1;
-                    assert_eq!(all, &joined_sets, "case {case}");
+                    assert_eq!(all.0, joined_sets, "case {case}");
                 }
-                if let Some(route) = route {
-                    let route: Vec<_> = route.into_iter().map(|s| s.expect("wanted")).collect();
-                    assert_eq!(route, joined_sets, "case {case}");
-                }
-            } else if let (Some(all), Some(route)) = (&all, route) {
-                let route: Vec<_> = route.into_iter().map(|s| s.expect("wanted")).collect();
-                assert_eq!(&route, all, "case {case}");
             }
         }
         eprintln!(
             "{draws} draws: polygons answered {polygons}, route {routed}, join {joined}, \
-             polygons and join both {both}"
+             polygons and join both {both}, refused {refused}"
         );
     }
 
-    /// `rows`' plan meets the two facts the proof of `plane::allowance` rests on: each atom of
-    /// a row in one group ([`Plan::covers`]), and the forward pass charging at least the
-    /// allowance in all. The debug assertions in `Plan::build` and `Plan::forward` check the
-    /// first and, atom by atom, the second, in every test that runs a join.
-    fn meets_the_allowance_facts(rows: &Rows, what: &str) {
-        let want = vec![true; rows.atoms.len()];
-        let Some(plan) = Plan::of(rows, &want) else {
-            return;
-        };
-        assert!(plan.covers(rows), "{what}: an atom of a row in no group");
-        let mut work = Work::new(u64::MAX);
-        assert!(plan.forward(rows, &mut work).is_some(), "{what}: no limit");
-        let (spent, allowed) = (u64::MAX - work.left, plane::allowance(rows));
-        assert!(
-            spent >= allowed,
-            "{what}: spent {spent}, allowance {allowed}"
-        );
-    }
-
-    /// The two facts the proof of `plane::allowance` rests on (TEST-plane-allowance-invariants),
-    /// on a case of each kind the proof names (an atom of one value, charged as a copy of the
-    /// table; an atom of no row, `free`; two atoms of one group; groups split into fused
-    /// pairs; the families of [`grid`]) and on seeded random rows. The test profile keeps debug
-    /// assertions (`profile.dev`), so the checks inside `Plan::build` and `Plan::forward` run
-    /// as well; only they check the second fact atom by atom, which the total here can miss
-    /// where another atom is charged more than its share.
+    /// PERF-plane-allowance-join-bound: the polygons answer `grid(1, 64, 40)` from 8,192
+    /// nodes, while the join passes its limit (with no limit it spends 920,638,974 units).
+    /// Its prefix tables cost 7,544,198 units, under the limit, and the polygons, allowed
+    /// that much, answer; the later layers, which pass the limit, never run.
     #[test]
-    fn every_plan_meets_the_facts_the_allowance_rests_on() {
-        let shapes = [
-            // `x` of one value, `x + y - 6 >= 0`.
-            rows_of(
-                vec![vec![(5, 5)], vec![(0, 3)]],
-                vec![(vec![(0, 1), (1, 1)], -6, false)],
-            ),
-            // `a2` in no row.
-            rows_of(
-                vec![vec![(0, 4)], vec![(0, 4)], vec![(1, 2)]],
-                vec![(vec![(0, 1), (1, -1)], 0, false)],
-            ),
-            // `x` and `y` of one signature, in one group, over two ranges each.
-            rows_of(
-                vec![vec![(0, 2), (7, 9)], vec![(1, 1), (4, 6)]],
-                vec![(vec![(0, 2), (1, -1)], 1, true)],
-            ),
-        ];
-        for (i, rows) in shapes.iter().enumerate() {
-            meets_the_allowance_facts(rows, &format!("shape {i}"));
-        }
-        // `a0 - a1 - a2 == 0` opened by `a0`'s group, `a1 + 2·a2 + a3 - 3 >= 0` opening at the
-        // group of `a1` and `a2`, whose ratios 1 and 2 split it into a fused pair, and closing
-        // at `a3`'s group after it.
-        let pair = rows_of(
-            vec![vec![(0, 10)], vec![(0, 3)], vec![(0, 3)], vec![(-2, 2)]],
-            vec![
-                (vec![(0, 1), (1, -1), (2, -1)], 0, true),
-                (vec![(1, 1), (2, 2), (3, 1)], -3, false),
-            ],
+    fn plane_answers_past_the_join_limit() {
+        let rows = grid(1, 64, 40);
+        let syms = rows.atoms.clone();
+        ROUTE.with(|r| r.set(None));
+        let got = project(rows, &syms, || Err(Refusal::Work));
+        eprintln!("route {:?}", ROUTE.with(Cell::get));
+        assert!(
+            got.is_ok(),
+            "refused where 1ff9a3b61's route answered from 8,192 nodes"
         );
-        let plan = Plan::of(&pair, &[true; 4]).expect("a plan");
-        assert!(!plan.joins.fused.is_empty(), "a fused pair");
-        meets_the_allowance_facts(&pair, "fused pair");
-        for family in 0..4 {
-            for (r, w) in [(1, 1), (3, 5), (16, 1), (64, 40)] {
-                let what = format!("grid({family}, {r}, {w})");
-                meets_the_allowance_facts(&grid(family, r, w), &what);
-            }
-        }
-        let mut seed = 0x007E_57A1_101A_4CE5_u64;
-        let mut next = move |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
-        let (mut planned, mut fused, draws) = (0, 0, 500);
-        for case in 0..draws {
-            let n = 2 + next(4) as usize;
-            let domains: Vec<Vec<(i128, i128)>> = (0..n)
-                .map(|_| {
-                    let mut at = next(7) as i128 - 3;
-                    let mut out = Vec::new();
-                    for _ in 0..1 + next(3) {
-                        let hi = at + next(5) as i128;
-                        out.push((at, hi));
-                        at = hi + 2 + next(3) as i128;
-                    }
-                    out
-                })
-                .collect();
-            let mut rs = Vec::new();
-            for _ in 0..1 + next(3) {
-                let mut terms: Vec<(usize, i128)> = Vec::new();
-                for j in 0..n {
-                    if next(2) == 0 {
-                        let c = 1 + next(3) as i128;
-                        terms.push((j, if next(2) == 0 { c } else { -c }));
-                    }
-                }
-                if !terms.is_empty() {
-                    rs.push((terms, next(11) as i128 - 5, next(3) == 0));
-                }
-            }
-            if rs.is_empty() {
-                continue;
-            }
-            let rows = rows_of(domains, rs);
-            let want = vec![true; n];
-            if let Some(plan) = Plan::of(&rows, &want) {
-                planned += 1;
-                fused += usize::from(!plan.joins.fused.is_empty());
-            }
-            meets_the_allowance_facts(&rows, &format!("case {case}"));
-        }
-        eprintln!("{draws} draws: planned {planned}, with fused pairs {fused}");
     }
 
-    /// Both sides of the switch between the polygons and the join (`plane::allowance`, A96),
+    /// The latency of a refusal (author P239, A99): `x` and `y` over `r` ranges of 40 values,
+    /// `d` over every other value, `d == x + y` and `x - y >= 0`, past the join's limit at
+    /// `r = 64` (511,045,523 units with no limit) and past the polygons' allowance too. The
+    /// polygons stop at their allowance, the units of the prefix tables, and `project`
+    /// refuses; before this row a bound read from the plan let them run on to an answer in
+    /// 0.55 s at `r = 64` and 8.5 s at `r = 256`. The time of the join alone at the same
+    /// limit is printed beside, not compared: it changes with the load.
+    #[test]
+    fn a_refusal_past_both_limits_is_quick() {
+        let r = 64i128;
+        let xs: Vec<(i128, i128)> = (0..r).map(|i| (i * 43, i * 43 + 39)).collect();
+        let ds: Vec<(i128, i128)> = (0..=r * 43).map(|j| (2 * j, 2 * j)).collect();
+        let make = || {
+            rows_of(
+                vec![xs.clone(), xs.clone(), ds.clone()],
+                vec![
+                    (vec![(2, 1), (0, -1), (1, -1)], 0, true),
+                    (vec![(0, 1), (1, -1)], 0, false),
+                ],
+            )
+        };
+        let syms = make().atoms;
+        let (rows, alone) = (make(), make());
+        ROUTE.with(|r| r.set(None));
+        let t = std::time::Instant::now();
+        let got = project(rows, &syms, || Err(Refusal::Work));
+        let took = t.elapsed();
+        let route = ROUTE.with(Cell::get);
+        // The join alone, at the same limit, for the time printed beside.
+        JOIN_LIMIT_SET.with(|o| o.set(Some(JOIN_LIMIT)));
+        let t = std::time::Instant::now();
+        let joined = project(alone, &syms, || Err(Refusal::Work));
+        JOIN_LIMIT_SET.with(|o| o.set(None));
+        eprintln!(
+            "polygons (allowance, spent, answered) {route:?}, refused in {took:?}; the join \
+             alone refused in {:?}",
+            t.elapsed()
+        );
+        assert!(joined.is_err());
+        assert!(got.is_err(), "answered: {route:?}");
+        assert!(
+            route.is_some_and(|(allowed, spent, answered)| {
+                !answered && spent <= allowed && allowed <= JOIN_LIMIT
+            }),
+            "{route:?}"
+        );
+    }
+
+    /// Both sides of the switch between the polygons and the join (`Plan::project`, A96),
     /// run by `tools/run_tests.sh --bench`.
     mod bench {
         use std::time::Instant;
 
         use super::*;
 
+        /// `grid(family, r, w)` with `extra` more rows, `x + y + k >= 0` and `-x - y + k >= 0`
+        /// by turns, that no point meets the edge of: each a half-plane more in every polygon,
+        /// half of them lower sides and half upper, so that their pairs are the most there are.
+        fn padded(family: usize, r: i128, w: i128, extra: usize) -> Rows {
+            let mut rows = grid(family, r, w);
+            for k in 0..extra {
+                let s = if k % 2 == 0 { 1 } else { -1 };
+                rows.rows.push(Row {
+                    terms: vec![(0, s), (1, s)],
+                    k: 1_000_000 + k as i128,
+                    eq: false,
+                });
+            }
+            rows
+        }
+
         /// The polygons with no allowance, the join with no limit and the default path timed
-        /// on families of [`grid`] where the route answers and where the join does, the
-        /// default's sets checked against the join's. The times are printed, not asserted:
-        /// the switch is set by the proved bound, not by them.
+        /// on families of [`grid`] where the polygons answer and where the join does, with 0
+        /// to 16 rows more for polygons of more half-planes, the default's sets checked
+        /// against the join's. Printed for each: the polygons' time per unit they are charged
+        /// and the join's time per unit, which the units of `plane` are measured to keep the
+        /// first at most the second (PERF-plane-shadow-pairs). The times are printed, not
+        /// asserted: they change with the load, and the switch is set by the proved bound.
         #[test]
         fn the_route_and_the_join_on_both_sides_of_the_allowance() {
-            for (family, r, w) in [(0, 2, 1), (0, 64, 1), (3, 2, 1), (3, 64, 1), (2, 64, 5)] {
-                let what = format!("family {family}, r = {r}, w = {w}");
-                let rows = grid(family, r, w);
-                let syms = rows.atoms.clone();
-                let routed = plane::project(&rows, &vec![true; syms.len()], JOIN_LIMIT).is_some();
+            let cases = [
+                (0, 2, 1, 0),
+                (0, 64, 1, 0),
+                (3, 2, 1, 0),
+                (3, 64, 1, 0),
+                (3, 64, 1, 16),
+                (2, 64, 5, 0),
+                (1, 16, 40, 0),
+                (1, 16, 40, 4),
+            ];
+            for (family, r, w, extra) in cases {
+                let what = format!("family {family}, r = {r}, w = {w}, {extra} rows more");
                 let t = Instant::now();
-                let (_, nodes) = by_polygons(&rows).expect("shown exact");
+                let (_, cost) = by_polygons(&padded(family, r, w, extra)).expect("shown exact");
                 let polygons_ns = t.elapsed().as_nanos();
                 let t = Instant::now();
-                let (joined, units) = by_join(grid(family, r, w)).expect("a plan");
+                let (joined, units) = by_join(padded(family, r, w, extra)).expect("a plan");
                 let join_ns = t.elapsed().as_nanos();
                 let t = Instant::now();
-                let got = project(rows, &syms, || Err(Refusal::Work)).expect("an answer");
+                let (got, route) = by_default(padded(family, r, w, extra));
                 let default_ns = t.elapsed().as_nanos();
-                let got: Vec<_> = got.0.into_iter().map(|s| s.expect("a set")).collect();
-                assert_eq!(got, joined, "{what}");
+                assert_eq!(got, Some(joined), "{what}");
+                let per = |ns: u128, n: u64| ns as f64 / n.max(1) as f64;
                 eprintln!(
-                    "switch: {what}: polygons {nodes} nodes in {polygons_ns} ns, join {units} \
-                     units in {join_ns} ns, default {default_ns} ns ({})",
-                    if routed { "the route" } else { "the join" }
+                    "switch: {what}: polygons {cost} units in {polygons_ns} ns ({:.2} ns per \
+                     unit), join {units} units in {join_ns} ns ({:.2} ns per unit), default \
+                     {default_ns} ns, polygons in it (allowance, spent, answered) {route:?}",
+                    per(polygons_ns, cost),
+                    per(join_ns, units),
                 );
             }
+        }
+
+        /// `x` over `n` ranges of 40 values, 43 apart, `y` over one, `d == x + y` and
+        /// `x - y >= 0`, `d` over one range wide enough for every sum: `n` boxes.
+        fn strip(n: i128) -> Rows {
+            let xs = (0..n).map(|i| (i * 43, i * 43 + 39)).collect();
+            rows_of(
+                vec![xs, vec![(0, 39)], vec![(-1, 43 * n + 40)]],
+                vec![
+                    (vec![(2, 1), (0, -1), (1, -1)], 0, true),
+                    (vec![(0, 1), (1, -1)], 0, false),
+                ],
+            )
+        }
+
+        /// The polygons with no allowance, and the default path (the prefix tables, then the
+        /// polygons, allowed what the tables cost), on [`strip`]: both linear in the boxes.
+        #[test]
+        fn the_route_after_the_prefix_tables_scales() {
+            crate::scaling::check_order("the polygons of n boxes", 64, 1, |n| {
+                assert!(by_polygons(&strip(n as i128)).is_some());
+            });
+            crate::scaling::check_order("the polygons after the prefix tables", 64, 1, |n| {
+                let (sets, route) = by_default(strip(n as i128));
+                assert!(sets.is_some() && route.is_some_and(|r| r.2), "{route:?}");
+            });
         }
     }
 }
