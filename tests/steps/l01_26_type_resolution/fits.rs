@@ -506,6 +506,7 @@ fn sig_of(
         own: own.iter().filter_map(|v| v.vars.first().cloned()).collect(),
         held: Default::default(),
         named: 0,
+        hull: None,
         facts: Facts::default(),
     };
     s.note_held();
@@ -588,6 +589,7 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
             own: own.iter().map(|v| (*v).into()).collect(),
             held: Default::default(),
             named: 0,
+            hull: None,
             facts: Facts::default(),
         };
         s.note_held();
@@ -643,6 +645,7 @@ pub(super) fn own_sig(
         own: names.iter().map(|v| v.as_str().into()).collect(),
         held: Default::default(),
         named: 0,
+        hull: None,
         facts: Facts::default(),
     };
     s.note_held();

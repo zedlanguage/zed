@@ -33,6 +33,27 @@ fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     });
 }
 
+/// Row RANGE-result-hull: each of `n` functions of a ranged parameter calls the one before it,
+/// so each call reads the hull of a signature (`call_hull`, one lookup) and each function takes
+/// one hull of its body (`hull_into`, COMPLEXITY.md C65): the check is linear in `n`. The text
+/// is read and resolved before the run is timed, so the run times the checker alone.
+#[test]
+fn a_chain_of_ranged_functions_prints_each_hull_in_linear_time() {
+    use super::super::written::{hull_chain, hull_chain_sig};
+    use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
+    let n = 2000;
+    let units = scaling::inputs(n, |m| Resolved::new(&hull_chain(m)));
+    scaling::check("a chain of n functions of a ranged parameter", n, |m| {
+        let info = units[&m].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+        let last = hull_chain_sig(m - 1);
+        assert!(
+            info.sigs.values().any(|s| s.to_string() == last),
+            "no signature {last}"
+        );
+    });
+}
+
 /// An open and a closed set of `n` pieces, built inside the timed run as before the split.
 fn sets(n: usize) -> (IntervalSet, IntervalSet) {
     let mut rng = Rng::new(n as u64);

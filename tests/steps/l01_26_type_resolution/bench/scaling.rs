@@ -666,6 +666,7 @@ fn shapes_of_variables(
             .collect(),
         held: Default::default(),
         named: 0,
+        hull: None,
         facts: Facts::default(),
     };
     s.note_held();
@@ -816,6 +817,7 @@ fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
         own: Default::default(),
         held: Default::default(),
         named: 0,
+        hull: None,
         facts: Facts::default(),
     }
 }

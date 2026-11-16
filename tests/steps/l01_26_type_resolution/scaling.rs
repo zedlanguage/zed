@@ -436,6 +436,7 @@ pub(super) fn functions_holding_one(
             word: None,
             needs: Vec::new(),
             named: 0,
+            hull: None,
             facts: Facts::default(),
         })
     });

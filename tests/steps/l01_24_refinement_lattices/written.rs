@@ -41,13 +41,11 @@ fn a_range_below_an_end_and_one_through_the_end_before_it_are_one_type() {
         ints("int[0..<18446744073709551617]"),
         ints("int[0..=18446744073709551616]")
     );
-    // The result's type prints as `int`, though DESIGN.md L1.25 gives the body's hull,
-    // `int[0..=9]` here: a signature has no place for a result interval yet (row
-    // RANGE-result-hull). The interval of the body is the cell's, read by the tests of step
-    // L1.39.
+    // The result prints as the body's hull, each end inclusive (DESIGN.md L1.25, row
+    // RANGE-result-hull): here the parameter's own range.
     assert_eq!(
         sig_of("n = 10;\nf(x: int[0..<n]) = x;\n", "f").to_string(),
-        "(x: int[0..=9]) -> int"
+        "(x: int[0..=9]) -> int[0..=9]"
     );
 }
 
@@ -57,4 +55,64 @@ fn the_meet_of_two_half_open_ranges_is_their_overlap_and_the_join_is_int() {
     assert_eq!(from.meet(&to), ints("int[0..=10]"));
     assert_eq!(from.join(&to), IntervalSet::top());
     assert_eq!(ints("int[_..]"), IntervalSet::top());
+}
+
+/// Row RANGE-result-hull: printed signatures carry the ranges DESIGN gives them. DESIGN.md
+/// L1.25: "with ranges written on parameters (step L1.12), `f(x: int[0..=9]) = x + 1` gives
+/// `int[1..=10]`, `g(x: int[-3..=4]) = x * x` gives `int[0..=16]`"; and the L1.39 test row:
+/// "`g0(y) = f(y)`, with no written type on `y`, is accepted with the inferred signature
+/// `g0(y: int[0..=10]) -> int[0..=10]`".
+#[test]
+fn a_function_of_a_ranged_parameter_prints_the_hull_of_its_result() {
+    assert_eq!(
+        sig_of("f(x: int[0..=9]) = x + 1;\n", "f").to_string(),
+        "(x: int[0..=9]) -> int[1..=10]"
+    );
+    assert_eq!(
+        sig_of("g(x: int[-3..=4]) = x * x;\n", "g").to_string(),
+        "(x: int[-3..=4]) -> int[0..=16]"
+    );
+    assert_eq!(
+        sig_of("f(x: int[0..=10]) = x;\ng0(y) = f(x: y);\n", "g0").to_string(),
+        "(y: int[0..=10]) -> int[0..=10]"
+    );
+}
+
+/// `n` functions of `x: int[0..=9]`, each but the first calling the one before it and adding 1:
+/// the call reads the hull of the one it calls, so `h<i>` gives `int[i..=i + 9]`. The names
+/// are `h<i>`, since `f32` and `f64` name prelude types.
+pub(super) fn hull_chain(n: usize) -> String {
+    let mut text = String::from("h0(x: int[0..=9]) = x;\n");
+    for i in 1..n {
+        text.push_str(&format!("h{i}(x: int[0..=9]) = h{}(x: x) + 1;\n", i - 1));
+    }
+    text
+}
+
+/// The signature `h<i>` of [`hull_chain`] has.
+pub(super) fn hull_chain_sig(i: usize) -> String {
+    format!("(x: int[0..=9]) -> int[{i}..={}]", i + 9)
+}
+
+/// Small instance of `bench::a_chain_of_ranged_functions_prints_each_hull_in_linear_time`.
+#[test]
+fn each_function_of_a_chain_prints_the_hull_of_the_one_it_calls_plus_one() {
+    let text = hull_chain(4);
+    for i in 0..4 {
+        assert_eq!(
+            sig_of(&text, &format!("h{i}")).to_string(),
+            hull_chain_sig(i)
+        );
+    }
+}
+
+/// The same on a partial map's key (RANGE-keys accepts `m: int[5..<10] ->? int` and checks each
+/// call against the range): printed types are syntax, so the range prints as written, each end
+/// inclusive.
+#[test]
+fn a_partial_map_parameter_prints_the_range_on_its_key() {
+    assert_eq!(
+        sig_of("f(positional m: int[5..<10] ->? int) = m(6);\n", "f").to_string(),
+        "(int[5..=9] ->? int) -> int | #notFound"
+    );
 }

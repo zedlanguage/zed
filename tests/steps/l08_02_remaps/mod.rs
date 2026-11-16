@@ -17,6 +17,7 @@ mod empty;
 mod kept;
 mod kernel;
 mod moves;
+mod recursion;
 mod rules;
 mod source;
 #[cfg(target_os = "linux")]

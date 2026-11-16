@@ -5393,6 +5393,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 own: sig.own.clone(),
                 held: sig.held.clone(),
                 named: sig.named,
+                hull: sig.hull.clone(),
                 facts: Default::default(),
             };
             out.push(Note {
@@ -9845,6 +9846,7 @@ fn op_sig(op: Operator) -> Sig {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
+        hull: None,
         facts: Default::default(),
     }
 }
@@ -9954,6 +9956,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
+        hull: None,
         facts: Default::default(),
     })
 }
@@ -10057,6 +10060,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
+        hull: None,
         facts: Default::default(),
     })
 }
@@ -10124,6 +10128,20 @@ pub fn written_ints(r: &WrittenRange) -> IntervalSet {
         None => open,
     };
     IntervalSet::range(end(&r.low, NegInf), end(&r.high, PosInf))
+}
+
+/// The range from the least to the greatest of `ints`, each end inclusive, as a signature
+/// prints it (`int[1..=10]`), the inverse of [`written_ints`] on one interval; `None` where
+/// `ints` is empty or has neither end, as `int` then says as much. A set of several pieces
+/// gives its hull, which holds each of them. O(1).
+pub(super) fn written_hull(ints: &IntervalSet) -> Option<WrittenRange> {
+    let (lo, hi) = ints.bounds()?;
+    let value = |e: &End| match e {
+        Fin(n) => Some(Value::from(n)),
+        _ => None,
+    };
+    let (low, high) = (value(lo), value(hi));
+    (low.is_some() || high.is_some()).then(|| WrittenRange::new(low, high))
 }
 
 /// A parameter declared a partial map of one key `K ->? V` (RANGE-keys), as
@@ -10619,9 +10637,12 @@ impl<'a> Ck<'_, 'a> {
     // is itself such a call, a special case of the result ranges of step L10. Trigger: a `codePoint` result returned by a user function, as in
     // `f(s) = codePoint(s); x = bitAnd(f(s: "a"), 1);`. Test:
     // `l01_39c_code_points::checks::a_code_point_returned_by_a_function_is_read_as_any_int`.
-    // COMPLEXITY.md row C28. A complete solution needs int-range types on results (step L10,
-    // ledger BIT-checker-ranges), so `codePoint`'s signature states `int[0..=1114111]` and a
-    // function's result type carries it, or the checker reading the reduced product's cell.
+    // COMPLEXITY.md row C28. A function with a ranged parameter carries the hull of its result
+    // in its signature (row RANGE-result-hull, [`Ck::call_hull`]), and a call of it reads that
+    // hull; a function with none, as `f` here, still gives any int. A complete solution needs
+    // int-range types on every result (step L10, ledger BIT-checker-ranges), so `codePoint`'s
+    // signature states `int[0..=1114111]` and each function's result type carries it, or the
+    // checker reading the reduced product's cell.
     /// Whether `e` calls the prelude word `codePoint` (step L1.39c), `codePoint(s)`, `s.codePoint()`
     /// or `s.codePoint`, whose int value lies in `0 ..= 1114111`.
     fn code_point_call(&self, e: &Expr) -> bool {
@@ -10646,6 +10667,49 @@ impl<'a> Ck<'_, 'a> {
                 _ => positional.is_empty() && member(callee),
             },
             _ => member(e),
+        }
+    }
+
+    /// The hull of the result ints of the function `e` calls by name, when `e` is such a call
+    /// and the function's signature has one (row RANGE-result-hull, [`Sig::hull`]): `f(x: 3)`
+    /// for `f(x: int[0..=9]) = x + 1` holds the ints of `int[1..=10]`.
+    ///
+    /// Proof that each int the call gives lies in the hull: the hull is the checker's read of
+    /// the callee's body ([`Ck::known`]), which holds each int the body gives for arguments in
+    /// the callee's parameter ranges; a call whose argument the checker cannot show lies in its
+    /// range is rejected (the parameter's need, `floors_at`). The callee is checked before the
+    /// caller, as statements are checked in dependency order, so `env` holds its signature
+    /// with the hull; the names of a cycle are bound to no function (recursion is rejected
+    /// until step L6), so a call of one reads as any int. A call that leaves parameters out
+    /// gives a function, which holds no int, so the hull holds each of its ints.
+    ///
+    /// Complexity tradeoff: O(1) per call, a hash lookup of the callee's binding; the naive
+    /// way, reading the callee's body again at each call (C28 below), is O(b) per call for a
+    /// body of size b, O(c·b) for c calls.
+    ///
+    /// [`Sig::hull`]: zedc_types::ty::Sig::hull
+    fn call_hull(&self, e: &Expr) -> Option<&WrittenRange> {
+        let ExprKind::Call {
+            callee,
+            curry: false,
+            ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let ExprKind::Name(_) = &callee.kind else {
+            return None;
+        };
+        let id = match self.t.res.uses.get(&callee.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+            _ => return None,
+        };
+        // A binding of one function and nothing else.
+        let t = self.env.get(&id)?;
+        let alone = t.set.is_empty() && t.tuples.is_empty() && t.vars.is_empty() && !t.dynamic;
+        match (t.fns.len(), alone) {
+            (1, true) => t.fns.first()?.hull.as_ref(),
+            _ => None,
         }
     }
 
@@ -10798,6 +10862,12 @@ impl<'a> Ck<'_, 'a> {
                 value: None,
             },
             _ => {
+                if let Some(h) = self.call_hull(e) {
+                    return Known {
+                        ints: written_ints(h),
+                        value: None,
+                    };
+                }
                 let Some((p, es)) = self.bit_call(e) else {
                     return Known::top();
                 };
@@ -10980,6 +11050,7 @@ fn port(key: Carrier, io: bool) -> Ty {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
+        hull: None,
         facts: Default::default(),
     }))
 }

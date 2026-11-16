@@ -1369,6 +1369,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let sig = self.handled_sig(params, &ids, tys, result, &f.body);
                 let sig = self.generalize(level, sig, &strip);
                 let sig = self.floors_into(sig, &ids);
+                let sig = self.hull_into(sig, &f.body);
                 m.ret = Ret::Sig(sig);
             }
             Frame::AtomArgs(s) => self.atom_step(m, s),
@@ -12261,16 +12262,32 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `sig` with the [`NeedKind::InDomain`] needs recorded on its parameters, whose
     /// binders are `ids`, at their positions; the parameters are no longer open.
+    ///
+    /// A parameter of no declared range that a call passes on as a ranged parameter, `y` in
+    /// `g0(y) = f(x: y)` for `f(x: int[0..=10])`, takes the meet of those ranges as its own,
+    /// so the signature prints `(y: int[0..=10])` (DESIGN.md, the L1.39 test row): each call
+    /// is checked to pass an int in each of them, which is an int in their meet. Each such
+    /// need is on the parameter itself, since one is recorded only where the argument names
+    /// it (`open_param`). An empty meet prints no range: no call can meet the needs, and each
+    /// is rejected by them. O(1) per need, the meet of two intervals.
     fn floors_into(&mut self, sig: Arc<Sig>, ids: &[Option<usize>]) -> Arc<Sig> {
         let mut needs = Vec::new();
+        let mut inferred: Vec<(usize, WrittenRange)> = Vec::new();
+        let mut keyed: Vec<(usize, WrittenRange)> = Vec::new();
         for (j, id) in ids.iter().enumerate() {
             let Some(id) = id else { continue };
             self.open_params.remove(id);
             let ranged = self.ranged_floors.remove(id).unwrap_or_default();
+            let open = sig.params.get(j).is_some_and(|p| p.range.is_none());
+            let mut meet: Option<IntervalSet> = None;
             for mut n in self.floors.remove(id).into_iter().chain(ranged) {
                 if let NeedKind::InDomain { domain, param, .. } = &mut n.kind {
                     if let Some(r) = &domain.written {
                         self.ranged_seen.remove(&(*id, r.clone()));
+                        if open {
+                            let ints = written_ints(r);
+                            meet = Some(meet.map_or(ints.clone(), |m| m.meet(&ints)));
+                        }
                     }
                     if let Some(k) = &domain.key {
                         self.keyed_seen.remove(&(*id, k.clone()));
@@ -12279,9 +12296,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 needs.push(n);
             }
+            if let Some(r) = meet.as_ref().and_then(written_hull) {
+                inferred.push((j, r));
+            }
             // A parameter declared a partial map takes only maps whose keys lie in the
             // ranges on its key, and only a family where a remap reads it (RANGE-keys).
-            if let Some(k) = self.param_keys.remove(id).and_then(|k| k.need()) {
+            //
+            // Proof that each remap that reads the parameter has run by now, so that `remapped`
+            // is final (row TEST-range-keys-mutual-recursion): a remap reads `m` only inside
+            // `m`'s scope, the function's defaults, `given` clauses and body, a lambda or a
+            // function declared in the body included. `infer` puts the entry in `param_keys`
+            // before any of these jobs is pushed, and this frame (`Frame::InferEnd`) is pushed
+            // below them on the machine's stack, so it runs after each has finished; a function
+            // in the body runs its own `infer` and `InferEnd` inside. A function of a cycle,
+            // whose body could reach this one's again, is not checked at all (recursion is
+            // rejected until step L6, `order_around_cycles`), and a check run again runs the
+            // whole `infer` again, entry and all. Tests: `l08_02_remaps::recursion`.
+            let keys = self.param_keys.remove(id);
+            // The range on the whole key prints in the key's place, `(int[5..=9] ->? int)`
+            // (RANGE-result-hull); one on a tuple component has no place in the printed type
+            // yet (row RANGE-key-component-print).
+            let whole = (keys.iter().flat_map(|k| &k.ranges)).find(|(part, _)| part.is_none());
+            if let Some((_, r)) = whole {
+                keyed.push((j, r.clone()));
+            }
+            if let Some(k) = keys.and_then(|k| k.need()) {
                 let name = sig
                     .params
                     .get(j)
@@ -12337,6 +12376,50 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut s = (*sig).clone();
         s.facts = Default::default();
         s.needs.extend(needs);
+        for (j, r) in inferred {
+            s.params[j].range = Some(r);
+        }
+        for (j, r) in keyed {
+            for a in &mut s.arrows {
+                if let Some(t) = a.params.get_mut(j) {
+                    *t = with_key_range(t, &r);
+                }
+            }
+        }
+        Arc::new(s)
+    }
+
+    /// `sig`, of the function whose body is `body`, with the hull of its result ints
+    /// ([`Sig::hull`], row RANGE-result-hull) where a parameter has a range and each arrow is
+    /// total with the result `int`: `f(x: int[0..=9]) = x + 1` gives `int[1..=10]` (DESIGN.md
+    /// L1.25). The hull is the checker's read of the body ([`Ck::known`]), from the
+    /// parameters' ranges, its literals, its integer operators and the hulls of the functions
+    /// it calls; each int the body gives lies in it, so a call of the function reads its
+    /// result there ([`Ck::call_hull`]).
+    ///
+    /// Complexity tradeoff: one read of the body, O(b) for a body of b nodes, each node read
+    /// once and cached by its span, and O(1) at each call after; the naive way reads the body
+    /// again at each call, O(c·b) for c calls. The read is the text's, not the reduced
+    /// product's cell, so the hull may be wider than the body's ints: a branch is read as
+    /// either arm whatever its test, and `x * x * x` as a square times `x`. A function with no
+    /// ranged parameter gets none, so a signature without ranges prints as before. COMPLEXITY.md
+    /// row C65.
+    ///
+    /// [`Sig::hull`]: zedc_types::ty::Sig::hull
+    fn hull_into(&mut self, sig: Arc<Sig>, body: &'a Expr) -> Arc<Sig> {
+        let int = Ty::carrier(Carrier::Int);
+        let ranged = sig.params.iter().any(|p| p.range.is_some());
+        let int_result =
+            !sig.arrows.is_empty() && sig.arrows.iter().all(|a| !a.partial && a.result == int);
+        if !ranged || !int_result {
+            return sig;
+        }
+        let Some(h) = written_hull(&self.known(body).ints) else {
+            return sig;
+        };
+        let mut s = (*sig).clone();
+        s.facts = Default::default();
+        s.hull = Some(h);
         Arc::new(s)
     }
 
@@ -14495,6 +14578,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             own: sig.own.clone(),
             held: BTreeSet::new(),
             named: sig.named,
+            // The rest returns what the whole call would.
+            hull: sig.hull.clone(),
             facts: Default::default(),
         };
         // A variable only the arguments given held is held by no parameter of the rest.
@@ -14791,6 +14876,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             own: s.own.clone(),
             held: s.held.clone(),
             named: s.named,
+            hull: s.hull.clone(),
             facts: Default::default(),
             params: e.params.clone(),
             arrows: s
@@ -21052,8 +21138,31 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: sig.named,
+        hull: sig.hull.clone(),
         facts: Default::default(),
     }
+}
+
+/// `t`, the type of a parameter declared a partial map of one key, with the range `r` written
+/// on its key on the map's one parameter, so that it prints in the key's place
+/// (`int[5..=9] ->? int`, [`Sig::morphism`]); `t` as it is where it is not one function of one
+/// positional parameter. The range takes no part in what the map's type admits: a call's
+/// argument is checked against it by the parameter's need (RANGE-keys). O(the size of the
+/// map's signature), one copy.
+///
+/// [`Sig::morphism`]: zedc_types::ty::Sig
+fn with_key_range(t: &Ty, r: &WrittenRange) -> Ty {
+    let alone = t.set.is_empty() && t.tuples.is_empty() && t.vars.is_empty() && !t.dynamic;
+    let (1, true, Some(f)) = (t.fns.len(), alone, t.fns.first()) else {
+        return t.clone();
+    };
+    if !matches!(&f.params[..], [p] if p.positional && p.range.is_none()) {
+        return t.clone();
+    }
+    let mut s = (**f).clone();
+    s.facts = Default::default();
+    s.params[0].range = Some(r.clone());
+    Ty::func(Arc::new(s))
 }
 
 /// Whether a call of `sig` checks each argument against its parameter apart from the others:
@@ -21245,6 +21354,7 @@ mod tests {
             own: BTreeSet::new(),
             held: BTreeSet::new(),
             named: 0,
+            hull: None,
             facts: Default::default(),
         };
         ck.generalize(1, sig, &[]);

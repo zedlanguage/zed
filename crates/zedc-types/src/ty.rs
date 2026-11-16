@@ -981,9 +981,11 @@ impl<'a> Same<'a> {
             own,
             held,
             named,
+            hull,
             facts: _,
         } = x;
         *params == y.params
+            && *hull == y.hull
             && arrows.len() == y.arrows.len()
             && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
                 p.params.len() == q.params.len()
@@ -1442,6 +1444,7 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
         own,
         held,
         named,
+        hull,
         facts,
     } = s;
     parts.extend([
@@ -1479,6 +1482,8 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
         Dbg::Leaf(held),
         Dbg::Text(", named: "),
         Dbg::Leaf(named),
+        Dbg::Text(", hull: "),
+        Dbg::Leaf(hull),
         Dbg::Text(", facts: "),
         Dbg::Leaf(facts),
         Dbg::Text(" }"),
@@ -2526,6 +2531,8 @@ impl<'b> Replacer<'b> {
             own,
             held,
             named: s.named,
+            // A result of `int` holds no variable, so it is the same after the replacement.
+            hull: s.hull.clone(),
             facts: Facts::default(),
         }
     }
@@ -2953,6 +2960,8 @@ impl Rebuild for Settle<'_> {
             own: s.own.iter().filter(open).cloned().collect(),
             held: s.held.iter().filter(open).cloned().collect(),
             named: s.named,
+            // A result of `int` holds no class variable, so it is the same once solved.
+            hull: s.hull.clone(),
             facts: Facts::default(),
         };
         s.facts.1.get_or_init(|| Arc::new(settled)).clone()
@@ -3007,6 +3016,13 @@ pub struct Sig {
     /// from, and gives them their names when it finishes, so a function around one does not
     /// rewrite it (CHK-curried).
     pub named: usize,
+    /// The hull of the ints its result can be, where its arrows' result is `int` and the
+    /// checker read the ints of the body (RANGE-result-hull): printed in place of that `int`
+    /// as a range, each end inclusive, so `f(x: int[0..=9]) = x + 1` is
+    /// `(x: int[0..=9]) -> int[1..=10]` (DESIGN.md L1.25, and the L1.39 test row). None
+    /// where nothing narrower than `int` is known. A function whose hull lies inside
+    /// another's fits where that one is wanted, and not the reverse ([`fits_sig`]).
+    pub hull: Option<WrittenRange>,
     /// The variables it holds at any depth, worked out when first asked ([`Sig::facts`]).
     /// Once they are read the signature is not changed in place: a change goes to a clone,
     /// whose facts are worked out again.
@@ -3868,6 +3884,22 @@ impl WrittenRange {
         let ge = |b: &Value| v.surface_cmp(b).is_some_and(|o| o.is_ge());
         let le = |b: &Value| v.surface_cmp(b).is_some_and(|o| o.is_le());
         self.low.as_ref().is_none_or(ge) && self.high.as_ref().is_none_or(le)
+    }
+
+    /// Whether each int it holds is held by `outer`: its least at least `outer`'s, and its
+    /// greatest at most `outer`'s, an open end of `outer` holding anything on its side. O(1).
+    pub fn within(&self, outer: &WrittenRange) -> bool {
+        let low = match (&self.low, &outer.low) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(a), Some(b)) => a.surface_cmp(b).is_some_and(|o| o.is_ge()),
+        };
+        let high = match (&self.high, &outer.high) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(a), Some(b)) => a.surface_cmp(b).is_some_and(|o| o.is_le()),
+        };
+        low && high
     }
 }
 
@@ -10837,6 +10869,17 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
         return true;
     }
+    // The hull of the results (row RANGE-result-hull): a function whose ints lie in a narrower
+    // range fits where a wider one is expected, and one with none, any int, fits only where
+    // none is expected. O(1), two comparisons of the ends.
+    let hull_fits = match (&s.hull, &q.hull) {
+        (_, None) => true,
+        (None, Some(_)) => false,
+        (Some(a), Some(b)) => a.within(b),
+    };
+    if !hull_fits {
+        return false;
+    }
     let same_params = s.params.len() == q.params.len()
         && s.params
             .iter()
@@ -11989,6 +12032,7 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
             .collect(),
         held: BTreeSet::new(),
         named: s.named,
+        hull: s.hull.clone(),
         facts: Facts::default(),
     };
     one.note_held();
@@ -13095,7 +13139,7 @@ impl Sig {
         let hash = |s: &Sig| {
             *s.facts.2.get_or_init(|| {
                 let parts = (&s.params, &s.arrows, &s.bounds, s.data, s.dense, &s.word);
-                let more = (&s.needs, &s.own, &s.held, s.named);
+                let more = (&s.needs, &s.own, &s.held, s.named, &s.hull);
                 BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
             })
         };
@@ -13398,6 +13442,7 @@ impl Sig {
             own: BTreeSet::new(),
             held: BTreeSet::new(),
             named: 0,
+            hull: None,
             facts: Default::default(),
         }
     }
@@ -14594,8 +14639,13 @@ enum PrintAt {
 
 /// A signature written as a morphism type ([`Sig::morphism`]).
 enum Morphism<'a> {
-    /// `K ->? V`: the key type, and the result, `V | #notFound`.
-    Partial { key: &'a Ty, value: &'a Ty },
+    /// `K ->? V`: the key type, the range written on the key, printed in its place where it
+    /// has one (`int[5..=9] ->? int`, RANGE-keys), and the result, `V | #notFound`.
+    Partial {
+        key: &'a Ty,
+        range: Option<&'a WrittenRange>,
+        value: &'a Ty,
+    },
     /// `L .. U -> V`: the guarantee, the permission and the value type.
     Bounded {
         lower: &'a Ty,
@@ -14609,12 +14659,12 @@ impl<'a> Morphism<'a> {
     /// so that `((int, int)) ->? V` is not read as two parameters.
     fn parts(&self, parts: &mut Vec<Print<'a>>) {
         match *self {
-            Morphism::Partial { key, value } => {
-                parts.extend([
-                    Print::Ty(key, PrintAt::Key),
-                    Print::Text(" ->? "),
-                    Print::Found(value),
-                ]);
+            Morphism::Partial { key, range, value } => {
+                parts.push(match range {
+                    Some(r) => Print::Text(&r.text),
+                    None => Print::Ty(key, PrintAt::Key),
+                });
+                parts.extend([Print::Text(" ->? "), Print::Found(value)]);
             }
             Morphism::Bounded {
                 lower,
@@ -14893,7 +14943,7 @@ impl Sig {
             let bare = matches!(&self.params[..], [p] if p.positional);
             let result = |a: &'a Arrow| match a.partial {
                 true => [Print::Text(" ->? "), Print::Found(&a.result)],
-                false => [Print::Text(" -> "), Print::Ty(&a.result, PrintAt::Result)],
+                false => [Print::Text(" -> "), self.result_part(a)],
             };
             let mut first = true;
             for a in &self.arrows {
@@ -14941,6 +14991,16 @@ impl Sig {
         }
     }
 
+    /// The part of the result of its arrow `a`: the hull of its ints, as a range each end
+    /// inclusive (`int[1..=10]`, row RANGE-result-hull), where it has one and `a`'s result is
+    /// `int`, which reads back as that range; the result's type otherwise.
+    fn result_part<'a>(&'a self, a: &'a Arrow) -> Print<'a> {
+        match &self.hull {
+            Some(h) if a.result == Ty::carrier(Carrier::Int) => Print::Text(&h.text),
+            _ => Print::Ty(&a.result, PrintAt::Result),
+        }
+    }
+
     /// Whether, as a member of a union that stands where a whole `Type` stands, it leaves its
     /// bounds clause to the end of the union ([`PrintAt::Member`]): an intersection of arrows,
     /// each in its own parentheses, which the clause after the union bounds as it would
@@ -14971,6 +15031,7 @@ impl Sig {
             {
                 Some(Morphism::Partial {
                     key: &a.params[0],
+                    range: p.range.as_ref(),
                     value: &a.result,
                 })
             }
@@ -15362,6 +15423,7 @@ mod tests {
             own: ["T".into(), "B".into()].into_iter().collect(),
             held: BTreeSet::new(),
             named: 0,
+            hull: None,
             facts: Facts::default(),
         };
         if bounded {
