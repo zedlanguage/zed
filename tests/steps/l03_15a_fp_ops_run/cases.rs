@@ -1010,3 +1010,94 @@ fn concatenation_and_zip_on_input_lines() {
         );
     }
 }
+
+/// Plan row PROOF-range-end-known-values: a range's end gets a known value, and the range
+/// exact keys, only where every run gives the end that value (the proof at `Ck::known`).
+/// Each program is whole, `n` an end; each accepted one prints the count the run gives, and
+/// each other one is rejected since nothing shows the keys equal, never with a wrong key.
+#[test]
+fn a_range_end_is_known_only_where_every_run_gives_it() {
+    let zip = |n: &str, other: &str| format!("(0 ..< {n}).zip(0 ..< {other}).count");
+    let main = |body: &str, shown: &str| {
+        format!("main(m: MainArgs) {{\n{body}  m.stdout <- \"${{{shown}}}\";\n}}\n")
+    };
+    let accepted = [
+        // A name bound once to literals, read inside a lambda: the closure holds that value.
+        (
+            main(
+                "  n = 3;\n  g = k -> (0 ..< n).zip(0 ..< 3).count + k;\n",
+                "g(1)",
+            ),
+            "4",
+        ),
+        // A block that binds names and returns one value.
+        (
+            main("  n = { a = 2; return a + 1; };\n", &zip("n", "3")),
+            "3",
+        ),
+        // A block whose bindings read the input, returning a literal.
+        (
+            main(
+                "  a = m.args.count;\n  n = { b = a; return 3; };\n",
+                &zip("n", "3"),
+            ),
+            "3",
+        ),
+        // The prelude's bit words, called and as a method, folded by the kernel.
+        (main("  n = bitAnd(7, 3);\n", &zip("n", "3")), "3"),
+        (main("  n = 7.bitAnd(3);\n", &zip("n", "3")), "3"),
+        // Integer division and remainder round toward minus infinity, as the run does.
+        (
+            main("  n = -7 div 2;\n", "(n ..< 0).zip(-4 ..< 0).count"),
+            "4",
+        ),
+        (main("  n = -7 mod 2;\n", &zip("n", "1")), "1"),
+        // Ends past 64 bits.
+        (
+            main(
+                "  n = 2 ^ 63 - 1;\n",
+                "(n ..< n + 2).zip(n ..= n + 1).count",
+            ),
+            "2",
+        ),
+    ];
+    for (i, (src, want)) in accepted.iter().enumerate() {
+        assert_eq!(
+            ran(&format!("range_end_known_{i}"), src),
+            (0, format!("{want}\n")),
+            "{src}"
+        );
+    }
+    let nothing = "nothing shows that";
+    let refused = [
+        // An end the run decides: a branch, a port's value, a call's result, a parameter
+        // (ranged to one value or not), a lambda's parameter, `else`, `/`.
+        main(
+            "  c = m.args.count > 0;\n  n = if c { 3 } else { 4 };\n",
+            &zip("n", "3"),
+        ),
+        main("  n = if true { 3 } else { 4 };\n", &zip("n", "3")),
+        main(
+            "  c = m.args.count > 0;\n  r = if c { 0 ..< 3 } else { 0 ..< 4 };\n",
+            "r.zip(0 ..< 3).count",
+        ),
+        main("  n = m.args.count;\n", &zip("n", "0")),
+        format!("three() = 3;\n{}", main("  n = three();\n", &zip("n", "3"))),
+        format!(
+            "f(n: int[3..=3]) = {};\n{}",
+            zip("n", "3"),
+            main("", "f(n: 3)")
+        ),
+        main("  g = k -> (0 ..< k).zip(0 ..< 3).count;\n", "g(3)"),
+        main("  n = 3 else 4;\n", &zip("n", "3")),
+        // A function or lambda of the program named after a bit word is not the bit word.
+        main(
+            "  bitAnd = (a, b) -> 5;\n  n = bitAnd(7, 3);\n",
+            &zip("n", "5"),
+        ),
+    ];
+    for (i, src) in refused.iter().enumerate() {
+        let (status, said) = ran(&format!("range_end_unknown_{i}"), src);
+        assert!(status != 0 && said.contains(nothing), "{src}\n{said}");
+    }
+}

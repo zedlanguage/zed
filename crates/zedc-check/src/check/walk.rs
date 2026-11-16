@@ -5045,9 +5045,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // holds each int k with a <= k <= b - 1, and `a ..= b` each with a <= k <= b, as
         // `Prim::Range` makes them, so the set is `[a, b - 1]` or `[a, b]`, empty where that
         // is. `known` gives an end's value only where the end is built from int literals,
-        // names bound to such, and the integer operators, exact at any size ([`Ck::known`]),
-        // the read that already decides `Dense::Ranks` above; so the run's range holds exactly
-        // these keys. A computed end, as a parameter, keeps `None`: only the arrows' `int`.
+        // names bound once to such, the integer operators, the prelude's bit words and blocks
+        // that only bind names, folded by the kernel's evaluator exact at any size, the read
+        // that already decides `Dense::Ranks` above; [`Ck::known`] proves case by case that
+        // such a value is the end's value at every evaluation, in a lambda run once per key,
+        // a closure or a body checked once per call alike (PROOF-range-end-known-values), so the run's range
+        // holds exactly these keys. A computed end, as a parameter, an `if`, a call's result
+        // or a port's value, keeps `None`: only the arrows' `int`.
         // Complexity tradeoff: O(1) more per range, two cached reads and two ends; the naive
         // way, the keys listed in the arrow's key type as an array display's, costs O(b - a)
         // (see [`Sig::keys`]).

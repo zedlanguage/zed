@@ -10827,6 +10827,53 @@ impl<'a> Ck<'_, 'a> {
     /// Test: `l01_39a_bit_words::errors::an_operand_not_shown_in_its_domain_is_rejected`.
     /// COMPLEXITY.md row C26. A complete solution needs int-range types on parameters and
     /// results (step L10, ledger BIT-checker-ranges), so a signature can state the domain.
+    ///
+    /// Proof that a value it gives is the value `e` has at every evaluation (plan row
+    /// PROOF-range-end-known-values; the users are a range's ends, [`Sig::keys`] and
+    /// `Dense::Ranks` in `range_end`, and the constant bit words). By induction on the read,
+    /// [`Ck::known_uncached`] gives `Known::value` in five cases only, and each is closed:
+    /// 1. An int literal: its digits, the value the run reads from them.
+    /// 2. `-a`, `a ^ b` and the integer operators of [`int_op`] (`+ - * div mod`) with both
+    ///    operands' values: [`kernel_folded`] runs the kernel's one evaluator, the run's own,
+    ///    on them; an operation it refuses or that gives an atom (`7 div 0`, `2 ^ -1`) gives
+    ///    no value. Ints are unbounded, so no width differs from the run.
+    /// 3. A call of a bit word whose operands have values: the callee resolves to the prelude
+    ///    (`Ref::Prelude`), or is a method of a prelude word of layer 1 whose callee does not
+    ///    resolve to a binder ([`Ck::bit_call`]), so a function or lambda of the program named
+    ///    `bitAnd` gives none. Not proved for later forms: a record or struct field named
+    ///    after a bit word, `s.bitAnd(3)`, is no form this version compiles (name resolution
+    ///    rejects every struct and record, as the walk's `unreachable!` arms for them say);
+    ///    once it is, `bit_call` must also see that the receiver is an int.
+    /// 4. A block whose statements before its last are all `Bind` and whose last returns one
+    ///    expression ([`block_value`]): its value is that expression's.
+    /// 5. A name with one binder (`Ref::Bound` of one id, never an overload set) that is no
+    ///    ranged parameter and whose binder is in [`Ck::facts`]: `bind` (walk.rs) puts there
+    ///    only the binder of a `name = value` statement with one name, mapped to `value`.
+    ///    Zed has no assignment: a name binds once in its scope, and binding it again there
+    ///    is rejected ("already bound"); the binder id is the statement's span and name, so
+    ///    unique. Its value is then `value`'s, read by this same induction.
+    ///
+    /// Every other form gives `None`, which is sound by default: a parameter (a ranged one
+    /// gives only its ints), a lambda's parameter, a call of any other function, an `if`
+    /// (only the join of its arms' ints), `else`, `/`, an index, a field, a port or `main`
+    /// argument read (`m.args.count`), and a captured name only through case 5, whose value
+    /// is fixed where it was bound. The forms whose names change from step to step, `loop`
+    /// and `gen` frames (`x' = …`, `initial x = e`, `with carryForward`), `while`/`until`,
+    /// `for`, port reads, `match`, `with` and families defined by index (`f[i] = …`), are
+    /// rejected by name resolution as later forms (its `later`, and `primed` for a primed
+    /// name) and are `unreachable!` in the checker's walk (`StmtKind::IndexedDef`, `Initial`,
+    /// `While`, `Until`; `ExprKind::Read`, `For`, `Loop`, `Break`, `Spread`, `Match`, `With`),
+    /// so no binder of one reaches case 5. When frames land, a frame variable must not enter `facts`, or
+    /// [`Sig::keys`] would be the first step's (row RANGE-literal-reads keeps a test for that).
+    ///
+    /// The memo is by span, and is sound: an expression that gives a value (cases 1 to 5)
+    /// has a token of its own outside its children (its digits, the operator, `-`, the
+    /// braces, the call's parentheses, the name), so no two such expressions share a span;
+    /// parentheses leave no node (`ast` module); and a node that gives no value and shares a
+    /// span with one could only read as `None` where a value was known, the safe direction.
+    /// Each binder's value is the same expression in every check of its body, so a body
+    /// checked again (a generic function per call) reads the same value. A name read before
+    /// its binder is checked memoizes `None`, the safe direction too.
     fn known(&mut self, e: &'a Expr) -> Known {
         if !self.known.contains_key(&e.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements

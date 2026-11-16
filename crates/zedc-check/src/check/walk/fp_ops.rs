@@ -756,6 +756,27 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// exact keys is finite, so the other side's `U` must be, so its `L`, so this side's `U`;
     /// so where a key type is infinite the exact test fails too. `list_concat_end` reads a
     /// count only where `L = U` exactly, which a set made larger or smaller here cannot fake.
+    ///
+    /// That argument in full, for any mix of families on each side (PROOF-range-end-known-
+    /// values). Write `L*`, `U*` for the true sets and `L`, `U` for these. A kernel set of ints
+    /// is a finite list or cofinite (`ints_listed` is `None` exactly then), so a key type is
+    /// approximated only where it is infinite, and then `L ⊆ L*` (an infinite sure set read as
+    /// empty) and `U ⊇ U*` (an infinite may set read as `top`); elsewhere they are equal. So
+    /// each test `U_x ⊆ L_y` read here implies the true one: an accepted `zip` is accepted
+    /// truly. Conversely, where any family of either side has an infinite key type, the true
+    /// verdict fails too: a family's sure keys lie in its may keys (the sure arrows are some
+    /// of its arrows), so that family makes its side's `U*` infinite, and the true tests then
+    /// need the other side's `L*` infinite, so every family there has infinite sure keys and
+    /// no exact keys, so that side's `U*` is infinite too, and the first side's `L*` must be
+    /// infinite, so no family of either side has exact keys; but these sets are read only
+    /// where one family has them (`keyed` in `zip_end`), a finite `L*` on its side. So the
+    /// verdict read here equals the true one in every case. Not proved, in the message only:
+    /// where the region `U_from - L_to` is made larger by an infinite sure set read as empty,
+    /// its least key may be one the other side holds, so the message names that key as one
+    /// "nothing shows" is there. It needs a family whose keys are infinitely many ints each
+    /// surely held, a total arrow on `int` held as data; no form found builds one (displays
+    /// list their keys; ranges, `Lines` inputs and `where` are partial), but that search is
+    /// not a proof.
     // Complexity tradeoff: O(k log k) for a family whose key type lists k ints, as an array
     // display, the cost of its type, and O(1) for one with exact keys, against O(b - a) for
     // listing the keys of `a ..< b` as the naive way would (row RANGE-literal-keys); a meet
