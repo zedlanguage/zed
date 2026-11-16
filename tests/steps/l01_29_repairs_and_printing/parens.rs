@@ -1013,6 +1013,52 @@ fn each_kernel_type_built_for_a_form_prints_it() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The kernel printer's round trip on a seed whose type met a union of a payload and a partial
+/// arrow with a partial arrow of disjoint key (FAIL-kernel-print-seed-15344750447356307552).
+/// The text is a meet, not an overload, since one operand of `&` is a union (DESIGN.md,
+/// Relation to semantic subtyping, rule (2)); a function of both has its domain within `rat`
+/// and within `#pair(int, _)`, so the meet is the function of empty domain the kernel prints.
+/// Before the fix the checker left `rat ->? f64` unmet, the key `#pair(int, _)` holding the
+/// unknown, and read `(rat ->? f64) & (Never ->? #pair(_, #a))`.
+#[test]
+fn a_meet_of_partial_arrows_with_disjoint_keys_reads_back_as_printed() {
+    // The text the seed drew and the kernel printer's print of the type built with it, as the
+    // random test compares them; the seed reproduces the draw itself:
+    // ZED_TEST_SEED=15344750447356307552 on the random test above.
+    let text = "((#box((#b))) | ((rat) ->? (f64))) & ((#pair((int), (_))) ->? (#pair((_), (#a))))";
+    let mut wrong = Vec::new();
+    kernel_read_back(text, "Never ->? Never", &mut wrong);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Corner cases of the fix above: the unknown on either side of the meet, a key it narrows
+/// rather than empties, and keys the narrowing must leave whole. Each text reads as the type
+/// written beside it (subtyping both ways).
+#[test]
+fn a_meet_of_partial_arrows_narrows_keys_holding_the_unknown() {
+    let cases = [
+        // The seed's text mirrored: the key holding the unknown is on the union's side.
+        (
+            "(#box(#b) | (#pair(int, _) ->? #pair(_, #a))) & (rat ->? f64)",
+            "Never ->? Never",
+        ),
+        // Keys that meet: the arrow keeps the values of `#pair(int, int)` alone.
+        (
+            "(#box(#b) | (#pair(int, int) ->? #a)) & (#pair(_, int) ->? #a)",
+            "#pair(int, int) ->? #a",
+        ),
+        // The unknown as the whole key permits every value: `rat ->? f64` stays.
+        ("(#box(#b) | (rat ->? f64)) & (_ ->? f64)", "rat ->? f64"),
+    ];
+    for (text, want) in cases {
+        let (got, want_t) = (parse_type(text).unwrap(), parse_type(want).unwrap());
+        assert!(
+            got.subtype(&want_t) && want_t.subtype(&got),
+            "`{text}` reads `{got}`, not `{want}`"
+        );
+    }
+}
+
 /// A body expression of a recursive group built at random, `depth` levels deep at most, from
 /// one-token leaves and the definition `U` itself, with the text it is built from, each
 /// operand in parentheses and `U` written `#u`. Left out for the reader's sake, as in

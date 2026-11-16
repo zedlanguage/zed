@@ -14106,9 +14106,14 @@ struct Domains {
     /// types each have a kernel type; none where no exact arrow has.
     guaranteed: Option<KType>,
     /// Parameter types whose product is its permission, where its permission has a kernel
-    /// type: for one parameter, the union of its arrows' types there; for several, the types
-    /// of its one arrow. None for several arrows of several parameters.
+    /// type or no parameter type of an arrow holds a variable: for one parameter, the union of
+    /// its arrows' types there; for several, the types of its one arrow. None for several
+    /// arrows of several parameters.
     within: Option<Vec<Ty>>,
+    /// Whether its permission has a kernel type. Where it has none, `within` holds the
+    /// unknown or a function, and [`Domains::meet`] meets a parameter type with it only where
+    /// that type is [`Domains::plain`].
+    exact: bool,
 }
 
 impl Domains {
@@ -14126,17 +14131,46 @@ impl Domains {
             .collect();
         let guaranteed = (!guaranteed.is_empty()).then(|| KType::union_all(guaranteed));
         let permission = tuples.into_iter().collect::<Option<Vec<_>>>();
-        let within = match (&permission, s.params.len(), s.arrows.as_slice()) {
-            (None, ..) => None,
-            (Some(_), 1, arrows) => Some(vec![Ty::union_all(arrows.iter().map(|a| &a.params[0]))]),
-            (Some(_), _, [a]) => Some(a.params.clone()),
-            (Some(_), ..) => None,
+        let exact = permission.is_some();
+        // A permission with no kernel type, for the unknown or a function in it, as
+        // `#pair(int, _)`, is still the product of `within`. Before
+        // (FAIL-kernel-print-seed-15344750447356307552), such a side had no `within`, so the
+        // other side's partial arrows were left unmet: `(rat ->? f64) & (#pair(int, _) ->?
+        // #pair(_, #a))`, met through a union, was read as `(rat ->? f64) & (Never ->? #pair(_,
+        // #a))`, where the kernel's `Never ->? Never` is the meet (DESIGN.md sec:type_language:
+        // a function of both has its domain within `rat` and within `#pair(int, _)`). A
+        // variable is left out: [`Ty::meet`] joins only its own side's variables, so a meet
+        // with a type holding one could drop values that type permits. Cost: flags read at the
+        // outer level of each parameter type, the rows and shapes keeping their own.
+        let usable = exact || (s.arrows.iter()).all(|a| a.params.iter().all(|p| !p.holds_vars()));
+        let within = match (usable, s.params.len(), s.arrows.as_slice()) {
+            (false, ..) => None,
+            (true, 1, arrows) => Some(vec![Ty::union_all(arrows.iter().map(|a| &a.params[0]))]),
+            (true, _, [a]) => Some(a.params.clone()),
+            (true, ..) => None,
         };
         Domains {
             permission: permission.map(KType::union_all),
             guaranteed,
             within,
+            exact,
         }
+    }
+
+    /// Whether `t` holds no function, kind-wide part or variable at any depth: then its meet
+    /// `t.meet(u)` with a type `u` with no variable lies within `t`, the unknown in either read
+    /// as every value (A92), as the kernel reads `_`. Proof, by the parts of [`Ty::meet`]: the
+    /// set is the sets' meet; an atom's payload shapes are met in pairs, or are `u`'s where `t`
+    /// holds that atom with any payload, or are dropped with the atom from the set where `t`
+    /// holds it not at all; tuples are met component by component, each by this argument; a
+    /// side that is the unknown gives the other. What [`Ty::meet`] keeps whole from `u`, which
+    /// is not within `t`, needs what `t` lacks: a row of `u` with no kernel type is kept
+    /// against a kind-wide part of `t`, the functions are met only against functions of `t`,
+    /// and `u` is joined only where `t` holds a variable. A parameter type that is not plain,
+    /// met so, could hold keys outside its arrow's, whose values the arrow would then bound
+    /// wrongly.
+    fn plain(t: &Ty) -> bool {
+        t.fns.is_empty() && t.first_order() && !t.holds_vars()
     }
 
     /// Whether a value of its guarantee was built outside the permission of `other`: then no
@@ -14198,13 +14232,19 @@ impl Domains {
         let n = m.arrows.len();
         m.add_arrows_of(q);
         let (own, other) = m.arrows.split_at_mut(n);
-        for (arrows, within) in [(own, &dq.within), (other, &ds.within)] {
+        for (arrows, within, exact) in [(own, &dq.within, dq.exact), (other, &ds.within, ds.exact)]
+        {
             let Some(within) = within else {
                 continue;
             };
             for a in arrows.iter_mut().filter(|a| a.partial) {
+                // A `within` holding the unknown meets plain types only ([`Domains::plain`]);
+                // a parameter type left as it is still holds its meet with `within`, so the
+                // arrow bounds every value it bounded, less narrowly.
                 for (p, u) in a.params.iter_mut().zip(within) {
-                    *p = p.meet(u);
+                    if exact || Domains::plain(p) {
+                        *p = p.meet(u);
+                    }
                 }
             }
         }
