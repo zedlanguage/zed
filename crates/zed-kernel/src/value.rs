@@ -51,6 +51,7 @@ use crate::num::{
     memory_clause, read_decimal, room, sign_of,
 };
 use crate::text::{Text, TooLong};
+use chain::Chain;
 
 /// `minimum(a, b)` (`min` true) or `maximum(a, b)` of IEEE 754-2019 (DESIGN.md sec:reduction,
 /// item 5): a NaN in either position gives a NaN, and `-0.0` is below `0.0`, so
@@ -1191,6 +1192,9 @@ pub(crate) enum Entries {
     /// (zedc-resolve), so a walk over it, which would not end, is a bug in zedc and stops with
     /// [`walked_unbounded`].
     From(Arc<Value>),
+    /// A list made by `++`: the lists joined, shared, and their map once a walk builds it
+    /// ([`Chain`], plan row PERF-list-concat-shared).
+    Seq(Arc<Chain>),
 }
 
 /// Stops at a walk over a range with no upper end, which never ends (`Entries::From`).
@@ -1222,6 +1226,7 @@ impl Deref for Entries {
         match self {
             Entries::Map(m) => m,
             Entries::Range(s) => s.map(),
+            Entries::Seq(c) => c.map(),
             Entries::From(_) => walked_unbounded(),
         }
     }
@@ -1232,12 +1237,13 @@ impl std::ops::DerefMut for Entries {
         match self {
             // A copy of a map costs O(1): it shares the nodes `Span::map` built.
             Entries::Range(s) => *self = Entries::Map(s.map().clone()),
+            Entries::Seq(c) => *self = Entries::Map(c.map().clone()),
             Entries::From(_) => walked_unbounded(),
             Entries::Map(_) => {}
         }
         match self {
             Entries::Map(m) => m,
-            _ => unreachable!("a range was replaced by its map above"),
+            _ => unreachable!("a range or a list made by `++` was replaced by its map above"),
         }
     }
 }
@@ -1542,6 +1548,357 @@ fn search_beside(mut lo: BigInt, mut hi: BigInt, k: &Value, after: bool) -> BigI
     lo
 }
 
+/// The lists made by `++` ([`chain::Chain`]), in a module of their own so that the names of their
+/// finger tree stay apart from the value's; in this file, as the tree holds families and a family
+/// holds the tree (step S.1f).
+mod chain {
+    use super::*;
+
+    /// The entries of a list made by `++` (plan row PERF-list-concat-shared): the lists joined, in
+    /// order, as the leaves of a finger tree whose parts each hold their count of entries, and the
+    /// map of the whole list once a reader walks it. Entry `i` of the list is entry `i - o` of the
+    /// leaf that starts at offset `o`, so the keys `0 ..< n` are positions, found by the counts.
+    // Complexity tradeoff: the naive `++` builds the joined list's map, as the union of `a` and `b`
+    // with `b`'s keys moved by `a.count` did before: O(m log(n + m)) for `a ++ b` with `n` and `m`
+    // entries, `a`'s nodes shared and `b`'s read one by one, so a chain of `[x] ++ acc`, each on
+    // the list the one before made, is O(n²) in all (measured: 63.6 times for 8 times the length,
+    // `l03_15a_fp_ops_run::bench::a_right_nested_chain_of_concatenations_runs_in_n_log_n`). Used:
+    // the finger tree of Hinze and Paterson (2006), the one strings use (`crate::text`, COMPLEXITY.md
+    // C29), with lists as its leaves: `++` shares both operands and builds O(log min(p, q)) nodes
+    // for operands of `p` and `q` leaves, O(1) amortized for a leaf added at either end; the count,
+    // a read by key, `in` and the first and last entry are answered from the counts in O(1) or
+    // O(log n), building no map. A walk over the entries (the hash, `==`, the order, a print, a
+    // change through `DerefMut`) builds the map once, O(n), which the copies share, as a range's
+    // (`Span::map`). Tradeoffs: a leaf per list joined, never merged with its neighbors, so a
+    // chain of one-entry lists holds a leaf, a one-entry map and O(1) tree nodes per entry; and a
+    // change to a list made by `++` builds its map, O(n), where the map made by the union took
+    // O(log n).
+    pub(crate) struct Chain {
+        tree: Part,
+        pub(super) map: std::sync::OnceLock<btree::Map<Value, Value>>,
+    }
+
+    /// A part of a [`Chain`]'s tree, shared.
+    #[derive(Clone)]
+    struct Part(Arc<ChainTree>);
+
+    /// One to four parts of one height, in order, the first `Some` and no `Some` after a `None`.
+    type ChainDigit = [Option<Part>; 4];
+
+    /// The finger tree of [`Chain`], as `text::tree::Tree` is for a string's blocks, with counts of
+    /// entries in place of lengths in bytes.
+    enum ChainTree {
+        /// The middle of a deep tree that has nothing between its ends.
+        Empty,
+        /// A list joined, not empty and not made by `++`: a part of height 0.
+        Leaf(Family),
+        /// Two or three parts of one height `h`, in order, the third `None` when there are two,
+        /// and their count of entries: a part of height `h + 1`.
+        Node {
+            len: usize,
+            parts: [Option<Part>; 3],
+        },
+        /// `front`, then the parts of the nodes that `middle` holds, then `back`, and their count of
+        /// entries. A tree of one part is that part itself.
+        Deep {
+            len: usize,
+            front: ChainDigit,
+            middle: Part,
+            back: ChainDigit,
+        },
+    }
+
+    impl Part {
+        /// The number of entries. O(1).
+        fn len(&self) -> usize {
+            match &*self.0 {
+                ChainTree::Empty => 0,
+                ChainTree::Leaf(f) => f.len(),
+                ChainTree::Node { len, .. } | ChainTree::Deep { len, .. } => *len,
+            }
+        }
+
+        /// The parts beneath this one, in order, the middle of a deep tree among them.
+        fn parts(&self) -> impl Iterator<Item = &Part> {
+            let (a, middle, b): (&[Option<Part>], _, &[Option<Part>]) = match &*self.0 {
+                ChainTree::Empty | ChainTree::Leaf(_) => (&[], None, &[]),
+                ChainTree::Node { parts, .. } => (parts.as_slice(), None, &[]),
+                ChainTree::Deep {
+                    front,
+                    middle,
+                    back,
+                    ..
+                } => (front.as_slice(), Some(middle), back.as_slice()),
+            };
+            a.iter().flatten().chain(middle).chain(b.iter().flatten())
+        }
+    }
+
+    impl Chain {
+        /// The list `a ++ b` of two lists, neither empty, of at most `i64::MAX` entries in all.
+        pub(super) fn join(a: &Family, b: &Family) -> Chain {
+            let part = |f: &Family| match &f.0 {
+                Entries::Seq(c) => c.tree.clone(),
+                _ => Part(Arc::new(ChainTree::Leaf(f.clone()))),
+            };
+            Chain {
+                tree: chain_concat(&part(a), &[], &part(b)),
+                map: std::sync::OnceLock::new(),
+            }
+        }
+
+        /// The number of entries. O(1).
+        pub(super) fn len(&self) -> usize {
+            self.tree.len()
+        }
+
+        /// The position `k` names, when it is one of the keys `0 ..< len`. A key equals an
+        /// integer only when it is that integer, of integer kind, and a `Big` is never in the
+        /// 64-bit range (`Span::find`), so only an `Int` is a key here.
+        pub(super) fn index(&self, k: &Value) -> Option<usize> {
+            match k {
+                Value::Int(i) => usize::try_from(*i).ok().filter(|&i| i < self.len()),
+                _ => None,
+            }
+        }
+
+        /// The leaf that holds position `i`, `i < len`, and the key `i` has in it: one part per
+        /// level, chosen by the counts, O(log n) levels of at most nine parts.
+        fn leaf(&self, mut i: usize) -> (&Family, Value) {
+            let mut t = &self.tree;
+            loop {
+                if let ChainTree::Leaf(f) = &*t.0 {
+                    return (f, Value::Int(i as i64));
+                }
+                t = t
+                    .parts()
+                    .find(|p| match i < p.len() {
+                        true => true,
+                        false => {
+                            i -= p.len();
+                            false
+                        }
+                    })
+                    .expect("a position below the count lies in one of the parts");
+            }
+        }
+
+        /// The value at key `k`, as [`Family::get`] gives it: O(log n), and the leaf's own read.
+        pub(super) fn get(&self, k: &Value) -> Option<&Value> {
+            let (f, k) = self.leaf(self.index(k)?);
+            f.get(&k)
+        }
+
+        /// The value at key `k`, copied, as [`Family::lookup`] gives it: O(log n), and the leaf's
+        /// own read, which on a range builds none of its entries.
+        pub(super) fn lookup(&self, k: &Value) -> Option<Value> {
+            let (f, k) = self.leaf(self.index(k)?);
+            f.lookup(&k)
+        }
+
+        /// The entry at position `i`, `i < len`, copied.
+        pub(super) fn entry(&self, i: usize) -> (Value, Value) {
+            let (f, k) = self.leaf(i);
+            let v = f.lookup(&k).expect("a leaf holds each key below its count");
+            (Value::Int(i as i64), v)
+        }
+
+        /// The map `{0 -> …, …}` of the whole list, built on the first call by one walk over the
+        /// leaves in order, O(n), and shared after.
+        pub(super) fn map(&self) -> &btree::Map<Value, Value> {
+            self.map.get_or_init(|| {
+                let mut out = Vec::with_capacity(self.len());
+                let mut todo = vec![&self.tree];
+                while let Some(t) = todo.pop() {
+                    match &*t.0 {
+                        ChainTree::Leaf(f) => {
+                            for (_, v) in f.iter() {
+                                out.push((Value::Int(out.len() as i64), v.clone()));
+                            }
+                        }
+                        _ => todo.extend(t.parts().collect::<Vec<_>>().into_iter().rev()),
+                    }
+                }
+                out.into_iter().collect()
+            })
+        }
+    }
+
+    /// The node of two or three parts of one height.
+    fn chain_node(parts: &[Part]) -> Part {
+        debug_assert!((2..=3).contains(&parts.len()));
+        let len = parts.iter().map(Part::len).sum();
+        let parts = std::array::from_fn(|i| parts.get(i).cloned());
+        Part(Arc::new(ChainTree::Node { len, parts }))
+    }
+
+    /// A digit of the given parts, one to four.
+    fn chain_digit(parts: &[Part]) -> ChainDigit {
+        debug_assert!((1..=4).contains(&parts.len()));
+        std::array::from_fn(|i| parts.get(i).cloned())
+    }
+
+    /// The deep tree of the given ends and middle, whose counts add up to `len`: the callers know
+    /// it from the tree they extend, so a push reads no part but the one it adds.
+    fn chain_deep(len: usize, front: ChainDigit, middle: Part, back: ChainDigit) -> Part {
+        debug_assert_eq!(
+            len,
+            front
+                .iter()
+                .chain(&back)
+                .flatten()
+                .map(Part::len)
+                .sum::<usize>()
+                + middle.len()
+        );
+        Part(Arc::new(ChainTree::Deep {
+            len,
+            front,
+            middle,
+            back,
+        }))
+    }
+
+    fn chain_empty() -> Part {
+        Part(Arc::new(ChainTree::Empty))
+    }
+
+    // Complexity tradeoff: `chain_push_back` and `chain_push_front` are strict, as the string's
+    // (`text::push_back`), so their O(1) is amortized over a sequence of pushes each made on the
+    // result of the one before, as a chain of `++` makes them: a push onto a full end (four parts)
+    // moves three of them into the middle as a node and leaves two, so the next two pushes at that
+    // end cannot carry. Given up: a program that keeps one tree whose ends are full at every level
+    // and pushes onto that same tree again and again pays O(log n) new nodes for each of those
+    // pushes; the list is the same. Why: an O(1) bound under any reuse of an old version needs
+    // Hinze and Paterson's lazy middle or Kaplan and Tarjan's catenable deques, a cell written after
+    // the node is shared or several times the code here. Test:
+    // `value::tests::lists_joined_in_any_shape_are_equal_and_read_alike`.
+    /// `t` then the part `p`, of the height of `t`'s parts.
+    fn chain_push_back(t: &Part, p: Part) -> Part {
+        let len = t.len() + p.len();
+        match &*t.0 {
+            ChainTree::Empty => p,
+            ChainTree::Leaf(_) | ChainTree::Node { .. } => chain_deep(
+                len,
+                chain_digit(std::slice::from_ref(t)),
+                chain_empty(),
+                chain_digit(&[p]),
+            ),
+            ChainTree::Deep {
+                front,
+                middle,
+                back,
+                ..
+            } => match back {
+                [Some(a), Some(b), Some(c), Some(d)] => chain_deep(
+                    len,
+                    front.clone(),
+                    chain_push_back(middle, chain_node(&[a.clone(), b.clone(), c.clone()])),
+                    chain_digit(&[d.clone(), p]),
+                ),
+                _ => {
+                    let mut back = back.clone();
+                    back[back.iter().take_while(|p| p.is_some()).count()] = Some(p);
+                    chain_deep(len, front.clone(), middle.clone(), back)
+                }
+            },
+        }
+    }
+
+    /// The part `p` then `t`, `p` of the height of `t`'s parts.
+    fn chain_push_front(p: Part, t: &Part) -> Part {
+        let len = p.len() + t.len();
+        match &*t.0 {
+            ChainTree::Empty => p,
+            ChainTree::Leaf(_) | ChainTree::Node { .. } => chain_deep(
+                len,
+                chain_digit(&[p]),
+                chain_empty(),
+                chain_digit(std::slice::from_ref(t)),
+            ),
+            ChainTree::Deep {
+                front,
+                middle,
+                back,
+                ..
+            } => match front {
+                [Some(a), Some(b), Some(c), Some(d)] => chain_deep(
+                    len,
+                    chain_digit(&[p, a.clone()]),
+                    chain_push_front(chain_node(&[b.clone(), c.clone(), d.clone()]), middle),
+                    back.clone(),
+                ),
+                [a, b, c, _] => chain_deep(
+                    len,
+                    [Some(p), a.clone(), b.clone(), c.clone()],
+                    middle.clone(),
+                    back.clone(),
+                ),
+            },
+        }
+    }
+
+    /// `a`, the parts `between`, then `b`: trees of parts of one height, and at most four parts
+    /// between. One level of the recursion per level of the shallower tree, each building O(1)
+    /// nodes, so O(log m) in all, `m` the number of leaves of the shorter; the recursion is that
+    /// deep, under 64.
+    fn chain_concat(a: &Part, between: &[Part], b: &Part) -> Part {
+        let onto_b = |b: &Part| {
+            between
+                .iter()
+                .rev()
+                .fold(b.clone(), |t, p| chain_push_front(p.clone(), &t))
+        };
+        let onto_a = |a: &Part| {
+            between
+                .iter()
+                .fold(a.clone(), |t, p| chain_push_back(&t, p.clone()))
+        };
+        match (&*a.0, &*b.0) {
+            (ChainTree::Empty, _) => onto_b(b),
+            (_, ChainTree::Empty) => onto_a(a),
+            (ChainTree::Leaf(_) | ChainTree::Node { .. }, _) => {
+                chain_push_front(a.clone(), &onto_b(b))
+            }
+            (_, ChainTree::Leaf(_) | ChainTree::Node { .. }) => {
+                chain_push_back(&onto_a(a), b.clone())
+            }
+            (
+                ChainTree::Deep {
+                    front,
+                    middle: m1,
+                    back: b1,
+                    ..
+                },
+                ChainTree::Deep {
+                    front: f2,
+                    middle: m2,
+                    back,
+                    ..
+                },
+            ) => {
+                let mut parts: Vec<Part> = b1.iter().flatten().cloned().collect();
+                parts.extend(between.iter().cloned());
+                parts.extend(f2.iter().flatten().cloned());
+                let len = a.len() + between.iter().map(Part::len).sum::<usize>() + b.len();
+                let mut rest: &[Part] = &parts;
+                let mut nodes = Vec::with_capacity(4);
+                while !rest.is_empty() {
+                    let k = if matches!(rest.len(), 2 | 4) { 2 } else { 3 };
+                    nodes.push(chain_node(&rest[..k]));
+                    rest = &rest[k..];
+                }
+                chain_deep(
+                    len,
+                    front.clone(),
+                    chain_concat(m1, &nodes, m2),
+                    back.clone(),
+                )
+            }
+        }
+    }
+}
+
 impl Hole for Value {
     /// `false`, which holds nothing on the heap.
     fn hole() -> Self {
@@ -1749,7 +2106,7 @@ impl Family {
                 Ends::Word { lo, last } => Some((lo, last)),
                 Ends::Wide { .. } => None,
             },
-            Entries::Map(_) | Entries::From(_) => None,
+            Entries::Map(_) | Entries::From(_) | Entries::Seq(_) => None,
         }
     }
 
@@ -1758,7 +2115,7 @@ impl Family {
     pub(crate) fn ends(&self) -> Option<(Value, Value)> {
         match &self.0 {
             Entries::Range(s) => Some((s.end(false), s.end(true))),
-            Entries::Map(_) | Entries::From(_) => None,
+            Entries::Map(_) | Entries::From(_) | Entries::Seq(_) => None,
         }
     }
 
@@ -1766,7 +2123,7 @@ impl Family {
     pub fn open_lo(&self) -> Option<&Value> {
         match &self.0 {
             Entries::From(lo) => Some(lo),
-            Entries::Range(_) | Entries::Map(_) => None,
+            Entries::Range(_) | Entries::Map(_) | Entries::Seq(_) => None,
         }
     }
 
@@ -1874,6 +2231,11 @@ impl Family {
 
     /// The value at key `k` of the top level.
     pub fn get(&self, k: &Value) -> Option<&Value> {
+        // A list made by `++` is read in its leaf, O(log n), building no map; its keys are
+        // integers, which `-0.0` is not.
+        if let Entries::Seq(c) = &self.0 {
+            return c.get(k);
+        }
         // Copied only when it holds a `-0.0`, which its key does not.
         match k.is_key() {
             true => self.0.get(k),
@@ -1889,27 +2251,32 @@ impl Family {
             // and `0.0` share, so `k.key()` is not needed.
             Entries::Range(s) => s.find(k),
             Entries::From(lo) => from_holds(lo, k).then(|| k.clone()),
+            Entries::Seq(c) => c.lookup(k),
             Entries::Map(_) => self.get(k).cloned(),
         }
     }
 
     /// Whether the top level has an entry at key `k`, as `in` reads it: O(1) on a range
-    /// (O(digits) on a wide one).
+    /// (O(digits) on a wide one) and on a list made by `++`.
     pub fn contains(&self, k: &Value) -> bool {
         match &self.0 {
             Entries::Range(s) => s.find(k).is_some(),
             Entries::From(lo) => from_holds(lo, k),
+            Entries::Seq(c) => c.index(k).is_some(),
             Entries::Map(_) => self.get(k).is_some(),
         }
     }
 
-    /// The least entry of the top level (`last` false) or the greatest, copied: O(1) on a range.
+    /// The least entry of the top level (`last` false) or the greatest, copied: O(1) on a range,
+    /// O(log n) on a list made by `++`, which is never empty (`Family::concat`).
     /// A range with no upper end has no greatest entry, and zedc never asks it for one.
     pub fn end_entry(&self, last: bool) -> Option<(Value, Value)> {
         match (&self.0, last) {
             (Entries::Range(s), _) => Some((s.end(last), s.end(last))),
             (Entries::From(lo), false) => Some((Value::clone(lo), Value::clone(lo))),
             (Entries::From(_), true) => walked_unbounded(),
+            (Entries::Seq(c), false) => Some(c.entry(0)),
+            (Entries::Seq(c), true) => Some(c.entry(c.len() - 1)),
             (Entries::Map(m), false) => m.get_min().cloned(),
             (Entries::Map(m), true) => m.get_max().cloned(),
         }
@@ -1924,6 +2291,11 @@ impl Family {
         Ok(match &self.0 {
             Entries::Range(s) => s.beside(k, after).map(|i| (i.clone(), i)),
             Entries::From(lo) => from_beside(lo, k, after)?.map(|i| (i.clone(), i)),
+            // The keys are the integers `0 ..= len - 1`: the one beside `k` as for a range,
+            // then its entry, O(log n).
+            Entries::Seq(c) => {
+                word_beside(0, c.len() as i64 - 1, k, after).map(|i| c.entry(i as usize))
+            }
             Entries::Map(m) => m.beside(k, after).cloned(),
         })
     }
@@ -1945,6 +2317,58 @@ impl Family {
     /// are shared, not copied.
     pub fn union(&self, other: &Family) -> Result<Family, KernelError> {
         union(self, other)
+    }
+
+    /// `self ++ other` on two lists (DESIGN.md step L5.2): `self`'s entries, then `other`'s with
+    /// each key `k` moved to `n + k`, `n` being `self.count`; `None` when either is not a list.
+    /// An empty side gives the other, the same family. Otherwise both are shared, not read, in a
+    /// list made by `++` (`Chain`): O(log min(p, q)) for operands joined from `p` and `q` lists,
+    /// O(1) amortized for a chain of `++` each on the list the one before made. Past `i64::MAX`
+    /// entries in all, where the keys leave `Int`, the list is built entry by entry, as the
+    /// union did before (a walk over that many entries does not end on any machine).
+    pub fn concat(&self, other: &Family) -> Option<Family> {
+        if !self.may_be_list() || !other.may_be_list() {
+            return None;
+        }
+        if self.is_empty() {
+            return Some(other.clone());
+        }
+        if other.is_empty() {
+            return Some(self.clone());
+        }
+        if self.size() + other.size() > i64::MAX as u128 {
+            let n = built_integer(&self.count());
+            let moved = other
+                .iter()
+                .map(|(k, v)| (Value::int(&n + built_integer(k)), v.clone()));
+            let entries = self
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .chain(moved);
+            return Some(Family::from_map(entries.collect()));
+        }
+        let chain = Chain::join(self, other);
+        Some(Family(Entries::Seq(Arc::new(chain)), fresh_id(), 0))
+    }
+
+    /// Whether the family may be a list, its keys the integers `0 ..< n`, read in O(1): a list
+    /// made by `++`; a range from 0; a map whose least key is `0` and whose greatest is
+    /// `n - 1` for its `n` entries. Not proved for a map: a key of another kind between `0` and
+    /// `n - 1` in the total order, `0.5`, with an integer missing, passes; the checker admits
+    /// `++` only on lists (`zedc-check` `list_concat_end`), so no checked program gives one.
+    fn may_be_list(&self) -> bool {
+        match &self.0 {
+            Entries::Seq(_) => true,
+            Entries::From(_) => false,
+            Entries::Range(s) => s.end(false) == Value::Int(0),
+            Entries::Map(m) => match (m.get_min(), m.get_max()) {
+                (Some((Value::Int(0), _)), Some((Value::Int(last), _))) => {
+                    u128::try_from(*last).is_ok_and(|l| l + 1 == m.len() as u128)
+                }
+                (None, None) => true,
+                _ => false,
+            },
+        }
     }
 
     /// Adds the entries at the top level, sharing all but O(m log n) of the map's nodes with the
@@ -2004,6 +2428,7 @@ impl Family {
         match &self.0 {
             Entries::Range(s) => usize::try_from(s.size()).unwrap_or_else(|_| self.0.len()),
             Entries::From(_) => walked_unbounded(),
+            Entries::Seq(c) => c.len(),
             Entries::Map(m) => m.len(),
         }
     }
@@ -2029,15 +2454,16 @@ impl Family {
         match &self.0 {
             Entries::Range(s) => s.size(),
             Entries::From(_) => walked_unbounded(),
+            Entries::Seq(c) => c.len() as u128,
             Entries::Map(m) => m.len() as u128,
         }
     }
 
     /// Whether the family has no entries. A range is never empty (`Family::range`,
-    /// `Family::range_from`).
+    /// `Family::range_from`), nor is a list made by `++` (`Family::concat`).
     pub fn is_empty(&self) -> bool {
         match &self.0 {
-            Entries::Range(_) | Entries::From(_) => false,
+            Entries::Range(_) | Entries::From(_) | Entries::Seq(_) => false,
             Entries::Map(m) => m.is_empty(),
         }
     }
@@ -3937,6 +4363,125 @@ mod tests {
             assert!(lazy.iter().eq(built.iter()));
         }
         assert!(Family::range(3, 2).is_empty() && Family::range(3, 2).span().is_none());
+    }
+
+    /// The list `[from, from + 1, …, to - 1]` built entry by entry: the value at key `i` is
+    /// `from + i`.
+    fn list_of(from: i64, to: i64) -> Family {
+        Family::of((from..to).map(|v| (v - from, v)))
+    }
+
+    /// `a ++ b`, both lists.
+    fn cat(a: &Family, b: &Family) -> Family {
+        a.concat(b).expect("both are lists")
+    }
+
+    /// The list `[from, …, to - 1]` joined from halves, down to one entry each.
+    fn halves(from: i64, to: i64) -> Family {
+        match to - from {
+            0 | 1 => list_of(from, to),
+            n => cat(&halves(from, from + n / 2), &halves(from + n / 2, to)),
+        }
+    }
+
+    /// Whether the list made by `++` `f` built its map.
+    fn chain_built(f: &Family) -> bool {
+        let Entries::Seq(c) = &f.0 else {
+            panic!("a join of two lists is kept as its parts")
+        };
+        c.map.get().is_some()
+    }
+
+    #[test]
+    fn lists_joined_in_any_shape_are_equal_and_read_alike() {
+        // Plan row PERF-list-concat-shared: the list `[0, …, n - 1]` joined by `++` in other
+        // shapes, one entry at a time from either end, as halves, in runs of three, and from a
+        // range and a list made by `++` at once, reads at every key, and at keys of every kind
+        // near both ends, as the list built entry by entry; the reads build no map. Then
+        // equality, the total order, the hash and the printed form, which read the entries,
+        // agree with the built list's and with one another's, whatever the shape.
+        let n = 200;
+        let built = list_of(0, n);
+        let one = |i: i64| list_of(i, i + 1);
+        let right = (0..n - 1)
+            .rev()
+            .fold(one(n - 1), |acc, i| cat(&one(i), &acc));
+        let left = (1..n).fold(one(0), |acc, i| cat(&acc, &one(i)));
+        let threes = (3..n).step_by(3).fold(list_of(0, 3), |acc, i| {
+            cat(&acc, &list_of(i, (i + 3).min(n)))
+        });
+        let mixed = cat(
+            &cat(&Family::range(0, 9), &halves(10, 100)),
+            &cat(&list_of(100, 150), &halves(150, n)),
+        );
+        let shapes = [right, left, halves(0, n), threes, mixed];
+        for (s, joined) in shapes.iter().enumerate() {
+            for i in 0..n {
+                assert_eq!(
+                    joined.lookup(&Value::Int(i)),
+                    Some(Value::Int(i)),
+                    "{s}: {i}"
+                );
+                assert_eq!(joined.get(&Value::Int(i)), Some(&Value::Int(i)), "{s}: {i}");
+            }
+            for k in keys_near(&[0, n - 1]) {
+                assert_eq!(joined.lookup(&k), built.get(&k).cloned(), "{s}: {k}");
+                assert_eq!(joined.contains(&k), built.get(&k).is_some(), "{s}: {k}");
+                for after in [false, true] {
+                    let want = built.beside_at(&k, after);
+                    assert_eq!(joined.beside_at(&k, after), want, "{s}: {k}, {after}");
+                }
+            }
+            for last_end in [false, true] {
+                assert_eq!(joined.end_entry(last_end), built.end_entry(last_end), "{s}");
+            }
+            assert_eq!((joined.len(), joined.count()), (built.len(), built.count()));
+            assert!(!joined.is_empty());
+            assert!(!chain_built(joined), "{s}: a read built the list's map");
+        }
+        for (s, joined) in shapes.iter().enumerate() {
+            assert!(*joined == built && built == *joined, "{s}");
+            let (j, b) = (Value::Family(joined.clone()), Value::Family(built.clone()));
+            assert_eq!(cmp(&j, &b), Ordering::Equal, "{s}");
+            assert_eq!(digest(&j), digest(&b), "{s}");
+            assert_eq!(joined.to_string(), built.to_string(), "{s}");
+            assert!(joined.iter().eq(built.iter()), "{s}");
+            for other in &shapes {
+                assert!(joined == other, "{s}");
+                let o = Value::Family(other.clone());
+                assert_eq!(cmp(&j, &o), Ordering::Equal, "{s}");
+                assert_eq!(digest(&j), digest(&o), "{s}");
+            }
+        }
+        // A list made by `++` differs from one of other entries, in either order.
+        let shorter = halves(0, n - 1);
+        assert!(shapes[0] != shorter && shorter != shapes[0]);
+        assert_eq!(
+            cmp(&Value::Family(shorter), &Value::Family(shapes[1].clone())),
+            Ordering::Less
+        );
+        // A change turns the list into its map, keeping the entries.
+        let mut changed = shapes[0].clone();
+        changed.extend([(Value::Int(n), Value::Int(n))]);
+        assert_eq!(changed, list_of(0, n + 1));
+    }
+
+    #[test]
+    fn a_join_with_an_empty_list_is_the_other_list_and_a_non_list_is_refused() {
+        let xs = list_of(0, 3);
+        assert_eq!(cat(&Family::new(), &xs).id(), xs.id());
+        assert_eq!(cat(&xs, &Family::new()).id(), xs.id());
+        assert!(cat(&Family::new(), &Family::new()).is_empty());
+        let not_lists = [
+            Family::of([(1, 1)]),
+            Family::of([(0, 0), (2, 2)]),
+            Family::set(["a"]),
+            Family::range(1, 3),
+            Family::range_from(Value::Int(0)),
+        ];
+        for f in &not_lists {
+            assert!(xs.concat(f).is_none() && f.concat(&xs).is_none(), "{f}");
+        }
     }
 
     #[test]

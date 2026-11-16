@@ -92,7 +92,7 @@
 | the number of keys of a key path | 23 |
 | a tuple `(a, b, …)` | 24 |
 | `t[i]` on a tuple | 25 |
-| `a ++ b` | 26 |
+| `a ++ b` on two strings | 26 |
 | `a ^ b` | 27 |
 | an atom built from its name, its field names and its payload | 28 |
 | `String` | 29 |
@@ -145,6 +145,7 @@
 | `lines` | 76 |
 | `concat` | 77 |
 | `a ..`, the integers from `a` with no upper end | 78 |
+| `a ++ b` on two lists | 79 |
 | Witness | Tag | Fields in order |
 | Residue | 0 | — |
 | Catalog | 1 | `name: string` |

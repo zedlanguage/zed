@@ -1355,7 +1355,7 @@ impl<'t> Machine<'_, 't> {
             return out;
         }
         let outer = std::mem::take(&mut t.reads);
-        let union = matches!(term, Term::Prim(Prim::Union, _));
+        let union = matches!(term, Term::Prim(Prim::Union | Prim::ListConcat, _));
         self.frames.push(Frame::Fact { at, outer, union });
         self.node(term, at, env)
     }
@@ -1376,7 +1376,8 @@ impl<'t> Machine<'_, 't> {
             V::Data(d) => Some(d.clone()),
             _ => None,
         };
-        // The two reads of a union are the facts of its operands, whose data were read when they
+        // The two reads of a union, or of `++` on lists, whose entries are its operands' entries
+        // under other keys, are the facts of its operands, whose data were read when they
         // were made: whether its value holds a failure is known unread, where a family made from
         // one holding none would be read by the difference of the two (`Holds`).
         let of_operands = union
@@ -4040,6 +4041,10 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         }
         (Prim::First | Prim::Last, [Value::Family(f)]) => leaf_at_end(f, p == Prim::Last),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
+        (Prim::ListConcat, [Value::Family(a), Value::Family(b)]) => match a.concat(b) {
+            Some(f) => Value::Family(f),
+            None => return ty(vals),
+        },
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
             Value::atom_with(atom_name(name)?, args.to_vec())
         }

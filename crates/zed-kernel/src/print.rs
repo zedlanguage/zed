@@ -216,6 +216,7 @@ fn name(p: Prim) -> &'static str {
         Lines => "lines",
         Join => "concat",
         RangeFrom => "rangeFrom",
+        ListConcat => "listConcat",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
@@ -249,6 +250,7 @@ impl Prim {
             Prim::Has => "in",
             Prim::Range => "..<",
             Prim::RangeFrom => "..",
+            Prim::ListConcat => "++",
             Prim::First => ".first",
             Prim::Last => ".last",
             Prim::Atom => "#_(..)",

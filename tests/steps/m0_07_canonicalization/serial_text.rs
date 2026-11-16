@@ -197,7 +197,7 @@ pub(super) mod m07 {
             PathLen => "the number of keys of a key path",
             Tuple => "a tuple `(a, b, …)`",
             TupleGet => "`t[i]` on a tuple",
-            Concat => "`a ++ b`",
+            Concat => "`a ++ b` on two strings",
             Pow => "`a ^ b`",
             Atom => "an atom built from its name, its field names and its payload",
             Show => "`String`",
@@ -250,6 +250,7 @@ pub(super) mod m07 {
             Lines => "`lines`",
             Join => "`concat`",
             RangeFrom => "`a ..`, the integers from `a` with no upper end",
+            ListConcat => "`a ++ b` on two lists",
         }
     }
 

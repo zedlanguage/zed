@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use zed_kernel::term::GuardPos;
-use zed_kernel::term::build::{lam, let_, lit, var};
+use zed_kernel::term::build::{app, lam, let_, lit, var};
 use zed_kernel::{Evaluator, Family, Pattern, Prim, Term, Value, World, eval};
 use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold, hold_linear};
@@ -208,6 +208,86 @@ fn elaborated(src: &str) -> HashMap<usize, Term> {
     scaling::inputs(N_KERNEL, |k| {
         with_prelude(Term::Let(xs.clone(), rc(entries(k)), q.clone()))
     })
+}
+
+/// Entries of a list built by n concatenations.
+const N_CONCAT: usize = 1_000;
+
+/// The list `[x]`.
+fn one(x: usize) -> Value {
+    Value::Family(Family::of([(0, x as i64)]))
+}
+
+/// `(a, b) -> a ++ b` with the body zedc elaborates `a ++ b` to on two lists of `int`. The
+/// chain is built here, not by zedc: zedc does not compile `++` on a fold's accumulator yet
+/// ("`++` on `a`, whose type is generic here").
+fn elaborated_concat() -> Term {
+    let unit = elab("a = [0];\nb = [0];\nq = a ++ b;").unwrap_or_else(|e| panic!("{e:?}"));
+    let def = |name: &str| unit.defs.iter().find(|d| d.name == name).unwrap();
+    let (a, b) = (def("a").kernel.clone(), def("b").kernel.clone());
+    lam(&[&a, &b], (*def("q").term).clone())
+}
+
+/// The k concatenations `[0] ++ ([1] ++ (… ++ ([k-1] ++ [0])))` (`right`) or
+/// `(([0] ++ [0]) ++ [1]) ++ … ++ [k-1]`, each a call of [`elaborated_concat`] on the list made
+/// by the one before, as `let`s.
+fn concat_chain(k: usize, right: bool) -> Term {
+    let step = |i: usize| match right {
+        true => app(var("cat"), vec![lit(one(i)), var("acc")]),
+        false => app(var("cat"), vec![var("acc"), lit(one(i))]),
+    };
+    let order: Vec<usize> = match right {
+        true => (0..k).rev().collect(),
+        false => (0..k).collect(),
+    };
+    let body = (order.iter().rev()).fold(var("acc"), |body, &i| let_("acc", step(i), body));
+    let_("cat", elaborated_concat(), let_("acc", lit(one(0)), body))
+}
+
+/// The list `0, …, k-1` with a `0` after it (`right`) or before it, as [`concat_chain`] makes.
+fn chain_value(k: usize, right: bool) -> Value {
+    let xs = (0..k as i64).collect::<Vec<_>>();
+    let all = match right {
+        true => [xs, vec![0]].concat(),
+        false => [vec![0], xs].concat(),
+    };
+    Value::Family(Family::of(
+        all.into_iter().enumerate().map(|(i, x)| (i as i64, x)),
+    ))
+}
+
+/// The benchmark of [`concat_chain`] at n and 8n concatenations, each result read whole by
+/// `==` against [`chain_value`].
+fn concat_chain_ratio(right: bool, what: &str) {
+    let terms = scaling::inputs(N_CONCAT, |k| with_prelude(concat_chain(k, right)));
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        assert_eq!(v, chain_value(k, right));
+    };
+    ratio(what, N_CONCAT, 1, run);
+}
+
+/// Plan row PERF-list-concat-shared: n concatenations, each putting one entry in front of the
+/// list built so far, `[x] ++ a`, the right-nested chain that a recursive
+/// `f(k) = [k] ++ f(k + 1)` builds. Each `++` shares both operands, so the chain costs
+/// O(n log n) in all; re-keying the right operand at each step costs O(n²).
+#[test]
+fn a_right_nested_chain_of_concatenations_runs_in_n_log_n() {
+    concat_chain_ratio(
+        true,
+        "n elaborated `[x] ++ a`, each on the list made by the one before, instructions",
+    );
+}
+
+/// The control of the test above: n concatenations, each putting one entry after the list
+/// built so far, `a ++ [x]`, the left-nested chain that `xs.foldl([], (a, x) -> a ++ [x])`
+/// builds.
+#[test]
+fn a_left_nested_chain_of_concatenations_runs_in_n_log_n() {
+    concat_chain_ratio(
+        false,
+        "n elaborated `a ++ [x]`, each on the list made by the one before, instructions",
+    );
 }
 
 /// Plan row FP-ops-scan: the scan walks the entries once, each step an entry step,

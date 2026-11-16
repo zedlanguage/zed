@@ -13,9 +13,10 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// interval, a method `.count`, `.first`, `.last`, a step of a walk in key order), or they belong
 /// to later layers, as the string functions `split`, `lines` and `concat` of layer 3 do, or a
 /// program writes them only inside another form (`a ..`, read by a key, `in` or `.first` until
-/// plan row RANGE-open-walk). A refusal names them by the form DESIGN.md writes, or else as the
-/// kernel's printer writes them.
-const UNNAMED: [Prim; 21] = [
+/// plan row RANGE-open-walk), or as `++` on two lists, which elaboration tells from `++` on two
+/// strings by the operands' types (plan row PERF-list-concat-shared). A refusal names them by
+/// the form DESIGN.md writes, or else as the kernel's printer writes them.
+const UNNAMED: [Prim; 22] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -37,6 +38,7 @@ const UNNAMED: [Prim; 21] = [
     Prim::Lines,
     Prim::Join,
     Prim::RangeFrom,
+    Prim::ListConcat,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.

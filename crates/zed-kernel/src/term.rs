@@ -214,6 +214,10 @@ pub enum Prim {
     /// mapping to itself; `a ..` is `rangeFrom(a)` (DESIGN.md sec:grammar, rule Range). It is
     /// read by a key, by `in` and by `first`, and never walked (plan row RANGE-open).
     RangeFrom,
+    /// `a ++ b` on two lists (DESIGN.md step L5.2): `a`'s entries, then `b`'s with each key `k`
+    /// moved to `a.count + k`. Both lists are shared in the result, not copied
+    /// (`Family::concat`, plan row PERF-list-concat-shared). `++` on strings is `Concat`.
+    ListConcat,
 }
 
 impl Prim {
@@ -320,6 +324,7 @@ impl Prim {
             Lines => 76,
             Join => 77,
             RangeFrom => 78,
+            ListConcat => 79,
         }
     }
 }

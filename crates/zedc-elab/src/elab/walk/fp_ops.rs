@@ -749,29 +749,16 @@ impl<'a> Elab<'a> {
     }
 
     /// `a ++ b` on two lists (step L5.2): `a`'s entries and then `b`'s, the key `k` of `b`
-    /// moved to `n + k`, `n` being `a.count`; the union of `a` and `fam k in n ..< n + m:
-    /// b[k - n]`, whose keys are disjoint from `a`'s.
-    // Complexity tradeoff: the `fam` asks m reads of `b`, O(m log m), and the union adds its
-    // m entries to `a`'s tree, O(m log(n + m)), sharing `a` without a copy; rebuilding the
-    // result entry by entry, the naive form, is O((n + m) log(n + m)) and copies `a`.
+    /// moved to `n + k`, `n` being `a.count`; the primitive `ListConcat`.
+    // Complexity tradeoff: the naive form, the union of `a` and `fam k in n ..< n + m:
+    // b[k - n]`, reads `b`'s m entries and adds them to `a`'s tree, O(m log(n + m)), so a chain
+    // of `[x] ++ acc` is O(n²). Used: `ListConcat`, which shares both lists in a finger tree of
+    // lists (Hinze and Paterson 2006; `Family::concat`, plan row PERF-list-concat-shared),
+    // O(log min(p, q)) for operands joined from p and q lists, O(1) amortized in a chain; a
+    // walk over the result builds its map once, O(n + m).
     pub(super) fn list_concat_term(&mut self, a: Term, b: Term) -> Term {
-        let (n, k) = (self.temp(), self.temp());
         self.over_two(a, b, |xs, ys| {
-            let count = |t: &Arc<str>| Term::Prim(Prim::Count, vec![var(t)]);
-            let end = Term::Prim(Prim::Add, vec![var(&n), count(ys)]);
-            let moved = Term::Fam {
-                domain: Shared::new(Term::Prim(Prim::Range, vec![var(&n), end])),
-                var: k.clone(),
-                body: Shared::new(Term::Prim(
-                    Prim::Get,
-                    vec![var(ys), Term::Prim(Prim::Sub, vec![var(&k), var(&n)])],
-                )),
-            };
-            Term::Let(
-                n.clone(),
-                Shared::new(count(xs)),
-                Shared::new(Term::Prim(Prim::Union, vec![var(xs), moved])),
-            )
+            Term::Prim(Prim::ListConcat, vec![var(xs), var(ys)])
         })
     }
 
