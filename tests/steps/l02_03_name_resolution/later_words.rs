@@ -201,7 +201,8 @@ const ALIASES: &[&str] = &["i8", "i16", "i32", "i64", "u8"];
 const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"), ("L12", "dist")];
 
 /// Names of the table whose rows are not built, each with the plan row that builds it: the test
-/// holds that each is not yet known, so that row must take it out of this list.
+/// holds that each is not yet known, or, for an annotation, that it is listed at its layer and
+/// still refused as not compiled yet, so that row must take it out of this list.
 const PENDING: &[(&str, &str)] = &[
     ("failure", "PORT-ack-name"),
     ("keeps", "L7.4"),
@@ -322,15 +323,15 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
     {
         for a in annots {
             let name = a.strip_prefix('@').expect("an annotation");
+            // A pending annotation is listed at its layer, as every other is, so that it is
+            // refused as not compiled yet; what tells it from a built one is that it still is.
+            assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
             if PENDING.iter().any(|(n, _)| *n == name) {
-                assert_eq!(
-                    annotation_layer(name),
-                    None,
+                assert!(
+                    not_compiled_yet(name),
                     "@{name} is built: remove it from PENDING"
                 );
-                continue;
             }
-            assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
             listed.entry(name.to_string()).or_insert(*layer);
         }
         // A facet word is a value word: the prelude binds the `Facet` value to the name.
@@ -420,6 +421,41 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
         assert!(
             types.get(t) == Some(&layer),
             "the type `{t}` of L{layer} is not in the table"
+        );
+    }
+}
+
+/// Whether a function annotated `@name` is refused with the message that names the annotation
+/// as not compiled yet.
+fn not_compiled_yet(name: &str) -> bool {
+    let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
+    zedc::run::load(src.as_bytes()).is_err_and(|out| {
+        out.contains(&zed_tests::not_yet(&format!("the annotation `@{name}`")))
+    })
+}
+
+/// An annotation that DESIGN lists in "Defined words by layer" but whose step is not built yet is
+/// reported as not compiled yet, as any later word is, and not as "is not an annotation" (plan
+/// row FAIL-pending-annotation-message: `@fpwarn` got that false message on zed-impl 6b74dc09c).
+#[test]
+fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet() {
+    for name in [
+        "stack",
+        "memoizationArena",
+        "equivalent",
+        "fpwarn",
+        "fpsafe",
+        "approx",
+    ] {
+        let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
+        let Err(out) = zedc::run::load(src.as_bytes()) else { panic!("accepted:\n{src}") };
+        assert!(!out.contains("is not an annotation"), "@{name}: {out}");
+        assert!(
+            out.contains(&format!(
+                "the annotation `@{name}` is part of the Zed language, and this version of zedc \
+                 does not compile it yet."
+            )),
+            "@{name}: {out}"
         );
     }
 }
