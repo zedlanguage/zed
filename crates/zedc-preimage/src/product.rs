@@ -11681,6 +11681,25 @@ impl Scope {
                 } else if !moved_by_base.remove(n) {
                     again |= !moved.insert(n.clone());
                 }
+                // A name left with a hole also asks for the whole block. The per-part
+                // projections stop at a fixpoint that is weaker than the projection of the
+                // conjunction of the parts, and a second move of one name is taken as the sign
+                // that the parts constrain each other (Schulte and Stuckey, "Efficient
+                // Constraint Propagation Engines", TOPLAS 31(1), 2008, run a propagator to its
+                // fixpoint in the same way and wake it again on its variables' events). The
+                // exact cover (`presburger::exact`) can give a name its exact set in one
+                // step where the box stage takes two, so that second move, and the whole-block
+                // projection with it, never came: a more exact input gave a less exact
+                // output. Audit seed 126 (`audit_seed_126_keeps_its_exact_ends`): the atom
+                // `3x + y == 4` gives y {-8, -5, -2, 1, 4, 7} at once, y moves once in the
+                // block of seven parts, and a stays [-8, 8], where the box answer
+                // [-8, 7] moves twice and the whole block gives a [-8, 2], z [0, 8].
+                // A set of more than one piece is the case the cover creates (a box never
+                // has a hole), so it is the trigger. Naive version, the whole block after
+                // every move: 8 more of the 175 l01_39 benchmarks over 20 s
+                // (coordkk, coordmix, hole_end*_pad), against none for this trigger
+                // (2026-11-16). Cost: one O(1) piece count a moved name.
+                again |= p.ints().len() > 1;
                 for j in b.due_users(n) {
                     if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
                         work.push_back(j.clone());
