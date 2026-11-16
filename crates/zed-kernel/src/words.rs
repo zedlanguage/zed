@@ -317,8 +317,9 @@ fn rank(pieces: impl Iterator<Item = Value>) -> Family {
 
 /// `split(s, sep)`: the pieces of `s` between the occurrences of `sep`, found left to right
 /// without overlap, every piece kept, empty ones included, so `concat(s.split(sep), sep: sep)`
-/// is `s` (DESIGN.md step L3.2). An empty `sep` gives each character of `s` as a piece, and
-/// `[""]` for an empty `s`, so `"".split(sep)` is `[""]` for every `sep`.
+/// is `s` (DESIGN.md step L3.2), and `"".split(sep)` is `[""]`. An empty `sep` has no answer,
+/// since it matches at every position, again and again: it gives the failure
+/// `#emptySeparator`, for every `s` (author decision P314).
 // Complexity tradeoff: the naive search tests `sep` at each offset of `s`, O(n·m) for n bytes
 // of `s` and m of `sep`. Used: the standard library's `str::split`, the Two-Way search
 // (Crochemore and Perrin, "Two-way string-matching", JACM 38(3), 1991), O(n + m) in all, then
@@ -327,6 +328,10 @@ fn rank(pieces: impl Iterator<Item = Value>) -> Family {
 // O(n) more memory for the time of the call, since the search reads one `&str`; a search across
 // block edges would avoid the copy at the cost of a matcher of its own.
 pub(crate) fn split(s: &Text, sep: &Text) -> Result<Value, KernelError> {
+    // The empty separator is answered before `s` is read, O(1).
+    if sep.is_empty() {
+        return Ok(Value::atom("emptySeparator"));
+    }
     let too_large = |bytes| KernelError::StringCopyTooLarge { op: "split", bytes };
     let flat = s.try_flat().map_err(|_| too_large(s.len()))?;
     let sep = sep.try_flat().map_err(|_| too_large(sep.len()))?;
@@ -336,15 +341,7 @@ pub(crate) fn split(s: &Text, sep: &Text) -> Result<Value, KernelError> {
         BigUint::from(s.len()) << 3u32,
     )
     .map_err(|_| too_large(s.len()))?;
-    let pieces: Vec<Value> = match (&*sep, flat.is_empty()) {
-        ("", true) => vec![Value::str("")],
-        ("", false) => flat
-            .char_indices()
-            .map(|(i, c)| Value::str(&flat[i..i + c.len_utf8()]))
-            .collect(),
-        (sep, _) => flat.split(sep).map(Value::str).collect(),
-    };
-    Ok(Value::Family(rank(pieces.into_iter())))
+    Ok(Value::Family(rank(flat.split(&*sep).map(Value::str))))
 }
 
 /// `lines(s)`: the lines of `s`, each ended by `\n`, `\r\n` or a lone `\r` and kept without it,

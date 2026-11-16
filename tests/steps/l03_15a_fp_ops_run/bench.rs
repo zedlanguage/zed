@@ -408,11 +408,12 @@ fn str_term(x: &str) -> Term {
     lit(Value::str(x))
 }
 
-/// Step L3.2's test: the join law `concat(s.split(sep), sep: sep) == s` on generated strings
-/// of n and 8n characters, each split and joined in O(n).
+/// Step L3.2's test: the join law `concat(s.split(sep), sep: sep) == s` for nonempty `sep` on
+/// generated strings of n and 8n characters, each split and joined in O(n). An empty `sep` is
+/// the failure `#emptySeparator` (author decision P314), given before the text is read.
 #[test]
 fn split_then_concat_gives_the_text_back_in_linear_time() {
-    for sep in [",", "\r\n", ""] {
+    for sep in [",", "\r\n"] {
         let terms = scaling::inputs(N_TEXT, |k| {
             let pieces = Term::Prim(Prim::Split, vec![str_term(&text(k)), str_term(sep)]);
             let term = Term::Prim(Prim::Join, vec![pieces, str_term(sep)]);

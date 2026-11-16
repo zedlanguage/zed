@@ -13,7 +13,7 @@
 use zed_kernel::term::build::{if_, let_, lit, var};
 use zed_kernel::{Family, Pattern, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
-use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable};
+use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
 use super::{program, run};
 
@@ -248,9 +248,9 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             joined(strings(&["a", "", "b", ""]), "|"),
         ),
         (
-            "split_by_the_empty_separator",
-            "${concat(\"hé€\".split(\"\"), sep: \".\")}",
-            joined(strings(&["h", "é", "€"]), "."),
+            "split_by_a_multibyte_separator",
+            "${concat(\"hé€é\".split(\"é\"), sep: \".\")}",
+            joined(strings(&["h", "€", ""]), "."),
         ),
         (
             "lines_at_each_line_end",
@@ -350,4 +350,32 @@ fn an_executable_gives_each_cases_value() {
     let want = (cases.iter().map(|(_, _, m)| expected(m))).collect::<Vec<_>>();
     // The program pushes one text, and `stdout` ends it with a newline as it does each push.
     assert_eq!(ran.stdout, want.concat());
+}
+
+/// An empty separator known only when the program runs gives `#emptySeparator` (DESIGN L3.2,
+/// author decision P314), from `zedc run` and from an executable alike; the same function
+/// gives the pieces at a separator that is not empty. The atom is compared, not written into
+/// the string: a loose atom in `${…}` is the value of the whole string, which a `Lines` port
+/// refuses.
+#[test]
+fn an_empty_separator_gives_the_failure_when_the_program_runs() {
+    let src = dir("l03_15a_fp_ops_run/empty_separator").join("empty_separator.zed");
+    let text = "parts(s: String, d: String) = s.split(d);\n\
+                main(m: MainArgs) {\n    m.stdout <- \"${parts(s: \"hé€\", d: \"\") == #emptySeparator} \
+                ${concat(parts(s: \"a,,b\", d: \",\") else [\"?\"], sep: \"|\")} \
+                ${concat(parts(s: \"a,,b\", d: \"\") else [\"?\"], sep: \"|\")}\";\n}\n";
+    std::fs::write(&src, text).unwrap();
+    let want = "true a||b ?\n";
+    let ran = interpreter(&src, &[], &[]);
+    assert_eq!(
+        (ran.status, ran.stderr.as_str(), ran.stdout.as_str()),
+        (0, "", want)
+    );
+    let exe = dir("l03_15a_fp_ops_run/empty_separator").join("empty_separator");
+    built(&src, &exe);
+    let ran = executable(&exe, &[], &[]);
+    assert_eq!(
+        (ran.status, ran.stderr.as_str(), ran.stdout.as_str()),
+        (0, "", want)
+    );
 }

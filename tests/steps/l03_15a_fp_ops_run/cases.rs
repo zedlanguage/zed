@@ -495,8 +495,7 @@ fn split_lines_and_concat() {
             ("\"\".split(\" \") == [\"\"]", "true"),
             ("\"a  b\".split(\" \") == [\"a\", \"\", \"b\"]", "true"),
             ("\"a,b,\".split(\",\") == [\"a\", \"b\", \"\"]", "true"),
-            ("\"ab\".split(\"\") == [\"a\", \"b\"]", "true"),
-            ("\"\".split(\"\") == [\"\"]", "true"),
+            ("\"hé€\".split(\"é\") == [\"h\", \"€\"]", "true"),
             ("\"a,b\".split(\",\")[1] else \"none\"", "b"),
             ("\"a,b\".split(\",\")[2] else \"none\"", "none"),
             ("\"a\\nb\".lines[-1] else \"none\"", "none"),
@@ -538,6 +537,69 @@ fn split_lines_and_concat() {
     );
 }
 
+/// `program` run by `zedc run`: what it prints, or with status not 0 its error output.
+fn ran(name: &str, program: &str) -> (u8, String) {
+    let out = run(&format!("fp_ops/{name}"), program, "", &[]);
+    match out.status {
+        0 => (0, out.stdout),
+        s => (s, out.stderr),
+    }
+}
+
+/// An empty separator has no answer (DESIGN L3.2, author decision P314, plan row
+/// FP-ops-split-empty-separator): `s.split("")` always fails, so it is rejected, and its message
+/// names the views that read the characters of `s`; a separator that may be empty gives
+/// `#emptySeparator` at `""`, and the atom is in the type of the call; a separator the checker
+/// proves nonempty adds no atom.
+#[test]
+fn an_empty_separator_is_a_failure() {
+    saying(
+        "split_empty",
+        &[
+            (
+                "\"ab\".split(\"\")",
+                "`\"ab\".split(\"\")` always fails with `#emptySeparator`",
+            ),
+            ("\"ab\".split(\"\")", "repair: write `\"ab\"::codepoints`"),
+            ("\"ab\".split(\"\")", "repair: write `\"ab\"::chars`"),
+            ("\"ab\".split(\"\")", "repair: write `\"ab\"::u8`"),
+            ("\"ab\".split(\"\")", "repair: write `\"ab\".split(sep)`"),
+            ("split(\"\", \"\")", "`split(\"\", \"\")` always fails"),
+            ("split(\"\", \"\")", "repair: write `split(\"\", sep)`"),
+            ("split(\"\", \"\")", "repair: write `\"\"::codepoints`"),
+        ],
+    );
+    // `d` may be empty: the call gives `#emptySeparator` there and the pieces elsewhere. The
+    // parameters are `String`, the one string type this zedc defines; DESIGN's `d: Utf8String`
+    // waits for plan row STR-types.
+    let parts = "parts(s: String, d: String) = s.split(d);\n";
+    let src = format!(
+        "{parts}main(m: MainArgs) {{\n  m.stdout <- \"${{parts(s: \"a,b\", d: \"\") == \
+         #emptySeparator}} ${{parts(s: \"a,b\", d: \",\") == [\"a\", \"b\"]}}\";\n}}\n"
+    );
+    assert_eq!(ran("split_empty_param", &src), (0, "true true\n".into()));
+    // The atom is in the type: the joined pieces may be `#emptySeparator`, which is no text.
+    let src = format!(
+        "{parts}main(m: MainArgs) {{\n  m.stdout <- concat(parts(s: \"a,b\", d: \",\"));\n}}\n"
+    );
+    let (status, err) = ran("split_empty_param_type", &src);
+    assert!(
+        status != 0 && err.contains("#emptySeparator"),
+        "{status}\n{err}"
+    );
+    // A literal separator that is not empty, and a name bound to one: the checker proves the
+    // separator nonempty from its type, so there is no atom and the joined pieces go to
+    // `m.stdout` as they are. A parameter `d: "," | ";"` or `d: String where d != ""` would show
+    // the same, but this zedc compiles neither form yet (plan row L10.1; the two tests wait in
+    // its deferred tests). A test `if d == "" { … } else { s.split(d) }` proves nothing of a
+    // `String` `d`: a test `x != v` takes `v` out of a listed type only (DESIGN L1.39), and
+    // `String` is not listed.
+    let src = "main(m: MainArgs) {\n  m.stdout <- concat(\"a,b\".split(\",\"), sep: \"+\");\n}\n";
+    assert_eq!(ran("split_nonempty_literal", src), (0, "a+b\n".into()));
+    let src = "main(m: MainArgs) {\n  d = \",\";\n  m.stdout <- concat(\"a,b\".split(d), sep: \"+\");\n}\n";
+    assert_eq!(ran("split_nonempty_bound", src), (0, "a+b\n".into()));
+}
+
 /// A call of `split`, `lines` or `concat` of the wrong shape is repaired with the operands the
 /// program wrote, in its own style, method or function; a missing operand is named by its
 /// parameter, as DESIGN step L3.2 writes it, and no separator the program did not write is
@@ -569,8 +631,19 @@ fn a_misshapen_string_call_is_repaired_with_the_programs_operands() {
             ),
             ("\"a\".split()", "repair: write `\"a\".split(sep)`"),
             ("split(\"a\")", "repair: write `split(\"a\", sep)`"),
-            // `"a".split("")` always fails (DESIGN L3.2, P314), so it is never the repair.
+            // `"a".split("")` always fails (DESIGN L3.2, P314), so it is never the repair; the
+            // views that read the characters are, as in the message for `"a".split("")`.
             ("\"a\".split(sep: \"\")", "repair: write `\"a\".split(sep)`"),
+            (
+                "\"a\".split(sep: \"\")",
+                "repair: write `\"a\"::codepoints`",
+            ),
+            ("\"a\".split(sep: \"\")", "repair: write `\"a\"::chars`"),
+            ("\"a\".split(sep: \"\")", "repair: write `\"a\"::u8`"),
+            (
+                "split(\"a\", by: \"\")",
+                "repair: write `\"a\"::codepoints`",
+            ),
             (
                 "\"a\".split(\",\", \";\")",
                 "repair: write `\"a\".split(\",\")`",

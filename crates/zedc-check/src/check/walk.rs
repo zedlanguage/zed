@@ -7708,11 +7708,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             let (shape, forms) = match word {
                 // The empty separator is not carried into the repair: `s.split("")` always
                 // fails, so it is rejected (DESIGN L3.2, author decision P314), and the repair
-                // names the parameter instead.
-                "split" => (
-                    "a string and a separator, passed by position",
-                    vec![call(second.filter(|c| *c != "\"\"").unwrap_or("sep"))],
-                ),
+                // names the parameter instead, then, as the message for `s.split("")` does,
+                // the views that read the characters of `s`.
+                "split" => {
+                    let mut forms = vec![call(second.filter(|c| *c != "\"\"").unwrap_or("sep"))];
+                    if second == Some("\"\"") {
+                        let e = (receiver.as_ref().and_then(|x| x.expr)).or(positional.first());
+                        forms.extend(fp_ops::view_forms(e, subject));
+                    }
+                    ("a string and a separator, passed by position", forms)
+                }
                 "lines" => ("one string", vec![call("")]),
                 _ => (
                     "a family of strings, and an optional separator `sep:` by name",

@@ -33,6 +33,29 @@ fn postfix_operand(c: &str) -> String {
     }
 }
 
+/// The operand `e`, written `c`, before a `.` or `::`: a string literal as written, whose
+/// quotes [`postfix_operand`] would wrap in parentheses it does not need, any other operand
+/// as [`postfix_operand`] writes it.
+fn postfix_subject(e: Option<&Expr>, c: &str) -> String {
+    match e.map(|e| &e.kind) {
+        Some(ExprKind::Str(_)) => c.to_string(),
+        _ => postfix_operand(c),
+    }
+}
+
+/// The views that read the characters of the string `e`, written `c`, as repairs of a split by
+/// the empty separator (DESIGN L3.2, author decision P314): its code points, its UTF-16 units
+/// and its UTF-8 bytes, which of them are the characters a program means depending on the
+/// string type.
+pub(in crate::check) fn view_forms(e: Option<&Expr>, c: &str) -> [String; 3] {
+    let s = postfix_subject(e, c);
+    [
+        format!("`{s}::codepoints`, the code points of `{s}`, each a `char32`"),
+        format!("`{s}::chars`, its UTF-16 units, each a `char16`"),
+        format!("`{s}::u8`, its UTF-8 bytes"),
+    ]
+}
+
 /// A quantifier of step L3.15a.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::check) enum Quantifier {
@@ -426,7 +449,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// when it is given. Each string operand must be a string, and the pieces of `concat` a
     /// family of strings; a family of families is rejected with `xss >< (++)` as the repair
     /// (author A105). `split` and `lines` give the rank `0 ..< n` of strings, `concat` a
-    /// string. A loose atom of an operand passes through, as through any call.
+    /// string. A loose atom of an operand passes through, as through any call. `split` gains
+    /// `#emptySeparator` where its separator may be `""`, and one whose separator is always
+    /// `""` is rejected (DESIGN L3.2, author decision P314).
     pub(super) fn strings_end(&mut self, word: &str, args: Vec<Arg<'a>>, span: Span) -> Ty {
         let quoted = format!("`{word}`");
         let mut out = Ty::empty();
@@ -438,6 +463,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             out = out.union(&self.passing(&a.ty, &quoted, span, a.at));
             if !self.string_operand(word, a, span) {
                 return Ty::empty();
+            }
+        }
+        if let ("split", [s, sep]) = (word, &args[..]) {
+            // An empty separator has no answer, so it is the failure `#emptySeparator`, given
+            // exactly where the separator's type holds `""`: a type that holds no `""`, as
+            // `","` or a name bound to it, adds no atom, and one whose only value is `""` is
+            // rejected. Each test reads the separator's type once, O(its size).
+            let value = sep.ty.without_loose();
+            let empty = Value::str("");
+            if !value.lists_nothing() && self.subtype(&value, &Ty::lit(&empty)) {
+                self.empty_separator(s, sep, span);
+                return Ty::empty();
+            }
+            if value.contains(&empty) {
+                out = out.union(&Ty::set(KType::atom("emptySeparator")));
             }
         }
         let Some(p) = pieces else {
@@ -538,6 +578,58 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         true
+    }
+
+    /// Rejects the `split` at `span` of the string `s` by `sep`, a separator that is always the
+    /// empty string: every value that reaches it fails with `#emptySeparator`, and an operation
+    /// that always fails is an error (DESIGN sec:failure; L3.2, author decision P314). The
+    /// repairs name the views that read the characters of `s`, then a separator that is not
+    /// empty, then the failure or `#bug` written in place of the call, as the other rejections
+    /// of an operation that always fails offer them.
+    fn empty_separator(&mut self, s: &Arg<'a>, sep: &Arg<'a>, span: Span) {
+        let at = sep.at.unwrap_or(span);
+        let call = match self.operand_text(Some(span)) {
+            Some(c) => format!("`{c}`"),
+            None => "`split` here".to_string(),
+        };
+        let reason = match (sep.expr.map(|e| &e.kind), self.operand_text(sep.at)) {
+            (Some(ExprKind::Str(_)), _) | (_, None) => "its separator is the empty string".into(),
+            (_, Some(c)) => format!("its separator `{c}` is always the empty string"),
+        };
+        let subject = self.operand_text(s.at).unwrap_or_else(|| "s".to_string());
+        // The call in the program's style: `split(s, sep)` as a function, `s.split(sep)` as a
+        // method.
+        let split = match call.starts_with("`split(") {
+            true => format!("`split({subject}, sep)`"),
+            false => format!("`{}.split(sep)`", postfix_subject(s.expr, &subject)),
+        };
+        let mut notes = vec![Note {
+            span: at,
+            text: "this separator is always the empty string".to_string(),
+        }];
+        notes.extend(self.derive(&[at]));
+        let menu = view_forms(s.expr, &subject)
+            .into_iter()
+            .map(|form| format!("repair: write {form}"))
+            .chain([
+                format!("repair: write {split}, with a separator `sep` that is not empty"),
+                "repair: write `#emptySeparator` in place of this call, where the failure is \
+                 meant"
+                    .to_string(),
+                "repair: write `#bug(\"…\")` in place of this call, where it is never meant to \
+                 be reached"
+                    .to_string(),
+            ]);
+        notes.extend(menu.map(|text| Note { span, text }));
+        self.rejects_with(
+            Row::AlwaysFails,
+            span,
+            format!(
+                "{call} always fails with `#emptySeparator`: {reason}, which is found at every \
+                 position of the text, so there are no pieces to give"
+            ),
+            notes,
+        );
     }
 
     /// The text of the operand at `at`, where it is on one line, for a message.

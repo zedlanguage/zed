@@ -157,9 +157,10 @@ fn strings(xs: &[&str]) -> Value {
         .collect())
 }
 
-/// `split` (plan row FP-ops-strings): every piece, empty ones included; an empty separator
-/// splits into characters, and `""` split by anything is `[""]`, so the join law holds there
-/// too.
+/// `split` (plan row FP-ops-strings): every piece, empty ones included, and `""` split by a
+/// nonempty separator is `[""]`, so the join law holds there too. An empty separator has no
+/// answer: it is the failure `#emptySeparator`, for every text, `""` included (DESIGN L3.2,
+/// author decision P314, plan row FP-ops-split-empty-separator).
 #[test]
 fn split_keeps_every_piece() {
     let split = |x: &str, sep: &str| run(Prim::Split, vec![s(x), s(sep)]);
@@ -170,8 +171,9 @@ fn split_keeps_every_piece() {
     assert_eq!(split("a::b", "::"), strings(&["a", "b"]));
     assert_eq!(split("abc", "x"), strings(&["abc"]));
     assert_eq!(split("aaa", "aa"), strings(&["", "a"]));
-    assert_eq!(split("hé€", ""), strings(&["h", "é", "€"]));
-    assert_eq!(split("", ""), strings(&[""]));
+    assert_eq!(split("hé€", "é"), strings(&["h", "€"]));
+    assert_eq!(split("hé€", ""), Value::atom("emptySeparator"));
+    assert_eq!(split("", ""), Value::atom("emptySeparator"));
 }
 
 /// `lines`: a line ends at `\n`, `\r\n` and a lone `\r`, and no empty line follows a line end
