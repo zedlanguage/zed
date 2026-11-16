@@ -1008,7 +1008,7 @@ fn leaf_digest(v: &Value) -> u64 {
         // for equal bytes however joined, and not by its bytes: a string doubled 62 times, a few
         // thousand nodes, would feed 2^62 bytes (item BUILD-doubling-60s).
         Value::Str(s) => (5, s.poly_hash()).hash(&mut h),
-        Value::Family(f) => (6, f.len()).hash(&mut h),
+        Value::Family(f) => (6, f.size()).hash(&mut h),
         Value::Atom(_) | Value::Tuple(_) | Value::Path(_) => {
             unreachable!("a value with a sequence")
         }
@@ -1166,7 +1166,135 @@ pub fn fresh_id() -> Id {
 /// the family this one was made from by adding entries to a copy of its map, 0 for none: the
 /// two share all but the nodes the change copied, which provenance reads (`Provenance::origins`).
 #[derive(Clone, Default)]
-pub struct Family(pub(crate) btree::Map<Value, Value>, Id, Id);
+pub struct Family(pub(crate) Entries, Id, Id);
+
+/// The top-level entries of a [`Family`]: an ordered map, or a range of 64-bit integers kept as
+/// its two ends (plan row RANGE-lazy). A range's map is built the first time a reader needs its
+/// entries one by one, through [`Deref`], and is then shared by every copy of the family; a
+/// change ([`std::ops::DerefMut`]) turns the range into that map first.
+// Complexity tradeoff: the naive range, every entry built when the range is made, costs O(n)
+// time and memory for n entries even when only one is read (`(0 ..< n)[k]`, `k in 0 ..< n`,
+// `.count`). Used: the two ends, O(1) to make; a read, `in`, the count and the first and last
+// entry are answered from the ends in O(1), and the entry beside a key in O(log n) at worst
+// (`Span::beside`). A walk over the entries builds the map once, O(n), as before, and the copies
+// share it. Tradeoffs: an `Arc` and a `OnceLock` per range, and one more test on each map read
+// through `Deref`; a family is 48 bytes either way (`a_value_is_56_bytes`).
+#[derive(Clone)]
+pub(crate) enum Entries {
+    /// The entries, in key order.
+    Map(btree::Map<Value, Value>),
+    /// The integers of a span, each a key that maps to itself, as a set leaf does.
+    Range(Arc<Span>),
+}
+
+impl Default for Entries {
+    fn default() -> Self {
+        Entries::Map(btree::Map::default())
+    }
+}
+
+impl Deref for Entries {
+    type Target = btree::Map<Value, Value>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Entries::Map(m) => m,
+            Entries::Range(s) => s.map(),
+        }
+    }
+}
+
+impl std::ops::DerefMut for Entries {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if let Entries::Range(s) = self {
+            // A copy of a map costs O(1): it shares the nodes `Span::map` built.
+            let map = s.map().clone();
+            *self = Entries::Map(map);
+        }
+        match self {
+            Entries::Map(m) => m,
+            Entries::Range(_) => unreachable!("a range was replaced by its map above"),
+        }
+    }
+}
+
+/// The integers `lo ..= last`, `lo <= last`, of a range family, and their map once built.
+pub(crate) struct Span {
+    lo: i64,
+    last: i64,
+    map: std::sync::OnceLock<btree::Map<Value, Value>>,
+}
+
+impl Span {
+    /// The number of integers, from 1 to 2^64, which `u128` holds exactly.
+    fn count(&self) -> u128 {
+        // `last >= lo`, so the difference of the two widened is from 0 to 2^64 − 1.
+        (i128::from(self.last) - i128::from(self.lo)) as u128 + 1
+    }
+
+    /// The map `{lo -> lo, …, last -> last}`, built on the first call, O(n), and shared after.
+    fn map(&self) -> &btree::Map<Value, Value> {
+        self.map.get_or_init(|| {
+            (self.lo..=self.last)
+                .map(|k| (Value::Int(k), Value::Int(k)))
+                .collect()
+        })
+    }
+
+    /// The integer `k` is, when it is one of the span's. Under the total order a key equals
+    /// `Int(i)` only when it is `Int(i)`: a value of another kind than the numbers is ordered by
+    /// its kind (`scalar_cmp`), a `Big` is never in the 64-bit range (`number_cmp`), and two
+    /// numbers of equal value and different kinds are ordered by kind (`number_cmp`'s
+    /// `then(number_kind)`), so a key that is no `Int` is in no span.
+    fn find(&self, k: &Value) -> Option<i64> {
+        match k {
+            Value::Int(i) if (self.lo..=self.last).contains(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// The least integer of the span greater than `k` under the total order (`after`), or the
+    /// greatest less than it, by binary search on the integers: `Int` values are ordered as
+    /// their `i64`s, so the integers of the span greater than `k` are a suffix of it and those
+    /// less than it a prefix. At most 64 comparisons, each of one integer with `k`.
+    fn beside(&self, k: &Value, after: bool) -> Option<i64> {
+        // `past(i)`: whether `Int(i)` is on the far side of `k`; monotone in `i`, false then
+        // true for `after`, true then false for its mirror, so the search finds the border.
+        let past = |i: i64| match after {
+            true => cmp(&Value::Int(i), k) == Ordering::Greater,
+            false => cmp(&Value::Int(i), k) == Ordering::Less,
+        };
+        // The span as `i128`, so that the midpoint and the steps past either end never overflow.
+        let (mut lo, mut hi) = (i128::from(self.lo), i128::from(self.last));
+        if after {
+            // The least `i` in `lo ..= hi` with `past(i)`, if any.
+            if !past(self.last) {
+                return None;
+            }
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                match past(mid as i64) {
+                    true => hi = mid,
+                    false => lo = mid + 1,
+                }
+            }
+        } else {
+            // The greatest `i` in `lo ..= hi` with `past(i)`, if any.
+            if !past(self.lo) {
+                return None;
+            }
+            while lo < hi {
+                let mid = lo + (hi - lo + 1) / 2;
+                match past(mid as i64) {
+                    true => lo = mid,
+                    false => hi = mid - 1,
+                }
+            }
+        }
+        // `lo` lies in the span, which is all `i64`.
+        Some(lo as i64)
+    }
+}
 
 impl Hole for Value {
     /// `false`, which holds nothing on the heap.
@@ -1177,8 +1305,12 @@ impl Hole for Value {
 
 impl Drop for Family {
     fn drop(&mut self) {
-        if !self.0.is_empty() {
-            free(Part::Map(mem::take(&mut self.0)));
+        // A range holds integers only, so its map, if built, is dropped where it is: there is
+        // no family beneath it whose drop could recurse.
+        if let Entries::Map(m) = &mut self.0
+            && !m.is_empty()
+        {
+            free(Part::Map(mem::take(m)));
         }
     }
 }
@@ -1313,7 +1445,32 @@ impl Family {
     fn made_from(map: btree::Map<Value, Value>, from: Id) -> Self {
         match map.is_empty() {
             true => Family::default(),
-            false => Family(map, fresh_id(), from),
+            false => Family(Entries::Map(map), fresh_id(), from),
+        }
+    }
+
+    /// The set of the integers `lo ..= last`, each key mapping to itself, as [`Family::set`]
+    /// gives it, kept as its two ends (`Entries::Range`); empty when `last < lo`.
+    pub fn range(lo: i64, last: i64) -> Self {
+        match last < lo {
+            true => Family::default(),
+            false => Family(
+                Entries::Range(Arc::new(Span {
+                    lo,
+                    last,
+                    map: std::sync::OnceLock::new(),
+                })),
+                fresh_id(),
+                0,
+            ),
+        }
+    }
+
+    /// The two ends `lo` and `last` of a family made by [`Family::range`] and not changed since.
+    pub fn span(&self) -> Option<(i64, i64)> {
+        match &self.0 {
+            Entries::Range(s) => Some((s.lo, s.last)),
+            Entries::Map(_) => None,
         }
     }
 
@@ -1428,6 +1585,44 @@ impl Family {
         }
     }
 
+    /// The value at key `k` of the top level, as [`Family::get`] gives it, copied: O(1) on a
+    /// range, which builds none of its entries for it.
+    pub fn lookup(&self, k: &Value) -> Option<Value> {
+        match &self.0 {
+            // A key is its own value in a range; `find` reads the key's own kind, which `-0.0`
+            // and `0.0` share, so `k.key()` is not needed.
+            Entries::Range(s) => s.find(k).map(Value::Int),
+            Entries::Map(_) => self.get(k).cloned(),
+        }
+    }
+
+    /// Whether the top level has an entry at key `k`, as `in` reads it: O(1) on a range.
+    pub fn contains(&self, k: &Value) -> bool {
+        match &self.0 {
+            Entries::Range(s) => s.find(k).is_some(),
+            Entries::Map(_) => self.get(k).is_some(),
+        }
+    }
+
+    /// The least entry of the top level (`last` false) or the greatest, copied: O(1) on a range.
+    pub fn end_entry(&self, last: bool) -> Option<(Value, Value)> {
+        match (&self.0, last) {
+            (Entries::Range(s), false) => Some((Value::Int(s.lo), Value::Int(s.lo))),
+            (Entries::Range(s), true) => Some((Value::Int(s.last), Value::Int(s.last))),
+            (Entries::Map(m), false) => m.get_min().cloned(),
+            (Entries::Map(m), true) => m.get_max().cloned(),
+        }
+    }
+
+    /// The entry of the top level just after key `k` (`after`) or just before it, copied, `k`
+    /// held or not: O(log n) on a range, which builds none of its entries for it.
+    pub fn entry_beside(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
+        match &self.0 {
+            Entries::Range(s) => s.beside(k, after).map(|i| (Value::Int(i), Value::Int(i))),
+            Entries::Map(m) => m.beside(k, after).cloned(),
+        }
+    }
+
     /// The top-level entries, in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
         self.0.iter()
@@ -1495,14 +1690,42 @@ impl Family {
         Some(out)
     }
 
-    /// The number of top-level entries.
+    /// The number of top-level entries: O(1) on a range of fewer than 2^64 integers. The one
+    /// range of 2^64, `i64::MIN ..= i64::MAX`, is past `usize`; its map is built for the count,
+    /// as every family's entries were before ranges were kept as their ends, which no memory
+    /// holds, so the call does not return a wrong number. [`Family::count`] counts it exactly.
     pub fn len(&self) -> usize {
-        self.0.len()
+        match &self.0 {
+            Entries::Range(s) => usize::try_from(s.count()).unwrap_or_else(|_| self.0.len()),
+            Entries::Map(m) => m.len(),
+        }
     }
 
-    /// Whether the family has no entries.
+    /// The number of top-level entries as an integer value, exact for every family: O(1) on a
+    /// range, `Big` past `i64`.
+    pub fn count(&self) -> Value {
+        let n = self.size();
+        match i64::try_from(n) {
+            Ok(n) => Value::Int(n),
+            Err(_) => Value::int(BigInt::from(n)),
+        }
+    }
+
+    /// The number of top-level entries, exact for every family and O(1): unlike [`Family::len`],
+    /// it builds no map for the range of 2^64 integers, so the hash and the comparisons read it.
+    pub(crate) fn size(&self) -> u128 {
+        match &self.0 {
+            Entries::Range(s) => s.count(),
+            Entries::Map(m) => m.len() as u128,
+        }
+    }
+
+    /// Whether the family has no entries. A range is never empty (`Family::range`).
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        match &self.0 {
+            Entries::Range(_) => false,
+            Entries::Map(m) => m.is_empty(),
+        }
     }
 }
 
@@ -1647,7 +1870,7 @@ impl<'a> Merging<'a> {
             big,
             left: small.0.iter(),
             small_is_b,
-            out: big.0.clone(),
+            out: (*big.0).clone(),
         }
     }
 }
@@ -2118,9 +2341,22 @@ fn atoms<'a>(a: &'a Atom, b: &'a Atom, r: Relation) -> Step<'a> {
 }
 
 fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
-    let same = a.0.ptr_eq(&b.0);
+    // Two ranges are compared by their ends, building neither map: the same ends are the same
+    // integer entries, which every relation reads as the same, as for one shared map below; other
+    // ends are other entries, and under the total order the walk decides.
+    let (x, y) = (a.span(), b.span());
+    if let (Some(x), Some(y)) = (x, y) {
+        match (x == y, r) {
+            (true, _) => return Step::Same,
+            (false, Relation::Identity | Relation::SurfaceEq) => return Step::Ends(None),
+            _ => {}
+        }
+    }
+    // With a range on one side the sharing is not tested, which would build its map: `same`
+    // false only sends the pair to the walk, which reads the entries and decides exactly.
+    let same = x.is_none() && y.is_none() && a.0.ptr_eq(&b.0);
     match r {
-        Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
+        Relation::Identity | Relation::SurfaceEq if a.size() != b.size() => Step::Ends(None),
         Relation::Identity | Relation::Total | Relation::Min | Relation::Max if same => Step::Same,
         _ => Step::Enter(Enter::Maps(a, b, r)),
     }
@@ -2417,8 +2653,17 @@ pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
 
 /// Whether two families are the same.
 pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
-    // One shared map: equal without a walk, as for sequences in `items_eq`.
-    if a.0.ptr_eq(&b.0) {
+    // Two ranges hold the same entries exactly when they have the same ends, and are never
+    // empty, so they are compared without building either map; a range and a map of another
+    // size differ, which `len` reads from the range's ends.
+    match (a.span(), b.span()) {
+        (Some(x), Some(y)) => return x == y,
+        (Some(_), None) | (None, Some(_)) if a.size() != b.size() => return false,
+        _ => {}
+    }
+    // One shared map: equal without a walk, as for sequences in `items_eq`. A range is not
+    // tested for sharing, which would build its map; the walk decides it.
+    if a.span().is_none() && b.span().is_none() && a.0.ptr_eq(&b.0) {
         return true;
     }
     COMPARISONS.with(|c| {
@@ -3262,6 +3507,165 @@ mod tests {
         assert_eq!(size_of::<Atom>(), 48);
         assert_eq!(size_of::<Items>(), 24);
         assert_eq!(size_of::<Fields>(), 8);
+    }
+
+    /// Keys of every kind near the integers `ends`: the integers within 2 of each, a float and a
+    /// rational of each such value and one half past it, a wide integer on each side of the
+    /// 64-bit range, and one value of each other kind.
+    fn keys_near(ends: &[i64]) -> Vec<Value> {
+        let half = |k: i64| {
+            let r = Rat::new(BigInt::from(k) * 2 + 1, BigInt::from(2)).expect("a nonzero den");
+            Value::rat(r)
+        };
+        let mut keys = vec![
+            Value::atom("a"),
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::str("0"),
+            Value::tuple(vec![Value::Int(0)]),
+            Value::Family(Family::set([0])),
+            Value::float(f64::NAN),
+            Value::float(-0.0),
+            Value::float(f64::INFINITY),
+            Value::float(f64::NEG_INFINITY),
+            Value::int(BigInt::from(i64::MAX) + 1),
+            Value::int(BigInt::from(i64::MIN) - 1),
+        ];
+        for &end in ends {
+            for d in -2..=2 {
+                let Some(k) = end.checked_add(d) else {
+                    continue;
+                };
+                keys.extend([
+                    Value::Int(k),
+                    Value::float(k as f64),
+                    Value::float32(k as f32),
+                    Value::float(k as f64 + 0.5),
+                    half(k),
+                ]);
+            }
+        }
+        keys
+    }
+
+    #[test]
+    fn a_range_kept_as_its_ends_reads_as_the_set_of_its_integers() {
+        // Plan row RANGE-lazy: every read of a range kept as its two ends agrees with the set
+        // of the same integers built entry by entry, at keys of every kind near both ends, and
+        // the range builds no entry for the reads.
+        let spans = [
+            (0, 0),
+            (0, 4),
+            (-3, 2),
+            (7, 7),
+            (i64::MAX - 2, i64::MAX),
+            (i64::MIN, i64::MIN + 2),
+        ];
+        for (lo, last) in spans {
+            let lazy = Family::range(lo, last);
+            let built = Family::set(lo..=last);
+            assert_eq!(lazy.span(), Some((lo, last)));
+            for k in keys_near(&[lo, last]) {
+                assert_eq!(
+                    lazy.lookup(&k),
+                    built.get(&k).cloned(),
+                    "{lo} ..= {last} at {k}"
+                );
+                assert_eq!(lazy.contains(&k), built.get(&k).is_some(), "{k}");
+                for after in [false, true] {
+                    let want = built.entry_beside(&k, after);
+                    assert_eq!(lazy.entry_beside(&k, after), want, "{k}, after {after}");
+                }
+            }
+            for last_end in [false, true] {
+                assert_eq!(lazy.end_entry(last_end), built.end_entry(last_end));
+            }
+            assert_eq!(lazy.len(), built.len());
+            assert_eq!(lazy.count(), built.count());
+            assert!(!lazy.is_empty());
+            let Entries::Range(s) = &lazy.0 else {
+                panic!("a range is kept as its ends")
+            };
+            assert!(s.map.get().is_none(), "a read built the range's entries");
+            // Equality both ways, the total order, the hash and the printed form read the
+            // entries, building the map, and agree with the set's.
+            assert!(lazy == built && built == lazy);
+            assert_eq!(
+                cmp(&Value::Family(lazy.clone()), &Value::Family(built.clone())),
+                Ordering::Equal
+            );
+            assert_eq!(
+                digest(&Value::Family(lazy.clone())),
+                digest(&Value::Family(built.clone()))
+            );
+            assert_eq!(lazy.to_string(), built.to_string());
+            assert!(lazy.iter().eq(built.iter()));
+        }
+        assert!(Family::range(3, 2).is_empty() && Family::range(3, 2).span().is_none());
+    }
+
+    #[test]
+    fn two_ranges_compare_by_their_ends_and_a_range_against_a_map_by_its_entries() {
+        let r = |lo, last| Value::Family(Family::range(lo, last));
+        let s = |lo: i64, last: i64| Value::Family(Family::set(lo..=last));
+        let pairs = [
+            ((0, 4), (0, 4)),
+            ((0, 4), (0, 5)),
+            ((0, 4), (1, 4)),
+            ((-1, 0), (0, 0)),
+        ];
+        for ((a, b), (c, d)) in pairs {
+            for (x, y) in [(r(a, b), r(c, d)), (r(a, b), s(c, d)), (s(a, b), r(c, d))] {
+                let (p, q) = (s(a, b), s(c, d));
+                assert_eq!(x == y, p == q, "{x} and {y}");
+                assert_eq!(x.surface_eq(&y), p.surface_eq(&q), "{x} and {y}");
+                assert_eq!(cmp(&x, &y), cmp(&p, &q), "{x} and {y}");
+                assert_eq!(x.surface_cmp(&y), p.surface_cmp(&q), "{x} and {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_range_changed_becomes_a_map_and_the_range_it_was_copied_from_is_unchanged() {
+        let lazy = Family::range(0, 2);
+        let mut changed = lazy.clone();
+        changed.extend([(Value::Int(9), Value::Int(9))]);
+        assert_eq!(changed.span(), None);
+        assert_eq!(changed, Family::set([0, 1, 2, 9]));
+        assert_eq!(lazy, Family::set([0, 1, 2]));
+        assert_eq!(lazy.span(), Some((0, 2)));
+    }
+
+    #[test]
+    fn the_range_of_every_64_bit_integer_is_counted_exactly() {
+        // 2^64 entries: past `i64` and `usize`, so `.count` is a wide integer. Its reads and its
+        // ends cost O(1); no test reads `len`, which would build it.
+        let all = Family::range(i64::MIN, i64::MAX);
+        assert_eq!(all.count(), Value::int(BigInt::from(u64::MAX) + 1));
+        assert_eq!(
+            all.lookup(&Value::Int(i64::MIN)),
+            Some(Value::Int(i64::MIN))
+        );
+        assert!(all.contains(&Value::Int(0)));
+        let at = |k: i64| Some((Value::Int(k), Value::Int(k)));
+        assert_eq!(all.end_entry(true), at(i64::MAX));
+        assert_eq!(all.entry_beside(&Value::float(0.5), true), at(1));
+        assert_eq!(all.entry_beside(&Value::float(0.5), false), at(0));
+        assert_eq!(all.entry_beside(&Value::Int(i64::MAX), true), None);
+        assert_eq!(Family::range(i64::MIN, i64::MAX - 1).len(), usize::MAX);
+        // The hash and the comparisons read the exact size, so none of them builds the map
+        // either: against a copy, a range one shorter, and a small map.
+        let one_less = Family::range(i64::MIN, i64::MAX - 1);
+        let digest = |f: &Family| leaf_digest(&Value::Family(f.clone()));
+        assert_eq!(digest(&all), digest(&all.clone()));
+        assert_ne!(digest(&all), digest(&one_less));
+        assert!(families_eq(&all, &all.clone()));
+        assert!(!families_eq(&all, &one_less));
+        assert!(!families_eq(&all, &Family::set(0..=2)));
+        assert_eq!(
+            cmp(&Value::Family(all.clone()), &Value::Family(all.clone())),
+            Ordering::Equal
+        );
     }
 
     #[test]

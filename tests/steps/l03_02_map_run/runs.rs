@@ -425,6 +425,54 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "${(2 ..< 5).where(x -> x > 2)[2] is #notFound}",
             lit(true),
         ),
+        // Plan row RANGE-lazy: a range is kept as its two ends, and read, counted and tested
+        // at its ends without its entries being made, so a range of 10^12 entries is read here
+        // in O(1) by the interpreter and by the executable alike.
+        ("a_range_counted", "${(3 ..< 10).count}", lit(7)),
+        (
+            "the_first_of_a_negative_range",
+            "${(-5 ..= -2).first else 0}",
+            lit(-5),
+        ),
+        (
+            "the_last_of_a_negative_range",
+            "${(-5 ..= -2).last else 0}",
+            lit(-2),
+        ),
+        (
+            "reads_at_both_ends_of_a_negative_range",
+            "${[(-5 ..= -2)[-5] else 0, (-5 ..= -2)[-2] else 0, (-5 ..= -2)[-1] else 0]}",
+            list(&[-5, -2, 0]),
+        ),
+        (
+            "a_range_of_a_trillion_entries_read_at_its_end",
+            "${(0 ..< 1000000000000)[999999999999] else -1}",
+            lit(999_999_999_999),
+        ),
+        (
+            "a_range_of_a_trillion_entries_counted",
+            "${(0 ..< 1000000000000).count}",
+            lit(1_000_000_000_000),
+        ),
+        (
+            "in_a_range_of_a_trillion_entries",
+            "${[999999999999 in 0 ..< 1000000000000, 1000000000000 in 0 ..< 1000000000000]}",
+            family(vec![(i(0), Value::Bool(true)), (i(1), Value::Bool(false))]),
+        ),
+        (
+            "every_64_bit_integer_counted",
+            "${(-9223372036854775807 - 1 ..= 9223372036854775807).count}",
+            lit(Value::int(num_bigint::BigInt::from(u64::MAX) + 1)),
+        ),
+        (
+            "a_range_equal_to_the_set_of_its_integers",
+            "${[(1 ..< 4) == {1, 2, 3}, (1 ..< 4) == {1, 2}, (1 ..< 4) == (1 ..= 3)]}",
+            family(vec![
+                (i(0), Value::Bool(true)),
+                (i(1), Value::Bool(false)),
+                (i(2), Value::Bool(true)),
+            ]),
+        ),
     ]
 }
 

@@ -3786,12 +3786,24 @@ fn entries(vals: Vec<Value>) -> Result<Value, KernelError> {
 /// and empty when `b <= a` (DESIGN.md sec:grammar, rule Range).
 // Complexity tradeoff: the naive version is a union of one-entry sets, one per integer, which
 // copies the set built so far on each union, O(n^2) for n keys, or a display `{a, …, b - 1}`
-// put through `from_leaves`, O(n log n). Used: the keys made in ascending order and collected
-// into the ordered map at once, which builds it from the sorted run in O(n). Tradeoff: none; an
-// end past `i64` builds each key with `+`, O(n) big-integer additions.
+// put through `from_leaves`, O(n log n), or the keys made in ascending order and collected into
+// the ordered map at once, O(n) time and memory (the method until plan row RANGE-lazy). Used:
+// when `a` and `b - 1` are both 64-bit, the two ends kept as they are (`Family::range`), O(1);
+// a read, `in`, `.count` and the first and last entry cost O(1) and the entry beside a key
+// O(log n), and the first walk over the entries builds the map, O(n), as before. Tradeoff: an
+// end past `i64` still builds each key with `+`, O(n) big-integer additions (plan row
+// RANGE-lazy-wide).
 fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
-    if let (Value::Int(x), Value::Int(y)) = (a, b) {
-        return Ok(Value::Family(Family::set(*x..*y)));
+    // `b - 1`, which is 64-bit for every 64-bit `b` above `i64::MIN` and for `b = 2^63`, the end
+    // `..= i64::MAX` gives.
+    let last = int_binary(Prim::Sub, b, &Value::Int(1))?.expect("an integer difference");
+    if let (Value::Int(lo), Value::Int(last)) = (a, &last) {
+        return Ok(Value::Family(Family::range(*lo, *last)));
+    }
+    if let (Value::Int(_), Value::Int(y)) = (a, b) {
+        // Only `b = i64::MIN`, whose `b - 1` is past `i64`: no integer is below it.
+        debug_assert_eq!(*y, i64::MIN);
+        return Ok(Value::Family(Family::new()));
     }
     // An end past `i64`: the count `b - a`, and each key `a + i`. A count past `i64` never
     // ends before memory runs out, as any family of that many entries.
@@ -3809,9 +3821,9 @@ fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
 
 /// An entry of a family as the tuple `(k, v)`, or the empty tuple `()` for none: the answer of
 /// the entry steps `firstEntry`, `lastEntry`, `entryAfter` and `entryBefore`.
-fn entry_tuple(e: Option<&(Value, Value)>) -> Value {
+fn entry_tuple(e: Option<(Value, Value)>) -> Value {
     match e {
-        Some((k, v)) => Value::tuple(vec![k.clone(), v.clone()]),
+        Some((k, v)) => Value::tuple(vec![k, v]),
         None => Value::tuple(Vec::new()),
     }
 }
@@ -3823,16 +3835,14 @@ fn entry_tuple(e: Option<&(Value, Value)>) -> Value {
 // least keypath, O(n log n) for n leaves. Used: the least (greatest) entry of each level the
 // descent passes, O(log n) per level, O(d log n) for d levels. Tradeoff: none.
 pub fn leaf_at_end(f: &Family, last: bool) -> Value {
-    let mut level = f;
+    // Each level's end entry is copied, O(1) whether a map or a range (a family's copy shares
+    // its map), so a range is read from its ends.
+    let mut level = f.clone();
     loop {
-        let e = match last {
-            false => level.0.get_min(),
-            true => level.0.get_max(),
-        };
-        match e {
+        match level.end_entry(last) {
             None => return Value::atom("none"),
             Some((_, Value::Family(inner))) => level = inner,
-            Some((_, v)) => return v.clone(),
+            Some((_, v)) => return v,
         }
     }
 }
@@ -4020,19 +4030,19 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Not, [Bool(a)]) => Bool(!a),
         // `v[0]` elaborates to `tupleGet` before types tell a family from a tuple (L1.22).
         (Prim::Get | Prim::TupleGet, [Value::Family(f), k]) => {
-            f.get(k).cloned().unwrap_or_else(|| Value::atom("notFound"))
+            f.lookup(k).unwrap_or_else(|| Value::atom("notFound"))
         }
-        (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
-        (Prim::Has, [k, Value::Family(f)]) => Bool(f.get(k).is_some()),
+        (Prim::Count, [Value::Family(f)]) => f.count(),
+        (Prim::Has, [k, Value::Family(f)]) => Bool(f.contains(k)),
         (Prim::Range, [a, b]) if a.number_kind() == Some(0) && b.number_kind() == Some(0) => {
             range(a, b)?
         }
-        (Prim::FirstEntry, [Value::Family(f)]) => entry_tuple(f.0.get_min()),
-        (Prim::LastEntry, [Value::Family(f)]) => entry_tuple(f.0.get_max()),
+        (Prim::FirstEntry, [Value::Family(f)]) => entry_tuple(f.end_entry(false)),
+        (Prim::LastEntry, [Value::Family(f)]) => entry_tuple(f.end_entry(true)),
         (Prim::EntryAfter | Prim::EntryBefore, [Value::Family(f), Value::Tuple(e)])
             if e.len() == 2 =>
         {
-            entry_tuple(f.0.beside(&e[0], p == Prim::EntryAfter))
+            entry_tuple(f.entry_beside(&e[0], p == Prim::EntryAfter))
         }
         (Prim::First | Prim::Last, [Value::Family(f)]) => leaf_at_end(f, p == Prim::Last),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
@@ -4067,10 +4077,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::TupleGet | Prim::At, [Value::Tuple(_), _]) => Value::atom("outOfBounds"),
         // A read the checker proved is of a family whose keys are one integer interval, every
         // key present: a key it lacks lies outside the interval.
-        (Prim::At, [Value::Family(f), k]) => f
-            .get(k)
-            .cloned()
-            .unwrap_or_else(|| Value::atom("outOfBounds")),
+        (Prim::At, [Value::Family(f), k]) => {
+            f.lookup(k).unwrap_or_else(|| Value::atom("outOfBounds"))
+        }
         (
             Prim::Show
             | Prim::CastInt

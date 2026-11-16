@@ -119,19 +119,66 @@ fn range_term(n: usize) -> Term {
     Term::Prim(Prim::Range, vec![lit(0), lit(n as i64)])
 }
 
+/// `r = 0 ..< n` read without a walk: the tuple of `r[n - 1]`, `n / 2 in r`, `r.count`, the
+/// last entry of `r` and the entry after the one at `n / 2`.
+fn range_reads_term(n: usize) -> Term {
+    let n = n as i64;
+    let half = Term::Prim(Prim::Tuple, vec![lit(n / 2), lit(n / 2)]);
+    let reads = Term::Prim(
+        Prim::Tuple,
+        vec![
+            get(var("r"), lit(n - 1)),
+            Term::Prim(Prim::Has, vec![lit(n / 2), var("r")]),
+            count(var("r")),
+            Term::Prim(Prim::LastEntry, vec![var("r")]),
+            Term::Prim(Prim::EntryAfter, vec![var("r"), half]),
+        ],
+    );
+    let_("r", range_term(n as usize), reads)
+}
+
 #[test]
-fn a_range_runs_in_linear_time() {
-    // Plan row MAP-run-rest. Complexity tradeoff: the range is built as a family of n entries,
-    // O(n) time and space; a lazy range would read in O(1) and hold O(1), and is what the
-    // kernel's `Fam` over an interval would give, but no consumer here reads a range without
-    // visiting its entries, so the entries are made at once.
-    let terms = scaling::inputs(N_KERNEL, range_term);
+fn a_range_is_made_and_read_in_constant_time() {
+    // Plan row RANGE-lazy. Complexity tradeoff: the range was built as a family of n entries,
+    // O(n) time and memory for any read (the method until RANGE-lazy); it is kept as its two
+    // ends, so making it and each read here cost O(1), and the entry after a key O(log n) by
+    // a search over the ends with no entry built. The walk is the other side, below.
+    let terms = scaling::inputs(N_KERNEL, range_reads_term);
     let run = |k: usize| {
-        let v = eval(&terms[&k]).unwrap();
-        assert!(matches!(v, Value::Family(f) if f.len() == k));
+        let (n, half) = (k as i64, k as i64 / 2);
+        let pair = |x: i64| Value::tuple(vec![Value::Int(x), Value::Int(x)]);
+        let want = Value::tuple(vec![
+            Value::Int(n - 1),
+            Value::Bool(true),
+            Value::Int(n),
+            pair(n - 1),
+            pair(half + 1),
+        ]);
+        assert_eq!(eval(&terms[&k]).unwrap(), want);
     };
-    scaling::check("the kernel run of `0 ..< n`", N_KERNEL, run);
-    under_nine("the kernel run of `0 ..< n`, instructions", N_KERNEL, run);
+    scaling::check_order("the kernel run of reads of `0 ..< n`", N_KERNEL, 0, run);
+}
+
+/// `(0 ..< n) >< (+)` in the kernel: the walk builds the range's entries.
+fn range_sum_term(n: usize) -> Term {
+    fold(range_term(n), Term::PrimFn(Prim::Add), Some(lit(0)))
+}
+
+#[test]
+fn a_walk_over_a_range_runs_in_linear_time() {
+    // Plan row RANGE-lazy, the other side of the switchover (A96): the first walk builds the
+    // range's n entries once, O(n), as the eager range did, and adds them, O(n).
+    let terms = scaling::inputs(N_KERNEL, range_sum_term);
+    let run = |k: usize| {
+        let want = (k as i64) * (k as i64 - 1) / 2;
+        assert_eq!(eval(&terms[&k]).unwrap(), Value::Int(want));
+    };
+    scaling::check("the kernel run of `(0 ..< n) >< (+)`", N_KERNEL, run);
+    under_nine(
+        "the kernel run of `(0 ..< n) >< (+)`, instructions",
+        N_KERNEL,
+        run,
+    );
 }
 
 /// The term `xs >< (+)` elaborates to over n float entries `0.5, 1.5, …`, which is never

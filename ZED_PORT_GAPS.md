@@ -4084,3 +4084,12 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `u128` products reduced modulo `2^64 - 59` by two folds of the high word times 59 and one subtraction | `priority::mul`, `reduce`, `add` | Machine integers, bit operations (gap 4) | `(a * b) mod (2^64 - 59)` on `int`, the operands' ranges `int[0..<2^64 - 59]` letting the compiler pick the machine form |
 | `impl Hasher` whose `write` folds a key's `Hash` stream into a polynomial at the draw's point, 32 bits at a time, with `as_chunks::<4>` | `priority::Stream`, `Priorities::hash` | Hashing input (gap 5) | A fold over the key's canonical byte form (the content digest's input), which Zed gives each value |
 | An `AtomicU64` counter, `fetch_add` with `Relaxed`, numbering intervals in the order taken across threads (was a `thread_local!` sequence) | `intervals.rs` `prio_of`, `TAKEN` | Mutation, global state | A counter threaded through the module's state, or the interval's own content hashed by `Priorities::hash` |
+
+## Entries from RANGE-lazy (`zed-kernel/src/value.rs` `Entries`, `Span`; `eval.rs` `range`, `leaf_at_end`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceLock` inside an `Arc` holding a range's map, filled on the first walk and shared by every copy of the family | `Span::map` | Lazy once-only cells (gap 3), identity (gap 1) | The map built by the walk and kept in the walk's result, or a memo keyed by the range's two ends (the ends are the range's content, so equal ranges share one map) |
+| `Deref` and `DerefMut` on `Entries`, so every reader of a family's map reads a range through its built map without naming the range, and a change replaces the range with the map | `impl Deref for Entries`, `impl DerefMut for Entries` | Implicit conversions; mutation (gap 11) | A union type `Map \| Range` with an explicit `entries(f)` that builds the map, called at each walk |
+| `clippy.toml` `ignore-interior-mutability` for `Span`, whose hash and order read its entries, which the cache does not change | `clippy.toml` | Lint configuration | None: Zed has no interior mutability for a lint to flag |
+| A binary search over `i128` for the integer beside a key of another kind, comparing by the total order | `Span::beside` | Machine integers (gap 4) | `int` with the range `int[-2^63 - 1..=2^63]`, which the compiler stores in one machine word plus one bit |
