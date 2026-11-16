@@ -1575,6 +1575,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             positional,
             named,
             curry,
+            site,
         } => {
             parts.extend([Dbg::Text("Call { what: "), Dbg::Leaf(what)]);
             parts.push(Dbg::Text(", positional: "));
@@ -1589,7 +1590,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
                     Dbg::Text(")"),
                 ]);
             });
-            parts.extend([Dbg::Text(", curry: "), Dbg::Leaf(curry), Dbg::Text(" }")]);
+            parts.extend([
+                Dbg::Text(", curry: "),
+                Dbg::Leaf(curry),
+                Dbg::Text(", site: "),
+                Dbg::Leaf(site),
+                Dbg::Text(" }"),
+            ]);
         }
         NeedKind::Fold { tys, right, by } => {
             parts.push(Dbg::Text("Fold { tys: "));
@@ -4049,6 +4056,18 @@ pub enum NeedKind {
         named: Vec<(Arc<str>, Ty)>,
         /// Whether the call ends in `...`.
         curry: bool,
+        /// The call written in the text that this need stands for, as `g(x: 3)` in
+        /// `call(g) = g(x: 3)`, kept through every function the need is passed on to, so that
+        /// the signature of each function met at a call of the generic function is recorded
+        /// there for elaboration, which builds the body once (row
+        /// FAIL-elab-named-call-generic-param). `None` for an application a prelude word
+        /// makes, as `map`'s of its function, which places its arguments itself.
+        ///
+        /// Complexity tradeoff: two calls of one value with the same argument types are two
+        /// needs, met once each at each call of the generic function, O(sites × calls), the
+        /// work of checking each call site of the body once per call; one need for both, as
+        /// before this field, met once per call, cannot say which site a signature belongs to.
+        site: Option<Span>,
     },
     /// A use, `what`, that takes data: the value holds no function. The use does with the
     /// value what [`DataUse`] says, which its message names.
@@ -4571,11 +4590,13 @@ impl Need {
                     positional,
                     named,
                     curry,
+                    site,
                 } => NeedKind::Call {
                     what: what.clone(),
                     positional: positional.iter().map(&mut f).collect(),
                     named: named.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
                     curry: *curry,
+                    site: *site,
                 },
                 NeedKind::Data(what, does) => NeedKind::Data(what.clone(), *does),
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),

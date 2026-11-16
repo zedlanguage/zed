@@ -77,6 +77,139 @@ fn runs_to(src: &str, name: &str, want: &str) {
     assert_eq!(n, Ok(want.to_string()), "native code: {src}");
 }
 
+/// A generic body that calls its parameter by name is called as the function each call passes
+/// says (DESIGN.md sec:values_morphisms, "A function value is called as its type says"): the
+/// checker meets `g` at `call(g: small)` with `(x: int) -> int`, and that signature places the
+/// argument `x: 3` (row FAIL-elab-named-call-generic-param). So does a function taken from a
+/// tuple argument.
+#[test]
+fn a_named_call_of_a_generic_parameter_runs() {
+    runs_to(
+        "small(x: int) = x + 1;\ncall(g) = g(x: 3);\na = call(g: small);\n",
+        "a",
+        "4",
+    );
+    runs_to(
+        "small(x: int) = x + 1;\npass(p) = p[1](x: 3);\na = pass(p: (small, small));\n",
+        "a",
+        "4",
+    );
+    // Through a second generic function, which passes `h` on to `call`.
+    runs_to(
+        "small(x: int) = x + 1;\ncall(g) = g(x: 3);\ncall2(h) = call(g: h) + 1;\na = call2(h: small);\n",
+        "a",
+        "5",
+    );
+    // Two calls by name in one body, each recorded at its own place in the text.
+    runs_to(
+        "small(x: int) = x + 1;\ncall(g) = g(x: 3) * 10 + g(x: 4);\na = call(g: small);\n",
+        "a",
+        "45",
+    );
+    // A call by position that leaves out a defaulted parameter gets the default.
+    runs_to(
+        "f(positional x: int, y: int = 1) = x + y;\ncall(g) = g(3);\na = call(g: f);\n",
+        "a",
+        "4",
+    );
+    // Two functions with the same parameters in the same order, passed at two calls.
+    runs_to(
+        "f(a: int, b: int) = a - b;\ng(a: int, b: int) = a * 10 + b;\ncall(k) = k(b: 2, a: 5);\na = call(k: f) * 100 + call(k: g);\n",
+        "a",
+        "352",
+    );
+    // A curried call by name.
+    runs_to(
+        "f(x: int, y: int) = x * 10 + y;\ncur(k) = k(x: 1, ...);\na = cur(k: f)(y: 2);\n",
+        "a",
+        "12",
+    );
+    // Defaults that differ are passed over when the call passes the parameter.
+    runs_to(
+        "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\ncall(k) = k(x: 3, y: 5);\na = call(k: f) * 100 + call(k: g);\n",
+        "a",
+        "815",
+    );
+}
+
+/// A union of functions whose parameter names differ is refused at the call that names a
+/// parameter one of them lacks, whether the call is direct or in a generic body met at the
+/// union; the call through the value cannot place the argument for both.
+#[test]
+fn a_named_call_of_a_union_with_different_names_is_refused() {
+    let pick = "small(x: int) = x + 1;\nother(y: int) = y * 2;\npick(c: bool) = if c { small } else { other };\n";
+    let direct = format!("{pick}h = pick(c: false);\na = h(x: 3);\n");
+    let errors = type_errors(&direct);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("has no parameter of that name"),
+        "{errors:?}"
+    );
+    let generic = format!("{pick}call(g) = g(x: 3);\na = call(g: pick(c: false));\n");
+    let errors = type_errors(&generic);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("`g` has no parameter of that name"),
+        "{errors:?}"
+    );
+}
+
+/// Elaboration builds a call through a value once, by one signature, so the functions the
+/// value may be must take the call's arguments in the same places and fill the parameters it
+/// leaves out with the same defaults. When they do not, the checker refuses the call as not
+/// compiled yet, with a repair, instead of letting elaboration refuse it or, for differing
+/// defaults, run the wrong one (row FAIL-elab-named-call-generic-param).
+#[test]
+fn a_call_one_signature_cannot_place_for_every_function_is_refused() {
+    let cases = [
+        // A union with the parameters in different orders.
+        (
+            "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(a: 5, b: 2);\n",
+            "which have the parameter `a` in different places",
+            "give the functions passed as this value the same parameters, in the same order",
+        ),
+        // The same two functions passed at two calls of a generic function.
+        (
+            "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, b: 2);\na = call(k: f) * 100 + call(k: g);\n",
+            "and at an earlier call one of type `(a: int, b: int) -> int`",
+            "give the functions passed as this value the same parameters, in the same order",
+        ),
+        // A union whose defaults for a parameter the call leaves out differ.
+        (
+            "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(x: 3);\n",
+            "may be either of two functions of type `(x: int, y: int) -> int`, whose defaults for `y`",
+            "pass `y` in this call, as `y: …`",
+        ),
+        // The same at two calls of a generic function.
+        (
+            "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\ncall(k) = k(x: 3);\na = call(k: f) * 100 + call(k: g);\n",
+            "other than the one an earlier call passes",
+            "pass `y` in this call, as `y: …`",
+        ),
+        // A union of functions with different numbers of parameters.
+        (
+            "f(x: int, y: int = 1) = x + y;\ng(x: int) = x * 7;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(x: 3);\n",
+            "which take different numbers of parameters",
+            "give the functions passed as this value the same parameters, in the same order",
+        ),
+    ];
+    for (src, reason, repair) in cases {
+        let errors = type_errors(src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(errors[0].contains(reason), "{src}: {errors:?}");
+        assert!(
+            errors[0].contains("does not compile it yet"),
+            "{src}: {errors:?}"
+        );
+        let (info, _) = super::info(src);
+        assert!(
+            (info.errors[0].notes.iter()).any(|n| n.text == format!("repair: {repair}")),
+            "{src}: {:?}",
+            info.errors[0].notes
+        );
+    }
+}
+
 /// A call through a partial slot of a value outside the domain of the function passed misses
 /// with `#notFound`, which the caller handles (DESIGN.md sec:type_language, "Morphism types
 /// carry two domain bounds": a key in `U` only yields `V | #notFound`); within the domain the

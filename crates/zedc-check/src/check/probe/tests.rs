@@ -40,14 +40,16 @@ fn a_call_of_a_generic_function_on_parameters_is_admitted_and_kept() {
     assert!(!fs[0].contains("E:need"), "{r}");
 }
 
-/// A second call of `f` on `x` after the call of `h0` is a need equal to the one the
-/// forward recorded on `f`'s class: eager finds it in `known`, so D must force there.
+/// A second `m.map(f)` after the call of `h0` is a need equal to the one the forward
+/// recorded on `m`'s class: eager finds it in `known`, so D must force there. (A map need
+/// and not a call need: a call need's key holds the place of its call in the body, so
+/// `f(x)` in `h1` is a different key from `f(x)` in `h0`, FAIL-elab-named-call-generic-param.)
 #[test]
 fn a_need_equal_to_a_deferred_one_collides() {
     let r = report(
-        "h0(positional f, positional x) = f(x);\n\
-         h1(positional f, positional x) = (h0(f, x), f(x));\n\
-         a = h1(y -> y + 1, 1);\n",
+        "h0(positional f, positional m) = m.map(f);\n\
+         h1(positional f, positional m) = (h0(f, m), m.map(f));\n\
+         a = h1(y -> y + 1, {\"k\" -> 0});\n",
     );
     let fs = forwards(&r);
     assert_eq!(fs.len(), 1, "{r}");

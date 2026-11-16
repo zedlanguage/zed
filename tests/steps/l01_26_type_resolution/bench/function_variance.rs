@@ -113,6 +113,41 @@ fn functions_passed_through_generic_parameters_to_partial_slots_scale() {
     });
 }
 
+/// n functions, each passed to one generic function that calls its parameter by name; one
+/// function passed down a chain of n generic functions to such a call; and one function passed
+/// to a body of n calls of it by name (FAIL-elab-named-call-generic-param): each call need
+/// carries its call's place in the body, and each meeting of it at a call of the generic
+/// function records the signature there or compares it with the one recorded, by a hash lookup
+/// and O(parameters + arguments), so checking and elaborating the whole is linear. Besides its
+/// ratio: the program elaborates at each size. Small instance:
+/// `function_variance::a_named_call_of_a_generic_parameter_runs`.
+#[test]
+fn named_calls_of_generic_parameters_scale() {
+    let what = "n functions called by name through a generic parameter, a chain of n, and a body of n calls";
+    let make = |n: usize| {
+        let mut src = String::from("call(g) = g(x: 3);\nq0(g) = g(x: 1);\n");
+        let mut many = String::from("many(g) = 0");
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nb{i} = call(g: s{i});\nq{}(g) = q{i}(g: g);\n",
+                i + 1
+            ));
+            many.push_str(&format!(" + g(x: {i})"));
+        }
+        src.push_str(&format!("c = q{n}(g: s0);\n{many};\nd = many(g: s0);\n"));
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(
+            u.get("d").is_some() && u.get("c").is_some(),
+            "{what} at {m}"
+        );
+    });
+}
+
 /// n functions, each with a parameter declared with a range and each passed to an exact slot
 /// whose parameter type is wider (MSG-fn-domain-wider-repair, part 2): each is refused once,
 /// with the narrower-domain message, after one trial of the fit without its range needs, so

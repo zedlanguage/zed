@@ -582,6 +582,10 @@ pub(super) struct CallValueF<'a> {
     args: Rc<Args<'a>>,
     curry: bool,
     span: Span,
+    /// The call in the text whose signature this check records ([`NeedKind::Call::site`]):
+    /// `span` itself for a call the walk meets, the generic body's call for a need met at a
+    /// call of the generic function, and `None` for a prelude word's application.
+    site: Option<Span>,
     out: Ty,
     checked: bool,
     /// The pieces not yet applied, the next last.
@@ -591,6 +595,92 @@ pub(super) struct CallValueF<'a> {
     /// For a class's call, the arguments found so far, and the next one's index.
     found: Option<(Args<'a>, usize)>,
     waiting: bool,
+}
+
+/// The places a call through a value fills: how many parameters its arguments by position
+/// fill, a receiver counted, the names of its arguments by name, and whether it ends in `...`.
+struct CallShape<'s> {
+    given: usize,
+    named: Vec<&'s str>,
+    curry: bool,
+}
+
+impl<'s> CallShape<'s> {
+    fn of(receiver: bool, args: &'s Args<'_>, curry: bool) -> Self {
+        CallShape {
+            given: usize::from(receiver) + args.positional.len(),
+            named: args.named.iter().map(|(n, _)| n.as_str()).collect(),
+            curry,
+        }
+    }
+}
+
+/// Why one call, built by the signature `r`, does not call a function of signature `t` right.
+enum Unaligned {
+    /// The two take different numbers of parameters.
+    Count,
+    /// The argument of this name goes to a different place in each.
+    Place(Arc<str>),
+    /// The call leaves out the parameter of this name, by position when the flag is set, and
+    /// the two fill it with different defaults.
+    Default(Arc<str>, bool),
+}
+
+/// Whether a call of the shape `shape`, which elaboration builds by `r` (the arguments placed
+/// by `r`'s parameter list, each parameter left out filled with `r`'s default, then one
+/// application of the value to the list), calls a function of signature `t` as `t` takes it,
+/// and if not, why ([`Unaligned`]). It does when the two have as many parameters, each named
+/// argument goes to the same place in both, and each parameter the call leaves out has the
+/// same default in both, the same parameter of the same function: a saturated call leaves no
+/// parameter to the function, so the default filled is the one that runs. A curried call
+/// leaves them to the lambda it gives, whose own calls fill them by its type. A name one of the
+/// two lacks, and a parameter left out with no default, are each an error of the call's check
+/// against that function, and are not repeated here.
+///
+/// Two functions of one value at one call are compared by the first; the conditions are
+/// equalities, so each function that agrees with the first agrees with every other.
+///
+/// Complexity tradeoff: a map from name to place for each signature, O(p + a) for p parameters
+/// and a arguments; a search of the parameter list for each argument's name would be O(p·a).
+/// Defaults are compared by the declaration they belong to, not by their text, so two
+/// functions whose defaults are written alike, as `y: int = 1` in both, are refused too: two
+/// texts may read different names in their scopes, and proving them equal would be a
+/// comparison of the values they give, which the checker does not make.
+fn unaligned(r: &Sig, t: &Sig, shape: &CallShape) -> Option<Unaligned> {
+    if std::ptr::eq(r, t) {
+        return None;
+    }
+    let n = r.params.len();
+    if n != t.params.len() {
+        return Some(Unaligned::Count);
+    }
+    let places = |s: &Sig| -> HashMap<Arc<str>, usize> {
+        (s.params.iter().enumerate())
+            .map(|(j, p)| (p.name.clone(), j))
+            .collect()
+    };
+    let (at_r, at_t) = (places(r), places(t));
+    let mut filled = vec![false; n];
+    for f in filled.iter_mut().take(shape.given) {
+        *f = true;
+    }
+    for &name in &shape.named {
+        match (at_r.get(name), at_t.get(name)) {
+            (Some(a), Some(b)) if a != b => return Some(Unaligned::Place(name.into())),
+            (Some(&a), _) => filled[a] = true,
+            _ => {}
+        }
+    }
+    if shape.curry {
+        return None;
+    }
+    (0..n).filter(|&j| !filled[j]).find_map(|j| {
+        let (a, b) = (&r.params[j], &t.params[j]);
+        match (a.default, b.default) {
+            (Some(x), Some(y)) if x != y => Some(Unaligned::Default(a.name.clone(), a.positional)),
+            _ => None,
+        }
+    })
 }
 
 pub(super) struct CallSigF<'a> {
@@ -907,17 +997,21 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// A call through a value of `f` with arguments already found, as a need of a generic
     /// function checked again at a call: what it gives. Its checks nest as deep as the needs
-    /// they check, which do not follow the nesting of the text.
+    /// they check, which do not follow the nesting of the text. `site` is the generic body's
+    /// call the need stands for ([`NeedKind::Call::site`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn call_found(
         &mut self,
         f: &Ty,
         what: &str,
         args: Args<'a>,
         curry: bool,
+        site: Option<Span>,
         span: Span,
     ) -> Ty {
         let mut m = M::new();
-        self.call_value(&mut m, f, what.into(), None, Rc::new(args), curry, span);
+        let args = Rc::new(args);
+        self.call_value(&mut m, f, what.into(), None, args, curry, site, span);
         self.drive(&mut m);
         m.take_ty()
     }
@@ -1673,7 +1767,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     return self.prelude_call(m, &f, call);
                 }
                 let args = Args::of(positional, named);
-                self.call_value(m, &f, what.into(), None, args, curry, span);
+                self.call_value(m, &f, what.into(), None, args, curry, Some(span), span);
             }
             Frame::Word(w, span) => {
                 let x = m.take_arg();
@@ -3658,6 +3752,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 positional: vec![entries],
                                 named: Vec::new(),
                                 curry: false,
+                                site: None,
                             };
                             let w = self.need(k, kind, true, span);
                             // What the function gives is not known either: `where` needs it
@@ -6456,7 +6551,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 1 => self.word(m, c.w, c.positional, receiver, c.span),
                 _ => {
                     let args = Args::of(c.positional, c.named);
-                    self.call_value(m, f, c.w.into(), receiver, args, false, c.span)
+                    let site = Some(c.span);
+                    self.call_value(m, f, c.w.into(), receiver, args, false, site, c.span)
                 }
             };
         }
@@ -6907,16 +7003,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         receiver: Option<Arg<'a>>,
         args: Rc<Args<'a>>,
         curry: bool,
+        site: Option<Span>,
         span: Span,
     ) {
         let out = self.passing(f, "a call", span, None);
         let mut pieces = f.pieces();
         // A class's calls are recorded with the arguments' types, found once.
         let class = pieces.iter().any(|p| self.class_of(p).is_some());
-        let call = match f.fns.first() {
-            Some(s) if f.fns.iter().all(|g| g.same_kinds(s)) => Some(s.clone()),
-            _ => None,
-        };
+        // Elaboration builds the call once, by the one signature recorded for it, so every
+        // function the value may be must take the arguments in that signature's places
+        // ([`unaligned`]); one that does not is refused here, where the types are known.
+        let call = f.fns.first().cloned();
+        if let Some(first) = &call {
+            let shape = CallShape::of(receiver.is_some(), &args, curry);
+            for g in f.fns.iter().skip(1) {
+                if let Some(why) = unaligned(first, g, &shape) {
+                    self.unaligned_call(&what, first, g, why, false, span);
+                    break;
+                }
+            }
+        }
         pieces.reverse();
         let s = CallValueF {
             what,
@@ -6924,6 +7030,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             args,
             curry,
             span,
+            site,
             out,
             checked: false,
             pieces,
@@ -6958,8 +7065,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             s.args = Rc::new(got);
         }
-        if let Some(c) = s.call.take() {
-            self.put(Undo::Call(s.span, Some(c)));
+        if let (Some(c), Some(site)) = (s.call.take(), s.site) {
+            self.record_call(&s, site, c);
         }
         if s.waiting {
             s.waiting = false;
@@ -7010,6 +7117,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .map(|(m, a)| (m.as_str().into(), ty_of(a)))
                             .collect(),
                         curry,
+                        site: s.site,
                     };
                     let got = |a: &ArgSrc| match a {
                         ArgSrc::Got(x) => (x.ty.clone(), x.at),
@@ -7049,6 +7157,85 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         m.k(Frame::Const(out));
         m.each(s.args.exprs());
+    }
+
+    /// Records `sig` as the signature by which elaboration builds the call written at `site`
+    /// (row FAIL-elab-named-call-generic-param). A need met at a call of a generic function
+    /// records it at the generic body's call, which elaboration builds once for every call of
+    /// the function, so each function met there after the first must take the arguments in
+    /// the first one's places ([`unaligned`]); one that does not is refused at the call that
+    /// passes it. [`Self::put`] drops a replay's writes, so this one is logged directly, as
+    /// [`Self::coerce_forwarded`] logs its, and a trial that is undone undoes it.
+    fn record_call(&mut self, s: &CallValueF<'a>, site: Span, sig: Arc<Sig>) {
+        if self.replaying == 0 {
+            self.put(Undo::Call(site, Some(sig)));
+            return;
+        }
+        if let Some(had) = self.info.calls.get(&site).cloned() {
+            let shape = CallShape::of(s.receiver.is_some(), &s.args, s.curry);
+            if let Some(why) = unaligned(&had, &sig, &shape) {
+                self.unaligned_call(&s.what, &had, &sig, why, true, s.span);
+            }
+            return;
+        }
+        let undo = self.set(Undo::Call(site, Some(sig)));
+        self.log.push(undo);
+    }
+
+    /// The error of a call at `span` of `w`, which may be a function of signature `r` or one
+    /// of signature `t`, which one built call cannot both call right, for the reason `why`.
+    /// With `earlier`, `w` is `t` at this call of a generic function and `r` at an earlier
+    /// one, and the call through `w` is the one in the generic body; without it, `w`'s own
+    /// type is a union of the two.
+    fn unaligned_call(
+        &mut self,
+        w: &str,
+        r: &Sig,
+        t: &Sig,
+        why: Unaligned,
+        earlier: bool,
+        span: Span,
+    ) {
+        let w = callee(w);
+        let (a, b) = (self.sig_text(r), self.sig_text(t));
+        // Defaults are not part of a type's text, so two functions that differ only in them
+        // print alike; the message then says "two functions" of that one type.
+        let subject = match (earlier, a == b) {
+            (false, false) => {
+                format!("{w} here may be a function of type `{a}` or one of type `{b}`")
+            }
+            (false, true) => format!("{w} here may be either of two functions of type `{a}`"),
+            (true, false) => format!(
+                "{w} here is a function of type `{b}`, and at an earlier call one of type `{a}`; \
+                 the call through {w} is built once for both functions"
+            ),
+            (true, true) => format!(
+                "{w} here is a function of type `{a}` other than the one an earlier call \
+                 passes; the call through {w} is built once for both functions"
+            ),
+        };
+        let reorder = "repair: give the functions passed as this value the same parameters, \
+                       in the same order"
+            .to_string();
+        let (reason, repair) = match why {
+            Unaligned::Count => ("which take different numbers of parameters".into(), reorder),
+            Unaligned::Place(n) => (
+                format!("which have the parameter `{n}` in different places"),
+                reorder,
+            ),
+            Unaligned::Default(n, positional) => (
+                format!("whose defaults for `{n}`, which this call leaves out, differ"),
+                match positional {
+                    true => format!("repair: pass `{n}` in this call, by position"),
+                    false => format!("repair: pass `{n}` in this call, as `{n}: …`"),
+                },
+            ),
+        };
+        let message = format!(
+            "{subject}, {reason}. {}",
+            zedc_base::rejection::not_yet("One call through a value that may be either function")
+        );
+        self.error_offering(span, message, [repair]);
     }
 
     /// The error of a call at `span` of `w`, a value of the type shown as `shown` that is not
@@ -7478,7 +7665,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => m.ty(Ty::dynamic()),
                     }
                 } else {
-                    self.call_value(m, &f, name.into(), Some(x), args, curry, span);
+                    let site = Some(span);
+                    self.call_value(m, &f, name.into(), Some(x), args, curry, site, span);
                 }
             }
             Some(Ref::Bound(_)) => m.ty(Ty::empty()),
@@ -11101,6 +11289,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry,
+                site,
             } => {
                 let args = Args {
                     positional: positional
@@ -11117,7 +11306,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         })
                         .collect(),
                 };
-                self.call_found(&on, what, args, *curry, span)
+                self.call_found(&on, what, args, *curry, *site, span)
             }
             NeedKind::Data(what, does) => {
                 self.data(&on, what, *does, span, span, Some(span));

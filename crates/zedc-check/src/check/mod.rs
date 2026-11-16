@@ -2404,6 +2404,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry,
+                site,
             } => NeedKind::Call {
                 what: what.clone(),
                 positional: positional.iter().zip(w).map(|(t, w)| cut(t, w)).collect(),
@@ -2413,6 +2414,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .map(|((m, t), w)| (m.clone(), cut(t, w)))
                     .collect(),
                 curry: *curry,
+                site: *site,
             },
             _ => return n,
         };
