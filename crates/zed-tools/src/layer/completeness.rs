@@ -56,7 +56,15 @@ fn spans_that_name_no_word_of_source_are_skipped() {
     // Only a word before `:` or `(…)` is an argument or a call, and only a span quoted at both
     // ends is a string literal: anything else is refused.
     for bad in [
-        "`a b:`", "`a b(…)`", "`f()`", "`1x`", "`a-b`", "`é`", "`\"`", "`\"a`", "`a\"`",
+        "`a b:`",
+        "`a b(…)`",
+        "`f()`",
+        "`1x`",
+        "`a-b`",
+        "`é`",
+        "`\"`",
+        "`\"a`",
+        "`a\"`",
     ] {
         assert!(row(&format!("| L2 | — | — | {bad} |")).is_err(), "{bad}");
     }
