@@ -18022,17 +18022,19 @@ fn factored(f: &Formula) -> Option<Formula> {
         return None;
     }
     let links = AtomLinks::of(f)?;
-    // Each compound part on the spine, its key mapped to the part rewritten, or `None` when
-    // unchanged; each part is entered once, after its parts on the spine.
-    let mut done: HashMap<Id, Option<Formula>> = HashMap::new();
-    let mut seen: HashSet<Id> = HashSet::new();
-    let mut stack: Vec<(&Formula, bool)> = vec![(f, false)];
-    while let Some((g, leave)) = stack.pop() {
+    // Each compound part on the spine, its key and whether it lies under an even number of
+    // negations mapped to the part rewritten, or `None` when unchanged; each part is entered
+    // once for each of the two, after its parts on the spine, so at most twice.
+    let mut done: HashMap<(Id, bool), Option<Formula>> = HashMap::new();
+    let mut seen: HashSet<(Id, bool)> = HashSet::new();
+    let mut stack: Vec<(&Formula, bool, bool)> = vec![(f, false, true)];
+    while let Some((g, leave, even)) = stack.pop() {
         let id = Id::any(g);
+        let kids_even = even != matches!(g, Formula::Not(_));
         if leave {
             let new = |k: &Formula| match k {
                 Formula::Con(_) => None,
-                _ => done[&Id::any(k)].clone(),
+                _ => done[&(Id::any(k), kids_even)].clone(),
             };
             let out = (g.kids().iter().any(|k| new(k).is_some())).then(|| {
                 g.rebuild(
@@ -18041,30 +18043,31 @@ fn factored(f: &Formula) -> Option<Formula> {
                         .collect(),
                 )
             });
-            done.insert(id, out);
+            done.insert((id, even), out);
             continue;
         }
-        if !seen.insert(id) {
+        if !seen.insert((id, even)) {
             continue;
         }
         match g {
             Formula::Con(_) => unreachable!("a constraint is not pushed"),
             Formula::Or(_) => {
-                done.insert(id, factored_or(g, &links));
+                done.insert((id, even), factored_or(g, &links, even));
             }
             Formula::Not(_) | Formula::And(_) => {
-                stack.push((g, true));
+                stack.push((g, true, even));
                 let compound = g.kids().iter().filter(|k| !matches!(k, Formula::Con(_)));
-                stack.extend(compound.map(|k| (k, false)));
+                stack.extend(compound.map(|k| (k, false, kids_even)));
             }
         }
     }
-    done.remove(&Id::any(f)).flatten()
+    done.remove(&(Id::any(f), true)).flatten()
 }
 
 /// The disjunction `g` with the compound parts every disjunct holds as conjuncts taken out
-/// ([`factored`]), or `None` when there are none or one is linked to the rest of a disjunct.
-fn factored_or(g: &Formula, links: &AtomLinks) -> Option<Formula> {
+/// ([`factored`]), or `None` when there are none, when one is linked to the rest of a disjunct,
+/// or, under an even number of negations (`even`), when the rests hold at every point.
+fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
     let ds = g.kids();
     if ds.len() < 2 {
         return None;
@@ -18099,7 +18102,27 @@ fn factored_or(g: &Formula, links: &AtomLinks) -> Option<Formula> {
             Formula::and_keeping(rest.into_iter().cloned().collect(), |i| keep[i])
         })
         .collect();
+    // Under an even number of negations, rests that hold at every point as written one way
+    // ([`signed`], which [`project_each`] reads next: `2d <= 3` as `d <= 1`, and `d <= 1 || d >= 2`
+    // as `true` by `Formula::or`) leave the disjunction as written: the part taken out would
+    // leave no disjunction, and each disjunct as written splits the values of an atom that a row
+    // outside the disjunction may tie to a lattice, so that its projection keeps a hole that the
+    // projection without the split, one interval, loses. In formula 198 of seed
+    // 6537938839028158658 of `random_tiers`, the rests `2d <= 3` and `d >= 2` beside the row
+    // `2c == d + 3` give `d` the set `[..=1, 3..]` as written and `[..]` once taken out
+    // (FAIL-shared-part-precision-seed). Every other join keeps each rest a disjunct of its own,
+    // read with the base by the projection as written. Under an odd number of negations the
+    // part is taken out still: there `!(u && true)` is `!u`, narrower than the two disjunctions
+    // the formula as written gives (formula 9 of seed 0x5f5b,
+    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`).
+    // Complexity tradeoff (COMPLEXITY.md, FAIL-shared-part-precision-seed): the rests are
+    // written one way once more here, O(r log r) for rests of r distinct parts, which the
+    // projection that follows reads anyway; a disjunction left as written costs O(d k), as the
+    // naive way above, only where its rests hold at every point.
     let rest = Formula::or(rests);
+    if even && signed(&rest, Signs::Chosen) == Formula::top() {
+        return None;
+    }
     let mut groups: HashSet<usize> = HashSet::new();
     for p in &common {
         p.walk(&mut |c| groups.extend(c.lin.terms.keys().map(|a| links.group(a))));

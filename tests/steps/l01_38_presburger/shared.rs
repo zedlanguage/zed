@@ -939,6 +939,38 @@ fn formula_122_of_seed_0x5f5b_loses_no_precision_when_its_shared_part_is_taken_o
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
 }
 
+/// Formula `i` of the [`random_tiers`] draws of `seed`.
+fn tiers_formula(seed: u64, i: usize) -> Formula {
+    let mut rng = Rng::new(seed);
+    (0..=i)
+        .map(|_| random_tiers(&mut rng))
+        .last()
+        .expect("i + 1 formulas")
+}
+
+/// Formulas whose projection as written has a hole that taking the shared part out once
+/// filled (FAIL-shared-part-precision-seed): formula 198 of seed 6537938839028158658 (`d` of
+/// `[..=1, 3..]` came out `[..]`), 135 of seed 16556051410465492833 (`3 * a <= 4 && 2 * c + d
+/// == 4 && ((b == -3 && 3 * c >= 4 && c >= -4) || (b == -3 && 3 * c <= 3) || (c <= 1 && b ==
+/// -3))`, `d` of `[..=0, 2..]` came out `[..]`), and the four others below, each found by a
+/// fresh seed of [`taking_a_shared_part_out_of_a_disjunction_loses_no_precision`]. In each,
+/// the rests are `true` once `signed` writes them (in formula 198, `2d <= 3` as `d <= 1`
+/// beside `d >= 2`), so the part taken out left no disjunction to split the atom by. Each
+/// keeps its hole now.
+#[test]
+fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
+    for (seed, i) in [
+        (6_537_938_839_028_158_658, 198),
+        (16_556_051_410_465_492_833, 135),
+        (5_898_677_465_240_422_513, 44),
+        (15_859_009_438_933_343_976, 122),
+        (3_779_468_183_349_773_342, 43),
+        (12_677_736_641_159_640_094, 22),
+    ] {
+        factoring_loses_no_precision([(i, tiers_formula(seed, i))]);
+    }
+}
+
 /// Formula 9 of seed 0x5f5b, `2 c >= -4 && !(...)`, whose projection narrows when the shared
 /// part `2 b >= 2` is taken out of the negated disjunction: the narrower sets hold every value
 /// of a point in the window. The random tests reach this case about once in 200 formulas.
