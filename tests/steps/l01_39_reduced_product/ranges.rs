@@ -108,14 +108,17 @@ fn a_prelude_word_reads_the_range_of_its_argument() {
 }
 
 /// A function declared with a range is not a function of every int: passed where one is
-/// expected, the message names its parameter.
+/// expected, the message names its parameter, and says the domain is narrower than the
+/// slot's (MSG-fn-domain-wider-repair, part 2); called on a value outside it, the value.
 #[test]
 fn a_ranged_function_passed_as_a_value_names_its_parameter() {
     assert_eq!(
         headline(
             "f(positional x: int[1..]) = x;\napply(g: (int) -> int) = g(1);\na = apply(g: f);\n"
         ),
-        "3:14: `f` takes `x` in int[1..]: `x : int`."
+        "3:14: `f` is `int[1..] -> int[1..]`, not `int -> int`: its domain is narrower than \
+         `int -> int`'s, `x` in `int[1..]` where `int -> int` passes any `int`, and a function \
+         passed as `int -> int` must take exactly that domain."
     );
     assert_eq!(
         headline("f(x: int[1..]) = x;\nh = f;\na = h(x: 0);\n"),
