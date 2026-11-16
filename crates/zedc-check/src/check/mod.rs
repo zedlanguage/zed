@@ -1926,6 +1926,10 @@ struct CallFrame<'a> {
     /// of an argument, or a component of such a component (`p[0]`, `g, n = p`), the
     /// argument's position and the components taken ([`Self::place`]).
     parts: HashMap<Arc<str>, (usize, Option<Rc<Taken>>)>,
+    /// For each variable that is the whole type of a parameter given a declared function by
+    /// name, the uses the callee's needs and result make of it ([`FnUses`],
+    /// [`Ck::reorder_forwarded`]); empty for every other call.
+    fn_uses: HashMap<Arc<str>, FnUses>,
     /// The call's span, where a call of a function applies its signature's needs; `None` for
     /// the check of a value that flowed into a class, which no call's span names. A fold
     /// checked under the frame is recorded at it ([`Ck::saw_fold`]).
@@ -1962,6 +1966,7 @@ impl<'a> CallFrame<'a> {
             by_var,
             whole,
             parts: HashMap::new(),
+            fn_uses: HashMap::new(),
             call: Some(call),
         }
     }
@@ -1987,6 +1992,17 @@ impl<'a> CallFrame<'a> {
         let taken = Rc::new(Taken { i, len, up });
         self.parts.insert(v.clone(), (at, Some(taken)));
     }
+}
+
+/// The uses a generic function's needs and result make of a value of one of its type
+/// variables ([`CallFrame::fn_uses`]): the closed types its needs pass it into, whether a need
+/// uses it otherwise (calls it, passes it to a parameter, reads it), and whether the result
+/// holds it.
+#[derive(Default)]
+struct FnUses {
+    slots: Vec<Ty>,
+    other: bool,
+    given_back: bool,
 }
 
 /// A component taken on the way into an argument ([`CallFrame::place`]): component `i` of a

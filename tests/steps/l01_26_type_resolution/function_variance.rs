@@ -777,3 +777,87 @@ fn a_domain_no_test_can_read_is_refused() {
         );
     }
 }
+
+/// Row FAIL-generic-pass-reordered-arrow: named parameters match by name, so a declared
+/// function whose named parameters are in another order than a slot's is passed to it with
+/// its parameters put in the slot's order ([`Fit::Adapter`] at the name), and so it is when
+/// it reaches the slot through a generic parameter: the call of the generic function puts
+/// the same fit at its argument. Before the fix the program was refused, as "`app2` does not
+/// take (y: f64, x: int) -> int, only (x: int, y: f64) -> int". The cases: one generic
+/// function, two in a chain, two slots that want one order, a partial slot that also tests
+/// the domain, and parameters of one type, where the order alone tells the parameters apart.
+#[test]
+fn a_reordered_function_passed_through_a_generic_parameter_runs() {
+    let head = "re(y: f64, x: int) = x;\napp2(f: (x: int, y: f64) -> int) = f(x: 1, y: 2.0);\npass(g) = app2(f: g);\n";
+    let cases = [
+        ("a = pass(g: re);\n", "1"),
+        ("pass2(h) = pass(g: h);\na = pass2(h: re);\n", "1"),
+        (
+            "both(g) = app2(f: g) + app2(f: g);\na = both(g: re);\n",
+            "2",
+        ),
+        ("b = (pass(g: re), pass(g: re));\na = b[1];\n", "1"),
+        // The repair the refusal of a body that gives the function back offers.
+        (
+            "back(g: (x: int, y: f64) -> int) = (app2(f: g), g);\nb = back(g: re);\na = b[1](y: 2.0, x: 1) + b[0];\n",
+            "2",
+        ),
+    ];
+    for (rest, want) in cases {
+        runs_to(&format!("{head}{rest}"), "a", want);
+    }
+    runs_to(
+        "re(y: int, x: int) = x;\napp2(f: (x: int, y: int) -> int) = f(x: 1, y: 2);\npass(g) = app2(f: g);\na = pass(g: re);\n",
+        "a",
+        "1",
+    );
+    let partial = |k: &str| {
+        format!(
+            "re(y: f64, x: int) = x + 1;\napp2(f: (x: int | f64, y: f64) ->? int) = f(x: {k}, y: 2.0) else 6;\npass(g) = app2(f: g);\na = pass(g: re);\n"
+        )
+    };
+    runs_to(&partial("2.5"), "a", "6");
+    runs_to(&partial("3"), "a", "4");
+}
+
+/// Row FAIL-generic-pass-reordered-arrow: the fit put at the argument changes the order of
+/// the parameters of the value the generic body holds, for every use of it there. So where
+/// the body also uses it in its own order, or in a third one, or gives it back, or calls it,
+/// no one order serves all the uses, and the call is refused with the reason, where a run
+/// would call the function with its arguments swapped.
+#[test]
+fn a_reordered_function_the_generic_body_uses_in_another_order_is_refused() {
+    let head = "re(y: f64, x: int) = x;\napp2(f: (x: int, y: f64) -> int) = f(x: 1, y: 2.0);\nown(f: (y: f64, x: int) -> int) = f(y: 2.0, x: 1);\n";
+    let cases = [
+        (
+            "pass(g) = app2(f: g) + own(f: g);\na = pass(g: re);\n",
+            "in another order, and also passes it on as `(y: f64, x: int) -> int`",
+        ),
+        (
+            "pass(g) = own(f: g) + app2(f: g);\na = pass(g: re);\n",
+            "in another order, and also passes it on as `(y: f64, x: int) -> int`",
+        ),
+        (
+            "pass(g) = (app2(f: g), g);\nb = pass(g: re);\na = b[1](y: 2.0, x: 1);\n",
+            "in another order, and also gives it back. Try `g: (x: int, y: f64) -> int` instead.",
+        ),
+        (
+            "pass(g) = app2(f: g) + g(y: 2.0, x: 1);\na = pass(g: re);\n",
+            "in another order, and also uses it in its own order. Try `g: (x: int, y: f64) -> int` instead.",
+        ),
+        (
+            "id(h) = h;\npass(g) = app2(f: g) + id(h: g)(y: 2.0, x: 1);\na = pass(g: re);\n",
+            "in another order, and also",
+        ),
+        (
+            "wide(f: (x: int | f64, y: f64) ->? int) = f(x: 2.5, y: 2.0) else 6;\npass(g) = app2(f: g) + wide(f: g);\na = pass(g: re);\n",
+            "is rebuilt here already",
+        ),
+    ];
+    for (rest, why) in cases {
+        let src = format!("{head}{rest}");
+        let errors = type_errors(&src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(errors[0].contains(why), "{src}: {errors:?}");
+    }
+}

@@ -11186,9 +11186,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
-                let from = self.call_frames.last().and_then(|f| f.named(&n.on));
-                self.passes_into(&on, ty, what, from, span);
-                self.coerce_forwarded(n, &on, ty);
+                if !self.reorder_forwarded(n, &on, ty) {
+                    let from = self.call_frames.last().and_then(|f| f.named(&n.on));
+                    self.passes_into(&on, ty, what, from, span);
+                    self.coerce_forwarded(n, &on, ty);
+                }
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
@@ -16423,36 +16425,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameters and the same named ones, in any order, and types that fit. `call` is the
     /// call it is an argument of, if it is one, which a repair shows rewritten.
     fn fit_declared(&mut self, id: usize, e: &Arc<Sig>, span: Span, call: Option<Span>) -> Ty {
+        let (t, fit) = self.fit_declared_as(id, e, span, call);
+        if let Some(fit) = fit {
+            self.put(Undo::Fit(span, Some(fit)));
+        }
+        t
+    }
+
+    /// [`Self::fit_declared`] without the write of the fit it finds, which it gives back.
+    fn fit_declared_as(
+        &mut self,
+        id: usize,
+        e: &Arc<Sig>,
+        span: Span,
+        call: Option<Span>,
+    ) -> (Ty, Option<Fit>) {
         let f = self.t.funcs[&id];
         let own = self.env.get(&id).cloned().unwrap_or_else(Ty::dynamic);
         let Some(s) = only_fn(&own) else {
-            return own;
+            return (own, None);
         };
-        let pos = |s: &Sig| s.params.iter().filter(|p| p.positional).count();
-        let mut from = Vec::new();
-        let mut k = 0;
-        let mut ok = pos(&s) == pos(e) && s.params.len() == e.params.len();
-        let epos: Vec<usize> = (0..e.params.len())
-            .filter(|&j| e.params[j].positional)
-            .collect();
-        for p in &s.params {
-            if !ok {
-                break;
-            }
-            if p.positional {
-                from.push(epos[k]);
-                k += 1;
-            } else {
-                match e
-                    .params
-                    .iter()
-                    .position(|q| !q.positional && q.name == p.name)
-                {
-                    Some(j) => from.push(j),
-                    None => ok = false,
-                }
-            }
-        }
+        let order = order_by_names(&s, e);
+        let ok = order.is_some();
+        let from = order.unwrap_or_default();
         if !ok {
             let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
             let call: Vec<String> = names.iter().map(|n| format!("{n}: {n}")).collect();
@@ -16491,7 +16486,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ),
                 menu,
             );
-            return Ty::func(e.clone());
+            return (Ty::func(e.clone()), None);
         }
         // `s` with its parameters in `e`'s order.
         let mut inv = vec![0; from.len()];
@@ -16537,13 +16532,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         if ranged && self.errors.len() > saved.errors {
             let at = (span, &saved);
             if self.narrower_range(&f.name, (&s, &kept, &permuted), e, &from, at) {
-                return Ty::func(e.clone());
+                return (Ty::func(e.clone()), None);
             }
         }
         if !fits {
             if let Some(lambda) = self.lambda_repair(&f.name, &s, &permuted, e, &from, span) {
                 self.wider_domain(&f.name, (&s, &permuted), e, &lambda, (span, call));
-                return Ty::func(e.clone());
+                return (Ty::func(e.clone()), None);
             }
             // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
             let why = match !permuted.holds_needs() {
@@ -16586,15 +16581,169 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (None, None)
             }
         };
-        if domain.is_some() || result.is_some() || from.iter().enumerate().any(|(i, &j)| i != j) {
-            let fit = Fit::Adapter {
+        let fit =
+            (domain.is_some() || result.is_some() || !in_order(&from)).then_some(Fit::Adapter {
                 from,
                 domain,
                 result,
-            };
-            self.put(Undo::Fit(span, Some(fit)));
+            });
+        (Ty::func(e.clone()), fit)
+    }
+
+    /// Fills [`CallFrame::fn_uses`] for the call whose frame is `frame`, of the function `sig`
+    /// whose arrow gives `result`: for each parameter whose type is a variable alone and which
+    /// the call gives a declared function by name, the uses of that variable in `sig`'s needs
+    /// and in `result`. Complexity tradeoff: O(p) for the p parameters whose type is a variable
+    /// alone, and, only at a call that gives a declared function at one of them, O(s) for the
+    /// size s of the needs and of `result`, which [`Self::replay`] walks too; the naive check,
+    /// a search of the other needs at each need on such a variable, would cost O(s) per need,
+    /// O(s²) in all.
+    fn note_fn_uses(&self, frame: &mut CallFrame<'a>, sig: &Sig, result: &Ty) {
+        if sig.needs.is_empty() {
+            return;
         }
-        Ty::func(e.clone())
+        for v in &frame.whole {
+            let Some(&Some(i)) = frame.by_var.get(v) else {
+                continue;
+            };
+            let declared = |a: Forwarded<'a>| a.expr.is_some_and(|e| self.declared(e).is_some());
+            if frame.args.get(i).copied().flatten().is_some_and(declared) {
+                frame.fn_uses.insert(v.clone(), FnUses::default());
+            }
+        }
+        if frame.fn_uses.is_empty() {
+            return;
+        }
+        for n in &sig.needs {
+            let mut vars = Vars::default();
+            n.vars_in(&mut vars);
+            for v in &vars.order {
+                let Some(uses) = frame.fn_uses.get_mut(v) else {
+                    continue;
+                };
+                match &n.kind {
+                    NeedKind::Into { ty, .. } if n.on.as_var() == Some(v) => {
+                        uses.slots.push(ty.clone())
+                    }
+                    _ => uses.other = true,
+                }
+            }
+        }
+        let mut vars = Vars::default();
+        result.vars_in(&mut vars);
+        for v in &vars.order {
+            if let Some(uses) = frame.fn_uses.get_mut(v) {
+                uses.given_back = true;
+            }
+        }
+    }
+
+    /// Fits a declared function given by name at a parameter of a generic function, and passed
+    /// on by its body as `w`, with its named parameters in another order than `w`'s, as `re`
+    /// in `pass(g: re)` for `pass(g) = app2(f: g)`, `re(y: f64, x: int)` and
+    /// `app2(f: (x: int, y: f64) -> int)` (FAIL-generic-pass-reordered-arrow). A direct pass,
+    /// `app2(f: re)`, matches the parameters by name and puts their order right with
+    /// [`Fit::Adapter`] ([`Self::fit_declared`]); the body of `pass` is checked once for every
+    /// type `g` may take, where the order is not known, so the same fit is put here, at the
+    /// argument of the call whose needs are checked, as [`Self::coerce_forwarded`] puts a
+    /// domain test there. Each use of `g` in the body then sees the function with its
+    /// parameters in `w`'s order. That is right only where every use wants that order: each
+    /// other need on `g` passes it into a slot of the same order, and none calls it or uses it
+    /// otherwise, and the result does not hold it, where its type would still state its own
+    /// order ([`FnUses`]). Elsewhere the call is refused, with the reason, since a run would
+    /// call the function with its arguments in the wrong places. Gives whether it took the
+    /// need: false where `on` and `w` are not one function type each, the names give no
+    /// order or the order is the written one, or the value is not that argument.
+    ///
+    /// Cost: O(p) for the order of p parameters and that of each other slot, plus
+    /// [`Self::fit_declared`]'s, at each such need.
+    fn reorder_forwarded(&mut self, n: &Need, on: &Ty, w: &Ty) -> bool {
+        let (Some(s), Some(e)) = (only_fn(on), only_fn(w)) else {
+            return false;
+        };
+        let Some(order) = order_by_names(&s, &e).filter(|o| !in_order(o)) else {
+            return false;
+        };
+        let Some(frame) = self.call_frames.last() else {
+            return false;
+        };
+        let (Some(v), Some((i, None))) = (n.on.as_var(), frame.place(&n.on)) else {
+            return false;
+        };
+        let (Some(uses), Some(Some(arg))) = (frame.fn_uses.get(v), frame.args.get(i)) else {
+            return false;
+        };
+        let Some(id) = arg.expr.and_then(|x| self.declared(x)) else {
+            return false;
+        };
+        let (at, call, name) = (arg.at, frame.call, frame.names.get(i).cloned());
+        let other = (uses.slots.iter())
+            .filter_map(only_fn)
+            .find(|q| order_by_names(&s, q).is_some_and(|o| o != order));
+        let why = match (other, uses.other, uses.given_back) {
+            (Some(q), _, _) => Some((
+                format!(
+                    "also passes it on as `{}`, in that order",
+                    self.sig_text(&q)
+                ),
+                false,
+            )),
+            (None, true, _) => Some(("also uses it in its own order".to_string(), true)),
+            (None, false, true) => Some(("also gives it back".to_string(), true)),
+            (None, false, false) => None,
+        };
+        if let Some((why, declare)) = why {
+            let code = self.code(Some(at)).unwrap_or("the value").to_string();
+            let (st, et) = (self.sig_text(&s), self.sig_text(&e));
+            let g = name.as_deref().unwrap_or("the parameter");
+            let repair = name
+                .as_ref()
+                .filter(|_| declare)
+                .map(|x| format!("{x}: {et}"));
+            let headline = format!(
+                "`{code} : {st}` is passed as `{g}`, which the body passes on as `{et}`, with its \
+                 parameters in another order, and {why}"
+            );
+            let headline = match &repair {
+                Some(r) => format!("{headline}. Try `{r}` instead."),
+                None => headline,
+            };
+            let reason = format!(
+                "named parameters match by name, so `{code}` would be passed with its \
+                 parameters in the order of `{et}`; the body has one value of `{g}` for every \
+                 use, and the other use wants another order"
+            );
+            let menu = std::iter::once(reason).chain(repair.map(|r| format!("repair: `{r}`")));
+            self.error_offering(at, headline, menu);
+            return true;
+        }
+        let (_, fit) = self.fit_declared_as(id, &e, at, call);
+        let Some(fit) = fit else {
+            return true;
+        };
+        match self.info.fits.get(&at) {
+            Some(old) if *old == fit => {}
+            Some(_) => {
+                let code = self.code(Some(at)).unwrap_or("the value").to_string();
+                let et = self.sig_text(&e);
+                self.error_offering(
+                    at,
+                    format!("`{code}` is passed on as `{et}` and is rebuilt here already"),
+                    [format!(
+                        "`{code}` would be passed with its parameters in the order of `{et}`, \
+                         and this call already rebuilds it in another way; this version of \
+                         zedc rebuilds an argument once"
+                    )],
+                );
+            }
+            // Written past `Self::put`, which makes no write while needs are replayed: this
+            // write is on the call being checked, not on the body the needs came from.
+            None => {
+                let undo = self.set(Undo::Fit(at, Some(fit)));
+                self.log.push(undo);
+            }
+        }
+        true
     }
 
     /// The domain test that a call through the function type `e` needs where a function of
@@ -16873,7 +17022,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::fit_declared`] puts no adapter (no domain test, no result rebuilt, no
     /// reordering); where it also stands inside another parameter's function type, two
     /// parameters hold it, and `place` finds nothing, so the program is refused before a
-    /// merge.
+    /// merge. [`Self::reorder_forwarded`] puts a [`Fit::Adapter`] at a forwarded place, only
+    /// where every slot the body passes the value into takes its parameters in one order
+    /// other than the written one. A need that reaches this function at that place passes the
+    /// value into a slot of one function type in the written order, and then the reordering
+    /// need refused the call and put nothing, or into another type, which takes no function
+    /// whose parameter names stand in another order, so [`Self::passes_into`] refused it.
     /// Each case is a test in l01_26_type_resolution/function_variance.rs.
     ///
     /// Cost: [`Self::coercion`] for each such need at each call, which [`holds_fn`] ends at
@@ -20262,8 +20416,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
             .collect();
         let names = sig.params.iter().map(|p| p.name.clone()).collect();
-        self.call_frames
-            .push(CallFrame::new(span, &arrow.params, forwarded, names));
+        let mut frame = CallFrame::new(span, &arrow.params, forwarded, names);
+        self.note_fn_uses(&mut frame, sig, &arrow.result);
+        self.call_frames.push(frame);
         #[cfg(any(test, feature = "forward-probe"))]
         let rec = self.probe_admit(sig, args, partial, span);
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
@@ -23685,6 +23840,35 @@ fn holds_fn(t: &Ty, pick: &dyn Fn(&Sig) -> bool) -> bool {
 /// unions.
 fn results(s: &Sig) -> Ty {
     Ty::union_all(s.arrows.iter().map(|a| &a.result))
+}
+
+/// Where each parameter of `s` goes among those of `e`, where `s` fits `e`'s parameter list
+/// ([`Ck::fit_declared`]): the same number of positional parameters, taken in order, and the
+/// same named ones, matched by name in any order. None where they differ. Complexity
+/// tradeoff: naive, a search of `e`'s parameters for each named one of `s`, O(p²) for p
+/// parameters (the search `fit_declared` made before); used, one hash map of `e`'s named
+/// parameters, O(p) expected.
+fn order_by_names(s: &Sig, e: &Sig) -> Option<Vec<usize>> {
+    let pos = |s: &Sig| s.params.iter().filter(|p| p.positional).count();
+    if pos(s) != pos(e) || s.params.len() != e.params.len() {
+        return None;
+    }
+    let mut epos = (0..e.params.len()).filter(|&j| e.params[j].positional);
+    let named: HashMap<&str, usize> = (e.params.iter().enumerate())
+        .filter(|(_, q)| !q.positional)
+        .map(|(j, q)| (&*q.name, j))
+        .collect();
+    (s.params.iter())
+        .map(|p| match p.positional {
+            true => epos.next(),
+            false => named.get(&*p.name).copied(),
+        })
+        .collect()
+}
+
+/// Whether the order `from` ([`order_by_names`]) keeps each parameter in its place.
+fn in_order(from: &[usize]) -> bool {
+    from.iter().enumerate().all(|(i, &j)| i == j)
 }
 
 /// The needs of the declared function `s` that hold where it is passed as the function type
