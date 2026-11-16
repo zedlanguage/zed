@@ -223,6 +223,9 @@ path = "steps/l08_02_remaps/mod.rs"
 name = "l22_08_vacuity"
 path = "steps/l22_08_vacuity/mod.rs"
 [[test]]
+name = "l22_09b_bool_formulas"
+path = "steps/l22_09b_bool_formulas/mod.rs"
+[[test]]
 name = "l25_08_mutate"
 path = "steps/l25_08_mutate/mod.rs"
 [[test]]
