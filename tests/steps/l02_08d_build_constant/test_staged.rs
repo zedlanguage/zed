@@ -298,7 +298,7 @@ fn target_is_a_usage_error_when_it_names_no_target() {
     assert_eq!((status, out.as_str()), (2, ""));
     assert_eq!(
         err,
-        "`--target x86_64-linx`: `x86_64-linx` is no target. Write one of `x86_64-linux`, \
+        "`--target x86_64-linx`: `x86_64-linx` is not a known target. Write one of `x86_64-linux`, \
          `aarch64-linux`, `riscv64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows` \
          and `aarch64-windows`.\n"
     );

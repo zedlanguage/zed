@@ -50,7 +50,7 @@ fn an_undefined_label_is_reported_with_its_file_and_line() {
         checked(&design(""), &[("src/a.rs", src)]),
         (
             false,
-            "src/a.rs:2: sec:keys is no label of DESIGN.md\n".into()
+            "src/a.rs:2: sec:keys is not a label in DESIGN.md\n".into()
         )
     );
 }
@@ -60,7 +60,10 @@ fn a_label_that_a_defined_one_begins_with_is_reported() {
     // The case of sec:checking, which only sec:checking_in_zed begins with.
     let (ok, out) = checked(&design(""), &[("STATUS.md", "see sec:checking.")]);
     assert!(!ok);
-    assert_eq!(out, "STATUS.md:1: sec:checking is no label of DESIGN.md\n");
+    assert_eq!(
+        out,
+        "STATUS.md:1: sec:checking is not a label in DESIGN.md\n"
+    );
 }
 
 #[test]
@@ -69,7 +72,7 @@ fn an_undefined_step_is_reported() {
     assert!(!ok);
     assert_eq!(
         out,
-        "src/a.rs:1: L1.3 is no step of DESIGN.md\nsrc/a.rs:1: L1.2b is no step of DESIGN.md\n"
+        "src/a.rs:1: L1.3 is not a step in DESIGN.md\nsrc/a.rs:1: L1.2b is not a step in DESIGN.md\n"
     );
 }
 
@@ -89,7 +92,7 @@ fn design_md_is_checked_too() {
     assert!(!ok);
     assert_eq!(
         out,
-        "DESIGN.md:5: sec:keys is no label of DESIGN.md\nDESIGN.md:5: L1.7 is no step of DESIGN.md\n"
+        "DESIGN.md:5: sec:keys is not a label in DESIGN.md\nDESIGN.md:5: L1.7 is not a step in DESIGN.md\n"
     );
 }
 
@@ -103,7 +106,7 @@ fn a_step_a_plan_row_adds_to_design_is_accepted() {
     // A step named only in the plan's notes, as L1.2d is, is not one to come.
     let (ok, out) = checked(&design(""), &[(PLAN, plan), ("src/a.rs", "step L1.2d")]);
     assert!(!ok);
-    assert_eq!(out, "src/a.rs:1: L1.2d is no step of DESIGN.md\n");
+    assert_eq!(out, "src/a.rs:1: L1.2d is not a step in DESIGN.md\n");
 }
 
 #[test]
@@ -112,7 +115,7 @@ fn the_plan_s_labels_are_checked() {
     assert!(!ok);
     assert_eq!(
         out,
-        "docs/plan_dag.md:1: sec:keys is no label of DESIGN.md\n"
+        "docs/plan_dag.md:1: sec:keys is not a label in DESIGN.md\n"
     );
 }
 
@@ -131,8 +134,8 @@ fn a_graph_dagview_saved_is_not_read_but_dagview_s_source_is() {
     assert!(!ok);
     assert_eq!(
         out,
-        "tools/dagview/layout.ts:1: sec:keys is no label of DESIGN.md\n\
-         tools/dagview/layout.ts:1: L1.9 is no step of DESIGN.md\n"
+        "tools/dagview/layout.ts:1: sec:keys is not a label in DESIGN.md\n\
+         tools/dagview/layout.ts:1: L1.9 is not a step in DESIGN.md\n"
     );
 }
 

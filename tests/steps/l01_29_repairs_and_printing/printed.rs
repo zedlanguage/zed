@@ -578,7 +578,7 @@ fn what_is_no_printed_type_is_an_error() {
     let cases = [
         (
             "$0",
-            "`$0`: the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"$\"`.",
+            "`$0`: the character `$` (U+0024) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"$\"`.",
         ),
         ("!int", "`!int`: `!` stands before no `_`"),
         (
@@ -591,7 +591,7 @@ fn what_is_no_printed_type_is_an_error() {
         ),
         (
             "(T) -> T for T in widget",
-            "`(T) -> T for T in widget`: `widget` in the bound of `T` is no carrier",
+            "`(T) -> T for T in widget`: `widget` in the bound of `T` is not a carrier",
         ),
         (
             "(T) -> T for T int",
@@ -603,7 +603,7 @@ fn what_is_no_printed_type_is_an_error() {
         ),
         (
             "(T) -> T for T in int | #a",
-            "`(T) -> T for T in int | #a`: `#a` in the bound of `T` is no carrier",
+            "`(T) -> T for T in int | #a`: `#a` in the bound of `T` is not a carrier",
         ),
     ];
     for (text, want) in cases {

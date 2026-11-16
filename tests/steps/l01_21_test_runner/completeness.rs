@@ -220,7 +220,7 @@ fn an_unknown_target_is_a_usage_error() {
     let (status, out, err) = run(&["--target", "nowhere", &pass]);
     assert_eq!((status, out.as_str()), (2, ""));
     assert!(
-        err.starts_with("`--target nowhere`: `nowhere` is no target. Write one of "),
+        err.starts_with("`--target nowhere`: `nowhere` is not a known target. Write one of "),
         "{err}"
     );
 }

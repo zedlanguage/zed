@@ -429,9 +429,8 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
 /// as not compiled yet.
 fn not_compiled_yet(name: &str) -> bool {
     let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
-    zedc::run::load(src.as_bytes()).is_err_and(|out| {
-        out.contains(&zed_tests::not_yet(&format!("the annotation `@{name}`")))
-    })
+    zedc::run::load(src.as_bytes())
+        .is_err_and(|out| out.contains(&zed_tests::not_yet(&format!("the annotation `@{name}`"))))
 }
 
 /// An annotation that DESIGN lists in "Defined words by layer" but whose step is not built yet is
@@ -448,7 +447,9 @@ fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet()
         "approx",
     ] {
         let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
-        let Err(out) = zedc::run::load(src.as_bytes()) else { panic!("accepted:\n{src}") };
+        let Err(out) = zedc::run::load(src.as_bytes()) else {
+            panic!("accepted:\n{src}")
+        };
         assert!(!out.contains("is not an annotation"), "@{name}: {out}");
         assert!(
             out.contains(&format!(

@@ -115,7 +115,7 @@ fn a_qualifier_is_no_value() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:2:7: `shapes` names the unit `geometry.shapes`, which is no value; a \
+            "main.zed:2:7: `shapes` names the unit `geometry.shapes`, which is not a value; a \
           definition of the unit is written `shapes.f`."
         ]
     );

@@ -277,13 +277,13 @@ fn escape(text: &str, i: usize) -> Result<usize, Error> {
                 // lexer's other messages do ([`may_not_show`]).
                 Some(c) if may_not_show(c) => format!(
                     "`\\` followed by the character U+{:04X}, which may not show on screen, is \
-                     no escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, `\\\"`, `\\$` \
-                     and `\\u{{…}}`. Write `\\\\` for a backslash itself.",
+                     not a valid escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, \
+                     `\\\"`, `\\$` and `\\u{{…}}`. Write `\\\\` for a backslash itself.",
                     c as u32
                 ),
                 Some(c) => format!(
-                    "`\\{c}` is no escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, \
-                     `\\\"`, `\\$` and `\\u{{…}}`. Write `\\\\` for a backslash itself."
+                    "`\\{c}` is not a valid escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, \
+                     `\\\\`, `\\\"`, `\\$` and `\\u{{…}}`. Write `\\\\` for a backslash itself."
                 ),
                 None => "the file ends after a `\\`, which starts an escape in a string. Write \
                          the escape, or `\\\\` for a backslash itself, and close the string."

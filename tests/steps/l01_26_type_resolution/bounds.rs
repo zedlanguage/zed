@@ -190,18 +190,18 @@ fn a_bound_that_is_no_union_of_carriers_is_an_error() {
         ),
         (
             "f(g: (T) -> T for T in int | (int, int)) = 0;\n",
-            "the bound of `T` is not a union of carriers: this type is no carrier; \
+            "the bound of `T` is not a union of carriers: this type is not a carrier; \
              the carriers are int, f32, f64, rat, String, bool [(int, int)]",
         ),
         (
             "f(g: (T) -> T for T in Lines) = 0;\n",
-            "the bound of `T` is not a union of carriers: `Lines` is no carrier; \
+            "the bound of `T` is not a union of carriers: `Lines` is not a carrier; \
              the carriers are int, f32, f64, rat, String, bool [Lines]",
         ),
         // A bound is read outside its clause, so a variable of the same clause is no name there.
         (
             "f(g: (T, U) -> T for T in int, U in T) = 0;\n",
-            "the bound of `U` is not a union of carriers: `T` is no carrier; \
+            "the bound of `U` is not a union of carriers: `T` is not a carrier; \
              the carriers are int, f32, f64, rat, String, bool [T]",
         ),
         (

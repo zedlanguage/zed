@@ -1125,13 +1125,13 @@ taint-through-concatenation
     Diagnostic {
         line: 78,
         col: 55,
-        message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
+        message: "the character `…` (U+2026) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 78, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`."), not_run: None }]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 78, col: 55, failure: Some("the character `…` (U+2026) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`."), not_run: None }]
 
 text-length-in-bytes
   rejected: [
@@ -1326,13 +1326,13 @@ unit-mismatch-force-energy
     Diagnostic {
         line: 79,
         col: 55,
-        message: "the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
+        message: "the character `…` (U+2026) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 79, col: 55, failure: Some("the character `…` (U+2026) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`."), not_run: None }]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 79, col: 55, failure: Some("the character `…` (U+2026) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `\"…\"`."), not_run: None }]
 
 unit-mismatch-in-sum
   rejected: [

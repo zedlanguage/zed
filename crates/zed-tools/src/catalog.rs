@@ -872,7 +872,7 @@ fn check_words(
                     None => (1, Vec::new(), 0),
                 };
                 if !defined(w) {
-                    return Some(format!("{} reads `.{w}`, which is no word", repr(t)));
+                    return Some(format!("{} reads `.{w}`, which is not a word", repr(t)));
                 }
                 calls.push(Call {
                     word: w,
@@ -884,7 +884,7 @@ fn check_words(
             _ if OPERANDS.contains(&w) || scope.get(w).is_some_and(|&c| c > 0) => {}
             _ if !defined(w) => {
                 return Some(format!(
-                    "{} names `{w}`, which is no operand, parameter or word",
+                    "{} names `{w}`, which is not an operand, parameter or word",
                     repr(t)
                 ));
             }

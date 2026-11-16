@@ -264,10 +264,10 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
             "both sort keys and a comparator `by:`; it takes its receiver alone",
         ),
         ("`xs.map(asc f)`", "calls `map` with 2 positional"),
-        ("`xs.indexOf(a)`", "reads `.indexOf`, which is no word"),
+        ("`xs.indexOf(a)`", "reads `.indexOf`, which is not a word"),
         (
             "`q + 1`",
-            "names `q`, which is no operand, parameter or word",
+            "names `q`, which is not an operand, parameter or word",
         ),
         ("`(y -> y)(a)`, `y`", "names `y`"),
         (

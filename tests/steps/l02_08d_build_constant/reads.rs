@@ -83,11 +83,15 @@ fn every_use_other_than_the_two_reads_is_rejected_naming_them() {
     assert_eq!(
         headlines(&report),
         [
-            format!("1:7: `build` alone is no value: {reads}."),
-            format!("2:7: `build.options` alone is no value: {reads}, one option at a time."),
+            format!("1:7: `build` alone is not a value: {reads}."),
+            format!("2:7: `build.options` alone is not a value: {reads}, one option at a time."),
             format!("3:7: `build.arch`: `build` has no member `arch`: {reads}."),
-            format!("4:7: `build?.target` reads no atom, so it takes `.`: {reads}."),
-            format!("5:7: `build.options?.fast` reads no atom, so it takes `.`: {reads}."),
+            format!(
+                "4:7: `build?.target` never gives an atom, so read it with `.`, not `?.`: {reads}."
+            ),
+            format!(
+                "5:7: `build.options?.fast` never gives an atom, so read it with `.`, not `?.`: {reads}."
+            ),
         ],
         "{report}"
     );
@@ -104,8 +108,10 @@ fn a_target_literal_that_names_no_target_is_rejected_on_either_side() {
     assert_eq!(
         headlines(&report),
         [
-            format!("1:23: `x86_64-linx` is no target: `build.target` is one of {targets}."),
-            format!("2:7: `arm` is no target: `build.target` is one of {targets}."),
+            format!(
+                "1:23: `x86_64-linx` is not a known target: `build.target` is one of {targets}."
+            ),
+            format!("2:7: `arm` is not a known target: `build.target` is one of {targets}."),
         ],
         "{report}"
     );

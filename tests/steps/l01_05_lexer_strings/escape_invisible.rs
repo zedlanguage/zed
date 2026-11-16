@@ -33,7 +33,7 @@ fn every_character_that_may_not_show_is_named_by_its_code_point() {
         let e = lex(&src).expect_err(&src);
         let why = e.to_string();
         assert!(
-            why.contains(code) && !why.contains(c) && why.contains("is no escape"),
+            why.contains(code) && !why.contains(c) && why.contains("is not a valid escape"),
             "{src:?}: {why:?}"
         );
         assert_eq!((e.span.start, e.span.end), (2, 3 + c.len_utf8()), "{src:?}");
@@ -46,7 +46,7 @@ fn a_backslash_before_a_character_that_shows_quotes_it() {
     for (src, quoted) in [("\"\\q\"", "`\\q`"), ("\"\\é\"", "`\\é`")] {
         let why = lex(src).expect_err(src).to_string();
         assert!(
-            why.starts_with(&format!("{quoted} is no escape.")),
+            why.starts_with(&format!("{quoted} is not a valid escape.")),
             "{why:?}"
         );
     }

@@ -235,7 +235,7 @@ fn non_ascii(word: &str, repair: &Option<String>) -> String {
         Some('@') => "annotation",
         _ => "name",
     };
-    let head = format!("`{word}` is no {what}: {which} is not ASCII.");
+    let head = format!("`{word}` is not a valid {what}: {which} is not ASCII.");
     match repair {
         Some(r) => format!("{head} Try `{r}` instead."),
         None => format!("{head} Write the {what} in ASCII letters, digits and `_`."),
@@ -264,9 +264,10 @@ fn unexpected(c: char) -> String {
             // the rest of the reader's terminal line (DESIGN.md sec:lexical, sec:diagnostics).
             if may_not_show(c) {
                 return format!(
-                    "the character U+{code:04X}, which may not show on screen, starts no name, \
-                     number, operator or other part of a Zed program. Remove it, or, if it is \
-                     meant as text, write it inside a string, as `\"\\u{{{code:X}}}\"`."
+                    "the character U+{code:04X}, which may not show on screen, cannot \
+                     start a name, number, operator or other part of a Zed program. Remove it, \
+                     or, if it is meant as text, write it inside a string, as \
+                     `\"\\u{{{code:X}}}\"`."
                 );
             }
             let quoted = match c {
@@ -279,9 +280,9 @@ fn unexpected(c: char) -> String {
                 _ => format!("`\"{c}\"`"),
             };
             format!(
-                "the character {quoted} (U+{code:04X}) starts no name, number, operator or \
-                 other part of a Zed program. Remove it, or, if it is meant as text, write it \
-                 inside a string, as {text}."
+                "the character {quoted} (U+{code:04X}) cannot start a name, number, operator \
+                 or other part of a Zed program. Remove it, or, if it is meant as text, write \
+                 it inside a string, as {text}."
             )
         }
     }

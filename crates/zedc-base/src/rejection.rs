@@ -81,7 +81,7 @@ rows! {
     FoldWithNone => "`.fold` on a type that has none",
     MapOutsideValues => "`.map` at a parameter outside the value positions",
     PositionalMap =>
-        "Positional `.map`, or a name that is no parameter, on a value that is not a morphism",
+        "Positional `.map`, or a name that is not a parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
     AlwaysFails => "Operation that always fails",
     UndischargedRegion => "Undischarged region assertion",
@@ -189,6 +189,7 @@ rows! {
     ReservedWordAsName => "Reserved word written where a name stands",
     BidiControlInText => "`Bidi_Control` character in a comment or in the text of a string literal",
     PushWhereLessMeant => "`<-` written where a comparison with a negative operand was meant",
+    PushTargetNotPushable => "Push to a target that cannot be pushed to",
     BindingInCondition => "`=` written in a condition where `==` was meant",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",

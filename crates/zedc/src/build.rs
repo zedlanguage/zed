@@ -173,7 +173,7 @@ pub fn take_target<'a>(words: &[&'a str]) -> Result<(Option<&'a str>, Vec<&'a st
         })?;
         if !TARGETS.contains(&t) {
             return Err(format!(
-                "`--target {t}`: `{t}` is no target. Write one of {}.",
+                "`--target {t}`: `{t}` is not a known target. Write one of {}.",
                 targets()
             ));
         }
@@ -291,7 +291,10 @@ pub(crate) fn read(stmts: &mut [Stmt], res: &mut Resolution, build: &Build) -> V
                 {
                     errors.push(error(
                         s.span,
-                        format!("`{t}` is no target: `build.target` is one of {}", targets()),
+                        format!(
+                            "`{t}` is not a known target: `build.target` is one of {}",
+                            targets()
+                        ),
                         None,
                     ));
                 }
@@ -372,7 +375,7 @@ fn misuse(e: &Expr, res: &Resolution) -> Option<ast::Error> {
     if is_build(e, res) {
         return Some(error(
             e.span,
-            format!("`build` alone is no value: {READS}"),
+            format!("`build` alone is not a value: {READS}"),
             Some("`build.target == \"x86_64-linux\"`".into()),
         ));
     }
@@ -383,10 +386,12 @@ fn misuse(e: &Expr, res: &Resolution) -> Option<ast::Error> {
     if is_build(of, res) {
         let message = match (name.as_str(), safe) {
             ("options", false) => {
-                format!("`build.options` alone is no value: {READS}, one option at a time")
+                format!("`build.options` alone is not a value: {READS}, one option at a time")
             }
             ("target" | "options", true) => {
-                format!("`build{dot}{name}` reads no atom, so it takes `.`: {READS}")
+                format!(
+                    "`build{dot}{name}` never gives an atom, so read it with `.`, not `?.`: {READS}"
+                )
             }
             _ => format!("`build{dot}{name}`: `build` has no member `{name}`: {READS}"),
         };
@@ -401,7 +406,9 @@ fn misuse(e: &Expr, res: &Resolution) -> Option<ast::Error> {
             let first = if *inner_safe { "?." } else { "." };
             Some(error(
                 e.span,
-                format!("`build{first}options{dot}{name}` reads no atom, so it takes `.`: {READS}"),
+                format!(
+                    "`build{first}options{dot}{name}` never gives an atom, so read it with `.`, not `?.`: {READS}"
+                ),
                 Some(format!("`build.options.{name}`")),
             ))
         }

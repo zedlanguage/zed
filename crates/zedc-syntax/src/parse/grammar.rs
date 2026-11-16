@@ -337,7 +337,7 @@ fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
                     .ok()
                     .and_then(char::from_u32)
                     .ok_or_else(|| {
-                        format!("`\\u{{{hex}}}` in a character class is no character")
+                        format!("`\\u{{{hex}}}` in a character class is not a valid character")
                     })?;
                 chars.push(Some(c));
                 i += 4 + close;
@@ -436,7 +436,7 @@ fn tokens(body: &str) -> Result<Vec<GTok>, String> {
                     _ => out.push(GTok::Name(name.into())),
                 }
             }
-            _ => return Err(format!("{c:?} in {body:?} is no grammar token")),
+            _ => return Err(format!("{c:?} in {body:?} is not a grammar token")),
         }
     }
     Ok(out)

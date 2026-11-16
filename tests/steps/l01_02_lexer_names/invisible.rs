@@ -29,7 +29,7 @@ fn error(text: &str) -> (ErrorKind, (usize, usize), String) {
 pub(super) fn invisible(hex: &str) -> String {
     let padded = format!("{hex:0>4}");
     format!(
-        "the character U+{padded}, which may not show on screen, starts no name, number, \
+        "the character U+{padded}, which may not show on screen, cannot start a name, number, \
          operator or other part of a Zed program. Remove it, or, if it is meant as text, write \
          it inside a string, as `\"\\u{{{hex}}}\"`."
     )
@@ -37,7 +37,7 @@ pub(super) fn invisible(hex: &str) -> String {
 
 #[test]
 fn a_byte_order_mark_after_the_start_is_an_error_in_code() {
-    let message = "the character U+FEFF, which may not show on screen, starts no name, number, \
+    let message = "the character U+FEFF, which may not show on screen, cannot start a name, number, \
                    operator or other part of a Zed program. Remove it, or, if it is meant as \
                    text, write it inside a string, as `\"\\u{FEFF}\"`.";
     assert_eq!(
@@ -61,7 +61,7 @@ fn a_byte_order_mark_after_the_start_is_an_error_in_code() {
 
 #[test]
 fn nul_is_an_error_in_code_and_is_never_printed_as_itself() {
-    let message = "the character U+0000, which may not show on screen, starts no name, number, \
+    let message = "the character U+0000, which may not show on screen, cannot start a name, number, \
                    operator or other part of a Zed program. Remove it, or, if it is meant as \
                    text, write it inside a string, as `\"\\u{0}\"`.";
     let (kind, span, text) = error("a = 1;\u{0}");
@@ -104,7 +104,8 @@ fn a_cyrillic_letter_that_looks_like_a_keyword_is_no_name() {
     // `і` is U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I, so `іf` looks like the
     // keyword `if`. It is rejected and named by its code point; its lookalike `if` is a keyword,
     // so `if_2` is offered.
-    let message = "`\u{456}f` is no name: `\u{456}` (U+0456) is not ASCII. Try `if_2` instead.";
+    let message =
+        "`\u{456}f` is not a valid name: `\u{456}` (U+0456) is not ASCII. Try `if_2` instead.";
     assert_eq!(
         error("\u{456}f x { 1 } else { 2 }"),
         (

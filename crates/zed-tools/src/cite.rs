@@ -105,7 +105,7 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
                 if !labels.contains(label) {
                     say!(
                         out,
-                        "{path}:{}: sec:{label} is no label of DESIGN.md",
+                        "{path}:{}: sec:{label} is not a label in DESIGN.md",
                         n + 1
                     );
                     ok = false;
@@ -116,7 +116,7 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
             }
             for step in cited_steps(line) {
                 if !steps.contains(step) {
-                    say!(out, "{path}:{}: {step} is no step of DESIGN.md", n + 1);
+                    say!(out, "{path}:{}: {step} is not a step in DESIGN.md", n + 1);
                     ok = false;
                 }
             }

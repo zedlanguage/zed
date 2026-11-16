@@ -13,7 +13,7 @@ fn each_malformed_grammar_line_is_refused() {
         ("E = 'x' ) L1", false, "trailing text"),
         ("E = 'x L1", false, "an unclosed literal"),
         ("E = [a L1", true, "an unclosed class"),
-        ("E = 'x' ; L1", false, "is no grammar token"),
+        ("E = 'x' ; L1", false, "is not a grammar token"),
         (
             "E = [a] L1",
             false,

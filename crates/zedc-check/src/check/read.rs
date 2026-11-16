@@ -174,7 +174,7 @@ fn read_part(
                     if let Err(c) = carrier_mask(&b.carriers) {
                         let c = &body[c.span.start..c.span.end];
                         return Err(format!(
-                            "`{text}`: `{c}` in the bound of `{}` is no carrier",
+                            "`{text}`: `{c}` in the bound of `{}` is not a carrier",
                             b.name
                         ));
                     }
@@ -446,7 +446,7 @@ fn leaves(
                 _ => {
                     return Err(format!(
                         "`{text}` holds a text literal with an expression inside it, which is \
-                         no type"
+                         not a type"
                     ));
                 }
             },

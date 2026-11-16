@@ -177,7 +177,8 @@ fn a_push_target_may_end_in_one_view() {
 
 #[test]
 fn a_push_target_has_at_most_one_view_and_it_comes_last() {
-    // Neither is a push target, so each reads as an expression, which stops at the `<-`.
+    // Neither is a push target, so the push stops at the `<-`, with a message that names the
+    // target (row "Push to a target that cannot be pushed to", author P302).
     for (target, at) in [
         ("m.stdout::bytes::len", "2:24"),
         ("m::stdout.bytes", "2:19"),
@@ -185,7 +186,10 @@ fn a_push_target_has_at_most_one_view_and_it_comes_last() {
         let src = format!("main(m: MainArgs) {{\n  {target} <- \"a\";\n}}\n");
         let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
         assert!(
-            err.starts_with(&format!("{at}: Syntax error at `<-`.\n")),
+            err.starts_with(&format!(
+                "{at}: `{target}` cannot be pushed to: a push target is a port, an accumulator \
+                 or the next generation, with at most one view, written last."
+            )),
             "{target}: {err}"
         );
     }

@@ -498,6 +498,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`if x < -1 {`"),
     ),
     (
+        Row::PushTargetNotPushable,
+        "",
+        "main(m: MainArgs) {\n  m.stdout::bytes <- \"a\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout::bytes::len <- \"a\";\n}\n",
+        "2:24",
+        None,
+    ),
+    (
         Row::BindingInCondition,
         "",
         "f(x: int) = if x == 3 { 1 } else { 0 };\n",
@@ -527,6 +535,8 @@ const LATER: &[Row] = &[
     Row::SignalDeclarationCannotHold,
     // A struct declaration is not compiled yet: the accepted program is rejected as not yet.
     Row::StructFieldTypeVariable,
+    // A push to a view of a port is not compiled yet: the accepted program is rejected as not yet.
+    Row::PushTargetNotPushable,
 ];
 
 /// The `.rs` files under `dir`, in no order.

@@ -136,7 +136,7 @@ fn a_prelude_unit_name_that_is_no_type_stands_where_a_type_is_written() {
         mistakes(&p),
         [
             "main.zed:1:17: `scale` stands where a type is written, and the prelude unit \
-             `std.prelude` declares `scale` as the binding target, which is no type."
+             `std.prelude` declares `scale` as the binding target, which is not a type."
         ]
     );
 }

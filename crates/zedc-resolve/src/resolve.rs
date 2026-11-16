@@ -1519,8 +1519,8 @@ impl Resolver<'_> {
                 Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Unit => {
                     let unit = &self.out.imports[&ids[0]];
                     format!(
-                        "`{name}` names the unit `{unit}`, which is no value; a definition of the \
-                     unit is written `{name}.f`"
+                        "`{name}` names the unit `{unit}`, which is not a value; a definition of \
+                     the unit is written `{name}.f`"
                     )
                 }
                 Some(Found::Bound(ids)) => {
@@ -3434,7 +3434,7 @@ impl Resolver<'_> {
                     span,
                     message: format!(
                         "`{n}` stands where a type is written, and names {binder} `{n}`, which \
-                         is no type"
+                         is not a type"
                     ),
                     notes: vec![note],
                 });
@@ -3451,7 +3451,7 @@ impl Resolver<'_> {
                 }
                 format!(
                     "`{n}` stands where a type is written, and the prelude unit `{unit}` \
-                     declares `{n}` as {}, which is no type",
+                     declares `{n}` as {}, which is not a type",
                     kind.binder()
                 )
             }
@@ -3515,7 +3515,7 @@ impl Resolver<'_> {
                     }
                     Some(e) => format!(
                         "`{q}.{name}` stands where a type is written, and the unit `{unit}` \
-                         declares `{name}` as {}, which is no type",
+                         declares `{name}` as {}, which is not a type",
                         e.kind.binder()
                     ),
                 }
@@ -3838,9 +3838,9 @@ impl Resolver<'_> {
                     TypeKind::Name(n) if self.tvars.contains_key(n) => {
                         format!("`{n}` is a type variable")
                     }
-                    TypeKind::Name(n) => format!("`{n}` is no carrier"),
+                    TypeKind::Name(n) => format!("`{n}` is not a carrier"),
                     TypeKind::Atom(a) => format!("`#{a}` is an atom, no carrier"),
-                    _ => "this type is no carrier".into(),
+                    _ => "this type is not a carrier".into(),
                 };
                 self.errors.push(Error {
                     row: None,

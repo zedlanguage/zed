@@ -179,22 +179,43 @@ fn an_error_in_a_later_declaration_does_not_withhold_the_repair() {
 }
 
 /// Outside a condition a push is allowed and no comparison was meant: a push statement whose
-/// target is malformed stays a syntax error at the `<-` (plan row
-/// FAIL-pitfall-rows-statement-push-near-miss: it got this row, offering
+/// target cannot be pushed to is refused at the `<-` with a message that names the target (row
+/// "Push to a target that cannot be pushed to", author P302), never in the push-versus-less row
+/// (plan row FAIL-pitfall-rows-statement-push-near-miss: it got that row, offering
 /// `m.stdout::bytes::len < -"a";`, a comparison with a negated string).
 #[test]
-fn a_malformed_push_statement_is_a_syntax_error() {
-    for (body, at) in [
-        ("  m.stdout::bytes::len <- \"a\";\n", "m.stdout::bytes::len <-"),
-        ("  m::stdout.bytes <- \"a\";\n", "m::stdout.bytes <-"),
-        ("  m.stdout::bytes::len <- x;\n", "m.stdout::bytes::len <-"),
+fn a_push_to_a_target_that_cannot_be_pushed_to_names_the_target() {
+    for (body, target) in [
+        ("  m.stdout::bytes::len <- \"a\";\n", "m.stdout::bytes::len"),
+        ("  m::stdout.bytes <- \"a\";\n", "m::stdout.bytes"),
+        ("  m.stdout::bytes::len <- x;\n", "m.stdout::bytes::len"),
+        ("  m.stdout::bytes::len <- -1;\n", "m.stdout::bytes::len"),
     ] {
         let src = program(body);
         let e = refusal(&src);
-        assert_eq!(e.row, Some(Row::SyntaxError), "{src}\n{}", e.message);
-        let at = src.find(at).unwrap() + at.len() - 2;
-        assert_eq!(e.span.start, at, "{src}");
-        assert_eq!(e.message, "Syntax error at `<-`.", "{src}");
+        assert_eq!(
+            e.row,
+            Some(Row::PushTargetNotPushable),
+            "{src}\n{}",
+            e.message
+        );
+        let at = src.find(target).unwrap() + target.len() + 1;
+        assert_eq!((e.span.start, e.span.end), (at, at + 2), "{src}");
+        assert_eq!(
+            e.message,
+            format!(
+                "`{target}` cannot be pushed to: a push target is a port, an accumulator or the \
+                 next generation, with at most one view, written last."
+            ),
+            "{src}"
+        );
+        assert!(e.notes.is_empty(), "{src}: {:?}", e.notes);
+    }
+    // A push after something that is not a name with fields, views and keys stays a syntax
+    // error.
+    for body in ["  y = <- 1;\n  m.stdout <- y;\n", "  m.f(1) <- 1;\n"] {
+        let src = program(body);
+        assert_eq!(refusal(&src).row, Some(Row::SyntaxError), "{src}");
     }
 }
 
@@ -212,4 +233,36 @@ fn no_comparison_is_offered_with_a_negated_string_or_atom() {
         "if x<-#a {",
         None,
     );
+}
+
+/// `n` bindings before `m.stdout::bytes::len <- "a";`.
+pub(super) fn bindings_before_a_bad_target(n: usize) -> String {
+    let lines: String = (0..n).map(|i| format!("  a{i} = {i};\n")).collect();
+    program(&format!("{lines}  m.stdout::bytes::len <- \"a\";\n"))
+}
+
+/// A push to `m.stdout` with `n` fields and keys after it and two views, `::bytes::len`.
+pub(super) fn a_long_bad_target(n: usize) -> String {
+    let parts: String = (0..n)
+        .map(|i| {
+            if i % 2 == 0 {
+                ".f".to_string()
+            } else {
+                format!("[{i}]")
+            }
+        })
+        .collect();
+    program(&format!("  m.stdout{parts}::bytes::len <- \"a\";\n"))
+}
+
+/// The target is found after many statements and when it is long. The time each takes is held
+/// linear in `bench/conditions.rs`.
+#[test]
+fn a_bad_target_is_found_after_many_statements_and_when_it_is_long() {
+    for n in [0, 1, 2, 9] {
+        let e = refusal(&bindings_before_a_bad_target(n));
+        assert_eq!(e.row, Some(Row::PushTargetNotPushable), "{}", e.message);
+        let e = refusal(&a_long_bad_target(n));
+        assert_eq!(e.row, Some(Row::PushTargetNotPushable), "{}", e.message);
+    }
 }

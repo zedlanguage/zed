@@ -9,7 +9,7 @@ expression: "out.join(\"\\n\")"
 "\"\"\"never closed\n"
     [0..16] this string is not closed before the end of the file. Write the closing `"""` where its text ends.
 "\"\\q is not an escape\""
-    [1..3] `\q` is no escape. The escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\$` and `\u{…}`. Write `\\` for a backslash itself.
+    [1..3] `\q` is not a valid escape. The escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\$` and `\u{…}`. Write `\\` for a backslash itself.
 "\"\\u{110000}\""
     [1..11] `\u{110000}` names no Unicode character: a code point is at most 10FFFF and is not a surrogate, D800 to DFFF. Write the code point of the character meant.
 "\"\\u{D800}\""

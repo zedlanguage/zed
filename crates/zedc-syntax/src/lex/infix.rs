@@ -52,8 +52,8 @@ pub(super) fn infix(text: &str, pos: usize) -> Result<(usize, String), Error> {
     if blanks > end && text[blanks..].starts_with('~') {
         return Err(bad(
             format!(
-                "`{}` is no infix call: a space stands before the closing `~`. Try `~{written}~` \
-                 instead.",
+                "`{}` is not a valid infix call: a space stands before the closing `~`. Try \
+                 `~{written}~` instead.",
                 &text[pos..=blanks]
             ),
             Span {
@@ -64,8 +64,8 @@ pub(super) fn infix(text: &str, pos: usize) -> Result<(usize, String), Error> {
     }
     Err(bad(
         format!(
-            "`~{written}` is no infix call: the name must be closed by a `~` right after it, as \
-             in `a ~{written}~ b`. For the bitwise complement, write `bitNot({written})`."
+            "`~{written}` is not a valid infix call: the name must be closed by a `~` right after \
+             it, as in `a ~{written}~ b`. For the bitwise complement, write `bitNot({written})`."
         ),
         span,
     ))
@@ -78,12 +78,13 @@ pub(super) fn infix(text: &str, pos: usize) -> Result<(usize, String), Error> {
 fn reserved(k: &str, span: Span) -> Error {
     let why = if matches!(k, "div" | "mod") {
         format!(
-            "`~{k}~` is no infix call: `{k}` is a reserved word, the operator of `a {k} b`. Write \
-             `a {k} b` instead."
+            "`~{k}~` is not a valid infix call: `{k}` is a reserved word, the operator of \
+             `a {k} b`. Write `a {k} b` instead."
         )
     } else {
         format!(
-            "`~{k}~` is no infix call: `{k}` is a reserved word, so no function can have that name."
+            "`~{k}~` is not a valid infix call: `{k}` is a reserved word, so no function can have \
+             that name."
         )
     };
     bad(why, span)
@@ -113,8 +114,8 @@ fn spaced_open(text: &str, pos: usize) -> Option<Error> {
     let written = &text[at..end];
     Some(bad(
         format!(
-            "`{}` is no infix call: a space stands after the opening `~`. Try `~{written}~` \
-             instead.",
+            "`{}` is not a valid infix call: a space stands after the opening `~`. Try \
+             `~{written}~` instead.",
             &text[pos..=close]
         ),
         Span {

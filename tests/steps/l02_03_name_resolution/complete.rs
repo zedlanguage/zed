@@ -154,7 +154,7 @@ fn a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused() {
                 ),
             ],
             "main.zed:2:17: `shapes.origin` stands where a type is written, and the unit \
-             `shapes` declares `origin` as the binding target, which is no type.",
+             `shapes` declares `origin` as the binding target, which is not a type.",
         ),
         (
             &[
@@ -184,7 +184,7 @@ fn a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused() {
         (
             &[("main.zed", "n = 1;\nf(positional p: n) = p;\n")],
             "main.zed:2:17: `n` stands where a type is written, and names the binding target \
-             `n`, which is no type.",
+             `n`, which is not a type.",
         ),
     ];
     for (fs, expected) in cases {
@@ -203,7 +203,7 @@ fn a_prelude_unit_name_that_is_no_type_or_is_broken_at_a_type() {
         ]),
         [
             "main.zed:1:17: `origin` stands where a type is written, and the prelude unit `pre` \
-          declares `origin` as the binding target, which is no type."
+          declares `origin` as the binding target, which is not a type."
         ]
     );
     // A use of the name a broken declaration of the prelude unit binds is not checked, at a

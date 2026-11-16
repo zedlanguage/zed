@@ -64,7 +64,7 @@ fn a_name_or_an_atom_cannot_hold_the_marks() {
             let out = rejected(&src);
             assert!(
                 out.contains(&format!(
-                    "U+{code:X}, which may not show on screen, starts no name, number, operator"
+                    "U+{code:X}, which may not show on screen, cannot start a name, number, operator"
                 )),
                 "{out}"
             );

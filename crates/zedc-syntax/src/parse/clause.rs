@@ -26,7 +26,9 @@
 //! found the same way: the parse is run once more with `< -` or `==` in its place, and the row
 //! applies when it gets past where the first stopped (rows "`<-` written where a comparison
 //! with a negative operand was meant" and "`=` written in a condition where `==` was
-//! meant").
+//! meant"). Outside a condition, a statement that stops at its `<-` after a name with fields,
+//! views and keys is a push to a target that cannot be pushed to, as `m.stdout::bytes::len <-
+//! "a";` (row "Push to a target that cannot be pushed to").
 
 use std::collections::HashSet;
 
@@ -341,7 +343,52 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| carry_word(t, far))
         .or_else(|| bare_key(t, far))
         .or_else(|| push_or_less(t, far))
+        .or_else(|| push_target(t, far))
         .or_else(|| binding_in_condition(t, far))
+}
+
+/// The [`Clause`] for a push statement whose target cannot be pushed to (row "Push to a target
+/// that cannot be pushed to", author P302): `m.stdout::bytes::len <- "a";`, where a push target
+/// is a name and its fields with at most one view, written last (`PushTarget` in
+/// sec:grammar), and any keys after it. The parse stops at the `<-`, outside a condition; the
+/// row applies when the text before it, from the start of the statement, is a name followed by
+/// fields `.f`, views `::v` and keys `[k]`, and the statement parses with one name in its
+/// place. No repair: which target was meant is not known. One scan of the statement and one
+/// parse more, on the error path only: linear in the unit.
+fn push_target(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    if t.toks.get(far) != Some(&(Kind::Op, "<-")) || condition(t, far).is_some() {
+        return None;
+    }
+    let first = t.stmt_first(far);
+    if first >= far || first > 0 && !matches!(t.t(first - 1), ";" | "{") {
+        return None;
+    }
+    let mut i = first;
+    let ident = |i: usize| t.toks.get(i).is_some_and(|x| x.0 == Kind::Ident);
+    if !ident(i) {
+        return None;
+    }
+    i += 1;
+    while i < far {
+        match t.t(i) {
+            "." | "::" if ident(i + 1) => i += 2,
+            "[" => i = t.after_group(i),
+            _ => return None,
+        }
+    }
+    let target = t.between(first, far - 1);
+    if i != far || !quotable(target) || !t.parses_past(first, far - 1, &t.unused("p"), 1) {
+        return None;
+    }
+    Some(Clause {
+        row: Some(Row::PushTargetNotPushable),
+        message: format!(
+            "`{target}` cannot be pushed to: a push target is a port, an accumulator or the next \
+             generation, with at most one view, written last."
+        ),
+        span: t.span(far),
+        notes: Vec::new(),
+    })
 }
 
 /// The condition around token `at`: its keyword, `if`, `while`, `until` or the word `where`, and the

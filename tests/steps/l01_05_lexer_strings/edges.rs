@@ -54,7 +54,8 @@ fn each_malformed_code_point_escape_is_an_error_at_its_backslash_u() {
         let (start, end, why) = error(src);
         assert_eq!((start, end), (1, 3), "{src}");
         assert!(
-            why.starts_with("`\\u` starts a code point") || why.starts_with("`\\U` is no escape"),
+            why.starts_with("`\\u` starts a code point")
+                || why.starts_with("`\\U` is not a valid escape"),
             "{src}: {why}"
         );
     }

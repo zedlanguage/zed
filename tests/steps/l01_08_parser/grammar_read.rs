@@ -93,7 +93,7 @@ fn a_character_class_reads_code_points_and_refuses_a_downward_range() {
     let e = Grammar::read_open(&["C = [z-a] L1\n"]).unwrap_err();
     assert!(e.contains("runs downward"), "{e}");
     let e = Grammar::read_open(&["C = [\\u{D800}] L1\n"]).unwrap_err();
-    assert!(e.contains("is no character"), "{e}");
+    assert!(e.contains("is not a valid character"), "{e}");
     let e = Grammar::read_open(&["C = [\\u{41] L1\n"]).unwrap_err();
     assert!(e.contains("has no `}`"), "{e}");
 }

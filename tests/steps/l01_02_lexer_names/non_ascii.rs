@@ -12,7 +12,7 @@ fn message(word: &str, held: &str, repair: Option<&str>) -> String {
         Some('@') => "annotation",
         _ => "name",
     };
-    let head = format!("`{word}` is no {what}: {held} is not ASCII.");
+    let head = format!("`{word}` is not a valid {what}: {held} is not ASCII.");
     match repair {
         Some(r) => format!("{head} Try `{r}` instead."),
         None => format!("{head} Write the {what} in ASCII letters, digits and `_`."),
@@ -243,24 +243,24 @@ fn the_messages_read_so() {
     let says = |text: &str| lex(text).unwrap_err().to_string();
     assert_eq!(
         says("caf\u{e9} = 1;"),
-        "`café` is no name: `é` (U+00E9) is not ASCII. Try `cafe` instead."
+        "`café` is not a valid name: `é` (U+00E9) is not ASCII. Try `cafe` instead."
     );
     assert_eq!(
         says("\u{394}T = 1;"),
-        "`ΔT` is no name: `Δ` (U+0394) is not ASCII. Write the name in ASCII letters, digits \
+        "`ΔT` is not a valid name: `Δ` (U+0394) is not ASCII. Write the name in ASCII letters, digits \
          and `_`."
     );
     assert_eq!(
         says("ne\u{301}e = 1;"),
-        "`ne\u{301}e` is no name: the character U+0301, which may not show on screen, is not \
+        "`ne\u{301}e` is not a valid name: the character U+0301, which may not show on screen, is not \
          ASCII. Try `nee` instead."
     );
     assert_eq!(
         says("x = #caf\u{e9};"),
-        "`#café` is no atom: `é` (U+00E9) is not ASCII. Try `#cafe` instead."
+        "`#café` is not a valid atom: `é` (U+00E9) is not ASCII. Try `#cafe` instead."
     );
     assert_eq!(
         says("@t\u{e9}st f() -> int { 1 }"),
-        "`@tést` is no annotation: `é` (U+00E9) is not ASCII. Try `@test` instead."
+        "`@tést` is not a valid annotation: `é` (U+00E9) is not ASCII. Try `@test` instead."
     );
 }

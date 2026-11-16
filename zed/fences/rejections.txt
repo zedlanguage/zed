@@ -30,7 +30,7 @@ Non-exhaustive `match`
 Unreachable `match` arm
 `.fold` on a type that has none
 `.map` at a parameter outside the value positions
-Positional `.map`, or a name that is no parameter, on a value that is not a morphism
+Positional `.map`, or a name that is not a parameter, on a value that is not a morphism
 Key outside the permission bound
 Operation that always fails
 Undischarged region assertion
@@ -114,6 +114,7 @@ Arithmetic operator written without parentheses in an operand of an infix call
 Reserved word written where a name stands
 `Bidi_Control` character in a comment or in the text of a string literal
 `<-` written where a comparison with a negative operand was meant
+Push to a target that cannot be pushed to
 `=` written in a condition where `==` was meant
 Named argument before a positional one
 `positional` parameter after a named one

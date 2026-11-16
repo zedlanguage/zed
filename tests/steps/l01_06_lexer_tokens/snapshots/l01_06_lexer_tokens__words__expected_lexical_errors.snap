@@ -4,22 +4,22 @@ expression: "out.join(\"\\n\")"
 ---
 # none       [0..1] `#` starts an atom, and the atom's name must follow it at once, as in `#none`. Write the name right after the `#`, with no space between.
 x = @        [4..5] `@` starts an annotation, and the annotation's name must follow it at once, as in `@test`. Write the name right after the `@`, with no space between.
-#pаypal      [0..8] `#pаypal` is no atom: `а` (U+0430) is not ASCII. Try `#paypal` instead.
-cost = $5    [7..8] the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"$"`.
-a % b        [2..3] the character `%` (U+0025) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"%"`.
+#pаypal      [0..8] `#pаypal` is not a valid atom: `а` (U+0430) is not ASCII. Try `#paypal` instead.
+cost = $5    [7..8] the character `$` (U+0024) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"$"`.
+a % b        [2..3] the character `%` (U+0025) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"%"`.
 x ~ y        [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
-`cmd`        [0..1] the character `` ` `` (U+0060) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `` "`" ``.
+`cmd`        [0..1] the character `` ` `` (U+0060) cannot start a name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `` "`" ``.
 x''          [2..3] `'` stands only right after a name, once, as in `x'`, and starts nothing by itself. Remove this `'`, or write it right after the name it marks.
-p ~ plus~ v  [2..9] `~ plus~` is no infix call: a space stands after the opening `~`. Try `~plus~` instead.
-p ~plus ~ v  [2..9] `~plus ~` is no infix call: a space stands before the closing `~`. Try `~plus~` instead.
-p ~plus v    [2..7] `~plus` is no infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
-p ~plus      [2..7] `~plus` is no infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
+p ~ plus~ v  [2..9] `~ plus~` is not a valid infix call: a space stands after the opening `~`. Try `~plus~` instead.
+p ~plus ~ v  [2..9] `~plus ~` is not a valid infix call: a space stands before the closing `~`. Try `~plus~` instead.
+p ~plus v    [2..7] `~plus` is not a valid infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
+p ~plus      [2..7] `~plus` is not a valid infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
 ~            [0..1] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
 x ~~ y       [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
 p ~ plus v   [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
-p ~café~ v   [3..8] `café` is no name: `é` (U+00E9) is not ASCII. Try `cafe` instead.
-~x + 1       [0..2] `~x` is no infix call: the name must be closed by a `~` right after it, as in `a ~x~ b`. For the bitwise complement, write `bitNot(x)`.
-a ~div~ b    [2..7] `~div~` is no infix call: `div` is a reserved word, the operator of `a div b`. Write `a div b` instead.
-a ~mod~ b    [2..7] `~mod~` is no infix call: `mod` is a reserved word, the operator of `a mod b`. Write `a mod b` instead.
-a ~for~ b    [2..7] `~for~` is no infix call: `for` is a reserved word, so no function can have that name.
-a ~in~ b     [2..6] `~in~` is no infix call: `in` is a reserved word, so no function can have that name.
+p ~café~ v   [3..8] `café` is not a valid name: `é` (U+00E9) is not ASCII. Try `cafe` instead.
+~x + 1       [0..2] `~x` is not a valid infix call: the name must be closed by a `~` right after it, as in `a ~x~ b`. For the bitwise complement, write `bitNot(x)`.
+a ~div~ b    [2..7] `~div~` is not a valid infix call: `div` is a reserved word, the operator of `a div b`. Write `a div b` instead.
+a ~mod~ b    [2..7] `~mod~` is not a valid infix call: `mod` is a reserved word, the operator of `a mod b`. Write `a mod b` instead.
+a ~for~ b    [2..7] `~for~` is not a valid infix call: `for` is a reserved word, so no function can have that name.
+a ~in~ b     [2..6] `~in~` is not a valid infix call: `in` is a reserved word, so no function can have that name.
