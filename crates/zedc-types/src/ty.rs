@@ -14574,7 +14574,16 @@ impl Sig {
             // (P191). The key stands at [`PrintAt::Key`], parenthesized only where it is a
             // function, a union, an intersection, a difference, or a tuple of other than one
             // component.
+            //
+            // A partial arrow is written with `->?` and its result without `#notFound`, which
+            // `->?` adds back on reading (DESIGN.md sec:type_language: `K ->? V` has an empty
+            // guarantee, its lookup `V | #notFound`), so that it reads back partial and not as
+            // the exact arrow `K -> V | #notFound`, another type (FAIL-main-red-exact-domain).
             let bare = matches!(&self.params[..], [p] if p.positional);
+            let result = |a: &'a Arrow| match a.partial {
+                true => [Print::Text(" ->? "), Print::Found(&a.result)],
+                false => [Print::Text(" -> "), Print::Ty(&a.result, PrintAt::Result)],
+            };
             let mut first = true;
             for a in &self.arrows {
                 between(parts, &mut first, " & ");
@@ -14586,8 +14595,7 @@ impl Sig {
                         Some(r) => parts.push(Print::Text(&r.text)),
                         None => parts.push(Print::Ty(key, PrintAt::Key)),
                     }
-                    parts.push(Print::Text(" -> "));
-                    parts.push(Print::Ty(&a.result, PrintAt::Result));
+                    parts.extend(result(a));
                     if several {
                         parts.push(Print::Text(")"));
                     }
@@ -14606,8 +14614,8 @@ impl Sig {
                         None => parts.push(Print::Ty(t, PrintAt::Any)),
                     }
                 }
-                parts.push(Print::Text(") -> "));
-                parts.push(Print::Ty(&a.result, PrintAt::Result));
+                parts.push(Print::Text(")"));
+                parts.extend(result(a));
                 if several {
                     parts.push(Print::Text(")"));
                 }

@@ -483,7 +483,10 @@ fn a_read_of_a_remap_or_group_result_may_miss() {
         (
             format!("{ragged}x = m as (i -> j -> v) into (j -> i -> _);\n"),
             "x[1]",
-            "(u: int) -> ((\"a\" | \"b\") -> \"a\" | \"b\" | #notFound) | #notFound",
+            // The inner family is partial, so it prints `->?` (plain `K -> V` is exact, DESIGN.md
+            // sec:type_language; FAIL-main-red-exact-domain), and `"a" | "b"`, now written twice,
+            // is named.
+            "type Part1 = \"a\" | \"b\";\n(u: int) -> (Part1 ->? Part1) | #notFound",
             "{\"a\"}",
         ),
         (
@@ -495,7 +498,7 @@ fn a_read_of_a_remap_or_group_result_may_miss() {
         (
             words.to_string(),
             "x[\"zz\"]",
-            "(u: int) -> ((0 | 1) -> \"B\" | \"a\" | #notFound) | #notFound",
+            "(u: int) -> ((0 | 1) ->? \"B\" | \"a\") | #notFound",
             "#notFound",
         ),
     ] {

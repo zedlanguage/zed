@@ -192,3 +192,40 @@ fn each_program_that_left_the_census_is_decided_rightly() {
         );
     }
 }
+
+/// The programs gone from pieces 0 and 1 (plan row FAIL-census-programs-0-1-stale-snapshots):
+/// the forms that the bucket tests of `l01_22_type_representation::kinds` had before
+/// FAIL-types-fn-param-exact-domain, where `p` takes a function whose parameter is of one type
+/// and is passed `g`, whose parameter is of another (`g`'s shapes with `bool`, or a variable,
+/// where `p`'s has `int`, or the reverse). A function type's domain is exact (DESIGN.md
+/// sec:type_language, "Morphism types carry two domain bounds": plain `K -> V` has L = U = K,
+/// and `<:` needs L2 <: L1 and U1 <: U2), so two arrows whose domains differ are not subtypes
+/// either way, and `p` does not take `g`: each program is now rejected, with no refusal. Before,
+/// a domain was contravariant, and the checker refused to decide whether `g`'s domain held
+/// `p`'s. Seven from piece 0 and six from piece 1; `3813bbfc`, whose `p` takes a function of a
+/// variable, stays refused, as before.
+const REJECTED: [&str; 13] = [
+    "b5505eff", "97525023", "5e38016f", "5b302ec0", "55276f5a", "e4aeab2c", "8c5b116c", "b0e081ed",
+    "1b5698a6", "887a19a2", "efec117e", "1ba72d47", "57185a17",
+];
+
+#[test]
+fn each_bucket_program_whose_domains_differ_is_rejected() {
+    for hash in REJECTED {
+        let suffix = format!("#{hash}");
+        let (origin, text) = (programs::all().iter())
+            .find(|(o, _)| o.ends_with(&suffix))
+            .unwrap_or_else(|| panic!("{suffix} is a program of programs.txt"));
+        let mut out = String::new();
+        refusals(origin, text, &mut out);
+        assert!(out.is_empty(), "{origin} has a refusal:\n{out}");
+        let messages: Vec<String> = match &*zedc::query::Db::new().front(text) {
+            Ok(_) => panic!("{origin} is accepted"),
+            Err(ds) => ds.iter().map(|d| d.message.clone()).collect(),
+        };
+        assert!(
+            messages.iter().any(|m| m.starts_with("`p` does not take")),
+            "{origin}: {messages:?}"
+        );
+    }
+}

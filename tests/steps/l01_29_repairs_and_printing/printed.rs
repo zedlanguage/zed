@@ -351,11 +351,13 @@ fn a_merged_failure_reads_back() {
 
 /// A partial map `K ->? V` is the function type whose lookup is `V | #notFound`
 /// (sec:type_language), printed `K ->? V` as `#morphism` of sec:introspection writes it, which reads back to it; an `#errs`
-/// family reads back through the same rule, its lookup `E | #notFound`.
+/// family reads back through the same rule, its lookup `E | #notFound`. It is not the exact
+/// `K -> V | #notFound`, whose guarantee is all of `K` ("plain `K -> V` is exact", `K ->? V`
+/// has `L = ∅`).
 #[test]
 fn a_partial_map_reads_back_with_its_miss() {
     let partial = back("String ->? int");
-    assert_eq!(partial, back("(String) -> int | #notFound"));
+    assert_ne!(partial, back("(String) -> int | #notFound"));
     assert_eq!(partial.to_string(), "String ->? int");
     assert_ne!(partial, back("String -> int"));
     let built = zedc::check::ty::errs_of(back("#a | #b"));
@@ -697,7 +699,9 @@ fn reading_wide_printed_types_back() {
 fn morphism_types_print_as_written_and_read_back_in_every_position() {
     for (text, shown) in [
         ("String ->? int", "String ->? int"),
-        ("(String) -> int | #notFound", "String ->? int"),
+        // Exact, its domain all of `String`, so not `String ->? int`, whose guarantee is empty
+        // (DESIGN.md sec:type_language, "plain `K -> V` is exact").
+        ("(String) -> int | #notFound", "String -> int | #notFound"),
         ("(String) -> #notFound", "String -> #notFound"),
         ("(String ->? int) | int", "int | (String ->? int)"),
         ("(String ->? int, int)", "(String ->? int, int)"),
@@ -715,10 +719,26 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
             "int .. (int | String) -> bool",
         ),
         ("#a .. (#a | #b) -> int", "#a .. (#a | #b) -> int"),
+        // A partial arrow outside the `K ->? V` and `L .. U -> V` forms keeps its `->?`: with a
+        // named parameter, with two, in an intersection, and with no value
+        // (FAIL-main-red-exact-domain; before, each printed as the exact `-> V | #notFound`).
+        ("(k: String) ->? int", "(k: String) ->? int"),
+        ("(int, String) ->? int", "(int, String) ->? int"),
+        (
+            "(int -> bool) & (String ->? int)",
+            "(int -> bool) & (String ->? int)",
+        ),
+        ("int ->? Never", "int ->? Never"),
         ("int .. int -> bool", "int -> bool"),
         ("Never .. int -> bool", "int ->? bool"),
+        // Two exact arrows, the second answering `#notFound` on every key of `int | String`:
+        // not `int .. (int | String) -> bool`, whose second arrow is partial.
         (
             "((int) -> bool) & ((int | String) -> bool | #notFound)",
+            "(int -> bool) & ((int | String) -> bool | #notFound)",
+        ),
+        (
+            "((int) -> bool) & ((int | String) ->? bool)",
             "int .. (int | String) -> bool",
         ),
         (

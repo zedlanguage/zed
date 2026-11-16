@@ -633,7 +633,7 @@ fn tuples_and_payloads_that_hold_functions_are_decided_by_their_normal_forms() {
             "(#a0, (int) -> int) | (#a1, (int) -> int)",
         ),
         ("#a((int) -> int)", "#a((int) -> int) | #b"),
-        ("#a((int | String) -> int)", "#a((int) -> int)"),
+        ("#a((int) -> 1)", "#a((int) -> int)"),
         (
             "#a((int) -> int, 1) | #a((int) -> int, 2)",
             "#a((int) -> int, int)",
@@ -653,6 +653,9 @@ fn tuples_and_payloads_that_hold_functions_are_decided_by_their_normal_forms() {
         ),
         ("#a((int) -> int)", "#a((String) -> int)"),
         ("#a((int) -> int)", "#a((int | String) -> int)"),
+        // A domain is exact (DESIGN.md sec:type_language, "plain `K -> V` is exact"): a
+        // function taking more keys is not one taking fewer (FAIL-types-fn-param-exact-domain).
+        ("#a((int | String) -> int)", "#a((int) -> int)"),
         ("#a(x: int)", "#a(y: int)"),
         ("#a(int)", "#a(x: int)"),
         ("#a(x: int)", "#a(int)"),
@@ -693,9 +696,11 @@ fn marks_are_cut_from_sets_of_all_atoms() {
 #[test]
 fn functions_unlike_on_both_sides_at_one_place_are_refused() {
     // Two functions of `t`, equal to none of the expected type's, meet two of its at one place:
-    // which fits which is not compared (COMPLEXITY.md F124), and the clause says so.
+    // which fits which is not compared (COMPLEXITY.md F124), and the clause says so. A domain is
+    // exact (DESIGN.md sec:type_language), so each function of `t` fits the expected function
+    // of its own domain by its narrower result (FAIL-types-fn-param-exact-domain).
     let (t, u) = (
-        ty("((int | String) -> int, 1) | ((int | rat) -> int, 2)"),
+        ty("((int) -> 1, 1) | ((String) -> 1, 2)"),
         ty("((int) -> int, int) | ((String) -> int, int)"),
     );
     assert!(!t.subtype(&u));
@@ -707,13 +712,10 @@ fn functions_unlike_on_both_sides_at_one_place_are_refused() {
     // One function on either side is compared with each on the other.
     for (member, whole) in [
         (
-            "((int | String) -> int, 1)",
+            "((int) -> 1, 1)",
             "((int) -> int, int) | ((String) -> int, int)",
         ),
-        (
-            "((int | String) -> int, 1) | ((int | rat) -> int, 2)",
-            "((int) -> int, int)",
-        ),
+        ("((int) -> 1, 1) | ((int) -> 0, 2)", "((int) -> int, int)"),
         // Functions equal on both sides are matched by equality, however many.
         (
             "((int) -> int, 1) | ((String) -> int, 2)",
@@ -1075,7 +1077,10 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     // `g` takes tuples of one pair or triple, which may each be held by a later shape of the
     // bucket of pairs and triples: the repair writes the shape of its own as a tuple of one.
-    let src = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
+    // first shape (FAIL-types-fn-param-exact-domain).
+    let src = "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) \
+               -> int) = 0;\n\
                q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)) -> int \
                for U in int) = p(f: g);\n";
     let errs = type_errors(src);
@@ -1095,7 +1100,8 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
         "{errs:?}"
     );
     // The repair written into the program is accepted.
-    let repaired = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+    let repaired = "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) \
+                    | ((int, int, int),)) -> int) = 0;\n\
                     q(g: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) \
                     | ((int, U) | (int, U, U),)) -> int for U in int) = p(f: g);\n";
     assert_eq!(type_errors(repaired), Vec::<String>::new());
@@ -1106,8 +1112,11 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     // `U` is bounded by `int` in `g`'s type: the bucket prints it by name, once or twice
     // (DESIGN.md sec:diagnostics, "Types in a message"), and the message says which `for`
-    // binds it, since the bucket is printed apart from `g`'s type.
-    let p = "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n";
+    // binds it, since the bucket is printed apart from `g`'s type. A domain is exact (DESIGN.md
+    // sec:type_language), so `f` also takes the tuples of `g`'s first shape
+    // (FAIL-types-fn-param-exact-domain).
+    let p = "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) \
+             -> int) = 0;\n";
     for (bucket, said) in [
         (
             "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)",
@@ -1203,8 +1212,11 @@ fn an_unbounded_type_variable_in_a_refused_bucket_prints_by_name_where_it_stands
     assert_eq!(l.refused(&twice), pairs_refused_in("(1 | 2, T) | (int, T)"));
     let once = Ty::union_all(&[pair(ty("1 | 2"), var("T")), pair(ty("int"), var("U"))]);
     assert_eq!(l.refused(&once), pairs_refused_in("(1 | 2, _) | (int, _)"));
-    // The own variable of a function type, in one shape twice and in two shapes.
-    let p = ty("(x: ((int, int),) | ((int, int, int),)) -> int");
+    // The own variable of a function type, in one shape twice and in two shapes. A domain is
+    // exact (DESIGN.md sec:type_language), so `p` also takes the tuples of the first shape
+    // (FAIL-types-fn-param-exact-domain).
+    let p =
+        ty("(x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),)) -> int");
     for bucket in [
         "((int, bool) | (int, bool, bool),) | ((int, T) | (int, T, T),)",
         "((int, bool) | (int, bool, bool),) | ((int, T) | (int, bool, T),)",
@@ -1945,8 +1957,11 @@ fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
         let shapes = format!(
             "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, U, {h}) | (int, U, U, {h}),)"
         );
+        // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of
+        // `g`'s first shape (FAIL-types-fn-param-exact-domain).
+        let bools = format!("((int, bool, {h}) | (int, bool, bool, {h}),)");
         let src = format!(
-            "p(f: (x: ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
+            "p(f: (x: {bools} | ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
              q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
         );
         let first = format!("((int, int, {h}),)");
@@ -1966,7 +1981,7 @@ fn a_function_in_a_tuple_of_a_refused_bucket_prints_as_its_type() {
             "{h}"
         );
         let repaired = format!(
-            "p(f: (x: ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
+            "p(f: (x: {bools} | ((int, int, {h}),) | ((int, int, int, {h}),)) -> int) = 0;\n\
              q(g: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | {first} \
              | ((int, U, {h}) | (int, U, U, {h}),)) -> int for U in int) = p(f: g);\n"
         );
@@ -1981,8 +1996,11 @@ fn functions_in_several_places_of_a_tuple_of_a_refused_bucket_print_as_their_typ
     let shapes = format!(
         "(({a}, bool, {b}) | ({a}, bool, bool, {b}),) | (({a}, U, {b}) | ({a}, U, U, {b}),)"
     );
+    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
+    // first shape (FAIL-types-fn-param-exact-domain).
     let src = format!(
-        "p(f: (x: (({a}, int, {b}),) | (({a}, int, int, {b}),)) -> int) = 0;\n\
+        "p(f: (x: (({a}, bool, {b}) | ({a}, bool, bool, {b}),) | (({a}, int, {b}),) \
+         | (({a}, int, int, {b}),)) -> int) = 0;\n\
          q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
     );
     let clause = bucket_refused(
@@ -2006,8 +2024,11 @@ fn a_function_as_a_tuple_of_one_component_in_a_refused_bucket_prints_as_its_type
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     let shapes =
         "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),) | ((y: int) -> int,)";
+    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
+    // first and last shapes (FAIL-types-fn-param-exact-domain).
     let src = format!(
-        "p(f: (x: ((int, int),) | ((int, int, int),)) -> int) = 0;\n\
+        "p(f: (x: ((int, bool) | (int, bool, bool),) | ((int, int),) | ((int, int, int),) \
+         | ((y: int) -> int,)) -> int) = 0;\n\
          q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
     );
     let clause = bucket_refused(
@@ -2035,9 +2056,11 @@ fn a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name() {
     let shapes = format!(
         "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, W, {h}) | (int, W, W, {h}),)"
     );
+    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
+    // first shape (FAIL-types-fn-param-exact-domain).
     let src = format!(
-        "p(f: (x: ((int, int, (y: V) -> int),) | ((int, int, int, (y: V) -> int),)) -> int \
-         for V in int) = 0;\n\
+        "p(f: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, int, (y: V) -> int),) \
+         | ((int, int, int, (y: V) -> int),)) -> int for V in int) = 0;\n\
          q(g: (x: {shapes}) -> int for W in int) = p(f: g);\n"
     );
     let clause = bucket_refused(
@@ -2063,9 +2086,12 @@ fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_
     // `V` of `f`'s type is rigid in the outermost comparison; the comparison of the functions
     // `k` two levels in meets `V` of `g`'s `k`, an own variable of the same name, which prints
     // as `T`.
+    // A domain is exact (DESIGN.md sec:type_language), so `f`'s `k` also takes the tuples of
+    // the first shape (FAIL-types-fn-param-exact-domain).
     let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
     let src = format!(
-        "p(f: (h: (k: (x: ((V, int),) | ((V, int, int),)) -> int) -> int) -> int for V in int) = 0;\n\
+        "p(f: (h: (k: (x: ((int, bool) | (int, bool, bool),) | ((V, int),) | ((V, int, int),)) \
+         -> int) -> int) -> int for V in int) = 0;\n\
          q(g: (h: (k: (x: {shapes}) -> int for V in int) -> int) -> int) = p(f: g);\n"
     );
     let clause = bucket_refused(
@@ -2086,15 +2112,26 @@ fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_
 }
 
 #[test]
-fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart() {
+fn a_rigid_variable_and_an_own_variable_of_the_same_name_one_level_in_print_apart() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
-    // `V` of `g`'s type reads as itself in the outer comparison, and so does `V` of `f`'s `h`
-    // in the comparison of the functions `h`: the second is given a new name there, so the
-    // two are two variables, and print apart, `V` and `T`.
+    // `V` of `f`'s type is rigid in the outer comparison; the comparison of the functions `h`
+    // meets `V` of `g`'s `h`, an own variable of the same name, which is given a new name
+    // there, so the two are two variables, and print apart, `V` and `T`. A domain is exact
+    // (DESIGN.md sec:type_language), so `f`'s `h` also takes the tuples of the first shape
+    // (FAIL-types-fn-param-exact-domain).
+    //
+    // This test was the same with `V` an own variable of `g`, bound by the outer comparison
+    // (`an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`).
+    // Under exact domains no form of it reaches the bucket: the checker refuses, as a plain
+    // "does not take", a function whose parameter holds a variable the comparison binds,
+    // against an exact or a `->?` domain its instance fits (`answers_within` in
+    // `crates/zedc-types/src/ty.rs` does not take such an arrow). That gap is
+    // FAIL-fn-domain-bindable-variable, which restores the own-variable form.
     let shapes = "((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),)";
     let src = format!(
-        "p(f: (h: (x: {shapes}) -> int for V in int) -> int) = 0;\n\
-         q(g: (h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in int) = p(f: g);\n"
+        "p(f: (h: (x: ((int, bool) | (int, bool, bool),) | ((V, int),) | ((V, int, int),)) \
+         -> int) -> int for V in int) = 0;\n\
+         q(g: (h: (x: {shapes}) -> int for V in int) -> int) = p(f: g);\n"
     );
     let clause = bucket_refused(
         "((V, int),)",
@@ -2107,9 +2144,8 @@ fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_
     assert_eq!(
         type_errors(&src),
         vec![format!(
-            "The checker could not decide whether `p` takes ((h: (x: ((V, int),) | ((V, int, int),)) -> int) -> int for V in \
-             int), so it is not proved \
-             wrong.{clause}"
+            "The checker could not decide whether `p` takes ((h: (x: {shapes}) -> int for V in \
+             int) -> int), so it is not proved wrong.{clause}"
         )]
     );
 }
@@ -2193,8 +2229,11 @@ fn bucket_of_functions(n: usize) -> (String, String) {
     let hs = ", (y: int) -> int".repeat(n);
     let shapes =
         format!("((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, U{hs}) | (int, U, U{hs}),)");
+    // A domain is exact (DESIGN.md sec:type_language), so `f` also takes the tuples of `g`'s
+    // first shape (FAIL-types-fn-param-exact-domain).
     let src = format!(
-        "p(f: (x: ((int, int{hs}),) | ((int, int, int{hs}),)) -> int) = 0;\n\
+        "p(f: (x: ((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, int{hs}),) \
+         | ((int, int, int{hs}),)) -> int) = 0;\n\
          q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
     );
     (src, format!("one of the shapes {shapes}, which"))

@@ -469,10 +469,11 @@ fn function_types_print_with_exactly_the_parentheses_the_grammar_needs() {
             "(int -> rat | ((T -> T) & (f64 -> _) for T in int | f64)) -> int",
         ),
         // The clause at the end bounds the members before it too, so it takes a name none of
-        // their clauses wrote: `for T` twice does not read.
+        // their clauses wrote: `for T` twice does not read. The partial arrow keeps its `->?`
+        // (FAIL-main-red-exact-domain): `_ -> String | #notFound` is exact, another type.
         (
             "((T) -> T for T in int | f64) | (((T) -> T for T in int | f64)) & ((_) ->? (String))",
-            "(T -> T for T in int | f64) | (U -> U) & (_ -> String | #notFound) for U in int | f64",
+            "(T -> T for T in int | f64) | (U -> U) & (_ ->? String) for U in int | f64",
         ),
     ];
     let mut wrong = Vec::new();
