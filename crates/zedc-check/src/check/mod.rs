@@ -5915,16 +5915,17 @@ fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
 /// before, only `t`'s own functions were looked at, and the need was checked at the call with
 /// the lambda's parameter unknown, refusing `h(x -> x + 1)`). The call defers the needs on the
 /// parameters of the same functions ([`Ty::each_held_fn`]), so each need it defers has one
-/// to join. A family is one function here and its entries are not entered, so a lambda in a
-/// family's entry still has its need checked at the call (row FAIL-family-lambda-calls-param).
-/// A variable `t` holds outside
-/// its functions is shared with the rest of the value, so it becomes no function's own: the
-/// rule for `t`'s own variables, taken through its tuples and payloads ([`Ty::vars_outside`]).
+/// to join. A family whose keys or entries hold a function is entered as a tuple is, so the
+/// need of `f` in `h(positional f) = {"k" -> (z -> f(z))}` goes with the lambda in the entry
+/// (row FAIL-family-lambda-calls-param); another family is one function here. A variable `t`
+/// holds outside its functions is shared with the rest of the value, so it becomes no
+/// function's own: the rule for `t`'s own variables, taken through its tuples, payloads and
+/// the keys and entries of the families entered ([`Ty::vars_outside_held`]).
 /// Whether a function holds a variable is read from its facts ([`Sig::facts`]), and a
 /// function no need joins is kept as it is: walking each function whole cost the depth of
 /// the functions `g(0)(1)…(n)` returns at each call (CHK-carrier).
-// Complexity tradeoff: O(r + V + Σ min(w, u)·log + h·log h) for r distinct rows and payload
-// shapes of `t` that hold a function (each made once, `Ty::with_held_fns`), V the variables of
+// Complexity tradeoff: O(r + V + Σ min(w, u)·log + h·log h) for r distinct rows, payload
+// shapes and families of `t` that hold a function (each made once, `Ty::with_held_fns`), V the variables of
 // all needs together, u the distinct ones, w the variables a function met holds (its kept
 // facts) and h the needs joined; the walk of the variables outside functions enters only rows
 // and shapes that hold one. Each function looks up the smaller side in the other: its own
@@ -5955,7 +5956,7 @@ fn hold(t: &Ty, needs: Vec<Need>, is_class: impl Fn(&str) -> bool) -> (Ty, Vec<N
         }
     }
     let mut outside = Vars::default();
-    t.vars_outside(&mut outside);
+    t.vars_outside_held(&mut outside);
     let mut taken = vec![false; needs.len()];
     let held = t.with_held_fns(|s| {
         let facts = s.facts();

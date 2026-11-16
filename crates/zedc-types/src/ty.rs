@@ -2801,10 +2801,12 @@ impl Rebuild for Widen {
 /// [`Ty::with_held_fns`]: each function a type holds outside functions replaced by what
 /// `each` makes of it, without entering it; a row or payload shape that holds no function at
 /// any depth outside functions is kept whole, and each other is made once, by address
-/// ([`Made`]).
+/// ([`Made`]). A family that holds a function ([`Sig::holds_fn_as_data`]) is entered as a
+/// tuple is, and made once, by address (`families`, read only by key, as [`Made`]'s maps).
 struct HeldFns<F> {
     each: F,
     made: Made,
+    families: HashMap<*const Sig, Arc<Sig>>,
 }
 
 impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
@@ -2835,11 +2837,35 @@ impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
     }
 
     fn known_held(&mut self, s: &Arc<Sig>) -> Option<Arc<Sig>> {
-        Some((self.each)(s))
+        match s.holds_fn_as_data() {
+            false => Some((self.each)(s)),
+            true => self.families.get(&Arc::as_ptr(s)).cloned(),
+        }
     }
 
-    fn made_held(&mut self, _: &Arc<Sig>, _: Vec<Arrow>, _: Vec<Need>) -> Arc<Sig> {
-        unreachable!("`with_held_fns` gives each function from `each`, so it enters none")
+    /// A family entered: the same family with its keys and entries made anew. It has no needs
+    /// ([`Sig::holds_fn_as_data`]), and the walk changes no variable, so its own, held and
+    /// bounded variables are those it had.
+    fn made_held(&mut self, s: &Arc<Sig>, arrows: Vec<Arrow>, needs: Vec<Need>) -> Arc<Sig> {
+        debug_assert!(
+            s.data && needs.is_empty(),
+            "only a family of no needs is entered"
+        );
+        let made = Arc::new(Sig {
+            params: s.params.clone(),
+            arrows,
+            bounds: s.bounds.clone(),
+            data: s.data,
+            dense: s.dense,
+            word: s.word.clone(),
+            needs,
+            own: s.own.clone(),
+            held: s.held.clone(),
+            named: s.named,
+            facts: Facts::default(),
+        });
+        self.families.insert(Arc::as_ptr(s), made.clone());
+        made
     }
 
     fn binding(&self, _: &str) -> Option<Cow<'_, Ty>> {
@@ -3098,6 +3124,24 @@ impl Sig {
             let _ = s.facts.5.set(e);
         }
         self.facts.5.get().expect("filled by the walk above")
+    }
+
+    /// Whether it is a family, of no needs, whose entries or keys hold a function, not a
+    /// family, at any depth outside functions: data that holds the function, as a tuple holds
+    /// one, so a walk of what a value holds outside functions enters it ([`Ty::each_held_fn`],
+    /// [`Ty::with_held_fns`]), and a lambda in `{"k" -> (z -> f(z))}` is met as the lambda in
+    /// `(1, z -> f(z))` is (row FAIL-family-lambda-calls-param). The entries are read from
+    /// their memo ([`Entries`]) and the keys at their outer level, as [`Ty::held_function`]
+    /// reads them, so it costs O(1) after the memo plus the outer levels of the key types.
+    /// A family with needs, if one is built, is left a function, as before this row, so the
+    /// walks never enter a need's types: a need is not a part of the value.
+    pub fn holds_fn_as_data(&self) -> bool {
+        self.data
+            && self.needs.is_empty()
+            && (self.entries().held.is_some()
+                || (self.arrows.iter())
+                    .flat_map(|a| a.params.iter())
+                    .any(|p| p.held_function().is_some()))
     }
 }
 
@@ -10047,28 +10091,57 @@ impl Ty {
 
     /// It with each function it holds outside functions, itself or at any depth in its tuples
     /// and its atoms' payloads, replaced by what `each` makes of it; the functions are not
-    /// entered, so one a function returns is left to that function. A family is a function
-    /// here, and its entries are not entered. A row or payload shape that holds no function
-    /// is kept whole, and each other is made once, on the walk's own stack (`rebuild`), so
-    /// the cost is the number of distinct rows and shapes that hold a function, plus one call
-    /// of `each` for each function met (one shared by two rows is met twice).
+    /// entered, so one a function returns is left to that function. A family that holds a
+    /// function in its keys or entries ([`Sig::holds_fn_as_data`]) is data that holds it, as a
+    /// tuple is: it is entered and made anew, and is not given to `each` (row
+    /// FAIL-family-lambda-calls-param); another family is a function here. A row or payload
+    /// shape that holds no function is kept whole, and each other, and each family entered, is
+    /// made once, on the walk's own stack (`rebuild`), so the cost is the number of distinct
+    /// rows, shapes and families that hold a function, plus one call of `each` for each
+    /// function met (one shared by two rows is met twice).
     pub fn with_held_fns(&self, each: impl FnMut(&Arc<Sig>) -> Arc<Sig>) -> Ty {
         let made = Made::default();
-        rebuild_ty(&mut HeldFns { each, made }, self)
+        let families = HashMap::new();
+        rebuild_ty(
+            &mut HeldFns {
+                each,
+                made,
+                families,
+            },
+            self,
+        )
     }
 
     /// Each function it holds outside functions, as [`Ty::with_held_fns`] meets them: itself,
-    /// or at any depth in its tuples and its atoms' payloads, a family counted as a function
-    /// and not entered. Only rows and payload shapes that hold a function are entered, each
-    /// once (by number, as [`Ty::vars_outside`] does), on the walk's own stack, so the cost is
-    /// the number of distinct such rows and shapes plus one call of `each` per function met.
-    pub fn each_held_fn<'a>(&'a self, mut each: impl FnMut(&'a Arc<Sig>)) {
+    /// or at any depth in its tuples, its atoms' payloads and the keys and entries of the
+    /// families that hold a function ([`Sig::holds_fn_as_data`]), which are entered and not
+    /// given to `each`; another family is given to `each` and not entered. Only rows and
+    /// payload shapes that hold a function are entered, each once (by number, as
+    /// [`Ty::vars_outside`] does), and each family once (by address, within this call, which
+    /// borrows `self`, so no address names a freed family), on the walk's own stack, so the
+    /// cost is the number of distinct such rows, shapes and families, plus one call of `each`
+    /// per function met.
+    pub fn each_held_fn<'a>(&'a self, each: impl FnMut(&'a Arc<Sig>)) {
+        self.walk_held(each, |_| {});
+    }
+
+    /// [`Ty::vars_outside`] of it and of each key and entry type of the families
+    /// [`Ty::each_held_fn`] enters: the variables a value of it holds outside the functions
+    /// that walk meets, which no one of them owns.
+    pub fn vars_outside_held(&self, out: &mut Vars) {
+        self.vars_outside(out);
+        self.walk_held(|_| {}, |t| t.vars_outside(out));
+    }
+
+    /// [`Ty::each_held_fn`], with `part` given each key and entry type of each family entered.
+    fn walk_held<'a>(&'a self, mut each: impl FnMut(&'a Arc<Sig>), mut part: impl FnMut(&'a Ty)) {
         enum Walk<'a> {
             Ty(&'a Ty),
             Row(&'a Row),
             Shape(&'a Shape),
         }
         let mut entered: HashSet<NodeId> = HashSet::new();
+        let mut families: HashSet<*const Sig> = HashSet::new();
         let mut stack = vec![Walk::Ty(self)];
         while let Some(w) = stack.pop() {
             match w {
@@ -10083,7 +10156,18 @@ impl Ty {
                     }
                 }
                 Walk::Ty(t) => {
-                    t.fns.iter().for_each(&mut each);
+                    for s in &t.fns {
+                        if !s.holds_fn_as_data() {
+                            each(s);
+                        } else if families.insert(Arc::as_ptr(s)) {
+                            let parts = (s.arrows.iter())
+                                .flat_map(|a| a.params.iter().chain(std::iter::once(&a.result)));
+                            for p in parts {
+                                part(p);
+                                stack.push(Walk::Ty(p));
+                            }
+                        }
+                    }
                     stack.extend(
                         t.tuples
                             .iter()

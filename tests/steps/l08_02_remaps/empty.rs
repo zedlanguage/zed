@@ -955,6 +955,9 @@ fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
          a = { p = ht(x -> x >< max, m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
         "ht(positional f, positional y) = (f(y), (1, z -> f(z)));\n\
          a = { p = ht(x -> top(x), m[\"a\"]); (p[0], p[1][1](mi[\"a\"])) };\n",
+        // The lambda in a family's entry (row FAIL-family-lambda-calls-param).
+        "hf(positional f, positional y) = (f(y), {\"k\" -> (z -> f(z))});\n\
+         a = { p = hf(x -> top(x), m[\"a\"]); (p[0], p[1][\"k\"](mi[\"a\"])) };\n",
     ] {
         rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
     }
@@ -978,6 +981,8 @@ fn a_function_a_call_returns_and_runs_at_the_same_carrier_runs_at_its_identity()
          a = { p = ht(x -> x >< max, m[\"a\"]); (p[0], p[1](m[\"b\"])) };\n",
         "ht(positional f, positional y) = (f(y), (1, z -> f(z)));\n\
          a = { p = ht(x -> top(x), m[\"a\"]); (p[0], p[1][1](m[\"b\"])) };\n",
+        "hf(positional f, positional y) = (f(y), {\"k\" -> (z -> f(z))});\n\
+         a = { p = hf(x -> top(x), m[\"a\"]); (p[0], p[1][\"k\"](m[\"b\"])) };\n",
     ] {
         prints(&format!("{TOP}{F}{I}{body}"), "a", "(-inf, 5.0)");
     }
@@ -1010,6 +1015,9 @@ fn a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after()
         ("ht", "", "(f(y), z -> f(z))"),
         ("hn", "", "(f(y), (1, z -> f(z)))"),
         ("hb", "", "(f(y), #box(z -> f(z)))"),
+        // ... and in a family's entry.
+        ("hf", "", "(f(y), {\"k\" -> (z -> f(z))})"),
+        ("ha", "", "(f(y), [(z -> f(z))])"),
     ] {
         let src = format!(
             "{TOP}{F}{I}{decls}{h}(positional f, positional y) = {body};\n\
@@ -1093,6 +1101,49 @@ fn a_tuple_holding_a_lambda_that_calls_a_parameter_runs() {
     // A lambda that does not take what `f` takes stays refused at its own call.
     rejected(
         "h(positional f) = (f(1), z -> f(z));\na = { p = h(x -> x + 1); p[1](\"s\") };\n",
+        &["does not take"],
+    );
+}
+
+// ---- A lambda that calls a parameter, returned in a family's entry (row
+// FAIL-family-lambda-calls-param) ----
+
+#[test]
+fn a_family_holding_a_lambda_that_calls_a_parameter_runs() {
+    // DESIGN.md sec:values_morphisms (application): `p["k"](2)` is `f(2)`, 3, and `f(1)` is 2.
+    // The parentheses around each lambda are needed: `{"k" -> z -> f(z)}` and `[z -> f(z)]`
+    // do not parse.
+    prints(
+        "h(positional f) = {\"k\" -> (z -> f(z))};\na = { p = h(x -> x + 1); p[\"k\"](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f) = (f(1), {\"k\" -> (z -> f(z))});\n\
+         a = { p = h(x -> x + 1); (p[0], p[1][\"k\"](2)) };\n",
+        "a",
+        "(2, 3)",
+    );
+    // The lambda in a tuple in an entry, in a family in an entry, and two lambdas in an array.
+    prints(
+        "h(positional f) = {\"k\" -> (0, z -> f(z))};\na = { p = h(x -> x + 1); p[\"k\"][1](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f) = {\"k\" -> {\"j\" -> (z -> f(z))}};\n\
+         a = { p = h(x -> x + 1); p[\"k\"][\"j\"](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f) = [(z -> f(z)), (w -> f(f(w)))];\na ={ p = h(x -> x + 1); (p[0](1), p[1](1)) };\n",
+        "a",
+        "(2, 3)",
+    );
+    // A lambda that does not take what `f` takes stays refused at its own call.
+    rejected(
+        "h(positional f) = {\"k\" -> (z -> f(z))};\na = { p = h(x -> x + 1); p[\"k\"](\"s\") };\n",
         &["does not take"],
     );
 }

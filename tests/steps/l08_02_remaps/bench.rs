@@ -894,3 +894,47 @@ fn a_lambda_that_calls_a_parameter_n_tuples_deep_runs_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_lambdas_that_call_a_parameter_in_a_returned_family_run_in_linear_time() {
+    // The family's n entries each hold a lambda that calls `f`; the call enters the family
+    // once (`Ty::each_held_fn`, `Ty::with_held_fns`) and joins each need to its lambda (row
+    // FAIL-family-lambda-calls-param). Small instances:
+    // `empty::a_family_holding_a_lambda_that_calls_a_parameter_runs`.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let entries = (0..n)
+            .map(|i| format!("\"k{i}\" -> (z -> f(z) + {i})"))
+            .collect::<Vec<_>>();
+        format!(
+            "h(positional f) = {{{}}};\na = {{ p = h(x -> x + 1); p[\"k{}\"](1) }};\n",
+            entries.join(", "),
+            n - 1
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n + 1).to_string());
+    scaling::check(
+        "n lambdas that call a parameter, returned in one family and one of them run, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn a_lambda_that_calls_a_parameter_n_families_deep_runs_in_linear_time() {
+    // The call enters each of the n families above the lambda once, and each of the n
+    // lookups, a call of a family with no needs, walks none of them (`apply_one` in
+    // crates/zedc-check/src/check/walk.rs; walking at each lookup gave 14.55 at 8n).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let deep = (0..n).fold("(z -> f(z))".to_string(), |t, _| {
+            format!("{{\"k\" -> {t}}}")
+        });
+        let path = "[\"k\"]".repeat(n);
+        format!("h(positional f) = {deep};\na = {{ p = h(x -> x + 1); p{path}(2) }};\n")
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "3");
+    scaling::check(
+        "a lambda that calls a parameter, n families deep in the result, run, whole path",
+        N_LEVELS,
+        run,
+    );
+}
