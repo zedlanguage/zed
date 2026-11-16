@@ -4000,16 +4000,37 @@ enum At {
 /// A value a maker waits for: the maker and the position.
 type Need = (usize, usize);
 
-/// The one row of `t` when `t` is the tuple type of that row and nothing else.
+/// The one row of `t` when `t` is the tuple type of that row and nothing else: `t` equals
+/// `Type::tuple(row)` by contents. Read from the parts, field by field as [`Type::with`] and
+/// [`Tuples::literal`] fill them, in O(1) and O(`L`) for the row's `L` components.
+// Complexity tradeoff: the naive test builds `Type::tuple(row)` and compares it with `t`. The
+// row it builds is a live row, found in the table by comparing contents, and the comparison of
+// the two types reads their parts again; where a column is a large literal set made apart
+// from the live row's, each reads the set (`Lits` skips the shared nodes, O(log n) for a set
+// of `n` made from one set): `only_row` was 63% of `meet_types` in
+// `listing_each_row_met_first_scales`, 9.154 times the instructions at 8n, now 8.94
+// (COMPLEXITY.md PERF-listing-each-row-met-first). Given up: nothing; the reads are the
+// fields `Type::with` fills. A recursive node is never equal to a type of parts (`types`
+// sorts them apart), so it has no row here either.
 fn only_row(t: &Type) -> Option<Row> {
-    let p = t.p();
-    let [(_, part)] = Vec::from_iter(&p.tuples.lens)[..] else {
+    let Node::Parts(p, _) = &*t.0 else {
         return None;
     };
-    let [row] = &part.distinct_atoms()[..] else {
+    let bare = p.bools == 0
+        && [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
+            .iter()
+            .all(|l| !l.cofinite && l.values.is_empty())
+        && p.atoms.is_default()
+        && !p.tuples.rest
+        && !p.structs
+        && p.morphisms.is_leaf() == Some(false);
+    let mut lens = p.tuples.lens.iter();
+    let (true, Some((&len, part)), None) = (bare, lens.next(), lens.next()) else {
         return None;
     };
-    (Type::tuple(row.to_vec()) == *t).then(|| row.clone())
+    let row = part.literal_atom()?;
+    // `Type::tuple` makes the empty type of a row with a component that lists nothing.
+    (row.len() == len && !row.iter().any(Type::lists_nothing)).then(|| row.clone())
 }
 
 /// The boxes of one type, for listing ([`Type::each_value`]), with each set of boxes equal in

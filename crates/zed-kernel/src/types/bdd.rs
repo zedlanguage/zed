@@ -812,6 +812,20 @@ impl<A: Literal> Part<A> {
         Part::Bdd(Bdd::literal(a))
     }
 
+    /// The atom `a` when the part is the one [`Part::literal`] makes of `a`, in O(1): a list of
+    /// one block holding `(a, true)`, of first value `true` (`Bdd::literal_key`). Both are read
+    /// here, not taken from the list's one form, so the answer is the same as comparing the
+    /// part with `Part::literal(a)` by contents.
+    pub(super) fn literal_atom(&self) -> Option<&A> {
+        match self {
+            Part::Bdd(b @ Bdd::List(_, true)) => match b.as_literal() {
+                Some((a, true)) => Some(a),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Whether the part is a list that is a union of literals, of any number, in O(1).
     pub(super) fn is_union_of_literals(&self) -> bool {
         matches!(self, Part::Bdd(b) if b.chain_len(Op::Or).is_some())

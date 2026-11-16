@@ -282,6 +282,57 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
 /// A tuple with a component that lists no value has no value, and is built as the empty type
 /// itself, also nested, inside an atom's payload and in a union; a component empty only by a
 /// tuple meet is kept as written, though `is_empty` still finds the tuple empty.
+/// `only_row` reads its answer from the parts (PERF-listing-each-row-met-first); it must agree
+/// with building the tuple of the one row and comparing it with the type.
+#[test]
+fn only_row_agrees_with_building_the_tuple_of_the_row() {
+    let (int, b) = (Type::int(), Type::bool());
+    let one = Type::lit(&Value::Int(1)).expect("a literal");
+    let odd = &int - &one;
+    let pair = Type::tuple(vec![odd.clone(), b.clone()]);
+    let other = Type::tuple(vec![int.clone(), int.clone()]);
+    let unit = Type::tuple(Vec::new());
+    let nested = Type::tuple(vec![pair.clone(), unit.clone()]);
+    let all = [
+        pair.clone(),
+        other.clone(),
+        unit.clone(),
+        nested.clone(),
+        Type::tuple(vec![one.clone()]),
+        &pair | &other,
+        &pair | &unit,
+        &pair | &int,
+        &pair | &Type::atom("a"),
+        &pair | &b,
+        &pair & &other,
+        !&pair,
+        &Type::top() - &pair,
+        int.clone(),
+        Type::top(),
+        Type::empty(),
+        Type::atom_with("a", &pair),
+        Type::tuple(vec![Type::empty(), int.clone()]),
+    ];
+    for t in &all {
+        let built = {
+            let p = t.p();
+            let lens = Vec::from_iter(&p.tuples.lens);
+            match &lens[..] {
+                [(_, part)] => match &part.distinct_atoms()[..] {
+                    [row] => (Type::tuple(row.to_vec()) == *t).then(|| row.to_vec()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let read = only_row(t).map(|row| row.to_vec());
+        assert_eq!(read, built, "{}", t.surface_operand());
+    }
+    for t in [&pair, &other, &unit, &nested] {
+        assert!(only_row(t).is_some(), "{}", t.surface_operand());
+    }
+}
+
 #[test]
 fn a_tuple_with_an_empty_component_is_empty() {
     let (never, int, b) = (Type::empty(), Type::int(), Type::bool());
