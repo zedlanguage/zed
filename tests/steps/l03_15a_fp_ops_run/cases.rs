@@ -285,6 +285,81 @@ fn a_float_scan_rounds_each_prefix_as_its_fold_does() {
     );
 }
 
+/// The canonical tree of DESIGN.md sec:reduction item 1, written from its words, apart from
+/// the elaborator's stack of power-of-two blocks: one element is itself; a power of two `n`
+/// combines its halves; any other `n`, with `p` the largest power of two dividing it,
+/// combines the first `n - p` with the last `p`.
+fn canonical_sum(xs: &[f64]) -> f64 {
+    let n = xs.len();
+    if n == 1 {
+        return xs[0];
+    }
+    let cut = match n.is_power_of_two() {
+        true => n / 2,
+        false => n - (1 << n.trailing_zeros()),
+    };
+    canonical_sum(&xs[..cut]) + canonical_sum(&xs[cut..])
+}
+
+/// `v` as a Zed float literal: Rust's `Display` writes the shortest digits that read back to
+/// `v`, in fixed notation, and a Zed decimal literal is correctly rounded, so the literal is
+/// `v` bit for bit.
+fn float_lit(v: f64) -> String {
+    let s = format!("{v}");
+    match s.contains('.') {
+        true => s,
+        false => format!("{s}.0"),
+    }
+}
+
+/// Plan row TEST-scan-float-long-chunk-ranks: at lengths past 4, each entry `i` of a float
+/// scan is the canonical-tree sum of entries `0..=i` (DESIGN.md sec:reduction item 1: "Entry
+/// `i` of a scan is the canonical-tree reduction of elements `0..=i`"), bit for bit, and its
+/// last entry is the fold `x >< (+)`. The entries are `1e16` and `-1e16` every 16 places and
+/// `1.0` elsewhere, so a `1.0` added to `1e16` alone rounds away while a sum of 1s added
+/// first does not: every length here has a prefix whose tree sum differs from the left fold's,
+/// which the test asserts, so a scan that grouped from the left fails it. The lengths cover
+/// one block past a power of two (5, 9, 17), a power of two (8) and many blocks (100, 1000).
+#[test]
+fn a_long_float_scan_gives_each_prefix_its_canonical_tree_sum() {
+    for n in [5usize, 8, 9, 17, 100, 1000] {
+        let xs: Vec<f64> = (0..n)
+            .map(|i| match (i % 16, (i / 16) % 2) {
+                (0, 0) => 1e16,
+                (0, _) => -1e16,
+                _ => 1.0,
+            })
+            .collect();
+        let tree: Vec<f64> = (1..=n).map(|i| canonical_sum(&xs[..i])).collect();
+        let left: Vec<f64> = (xs.iter())
+            .scan(0.0, |a, v| {
+                *a += v;
+                Some(*a)
+            })
+            .collect();
+        assert!(
+            tree.iter()
+                .zip(&left)
+                .any(|(t, l)| t.to_bits() != l.to_bits()),
+            "at n = {n} no prefix's tree sum differs from the left fold's, so the test would \
+             not tell them apart"
+        );
+        let list = |v: &[f64]| {
+            let items: Vec<String> = v.iter().map(|&e| float_lit(e)).collect();
+            format!("[{}]", items.join(", "))
+        };
+        let (x, tree, left) = (list(&xs), list(&tree), list(&left));
+        prints(
+            &format!("scan_float_long_{n}"),
+            &[
+                (&format!("{x}.scan((+)) == {tree}"), "true"),
+                (&format!("{x}.scan((+)).last == {x} >< (+)"), "true"),
+                (&format!("{x}.scan((+)) == {left}"), "false"),
+            ],
+        );
+    }
+}
+
 /// Step L5.3: `chunkBy` splits where `f`'s value changes, the last run included; a run
 /// keeps the keys of its entries; an empty family has no runs.
 #[test]
@@ -327,6 +402,44 @@ fn chunk_by_splits_where_the_value_changes() {
                 "true",
             ),
         ],
+    );
+}
+
+/// Plan row TEST-scan-float-long-chunk-ranks: the outer level of `chunkBy` is the run index
+/// from 0, every index present, a list (`Dense::Ranks`), so `flatMap` takes a `chunkBy` as
+/// the list its function gives, and a read past the last run, or before the first, gives
+/// `#outOfBounds`, as on a list; a run keeps its entries' own keys, so it is no list: a
+/// missing key in it gives `#notFound`, and `flatMap` does not take a run as a list.
+#[test]
+fn chunk_by_runs_are_ranked_from_zero() {
+    prints(
+        "chunk_ranks",
+        &[
+            (
+                "[1, 1, 2].chunkBy(x -> x).flatMap(r -> [r.count, r.sum]) == [[2, 2], [1, 2]]",
+                "true",
+            ),
+            (
+                "[[1, 1, 2], [3]].flatMap(v -> v.chunkBy(x -> x)) == [[{0 -> 1, 1 -> 1}, {2 -> 2}], [{0 -> 3}]]",
+                "true",
+            ),
+            (
+                "[[1, 1, 2], [3]].flatMap(v -> v.chunkBy(x -> x)).map(rs -> rs.count) == [2, 1]",
+                "true",
+            ),
+            ("[4, 4, 5].chunkBy(x -> x)[5] == #outOfBounds", "true"),
+            ("[4, 4, 5].chunkBy(x -> x)[-1] == #outOfBounds", "true"),
+            ("{}.chunkBy(x -> x)[0] == #outOfBounds", "true"),
+            ("[4, 4, 5].chunkBy(x -> x)[1][0] == #notFound", "true"),
+            ("[4, 4, 5].chunkBy(x -> x)[1][2] == 5", "true"),
+        ],
+    );
+    saying(
+        "chunk_ranks",
+        &[(
+            "[4, 4, 5].chunkBy(x -> x).flatMap(r -> r)",
+            "`flatMap` adjoins the list its function gives for each entry as a rank level",
+        )],
     );
 }
 
