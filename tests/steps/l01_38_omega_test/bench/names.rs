@@ -2,9 +2,7 @@
 
 use crate::names::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{
-    Atom, Con, Formula, Lin, Refusal, decide, project_each, satisfiable,
-};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
 
 #[test]
 fn decide_scales_over_copies_of_a_tie() {
@@ -212,6 +210,42 @@ fn capped_one_way_cycle(n: usize, top: i64) -> Formula {
     let v = |i: usize| Lin::atom(Atom::Sym(format!("v{i}").into()));
     let caps = (0..n).map(|i| Formula::Con(Con::ge(&Lin::constant(top), &v(i))));
     Formula::and(std::iter::once(one_way_cycle(n)).chain(caps).collect())
+}
+
+/// The cycle of `names::cycle_both_ways` over `n` variables, every variable at most `top`:
+/// `3·v[i + 1] - v[i] >= 10` and `3·v[i] - v[i + 1] >= 10` for each `i`, `v[n]` being `v[0]`.
+/// Summing the rows gives `4·Σ v >= 20·n`, so at `top = 4` it has no point, at 5 the point
+/// with every variable 5.
+fn capped_cycle_both_ways(n: usize, top: i64) -> Formula {
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{}", i % n).into()));
+    let row =
+        |a: usize, b: usize| Formula::Con(Con::ge(&v(b).times(3), &v(a).plus(&Lin::constant(10))));
+    let rows = (0..n).flat_map(|i| [row(i, i + 1), row(i + 1, i)]);
+    let caps = (0..n).map(|i| Formula::Con(Con::ge(&Lin::constant(top), &v(i))));
+    Formula::and(rows.chain(caps).collect())
+}
+
+/// `decide` on a cycle of `n` variables turned both ways (FAIL-tie-cycle-reflected-and-second-tie):
+/// all `n` tie at the first step, and `System::symmetries` fixes a first variable and then one
+/// of its two neighbors to find the turns and the reflections of the cycle. One variable is
+/// eliminated; the path left is symmetric end for end, and its ties are taken by swaps or by
+/// `System::rekey`, which may run again at a later step. This measures whether those later
+/// steps keep the run within n log n.
+#[test]
+fn decide_on_a_cycle_turned_both_ways_scales() {
+    let n = 500;
+    for m in [n, n * scaling::FACTOR] {
+        assert_eq!(decide(&capped_cycle_both_ways(m, 5)), Ok(true), "n = {m}");
+        assert_eq!(decide(&capped_cycle_both_ways(m, 4)), Ok(false), "n = {m}");
+    }
+    let (small, large) = (
+        capped_cycle_both_ways(n, 4),
+        capped_cycle_both_ways(n * scaling::FACTOR, 4),
+    );
+    scaling::check("decide on a cycle turned both ways", n, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
 }
 
 /// `decide` on a cycle of `n` variables turned one way (FAIL-alone-point-refused-at-model,

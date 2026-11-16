@@ -776,6 +776,12 @@ fn a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided() {
     };
     // Turned both ways, the cycle of four is a square: fixing `x[0]` leaves its two
     // neighbors alike, and fixing one of them as well tells every variable apart.
+    let rows = cycle_both_ways(4);
+    assert!(holds(&rows, &[5, 5, 5, 5]));
+    assert_eq!(
+        namings(&rows, 4).into_keys().collect::<Vec<_>>(),
+        ["Ok(true)"]
+    );
     for (top, want) in [(4, "Ok(false)"), (5, "Ok(true)")] {
         let rows = capped(cycle_both_ways(4), 4, top);
         assert_eq!(
@@ -792,6 +798,12 @@ fn a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided() {
         // Both ways: the polygon of `n` sides, as the square.
         for rows in [cycle(n), cycle_both_ways(n)] {
             assert!(holds(&rows, &vec![5; n]));
+            let seen = sampled_namings(&rows, n, &mut rng, 60);
+            assert_eq!(
+                seen.into_keys().collect::<Vec<_>>(),
+                ["Ok(true)"],
+                "n = {n}, seed {seed:#x}"
+            );
             for (top, want) in [(4, "Ok(false)"), (5, "Ok(true)")] {
                 let seen = sampled_namings(&capped(rows.clone(), n, top), n, &mut rng, 60);
                 assert_eq!(
