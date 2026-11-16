@@ -540,14 +540,34 @@ fn a_call_of_a_name_bound_to_either_of_two_functions_holds_both_results() {
 }
 
 /// A call that leaves out a parameter gives it its default, so a default outside the range
-/// would give `g` a value outside its printed hull `int[0..=3]`: the call is refused. (A
-/// default inside the range is refused too, which is row RANGE-default-in-range.)
+/// would give `g` a value outside its printed hull `int[0..=3]`: the call is refused.
 #[test]
 fn a_default_outside_the_range_is_not_read_as_inside_it() {
-    let text = "g(x: int[0..=3] = 10) = x;\nf(a: int[0..=1]) = g() + a;\n";
-    let errors = type_errors(text);
-    assert!(
-        errors.iter().any(|e| e.contains("`g()` leaves out `x`")),
-        "{text}\n{errors:#?}"
-    );
+    for text in [
+        "g(x: int[0..=3] = 10) = x;\nf(a: int[0..=1]) = g() + a;\n",
+        "g(x: int[0..=3] = 2 + 2) = x;\nf(a: int[0..=1]) = g() + a;\n",
+        "g(x: int[0..=3] = -1) = x;\nf(a: int[0..=1]) = g() + a;\n",
+    ] {
+        let errors = type_errors(text);
+        assert!(
+            errors.iter().any(|e| e.contains("`g()` leaves out `x`")),
+            "{text}\n{errors:#?}"
+        );
+    }
+}
+
+/// A default that reads no name and lies in the range is the parameter's value at a call
+/// that leaves it out, so the call is accepted and its result lies in `g`'s hull (row
+/// RANGE-default-in-range, found by TEST-range-hull-sound: such a call was refused with
+/// "repair: give `x` a default in int[0..=3]", which it already had).
+#[test]
+fn a_default_inside_the_range_is_accepted_and_held_by_the_hull() {
+    for text in [
+        "g(x: int[0..=3] = 2) = x;\nf(a: int[0..=1]) = g() + a;\n",
+        "g(x: int[0..=3] = 2, y: int[0..=3]) = x + y;\nf(a: int[0..=1]) = g(y: a);\n",
+        "g(x: int[0..=3] = 0) = x;\nf(a: int[0..=1]) = g() + a;\n",
+    ] {
+        assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
+        one(text, &[("a", 0, 1)]).sound();
+    }
 }

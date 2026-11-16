@@ -2991,6 +2991,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.infer_defaults(m, s);
     }
 
+    /// Records in [`Ck::default_ints`] the ints the default `d` of the parameter `p` may be,
+    /// `t` being the type its check gave. A default that reads no name has one value at every
+    /// call, among the ints its facts give, so a call that leaves the parameter out may read
+    /// them for a range need ([`Self::floors_at`]). Only a default whose type is a nonempty
+    /// part of `int` is recorded, so its facts cover every value it may take. One that reads
+    /// a name is not recorded: its value differs from call to call, and such a call stays
+    /// refused.
+    fn note_default_ints(&mut self, p: &SParam, d: &'a Expr, t: &Ty) {
+        let Some((binder, index, true)) = p.default else {
+            return;
+        };
+        if t.is_empty() || !self.subtype(t, &Ty::carrier(Carrier::Int)) {
+            return;
+        }
+        let ints = self.known(d).ints;
+        self.default_ints.insert((binder, index), ints);
+    }
+
     /// A default that reads the other parameters, at its parameter's type, each in turn;
     /// then the body.
     fn infer_defaults(&mut self, m: &mut M<'a>, mut s: Box<InferF<'a>>) {
@@ -3000,6 +3018,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = &s.tys[s.i];
             let d = p.default.as_ref().expect("a default");
             let what = format!("the default of `{}`", p.name);
+            self.note_default_ints(&s.params[s.i], d, &dt);
             match class {
                 Some(k) => {
                     self.defaults.insert(d.span, p.name.as_str().into());
@@ -13340,8 +13359,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 chain
             };
             let Some(a) = args.get(*param).and_then(Option::as_ref) else {
-                // A parameter left out takes its default, whose value the call does not show.
-                if sig.params.get(*param).is_some_and(|p| p.default.is_some()) {
+                // A parameter left out takes its default. One that reads no name has the ints
+                // recorded where the function was checked ([`Ck::default_ints`]): the call
+                // meets the need when they are some ints and all lie in the domain, as
+                // `g(x: int[0..=3] = 2)` called `g()` does (RANGE-default-in-range). Any other
+                // default's value the call does not show, and the call is refused.
+                let default = sig.params.get(*param).and_then(|p| p.default);
+                let shown_in = default
+                    .and_then(|(binder, index, _)| self.default_ints.get(&(binder, index)))
+                    .is_some_and(|ints| !ints.is_empty() && ints_in(domain, ints));
+                if shown_in {
+                    continue;
+                }
+                if default.is_some() {
                     let dom = domain_text(domain);
                     let message = match self.code(Some(span)) {
                         Some(call) => format!("{takes}: `{call}` leaves out `{p}`."),

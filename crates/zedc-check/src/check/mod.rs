@@ -1626,6 +1626,11 @@ struct Ck<'t, 'a> {
     /// at its parameter's type: a rejection whose value reached its use through the default
     /// names it and offers the declaration without it.
     defaults: HashMap<Span, Box<str>>,
+    /// The ints each default that reads no name may be, by the function's binder and the
+    /// parameter's index ([`SParam::default`]), for each such default whose type is `int`: a
+    /// call that leaves the parameter out takes one of them, so the call meets a range need
+    /// of the parameter when they lie in the range (plan row RANGE-default-in-range).
+    pub(super) default_ints: HashMap<(usize, usize), IntervalSet>,
     /// The [`Found::id`] the next error gets.
     next_found: usize,
     /// Whether the repair being tried ([`Ck::tried`]) makes an operation on literals alone
@@ -2033,6 +2038,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             fixing: None,
             next_fix: 0,
             defaults: HashMap::new(),
+            default_ints: HashMap::new(),
             next_found: 0,
             opened: false,
             failed: HashSet::new(),
@@ -10805,8 +10811,12 @@ impl<'a> Ck<'_, 'a> {
     /// range is rejected (the parameter's need, `floors_at`). The callee is checked before the
     /// caller, as statements are checked in dependency order, so `env` holds its signature
     /// with the hull; the names of a cycle are bound to no function (recursion is rejected
-    /// until step L6), so a call of one reads as any int. A call that leaves parameters out
-    /// gives a function, which holds no int, so the hull holds each of its ints.
+    /// until step L6), so a call of one reads as any int. A call that leaves out a parameter
+    /// with a default gives an int, the parameter taking its default; such a call is accepted
+    /// only where the default reads no name and its ints all lie in the range (`floors_at`
+    /// with [`Ck::default_ints`], RANGE-default-in-range), so the parameter is in its range
+    /// there too. Any other call that leaves parameters out gives a function, which holds no
+    /// int, so the hull holds each of its ints.
     ///
     /// Complexity tradeoff: O(1) per call, a hash lookup of the callee's binding; the naive
     /// way, reading the callee's body again at each call (C28 below), is O(b) per call for a
