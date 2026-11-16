@@ -207,6 +207,38 @@ fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
     });
 }
 
+/// Besides its ratio: the wider function type is no subtype of the narrower. Small instance:
+/// `deep_scaling::generic_function_types_nested_a_few_deep_compare`.
+#[test]
+fn a_refusal_of_generic_function_types_nested_deep_is_linear() {
+    // `(T0 -> (T0 -> … int | f64) for T0 in int | f64)` is not the same with `int`. Each
+    // level's result holds a function that holds the level's variable, read anew with the
+    // variable bound (`Cx::bound_in_fns`); the search for a cover compares that result again,
+    // and the new reading is kept by the function and the binding (`Cx::bound_fns`), so the
+    // second comparison reads the first's verdict (`Cx::fitted`) and each level is compared
+    // once (FAIL-types-result-fn-outer-binding); without that memo this ran past 58 s. Each
+    // function read was kept with the whole environment of its side, an entry for each level
+    // around, and its test against the n - k names the function holds cost O(n^2) in all:
+    // 16.7 times at 8n before the bindings, 26.3 with them. A function is now kept with the
+    // entries for the variables it holds only (`held_reading`, PERF-types-env-held-part):
+    // 8.4 times.
+    use super::super::deep_scaling::generic_curried;
+    let n = 250;
+    zed_tests::deep::on_small_stack(|| {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                let narrow = generic_curried(m, "int");
+                (m, (narrow, generic_curried(m, "int | f64")))
+            })
+            .collect();
+        scaling::check_order("refusing generic function types n deep", n, 1, |m| {
+            let (narrow, wide) = &built[&m];
+            assert!(!wide.subtype(narrow), "{m} deep");
+        });
+    });
+}
+
 #[test]
 fn function_types_written_4000_deep_check_on_a_512_kib_stack() {
     // The denotation of a written type (`Denote::ty`, zedc-check) recursed once per level of

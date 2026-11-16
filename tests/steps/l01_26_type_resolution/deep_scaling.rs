@@ -111,6 +111,29 @@ fn function_types_nested_a_few_deep_compare() {
     }
 }
 
+/// `(T0 -> (T0 -> (T1 -> (T1 -> … result) for T1 in int | f64)) for T0 in int | f64)`, `n`
+/// signatures deep, each with a bounded variable that its parameter and the function in its
+/// result hold.
+pub(super) fn generic_curried(n: usize, result: &str) -> zedc::check::ty::Ty {
+    let text = (0..n).rev().fold(result.to_string(), |t, k| {
+        format!("(T{k} -> (T{k} -> {t}) for T{k} in int | f64)")
+    });
+    zedc::check::read::parse_type(&text).unwrap()
+}
+
+#[test]
+fn generic_function_types_nested_a_few_deep_compare() {
+    // A small instance of the benchmark
+    // `bench::deep_scaling::a_refusal_of_generic_function_types_nested_deep_is_linear`: the
+    // binding of each level's variable is carried into the function its result holds
+    // (FAIL-types-result-fn-outer-binding).
+    for n in 1..=SMALL {
+        let (narrow, wide) = (generic_curried(n, "int"), generic_curried(n, "int | f64"));
+        assert!(narrow.subtype(&wide), "{n} deep");
+        assert!(!wide.subtype(&narrow), "{n} deep");
+    }
+}
+
 /// Programs with a function type written `n` deep: `p(g: t) = 0; q(f: t) = p(g: f);` for `t`
 /// the type `(h: … (x: int) -> int …) -> int`, the same with a bounded result variable at each
 /// level, and `h(g: t)` for `t` a nest of `n` bounds clauses `(… T0 -> T0 for T0 in int …) ->

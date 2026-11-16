@@ -1917,3 +1917,88 @@ fn rows_of_functions_in_results_are_compared_by_component() {
         ),
     ]);
 }
+
+/// A function in the result holding the variable the parameters bind is compared at the
+/// binding the parameters made, not bound again (FAIL-types-result-fn-outer-binding): a
+/// call fixes a bounded variable to one carrier (DESIGN sec:type_resolution rule 6), so
+/// `T -> (T -> T) for T in int | f64` at `T = f64` is `f64 -> (f64 -> f64)`, whose result
+/// is not within `int -> int` (sec:type_language: a function type's domain is exact).
+#[test]
+fn a_function_in_a_result_holds_the_variable_at_the_binding_of_the_parameters() {
+    let d = "((#_, 1) \\ (#a, 1))";
+    let generic =
+        |inner: &str, set: &str| format!("(T -> ({set} | (1, ({inner}))) for T in int | f64)");
+    judge(&[
+        // At T = f64 the result is f64 -> f64, not within int -> int.
+        (
+            "(T -> (T -> T) for T in int | f64)",
+            "(f64 -> (int -> int))",
+            false,
+        ),
+        (
+            "(T -> (T -> T) for T in int | f64)",
+            "(T -> (int -> int) for T in int | f64)",
+            false,
+        ),
+        // At T = f64 the domain f64 is not int.
+        (
+            "(T -> (T -> int) for T in int | f64)",
+            "(T -> (int -> int) for T in int | f64)",
+            false,
+        ),
+        // The same inside a tuple.
+        (
+            "(T -> (1, (T -> T)) for T in int | f64)",
+            "(T -> (1, (int -> int)) for T in int | f64)",
+            false,
+        ),
+        // The same beside a row of numbers.
+        (
+            &generic("T -> T", "(1, 1)"),
+            &generic("int -> int", "(1, 1)"),
+            false,
+        ),
+        // The same beside a set of every atom.
+        (
+            &generic("T -> T", d),
+            &generic("int -> int", "(#_, 1)"),
+            false,
+        ),
+        // Two functions deep: the binding reaches the function in the result's result.
+        (
+            "(T -> (int -> (T -> T)) for T in int | f64)",
+            "(T -> (int -> (int -> int)) for T in int | f64)",
+            false,
+        ),
+        // An unbounded variable: the parameter binds it to `int`, so the result is
+        // `int -> int`, not within `f64 -> f64`.
+        ("(T -> (T -> T))", "(int -> (f64 -> f64))", false),
+        // Controls.
+        ("(T -> (T -> T))", "(int -> (int -> int))", true),
+        (
+            "(T -> (int -> (T -> T)) for T in int)",
+            "(T -> (int -> (int -> int)) for T in int)",
+            true,
+        ),
+        (
+            "(T -> (int -> T) for T in int | f64)",
+            "(T -> (int -> int) for T in int | f64)",
+            false,
+        ),
+        (
+            "(T -> (1, T) for T in int | f64)",
+            "(T -> (1, int) for T in int | f64)",
+            false,
+        ),
+        (
+            "(T -> (T -> T) for T in int)",
+            "(T -> (int -> int) for T in int)",
+            true,
+        ),
+        (
+            "(T -> (T -> T) for T in int | f64)",
+            "(T -> (T -> T) for T in int | f64)",
+            true,
+        ),
+    ]);
+}

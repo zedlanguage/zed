@@ -4945,6 +4945,9 @@ enum Read {
     Rigid(Arc<str>),
     /// As every value of the carriers of the mask, [`Ty::of_mask`].
     Mask(u8),
+    /// As this type, already read: what the parameters of an arrow bound the variable to,
+    /// read inside a function its result holds ([`Cx::bound_in_fns`]).
+    Bound(Ty),
 }
 
 /// The variables of the function types around one side of a comparison that it reads as
@@ -4988,7 +4991,7 @@ struct Cx<'s> {
     /// as a binding of a variable there, is read as it was where it came from.
     fns: BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
     /// The variables of `fns` whose function reads alike in every environment: its reading
-    /// names none of the variables it holds at any depth ([`reads_alike_anywhere`]).
+    /// names none of the variables it holds at any depth (its [`held_reading`] is empty).
     /// [`Comparing::closed_form`] puts these back as written and the others as tokens.
     closed: HashSet<Arc<str>>,
     /// The rows [`Cx::read`] read that hold no variable at any depth, inside functions and
@@ -5022,6 +5025,18 @@ struct Cx<'s> {
     // pair, linear in the depth. Tradeoff: one entry per pair compared, held until the
     // outermost comparison ends.
     fitted: HashMap<(Arc<str>, Arc<str>), Fitted>,
+    /// For each function of `fns` in the result of an arrow and each binding of the own
+    /// variables of the arrow's signature it holds, the name of the same function read with
+    /// those variables bound ([`Cx::bound_in_fns`]). A name is never made twice
+    /// ([`Cx::fresh`]), so an entry whose name [`Cx::forget`] dropped is only made again.
+    // Complexity tradeoff (COMPLEXITY.md row FAIL-types-result-fn-outer-binding): naive
+    // version, a new name at each comparison of a result, so `fitted` never meets the pair
+    // again and a refusal of curried function types, whose cover search compares each result
+    // twice, costs O(2^depth) again. Used: the name kept by the function and the binding, so
+    // the second comparison of a result reads the first's verdict from `fitted`, linear in
+    // the depth. Tradeoff: one entry per function and binding met, held until the outermost
+    // comparison ends, as `fitted` is.
+    bound_fns: HashMap<BoundFn, Arc<str>>,
     /// The verdict of each comparison of two functions as written, with no reading
     /// ([`Comparing::fits_written`]), by the two signatures' addresses, each kept with its
     /// signature so that no other takes the address while the entry is held; made in the
@@ -5166,6 +5181,10 @@ type FittedWritten = HashMap<(usize, usize), (Arc<Sig>, Arc<Sig>, Fitted)>;
 /// the key, are not reused, and the verdict.
 type FittedAlone = (Arc<Sig>, Arc<Sig>, Fitted);
 
+/// A key of [`Cx::bound_fns`]: the name of a function of [`Cx::fns`], and each own variable
+/// of the signature around that it holds, with what the parameters bound it to.
+type BoundFn = (Arc<str>, Vec<(Arc<str>, Ty)>);
+
 impl Cx<'_> {
     /// `ok`, the answer of the comparison this state ran, unless the comparison was refused.
     fn decided(&self, ok: bool) -> bool {
@@ -5264,7 +5283,7 @@ impl Cx<'_> {
         // comparison; such a row holds no variable, at any depth, so it reads alike by every
         // environment but for the new names of its functions, each kept in `fns` with the
         // empty environment, by which each of those functions reads as by any other
-        // ([`reads_alike_anywhere`]: it holds no variable). A name kept for the whole
+        // ([`held_reading`]: it holds no variable). A name kept for the whole
         // comparison stands for that function there, and no name is made twice.
         let mut stack = vec![start(t, false)];
         loop {
@@ -5395,10 +5414,11 @@ impl Cx<'_> {
                 continue;
             }
             let w = self.fresh("");
-            if reads_alike_anywhere(s, env) {
+            let env = held_reading(s, env);
+            if env.is_empty() {
                 self.closed.insert(w.clone());
             }
-            self.fns.insert(w.clone(), (s.clone(), env.clone()));
+            self.fns.insert(w.clone(), (s.clone(), env));
             out.vars.insert(w);
         }
         let mut solved = Vec::new();
@@ -5417,6 +5437,7 @@ impl Cx<'_> {
                 Some(&Read::Mask(m)) => {
                     out.set = Carrier::of_mask(m).fold(out.set, |s, c| &s | &c.ty());
                 }
+                Some(Read::Bound(u)) => solved.push(u.clone()),
             }
         }
         solved.iter().fold(out, |o, u| o.union(u))
@@ -5465,6 +5486,7 @@ impl Cx<'_> {
                 let read = match env.get(&v) {
                     Some(Read::Rigid(r)) => Some(Ty::var(r.clone())),
                     Some(&Read::Mask(m)) => Some(Ty::of_mask(m)),
+                    Some(Read::Bound(u)) => Some(self.unread(u).into_owned()),
                     None => self.solve.and_then(|f| f(&v)),
                 };
                 if let Some(u) = read {
@@ -7470,7 +7492,7 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// [`Comparing::by_form`] of `t` and `other` with each variable outside their functions
     /// that stands for a function ([`Cx::fns`]) replaced: by that function where it reads alike
-    /// in every environment ([`reads_alike_anywhere`], kept in [`Cx::closed`] by [`Cx::read`]),
+    /// in every environment ([`held_reading`] empty, kept in [`Cx::closed`] by [`Cx::read`]),
     /// else by a token of its own ([`fn_token`]) that [`Comparing::fits_named`] compares by the
     /// variable; nothing where there is no such variable.
     ///
@@ -7480,7 +7502,7 @@ impl<'m, 's> Comparing<'m, 's> {
     /// of a variable in [`Cx::closed`], or the token of a variable `x` not in it; write `S(f)`
     /// for `S(x)` of the variable `named` keeps for `f`. For a closed `s`, `S(s)` is `s` read
     /// by the empty environment, since its reading names none of the variables it holds
-    /// ([`reads_alike_anywhere`]); so two variables put back as one equal `s` stand for one
+    /// ([`held_reading`]); so two variables put back as one equal `s` stand for one
     /// set, and a token, named by a variable whose name holds a quote, which no name a program
     /// writes does, equals no written function and no other token. [`Forms`] reads of a
     /// function only its equality and hash: each function of `t` is a mark `i` of its own, and
@@ -11454,9 +11476,10 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     fits
 }
 
-/// Whether the function `s`, read by `env`, reads as it does by an empty environment: `env`
-/// names none of the variables `s` holds at any depth ([`Sig::facts`]), so [`fits_in`] of it
-/// by `env` gives what it gives by [`Env::new`] (TEST-nested-marks-fn-vars).
+/// The part of `env` that the function `s` can read: its entries for the variables `s` holds
+/// at any depth ([`Sig::facts`]). [`fits_in`] of `s` by it gives what it gives by `env`, so
+/// [`Cx::read`] keeps each function with this part only; where it is empty, `s` reads as it
+/// does by an empty environment (TEST-nested-marks-fn-vars), and is closed ([`Cx::closed`]).
 ///
 /// Why: [`fits_in`] reads its environment only by looking up a variable the signature holds
 /// at any depth: [`read_alike`] those of its arrows and needs, [`Cx::open`] its own (which it
@@ -11465,23 +11488,41 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
 /// compared ([`Comparing::fits_read`]), their variables among those `s` holds at any depth.
 /// A lookup that misses reads the variable through `solve` or as itself, which does not
 /// depend on the environment. `facts` holds more than the lookups read (the bounded, own and
-/// held variables), which can only say no where yes would do.
+/// held variables), which can only keep an entry that is never read.
 ///
 /// Complexity tradeoff: the smaller of `env` and the facts is walked, each name looked up in
 /// the other, O(min · log max), once for each function [`Cx::read`] reads; the facts are
 /// worked out once for each signature. The naive test, a reading of the whole signature by
-/// both environments, costs its size at each read. The test it replaces, "holds no variable"
+/// both environments, costs its size at each read. The test before it, "holds no variable"
 /// ([`Sig::vars_order`] empty), put back no function with a type variable of its own, such as
 /// `T -> T for T in int`, and each comparison beside one fell to the rule of one shape.
-fn reads_alike_anywhere(s: &Sig, env: &Env) -> bool {
+/// Until PERF-types-env-held-part this only said whether the part was empty, and each
+/// function was kept with the whole `env`: in a nest of n generic function types, each
+/// result holding a function of the level's variable, the environment at level k held an
+/// entry for each of the k levels around and the function there n - k names, so the walks
+/// cost O(n^2) in all (16.7 times at 8n, 26.3 with the bindings of
+/// FAIL-types-result-fn-outer-binding, `a_refusal_of_generic_function_types_nested_deep_is_
+/// linear`). Kept with its part only, a function passes on no entry for a variable it does
+/// not hold, so each environment holds only entries for variables of the function read.
+fn held_reading(s: &Sig, env: &Env) -> Env {
     if env.is_empty() {
-        return true;
+        return Env::new();
     }
     let f = s.facts();
-    if env.len() <= f.classes.len() + f.names.len() {
-        env.keys().all(|v| !f.holds(v))
+    let held: Env = if env.len() <= f.classes.len() + f.names.len() {
+        (env.iter())
+            .filter(|(v, _)| f.holds(v))
+            .map(|(v, r)| (v.clone(), r.clone()))
+            .collect()
     } else {
-        (f.classes.iter().chain(&f.names)).all(|v| !env.contains_key(v))
+        (f.classes.iter().chain(&f.names))
+            .filter_map(|v| env.get(v).map(|r| (v.clone(), r.clone())))
+            .collect()
+    };
+    if held.len() == env.len() {
+        env.clone()
+    } else {
+        held
     }
 }
 
@@ -11622,6 +11663,65 @@ impl Cx<'_> {
         }
         free.sort();
         (mark, sas, qas, renamed, free.into(), wide)
+    }
+
+    /// For each function of `fns` in `result`, the result of an arrow of `s` as read, that
+    /// holds an own variable of `s` that `b` binds, the binding of its name to a new name of
+    /// the same function read with each such variable read as what `b` binds it to
+    /// ([`Read::Bound`]): what [`Ty::subst`] does outside functions, carried into them
+    /// (FAIL-types-result-fn-outer-binding). Kept with the reading of `s`'s side, such a
+    /// variable read as itself inside the function, where a comparison of the function binds
+    /// it afresh ([`accepts`]), so `(T -> (T -> T) for T in int | f64)` fit `(T -> (int ->
+    /// int) for T in int | f64)`, the inner `T` bound to `int` while the parameter bound it to
+    /// the rigid `T` of the other side.
+    ///
+    /// The name of each variable is found from the reading the function was kept with, the
+    /// one `Cx::open` gave `s`'s side: no entry reads it as itself, `Rigid(w)` as `w`, and a
+    /// mask is no variable to bind. Cost: for each function in `result`, a lookup of each own
+    /// variable of `s` in the function's facts and the reading, and one in `bound_fns`.
+    fn bound_in_fns(&mut self, s: &Sig, result: &Ty, b: &Binds) -> Binds {
+        let mut out = Binds::new();
+        if b.is_empty() {
+            return out;
+        }
+        let mut vs = Vars::default();
+        result.vars_in(&mut vs);
+        for f in vs.order {
+            let Some((sig, env)) = self.fns.get(&f).cloned() else {
+                continue;
+            };
+            let facts = sig.facts();
+            let mut bound = Vec::new();
+            for v in s.own.iter().filter(|v| facts.holds(v)) {
+                let r = match env.get(v) {
+                    None => v,
+                    Some(Read::Rigid(w)) => w,
+                    Some(Read::Mask(_) | Read::Bound(_)) => continue,
+                };
+                if let Some(t) = b.get(r) {
+                    bound.push((v.clone(), t.clone()));
+                }
+            }
+            if bound.is_empty() {
+                continue;
+            }
+            let key = (f.clone(), bound);
+            let w = match self.bound_fns.get(&key) {
+                Some(w) if self.fns.contains_key(w) => w.clone(),
+                _ => {
+                    let mut env = env;
+                    for (v, t) in &key.1 {
+                        env.insert(v.clone(), Read::Bound(t.clone()));
+                    }
+                    let w = self.fresh("");
+                    self.fns.insert(w.clone(), (sig, env));
+                    self.bound_fns.insert(key, w.clone());
+                    w
+                }
+            };
+            out.insert(f, Ty::var(w));
+        }
+        out
     }
 
     /// The name an own variable `v` of a function type opened is read as, in `env`, the
@@ -12565,8 +12665,8 @@ async fn refused_cover<'m>(
             if let Some((v, t)) = several {
                 shared.get_or_insert((i, v.clone(), t.clone(), Places::of(sa, v, &cx)));
             }
-        } else if !result_within(sa, qa, &b, c).await {
-            outside.push((i, miss.is_empty().then(|| sa.result.subst(&b))));
+        } else if !result_within(s, sa, qa, &b, c).await {
+            outside.push((i, miss.is_empty().then(|| result_bound(s, sa, &b, c))));
         }
     }
     let slot = arrow_text(q, &q.arrows[k]);
@@ -12843,7 +12943,7 @@ async fn part_of<'m>(
     }
     let part = match miss {
         None => Part::Whole,
-        Some(j) => Part::At(j, result_within(sa, qa, &b, c).await),
+        Some(j) => Part::At(j, result_within(s, sa, qa, &b, c).await),
     };
     Some((part, b))
 }
@@ -12898,12 +12998,12 @@ async fn met<'m>(
     for &i in cands {
         let sa = &sas[i];
         match part_of_alone(s, sa, qa, c, &mut refused).await {
-            Some((Part::Whole, b)) => whole.push(sa.result.subst(&b)),
+            Some((Part::Whole, b)) => whole.push(result_bound(s, sa, &b, c)),
             Some((Part::At(j, true), _)) => within.entry(j).or_default().push(&sa.params[j]),
             Some((Part::At(j, false), b)) => outside
                 .entry(j)
                 .or_default()
-                .push((&sa.params[j], sa.result.subst(&b))),
+                .push((&sa.params[j], result_bound(s, sa, &b, c))),
             None => {}
         }
     }
@@ -13484,7 +13584,7 @@ async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_
             }
         }
         ok = ok && bounds_hold(s, sa, &b, &c.cx.borrow());
-        ok = ok && result_within(sa, qa, &b, c).await;
+        ok = ok && result_within(s, sa, qa, &b, c).await;
         ok = ok && instance_within(s, sa, qa, &b, c).await;
         let Some(before) = before else {
             if let Some(why) = refused.filter(|_| !ok) {
@@ -13729,10 +13829,26 @@ impl Places {
     }
 }
 
-/// Whether the result of `sa`, its variables bound by `b`, is within `qa`'s, binding nothing.
-async fn result_within<'m>(sa: &Arrow, qa: &Arrow, b: &Binds, c: &'m Comparing<'m, '_>) -> bool {
+/// Whether the result of `sa`, an arrow of `s`, its variables bound by `b`, is within `qa`'s,
+/// binding nothing.
+async fn result_within<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    b: &Binds,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     let mut rb = Binds::new();
-    c.sub_in(&sa.result.subst(b), &qa.result, &mut rb).await && rb.is_empty()
+    let r = result_bound(s, sa, b, c);
+    c.sub_in(&r, &qa.result, &mut rb).await && rb.is_empty()
+}
+
+/// The result of `sa`, an arrow of `s`, with its variables bound by `b`: outside functions by
+/// [`Ty::subst`], and inside the functions it holds by reading them anew
+/// ([`Cx::bound_in_fns`]).
+fn result_bound(s: &Sig, sa: &Arrow, b: &Binds, c: &Comparing) -> Ty {
+    let fns = c.cx.borrow_mut().bound_in_fns(s, &sa.result, b);
+    sa.result.subst(&fns).subst(b)
 }
 
 impl Sig {
@@ -16203,7 +16319,7 @@ mod tests {
             }
         }
         let held = bounds_hold(s, sa, &b, &c.cx.borrow());
-        held && result_within(sa, qa, &b, c).await && instance_within(s, sa, qa, &b, c).await
+        held && result_within(s, sa, qa, &b, c).await && instance_within(s, sa, qa, &b, c).await
     }
 
     /// Whether, at some parameter, a set of arrows of `sas` covers `qa`: each arrow of the set
