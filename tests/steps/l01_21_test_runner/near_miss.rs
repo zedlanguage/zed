@@ -481,6 +481,30 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:6",
         Some("write `x: int[4..=5]`, the range from the lesser bound through the greater"),
     ),
+    (
+        Row::BidiControlInText,
+        "",
+        "y = \"xy\";\n",
+        "y = \"x\u{202e}y\";\n",
+        "1:7",
+        Some("`\"x\\u{202E}y\"`"),
+    ),
+    (
+        Row::PushWhereLessMeant,
+        "",
+        "f(x: int) = if x < -1 { 1 } else { 0 };\n",
+        "f(x: int) = if x<-1 { 1 } else { 0 };\n",
+        "1:17",
+        Some("`if x < -1 {`"),
+    ),
+    (
+        Row::BindingInCondition,
+        "",
+        "f(x: int) = if x == 3 { 1 } else { 0 };\n",
+        "f(x: int) = if x = 3 { 1 } else { 0 };\n",
+        "1:18",
+        Some("`if x == 3 {`"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step

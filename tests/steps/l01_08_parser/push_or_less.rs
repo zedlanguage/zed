@@ -177,3 +177,39 @@ fn an_error_in_a_later_declaration_does_not_withhold_the_repair() {
     );
     assert!(!parses(&src.replacen("x<-1", "x < -1", 1)), "{src}");
 }
+
+/// Outside a condition a push is allowed and no comparison was meant: a push statement whose
+/// target is malformed stays a syntax error at the `<-` (plan row
+/// FAIL-pitfall-rows-statement-push-near-miss: it got this row, offering
+/// `m.stdout::bytes::len < -"a";`, a comparison with a negated string).
+#[test]
+fn a_malformed_push_statement_is_a_syntax_error() {
+    for (body, at) in [
+        ("  m.stdout::bytes::len <- \"a\";\n", "m.stdout::bytes::len <-"),
+        ("  m::stdout.bytes <- \"a\";\n", "m::stdout.bytes <-"),
+        ("  m.stdout::bytes::len <- x;\n", "m.stdout::bytes::len <-"),
+    ] {
+        let src = program(body);
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::SyntaxError), "{src}\n{}", e.message);
+        let at = src.find(at).unwrap() + at.len() - 2;
+        assert_eq!(e.span.start, at, "{src}");
+        assert_eq!(e.message, "Syntax error at `<-`.", "{src}");
+    }
+}
+
+/// `-` negates a number, never a string or an atom: in a condition, `<-` before a string or an
+/// atom literal is refused in the row, with no comparison offered.
+#[test]
+fn no_comparison_is_offered_with_a_negated_string_or_atom() {
+    refused(
+        &program("  m.stdout <- if x<-\"a\" { \"a\" } else { \"b\" };\n"),
+        "if x<-\"a\" {",
+        None,
+    );
+    refused(
+        &program("  m.stdout <- if x<-#a { \"a\" } else { \"b\" };\n"),
+        "if x<-#a {",
+        None,
+    );
+}

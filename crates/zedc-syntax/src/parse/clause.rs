@@ -424,11 +424,14 @@ fn quotable(s: &str) -> bool {
 /// The [`Clause`] for `<-` written where a comparison with a negative operand was meant (row
 /// "`<-` written where a comparison with a negative operand was meant"): `if x<-1 { … }`,
 /// where `<-` is one token, a push, which only a statement makes. The parse stops at the `<-`
-/// or at the token after it; the row applies when the text with `< -` in its place gets past
-/// the token where the parse stopped. The repair is the condition (or else the statement) with
-/// `< -` in place of `<-`, offered when the declaration then parses: the parse with it gets past
-/// the token that ends the declaration ([`decl_end`]). Two parses more and one scan of the
-/// unit, on the error path only: linear in the unit.
+/// or at the token after it; the row applies when that `<-` stands in a condition ([`condition`])
+/// and the text with `< -` in its place gets past the token where the parse stopped. Outside a
+/// condition, as in a push statement with a malformed target (`m.stdout::bytes::len <- "a";`), a
+/// push is allowed and no comparison was meant, so the error stays a syntax error. The repair is
+/// the condition with `< -` in place of `<-`, offered when the token after `<-` is not a string
+/// or atom literal, which `-` cannot negate, and the declaration then parses: the parse with it
+/// gets past the token that ends the declaration ([`decl_end`]). Two parses more and one scan of
+/// the unit, on the error path only: linear in the unit.
 fn push_or_less(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     let push = |i: usize| t.toks.get(i).is_some_and(|x| *x == (Kind::Op, "<-"));
     let at = [Some(far), far.checked_sub(1)]
@@ -438,11 +441,7 @@ fn push_or_less(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     if !t.parses_past(at, at, "< -", far - at) {
         return None;
     }
-    let (first, end) = condition(t, at).unwrap_or_else(|| {
-        let first = t.stmt_first(at);
-        let stop = t.stmt_stop(at);
-        (first, if t.t(stop) == ";" { stop } else { stop - 1 })
-    });
+    let (first, end) = condition(t, at)?;
     if end < at {
         return None;
     }
@@ -469,7 +468,9 @@ fn push_or_less(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
          used as a statement; `x < -1`, with a space, compares `x` with a negative number"
             .to_string(),
     )];
-    if t.parses_past(at, at, "< -", decl_end(t, at) - at) {
+    // `-` negates a number, never a string or an atom, so `x < -"a"` is no comparison to offer.
+    let negatable = !matches!(t.toks.get(at + 1), Some((Kind::Str | Kind::Atom, _)));
+    if negatable && t.parses_past(at, at, "< -", decl_end(t, at) - at) {
         message.push_str(&format!(" Try `{repaired}` instead."));
         notes.push((span, format!("repair: `{repaired}`")));
     }
