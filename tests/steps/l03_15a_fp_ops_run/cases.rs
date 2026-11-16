@@ -652,6 +652,11 @@ fn a_misused_concatenation_or_zip_is_rejected_in_plain_words() {
                 "[1, 2].where(x -> x > 1) ++ [1]",
                 "`++` joins lists, whose keys are the ranks",
             ),
+            // Keys 2, 3, 4: one interval, but not the ranks.
+            (
+                "(2 ..< 5) ++ [1]",
+                "`++` joins lists, whose keys are the ranks",
+            ),
             ("\"a\" ++ [1]", "`++` joins two lists or two strings"),
             ("[1, 2].zip()", "`zip` takes one family, passed by position"),
             ("(3).zip([1])", "`zip` reads the entries of a family"),

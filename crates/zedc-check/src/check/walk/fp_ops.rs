@@ -592,7 +592,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // `{}` holds no key, the ranks `0 ..< 0`.
                     Piece::Fn(sig)
                         if sig.data
-                            && (sig.dense || sig.arrows.iter().all(|a| a.params[0].is_empty())) =>
+                            && (sig.dense == Dense::Ranks
+                                || sig.arrows.iter().all(|a| a.params[0].is_empty())) =>
                     {
                         sigs.push(sig)
                     }
@@ -652,7 +653,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let mut sig = sig;
         sig.data = true;
-        sig.dense = true;
+        sig.dense = Dense::Ranks;
         sig.note_held();
         if !self.trying {
             self.info.list_concats.insert(span);
@@ -734,7 +735,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
         let mut sig = Sig::one(positional(1), vec![ua], pair);
         sig.data = true;
-        sig.dense = a.iter().all(|s| s.dense) || b.iter().all(|s| s.dense);
+        // The two keyspaces were shown equal above, so what either side's type knows of its
+        // keys holds for the pairs' keys: the ranks if either side is a list, else one
+        // interval if either side is a range.
+        let all = |side: &[Arc<Sig>], d: fn(Dense) -> bool| side.iter().all(|s| d(s.dense));
+        let is_ranks = |d: Dense| d == Dense::Ranks;
+        sig.dense = if all(&a, is_ranks) || all(&b, is_ranks) {
+            Dense::Ranks
+        } else if all(&a, Dense::interval) || all(&b, Dense::interval) {
+            Dense::Interval
+        } else {
+            Dense::No
+        };
         sig.note_held();
         out.union(&Ty::func(Arc::new(sig)))
     }
