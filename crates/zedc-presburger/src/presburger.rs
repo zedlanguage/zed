@@ -13920,7 +13920,64 @@ pub fn systems_solved() -> u64 {
 /// a row, the solver refuses with [`Refusal::Tie`] instead of choosing; candidates that share
 /// no row are taken together, which no order can change. So the answer, refusals included, is
 /// the same under every naming of the variables and every order of the constraints.
+///
+/// Where the Omega test refuses ([`Refusal::Growth`], [`Refusal::Shadows`], [`Refusal::Tie`]),
+/// the point the modular solver finds by structure alone ([`modular::point_by_structure`]) is
+/// the answer, once every constraint is checked to hold there; a refusal by work is not
+/// passed on to it.
+// Complexity tradeoff (FAIL-one-scope-pairs-seed-refusal): division pairs over one variable
+// with a bound on one side only (`x == 5 q + r + 7`, `0 <= r <= 4`, ..., `x >= 82`) make the
+// Omega test eliminate a quotient whose coefficient is not a unit on either side, and its
+// splinters keep as many live variables as the system (Shadows), though `x = 85` is a point.
+// The search through disjunctions met such a system as its first choice in one order of the
+// disjuncts and refused the whole question, where the other order found a point first, so
+// the answer of `Extending::defined_with` turned on how the formula's conjunctions nested.
+// Naive version: the refusal stands. Used: on the solver's own refusals only, one run of the
+// modular solver (one walk of the rows, as [`decide_named`] already makes on every formula)
+// and one check of each row at its point, O(n log n) for rows of total size n beside the
+// refused run (the model is an ordered map; measured 8.1 times the instructions at 8n,
+// `bench::division_pairs_scale`); no system the Omega test answers costs more. The refused
+// run itself grows faster on these systems (56 times at 50 to 400 pairs), which this change
+// leaves as it was (FAIL-omega-pairs-shadows-cost). A point checked against every row proves
+// the answer, so nothing rests on the modular solver beyond the point it gives; its answers
+// that the rows are empty are not taken here, and a refusal stays a refusal where it gives no
+// point. Only its runs that read no names are made, so whether the refusal becomes a point
+// does not turn on the names. Tests: `modular::r7_tests::division_pairs_with_a_lower_bound_
+// have_their_point_found`, `modular::r7_tests::the_fails_question_of_c2_is_answered_however_
+// its_conjunctions_nest`, `l01_38_omega_test::one_scope::the_unit_of_seed_4236942624890658512_
+// is_answered_as_its_bodies_read`.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
+    match solve_omega(cons, want) {
+        Err(why @ (Refusal::Growth | Refusal::Shadows | Refusal::Tie(_))) => {
+            match point_past_refusal(cons) {
+                Some(m) => Ok(Some(if want { m } else { Model::new() })),
+                None => Err(why),
+            }
+        }
+        answer => answer,
+    }
+}
+
+/// The point [`modular::point_by_structure`] finds for the conjunction of `cons`, over the
+/// atoms of `cons` alone, if every row of `cons` holds there; otherwise `None`. What [`solve`]
+/// answers where the Omega test refuses.
+fn point_past_refusal<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<Model> {
+    let rows: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
+    let f = Formula::and(rows.iter().map(|&c| Formula::Con(c.clone())).collect());
+    let found = modular::point_by_structure(&f)?;
+    // An atom the modular solver left out of its point is 0, as `Con::holds_linear` reads it.
+    let m: Model = (rows.iter())
+        .flat_map(|c| c.lin.terms.keys())
+        .map(|a| (a.clone(), found.get(a).cloned().unwrap_or(Int::ZERO)))
+        .collect();
+    rows.iter().all(|c| c.holds_linear(&m)).then_some(m)
+}
+
+/// [`solve`] by the Omega test alone.
+fn solve_omega<C: std::borrow::Borrow<Con>>(
+    cons: &[C],
+    want: bool,
+) -> Result<Option<Model>, Refusal> {
     SOLVES.with(|c| c.set(c.get() + 1));
     let raw_cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
     // A question of the cover is charged each system's constraints and terms

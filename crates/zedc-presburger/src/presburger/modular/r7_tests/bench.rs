@@ -6,6 +6,21 @@
 
 use super::*;
 
+/// What `solve` adds where the Omega test refuses (FAIL-one-scope-pairs-seed-refusal), on
+/// [`division_pairs`]: one run of the modular solver and one check of each row at its point.
+/// The refused run of the Omega test before it is not timed here; it grows faster on these
+/// systems (FAIL-omega-pairs-shadows-cost).
+#[test]
+fn division_pairs_scale() {
+    let inputs = scaling::inputs(N_PAIRS, division_pairs);
+    scaling::check_order("division pairs answered past a refusal", N_PAIRS, 1, |n| {
+        assert!(crate::presburger::point_past_refusal(&inputs[&n]).is_some());
+    });
+}
+
+/// The size of [`division_pairs_scale`].
+const N_PAIRS: usize = 10_000;
+
 #[test]
 fn pncx_fixed_chain_scale() {
     let inputs = scaling::inputs(60_000, fixed_chain);

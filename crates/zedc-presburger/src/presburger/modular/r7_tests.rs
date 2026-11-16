@@ -119,6 +119,164 @@ fn a_unit_whose_factors_are_fixed_outside_its_set_empties_the_regime() {
     );
 }
 
+/// The fails question of `c2` of the unit of seed 4236942624890658512 (FAIL-one-scope-pairs-
+/// seed-refusal), with its bindings in place, over `x` alone: seven division pairs
+/// `x == k q + r + c`, `0 <= r < k`, and the negation of the body. The first disjunct of the
+/// body is written flat (`a && b && c`) or nested (`(a && b) && c`), as the projected side and
+/// the body side of `Extending::defined_with` wrote it.
+fn bound_c2(nested: bool) -> Formula {
+    use crate::presburger::Shared;
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let q = |n: u32| Lin::atom(Atom::Aux(n));
+    let c = Lin::constant;
+    let le = |a: &Lin, b: &Lin| Formula::Con(Con::ge(b, a));
+    let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+    let and = |v: Vec<Formula>| Formula::And(Shared::new(v));
+    let or = |v: Vec<Formula>| Formula::Or(Shared::new(v));
+    let mut parts = c2_pairs();
+    let first = if nested {
+        and(vec![
+            and(vec![eq(&q(20), &c(0)), le(&x, &c(39))]),
+            le(&c(10), &q(21)),
+        ])
+    } else {
+        and(vec![eq(&q(20), &c(0)), le(&x, &c(39)), le(&c(10), &q(21))])
+    };
+    let inner = and(vec![
+        and(vec![
+            and(vec![
+                and(vec![eq(&q(1), &c(0)), le(&x, &c(36))]),
+                le(&c(10), &q(3)),
+            ]),
+            eq(&q(7), &c(0)),
+        ]),
+        le(&c(10), &q(9)),
+    ]);
+    let body = or(vec![
+        first,
+        le(&q(17), &c(2)),
+        and(vec![
+            or(vec![
+                inner,
+                le(&q(17), &c(1)),
+                and(vec![le(&c(3), &x), le(&x, &c(54))]),
+            ]),
+            le(&x, &c(81)),
+        ]),
+    ]);
+    parts.push(Formula::Not(Shared::new(body)));
+    and(parts)
+}
+
+/// The seven division pairs of [`bound_c2`]: `x == k q + r + c`, `0 <= r <= k - 1`.
+fn c2_pairs() -> Vec<Formula> {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let q = |n: u32| Lin::atom(Atom::Aux(n));
+    let c = Lin::constant;
+    let mut parts = Vec::new();
+    for (k, qn, rn, off) in [
+        (5, 16, 17, 7),
+        (3, 21, 22, 6),
+        (4, 19, 20, 3),
+        (5, 9, 10, 4),
+        (6, 6, 7, 3),
+        (3, 3, 4, 3),
+        (4, 0, 1, 0),
+    ] {
+        parts.push(Formula::Con(Con::eq(
+            &x,
+            &q(qn).times(k).plus(&q(rn)).plus(&c(off)),
+        )));
+        parts.push(Formula::Con(Con::ge(&q(rn), &c(0))));
+        parts.push(Formula::Con(Con::ge(&c(k - 1), &q(rn))));
+    }
+    parts
+}
+
+#[test]
+fn the_fails_question_of_c2_is_answered_however_its_conjunctions_nest() {
+    // FAIL-one-scope-pairs-seed-refusal: the two sides of `Extending::defined_with` gave this
+    // formula nested two ways, which made the search read the disjuncts of one disjunction in
+    // two orders; in one, the first choice it tried was a conjunction the Omega test refused
+    // (Shadows), and the question was refused. x = 85 is a point: 85 >= 82, and
+    // q17 = (85 - 7) mod 5 = 3, so no disjunct of the body holds.
+    for nested in [false, true] {
+        let f = bound_c2(nested);
+        assert_eq!(
+            crate::presburger::decide(&f),
+            Ok(true),
+            "nested: {nested}, {f}"
+        );
+    }
+}
+
+#[test]
+fn division_pairs_with_a_lower_bound_have_their_point_found() {
+    // The conjunction the search above tried: the pairs, `x >= 82` and `q17 >= 3`. The Omega
+    // test refuses it (Shadows); `solve` gives the point the modular solver finds, checked
+    // against every row.
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let mut parts = c2_pairs();
+    parts.push(Formula::Con(Con::ge(&x, &Lin::constant(82))));
+    parts.push(Formula::Con(Con::ge(
+        &Lin::atom(Atom::Aux(17)),
+        &Lin::constant(3),
+    )));
+    let cons: Vec<Con> = parts
+        .iter()
+        .map(|g| match g {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!("rows only"),
+        })
+        .collect();
+    let m = crate::presburger::solve(&cons, true)
+        .expect("answered")
+        .expect("a point");
+    assert!(cons.iter().all(|c| c.holds_linear(&m)), "{m:?}");
+    assert_eq!(
+        crate::presburger::solve(&cons, false),
+        Ok(Some(Model::new()))
+    );
+}
+
+/// `n` division pairs `x == k q_i + r_i + c_i`, `0 <= r_i <= k - 1`, with k going through
+/// 5, 3, 4, 6 and `c_i = i mod 7`, and `x >= 82`, `r_0 >= 3`: the shape of
+/// [`division_pairs_with_a_lower_bound_have_their_point_found`] at any size, for the benchmark
+/// of `solve`'s answer where the Omega test refuses.
+fn division_pairs(n: usize) -> Vec<Con> {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let c = Lin::constant;
+    let mut cons = Vec::new();
+    for i in 0..n {
+        let k = [5, 3, 4, 6][i % 4];
+        let (q, r) = (
+            Lin::atom(Atom::Aux(2 * i as u32)),
+            Lin::atom(Atom::Aux(2 * i as u32 + 1)),
+        );
+        cons.push(Con::eq(&x, &q.times(k).plus(&r).plus(&c((i % 7) as i64))));
+        cons.push(Con::ge(&r, &c(0)));
+        cons.push(Con::ge(&c(k - 1), &r));
+    }
+    cons.push(Con::ge(&x, &c(82)));
+    cons.push(Con::ge(&Lin::atom(Atom::Aux(1)), &c(3)));
+    cons
+}
+
+#[test]
+fn division_pairs_have_their_point_found_where_the_omega_test_refuses() {
+    // The small instances of `bench::division_pairs_scale`. From 7 pairs the Omega test alone
+    // refuses (Shadows; 2026-11-16), so the benchmark times the answer `solve` gives in its
+    // place; below that it answers.
+    for n in [1, 2, 3, 4, 7, 8, 16] {
+        let cons = division_pairs(n);
+        let omega = crate::presburger::solve_omega(&cons, false);
+        assert_eq!(omega.is_err(), n >= 7, "{n}: {omega:?}");
+        let m = crate::presburger::solve(&cons, true);
+        let m = m.expect("answered").expect("a point");
+        assert!(cons.iter().all(|c| c.holds_linear(&m)), "{n}: {m:?}");
+    }
+}
+
 /// The point a regime's answer gives, for messages.
 fn found(out: &RegimeOut) -> Option<Int> {
     match out {

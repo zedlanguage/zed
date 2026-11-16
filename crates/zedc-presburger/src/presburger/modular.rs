@@ -638,6 +638,21 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
 }
 
+/// A point of `f` that the runs of [`solve_modular`] that read no names find, or `None`: where
+/// those runs give no answer, find `f` empty, or `f` lies outside their scope. The last run of
+/// [`solve_modular`], which takes a choice by `Atom` order, is not made, so whether a point is
+/// found does not turn on the names.
+pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
+    let (mut tied, mut both_bounded) = (false, false);
+    match solve_modular_whole(f, true, false, false, &mut tied, &mut both_bounded) {
+        Some(found) => found,
+        None if tied => {
+            solve_modular_whole(f, true, true, false, &mut tied, &mut both_bounded).flatten()
+        }
+        None => None,
+    }
+}
+
 fn solve_modular_whole(
     f: &Formula,
     want_model: bool,
