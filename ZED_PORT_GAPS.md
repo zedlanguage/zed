@@ -4018,6 +4018,12 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `HashMap<(Span, Span), Vec<Span>>` from (fold, use) to the calls that checked the use, built once from `Info::fold_reads` | `Instancing::new`, `Elab::env_identity` | Mutation (gap 11) while built | a family `(Span, Span) ->? Span[]` built by a fold over the set, read only |
 | `HashMap<usize, usize>` of aliases (`g = f`), each resolved to the final function when inserted, and `HashMap<Span, Span>` maps `value_at`, `callee_at` from a name passed to a call or called to that call | `Instancing::alias`, `value_at`, `callee_at`, `Elab::stmt`, `enter_expr`, `call`, `named`, `target` | Mutation (gap 11) | families returned with the block's term (aliases) or passed down the walk (the call a name is passed to) |
 
+## Entries from REDUCE-identity-escaping-values (`crates/zedc-check/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashSet<*const Ty>` and `HashSet<*const Sig>` of the types and functions visited, by address, with an explicit `Vec` stack and an early `return true` | `type_holds_needs` | Identity by address; mutation (gap 11); early exit (gap 12) | number each type and signature where it is made (author decision on node ids) and keep a set of those numbers; the search as a fold over a worklist that stops at the first hit |
+
 ## Entries from FAIL-if-chain-params-quadratic (`crates/zedc-types/src/ty.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
