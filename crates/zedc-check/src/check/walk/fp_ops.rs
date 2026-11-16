@@ -87,9 +87,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The families `x` may be, for `word`, a built-in word on one level: each data function
     /// of `x`. A loose atom `x` may be passes through, and is not listed; `_` is reported as at
-    /// `map`; any other value is rejected with `example`, the word on a family, as the repair,
-    /// and so is a class, whose need this zedc does not record for these words. `None` after
-    /// an error.
+    /// `map`; any other value is rejected with `example`, the word on a family, as the repair.
+    /// A class never reaches here: walk.rs's `Ck::level_word` takes the variables of `x` out
+    /// first, each as a need ([`NeedKind::Level`]) or as the type it is resolved to; the
+    /// `Piece::Var` arm stays for a caller that did not. `None` after an error.
     pub(super) fn levels_of(
         &mut self,
         x: &Ty,
@@ -279,7 +280,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// passed in by walk.rs): the operators whose associativity is built in, on the entries
     /// they take. A prefix holds its own entry, so it is never empty and no entry is `#empty`;
     /// each arrow keeps its keys and its misses, so the bounds ride through as at `map`. A
-    /// loose atom `x` may be passes through.
+    /// loose atom `x` may be passes through. `site` is where the scan is written, which the
+    /// fold's check records what it saw at; it is `span` but where a generic function's need
+    /// is checked at a call at `span`.
     // Complexity tradeoff: the type is one fold check and one copy of each family's arrows,
     // O(arrows), as `map_end` makes; typing each prefix apart would cost a check per entry for
     // the same type, since every prefix folds entries of one type.
@@ -288,6 +291,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         x: &Ty,
         op: Reducer,
         span: Span,
+        site: Span,
         fold: FoldLevel<'t, 'a>,
     ) -> Ty {
         // Typed so that the import graph of step S.1f reads `form.word()` as `FoldForm::word`,
@@ -298,7 +302,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(sigs) = self.levels_of(x, form.word(), &example, span) else {
             return Ty::empty();
         };
-        let folded = fold(self, op, &x.without_loose(), span, span, form);
+        let folded = fold(self, op, &x.without_loose(), span, site, form);
         // `fold_level` gives the type of no value only after its error: a fold it accepts gives
         // the carrier, or `#empty` for a family with no entries.
         if folded.lists_nothing() {

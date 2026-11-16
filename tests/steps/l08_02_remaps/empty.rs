@@ -1619,3 +1619,69 @@ fn a_key_made_by_a_function_is_data_at_each_call() {
         "3",
     );
 }
+
+// ---- The one-level words on a generic receiver (plan row FP-ops-generic-receivers) ----
+
+/// `.count`, `.first`, `.last`, `.any`, `.all`, `.find`, `.scan` and `.chunkBy` on a value
+/// whose type is a type parameter are each decided at each call from the type the parameter
+/// takes there, as `.sum` is (found by FP-ops-scan).
+#[test]
+fn the_one_level_words_in_a_generic_function_read_a_family() {
+    let src = "f(positional xs) = xs.scan((+));\nt = f([1, 2, 3]) == [1, 3, 6];\n";
+    prints(src, "t", "true");
+    let src = "g(positional xs) = xs.count;\nt = g({\"a\" -> 1, \"b\" -> 2});\n";
+    prints(src, "t", "2");
+    let src = "h(positional xs) = xs.any(x -> x > 2);\nt = h([1, 2, 3]);\n";
+    prints(src, "t", "true");
+    let src = "c(positional xs) = xs.chunkBy(x -> x).count;\nt = c([1, 1, 2]);\n";
+    prints(src, "t", "2");
+    let src = "l(positional xs) = xs.last;\nt = l([4, 5]);\n";
+    prints(src, "t", "5");
+}
+
+/// The rest of the words, each at two calls of other types; a parameter joined with a
+/// family, which takes the word as it stands while the parameter takes it at each call; a
+/// generic function passing its parameter on to another; a scan by `max` at `int` and at
+/// `f64`; `foldr` at two calls and `foldl` on a parameter joined with a family; and a call
+/// that passes no family, rejected at the call in the word's own message (plan row
+/// FP-ops-generic-receivers).
+#[test]
+fn each_one_level_word_is_decided_at_each_call_of_a_generic_function() {
+    let src = "f(positional xs) = xs.first;\nt = (f([4, 5]), f({\"b\" -> 2.5, \"a\" -> 1.5}));\n";
+    prints(src, "t", "(4, 1.5)");
+    let src = "a(positional xs) = xs.all(x -> x > 0);\nt = (a([1, 2]), a({\"a\" -> -1}));\n";
+    prints(src, "t", "(true, false)");
+    let src = "f(positional xs) = xs.find(x -> x > 1);\n\
+               t = (f([1, 2]) == 1, f({\"a\" -> 1, \"b\" -> 5}) == \"b\", f([0]) == #none);\n";
+    prints(src, "t", "(true, true, true)");
+    let src = "s(positional xs) = xs.scan(max);\n\
+               t = (s([1, 3, 2]) == [1, 3, 3], s([1.5, 0.5]) == [1.5, 1.5]);\n";
+    prints(src, "t", "(true, true)");
+    let src = "c(positional xs) = xs.chunkBy(x -> x > 1);\n\
+               t = c({\"a\" -> 1, \"b\" -> 2, \"c\" -> 3}) == {0 -> {\"a\" -> 1}, 1 -> {\"b\" -> 2, \"c\" -> 3}};\n";
+    prints(src, "t", "true");
+    let src = "j(positional xs, positional b) = (if b { xs } else { [7, 8, 9] }).count;\n\
+               t = (j([1], true), j([1], false), j({\"a\" -> 1, \"b\" -> 2}, true));\n";
+    prints(src, "t", "(1, 3, 2)");
+    let src = "k(positional xs) = xs.scan((+));\nm(positional ys) = k(ys).last;\n\
+               t = (m([1, 2, 3]), m([0.5, 0.25]));\n";
+    prints(src, "t", "(6, 0.75)");
+    let src = "l(positional xs) = xs.foldr((x, a) -> x * 10 + a, 0);\n\
+               t = (l([1, 2]), l({\"a\" -> 5}));\n";
+    prints(src, "t", "(30, 50)");
+    let src = "j(positional xs, positional b) = \
+               (if b { xs } else { [7, 8] }).foldl(0, (a, x) -> a * 10 + x);\n\
+               t = (j([1, 2], true), j([1], false), j({\"a\" -> 5}, true));\n";
+    prints(src, "t", "(12, 78, 5)");
+    rejected(
+        "g(positional xs) = xs.count;\nt = g(3);\n",
+        &[
+            "`count` reads the entries of a family, and this value is 3",
+            "[g(3)]",
+        ],
+    );
+    rejected(
+        "h(positional xs) = xs.any(x -> x > 2);\nt = h([\"a\"]);\n",
+        &["the function given to `any` does not take", "[h([\"a\"])]"],
+    );
+}

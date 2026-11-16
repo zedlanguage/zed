@@ -1128,7 +1128,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Quantify(x, q, span) => {
                 let f = m.take_arg();
-                let t = self.quantifier_end(&x, f, q, span, Self::apply);
+                let word = match q {
+                    Quantifier::Any => LevelWord::Any,
+                    Quantifier::All => LevelWord::All,
+                    Quantifier::Find => LevelWord::Find,
+                };
+                let t = self.level_word(&x, word, f, span, span);
                 m.ty(t);
             }
             Frame::Strings(mut s) => {
@@ -1147,24 +1152,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::ScanFn(x, span, at) => {
                 let f = m.take_ty();
                 let t = match self.reduce_by(&f, span, at, FoldForm::Scan) {
-                    Some(r) => self.scan_end(&x, r, span, Self::fold_level),
+                    Some(r) => {
+                        let none = Arg::of(Ty::empty());
+                        self.level_word(&x, LevelWord::Scan(r), none, span, span)
+                    }
                     None => Ty::empty(),
                 };
                 m.ty(t);
             }
             Frame::ChunkBy(x, span) => {
                 let f = m.take_arg();
-                let at = f.at.unwrap_or(span);
-                let t = match self.chunk_by_end(&x, f, span, Self::apply) {
-                    Some((t, gives)) => {
-                        // The run ends where the function's value changes, found by `==`, so
-                        // the value is data, as a key `group` makes is.
-                        let w = gives.without_loose();
-                        self.data(&w, "`chunkBy`", DataUse::Compare, at, at, Some(span));
-                        t
-                    }
-                    None => Ty::empty(),
-                };
+                let t = self.level_word(&x, LevelWord::ChunkBy, f, span, span);
                 m.ty(t);
             }
             Frame::Reduce(op, span) => {
@@ -4144,22 +4142,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return Ty::empty();
         }
-        // A class alone takes the fold as a need (CHK-need-bound); `meet` calls back here
-        // with `replaying` set.
-        if let ([Piece::Var(v)], true) = (x.pieces().as_slice(), x.fns.is_empty()) {
-            let r = self.class_root(v);
-            return match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.fold_dir_end(&t, init, f, span, right),
-                Some((r, None)) => {
-                    let kind = NeedKind::Fold {
-                        tys: vec![init.clone(), f.ty.clone()],
-                        right,
-                        by: false,
-                    };
-                    self.need(r, kind, true, span)
-                }
-                None => Ty::dynamic(),
-            };
+        // Each class of `x` takes the fold as a need (CHK-need-bound), and `meet` calls back
+        // here with `replaying` set; the rest of `x`, families beside the classes as in
+        // `(if b { xs } else { [7] }).foldl(0, f)`, is folded as it stands, and the results
+        // are joined, as at `level_word` (plan row FP-ops-generic-receivers). The value is one
+        // of the regions, so its fold is that region's fold. The recursion ends as there:
+        // `rest` and a resolved type hold no variable.
+        if !x.vars.is_empty() {
+            let mut rest = x.clone();
+            rest.vars = VarSet::new();
+            let mut out = out;
+            if !rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
+                let t = self.fold_dir_end(&rest, init, f.clone(), span, right);
+                out = out.union(&t);
+            }
+            for v in x.vars.iter() {
+                let r = self.class_root(v);
+                let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                    Some((_, Some(t))) => self.fold_dir_end(&t, init, f.clone(), span, right),
+                    Some((r, None)) => {
+                        let kind = NeedKind::Fold {
+                            tys: vec![init.clone(), f.ty.clone()],
+                            right,
+                            by: false,
+                        };
+                        self.need(r, kind, true, span)
+                    }
+                    None => Ty::dynamic(),
+                };
+                out = out.union(&t);
+            }
+            return out;
         }
         let mut values = Ty::empty();
         for p in x.pieces() {
@@ -4483,6 +4496,84 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.sum(Arg::of(x.clone()), span)
     }
 
+    /// `x.word` or `x.word(f)`, a word on one level of a family (`count_end`, `end_end`,
+    /// `quantifier_end`, `scan_end` and `chunk_by_end` in fp_ops.rs), `f` the function the
+    /// word takes, or an argument of the empty type for a word that takes none. Each variable of `x` takes
+    /// the word as it takes `.sum` ([`Self::sum_beside`], plan row FP-ops-generic-receivers):
+    /// a class resolved to a type takes the word on that type; one not yet resolved records
+    /// it as a need ([`NeedKind::Level`]), checked at each call of the generic function on the
+    /// type the call gives it, with `site`, where the word is written, kept for the fold of a
+    /// scan; a variable with no class gives `_`. The rest of `x` takes the word as it stands,
+    /// and the results are joined. `span` is where the word is checked: `site` itself, or
+    /// the call at which `meet` checks the need.
+    // Complexity tradeoff: one need or one recursion per variable of `x`, plus one check of
+    // the rest, as at `fold_level`; the word's own check is O(arrows) per family. Proof that
+    // the recursion ends: `rest` holds no variable, and the type a class is resolved to holds
+    // none (the invariant at `Class::resolved`, as `fold_level` uses it), so each recursive
+    // call takes the branch with no variable. `need` checks the use at once on the values
+    // that flowed into the class and may come back here on another class; it records the
+    // use in the class's `known` before that check, so each pair of a class and a use is
+    // checked once (the visited set of P207), as at `fold_level`. The naive alternative,
+    // rejecting a variable (what `levels_of` did), costs nothing but refuses the program.
+    pub(super) fn level_word(
+        &mut self,
+        x: &Ty,
+        word: LevelWord,
+        f: Arg<'a>,
+        span: Span,
+        site: Span,
+    ) -> Ty {
+        if !x.vars.is_empty() {
+            let mut rest = x.clone();
+            rest.vars = VarSet::new();
+            let mut out = match rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
+                true => self.passing(&rest, word.word(), span, None),
+                false => self.level_word(&rest, word, f.clone(), span, site),
+            };
+            for v in x.vars.iter() {
+                let r = self.class_root(v);
+                let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                    Some((_, Some(t))) => self.level_word(&t, word, f.clone(), span, site),
+                    Some((r, None)) => {
+                        let kind = NeedKind::Level {
+                            word,
+                            f: f.ty.clone(),
+                            site,
+                        };
+                        self.need(r, kind, true, span)
+                    }
+                    // A scan records no identity ([`FoldForm::records_identity`]), so a
+                    // variable with no class records nothing, unlike at `fold_level`.
+                    None => Ty::dynamic(),
+                };
+                out = out.union(&t);
+            }
+            return out;
+        }
+        match word {
+            LevelWord::Count => self.count_end(x, span),
+            LevelWord::First => self.end_end(x, false, span),
+            LevelWord::Last => self.end_end(x, true, span),
+            LevelWord::Any => self.quantifier_end(x, f, Quantifier::Any, span, Self::apply),
+            LevelWord::All => self.quantifier_end(x, f, Quantifier::All, span, Self::apply),
+            LevelWord::Find => self.quantifier_end(x, f, Quantifier::Find, span, Self::apply),
+            LevelWord::Scan(op) => self.scan_end(x, op, span, site, Self::fold_level),
+            LevelWord::ChunkBy => {
+                let at = f.at.unwrap_or(span);
+                match self.chunk_by_end(x, f, span, Self::apply) {
+                    Some((t, gives)) => {
+                        // The run ends where the function's value changes, found by `==`, so
+                        // the value is data, as a key `group` makes is.
+                        let w = gives.without_loose();
+                        self.data(&w, "`chunkBy`", DataUse::Compare, at, at, Some(span));
+                        t
+                    }
+                    None => Ty::empty(),
+                }
+            }
+        }
+    }
+
     /// `x.sum` on a family or `x.reduce(op)`, `form`: the fold of [`Self::fold_level`] by
     /// `op`, where a loose atom `x` may be passes through, as at every member call, while
     /// `x >< op` rejects one.
@@ -4633,7 +4724,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
                     Some((r, None)) => self.need(r, NeedKind::Reduce(op, site, form), true, span),
                     None => {
-                        self.saw_fold(site, None, None);
+                        if form.records_identity() {
+                            self.saw_fold(site, None, None);
+                        }
                         Ty::dynamic()
                     }
                 };
@@ -4647,7 +4740,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // looser than the concrete join where the call's other values give a carrier with an
         // identity.
         if !others && x.loose().is_empty() && !x.fns.is_empty() && entries.lists_nothing() {
-            self.saw_empty(site);
+            if form.records_identity() {
+                self.saw_empty(site);
+            }
             return Ty::set(KType::atom("empty"));
         }
         if others || !x.loose().is_empty() {
@@ -4741,7 +4836,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         };
         let t = Ty::carrier(c);
-        self.saw_fold(site, Some(c), identity.clone());
+        if form.records_identity() {
+            self.saw_fold(site, Some(c), identity.clone());
+        }
         if identity.is_some() {
             return t;
         }
@@ -7376,10 +7473,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if matches!(name, "count" | "first" | "last") => {
                     match (positional, named, curry) {
                         ([], [], false) => {
-                            let t = match name {
-                                "count" => self.count_end(&x.ty, span),
-                                _ => self.end_end(&x.ty, name == "last", span),
+                            let word = match name {
+                                "count" => LevelWord::Count,
+                                "first" => LevelWord::First,
+                                _ => LevelWord::Last,
                             };
+                            let none = Arg::of(Ty::empty());
+                            let t = self.level_word(&x.ty, word, none, span, span);
                             m.ty(t);
                         }
                         _ => {
@@ -7419,7 +7519,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "scan" => match (positional, named, curry) {
                     ([f], [], false) => match f.kind {
                         ExprKind::Section(op, _) => {
-                            let t = self.scan_end(&x.ty, Reducer::Op(op), span, Self::fold_level);
+                            let word = LevelWord::Scan(Reducer::Op(op));
+                            let none = Arg::of(Ty::empty());
+                            let t = self.level_word(&x.ty, word, none, span, span);
                             m.ty(t);
                         }
                         _ => {
@@ -10785,6 +10887,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Group { f, recv } => {
                 let f = Arg::of(self.bound(f, binds));
                 self.group_of(&on, *recv, f, span, false)
+            }
+            NeedKind::Level { word, f, site } => {
+                let f = Arg::of(self.bound(f, binds));
+                self.level_word(&on, *word, f, span, *site)
             }
             NeedKind::Remap { at, src, .. } => {
                 let src = self.remap_src(n, src, &on, binds);

@@ -1549,6 +1549,15 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(recv),
             Dbg::Text(" }"),
         ]),
+        NeedKind::Level { word, f, site } => parts.extend([
+            Dbg::Text("Level { word: "),
+            Dbg::Leaf(word),
+            Dbg::Text(", f: "),
+            Dbg::Ty(f),
+            Dbg::Text(", site: "),
+            Dbg::Leaf(site),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Remap { at, src, .. } => parts.extend([
             Dbg::Text("Remap { at: "),
             Dbg::Leaf(at),
@@ -3839,6 +3848,45 @@ impl Reducer {
     }
 }
 
+/// A built-in word that reads one level of a family, recorded by a [`NeedKind::Level`] when
+/// its receiver's type is a type parameter (plan row FP-ops-generic-receivers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LevelWord {
+    /// `x.count`.
+    Count,
+    /// `x.first`.
+    First,
+    /// `x.last`.
+    Last,
+    /// `x.any(f)`.
+    Any,
+    /// `x.all(f)`.
+    All,
+    /// `x.find(f)`.
+    Find,
+    /// `x.scan(op)`.
+    Scan(Reducer),
+    /// `x.chunkBy(f)`.
+    ChunkBy,
+}
+
+impl LevelWord {
+    /// The word as the checker's messages quote it: `count`'s check names it "`count`", a
+    /// scan's ([`FoldForm::Scan`]) "`.scan`".
+    pub fn word(self) -> &'static str {
+        match self {
+            LevelWord::Count => "`count`",
+            LevelWord::First => "`first`",
+            LevelWord::Last => "`last`",
+            LevelWord::Any => "`any`",
+            LevelWord::All => "`all`",
+            LevelWord::Find => "`find`",
+            LevelWord::Scan(_) => "`.scan`",
+            LevelWord::ChunkBy => "`chunkBy`",
+        }
+    }
+}
+
 /// How a program wrote a fold of one level, for the messages of the checker's `fold_level`.
 /// A need [`NeedKind::Reduce`] carries it, so that a fold checked again at each call of a
 /// generic function names the form the program wrote (row FAIL-need-fold-form-message).
@@ -3857,6 +3905,16 @@ pub enum FoldForm {
 }
 
 impl FoldForm {
+    /// Whether the fold's checks record the carrier and the identity it met at its site for
+    /// the checker's `finish`, which gives the fold its identity, or one per call of a generic
+    /// function (`split_folds`). A scan's does not: each entry of a scan folds a prefix that
+    /// holds that entry, so no prefix is empty and no scan reads an identity (the elaborator's
+    /// `scan_term` takes none), and a generic scan by `max` checked at `int` and at `f64`,
+    /// whose empty folds differ, needs no body per call (plan row FP-ops-generic-receivers).
+    pub fn records_identity(self) -> bool {
+        self != FoldForm::Scan
+    }
+
     /// The fold as code, quoted.
     pub fn word(self) -> &'static str {
         match self {
@@ -4037,6 +4095,19 @@ pub enum NeedKind {
         f: Ty,
         /// Where the receiver is written, for the error's words.
         recv: Span,
+    },
+    /// A one-level word on the value, `v.count`, `v.any(f)`, `v.scan(op)` and the rest of
+    /// [`LevelWord`]: the value is a family, and the use gives what the word gives of it
+    /// (plan row FP-ops-generic-receivers).
+    Level {
+        /// The word.
+        word: LevelWord,
+        /// The type of the function the word takes, or the empty type for a word that takes
+        /// none.
+        f: Ty,
+        /// Where the word is written: a scan's fold is checked as written there, as a
+        /// [`NeedKind::Reduce`]'s is.
+        site: Span,
     },
     /// The remap written at `at`, of a source of type `src` that holds the value: `src` is the
     /// value's own variable where the value is the source, or a family that holds the value
@@ -4426,6 +4497,11 @@ impl Need {
                     f: f(g),
                     recv: *recv,
                 },
+                NeedKind::Level { word, f: g, site } => NeedKind::Level {
+                    word: *word,
+                    f: f(g),
+                    site: *site,
+                },
                 NeedKind::Remap { at, src, rank } => NeedKind::Remap {
                     at: *at,
                     src: f(src),
@@ -4520,6 +4596,7 @@ impl Need {
             | NeedKind::Order { other: k, .. }
             | NeedKind::Map { f: k, .. }
             | NeedKind::Group { f: k, .. }
+            | NeedKind::Level { f: k, .. }
             | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..
@@ -4550,6 +4627,7 @@ impl Need {
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
+            | NeedKind::Level { f: t, .. }
             | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
@@ -4586,6 +4664,7 @@ impl Need {
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
+            | NeedKind::Level { f: t, .. }
             | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }

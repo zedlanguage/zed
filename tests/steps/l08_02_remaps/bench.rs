@@ -608,6 +608,68 @@ fn n_calls_of_a_generic_fold_at_two_carriers_run_in_linear_time() {
     );
 }
 
+/// The one-level words on a generic function's parameter, each a need met at each call
+/// (plan row FP-ops-generic-receivers).
+const WORDS: &str = "w(positional xs) = (xs.count, xs.first, xs.last, xs.any(x -> x > 1), \
+                     xs.all(x -> x > 0), xs.find(x -> x > 1), xs.scan(max).last, \
+                     xs.chunkBy(x -> x).count);\n";
+
+#[test]
+fn n_calls_of_a_generic_function_of_the_one_level_words_run_in_linear_time() {
+    // The calls alternate a list of `int` and a keyed display of `f64`, so each word's need is
+    // checked on another family type at each call (plan row FP-ops-generic-receivers).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = w([{i}, 2]);\n"),
+                _ => format!("x{i} = w({{\"a\" -> {i}.5, \"b\" -> 0.5}});\n"),
+            })
+            .collect::<String>();
+        format!("{WORDS}{calls}")
+    });
+    let run = |n: usize| {
+        let i = n - 1;
+        assert_eq!(
+            value(&srcs[&n], &format!("x{i}")),
+            format!("(2, {i}.5, 0.5, true, true, \"a\", {i}.5, 2)")
+        );
+    };
+    scaling::check(
+        "n calls of a generic function of `count`, `first`, `last`, `any`, `all`, `find`, \
+         `scan` and `chunkBy`, alternately on a list and a keyed display, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn a_chain_of_n_generic_functions_passing_on_the_one_level_words_runs_in_linear_time() {
+    // `w`'s needs wait on `g0`'s parameter, and each `g{i}` passes them on, so they are
+    // checked once at each of the two calls at the chain's top (plan row
+    // FP-ops-generic-receivers).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("g{i}(positional mm) = g{}(mm);\n", i - 1))
+            .collect::<String>();
+        format!(
+            "{WORDS}g0(positional mm) = w(mm);\n{chain}a = (g{0}([3, 2]), g{0}({{\"a\" -> 1.5}}));\n",
+            n - 1
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(
+            value(&srcs[&n], "a"),
+            "((2, 3, 2, true, true, 0, 3, 2), (1, 1.5, 1.5, true, true, \"a\", 1.5, 1))"
+        );
+    };
+    scaling::check(
+        "a chain of n generic functions passing a list and a keyed display to one of the \
+         one-level words, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
 #[test]
 fn a_chain_of_n_generic_functions_over_a_map_of_a_fold_runs_in_linear_time() {
     // The fold's need waits in `g0`'s `.map` lambda, and each `g{i}` passes it on, so the
