@@ -203,7 +203,7 @@ fn each_program_that_left_the_census_is_decided_rightly() {
 /// either way, and `p` does not take `g`: each program is now rejected, with no refusal. Before,
 /// a domain was contravariant, and the checker refused to decide whether `g`'s domain held
 /// `p`'s. Seven from piece 0 and six from piece 1; `3813bbfc`, whose `p` takes a function of a
-/// variable, stays refused, as before.
+/// variable, stayed refused then, and is accepted since 2ec6b9418 ([`BOUND_BY_ONE_CARRIER`]).
 const REJECTED: [&str; 13] = [
     "b5505eff", "97525023", "5e38016f", "5b302ec0", "55276f5a", "e4aeab2c", "8c5b116c", "b0e081ed",
     "1b5698a6", "887a19a2", "efec117e", "1ba72d47", "57185a17",
@@ -227,5 +227,62 @@ fn each_bucket_program_whose_domains_differ_is_rejected() {
             messages.iter().any(|m| m.starts_with("`p` does not take")),
             "{origin}: {messages:?}"
         );
+    }
+}
+
+/// The program gone from piece 0 (plan row FAIL-census-programs-0-stale-2ec6b9418), the form
+/// the test `l01_22_type_representation::kinds::a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered`
+/// had before 2ec6b9418:
+///
+/// ```text
+/// p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),) for V in int) = 0;
+/// q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int) = p(f: g);
+/// ```
+///
+/// A bounded type variable is one carrier at a call (DESIGN.md sec:type_resolution, rule 6), and
+/// `int` is the one carrier of the bound `int`, so `V` and `W` are `int` at every instance. Then
+/// `g` is `(x: int) -> ((int, int),) | ((int, int, int),)` and `p` takes
+/// `(x: int) -> ((int, bool) | (int, bool, bool),) | ((int, int) | (int, int, int),)`: the
+/// domains are the same, and each of `g`'s two results, `((int, int),)` and
+/// `((int, int, int),)`, is held by the second shape of `p`'s, so `p` takes `g` and the program
+/// is right to check. Before 2ec6b9418 the checker compared `V` and `W` as variables and refused
+/// to choose a shape for them (`Unchosen`). With a bound of two carriers, as the l01_22 test now
+/// writes (`for V in int | f64`), the choice remains and the refusal stays (that test). The
+/// census does not gain the new form: `programs.txt` holds the units the step tests compiled on
+/// the day of the census, and a test that changes its source later does not change that file.
+const BOUND_BY_ONE_CARRIER: &str = "3813bbfc";
+
+#[test]
+fn the_bucket_program_whose_variables_are_bounded_by_one_carrier_is_accepted() {
+    let suffix = format!("#{BOUND_BY_ONE_CARRIER}");
+    let (origin, text) = (programs::all().iter())
+        .find(|(o, _)| o.ends_with(&suffix))
+        .unwrap_or_else(|| panic!("{suffix} is a program of programs.txt"));
+    let mut out = String::new();
+    refusals(origin, text, &mut out);
+    assert!(out.is_empty(), "{origin} has a refusal:\n{out}");
+    match &*zedc::query::Db::new().front(text) {
+        Ok((_, _, warnings)) => assert!(
+            warnings.is_empty(),
+            "{origin}: {:?}",
+            warnings.iter().map(|d| &d.message).collect::<Vec<_>>()
+        ),
+        Err(ds) => panic!(
+            "{origin} is rejected: {:?}",
+            ds.iter().map(|d| &d.message).collect::<Vec<_>>()
+        ),
+    }
+    // The contrast: with `g` giving a tuple of four, which neither shape of `p`'s result holds,
+    // the same reading of `V` and `W` as `int` rejects the call.
+    let wider = text.replace("((W, W, W),)", "((W, W, W, W),)");
+    assert_ne!(&wider, text, "{origin} writes `((W, W, W),)`");
+    match &*zedc::query::Db::new().front(&wider) {
+        Ok(_) => panic!("{origin} with a tuple of four is accepted"),
+        Err(ds) => assert!(
+            ds.iter()
+                .any(|d| d.message.starts_with("`p` does not take")),
+            "{origin} with a tuple of four: {:?}",
+            ds.iter().map(|d| &d.message).collect::<Vec<_>>()
+        ),
     }
 }
