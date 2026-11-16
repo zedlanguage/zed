@@ -1,6 +1,8 @@
 //! Treap priorities drawn at random once per run, so that a treap's expected depth is
-//! `O(log n)` for every input, chosen keys included (COMPLEXITY.md K123, plan row
-//! PERF-treap-seeded-priorities).
+//! `O(log n)` for every input whose keys are distinct points of the draw, chosen keys included
+//! (COMPLEXITY.md K123, plan row PERF-treap-seeded-priorities). Keys at one point tie under
+//! every draw (below); where the point is a type's 64-bit digest a program can choose many such
+//! keys (plan row PERF-set-tied-digest-depth).
 //!
 //! A [`Priorities`] is a polynomial `q` of degree 4 over the field of the prime
 //! `p = 2^64 - 59`, its five coefficients drawn uniformly from `0..p` from the operating
@@ -30,7 +32,12 @@
 //! probability at most `c/k` given the points: the depth is at most `E[T] + 2c H_n` in
 //! expectation. Two keys at distinct points of `q` tie with probability `1/p`. Keys whose points
 //! are equal tie always: their number adds to `T` whatever the draw, and each use below says what
-//! makes two keys one point.
+//! makes two keys one point. In all, a node's expected depth is at most
+//! `T0 + n(n - 1)/p + 2c H_n`, `T0` the keys that share their point with another key of the
+//! treap. Where the point is a type's 64-bit digest (settings, list cells, sets), `T0` is not
+//! bounded by the draw: each step of a digest is a bijection in either argument, so a program can
+//! write many distinct literals of one digest (test `a_program_can_write_many_rows_of_one_digest`
+//! in `types/bdd/set/tests.rs`).
 //!
 //! Keys of more than a word ([`Priorities::hash`]) go to `q` through a second polynomial `g` of
 //! the same draw, evaluated at a random point `r`. The key's `Hash` stream is read as 64-bit

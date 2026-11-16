@@ -688,8 +688,8 @@ pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
             Step::Make(n) => {
                 let r = done.pop().expect("the right side is made");
                 let l = done.pop().expect("the left side is made");
-                let kept = id(l.as_ref()) == id(n.left.as_ref())
-                    && id(r.as_ref()) == id(n.right.as_ref());
+                let kept =
+                    id(l.as_ref()) == id(n.left.as_ref()) && id(r.as_ref()) == id(n.right.as_ref());
                 done.push(Some(if kept { n } else { remake(&n, l, r) }));
                 continue;
             }

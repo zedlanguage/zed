@@ -235,8 +235,9 @@ fn joining_chains_to_lists_scales() {
 fn parity_built_a_literal_at_a_time_scales() {
     // Small instances: `exclusive_ors_built_in_any_order_are_one_node`.
     // Parity built a literal at a time, as the type operations build it: each step takes a
-    // literal into the set of the one form in `O(log n)`, and makes the expressions of the
-    // `O(log n)` new tree nodes. Each size has atoms of its own. Each literal rebuilds the
+    // literal into the set of the one form in `O(log n)`, and makes one exclusive or and its
+    // complement over the new set (since PERF-xor-shape-free; before, the expressions of the
+    // `O(log n)` new tree nodes). Each size has atoms of its own. Each literal rebuilds the
     // nodes on its path in the set's treap, so the work follows that path; parity is built
     // over `SHAPES` offsets of the atoms.
     //
@@ -284,7 +285,9 @@ fn parity_built_a_literal_at_a_time_scales() {
 #[test]
 fn exclusive_ors_scale() {
     // The exclusive ors of the first half and of the last three quarters of `n` atoms, which
-    // share a quarter, are joined in `O(n log n)`. Each size has atoms of its own. Small
+    // share a quarter, are joined in `O(n)`: their sets' symmetric difference is join-based,
+    // `O(m log(n/m + 1))` for sets of `m <= n` literals (`set::symmetric`), and here `m` is
+    // about `n`. Each size has atoms of its own. Small
     // instances: `exclusive_ors_with_atoms_in_common_join_in_an_exclusive_or`.
     let n = 1 << 13;
     let halves = scaling::inputs(n, overlapping_xors);

@@ -1517,7 +1517,11 @@ fn the_halves_of_an_exclusive_or_read_on_many_threads_are_made_once() {
             .collect()
     });
     assert!(seen.iter().all(|&a| a == seen[0]), "{seen:?}");
-    assert!(matches!(expr_of(&x).form(), Form::Or(..)));
+    // The form is the exclusive or's one form: the union of its halves is the node itself.
+    let Form::Or(u, v) = expr_of(&x).form() else {
+        panic!("an exclusive or is a union")
+    };
+    assert_eq!(u.zip(v, Op::Or).id(), x.id());
 }
 
 /// What `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` records of a part: its

@@ -1,7 +1,8 @@
 //! The depth of the sets' treaps on structured keys (PROOF-treap-digest-priorities,
 //! PERF-xor-shape-free, COMPLEXITY.md K123). A node's priority is the run's random polynomial at
-//! its literal's digest ([`priority`]), so the bound holds for every input (module
-//! [`crate::priority`]); the unit tests run one fixed draw (seed 0 unless `ZED_TREAP_SEED` is
+//! its literal's digest ([`priority`]), so the bound holds for every input whose literals are
+//! distinct points, and literals at one point add their number (module [`crate::priority`];
+//! a program can write many, PERF-set-tied-digest-depth); the unit tests run one fixed draw (seed 0 unless `ZED_TREAP_SEED` is
 //! set). These tests check keys built the way programs build them (consecutive numbers, names,
 //! rows that share a prefix or a suffix, digests that are consecutive numbers) and keys chosen
 //! against the fixed hash the priority was before: each fails when Seidel and Aragon's bound puts
@@ -24,8 +25,11 @@
 //! `x` to `y` (Seidel and Aragon, Lemma 4.3, which needs only that `y`'s priority equals no other
 //! there); then it is also above every priority of those keys outside the classes, so `y` is an
 //! ancestor of `x` in the treap of `x` and the keys outside the classes, whose priorities are
-//! distinct. So `D(x)` is at most `x`'s depth in that treap of at most `n` nodes, plus `T`: the
-//! tests measure `T` and apply the bound to the height less `T`.
+//! distinct. So `D(x)` is at most `x`'s depth in that treap of at most `n` nodes, plus `T`. The
+//! tests apply the bound to the height less the part of `T` the keys force: the literals whose
+//! point (their `taken` and their digest modulo `2^64 - 59`) another literal shares, which tie
+//! under every draw. Distinct points tie with probability `1/p` a pair; such ties are not taken
+//! off, so a priority that ties distinct points (a constant, say) fails the tests.
 
 use super::*;
 use crate::types::{Row, Shared, Type};
@@ -61,6 +65,14 @@ fn check(family: &str, atoms: Vec<Row>, taken: impl Fn(usize) -> bool) -> (usize
     let n = keys.len();
     let sum = |d: fn(&Row) -> u64| (keys.iter()).fold(0, |s, k| summed(d(&k.0), k.1, s, 0));
     let sums = (sum(Atom::digest), sum(Atom::name_digest));
+    // The literals that share their point with another: they tie under every draw.
+    let mut points: crate::digest::DigestMap<(bool, u64), usize> = Default::default();
+    for k in &keys {
+        *points
+            .entry((k.1, k.0.digest() % crate::priority::P))
+            .or_default() += 1;
+    }
+    let forced: usize = points.values().filter(|&&k| k > 1).sum();
     let t = from_sorted(keys);
     assert_eq!(len(t.as_ref()), n);
     assert_eq!(
@@ -69,14 +81,18 @@ fn check(family: &str, atoms: Vec<Row>, taken: impl Fn(usize) -> bool) -> (usize
         "{family}"
     );
     let (height, tied) = shape(&t);
+    assert!(
+        tied >= forced,
+        "{family}: {tied} tied, {forced} at shared points"
+    );
     let ln_n = (n as f64).ln();
-    let c = (height.saturating_sub(tied) as f64 - 1.0) / (2.0 * ln_n);
+    let c = (height.saturating_sub(forced) as f64 - 1.0) / (2.0 * ln_n);
     let ln_bound = 2f64.ln() + ln_n - c * (c / std::f64::consts::E).ln() * (ln_n - 1.0);
     assert!(
         c <= std::f64::consts::E || ln_bound >= -ln_n,
-        "{family}: {n} literals, height {height} nodes, {tied} in classes of equal priority: \
-         c = {c:.2}, and the model gives this height a probability below e^{ln_bound:.1}, \
-         under 1/n"
+        "{family}: {n} literals, height {height} nodes, {tied} in classes of equal priority, \
+         {forced} at shared points: c = {c:.2}, and the model gives this height a probability \
+         below e^{ln_bound:.1}, under 1/n"
     );
     (height, tied)
 }
@@ -258,8 +274,15 @@ fn sets_whose_digests_tie_and_shapes_differ_are_ordered_by_their_literals() {
             .cmp(in_order(&t).iter().map(|k| (k.1, &k.0)));
         assert_ne!(expected, std::cmp::Ordering::Equal);
         assert_eq!(Row::order(Walk::Sets(Some(x), Some(y))), expected, "{e}");
-        assert_eq!(Row::order(Walk::Sets(Some(y), Some(x))), expected.reverse(), "{e}");
-        assert_eq!(Row::order(Walk::Sets(Some(x), Some(x))), std::cmp::Ordering::Equal);
+        assert_eq!(
+            Row::order(Walk::Sets(Some(y), Some(x))),
+            expected.reverse(),
+            "{e}"
+        );
+        assert_eq!(
+            Row::order(Walk::Sets(Some(x), Some(x))),
+            std::cmp::Ordering::Equal
+        );
     }
     assert!(found > 0, "no digest of 64 gave two shapes");
 }
@@ -273,7 +296,11 @@ fn sets_whose_digests_tie_and_shapes_differ_are_ordered_by_their_literals() {
 /// `step(h, x)` of [`crate::digest::step`] solved for `x`: the finalizer's three xor-shifts and
 /// two odd multiplications undone (each multiplication by its inverse modulo 2^64).
 fn step_x(h: u64, out: u64) -> u64 {
-    let inv = |m: u64| (0..6).fold(m, |y, _| y.wrapping_mul(2u64.wrapping_sub(m.wrapping_mul(y))));
+    let inv = |m: u64| {
+        (0..6).fold(m, |y, _| {
+            y.wrapping_mul(2u64.wrapping_sub(m.wrapping_mul(y)))
+        })
+    };
     let unshift = |z: u64, s: u32| (1..=64 / s).fold(z, |y, k| y ^ (z >> (s * k)));
     let mut z = unshift(out, 31).wrapping_mul(inv(0x94d0_49bb_1331_11eb));
     z = unshift(z, 27).wrapping_mul(inv(0xbf58_476d_1ce4_e5b9));
@@ -344,7 +371,10 @@ fn a_program_can_write_many_rows_of_one_digest() {
     let rows = rows_of_one_digest(n);
     let distinct: std::collections::BTreeSet<&Row> = rows.iter().collect();
     assert_eq!(distinct.len(), n, "distinct rows");
-    assert!(rows.iter().all(|r| r.digest() == rows[0].digest()), "one digest");
+    assert!(
+        rows.iter().all(|r| r.digest() == rows[0].digest()),
+        "one digest"
+    );
     let (height, tied) = check("rows of one digest", rows, |_| true);
     assert_eq!((height, tied), (n, n));
 }

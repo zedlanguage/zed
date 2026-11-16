@@ -10252,17 +10252,20 @@ impl Choices<'_> {
             if !ready && known.contains_key(&p.id()) {
                 continue;
             }
-            let k = match p.view() {
-                Ok(b) => Known {
+            // An exclusive or is read from its set of atoms, before `view`, which would make its
+            // halves (module `xor` in `bdd.rs`).
+            let k = if let Some((atoms, constant)) = p.expr_id().and_then(|_| p.exclusive_or()) {
+                Known {
                     leaf: Some((p, false)),
-                    ..self.list(b)
-                },
-                Err(form) => match p.exclusive_or() {
-                    Some((atoms, constant)) => Known {
+                    ..self.parity(&atoms, constant)
+                }
+            } else {
+                match p.view() {
+                    Ok(b) => Known {
                         leaf: Some((p, false)),
-                        ..self.parity(&atoms, constant)
+                        ..self.list(b)
                     },
-                    None => {
+                    Err(form) => {
                         let (x, y) = match form {
                             Form::Not(q) => (q, None),
                             Form::Or(a, b) | Form::And(a, b) => (a, Some(b)),
@@ -10325,7 +10328,7 @@ impl Choices<'_> {
                             (_, None) => unreachable!("an `or` and an `and` have two operands"),
                         }
                     }
-                },
+                }
             };
             known.insert(p.id(), k);
         }
@@ -10354,9 +10357,11 @@ impl Choices<'_> {
         let mut stack = vec![(f, true)];
         while let Some((p, want)) = stack.pop() {
             let k = &known[&p.id()];
-            let form = match p.view() {
-                Ok(_) => None,
-                Err(form) => p.exclusive_or().is_none().then_some(form),
+            // An exclusive or is told by its tag, before `view`, which would make its halves.
+            let form = if p.expr_id().is_some() && p.is_exclusive_or() {
+                None
+            } else {
+                p.view().err()
             };
             let (x, y, or) = match form {
                 None => {
@@ -10579,7 +10584,10 @@ impl Choices<'_> {
     /// The decision list or exclusive or `p` read for [`Choices::meet`], in time linear in it
     /// and the log of its size.
     fn index(&self, p: &Part<Row>) -> Index {
-        if let Ok(b) = p.view() {
+        // An exclusive or's form is made on first read (module `xor`); its atoms need none.
+        if (p.expr_id().is_none() || !p.is_exclusive_or())
+            && let Ok(b) = p.view()
+        {
             return Index::List(self.list_index(b));
         }
         let (atoms, constant) = p

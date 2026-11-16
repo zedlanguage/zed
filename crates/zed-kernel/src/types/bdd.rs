@@ -17,7 +17,8 @@
 //!
 //! A part is decided (module `empty`) by three-valued operations: it is evaluated with some
 //! atoms known (`Part::eval3`) and restricted to them (`Part::restrict`), each in time linear in
-//! its literals; asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
+//! its literals once the forms it reads are made (an exclusive or of `n` atoms makes its forms on
+//! first read, `O(n log n)` expected over all of them, module `xor`); asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
 //! on a list and in one pass over the nodes of an expression (COMPLEXITY.md K32); and settled on
 //! its shared subexpressions (`Part::settle`), one evaluation per shared subexpression in each
 //! round. The last is above the rule of low complexity, an open item (DESIGN.md L1.23). Listing
@@ -2547,31 +2548,38 @@ mod xor {
             Some((atoms.collect(), constant))
         }
 
+        /// Whether the part is an exclusive or in its one form ([`Part::xor_tag`]), its atoms
+        /// not collected.
+        pub(in crate::types) fn is_exclusive_or(&self) -> bool {
+            self.xor_tag().is_some()
+        }
+
         /// The exclusive or of `atoms`, each taken, and `constant`, in its one form.
         pub(super) fn xor(atoms: Tree<A>, constant: bool) -> Part<A> {
             let Some(s) = atoms else {
                 return Part::leaf(constant);
             };
-            let x = if let Some((atom, _)) = set::single_key(&s) {
-                Part::literal(atom.clone())
+            if let Some((atom, _)) = set::single_key(&s) {
+                let x = Part::literal(atom.clone());
+                if constant { x.not() } else { x }
             } else if let Some(x) = found(s.id, constant) {
-                return x;
+                x
             } else if let Some(n) = found(s.id, !constant) {
                 // When only the complement lives, the one asked for is its complement's (`mate`):
                 // made anew beside a complement of its own, it would replace the live one in the
                 // table, and one function would have two nodes (test
                 // `an_exclusive_or_is_found_again_when_only_its_complement_lives`).
-                return n.not();
+                n.not()
             } else {
-                let x = node(&s, false);
-                let n = node(&s, true);
+                // The node asked for holds its complement, so neither is made only to be freed.
+                let x = node(&s, constant);
+                let n = node(&s, !constant);
                 if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
                     let _ = e.complement.set(n.clone());
                     m.set_back(e);
                 }
                 x
-            };
-            if constant { x.not() } else { x }
+            }
         }
     }
 

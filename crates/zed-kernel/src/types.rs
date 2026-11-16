@@ -1112,12 +1112,12 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
         Walk::Cells(None, None) | Walk::Sets(None, None) | Walk::SetsInOrder(None, None) => {
             Ordering::Equal
         }
-        Walk::Cells(None, Some(_)) | Walk::Sets(None, Some(_)) | Walk::SetsInOrder(None, Some(_)) => {
-            Ordering::Less
-        }
-        Walk::Cells(Some(_), None) | Walk::Sets(Some(_), None) | Walk::SetsInOrder(Some(_), None) => {
-            Ordering::Greater
-        }
+        Walk::Cells(None, Some(_))
+        | Walk::Sets(None, Some(_))
+        | Walk::SetsInOrder(None, Some(_)) => Ordering::Less,
+        Walk::Cells(Some(_), None)
+        | Walk::Sets(Some(_), None)
+        | Walk::SetsInOrder(Some(_), None) => Ordering::Greater,
         Walk::Cells(Some(a), Some(b)) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {
