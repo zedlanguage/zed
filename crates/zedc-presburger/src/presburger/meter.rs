@@ -39,7 +39,7 @@ use super::Refusal;
 // of them took under 250 ms, so a cover refused at the limit may have needed far less
 // (COMPLEXITY.md, PRES-pugh-work-budget). After the refit of PRES-work-charge-fit
 // ([`SOLVER_STEP`], [`QUESTION_ROW`]) no cover of the step tests or the benchmarks ran past
-// its prediction at loads of 36 to 75; still measured, not proved.
+// its prediction at loads of 36 to 65; still measured, not proved.
 pub const EXACT_LIMIT: u64 = 3_100_000;
 
 thread_local! {
@@ -147,8 +147,8 @@ pub const SOLVER_UNIT: u64 = 100;
 /// charges the per-site timings showed missing: each atom the Omega test takes from its queue
 /// (`shadow_logged`), each piece of a cell the cover cuts from its gap (`exact::cover`), and
 /// none for a call whose solver answer is already empty (`exact_each`). Replayed on every
-/// cover the step tests and the benchmarks make (28,838 and about 9,030 covers, run with no
-/// limit at loads of 36 to 75 on 32 cores), none then took more CPU time than its prediction;
+/// cover the step tests and the benchmarks make (28,838 and about 9,030 covers, run at
+/// [`EXACT_LIMIT`] at loads of 36 to 65 on 32 cores), none then took more CPU time than its prediction;
 /// the least ratio was 1.09 (`bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`,
 /// record 1, load 62) and in the step tests 1.82. COMPLEXITY.md, PRES-work-charge-fit.
 // Complexity tradeoff: one factor for all solver steps and one for question rows is the

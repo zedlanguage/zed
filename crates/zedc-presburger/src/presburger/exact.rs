@@ -147,7 +147,10 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     // a refusal of `has_points` replaced answers known to be empty (`nest_empty`,
     // PRES-work-charge-fit: past its prediction, as `split` is not charged). Used: one look at
     // each answer, O(k) for k symbols, before any work.
-    if each.iter().any(|h| h.as_ref().is_ok_and(IntervalSet::is_empty)) {
+    if each
+        .iter()
+        .any(|h| h.as_ref().is_ok_and(IntervalSet::is_empty))
+    {
         let out = (each.into_iter())
             .map(|r| r.map(|_| IntervalSet::empty()))
             .collect();
