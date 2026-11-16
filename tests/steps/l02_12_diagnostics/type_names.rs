@@ -313,6 +313,26 @@ fn many_lambdas_at_one_type_variable_are_each_checked_at_its_type() {
     assert_eq!(output(&lambdas_at_one_type_variable(4)), "6\n");
 }
 
+/// A call of n functions at parameters `(T) -> T`, `T` written nowhere else: the first, a
+/// lambda with its parameter's type written, fixes `T` through it, and the rest, lambdas with
+/// no written types, are checked at that instance (row FAIL-typevar-fn-only-binding).
+pub(crate) fn functions_fix_one_type_variable(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("g{i}: (T) -> T")).collect();
+    let args: String = (1..n).map(|i| format!(", g{i}: (v) -> v + {i}")).collect();
+    format!(
+        "f({}) = 0;\n\
+         main(m: MainArgs) {{\n  m.stdout <- \"${{f(g0: (v: int) -> v{args})}}\";\n}}\n",
+        params.join(", ")
+    )
+}
+
+/// [`functions_fix_one_type_variable`] at a small size, the check its benchmark makes besides
+/// the ratio.
+#[test]
+fn many_functions_fix_one_type_variable_through_the_first() {
+    assert_eq!(output(&functions_fix_one_type_variable(4)), "0\n");
+}
+
 const TO_F64: &str = "h(positional z: f64) = z;";
 
 /// The expected type is matched against the result before the arguments (DESIGN.md

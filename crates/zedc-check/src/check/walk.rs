@@ -3449,6 +3449,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
+    /// The keys of `group`'s result `out` are what `f` gives, so they must be data: a function
+    /// as a key leaves the kernel's reindex nothing to compare (plan row
+    /// FAIL-group-key-function). A class, as what a parameter `f` gives, keeps a need until its
+    /// type is known.
+    // Complexity tradeoff: one union of the arrows of `out`, O(arrows), and one data check.
+    fn group_keys_data(&mut self, out: &Ty, f: &Arg<'a>, span: Span) {
+        let keys = Ty::union_all(
+            (out.fns.iter().filter(|g| g.data)).flat_map(|g| g.arrows.iter().map(|a| &a.params[0])),
+        );
+        let at = f.at.unwrap_or(span);
+        self.data(&keys, "a key of a family", DataUse::Key, at, at, Some(span));
+    }
+
     /// `x.group(f)`, or `x.rekey(f)` with `rekey` ([`Self::group_end`]), where `x` may hold
     /// classes. A class, as the parameter `g` of `m.map(g -> g.group(f))` stands for, takes
     /// the use as a need, checked on each value that flows into it and at each call of a
@@ -3462,8 +3475,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     // resolves back to it (a class is resolved to a type built before it), so the recursion
     // ends.
     fn group_of(&mut self, x: &Ty, recv: Span, f: Arg<'a>, span: Span, rekey: bool) -> Ty {
+        // `group_end` (remap.rs) builds the family; its outer keys are checked here, and
+        // `Ck::need` is passed in, since a call from remap.rs of a method written in this file
+        // would close an import cycle (tests/steps/s_01f_import_graph).
+        let calls: (remap::Apply<'t, 'a>, remap::NeedFn<'t, 'a>) = (Self::apply, Self::need);
         if rekey || x.vars.is_empty() {
-            return self.group_end(x, recv, f, span, rekey, Self::apply);
+            let out = self.group_end(x, recv, f.clone(), span, rekey, calls);
+            self.group_keys_data(&out, &f, span);
+            return out;
         }
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut rest = x.clone();
@@ -3474,7 +3493,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let mut out = match only_misses {
             true => Ty::empty(),
-            false => self.group_end(&rest, recv, f.clone(), span, false, Self::apply),
+            false => {
+                let out = self.group_end(&rest, recv, f.clone(), span, false, calls);
+                self.group_keys_data(&out, &f, span);
+                out
+            }
         };
         for v in x.vars.iter() {
             let r = self.class_root(v);

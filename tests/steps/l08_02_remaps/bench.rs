@@ -919,6 +919,44 @@ fn n_lambdas_that_call_a_parameter_in_a_returned_family_run_in_linear_time() {
     );
 }
 
+/// Row FAIL-map-generic-parameter-function: `group` by a parameter with no written type, over
+/// n entries: one need "`f` takes the entries" on `f`'s class, met once at the call, and the
+/// kernel's reindex over the n entries. Small instances:
+/// `empty::the_words_that_take_a_function_take_a_function_parameter`.
+#[test]
+fn group_by_a_function_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "g(positional f) = {}.group(f);\na = g(v -> v mod 7).count;\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "7");
+    scaling::check(
+        "group of n entries by a function parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+/// Row FAIL-group-key-function: n families nested, each keyed by a call of the parameter `f`:
+/// the call meets each key's data need once, no longer deferred as a lambda's parameter.
+/// Small instances: `empty::a_key_made_by_a_function_is_data_at_each_call`.
+#[test]
+fn n_families_keyed_by_calls_of_a_parameter_check_in_linear_time() {
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let deep = (0..n).fold("0".to_string(), |t, i| format!("{{f({i}) -> {t}}}"));
+        let path: String = (0..n).rev().map(|i| format!("[{}]", i + 1)).collect();
+        format!("h(positional f) = {deep};\na = h(x -> x + 1){path};\n")
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "0");
+    scaling::check(
+        "n families nested, keyed by calls of a parameter, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
 #[test]
 fn a_lambda_that_calls_a_parameter_n_families_deep_runs_in_linear_time() {
     // The call enters each of the n families above the lambda once, and each of the n

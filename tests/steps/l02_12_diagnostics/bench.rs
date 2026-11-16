@@ -5,7 +5,7 @@
 
 use zed_tests::scaling;
 
-use crate::type_names::lambdas_at_one_type_variable;
+use crate::type_names::{functions_fix_one_type_variable, lambdas_at_one_type_variable};
 use crate::{prints_no_esc, quoted};
 
 /// Row FAIL-typevar-free-in-checker: a call that passes n lambdas, each at a parameter of type
@@ -16,6 +16,22 @@ fn a_call_of_n_lambdas_at_one_type_variable_scales() {
     let inputs = scaling::inputs(200, lambdas_at_one_type_variable);
     scaling::check(
         "a call passing n lambdas at the type variable `T`",
+        200,
+        |n| {
+            zedc::run::load(inputs[&n].as_bytes()).expect("accepted");
+        },
+    );
+}
+
+/// Row FAIL-typevar-fn-only-binding: a call of n functions at parameters `(T) -> T`, `T`
+/// fixed through the first one's written parameter type (`bound_through_fn`, one comparison
+/// per argument and an O(1) copy of the persistent bindings), the rest checked at the
+/// instance: O(n).
+#[test]
+fn a_call_of_n_functions_fixing_a_type_variable_through_one_scales() {
+    let inputs = scaling::inputs(200, functions_fix_one_type_variable);
+    scaling::check(
+        "a call passing n functions, `T` fixed through the first",
         200,
         |n| {
             zedc::run::load(inputs[&n].as_bytes()).expect("accepted");

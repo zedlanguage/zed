@@ -108,6 +108,9 @@ pub(in crate::check) type ReduceEnd<'t, 'a> = fn(&mut Ck<'t, 'a>, Reducer, &Ty, 
 pub(in crate::check) type Apply<'t, 'a> =
     fn(&mut Ck<'t, 'a>, Label<'_>, &Sig, Vec<Option<Arg<'a>>>, bool, Span) -> (Ty, Vec<usize>);
 
+/// `Ck::need`, a use of a class recorded as a need, passed in by walk.rs as `Apply` is.
+pub(in crate::check) type NeedFn<'t, 'a> = fn(&mut Ck<'t, 'a>, usize, NeedKind, bool, Span) -> Ty;
+
 impl<'t, 'a> Ck<'t, 'a> {
     /// Starts the check of the remap `e`: the remap's state and its source, which walk.rs checks
     /// first.
@@ -984,7 +987,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         f: Arg<'a>,
         span: Span,
         rekey: bool,
-        apply: Apply<'t, 'a>,
+        (apply, need): (Apply<'t, 'a>, NeedFn<'t, 'a>),
     ) -> Ty {
         let word = if rekey { "rekey" } else { "group" };
         if rekey {
@@ -1087,14 +1090,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     named: Vec::new(),
                     curry: false,
                 };
-                self.need(k, kind, true, span)
+                need(self, k, kind, true, span)
             }
         };
-        // What `f` gives is a key of the result, so data: a function as a key leaves the
-        // kernel's reindex nothing to compare (plan row FAIL-group-key-function). A class, as
-        // what a parameter `f` gives, keeps the need until its type is known.
-        let at = f.at.unwrap_or(span);
-        self.data(&w, "a key of a family", DataUse::Key, at, at, Some(span));
+        // What `f` gives is a key of the result, so it must be data; the caller,
+        // `Ck::group_of`, checks it (plan row FAIL-group-key-function).
         family(w, family(keys, values))
     }
 }
