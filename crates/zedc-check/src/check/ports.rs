@@ -447,6 +447,19 @@ pub fn silent_tail<'e>(
                     // A tuple of values is no write, whatever its parts do.
                     _ => false,
                 },
+                // No program reaches this arm today: every block this walk meets stands in the
+                // place of a value (the statement itself, a branch of an `if`, a `match` arm, a
+                // block's export), and the parser refuses such a block when it ends in no export
+                // (`zedc_syntax`'s `Builder::node`); only a function's or a `loop`'s body may
+                // export nothing, and neither is walked here. Test:
+                // `l01_19_whole_file_ports::ports::a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser`.
+                // Were it reached: a write on one branch of an `if` lies in that branch's block,
+                // which is no statement of this block, and a statement of this block that is an
+                // expression is accepted only if it writes on every one of its own paths
+                // (`Ck::expr_stmt` checks it where it stands). That the block then writes on
+                // every path also needs each of its statements to run whenever the block ends
+                // normally; that is not proved for a block that leaves early (a `while` or
+                // `until` guard, a failure that bubbles out), which no such block can hold today.
                 _ => (stmts.iter())
                     .any(|s| matches!(s.kind, StmtKind::Push { .. } | StmtKind::Expr(_))),
             },

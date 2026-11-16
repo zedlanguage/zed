@@ -187,6 +187,169 @@ fn a_statement_that_writes_nothing_names_the_call_and_the_repairs() {
     );
 }
 
+/// The errors the checker gives `main`'s body `body`, after the helper `say` of L1.19 and a
+/// `k` read from the arguments: each its message, the statement it is reported at, and the
+/// text each note is placed at.
+fn statement_errors(body: &str) -> Vec<(String, String, Vec<String>)> {
+    let text = format!(
+        "say(positional s, out: Lines) {{ out <- s; }}\n\nmain(m: MainArgs) {{\n  \
+         k = int(m.args[0] else \"\") else 0;\n  {body}\n}}\n"
+    );
+    let (stmts, res) = resolved(&text);
+    let info = check_text(&stmts, &res, Some(&text));
+    let at = |s: zedc::lex::Span| text[s.start..s.end].to_string();
+    (info.errors.iter())
+        .map(|e| {
+            assert_eq!(e.row, Some(zedc::rejection::Row::WritesNothing), "{e:?}");
+            let notes = e.notes.iter().map(|n| at(n.span)).collect();
+            (e.message.clone(), at(e.span), notes)
+        })
+        .collect()
+}
+
+/// A block written as the row of the plan states it, `{ if c { say(…); } else { } };`, with
+/// the write on one branch, never reaches the statement check: a block in the place of a value
+/// (a branch of an `if`, a `match` arm, the statement itself) gives that value, so it must end
+/// in an export, and the parser refuses one that does not (DESIGN.md sec:grammar, `Block`; the
+/// builder's `Builder::node`). Only a function's body and a `loop`'s body may export nothing.
+#[test]
+fn a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser() {
+    let no_export = "this block exports nothing, and a block gives a value, so it must export \
+                     one. End it with an expression, or with `return e;` to give the value `e`.";
+    let empty = "this `{}` is an empty block, and a block gives a value, so it must export one: \
+                 a brace after `->`, `else`, or the head of an `if` or a `for` is a block. To \
+                 write the empty family there, write `{ {} }`, or `({})` after `->` or a \
+                 fallback's `else`.";
+    // A brace in statement position is a block when a statement follows it (sec:grammar,
+    // `!HEAD &('{' Item) ~Block`), here `j = k;`; `{ if … }` is the family of one value.
+    for (name, body, col, why) in [
+        // The write in the `then` branch only, by a call and by a push: the first block the
+        // parser builds, the `then` branch, exports nothing.
+        (
+            "stmt_block_then_call",
+            "{ j = k; if j > 1 { say(\"x\", out: m.stdout); } else { } };",
+            21,
+            no_export,
+        ),
+        (
+            "stmt_block_then_push",
+            "{ j = k; if j > 1 { m.stdout <- \"x\"; } else { } };",
+            21,
+            no_export,
+        ),
+        // The write in the `else` branch only: the empty `then` branch.
+        (
+            "stmt_block_else_call",
+            "{ j = k; if j > 1 { } else { say(\"x\", out: m.stdout); } };",
+            21,
+            empty,
+        ),
+        // Nested twice, the silent branch two blocks down.
+        (
+            "stmt_block_nested",
+            "{ j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout); } else { } } \
+             else { say(\"y\", out: m.stdout) } };",
+            32,
+            no_export,
+        ),
+        // A `match` arm whose block writes and exports nothing.
+        (
+            "stmt_block_arm",
+            "{ j = k; match j { 1 -> { say(\"x\", out: m.stdout); }, _ -> 0 } };",
+            27,
+            no_export,
+        ),
+        // Every branch exports, and the `if` is a statement of the outer block, which then
+        // exports nothing.
+        (
+            "stmt_block_outer",
+            "{ j = k; if j > 1 { say(\"x\", out: m.stdout) } else { 0 }; };",
+            3,
+            no_export,
+        ),
+    ] {
+        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {body}"));
+        assert_eq!(rejected(name, &src), format!("5:{col}: {why}"), "{src}");
+    }
+}
+
+/// The forms of a write on one branch that a program can write: each branch ends in an export,
+/// and the silent one exports a value that writes nothing. The statement is refused at that
+/// export, named in the headline and at each note, whichever branch writes, however deep the
+/// `if` stands, and whatever the block holds before its export (DESIGN.md sec:tour_methods,
+/// "the check is per flow path: each branch of an `if` or `match` and each block's export is
+/// checked on its own"; `check::ports::silent_tail`). An `if` that is a statement of a block,
+/// not its export, is checked where it stands.
+#[test]
+fn a_block_that_writes_on_one_branch_only_is_refused_at_the_silent_branch() {
+    let silent = |stmt: &str, branch: &str| {
+        let message = format!(
+            "Statement has no effect: `{branch}` writes to no port, and its value is dropped."
+        );
+        vec![(message, stmt.to_string(), vec![branch.to_string(); 3])]
+    };
+    // The write in the `then` branch only, and in the `else` branch only, of an `if` that a
+    // block exports.
+    let body = "{ j = k; if j > 1 { say(\"x\", out: m.stdout) } else { 0 } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    let body = "{ j = k; if j > 1 { 0 } else { say(\"x\", out: m.stdout) } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    // A write in a statement of the silent branch's block does not make its export write.
+    let body = "{ j = k; if j > 1 { say(\"x\", out: m.stdout) } else { m.stdout <- \"y\"; 0 } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    // Nested twice: the silent branch is the inner `if`'s, two blocks down; the outer `if`
+    // writes on its other branch.
+    let body = "{ j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout) } else { 0 } } \
+                else { say(\"y\", out: m.stdout) } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    let body = "{ j = k; if j > 1 { say(\"y\", out: m.stdout) } \
+                else { if j > 2 { 0 } else { say(\"x\", out: m.stdout) } } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    // A write before the `if` does not make its silent branch write.
+    let body = "{ say(\"a\", out: m.stdout); if k > 1 { say(\"x\", out: m.stdout) } else { 0 } };";
+    assert_eq!(statement_errors(body), silent(body, "0"));
+    // An `if` that is a statement of the block is refused where it stands, though the block's
+    // export writes.
+    let inner = "if k > 1 { say(\"x\", out: m.stdout) } else { 0 };";
+    let body = format!("{{ {inner} say(\"a\", out: m.stdout) }};");
+    assert_eq!(statement_errors(&body), silent(inner, "0"));
+    // The same through `zedc run`: refused, placed at the statement.
+    let src = with_say(
+        "k = int(m.args[0] else \"\") else 0;\n  \
+         { j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout) } else { 0 } } \
+         else { say(\"y\", out: m.stdout) } };",
+    );
+    assert_eq!(
+        rejected("stmt_block_nested_value", &src),
+        "5:3: Statement has no effect: `0` writes to no port, and its value is dropped."
+    );
+}
+
+/// The contrast: a block whose `if` writes on both branches, at any depth, writes on every
+/// path, and stands as a statement.
+#[test]
+fn a_block_that_writes_on_both_branches_is_a_statement() {
+    for body in [
+        "{ j = k; if j > 1 { say(\"many\", out: m.stdout) } else { say(\"one\", out: m.stdout) } };",
+        "{ j = k; if j > 1 { m.stdout <- \"many\"; say(\"\", out: m.stderr) } \
+         else { say(\"one\", out: m.stdout) } };",
+        "{ j = k; if j > 1 { if j > 2 { say(\"many\", out: m.stdout) } else \
+         { say(\"many\", out: m.stdout) } } else { say(\"one\", out: m.stdout) } };",
+    ] {
+        assert_eq!(statement_errors(body), [], "{body}");
+        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {body}"));
+        for (args, want) in [(&[][..], "one\n"), (&["--", "5"][..], "many\n")] {
+            let out = run("stmt_block_both", &src, "", args);
+            assert_eq!(
+                (out.status, out.stdout.as_str()),
+                (0, want),
+                "{src}\n{}",
+                out.stderr
+            );
+        }
+    }
+}
+
 /// The port reaches the push whatever the path: through a chain of helpers, by position, in
 /// parentheses, from a lambda in the helper, beside a push of `main` to the other output.
 #[test]
