@@ -18,8 +18,13 @@
 //!   `match` and `port` regions carry state (step L1.31), so a `match` or `if` whose arms touch
 //!   different ports passes each port's state through the arm that does not touch it, and the
 //!   root region is a `port` region when the term uses a port and a `function` region when not.
-//! - **A function that uses a port threads its state.** A `let`-bound lambda whose body reads
-//!   or pushes a port, or calls such a function, is inlined at its call when its name occurs
+//!   A read inside a loop or family body (`fix`, `gen`, `fam`) or a function's body, where no
+//!   state edge of its port enters, is placed just outside the outermost such body and its
+//!   value captured, since a read gives the same value wherever it runs (`Lower::read_frame`
+//!   has the proof), and later such reads of the port placed in that region take the same
+//!   node; a push there is refused.
+//! - **A function that pushes to a port threads its state.** A `let`-bound lambda whose body
+//!   pushes to a port, or calls such a function, is inlined at its call when its name occurs
 //!   once in the term. Otherwise it is one `lambda` node whose region takes a state argument
 //!   for each of those ports after its parameters and returns their states after its value,
 //!   and each call is an `apply` that passes the current states in and takes the new ones
@@ -32,7 +37,8 @@
 //!   equal keys mean equal normal forms of the one-node regions holding the nodes), and a
 //!   second node with that key is not added: its uses read the first. Nodes that differ
 //!   only in hints, binder names or facet order are one node. A read, a push, or a node an
-//!   effect passes through is never merged, since its state input is used once.
+//!   effect passes through is never merged, since its state input is used once; the reads of
+//!   one port placed outside loop or family bodies into one region are one node (see above).
 //! - **Edges carry `_` and no facts but hints.** The checker's types and the store's domains
 //!   reach the graph in a later step; the lowering keeps the term's structure exactly.
 //!
@@ -121,6 +127,13 @@ struct Frame {
     /// Whether the region is the body of a `fam` node: its kind is function, as a lambda's is,
     /// and a refusal of a port in it names a family, not a function.
     family: bool,
+    /// The frame a read of each port made in this region is placed in ([`Lower::read_frame`]),
+    /// once worked out.
+    reads: HashMap<Arc<str>, usize>,
+    /// The value of the read of each port placed in this region from inside a loop or family
+    /// body: later such reads take it too, since a read gives the same value wherever it runs
+    /// ([`Lower::read_frame`]).
+    hoisted: HashMap<Arc<str>, Src>,
 }
 
 impl Frame {
@@ -141,6 +154,8 @@ impl Frame {
             numbers: Vec::new(),
             sites: Vec::new(),
             family: false,
+            reads: HashMap::new(),
+            hoisted: HashMap::new(),
         }
     }
 }
@@ -177,7 +192,8 @@ struct Lower<'t> {
     site: Option<Span>,
 }
 
-/// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
+/// What a lambda body uses from outside it: a port it pushes to, or a name free in it. A port
+/// it only reads is not a use: the read is placed outside the body ([`Lower::read_frame`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Use {
     Port(Arc<str>),
@@ -500,6 +516,80 @@ impl<'t> Lower<'t> {
         Ok(s)
     }
 
+    /// The frame a read of port `p` made in frame `k` is placed in: `k` itself, unless a body
+    /// that does not hold `p`'s state (a `fix` or `gen` region, the body of a `fam`, or the
+    /// region of a lambda, bound by `let` or not, that does not push to `p`) lies between `k`
+    /// and the nearest frame that holds `p`'s state, in which case the frame just outside the
+    /// outermost such body. The read's value then enters the bodies as a capture, and no state
+    /// edge enters them (DESIGN L1.31: state edges enter only match and port regions and the
+    /// function region of a `lambda`), so a function that only reads a port takes no state for
+    /// it and may be called anywhere, in a family's body or as a value. A recursive function
+    /// or the root ends the walk, and [`Lower::state`] refuses a read in a recursive function
+    /// with its wording, as before.
+    ///
+    /// Proof that placing the read outside the bodies keeps the program's value and effects
+    /// (row FAIL-build-port-read-in-map): a `read` node gives, for an input port, the port's
+    /// value, which is fixed for the whole wave before the run starts (`World::inputs`); for a
+    /// lookup port such as `main::files`, a word naming the port (`Word::SOURCE`), not an
+    /// answer: the port is asked where the program looks up a key (`Get`), which stays inside
+    /// the body, and the world asks it at most once per key and keeps the answer
+    /// (`World::reads`, or the port itself when it `keeps_answers`), as `zedc run` does
+    /// (zed-kernel `Evaluator::check_impure`). So the read gives the same value at the new
+    /// place as at every element of the body, and running it once where the body ran it once
+    /// per element, or where the body ran zero times, changes no value. A read pushes nothing,
+    /// so it changes no output, and it is placed in the outer region before the node of the
+    /// body, after every node already there, so the order of that region's effects is kept.
+    /// A read of a port the run does not bind fails, but the run binds every port the root
+    /// region takes, and `state` threads the read's port to the root as before. A function's
+    /// body runs where it is called, with the values of the program at its definition, and the
+    /// read gives the same value at the definition as at every call, so a read in a function
+    /// is placed at the definition by the same argument. A push, and a read in a recursive
+    /// function, is not covered by this proof and stays refused (QUESTIONS A108 for a push in
+    /// a family).
+    // Complexity tradeoff: the naive walk goes from `k` down the frame stack at every read,
+    // O(d) per read and O(n·d) for n reads in a body d frames deep. Here each frame keeps the
+    // answer for each port once found (`Frame::reads`): the walk stops at the first frame that
+    // has it, and every frame it passed gets its own, so each frame is walked once per port it
+    // reads, O(1) amortized per read. The answer of a frame never changes while it is on the
+    // stack: a frame below it gains `p`'s state only through `state` walking up through it,
+    // which happens only when no body lies between, and then the answer was the
+    // frame itself. The naive placement also gives each read its own `read` node outside the
+    // bodies, so a read in each of d nested bodies, all placed in one region, brings d edges
+    // into the bodies below, one per read, Θ(d²) arguments; here the reads of one port placed
+    // in one region share its first read node (`Frame::hoisted`, by the proof above), so each
+    // body takes one argument for it, O(d). Tradeoff: one map entry per frame per port read in
+    // it. Nothing is refused. Test
+    // `l01_33_lowering::bench::scaling::reads_in_a_deep_nest_of_families_scale`.
+    fn read_frame(&mut self, k: usize, p: &Arc<str>) -> usize {
+        let mut j = k;
+        let base = loop {
+            let f = &self.frames[j];
+            if let Some(&a) = f.reads.get(p) {
+                break a;
+            }
+            // A recursive function's region ends the walk: `state` refuses a read there.
+            let rec = matches!(f.region.kind, RegionKind::Rec);
+            if j == 0 || f.states.contains_key(p) || rec {
+                break j;
+            }
+            j -= 1;
+        };
+        // Up from the frame the walk stopped at: a loop, family or function body sends a read
+        // to where a read just outside it goes; a match or port region carries the state when
+        // the frame outside it reads in place, and otherwise sends the read where that frame
+        // does. A function region holding `p`'s state stopped the walk, so none is passed here.
+        let mut a = base;
+        for i in j + 1..=k {
+            let f = &mut self.frames[i];
+            let body = matches!(f.region.kind, RegionKind::Loop | RegionKind::Function);
+            if !body && a == i - 1 {
+                a = i;
+            }
+            f.reads.insert(p.clone(), a);
+        }
+        a
+    }
+
     fn set_state(&mut self, p: &Arc<str>, s: Src) {
         self.frame().states.insert(p.clone(), s);
     }
@@ -537,6 +627,19 @@ impl<'t> Lower<'t> {
         numbers: Vec<usize>,
         regions: Vec<Vec<NodeSite>>,
     ) -> usize {
+        self.add_in(self.top(), node, keys, numbers, regions)
+    }
+
+    /// [`Lower::add`] into the region of frame `k`, which may be below the top when a read is
+    /// placed outside a loop or family body ([`Lower::read_frame`]).
+    fn add_in(
+        &mut self,
+        k: usize,
+        node: Node,
+        keys: Vec<ContentAddress>,
+        numbers: Vec<usize>,
+        regions: Vec<Vec<NodeSite>>,
+    ) -> usize {
         let site = self.sites.map(|_| NodeSite {
             at: self.site,
             regions,
@@ -552,7 +655,7 @@ impl<'t> Lower<'t> {
                 if let (None, Err(e)) = (refused, shape) {
                     self.refused = Some(e);
                 }
-                let f = self.frame();
+                let f = &mut self.frames[k];
                 f.region.nodes.push(node);
                 f.keys.push(keys);
                 f.numbers.push(numbers);
@@ -561,7 +664,7 @@ impl<'t> Lower<'t> {
             }
         };
         let key = shape.key(&keys);
-        let f = self.frame();
+        let f = &mut self.frames[k];
         match f.seen.entry(key).or_default().entry(shape) {
             btree_map::Entry::Occupied(e) => *e.get(),
             btree_map::Entry::Vacant(e) => {
@@ -981,8 +1084,19 @@ impl<'t> Lower<'t> {
                 s.srcs(&[p(0, init)]);
             }
             Term::Read(p) => {
-                let st = self.state(at, p)?;
-                let n = self.add(
+                // Inside a loop or family body the read is placed outside the outermost such
+                // body (`read_frame`, which proves it keeps the value), and its value is
+                // brought in as a capture where it is used.
+                let k = self.read_frame(at, p);
+                if k < at
+                    && let Some(v) = self.frames[k].hoisted.get(p)
+                {
+                    s.vals.push(Val::Src(v.clone(), k));
+                    return Ok(());
+                }
+                let st = self.state(k, p)?;
+                let n = self.add_in(
+                    k,
                     Node {
                         op: Op::Read(p.clone()),
                         inputs: vec![st],
@@ -993,8 +1107,12 @@ impl<'t> Lower<'t> {
                     Vec::new(),
                     Vec::new(),
                 );
-                self.set_state(p, Src::Out(n, 1));
-                s.vals.push(Val::Src(Src::Out(n, 0), at));
+                let f = &mut self.frames[k];
+                f.states.insert(p.clone(), Src::Out(n, 1));
+                if k < at {
+                    f.hoisted.insert(p.clone(), Src::Out(n, 0));
+                }
+                s.vals.push(Val::Src(Src::Out(n, 0), k));
             }
             Term::Push(p, v) => {
                 s.jobs.push(Job::Push(p));
@@ -1591,7 +1709,7 @@ impl<'t> UseWalk<'t> {
         match here.t {
             Term::Lit(_) | Term::PrimFn(_) => {}
             Term::Var(x) => self.add(Use::Free(x.clone())),
-            Term::Read(q) => self.add(Use::Port(q.clone())),
+            Term::Read(_) => {}
             Term::Lam(ps, b) => self.todo.push(Visit::Lam(ps, p(0, b))),
             Term::Let(x, e, b) => {
                 self.todo.push(Visit::Under(one(x), p(1, b)));

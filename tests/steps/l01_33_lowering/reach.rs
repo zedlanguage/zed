@@ -10,6 +10,7 @@ use zed_kernel::{Evaluator, Family, GuardPos, Pattern, Prim, Term, Value, World}
 use zed_tests::kernel::{fam, fix_defined, fold};
 use zedc::zir::lower::{lower, raise};
 use zedc::zir::text::parse;
+use zedc::zir::{Region, op_name};
 
 use super::count;
 
@@ -74,12 +75,7 @@ fn a_push_in_a_generation_or_a_fixpoint_is_refused_as_inside_a_loop() {
         pos: GuardPos::Before,
     };
     let in_fix = fix_defined(set(), |_, k| push("stdout", k));
-    let read_in_fix = fix_defined(set(), |_, _| read("stdin"));
-    for (t, port) in [
-        (in_gen, "stdout"),
-        (in_fix, "stdout"),
-        (read_in_fix, "stdin"),
-    ] {
+    for (t, port) in [(in_gen, "stdout"), (in_fix, "stdout")] {
         assert_eq!(
             lower(&t).unwrap_err(),
             refused(port, "inside a loop or a family", "the loop or family"),
@@ -88,17 +84,131 @@ fn a_push_in_a_generation_or_a_fixpoint_is_refused_as_inside_a_loop() {
     }
 }
 
+/// The `port` nodes inside the bodies of `fam`, `fix` and `gen` nodes of `g`, at any depth.
+fn ports_in_bodies(g: &Region) -> usize {
+    g.nodes
+        .iter()
+        .map(|n| match op_name(&n.op) {
+            "fam" | "fix" | "gen" => n.regions.iter().map(|r| count(r, "port")).sum::<usize>(),
+            _ => n.regions.iter().map(|r| ports_in_bodies(r)).sum::<usize>(),
+        })
+        .sum()
+}
+
+/// A read inside a loop or a family body lowers (row FAIL-build-port-read-in-map): the read is
+/// placed outside the outermost body, its value enters as a capture, and the raised term has
+/// the value of the original. Under a `match` in the body, in a nest of families, in a family
+/// in a `match` arm (the read stays in the arm), next to a push outside, in a family inside a
+/// function called twice, and in a `fix` and a `gen`.
+#[test]
+fn a_read_in_a_loop_or_a_family_lowers_outside_the_body() {
+    let concat = |a: Term, b: Term| prim(Prim::Concat, vec![a, b]);
+    let show = |a: Term| prim(Prim::Show, vec![a]);
+    let in_gen = Term::Gen {
+        init: lit(0).into(),
+        step: lam(
+            &["f"],
+            prim(
+                Prim::Add,
+                vec![var("f"), prim(Prim::Len, vec![read("stdin")])],
+            ),
+        )
+        .into(),
+        guard: lam(&["f"], prim(Prim::Lt, vec![var("f"), lit(7)])).into(),
+        pos: GuardPos::Before,
+    };
+    let cases = [
+        fam(set(), "i", concat(show(var("i")), read("stdin"))),
+        fam(
+            set(),
+            "i",
+            Term::If(
+                prim(Prim::Eq, vec![var("i"), lit(1)]).into(),
+                read("stdin").into(),
+                lit("-").into(),
+            ),
+        ),
+        fam(set(), "i", fam(set(), "j", read("stdin"))),
+        Term::If(
+            lit(true).into(),
+            fam(set(), "i", read("stdin")).into(),
+            lit(0).into(),
+        ),
+        prim(
+            Prim::Tuple,
+            vec![
+                push("stdout", lit("x")),
+                fam(set(), "i", concat(read("stdin"), read("stdin"))),
+                read("stdin"),
+            ],
+        ),
+        called_twice(|m| fam(set(), "i", concat(read("stdin"), show(m)))),
+        fix_defined(set(), |_, k| concat(show(k), read("stdin"))),
+        in_gen,
+    ];
+    for (k, t) in cases.iter().enumerate() {
+        let g = lower(t).unwrap_or_else(|e| panic!("{k}: {e}"));
+        assert!(count(&g, "port") > 0, "{k}");
+        assert_eq!(ports_in_bodies(&g), 0, "{k}");
+        same(t);
+    }
+}
+
+/// A read in a function that does not push to its port lowers, the read placed outside the
+/// function, so the function takes no state and may be called in a family or passed as a
+/// value: a lambda passed to a fold, a read in a family inside a lambda called in place, and a
+/// `let`-bound function that reads, called twice inside a family and passed as a value.
+#[test]
+fn a_read_in_a_function_lowers_outside_the_function() {
+    let reader = lam(&["x"], prim(Prim::Concat, vec![var("x"), read("stdin")]));
+    let cases = [
+        fold(
+            set(),
+            lam(
+                &["a", "b"],
+                prim(
+                    Prim::Add,
+                    vec![var("a"), prim(Prim::Len, vec![read("stdin")])],
+                ),
+            ),
+            Some(lit(0)),
+        ),
+        app(lam(&["m"], fam(set(), "i", read("stdin"))), vec![lit(0)]),
+        let_(
+            "r",
+            reader,
+            prim(
+                Prim::Tuple,
+                vec![
+                    fam(
+                        set(),
+                        "i",
+                        app(var("r"), vec![prim(Prim::Show, vec![var("i")])]),
+                    ),
+                    app(var("r"), vec![lit("x")]),
+                    fold(
+                        fam(set(), "i", lit("y")),
+                        lam(&["a", "b"], app(var("r"), vec![var("a")])),
+                        Some(lit("z")),
+                    ),
+                ],
+            ),
+        ),
+    ];
+    for (k, t) in cases.iter().enumerate() {
+        let g = lower(t).unwrap_or_else(|e| panic!("{k}: {e}"));
+        assert!(count(&g, "port") > 0, "{k}");
+        assert_eq!(ports_in_bodies(&g), 0, "{k}");
+        same(t);
+    }
+}
+
 #[test]
 fn a_push_in_a_family_or_in_a_lambda_passed_as_an_argument_is_refused() {
     // The wording for a family is FAIL-zir-lower-port-in-family-message; here only that it is
-    // refused and names the port.
-    for (t, port) in [
-        (fam(set(), "i", push("stdout", var("i"))), "stdout"),
-        (fam(set(), "i", read("stdin")), "stdin"),
-    ] {
-        let e = lower(&t).unwrap_err();
-        assert!(e.contains(&format!("the port `{port}` inside")), "{e}");
-    }
+    // refused and names the port. A read there lowers (`a_read_in_a_loop_or_a_family_...`).
+    let e = lower(&fam(set(), "i", push("stdout", var("i")))).unwrap_err();
+    assert!(e.contains("the port `stdout` inside"), "{e}");
     let passed = let_(
         "g",
         lam(&["h"], app(var("h"), vec![lit(1)])),
@@ -116,15 +226,23 @@ fn a_push_in_a_family_or_in_a_lambda_passed_as_an_argument_is_refused() {
 
 #[test]
 fn a_function_using_two_ports_used_as_a_value_names_both() {
+    // A port the function only reads is not named: the read is placed outside the function
+    // and takes no state through the call (FAIL-build-port-read-in-map).
     let echo = lam(
         &["p"],
-        push("stdout", prim(Prim::Concat, vec![var("p"), read("stdin")])),
+        prim(
+            Prim::Tuple,
+            vec![
+                push("stdout", prim(Prim::Concat, vec![var("p"), read("stdin")])),
+                push("stderr", var("p")),
+            ],
+        ),
     );
     let t = let_("echo", echo, prim(Prim::Tuple, vec![var("echo")]));
     assert_eq!(
         lower(&t).unwrap_err(),
         "`zedc build` cannot compile this program: the function `echo`, of 1 parameter, reads \
-         or pushes the ports `stdout`, `stdin`, and the program uses `echo` as a value (it \
+         or pushes the ports `stdout`, `stderr`, and the program uses `echo` as a value (it \
          passes, stores or returns it) instead of calling it. Built code carries the state of \
          a port only through a call that names the function, so `echo` can only be called by \
          its name. Repairs: call `echo` by its name where it is used; move the reads and \

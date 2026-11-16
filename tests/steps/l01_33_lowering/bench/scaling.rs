@@ -4,8 +4,10 @@
 
 use std::collections::BTreeMap;
 
-use zed_kernel::Term;
+use zed_kernel::term::build::{lit, prim};
+use zed_kernel::{Family, Prim, Term, Value};
 use zed_tests::deep::on_small_stack;
+use zed_tests::kernel::fam;
 use zed_tests::scaling;
 use zed_tests::scaling::check_order;
 use zedc::zir::Region;
@@ -217,5 +219,39 @@ fn lowering_a_wide_match_scales() {
         .collect();
     scaling::check("lowering a function over a match of n arms", N, |n| {
         lower(&terms[&n]).unwrap();
+    });
+}
+
+/// `{x0: (stdin, {x1: (stdin, … stdin …)})}`, `d` families deep, each body reading standard
+/// input: every read is placed outside the outermost family (row FAIL-build-port-read-in-map).
+fn reads_in_nested_families(d: usize) -> Term {
+    let one = || lit(Family::set([Value::Int(1)]));
+    (0..d).fold(Term::Read("stdin".into()), |t, i| {
+        fam(
+            one(),
+            &format!("x{i}"),
+            prim(Prim::Tuple, vec![Term::Read("stdin".into()), t]),
+        )
+    })
+}
+
+/// A read inside each of d nested families finds where it goes in O(1) amortized, and the reads
+/// share one node outside them, so each family takes one argument for it: linear in d, not
+/// d² (`Lower::read_frame` in crates/zedc-zir/src/zir/lower.rs).
+#[test]
+fn reads_in_a_deep_nest_of_families_scale() {
+    on_small_stack(|| {
+        let (small, large) = (
+            reads_in_nested_families(2_000),
+            reads_in_nested_families(2_000 * scaling::FACTOR),
+        );
+        check_order(
+            "lowering a read in each of n nested families",
+            2_000,
+            1,
+            |d| {
+                lower(if d == 2_000 { &small } else { &large }).unwrap();
+            },
+        );
     });
 }

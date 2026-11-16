@@ -18,13 +18,12 @@ use zedc::zir::lower::lower;
 #[test]
 fn a_port_in_a_family_s_body_is_refused_as_inside_a_family() {
     let set = || lit(Family::set([1, 2].map(Value::Int)));
-    let cases = [
-        (
-            fam(set(), "i", Term::Push("stdout".into(), var("i").into())),
-            "stdout",
-        ),
-        (fam(set(), "i", Term::Read("stdin".into())), "stdin"),
-    ];
+    // A read in a family's body lowers since FAIL-build-port-read-in-map
+    // (`reach::a_read_in_a_loop_or_a_family_lowers_outside_the_body`); a push is refused.
+    let cases = [(
+        fam(set(), "i", Term::Push("stdout".into(), var("i").into())),
+        "stdout",
+    )];
     let wrong: Vec<String> = cases
         .iter()
         .filter_map(|(t, port)| {
