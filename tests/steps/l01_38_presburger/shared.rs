@@ -10,7 +10,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::int::Int;
 use zedc::store::presburger::{
     Atom, Con, Formula, Lin, Model, Shared, decide, project, satisfiable,
@@ -974,8 +973,7 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
 
 /// Formula 9 of seed 0x5f5b, `2 c >= -4 && !(...)`, whose projection narrows when the shared
 /// part `2 b >= 2` is taken out of the negated disjunction: the narrower sets hold every value
-/// of a point in the window. The random tests reach this case about once in 200 formulas. The
-/// solver alone; with the exact cover both writings give the exact sets, so the same.
+/// of a point in the window. The random tests reach this case about once in 200 formulas.
 #[test]
 fn a_shared_part_taken_out_narrows_a_projection() {
     let mut rng = Rng::new(0x5F5B);
@@ -983,10 +981,8 @@ fn a_shared_part_taken_out_narrows_a_projection() {
         .map(|_| random_tiers(&mut rng))
         .last()
         .expect("ten formulas");
-    let c = solver_alone(|| factoring_loses_no_precision([(9, f.clone())]));
-    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
     let c = factoring_loses_no_precision([(9, f)]);
-    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
 }
 
 /// The counts of [`factoring_loses_no_precision`]: projections the same as the formula's as

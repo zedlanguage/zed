@@ -290,7 +290,7 @@ pub(super) fn spent() -> bool {
 /// what the solver alone answers (`l01_39_reduced_product::scaling::an_even_number_that_is_
 /// odd_is_empty`, whose parity the reduction then finds).
 ///
-/// `f` is in the form of [`super::canonical_parts`], as its one caller, `project_each_asked`,
+/// `f` is in the form of [`super::canonical_parts`], as its one caller, `project_each_with`,
 /// gives it: the solver and the cover then read one formula whatever order its parts were
 /// written in, so the cover's models, cells, work and any refusal past the limit do not
 /// depend on that order (PRES-cover-order-refusals). A caller with a formula in another
@@ -1931,7 +1931,7 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Shared, member, project_each};
+    use super::super::{Shared, member, project_each_exact};
     use super::*;
 
     /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
@@ -2150,9 +2150,9 @@ mod tests {
         let (mut wrong, mut refused, mut wider_before) = (Vec::new(), Vec::new(), 0);
         for round in 0..300 {
             let f = boxed(formula(&mut rng, 3));
-            let each = project_each(&f, &syms);
+            let each = project_each_exact(&f, &syms);
             EXACT_OFF.set(true);
-            let before = project_each(&f, &syms);
+            let before = project_each_exact(&f, &syms);
             EXACT_OFF.set(false);
             for (k, n) in NAMES.iter().enumerate() {
                 let want = brute(&f, n);
@@ -2193,7 +2193,7 @@ mod tests {
                 let answers: Vec<_> = (orders.iter())
                     .map(|o| {
                         let syms: Vec<Atom> = o.iter().map(|n| a(n)).collect();
-                        let got = project_each(&f, &syms);
+                        let got = project_each_exact(&f, &syms);
                         let mut by: Vec<(&str, String)> = (o.iter().copied())
                             .zip(match &got {
                                 Ok((each, _)) => each.iter().map(|r| format!("{r:?}")).collect(),
@@ -2227,7 +2227,7 @@ mod tests {
             ])
         };
         let f = boxed(Formula::and(vec![d(1, 0, 3, 1), d(1, 1, 3, 0)]));
-        let each = project_each(&f, &[a("x"), a("y")]).unwrap();
+        let each = project_each_exact(&f, &[a("x"), a("y")]).unwrap();
         assert_eq!(each.0[0], Ok(IntervalSet::empty()), "{f}");
         assert_eq!(each.0[1], Ok(IntervalSet::empty()), "{f}");
     }
@@ -2255,7 +2255,7 @@ mod tests {
             }
             assert!(each.1.is_empty());
             assert_eq!(EXACT_QUESTIONS.get(), 0);
-            assert_eq!(project_each(&f, &[a("x"), a("y"), a("z")]).unwrap(), each);
+            assert_eq!(project_each_exact(&f, &[a("x"), a("y"), a("z")]).unwrap(), each);
             assert_eq!(EXACT_QUESTIONS.get(), 0);
         }
         assert!(super::super::certified_domains(&evens(4), &[a("x")]).is_none());
@@ -2344,7 +2344,7 @@ mod tests {
     }
 
     fn project(f: &Formula, s: &str) -> IntervalSet {
-        project_each(f, &[a(s)]).unwrap().0.remove(0).unwrap()
+        project_each_exact(f, &[a(s)]).unwrap().0.remove(0).unwrap()
     }
 
     /// A formula whose cover takes one question for each even value of x in `0..=2k`, the
@@ -2404,7 +2404,7 @@ mod tests {
             "the work is not the same on a second run"
         );
         EXACT_LIMIT_SET.set(Some(used - 1));
-        let r = project_each(&f, &[a("x")]).unwrap();
+        let r = project_each_exact(&f, &[a("x")]).unwrap();
         EXACT_LIMIT_SET.set(None);
         assert_eq!(r.0, vec![Err(Refusal::Questions)]);
         assert!(r.1.is_empty(), "{:?}", r.1);
@@ -2425,7 +2425,7 @@ mod tests {
             eq(&[("x", 1), ("z", -2)], 0),
         ]);
         EXACT_LIMIT_SET.set(Some(10_000));
-        let (mut each, causes) = project_each(&f, &[a("x")]).unwrap();
+        let (mut each, causes) = project_each_exact(&f, &[a("x")]).unwrap();
         EXACT_LIMIT_SET.set(None);
         assert_eq!(
             each.remove(0),
@@ -2591,7 +2591,7 @@ mod tests {
             ge(&[("a", 1), ("c", 1), ("z0", -1)], 12),
             eq(&[("a", 1), ("b", 1), ("c", 2), ("z2", -1)], -5),
         ]);
-        let b = project_each(&f, &[a("b")]).unwrap().0.remove(0);
+        let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
         assert_eq!(b, Err(Refusal::Growth), "{b:?}");
     }
 
@@ -2779,9 +2779,9 @@ mod tests {
             }
             for (l, limit) in [None, Some(LOW)].into_iter().enumerate() {
                 EXACT_LIMIT_SET.set(limit);
-                let first = project_each(&f, &syms);
+                let first = project_each_exact(&f, &syms);
                 for g in &orders {
-                    let other = project_each(g, &syms);
+                    let other = project_each_exact(g, &syms);
                     if other != first {
                         differ.push(format!(
                             "round {round} limit {limit:?}: {first:?} and {other:?}: {f} and {g}"
@@ -2844,7 +2844,7 @@ mod tests {
         EXACT_QUESTIONS.set(0);
         EXACT_WORK.set(0);
         FAST_WORK.set(0);
-        let got = project_each(&f, &[a("x")]).unwrap().0;
+        let got = project_each_exact(&f, &[a("x")]).unwrap().0;
         EXACT_LIMIT_SET.set(None);
         assert_eq!(got, vec![Ok(want)]);
         assert_eq!(EXACT_QUESTIONS.replace(0), 0);

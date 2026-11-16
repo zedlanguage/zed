@@ -5,7 +5,7 @@
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zedc::store::presburger::exact::EXACT_OFF;
-use zedc::store::presburger::{Atom, Each, Formula, Refusal, project_each};
+use zedc::store::presburger::{Atom, Each, Formula, Refusal, project_each, project_each_exact};
 
 use crate::instances::Rng;
 
@@ -84,13 +84,13 @@ pub fn solver_alone<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// `project_each(f, syms)` as the solver alone answers it ([`solver_alone`]), checked against
-/// the answer with the exact cover: inside the solver's set, or a refusal with
-/// [`Refusal::Questions`] where the cover passed its work limit. A cover that passes its limit
-/// refuses the projection (P197): it does not keep the solver's set, even where that set is
-/// exact.
+/// the answer with the exact cover ([`project_each_exact`]): inside the solver's set, or a
+/// refusal with [`Refusal::Questions`] where the cover passed its work limit. A cover that
+/// passes its limit refuses the projection (P197): it does not keep the solver's set, even
+/// where that set is exact.
 pub fn project_alone(f: &Formula, syms: &[Atom]) -> Each {
     let alone = solver_alone(|| project_each(f, syms)).expect("a projection");
-    let covered = project_each(f, syms).expect("a projection");
+    let covered = project_each_exact(f, syms).expect("a projection");
     for (a, c) in alone.0.iter().zip(&covered.0) {
         let inside = matches!((a, c), (Ok(a), Ok(c)) if c.is_subset(a));
         assert!(

@@ -36,8 +36,8 @@ fn exact_preimages_of_ranges() {
         (
             "ok(x) = x * 7 mod 10 == 3;\n",
             &[("x", Some(0), Some(30))],
-            "x [9..=9, 19..=19, 29..=29]; exact",
-            "x [9..=9, 19..=19, 29..=29]; exact",
+            "x [9..=29]; necessary",
+            "x [9..=9, 19..=19, 29..=29]; exact; enumerated",
         ),
         (
             // Every `x` and every `y` in 1..=6 has a partner, but not every pair meets it.
