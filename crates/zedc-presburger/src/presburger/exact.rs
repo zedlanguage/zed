@@ -331,18 +331,15 @@ struct Piece {
 // Complexity tradeoff: the cover asked each question and read each cell on the whole formula,
 // so a call on n stages that share no atom cost O(n) for each symbol and O(n^2) for all
 // (`bench::omega::every_state_and_credit_of_a_pipeline_scale`, 5.4 M units for each symbol at
-// 3,450 constraints, refused). Used: union-find over the atoms of the conjuncts, O(t α) for
-// t terms, once a call; each symbol's cover then reads its own group. The same split the
-// solver makes for its hulls (item TIGHTEN-each-whole), made here for the cover.
+// 3,450 constraints, refused). Used: union-find over the atoms of the conjuncts, with path
+// halving and no union by rank, O(t log t) for t terms, once a call; each symbol's cover then
+// reads its own group. The same split the solver makes for its hulls (item TIGHTEN-each-whole),
+// made here for the cover. The conjuncts are read by `Formula::conjuncts`, a shared conjunction
+// once: read once for each path to it, `A_(n+1) = A_n ∧ A_n` gave 2^(n+1) conjuncts (42 s and
+// 8 GB at n = 22; Sol, round 2 of PRES-pugh-xr), test
+// `splitting_a_shared_conjunction_reads_it_once`.
 fn split(f: &Formula) -> Vec<Piece> {
-    let mut conjuncts: Vec<&Formula> = Vec::new();
-    let mut stack = vec![f];
-    while let Some(g) = stack.pop() {
-        match g {
-            Formula::And(gs) => stack.extend(gs.iter().rev()),
-            _ => conjuncts.push(g),
-        }
-    }
+    let conjuncts = f.conjuncts();
     let whole = || {
         vec![Piece {
             f: f.clone(),
@@ -369,7 +366,7 @@ fn split(f: &Formula) -> Vec<Piece> {
         for a in &atoms {
             let j = *first.entry(a.clone()).or_insert(i);
             let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
-            parent[ri] = rj;
+            parent[ri.max(rj)] = ri.min(rj);
         }
         reads.push(atoms);
     }
@@ -1051,7 +1048,9 @@ fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refu
         }
         let j = *first.entry(a).or_insert(i);
         let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
-        parent[ri] = rj;
+        // The least index the root, so that a group, and the order of `groups` below, do not
+        // depend on the order a hash set of atoms is read in (Sol, round 2 of PRES-pugh-xr).
+        parent[ri.max(rj)] = ri.min(rj);
     }
     work.read(read)?;
     // Ordered, so that the work charged before a group not shown exact is the same on every run.
@@ -2121,6 +2120,22 @@ mod tests {
             member(&a("x"), &IntervalSet::of(0, 2 * k)),
             member(&a("z"), &IntervalSet::of(0, 2 * k)),
         ])
+    }
+
+    /// A conjunction held by both sides of a conjunction, 18 levels deep: a DAG of 19 parts whose
+    /// tree has 2^18 paths. Its conjuncts are the two constraints, each read once, and `split`
+    /// parts them. Read once for each path (before Sol's fix in round 2 of PRES-pugh-xr) they were
+    /// 2^19, and 2^22 at 22 levels took 42 s and 8 GB.
+    #[test]
+    fn splitting_a_shared_conjunction_reads_it_once() {
+        let mut f = Formula::And(Shared::new(vec![ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]));
+        for _ in 0..18 {
+            f = Formula::And(Shared::new(vec![f.clone(), f]));
+        }
+        assert_eq!(f.conjuncts().len(), 2);
+        let parts = split(&f);
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.size == 1));
     }
 
     /// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, the
