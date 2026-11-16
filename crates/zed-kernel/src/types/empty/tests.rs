@@ -507,65 +507,79 @@ pub(super) type Ring = (&'static str, Vec<Type>, Vec<Vec<usize>>);
 /// - each holding `#c_j((L,))` for the list type `L = #nil | #cons((int, L))`, a recursive
 ///   lower group.
 pub(super) fn rings(k: usize) -> Vec<Ring> {
+    (0..RINGS).map(|i| ring_family(k, i)).collect()
+}
+
+/// The number of families [`rings`] gives.
+pub(super) const RINGS: usize = 6;
+
+/// The family `i` of [`rings`] alone, so a benchmark builds only the one it measures.
+pub(super) fn ring_family(k: usize, i: usize) -> Ring {
     use super::super::rec::{Def, Expr, Group};
-    let apart: Vec<Vec<usize>> = (0..k).map(|j| vec![j]).collect();
+    let apart = || (0..k).map(|j| vec![j]).collect();
     let names = |j: usize, t: Expr| Expr::Atom(format!("a{j}"), vec![t]);
-    let zero = Type::tuple(vec![Type::lit(&Value::Int(0)).expect("0")]);
-    let mut beside = ring(k, names);
-    beside.extend((0..k).map(|j| Type::atom_with(&format!("a{j}"), &(&Type::top() - &zero))));
-    let int = Type::tuple(vec![Type::int()]);
+    let int = || Type::tuple(vec![Type::int()]);
     let holding =
         |lower: &dyn Fn(usize) -> Expr| ring(k, |j, t| Expr::Union(vec![names(j, t), lower(j)]));
-    let list = Group::new(vec![Def {
-        name: "L".into(),
-        params: vec![],
-        body: Expr::Union(vec![
-            Expr::Type(Type::atom("nil")),
-            Expr::Atom(
-                "cons".into(),
-                vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
-            ),
-        ]),
-    }])
-    .expect("a group")
-    .instance(vec![])
-    .remove(0);
-    vec![
-        (
+    match i {
+        0 => (
             "k types that each reach a ring of k names",
             ring(k, names),
-            apart.clone(),
+            apart(),
         ),
-        (
+        1 => (
             "k types that share a node and reach a ring of k names",
             ring(k, |j, t| Expr::Tuple(vec![names(j, t)])),
-            apart.clone(),
+            apart(),
         ),
-        (
-            "a ring of k names beside a whole under each name",
-            beside,
-            (0..k).map(|j| vec![j, k + j]).collect(),
-        ),
-        (
+        2 => {
+            let zero = Type::tuple(vec![Type::lit(&Value::Int(0)).expect("0")]);
+            let mut beside = ring(k, names);
+            beside
+                .extend((0..k).map(|j| Type::atom_with(&format!("a{j}"), &(&Type::top() - &zero))));
+            (
+                "a ring of k names beside a whole under each name",
+                beside,
+                (0..k).map(|j| vec![j, k + j]).collect(),
+            )
+        }
+        3 => (
             "k types that each reach a ring of k names holding a lower type",
-            holding(&|j| Expr::Type(Type::atom_with(&format!("b{j}"), &int))),
-            apart.clone(),
+            holding(&|j| Expr::Type(Type::atom_with(&format!("b{j}"), &int()))),
+            apart(),
         ),
-        (
+        4 => (
             "k types that each reach a ring of k names holding one lower type under one name",
-            holding(&|_| Expr::Type(Type::atom_with("b", &int))),
+            holding(&|_| Expr::Type(Type::atom_with("b", &int()))),
             vec![(0..k).collect()],
         ),
-        (
-            "k types that each reach a ring of k names holding a list type",
-            holding(&|j| Expr::Atom(format!("c{j}"), vec![Expr::Type(list.clone())])),
-            apart,
-        ),
-    ]
+        5 => {
+            let list = Group::new(vec![Def {
+                name: "L".into(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Type(Type::atom("nil")),
+                    Expr::Atom(
+                        "cons".into(),
+                        vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+                    ),
+                ]),
+            }])
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+            (
+                "k types that each reach a ring of k names holding a list type",
+                holding(&|j| Expr::Atom(format!("c{j}"), vec![Expr::Type(list.clone())])),
+                apart(),
+            )
+        }
+        _ => panic!("rings has {RINGS} families, not a family {i}"),
+    }
 }
 
 /// The classes of the ring families of [`rings`] at a few small sizes, each the one its
-/// benchmark in `bench.rs` checks at 64 and 512 types.
+/// benchmark in `bench.rs` checks at 2048 and 16384 types.
 #[test]
 fn the_rings_of_names_have_the_classes_their_shapes_give() {
     for k in [1, 2, 3, 8] {

@@ -2,20 +2,99 @@
 //! its default run (TEST-bench-move-crates). Each check they make besides the ratio has a small
 //! instance among the correctness tests in `tests.rs`, named at each benchmark.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::tests::{
-    rings, tuple_diff_union_pair, tuple_diff_union_payload_key_pair, tuple_diff_union_payload_pair,
+    RINGS, Ring, ring_family, tuple_diff_union_pair, tuple_diff_union_payload_key_pair,
+    tuple_diff_union_payload_pair,
 };
 use super::*;
 
-/// Checks the families `range` of [`rings`] at 64 and 512 types.
+/// `runs` copies of the family `i` of [`super::tests::rings`] at `k` types, each built on a
+/// thread of its own, so no run of a benchmark reads what another run left in its input.
+///
+/// One input shared by every run of a size let the first run do work that the later runs found
+/// done: on the second family at 2048 and 16384 types, the warm-up took 321.0M instructions and
+/// 69.1 MB and the measured run at 2048 247.4M and 54.4 MB, while the one run at 16384 was a first
+/// run, 2618.2M and 552.8 MB. The meter compares the second run at n with the first at 8n, so the
+/// ratio came out 10.58, over the limit of 10.5, and only the second run at 8n that the meter takes
+/// when the first is over (`Meter::again_when_over`) brought it to 8.20. At 4f94e70b9 the same
+/// comparison came to 10.497 or 10.498 from one run to the next, so the check passed at 10.50 in
+/// some runs and in others went over and was measured again at 8.2: the 3.21G and 2.51G
+/// instructions of FAIL-ratio-ring-shared-node. Copies built on the main thread one after another
+/// do not help: a group's instance at equal arguments is one per thread
+/// (`rec::group::INSTANCES`), so they share their types, and the runs measured the same 321M
+/// against 247M.
+///
+/// A thread's instances end with it: when the building thread ends, its unit ends (`Unit`'s
+/// `Drop` in `rec::unfold`), and every run unfolds the types it reads again, in its own unit. So
+/// every run of a size does the same work: measured, the warm-up and the run at 2048 took 361.2M
+/// instructions within 0.01% and the same 75,014,764 bytes, and the run at 16384 2940.0M and
+/// 600,121,900 bytes, ratio 8.14, with no second run at 16384. The one difference left is in
+/// what the process keeps: equal definitions are one group (`rec::group::GROUPS`), so the copies
+/// of a size share their ring's group, and the first run of the last family allocates 4,992 bytes
+/// more than the later ones, the same at 64 types and at 2048, so it does not grow with k
+/// (`each_run_of_a_ring_benchmark_does_the_same_work`).
+// Complexity tradeoff: the runs that the meter takes (2 at each size on a count of instructions)
+// cost one build each, Θ(runs · k) time and memory where one shared input cost Θ(k), all of it
+// before any run is timed; a shared input measures a memo in place of the pass.
+fn rings_each(k: usize, i: usize, runs: usize) -> Vec<Ring> {
+    (0..runs)
+        .map(|_| {
+            std::thread::spawn(move || ring_family(k, i))
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+        .collect()
+}
+
+/// Checks the families `range` of [`super::tests::rings`] at 2048 and 16384 types, each run on an
+/// input of its own ([`rings_each`]).
 fn rings_scale(range: std::ops::Range<usize>) {
-    let families = crate::scaling::inputs(2048, rings);
+    let n = 2048;
+    let (small, large) = crate::scaling::Meter::new().runs();
     for i in range {
-        let (what, _, _) = rings(1).swap_remove(i);
-        crate::scaling::check(what, 2048, |k| {
-            let (_, ts, classes) = &families[&k][i];
+        let (what, _, _) = ring_family(1, i);
+        let inputs: HashMap<usize, (Vec<Ring>, AtomicUsize)> =
+            [(n, small), (crate::scaling::FACTOR * n, large)]
+                .into_iter()
+                .map(|(k, runs)| (k, (rings_each(k, i, runs), AtomicUsize::new(0))))
+                .collect();
+        crate::scaling::check(what, n, |k| {
+            let (each, next) = &inputs[&k];
+            let (_, ts, classes) = &each[next.fetch_add(1, Ordering::Relaxed)];
             assert_eq!(&overlaps(ts.iter()), classes);
         });
+    }
+}
+
+/// Each run of a ring benchmark allocates the same bytes as every other run of its size, so the
+/// meter compares the pass at both sizes and not a memo the first run fills
+/// (FAIL-ratio-ring-shared-node, at [`rings_each`]). A run on a copy built apart comes first, as
+/// the meter's warm-up does: equal definitions are one group for the process
+/// (`rec::group::GROUPS`), so the copies of a family share its ring's group, and the first run of
+/// the last family that reads that group allocates 4,992 bytes more than the later ones, at 64
+/// types and at 2048. The copy is built on a thread of its own, not by [`rings_each`], so that
+/// copies of [`rings_each`] that shared their types would still differ from one run to the next.
+#[test]
+fn each_run_of_a_ring_benchmark_does_the_same_work() {
+    for i in 0..RINGS {
+        let (_, ts, classes) = std::thread::spawn(move || ring_family(64, i))
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        let each = rings_each(64, i, 3);
+        crate::scaling::alone(&|| assert_eq!(&overlaps(ts.iter()), &classes));
+        let bytes: Vec<u64> = each
+            .iter()
+            .map(|(_, ts, classes)| {
+                crate::scaling::alone(&|| assert_eq!(&overlaps(ts.iter()), classes)).0
+            })
+            .collect();
+        assert!(
+            bytes.iter().all(|&b| b == bytes[0]),
+            "{}: the runs allocated {bytes:?} bytes",
+            each[0].0
+        );
     }
 }
 

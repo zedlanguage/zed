@@ -12453,8 +12453,10 @@ impl Placing {
 // one large group. Benchmarks: `types::empty::bench::types_that_each_reach_a_ring_of_names_scale`
 // (the ring of names, the same under a one-tuple, and beside a whole under each name),
 // `types_that_each_reach_a_ring_holding_lower_types_scale` (each member holding `#b_j((int,))`,
-// `#b((int,))` under one name, or `#c_j((L,))` for a recursive list type `L`),
-// small instances of both in
+// `#b((int,))` under one name, or `#c_j((L,))` for a recursive list type `L`), each run on a
+// copy of its own (`bench::rings_each`; FAIL-ratio-ring-shared-node: one copy shared by every
+// run put a first run at 8k beside a later run at k, 10.50 or more), 8.10 to 8.16 times the
+// instructions from k = 2,048 to 16,384; small instances of both in
 // `types::empty::tests::the_rings_of_names_have_the_classes_their_shapes_give`; tests:
 // `types_that_meet_are_joined_in_random_groups_holding_lower_types` (400 random cases against
 // the meets), `types_that_each_reach_a_ring_of_names_are_apart`,
