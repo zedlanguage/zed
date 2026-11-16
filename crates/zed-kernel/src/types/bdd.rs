@@ -1150,7 +1150,9 @@ impl<'m> Connect<'m> {
             [q, p]
         };
         // The meets may be a leaf, or the two halves of an exclusive or (`a&!b`, `!a&b`), whose
-        // one form is not this union (module `xor`); both tests take constant time.
+        // one form is not this union (module `xor`), as `Connect::zipped` finds them. Both tests
+        // take constant time when they fail; when the second fits it joins the two sets of atoms
+        // (`xor::join`), as `zipped` does.
         Part::zip_at_once(&a, &b, Op::Or)
             .or_else(|| xor::xor_of(&a, &b, Op::Or))
             .unwrap_or_else(|| Part::expr(Form::Or(a, b)))
