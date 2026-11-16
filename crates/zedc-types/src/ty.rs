@@ -11271,36 +11271,42 @@ impl Ty {
     }
 
     /// The functions of its meet with `t`: for each of its functions and each of `t`'s that
-    /// takes the same parameters, the function with the arrows of both ([`Sig::add_arrows_of`]),
-    /// or the one function where the two are equal. A function of one parameter list and a
-    /// function of another share no value ([`fits_sig`]), so such a pair gives nothing.
-    /// Before (FAIL-types-meet-function-union), its own functions were kept whenever `t` had
-    /// any, and `(rat -> #b) & ((bool -> ()) | String)` was read as `rat -> #b`.
+    /// takes the same parameters, their meet ([`Domains::meet`]), or the one function where the
+    /// two are equal. A function of one parameter list and a function of another share no value
+    /// ([`fits_sig`]), so such a pair gives nothing. Before (FAIL-types-meet-function-union),
+    /// its own functions were kept whenever `t` had any, and `(rat -> #b) & ((bool -> ()) |
+    /// String)` was read as `rat -> #b`.
     // Complexity tradeoff (COMPLEXITY.md F200): `t`'s functions are filed by parameter list in
     // a hash map, O(m) expected for m functions, and each of the n functions of `self` is paired
     // with those of its list only, so the cost is O(n + m) plus the pairs made, which are the
     // meet itself. The naive method compares each of the n·m pairs, O(n·m) also where no two
-    // functions take the same parameters and the meet has no function.
+    // functions take the same parameters and the meet has no function. What each function's
+    // arrows say of its domain ([`Domains`]) is worked out once for each function, not once for
+    // each pair.
     fn fns_met(&self, t: &Ty) -> Vec<Arc<Sig>> {
         if self.fns.is_empty() || t.fns.is_empty() {
             return Vec::new();
         }
-        let mut by_params: HashMap<ParamList, Vec<&Arc<Sig>>> = HashMap::new();
+        let mut by_params: HashMap<ParamList, Vec<(&Arc<Sig>, Domains)>> = HashMap::new();
         for q in &t.fns {
-            by_params.entry(q.param_list()).or_default().push(q);
+            let entry = (q, Domains::of(q));
+            by_params.entry(q.param_list()).or_default().push(entry);
         }
         let mut have = HashSet::new();
         let mut out = Vec::new();
         for s in &self.fns {
-            for q in by_params.get(&s.param_list()).into_iter().flatten() {
-                let m = if s == *q {
-                    s.clone()
-                } else {
-                    let mut m = Sig::clone(s);
-                    m.add_arrows_of(q);
-                    Arc::new(m)
+            let Some(qs) = by_params.get(&s.param_list()) else {
+                continue;
+            };
+            let ds = Domains::of(s);
+            for (q, dq) in qs {
+                let m = match s == *q {
+                    true => Some(s.clone()),
+                    false => Domains::meet((s, &ds), (q, dq)).map(Arc::new),
                 };
-                if have.insert(m.clone()) {
+                if let Some(m) = m
+                    && have.insert(m.clone())
+                {
                     out.push(m);
                 }
             }
@@ -14048,6 +14054,148 @@ fn piece_keys<'t>(t: &'t Ty, out: &mut Vec<Key<'t>>) -> bool {
             .map(|c| Key::Carrier(c.base())),
     );
     true
+}
+
+/// What the arrows of a signature say of its domain, for its meet with a signature of the same
+/// parameters ([`Ty::fns_met`]). The domain of a function of the signature holds the parameter
+/// types of each exact arrow, its guarantee, and lies within those of all its arrows, its
+/// permission (DESIGN.md sec:type_language, "Morphism types carry two domain bounds", as
+/// [`every_arrow_fits`] reads a signature); the arrows of several parameters are read as
+/// tuples of their parameter types, in order.
+struct Domains {
+    /// The kernel type of its permission, the union of the tuples of each arrow's parameter
+    /// types, where each of those has a kernel type ([`Ty::exact_kernel`]); none where one
+    /// holds a function, a variable or the unknown.
+    permission: Option<KType>,
+    /// The union of the tuples of the parameter types of each exact arrow whose parameter
+    /// types each have a kernel type; none where no exact arrow has.
+    guaranteed: Option<KType>,
+    /// Parameter types whose product is its permission, where its permission has a kernel
+    /// type: for one parameter, the union of its arrows' types there; for several, the types
+    /// of its one arrow. None for several arrows of several parameters.
+    within: Option<Vec<Ty>>,
+}
+
+impl Domains {
+    /// What the arrows of `s` say of its domain. Cost: one kernel type for each parameter
+    /// type of each arrow, and their union joined in pairs.
+    fn of(s: &Sig) -> Domains {
+        let tuple = |a: &Arrow| {
+            let ks = a.params.iter().map(Ty::exact_kernel);
+            Some(KType::tuple(ks.collect::<Option<Vec<_>>>()?))
+        };
+        let tuples: Vec<Option<KType>> = s.arrows.iter().map(tuple).collect();
+        let guaranteed: Vec<KType> = (s.arrows.iter().zip(&tuples))
+            .filter(|(a, _)| !a.partial)
+            .filter_map(|(_, k)| k.clone())
+            .collect();
+        let guaranteed = (!guaranteed.is_empty()).then(|| KType::union_all(guaranteed));
+        let permission = tuples.into_iter().collect::<Option<Vec<_>>>();
+        let within = match (&permission, s.params.len(), s.arrows.as_slice()) {
+            (None, ..) => None,
+            (Some(_), 1, arrows) => Some(vec![Ty::union_all(arrows.iter().map(|a| &a.params[0]))]),
+            (Some(_), _, [a]) => Some(a.params.clone()),
+            (Some(_), ..) => None,
+        };
+        Domains {
+            permission: permission.map(KType::union_all),
+            guaranteed,
+            within,
+        }
+    }
+
+    /// Whether a value of its guarantee was built outside the permission of `other`: then no
+    /// function is of both signatures, since its domain would hold the value and lie within
+    /// that permission. `Inhabited` is the kernel's proof, the value built and checked
+    /// ([`KType::subtype_verdict`]); `Empty` and a refusal claim no such value, and the meet
+    /// is kept. The guarantee is compared as one union: a value of the union outside the
+    /// permission is a value of one of its exact arrows' tuples outside it, so the answer is
+    /// that of comparing each tuple alone, where the kernel decides both.
+    // Complexity tradeoff: one comparison for each exact arrow, made first, cost O(a) kernel
+    // comparisons against a permission of O(a) rows, O(a^2) (measured: 5.5 s for 2048 arrows
+    // each side, 9 times that of 1024). Used: one comparison of the union of the guarantees,
+    // made once for each function, whose cost is that of the kernel's comparison of two unions
+    // of O(a) rows. Given up: where the kernel refuses the union but would decide one tuple,
+    // no value is proved outside and the meet is kept, which is sound.
+    fn outside(&self, other: &Domains) -> bool {
+        let (Some(g), Some(p)) = (&self.guaranteed, &other.permission) else {
+            return false;
+        };
+        g.subtype_verdict(p) == Verdict::Inhabited
+    }
+
+    /// The meet of `s` and `q`, two signatures of the same parameters with what their arrows
+    /// say of their domains: none where it is proved empty, two exact arrows over different
+    /// domains among them (DESIGN.md sec:type_language, "two exact arrows over different
+    /// domains share no value and their intersection is empty"); otherwise the arrows of both,
+    /// each partial arrow's parameter types met with those of the other side's permission.
+    ///
+    /// Proof that a function `f` of both signatures is of the meet. Its domain holds both
+    /// guarantees, which are the exact arrows of both, kept; its values on each arrow's
+    /// parameter types are those the arrow allows, and each kept arrow is unchanged. Its domain
+    /// lies within both permissions, `U_s` and `U_q`. A partial arrow of `s`, over `P`, allows
+    /// `f`'s values only at keys in `U_q`, so the arrow over `P & U_q` bounds every value it
+    /// bounded; where `U_q` is the product of `within` (one parameter: the union of its
+    /// arrows' types; several, with one arrow: that arrow's types), `P & U_q` is the product of
+    /// the meets of the parameter types, and [`Ty::meet`] holds each of those. The meet's
+    /// permission is the union of its arrows' parameter types, and holds `U_s & U_q`: `U_s` is
+    /// `s`'s guarantee and partial arrows `P_s`, so `U_s & U_q` lies within `s`'s guarantee and
+    /// each `P_s & U_q`, which the meet's arrows hold; so `f`'s domain is permitted.
+    ///
+    /// It is within both sides exactly when each guarantee lies within the other side's
+    /// permission and each partial arrow was met. Where that is not proved, a refusal, a
+    /// variable, a function in a parameter type, or several arrows of several parameters, the
+    /// arrows are kept as they are: a meet holding every function of both, as an `is` test
+    /// needs, but not within each side.
+    // Complexity tradeoff: the overload of both, made before (FAIL-types-meet-exact-arrows-
+    // differing-domains), cost the arrows copied, O(a) for a arrows, and its permission was the
+    // union of the two, so it was within neither side where the domains differ. Used: one
+    // kernel comparison of each side's guarantee with the other side's permission
+    // ([`Domains::outside`]), and one meet for each parameter type of each partial arrow, O(a)
+    // meets of the sizes of the types; each side's guarantee and permission are made once for
+    // each function ([`Ty::fns_met`]). Given up: a guarantee the kernel refuses is not proved
+    // outside, and the meet is kept (COMPLEXITY.md F222).
+    fn meet((s, ds): (&Sig, &Domains), (q, dq): (&Sig, &Domains)) -> Option<Sig> {
+        if ds.outside(dq) || dq.outside(ds) {
+            return None;
+        }
+        let mut m = s.clone();
+        let n = m.arrows.len();
+        m.add_arrows_of(q);
+        let (own, other) = m.arrows.split_at_mut(n);
+        for (arrows, within) in [(own, &dq.within), (other, &ds.within)] {
+            let Some(within) = within else {
+                continue;
+            };
+            for a in arrows.iter_mut().filter(|a| a.partial) {
+                for (p, u) in a.params.iter_mut().zip(within) {
+                    *p = p.meet(u);
+                }
+            }
+        }
+        // Two arrows of one kind over equal parameter types are one arrow whose result is the
+        // meet of theirs: a function of both has its values there in both results, and
+        // [`Ty::meet`] holds those. The comparison of a signature takes each arrow it is given
+        // alone, so `(int ->? int) & (int ->? int | #a)` was not found within `int ->? int`.
+        // Cost: one hash lookup for each arrow, and the meets of the results merged.
+        let mut at: HashMap<(&[Ty], bool), usize> = HashMap::new();
+        let mut merged: Vec<Arrow> = Vec::with_capacity(m.arrows.len());
+        for a in &m.arrows {
+            match at.entry((&a.params, a.partial)) {
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    let kept = &mut merged[*e.get()];
+                    kept.result = kept.result.meet(&a.result);
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(merged.len());
+                    merged.push(a.clone());
+                }
+            }
+        }
+        drop(at);
+        m.arrows = merged;
+        Some(m)
+    }
 }
 
 /// The arrows of a signature, as read, by what their parameter types offer and their result

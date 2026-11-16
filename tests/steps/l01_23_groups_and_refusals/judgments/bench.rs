@@ -115,6 +115,32 @@ fn a_meet_of_unions_of_functions_scales() {
     });
 }
 
+/// An overload of `n` exact arrows met with an overload of `n` partial arrows over the same
+/// keys, one atom each, is one function of `2n` arrows, made in time near linear in `n`: each
+/// side's guarantee and permission are made once and compared once, and each partial arrow is
+/// met with the other side's permission once (FAIL-types-meet-exact-arrows-differing-
+/// domains, COMPLEXITY.md F222). Small instances: `a_meet_of_functions_meets_their_domains`.
+#[test]
+fn a_meet_of_overloads_meets_their_domains_in_time_near_linear() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let overload = |m: usize, arrow: &str| {
+        let text = (0..m)
+            .map(|i| format!("(#k{i} {arrow})"))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let n = 4096;
+    let sides = scaling::inputs(n, |m| (overload(m, "-> int"), overload(m, "->? int | #a")));
+    scaling::check("the meet of two overloads of n arrows", n, |m| {
+        let (a, b): &(Ty, Ty) = &sides[&m];
+        let met = a.meet(b);
+        assert_eq!(met.fns.len(), 1);
+        assert_eq!(met.fns[0].arrows.len(), 2 * m);
+    });
+}
+
 /// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
 /// another function of the same type at each depth, decided in time linear in `n`: each
 /// function is compared with the one at its depth (FAIL-types-tuple-subtype, COMPLEXITY.md

@@ -668,7 +668,12 @@ mod bench;
 
 // FAIL-types-meet-function-union: found by the kernel printer's round trip (l01_29 parens.rs).
 /// A meet one of whose sides is a union holding a function keeps both sides: it is the union
-/// of the meets of the other side with each member.
+/// of the meets of the other side with each member. An intersection with an operand that is
+/// no function type is the meet of sets, not an overload (DESIGN.md sec:type_language, point
+/// (2) of "Relation to semantic subtyping"), so two exact arrows over different domains meet
+/// in nothing, and two partial ones in their shared keys. Until
+/// FAIL-types-meet-exact-arrows-differing-domains this test held such a meet equal to the
+/// overload of the two, which holds functions of neither side.
 #[test]
 fn a_meet_with_a_union_of_functions_keeps_both_sides() {
     use zedc::check::read::parse_type;
@@ -676,10 +681,15 @@ fn a_meet_with_a_union_of_functions_keeps_both_sides() {
         let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
         (x.subtype(&y), y.subtype(&x))
     };
+    assert!(
+        parse_type("(rat -> #b) & ((bool -> ()) | String)")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         both(
-            "(rat -> #b) & ((bool -> ()) | String)",
-            "(rat -> #b) & (bool -> ())"
+            "(rat -> #b) & ((rat -> ()) | String)",
+            "(rat -> #b) & (rat -> ())"
         ),
         (true, true)
     );
@@ -690,13 +700,19 @@ fn a_meet_with_a_union_of_functions_keeps_both_sides() {
         ),
         (true, true)
     );
-    assert_eq!(
-        both(
-            "((f64 ->? int) & (String ->? #b)) | ((int ->? bool) & (String ->? #b))",
-            "((f64 ->? int) | (int ->? bool)) & (String ->? #b)"
-        ),
-        (true, true)
-    );
+    // The partial arrows share no key, so the meet holds only the map with no key: it is
+    // within each side and within the overloads, which hold more.
+    let meet = parse_type("((f64 ->? int) | (int ->? bool)) & (String ->? #b)").unwrap();
+    for side in [
+        "((f64 ->? int) & (String ->? #b)) | ((int ->? bool) & (String ->? #b))",
+        "(f64 ->? int) | (int ->? bool)",
+        "String ->? #b",
+    ] {
+        assert!(
+            meet.subtype(&parse_type(side).unwrap()),
+            "`{meet}` is not within `{side}`"
+        );
+    }
     // Control (passes today): a meet of two arrows, in either order.
     assert_eq!(
         both("(rat -> #b) & (bool -> ())", "(bool -> ()) & (rat -> #b)"),
@@ -743,6 +759,113 @@ fn a_meet_of_a_union_holding_the_unknown_is_the_other_side() {
         assert!(
             within(meet, other) && within(other, meet),
             "`{meet}` is not `{other}`"
+        );
+    }
+}
+
+// FAIL-types-meet-exact-arrows-differing-domains: split from FAIL-types-meet-key-arrows-not-within.
+/// A meet of two functions is within each of its sides, through `Ty::meet` as `is` narrows.
+#[test]
+fn a_meet_of_exact_arrows_of_different_domains_is_within_each_side() {
+    use zedc::check::read::parse_type;
+    let meet_of = |a: &str, b: &str| parse_type(a).unwrap().meet(&parse_type(b).unwrap());
+    for (a, b) in [
+        ("(()) -> ()", "String -> int"),
+        ("int -> ()", "String -> int"),
+        ("int -> ()", "rat ->? bool"),
+    ] {
+        let m = meet_of(a, b);
+        for side in [a, b] {
+            assert!(
+                m.subtype(&parse_type(side).unwrap()),
+                "the meet of `{a}` and `{b}`, `{m}`, is not within `{side}`"
+            );
+        }
+    }
+}
+
+/// The meet of two functions of one parameter list (DESIGN.md sec:type_language, "Morphism
+/// types carry two domain bounds"): empty where a guarantee is proved outside the other side's
+/// permission; otherwise the exact arrows of both, each partial arrow met with the other
+/// side's permission, within each side; and in every case it holds each function of both
+/// sides, as an `is` test needs.
+#[test]
+fn a_meet_of_functions_meets_their_domains() {
+    use zedc::check::read::parse_type;
+    let ty = |s: &str| parse_type(s).unwrap();
+    // Empty: a guarantee outside the other side's permission, with overloads and several
+    // parameters on either side.
+    for (a, b) in [
+        ("int -> ()", "String -> ()"),
+        ("int -> ()", "rat ->? ()"),
+        ("(int -> #a) & (String -> #a)", "int -> #a"),
+        ("(int | String) ->? #a", "(int -> #a) & (bool -> #a)"),
+        ("(x: int, y: int) -> int", "(x: int, y: String) -> int"),
+        (
+            "(x: int, y: int) -> int",
+            "(x: int, y: String | bool) ->? int",
+        ),
+    ] {
+        for (l, r) in [(a, b), (b, a)] {
+            let m = ty(l).meet(&ty(r));
+            assert!(
+                m.is_empty(),
+                "the meet of `{l}` and `{r}` is `{m}`, not empty"
+            );
+        }
+    }
+    // Within each side, and not empty: each case names a function of both sides, which the
+    // meet holds.
+    for (a, b, both) in [
+        ("int -> #a | #b", "int -> #a | #c", "int -> #a"),
+        ("int -> #a", "(int | String) ->? #a | #b", "int -> #a"),
+        (
+            "(int | String) ->? int",
+            "(int | bool) ->? int | #a",
+            "int ->? int",
+        ),
+        (
+            "(int -> #a) & (String ->? #b)",
+            "(int | bool) ->? #a | #c",
+            "int -> #a",
+        ),
+        (
+            "(int -> #a) & (String -> #b)",
+            "(int | String) ->? #a | #b",
+            "(int -> #a) & (String -> #b)",
+        ),
+        (
+            "(x: int, y: int) -> int",
+            "(x: int, y: int | String) ->? int",
+            "(x: int, y: int) -> int",
+        ),
+    ] {
+        for (l, r) in [(a, b), (b, a)] {
+            let m = ty(l).meet(&ty(r));
+            assert!(
+                ty(both).subtype(&m),
+                "the meet of `{l}` and `{r}`, `{m}`, does not hold `{both}`"
+            );
+            for side in [l, r] {
+                assert!(
+                    m.subtype(&ty(side)),
+                    "the meet of `{l}` and `{r}`, `{m}`, is not within `{side}`"
+                );
+            }
+        }
+    }
+    // A variable in a parameter type proves nothing outside, and its arrows are kept: the meet
+    // holds each function of both sides, here one on `int | rat`.
+    let (a, b, both) = (
+        "(T) -> int for T in int | rat",
+        "(int | rat | String) ->? int",
+        "(int | rat) -> int",
+    );
+    for (l, r) in [(a, b), (b, a)] {
+        let m = ty(l).meet(&ty(r));
+        assert!(
+            ty(both).subtype(&m),
+            "the meet of `{l}` and `{r}`, `{m}`, does not hold `{both}`"
         );
     }
 }
