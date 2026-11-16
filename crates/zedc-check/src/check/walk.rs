@@ -7706,9 +7706,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (false, _) => format!("`{word}({subject}, {rest})`"),
             };
             let (shape, forms) = match word {
+                // The empty separator is not carried into the repair: `s.split("")` always
+                // fails, so it is rejected (DESIGN L3.2, author decision P314), and the repair
+                // names the parameter instead.
                 "split" => (
                     "a string and a separator, passed by position",
-                    vec![call(second.unwrap_or("sep"))],
+                    vec![call(second.filter(|c| *c != "\"\"").unwrap_or("sep"))],
                 ),
                 "lines" => ("one string", vec![call("")]),
                 _ => (

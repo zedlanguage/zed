@@ -569,6 +569,8 @@ fn a_misshapen_string_call_is_repaired_with_the_programs_operands() {
             ),
             ("\"a\".split()", "repair: write `\"a\".split(sep)`"),
             ("split(\"a\")", "repair: write `split(\"a\", sep)`"),
+            // `"a".split("")` always fails (DESIGN L3.2, P314), so it is never the repair.
+            ("\"a\".split(sep: \"\")", "repair: write `\"a\".split(sep)`"),
             (
                 "\"a\".split(\",\", \";\")",
                 "repair: write `\"a\".split(\",\")`",
