@@ -324,8 +324,16 @@ fn a_rejected_program_builds_nothing() {
 
 /// A build stopped by SIGKILL while its linker runs leaves its working directory, with the
 /// object file in it; the next build to the same output succeeds and removes it
-/// (LINK-obj-leftover). The driver here stands for a slow linker: it says when the link has
-/// begun, and waits until the build that ran it has ended, then fails.
+/// (LINK-obj-leftover). The driver here stands for a slow linker: in the link of the program,
+/// the one call that reads `killed.o` from the working directory, it says when the link has
+/// begun, and waits until the build that ran it has ended, then fails. Every other call, the
+/// version reports and the prelink of the runtime, it passes to `cc`. Before
+/// (FAIL-build-killed-link-no-working-dir), it waited in every call but the version reports,
+/// and so in the prelink, which runs before the working directory is made, whenever no
+/// prelinked runtime of this library and key was there yet: after each new build of the
+/// library, and after LINK-lld-when-present gave LLD a key of its own. The build was then
+/// killed with no working directory, and the test failed or passed by the order its tests ran
+/// in. `a_build_killed_while_prelinking_blocks_no_later_build` kills a build in the prelink.
 #[test]
 fn a_build_killed_while_linking_blocks_no_later_build() {
     let d = dir();
@@ -343,8 +351,9 @@ fn a_build_killed_while_linking_blocks_no_later_build() {
     install(
         &waits,
         format!(
-            "#!/bin/sh\ncase \"$1\" in --version|-Wl,--version) exec cc \"$@\" ;; esac\n\
-             : > '{}'\nwhile kill -0 \"$PPID\" 2>/dev/null; do sleep 0.01; done\nexit 1\n",
+            "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in */killed.o)\n    : > '{}'\n    \
+             while kill -0 \"$PPID\" 2>/dev/null; do sleep 0.01; done\n    exit 1 ;;\n  \
+             esac\ndone\nexec cc \"$@\"\n",
             linking.display()
         )
         .as_bytes(),
@@ -383,4 +392,114 @@ fn a_build_killed_while_linking_blocks_no_later_build() {
         (Some(0), "again\n".to_string())
     );
     assert_eq!(working(&d, "killed"), Vec::<String>::new());
+}
+
+/// The prelinked runtimes in `d` made from the library named `library`, finished
+/// (`<library>.<hash>.<key>.o`) or unfinished (that and `.<pid>`), by name.
+fn prelinked_in(d: &Path, library: &str) -> Vec<String> {
+    let prefix = format!("{library}.");
+    let mut names: Vec<String> = std::fs::read_dir(d)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with(&prefix) && (n.ends_with(".o") || n.contains(".o.")))
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// A build stopped by SIGKILL while the driver makes the prelinked runtime, which comes before
+/// the build has a working directory, leaves none, and leaves only the prelink's unfinished
+/// file; the next build to the same output prelinks again, removes that file, and succeeds
+/// (FAIL-build-killed-link-no-working-dir). The runtime library is linked (`link(2)`) into a
+/// directory of this test's own, which `zed_native::link::prelinked` looks in first, so the
+/// build prelinks there whatever other tests have made beside the library itself; the
+/// prelinked runtimes a run before left there are removed first, and the one this run makes
+/// is removed at the end, since it is as large as the part of the library a program reaches.
+#[test]
+fn a_build_killed_while_prelinking_blocks_no_later_build() {
+    let d = dir().join("killed-prelinking");
+    std::fs::create_dir_all(&d).unwrap();
+    let library = runtime();
+    let name = library.file_name().unwrap().to_str().unwrap().to_string();
+    let linked = d.join(&name);
+    // The library of a build of zed-native before is another file; this one is linked again.
+    use std::os::unix::fs::MetadataExt;
+    let same =
+        |a: &std::fs::Metadata, b: &std::fs::Metadata| (a.dev(), a.ino()) == (b.dev(), b.ino());
+    match std::fs::metadata(&linked) {
+        Ok(m) if same(&m, &std::fs::metadata(&library).unwrap()) => {}
+        Ok(_) => {
+            std::fs::remove_file(&linked).unwrap();
+            std::fs::hard_link(&library, &linked).unwrap();
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::hard_link(&library, &linked).unwrap();
+        }
+        Err(e) => panic!("{}: {e}", linked.display()),
+    }
+    for f in prelinked_in(&d, &name) {
+        std::fs::remove_file(d.join(f)).unwrap();
+    }
+    let src = d.join("killed.zed");
+    std::fs::write(&src, "main(m: MainArgs) {\n  m.stdout <- \"again\";\n}\n").unwrap();
+    let (out, prelinking) = (d.join("killed"), d.join("killed.prelinking"));
+    for f in [&out, &prelinking] {
+        match std::fs::remove_file(f) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("{}: {e}", f.display()),
+            _ => {}
+        }
+    }
+    // The prelink is the one call whose first argument is `-r` (`PRELINK_FLAGS`).
+    let waits = d.join("cc-waits");
+    install(
+        &waits,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in -r)\n  : > '{}'\n  \
+             while kill -0 \"$PPID\" 2>/dev/null; do sleep 0.01; done\n  exit 1 ;;\n\
+             esac\nexec cc \"$@\"\n",
+            prelinking.display()
+        )
+        .as_bytes(),
+    );
+    let mut build = Command::new(env!("CARGO_BIN_EXE_zedc"))
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .env("ZED_RUNTIME", &linked)
+        .env("CC", &waits)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    while !prelinking.exists() {
+        if let Some(status) = build.try_wait().unwrap() {
+            panic!("the build ended before its prelink began: {status}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    build.kill().unwrap();
+    build.wait().unwrap();
+    assert_eq!(working(&d, "killed"), Vec::<String>::new());
+    let left = prelinked_in(&d, &name);
+    assert!(
+        left.len() == 1 && left[0].ends_with(&format!(".o.{}", build.id())),
+        "{left:?}"
+    );
+    assert!(!out.exists());
+
+    let linked_text = linked.to_str().unwrap();
+    assert_eq!(
+        failed(&zedc_build(&src, &out, &[("ZED_RUNTIME", linked_text)])),
+        (Some(0), String::new())
+    );
+    let ran = Command::new(&out).output().unwrap();
+    assert_eq!(
+        (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
+        (Some(0), "again\n".to_string())
+    );
+    assert_eq!(working(&d, "killed"), Vec::<String>::new());
+    let made = prelinked_in(&d, &name);
+    assert!(made.len() == 1 && made[0].ends_with(".o"), "{made:?}");
+    std::fs::remove_file(d.join(&made[0])).unwrap();
 }
