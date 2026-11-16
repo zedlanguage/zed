@@ -1,0 +1,545 @@
+//! Tests asked inside the cases of a test, where both cases survive, against the reduction from
+//! scratch (XR-case-group-wake): random scopes steered at the shapes that the case wake of the
+//! reduced product certifies without projecting a part (a two-name disjunction of `>=` rows and
+//! its recession directions, a third name of one sign, half-lines and bounded ends, punctured
+//! lines with a guard) and at the shapes just outside them (holes, a class, a fourth name).
+//! Each test is asked holding and not holding, so that a disjunction or a failed conjunction
+//! splits the scope into two cases, and each answer is held to the projection from scratch.
+
+use std::sync::Arc;
+
+use zed_kernel::{Prim, Term, Value};
+use zed_tests::instances::Rng;
+use zedc::store::cell::Premises;
+use zedc::store::product::Scope;
+
+use super::ints;
+
+thread_local! {
+    /// The assumptions made on the scope under test, printed when an answer differs.
+    static HISTORY: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `s.assume(t, holds, p)`, noted in the history when it is kept (not bottom).
+fn ap(s: &Scope, t: &Term, holds: bool, p: &Premises) -> Scope {
+    let next = s.assume(t, holds, p);
+    if !next.bottom {
+        HISTORY.with(|h| h.borrow_mut().push(format!("{holds} {t:?}")));
+    }
+    next
+}
+
+fn var(x: &str) -> Term {
+    Term::Var(x.into())
+}
+
+fn prim(p: Prim, a: Term, b: Term) -> Term {
+    Term::Prim(p, vec![a, b])
+}
+
+fn int(n: i64) -> Term {
+    Term::Lit(Value::Int(n))
+}
+
+/// `sum c_i * n_i`, a name with coefficient 1 written bare.
+fn lin(terms: &[(i64, &str)]) -> Term {
+    let one = |&(c, n): &(i64, &str)| {
+        if c == 1 {
+            var(n)
+        } else {
+            prim(Prim::Mul, int(c), var(n))
+        }
+    };
+    let mut it = terms.iter();
+    let first = one(it.next().expect("a term"));
+    it.fold(first, |s, t| prim(Prim::Add, s, one(t)))
+}
+
+/// The intervals of `s` at `ns`, or `None` when it is bottom.
+fn intervals(s: &Scope, ns: &[Arc<str>]) -> Option<Vec<String>> {
+    if s.bottom {
+        return None;
+    }
+    Some(
+        ns.iter()
+            .map(|n| format!("{n}: {:?}", s.get(n).ints()))
+            .collect(),
+    )
+}
+
+/// What an attack ran: tests asked, answers that moved an interval, answers that left a name
+/// with a hole, answers that were bottom.
+#[derive(Debug, Default)]
+struct Ran {
+    asked: usize,
+    moved: usize,
+    holed: usize,
+    empty: usize,
+    /// Scopes skipped because they already differed from their own reduction from scratch
+    /// before the test (a flaw of the reduction outside cases, reported apart).
+    stale: usize,
+    /// Tests skipped because one of their cases, assumed alone and outside any case, already
+    /// differs from the reduction from scratch (the same flaw, reached by one constraint).
+    alone: usize,
+}
+
+/// `t` asked of `s`, holding or not, gives the intervals of the projection from scratch, unless
+/// one of its `cases` (each a constraint and whether it holds), assumed alone, already does not.
+#[allow(clippy::too_many_arguments)]
+fn checked(
+    s: &Scope,
+    t: &Term,
+    holds: bool,
+    cases: &[(&Term, bool)],
+    ns: &[Arc<str>],
+    p: &Premises,
+    ran: &mut Ran,
+    at: &dyn Fn() -> String,
+) -> Scope {
+    let mut before = s.clone();
+    before.forget_projections();
+    before.reduce();
+    if intervals(&before, ns) != intervals(s, ns) {
+        ran.stale += 1;
+        return s.assume(t, holds, p);
+    }
+    for &(c, h) in cases {
+        let alone = s.assume(c, h, p);
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = fresh.assume(c, h, p);
+        want.forget_projections();
+        want.reduce();
+        if intervals(&alone, ns) != intervals(&want, ns) {
+            ran.alone += 1;
+            return s.assume(t, holds, p);
+        }
+    }
+    let got = s.assume(t, holds, p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(t, holds, p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(
+        intervals(&got, ns),
+        intervals(&want, ns),
+        "{} {holds}: {t:?}\nhistory:\n{}",
+        at(),
+        HISTORY.with(|h| h.borrow().join("\n"))
+    );
+    ran.asked += 1;
+    ran.moved += usize::from(intervals(&got, ns) != intervals(s, ns));
+    ran.holed += usize::from(ns.iter().any(|n| got.get(n).ints().len() > 1));
+    ran.empty += usize::from(got.bottom);
+    got
+}
+
+/// The shape an attack is steered at.
+#[derive(Clone, Copy, Debug)]
+enum Aim {
+    /// Two-name disjunctions on `x` and `y` with distinct slopes, a star `a >= x + y` or rows on
+    /// `x` and `y`, half-lines and bounded ends (the recession arcs and corner rays).
+    Pair,
+    /// Disjunctions on `x`, `y` and `w`, the third of one sign or of mixed signs.
+    Three,
+    /// Punctured lines `p*y + q*z != c` with a guard `x <= g`, on the star `a >= x + y + z`.
+    Puncture,
+    /// The pair shape with holes in `x` and `y` beside two consecutive integers, and a class.
+    Holes,
+    /// Differences on `x0`..`x3` (the shape of the red tests): holes and disjunctions of
+    /// differences as parts, difference rows as links, and tests whose second case reaches a
+    /// part only through the group of a link.
+    Diff,
+}
+
+const DIFF: [&str; 4] = ["x0", "x1", "x2", "x3"];
+
+/// A random difference `xi - xj` (i != j) with its two names.
+fn diff(r: &mut Rng) -> Term {
+    let i = r.below(4);
+    let j = (i + 1 + r.below(3)) % 4;
+    prim(Prim::Sub, var(DIFF[i]), var(DIFF[j]))
+}
+
+/// A coefficient in `-3..=3` but 0.
+fn coef(r: &mut Rng) -> i64 {
+    let c = r.int(1, 3);
+    if r.below(2) == 0 { c } else { -c }
+}
+
+/// A random `>=` row on `ns` (each name kept with probability 2/3, at least one).
+fn row(r: &mut Rng, ns: &[&str], lo: i64, hi: i64) -> Term {
+    let mut ts: Vec<(i64, &str)> = Vec::new();
+    for &n in ns {
+        if r.below(3) != 0 {
+            ts.push((coef(r), n));
+        }
+    }
+    if ts.is_empty() {
+        ts.push((coef(r), ns[r.below(ns.len())]));
+    }
+    prim(Prim::Ge, lin(&ts), int(r.int(lo, hi)))
+}
+
+/// A random end for the name `n`: none, a lower end, an upper end or both.
+fn bound(s: Scope, r: &mut Rng, n: &str, p: &Premises) -> Scope {
+    let lo = r.int(-6, 2);
+    let s = match r.below(4) {
+        0 | 2 => ap(&s, &prim(Prim::Ge, var(n), int(lo)), true, p),
+        _ => s,
+    };
+    match r.below(4) {
+        1 | 2 => ap(&s, &prim(Prim::Le, var(n), int(lo + r.int(1, 9))), true, p),
+        _ => s,
+    }
+}
+
+/// The part a step adds, of the aimed shape.
+fn part(r: &mut Rng, aim: Aim) -> Term {
+    let or = |a, b| prim(Prim::Or, a, b);
+    match aim {
+        Aim::Pair | Aim::Holes => {
+            let arms = 2 + usize::from(r.below(4) == 0);
+            (1..arms).fold(row(r, &["x", "y"], -4, 4), |d, _| {
+                or(d, row(r, &["x", "y"], -4, 4))
+            })
+        }
+        Aim::Three => {
+            // The third name `w` in some arms, of one sign unless `mixed`.
+            let mixed = r.below(3) == 0;
+            let s = coef(r);
+            let arm = |r: &mut Rng, with_w: bool| {
+                let mut ts = vec![(coef(r), "x"), (coef(r), "y")];
+                if r.below(3) == 0 {
+                    ts.remove(r.below(2));
+                }
+                if with_w {
+                    let sw = if mixed {
+                        coef(r)
+                    } else {
+                        s.signum() * r.int(1, 2)
+                    };
+                    ts.push((sw, "w"));
+                }
+                prim(Prim::Ge, lin(&ts), int(r.int(-4, 4)))
+            };
+            let a = arm(r, true);
+            let with_w = r.below(2) == 0;
+            let b = arm(r, with_w);
+            or(a, b)
+        }
+        Aim::Diff => match r.below(3) {
+            0 => prim(Prim::Ne, diff(r), int(r.int(-3, 3))),
+            1 => prim(
+                Prim::Or,
+                prim(Prim::Le, diff(r), int(r.int(-3, 3))),
+                prim(Prim::Ge, diff(r), int(r.int(-3, 3))),
+            ),
+            _ => prim(
+                Prim::Or,
+                prim(Prim::Ne, var(DIFF[r.below(4)]), int(r.int(-3, 6))),
+                prim(Prim::Ge, diff(r), int(r.int(-3, 3))),
+            ),
+        },
+        Aim::Puncture => {
+            let (p, q) = (coef(r), coef(r));
+            let line = prim(Prim::Ne, lin(&[(p, "y"), (q, "z")]), int(r.int(-3, 3)));
+            match r.below(3) {
+                0 => or(prim(Prim::Le, var("x"), int(r.int(-2, 2))), line),
+                _ => line,
+            }
+        }
+    }
+}
+
+/// Two or three disjunctions on `x` and `y` with the same rows and shifted ends: a chain
+/// (`chain_shape`), whose least part the case wake projects for all of them.
+fn chain(r: &mut Rng) -> Vec<Term> {
+    let arms: Vec<(i64, i64, i64)> = (0..2)
+        .map(|_| {
+            let (a, b) = (coef(r), coef(r));
+            (a, b, r.int(-4, 4))
+        })
+        .collect();
+    (0..2 + r.below(2))
+        .map(|_| {
+            let shift = r.int(0, 3);
+            let row = |&(a, b, c): &(i64, i64, i64)| {
+                prim(Prim::Ge, lin(&[(a, "x"), (b, "y")]), int(c + shift))
+            };
+            prim(Prim::Or, row(&arms[0]), row(&arms[1]))
+        })
+        .collect()
+}
+
+/// The test a step asks: two arms over the aimed names, to be asked as a disjunction that holds
+/// and a conjunction that does not.
+fn arms(r: &mut Rng, aim: Aim) -> (Term, Term) {
+    if let Aim::Diff = aim {
+        let one = |r: &mut Rng| match r.below(2) {
+            0 => prim(Prim::Ne, var(DIFF[r.below(4)]), int(r.int(-3, 6))),
+            _ => prim(Prim::Ge, diff(r), int(r.int(-3, 3))),
+        };
+        let a = one(r);
+        return (a, one(r));
+    }
+    let ns: &[&str] = match aim {
+        Aim::Pair | Aim::Holes => &["x", "y", "a"],
+        Aim::Three => &["x", "y", "w", "a"],
+        Aim::Puncture => &["x", "y", "z", "a"],
+        Aim::Diff => unreachable!("handled above"),
+    };
+    let one = |r: &mut Rng| match r.below(4) {
+        0 => {
+            let n = ns[r.below(ns.len())];
+            prim(Prim::Ne, var(n), int(r.int(-3, 3)))
+        }
+        // A row on the leaf and one hub reaches the hubs' parts only through the link.
+        1 => {
+            let hub = ns[r.below(ns.len() - 1)];
+            row(r, &["a", hub], -5, 5)
+        }
+        _ => row(r, ns, -5, 5),
+    };
+    let a = one(r);
+    (a, one(r))
+}
+
+/// A scope of the aimed shape: the names, their ends, the linking rows and some parts.
+fn scope(r: &mut Rng, aim: Aim, p: &Premises) -> (Scope, Vec<Arc<str>>) {
+    HISTORY.with(|h| h.borrow_mut().clear());
+    if let Aim::Diff = aim {
+        let ns: Vec<Arc<str>> = DIFF.iter().map(|&n| n.into()).collect();
+        let mut s = ints(&ns);
+        for n in DIFF {
+            s = bound(s, r, n, p);
+        }
+        // Links: one to three difference rows, which put their names in one group.
+        for _ in 0..1 + r.below(3) {
+            let next = ap(&s, &prim(Prim::Ge, diff(r), int(r.int(-3, 3))), true, p);
+            if !next.bottom {
+                s = next;
+            }
+        }
+        for _ in 0..1 + r.below(3) {
+            let next = ap(&s, &part(r, aim), true, p);
+            if !next.bottom {
+                s = next;
+            }
+        }
+        return (s, ns);
+    }
+    let names: &[&str] = match aim {
+        Aim::Pair | Aim::Holes => &["a", "x", "y"],
+        Aim::Three => &["a", "x", "y", "w"],
+        Aim::Puncture => &["a", "x", "y", "z"],
+        Aim::Diff => unreachable!("handled above"),
+    };
+    let ns: Vec<Arc<str>> = names.iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for n in &names[1..] {
+        s = bound(s, r, n, p);
+    }
+    if let Aim::Puncture = aim {
+        // Finite ends on the punctured line's names and on `x`, so that the leaf has a lower
+        // end, as the line's certificate needs.
+        for n in ["x", "y", "z"] {
+            let lo = r.int(-4, 1);
+            s = ap(&s, &prim(Prim::Ge, var(n), int(lo)), true, p);
+            s = ap(&s, &prim(Prim::Le, var(n), int(lo + r.int(2, 8))), true, p);
+        }
+    }
+    // The link: a star on the leaf `a`, or a row among the hubs.
+    let link = match (aim, r.below(3)) {
+        (Aim::Puncture, _) => prim(Prim::Ge, var("a"), lin(&[(1, "x"), (1, "y"), (1, "z")])),
+        (Aim::Three, 0) => row(r, &["x", "y", "w"], -4, 4),
+        (_, 0) => row(r, &["x", "y"], -4, 4),
+        (_, 1) => prim(Prim::Le, var("a"), lin(&[(1, "x"), (1, "y")])),
+        _ => prim(Prim::Ge, var("a"), lin(&[(1, "x"), (1, "y")])),
+    };
+    s = ap(&s, &link, true, p);
+    if let Aim::Holes = aim {
+        // A hole beside two consecutive integers, and sometimes a class through an equality.
+        for n in ["x", "y"] {
+            if r.below(2) == 0 {
+                s = ap(&s, &prim(Prim::Ne, var(n), int(r.int(-3, 3))), true, p);
+            }
+        }
+        if r.below(3) == 0 {
+            let t = prim(Prim::Mul, int(2), var("a"));
+            s = ap(
+                &s,
+                &prim(Prim::Eq, var("x"), prim(Prim::Add, t, int(1))),
+                true,
+                p,
+            );
+        }
+    }
+    for _ in 0..1 + r.below(4) {
+        let ts = match aim {
+            Aim::Pair | Aim::Holes if r.below(2) == 0 => chain(r),
+            _ => vec![part(r, aim)],
+        };
+        for t in ts {
+            let next = ap(&s, &t, true, p);
+            if !next.bottom {
+                s = next;
+            }
+        }
+    }
+    (s, ns)
+}
+
+/// `scopes` random scopes of `seed` aimed at `aim`, each with up to 6 tests asked both ways and
+/// half of them kept.
+fn attack(aim: Aim, seed: u64, scopes: usize) -> Ran {
+    let mut r = Rng::new(seed);
+    let p = Premises::new();
+    let mut ran = Ran::default();
+    for case in 0..scopes {
+        let (mut s, ns) = scope(&mut r, aim, &p);
+        for step in 0..1 + r.below(6) {
+            let (a, b) = arms(&mut r, aim);
+            let at = || format!("{aim:?} seed {seed} case {case} step {step}");
+            let either = prim(Prim::Or, a.clone(), b.clone());
+            let both = prim(Prim::And, a.clone(), b.clone());
+            let (one, two) = (&a, &b);
+            checked(
+                &s,
+                &either,
+                true,
+                &[(one, true), (two, true)],
+                &ns,
+                &p,
+                &mut ran,
+                &at,
+            );
+            checked(
+                &s,
+                &both,
+                false,
+                &[(one, false), (two, false)],
+                &ns,
+                &p,
+                &mut ran,
+                &at,
+            );
+            if r.below(2) == 0 {
+                let next = ap(&s, &either, true, &p);
+                if next.bottom {
+                    break;
+                }
+                s = next;
+            }
+            // Sometimes a further part between tests, so that a later case meets more parts.
+            if r.below(3) == 0 {
+                let next = ap(&s, &part(&mut r, aim), true, &p);
+                if !next.bottom {
+                    s = next;
+                }
+            }
+        }
+    }
+    ran
+}
+
+/// The number of scopes each attack draws on one run, and the seed of a run (a fresh one each
+/// run, printed; `ZED_TEST_SEED` repeats it).
+const SCOPES: usize = 16;
+
+fn run(aim: Aim, what: &str) {
+    let (_, seed) = Rng::fresh(what);
+    let ran = attack(aim, seed, SCOPES);
+    eprintln!("{aim:?} seed {seed}: {ran:?}");
+    assert!(ran.moved > 0 && ran.asked > 0, "{ran:?}");
+}
+
+#[test]
+fn tests_on_two_names_with_distinct_slopes_give_the_projection_from_scratch() {
+    run(Aim::Pair, "case wake: two names");
+}
+
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch() {
+    run(Aim::Three, "case wake: three names");
+}
+
+#[test]
+fn tests_on_punctured_lines_give_the_projection_from_scratch() {
+    run(Aim::Puncture, "case wake: punctured lines");
+}
+
+#[test]
+fn tests_beside_holes_and_classes_give_the_projection_from_scratch() {
+    run(Aim::Holes, "case wake: holes and classes");
+}
+
+#[test]
+fn tests_on_differences_reaching_a_part_through_a_group_give_the_projection_from_scratch() {
+    run(Aim::Diff, "case wake: differences");
+}
+
+/// The history of the difference found on R1_GEMINI.patch (Three, seed 6, case 13, step 1)
+/// without its assumption 4, which R1_GEMINI.patch, waking the groups of a case only after the
+/// block's constraints part had projected, made narrower than from scratch.
+#[test]
+fn a_test_on_three_names_in_a_case_gives_the_projection_from_scratch() {
+    three_names_in_a_case(&[4]);
+}
+
+/// That history without the assumptions `drop`, then its test, checked against the projection
+/// from scratch.
+fn three_names_in_a_case(drop: &[usize]) {
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let all = [
+        ge(var("x"), -2),
+        ge(var("y"), -4),
+        prim(Prim::Le, var("w"), int(3)),
+        prim(Prim::Ge, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(-2, "x"), (2, "y"), (2, "w")]), 4),
+            ge(lin(&[(-1, "y")]), 2),
+        ),
+        or(
+            ge(lin(&[(-2, "x"), (-3, "y"), (3, "w")]), 4),
+            ge(lin(&[(-2, "x"), (-2, "y"), (1, "w")]), -3),
+        ),
+        or(
+            ge(lin(&[(1, "x"), (-2, "w"), (2, "a")]), -3),
+            prim(Prim::Ne, var("x"), int(-1)),
+        ),
+        or(
+            ge(lin(&[(2, "y"), (1, "w")]), -1),
+            ge(lin(&[(2, "x"), (1, "y"), (1, "w")]), 2),
+        ),
+    ];
+    let ns: Vec<Arc<str>> = ["a", "x", "y", "w"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for (i, t) in all.iter().enumerate() {
+        if !drop.contains(&i) {
+            s = s.assume(t, true, &p);
+        }
+    }
+    eprintln!("before: {:?}", intervals(&s, &ns));
+    let t = prim(
+        Prim::And,
+        ge(lin(&[(1, "a"), (-2, "x")]), 0),
+        ge(lin(&[(-3, "y"), (-1, "w"), (-2, "a")]), 2),
+    );
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, false, &p);
+    want.forget_projections();
+    want.reduce();
+    eprintln!("got: {:?}", intervals(&s.assume(&t, false, &p), &ns));
+    eprintln!("from scratch: {:?}", intervals(&want, &ns));
+    let mut ran = Ran::default();
+    checked(&s, &t, false, &[], &ns, &p, &mut ran, &|| "minimize".into());
+    assert_eq!(
+        ran.stale, 0,
+        "the scope differed from scratch before the test"
+    );
+}

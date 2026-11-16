@@ -2819,3 +2819,86 @@ fn holes_in_the_trees_of_seed_1217883182935025609_give_the_projection_from_scrat
 fn holes_in_the_trees_of_seed_5815247056960035517_give_the_projection_from_scratch() {
     holes_in_trees(5815247056960035517, false, HOLE_TREES);
 }
+
+/// Seed 216 of [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], case 2 step
+/// 12: the hole `x2 != x0 + 1` is held, and the test `x3 != 0 && x0 - x3 >= 2` is false with
+/// both its cases alive. The second case's `x0 - x3 <= 1` joins the group of differences that
+/// holds `x0` and `x2`, so it narrows the hole's part only through that group: `x3 = -6` needs
+/// `x2 = -4`, `x1 = -2` and `x0 = -5 = x2 - 1`, which the hole excludes, so `x3` is in
+/// `[-5..=2]` (FAIL-linked-two-cases-seed-216; held `[-6..=2]` before the fix).
+#[test]
+fn holes_in_the_trees_of_seed_216_give_the_projection_from_scratch() {
+    holes_in_trees(216, false, HOLE_TREES);
+}
+
+/// The piled trees of seed 14072984267085997581 give the projection from scratch: both cases of
+/// a hole survive (FAIL-linked-case-group-wake; held `x2` `[0..]` before the fix, from scratch
+/// `[1..]`).
+#[test]
+fn holes_piled_in_the_trees_of_seed_14072984267085997581_give_the_projection_from_scratch() {
+    holes_in_trees(14072984267085997581, true, HOLE_TREES);
+}
+
+/// Seed 14072984267085997581 made minimal: both cases of the hole survive, and the first one's
+/// `x0 <= x2 - 3` reaches the part `!(x2 == x1 + 2)` only through the group of `x0 - x1 >= -1`.
+#[test]
+fn a_hole_left_with_two_cases_wakes_the_parts_of_their_groups() {
+    let ns = named(3, "x");
+    let v = |n: usize| var(&ns[n]);
+    let d = |a: usize, b: usize| prim(Prim::Sub, v(a), v(b));
+    let and = |a: Term, b: Term| prim(Prim::And, a, b);
+    let steps = [
+        (prim(Prim::Ge, v(1), int(-2)), true),
+        (prim(Prim::Le, v(1), int(1)), true),
+        (prim(Prim::Ge, v(2), int(0)), true),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(6)),
+                prim(Prim::Ge, d(0, 2), int(1)),
+            ),
+            false,
+        ),
+        (prim(Prim::Ge, d(0, 1), int(-1)), true),
+        (prim(Prim::Eq, d(2, 1), int(2)), false),
+    ];
+    let hole = and(
+        prim(Prim::Ne, v(2), int(4)),
+        prim(Prim::Ge, d(0, 2), int(-2)),
+    );
+    hole_false_gives_the_projection_from_scratch(3, &steps, &hole);
+}
+
+// PERF-refused-shape-disjunctions-quadratic: k disjunctions over four names (base 7.7; the
+// round-1 Gemini patch and the round-2 Opus patch 29.7).
+fn four_name_run(k: usize) {
+    let ns = named(5, "x");
+    let p = Premises::new();
+    let base = r2_row(&[-1, -1, -1, -1, 1], 0);
+    let mut s = ints(&ns).assume(&base, true, &p);
+    for j in 1..=k as i64 {
+        let t = prim(
+            Prim::Or,
+            r2_row(&[1, j, j + 1, j + 2, 0], -1),
+            r2_row(&[1, -j, -j - 1, -j - 2, 0], -1),
+        );
+        s = s.assume(&t, true, &p);
+    }
+    assert!(!s.bottom);
+}
+#[test]
+fn refused_four_names_scaling() {
+    scaling::check_order("four-name disjunctions (refused)", 8, 1, four_name_run);
+}
+
+// The row `c + sum(cs[i] * x_i) >= 0` over x0..x4 (Sol's helper, round 2).
+fn r2_row(cs: &[i64], c: i64) -> Term {
+    let mut sum = int(c);
+    for (i, k) in cs.iter().enumerate().filter(|(_, k)| **k != 0) {
+        sum = prim(
+            Prim::Add,
+            sum,
+            prim(Prim::Mul, int(*k), var(&format!("x{i}"))),
+        );
+    }
+    prim(Prim::Ge, sum, int(0))
+}

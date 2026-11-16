@@ -4605,6 +4605,15 @@ struct Part {
     pure_two_sym: Option<(Arc<str>, Arc<str>, u8)>,
     /// Its conjunct's atoms and their ends ([`chain_shape`]), when it has that shape.
     chain: Option<Chain>,
+    /// Its punctured-line shape ([`puncture_part`]), when it has one, and its index key in
+    /// [`Block::punctures`] when held there.
+    puncture: Option<PuncturePart>,
+    puncture_key: Option<PunctureKey>,
+    /// Its angular failure arcs in [`Block::recession`] ([`recession_shape`]), when indexed
+    /// there.
+    recession: Option<PartRecession>,
+    /// Its key in [`Block::cones`] ([`cone_shape`]), when indexed there.
+    cone: Option<ConeKey>,
 }
 
 /// One atom of a disjunction of rows, without its ends: a row `t + c >= 0`, kept as its
@@ -4685,6 +4694,136 @@ fn chain_shape(g: &Formula) -> Option<Chain> {
 /// then the disjunction of `q` implies that of `p` ([`Scope::idle_by_chain`]).
 fn chain_below(q: &[Int], p: &[Int]) -> bool {
     q.len() == p.len() && q.iter().zip(p).all(|(a, b)| a <= b)
+}
+
+/// The key of a disjunction under the direction certificate ([`Block::cone_certified`]): its
+/// names, sorted, and for each direction of [`cone_dirs`] over them whether some arm grows
+/// along it ([`cone_shape`]). Parts with one key are certified or refused together.
+type ConeKey = (Arc<[Arc<str>]>, Arc<[bool]>);
+
+/// The parts of one [`ConeKey`] ([`Block::cones`]): those of no chain, and the count of parts
+/// of each chain key, which wake by [`Block::chain_least`] as in [`Block::wake_recession_bucket`].
+#[derive(Clone, Default)]
+struct ConeBucket {
+    unchained: imbl::OrdSet<PartAt>,
+    chains: imbl::OrdMap<Arc<Vec<ChainAtom>>, usize>,
+}
+
+/// A direction over the sorted names of a disjunction ([`cone_dirs`]): `d`, steps of +1 or -1
+/// on one name or on two names next to each other in the order, and `s`, a step on a name of
+/// `d` added at a scale small enough that it decides only the rows on which `d` is zero.
+#[derive(Clone, Copy)]
+struct ConeDir {
+    d: [(usize, i8); 2],
+    len: usize,
+    s: Option<(usize, i8)>,
+}
+
+/// The directions tried over `m` sorted names: each name up and down, and for each two names
+/// next to each other the four sign pairs, each alone or with one of the four small steps.
+/// 2m + 20(m - 1) directions, in a fixed order, so that equal keys mean equal answers.
+fn cone_dirs(m: usize) -> Vec<ConeDir> {
+    let mut out = Vec::with_capacity(22 * m);
+    for i in 0..m {
+        for t in [1, -1] {
+            out.push(ConeDir {
+                d: [(i, t), (i, t)],
+                len: 1,
+                s: None,
+            });
+        }
+    }
+    for i in 1..m {
+        for (a, b) in [(1, -1), (-1, 1), (1, 1), (-1, -1)] {
+            for s in [
+                None,
+                Some((i - 1, 1)),
+                Some((i - 1, -1)),
+                Some((i, 1)),
+                Some((i, -1)),
+            ] {
+                out.push(ConeDir {
+                    d: [(i - 1, a), (i, b)],
+                    len: 2,
+                    s,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The row `terms` read along `dir`: the change of the row along `d` and along `s`.
+fn cone_dot(terms: &BTreeMap<Atom, Int>, names: &[Arc<str>], dir: &ConeDir) -> (Int, Int) {
+    let at = |(i, t): (usize, i8)| match terms.get(&Atom::Sym(names[i].clone())) {
+        Some(k) if t > 0 => k.clone(),
+        Some(k) => -k,
+        None => Int::ZERO,
+    };
+    let mut d = Int::ZERO;
+    for &step in &dir.d[..dir.len] {
+        d = &d + &at(step);
+    }
+    (d, dir.s.map_or(Int::ZERO, at))
+}
+
+/// Whether a row grows along `d + r*s` for every small enough `r > 0`.
+fn cone_grows((d, s): &(Int, Int)) -> bool {
+    d.is_positive() || (d.is_zero() && s.is_positive())
+}
+
+/// The [`ConeKey`] of `g` when `g` is a disjunction of `>=` rows on names only (no other
+/// atom); otherwise `None`. O(a t m) for a arms of t terms over m names, once per part.
+fn cone_shape(g: &Formula) -> Option<ConeKey> {
+    let Formula::Or(gs) = g else { return None };
+    let mut arms = vec![];
+    for a in gs.iter() {
+        let Formula::Con(c) = a else { return None };
+        if c.rel != Rel::Ge
+            || c.lin.terms.is_empty()
+            || !c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_)))
+        {
+            return None;
+        }
+        arms.push(&c.lin.terms);
+    }
+    let names: BTreeSet<Arc<str>> = arms
+        .iter()
+        .flat_map(|t| t.keys())
+        .filter_map(|a| match a {
+            Atom::Sym(n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
+    let names: Arc<[Arc<str>]> = names.into_iter().collect();
+    let grows: Arc<[bool]> = cone_dirs(names.len())
+        .iter()
+        .map(|dir| arms.iter().any(|t| cone_grows(&cone_dot(t, &names, dir))))
+        .collect();
+    Some((names, grows))
+}
+
+/// The entries of `index` held under two variables of `v` or more ([`Block::reframe`]). Such
+/// an entry is held under a variable of `v` other than the one with the most entries, so the
+/// entries of the others are read and counted, and one counted once is taken if the one with
+/// the most also holds it. O((p + v) log k) for the p entries read and k entries in all.
+fn holding_two<T: Ord + Clone>(
+    index: &imbl::OrdMap<Factor, imbl::OrdSet<T>>,
+    v: &BTreeSet<Factor>,
+) -> Vec<T> {
+    let count = |x: &Factor| index.get(x).map_or(0, imbl::OrdSet::len);
+    let most = v.iter().max_by_key(|x| count(x));
+    let mut read: BTreeMap<&T, usize> = BTreeMap::new();
+    for x in v.iter().filter(|&x| Some(x) != most) {
+        for at in index.get(x).into_iter().flatten() {
+            *read.entry(at).or_insert(0) += 1;
+        }
+    }
+    let of_most = most.and_then(|x| index.get(x));
+    read.into_iter()
+        .filter(|(at, k)| *k >= 2 || of_most.is_some_and(|ps| ps.contains(*at)))
+        .map(|(at, _)| at.clone())
+        .collect()
 }
 
 /// What reads a part's conjunct besides its own projection, found once as the part is added.
@@ -4792,6 +4931,11 @@ struct Block {
     parts: imbl::OrdMap<PartAt, Arc<Part>>,
     /// The parts that mention each name, the leaf among them ([`Users`]).
     users: imbl::OrdMap<Arc<str>, Users>,
+    /// Unchained parts and chain-key counts per name, so a variable movement inside a case in
+    /// [`Scope::project_block`] wakes only [`Block::chain_least`] per chain in O(log k).
+    unchained_users: imbl::OrdMap<Arc<str>, Users>,
+    /// Per name, the chain keys of its chained parts, each with its count of parts.
+    chained_users: imbl::OrdMap<Arc<str>, imbl::OrdMap<Arc<Vec<ChainAtom>>, usize>>,
     /// The parts of each [`Role`] but the constraints' part.
     roles: imbl::OrdMap<Role, imbl::OrdSet<PartAt>>,
     /// The rays, grouped by their two names ([`RayGroup`]).
@@ -4844,7 +4988,8 @@ struct Block {
     terms: imbl::OrdMap<Arc<BTreeMap<Atom, Int>>, imbl::OrdSet<PartAt>>,
     mentions: imbl::OrdMap<Arc<str>, usize>,
     /// The parts of the conjuncts that hold each variable ([`factors`]), so that a constraint
-    /// added or gone finds the parts whose group it changes ([`Block::reframe`]).
+    /// added or gone finds the parts whose group it changes ([`Block::reframe`]). Parts indexed
+    /// in `recession`, `punctures`, `cones` or `chain_vars` are held there instead of here.
     // Complexity tradeoff: naive version, each part kept under each pair of its s variables,
     // O(s^2 log k) to add, which a disjunction over the 2d names of a chain of accounts pays
     // at every level (36.4 times the bytes at 8 times the depth). Used: each part under each
@@ -4853,6 +4998,28 @@ struct Block {
     /// The parts of each chain key ([`chain_shape`]), ordered by their ends, so that the
     /// first is the least ([`Scope::idle_by_chain`]).
     chains: ChainParts,
+    /// The chain keys (of parts not in `recession`) that hold each variable, and the count of
+    /// each end value at each place so that [`Block::chain_least`] reads in O(e log k).
+    chain_vars: imbl::OrdMap<Factor, imbl::OrdSet<Arc<Vec<ChainAtom>>>>,
+    chain_ends: imbl::OrdMap<Arc<Vec<ChainAtom>>, Vec<imbl::OrdMap<Int, usize>>>,
+    /// Two-name (plus optional consistent-sign third symbol) disjunctions of `>=` rows indexed
+    /// by their angular failure arcs on `(-π, π]` ([`PairRecession`], [`recession_shape`]), and
+    /// the keys that hold each variable, so that within a case [`Block::wake_case_groups`] wakes
+    /// only the parts no recession ray of the group certifies, in O(log k + output) via a
+    /// persistent priority search tree.
+    recession: imbl::OrdMap<RecKey, PairRecession>,
+    recession_vars: imbl::OrdMap<Factor, imbl::OrdSet<RecKey>>,
+    /// Punctured-line disjunctions grouped by their variable set and two-variable punctured line
+    /// ([`PunctureKey`]), so [`Block::wake_case_groups`] evaluates [`PunctureContext`] once per
+    /// pair in O(1) instead of scanning [`Block::chain_vars`].
+    punctures: imbl::OrdMap<PunctureKey, imbl::OrdMap<PartAt, PuncturePart>>,
+    puncture_vars: imbl::OrdMap<Factor, imbl::OrdSet<PunctureKey>>,
+    /// The other disjunctions of `>=` rows on names, grouped by [`ConeKey`], and the keys that
+    /// hold each variable, so that within a case [`Block::wake_case_groups`] reads one
+    /// certificate per key ([`Block::cone_certified`]), not one wake per part. Parts held
+    /// here are not in `vars` or `chain_vars`.
+    cones: imbl::OrdMap<ConeKey, ConeBucket>,
+    cone_vars: imbl::OrdMap<Factor, imbl::OrdSet<ConeKey>>,
     /// The disjunctions in which a constraint on two names bounds an end of one of them in
     /// every arm ([`bounds_at`]), by the two names, the end and the side of it the constraint
     /// turns from that end, and by how far it may turn ([`Turn`]), so that a case's constraint
@@ -4860,9 +5027,16 @@ struct Block {
     bounds: imbl::OrdMap<BoundsKey, imbl::OrdMap<Turn, imbl::OrdSet<PartAt>>>,
     /// Threshold parts, grouped by their lower and upper names.
     stairs: imbl::OrdMap<(Arc<str>, Arc<str>), Staircase>,
-    /// The parts the two-name rule of [`Block::reframe`] made due at the last update, projected
-    /// whatever their records say.
+    /// The parts the two-name and group rules of [`Block::reframe`] made due at the last update,
+    /// projected whatever their records say.
     fired: BTreeSet<PartAt>,
+    /// Chain keys whose least uncertified part alone was made due within a case (`None` for the
+    /// whole chain, `Some(rest)` for only the remaining uncertified parts of a sector query);
+    /// expanded in [`Scope::project_block`] only when that least part is neither idle before nor
+    /// idle after its projection.
+    fired_chains: BTreeMap<Arc<Vec<ChainAtom>>, Option<Vec<PartAt>>>,
+    /// Case-changed constraint groups ([`Block::reframe`]), woken in [`Scope::block`].
+    case_groups: BTreeSet<BTreeSet<Factor>>,
     /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] projected for
     /// at the last update, spent once the block is kept ([`Scope::spent`]).
     spends: Vec<BoundsKey>,
@@ -4924,6 +5098,8 @@ impl Block {
             id: b,
             parts: imbl::OrdMap::new(),
             users: imbl::OrdMap::new(),
+            unchained_users: imbl::OrdMap::new(),
+            chained_users: imbl::OrdMap::new(),
             roles: imbl::OrdMap::new(),
             rays: imbl::OrdMap::new(),
             ray_managed: false,
@@ -4944,9 +5120,19 @@ impl Block {
             mentions: imbl::OrdMap::new(),
             vars: imbl::OrdMap::new(),
             chains: imbl::OrdMap::new(),
+            chain_vars: imbl::OrdMap::new(),
+            chain_ends: imbl::OrdMap::new(),
+            recession: imbl::OrdMap::new(),
+            recession_vars: imbl::OrdMap::new(),
+            punctures: imbl::OrdMap::new(),
+            puncture_vars: imbl::OrdMap::new(),
+            cones: imbl::OrdMap::new(),
+            cone_vars: imbl::OrdMap::new(),
             bounds: imbl::OrdMap::new(),
             stairs: imbl::OrdMap::new(),
             fired: BTreeSet::new(),
+            fired_chains: BTreeMap::new(),
+            case_groups: BTreeSet::new(),
             spends: Vec::new(),
             forgot: imbl::OrdSet::new(),
             members,
@@ -5045,6 +5231,23 @@ impl Block {
     ) {
         let names = syms(formula);
         let role = Role::of(of.as_deref());
+        let chain = of.as_deref().and_then(chain_shape);
+        let puncture = of.as_deref().and_then(puncture_part);
+        let cand_rec = of
+            .as_deref()
+            .and_then(|g| recession_shape(g, self.leaf.as_ref()));
+        let (recession, puncture_key) = match (cand_rec, &puncture, &of) {
+            (Some(rec), _, _) if rec.key.2.is_none() => (Some(rec), None),
+            (_, Some(pp), Some(g)) => {
+                let fs: Arc<[Factor]> = factors(g).into_iter().collect::<Vec<_>>().into();
+                (None, Some((fs, pp.pair.clone())))
+            }
+            (Some(rec), _, _) => (Some(rec), None),
+            (None, _, _) => (None, None),
+        };
+        let cone = (recession.is_none() && puncture_key.is_none())
+            .then(|| of.as_deref().and_then(cone_shape))
+            .flatten();
         if role != Role::Constraints {
             self.roles.entry(role).or_default().insert(at.clone());
         }
@@ -5065,9 +5268,29 @@ impl Block {
                 least.take_ray(&self.cons, &x, &y, &j, &d);
             }
         }
+        let chain_id = match &chain {
+            Some((ck, _)) if recession.is_none() && puncture_key.is_none() => Some(ck),
+            _ => None,
+        };
         for n in &names {
             let users = self.users.entry(n.clone()).or_default();
             users.of_role(role).insert(at.clone());
+            if recession.is_none() && puncture_key.is_none() {
+                if let Some(id) = chain_id {
+                    *self
+                        .chained_users
+                        .entry(n.clone())
+                        .or_default()
+                        .entry(id.clone())
+                        .or_insert(0) += 1;
+                } else {
+                    self.unchained_users
+                        .entry(n.clone())
+                        .or_default()
+                        .of_role(role)
+                        .insert(at.clone());
+                }
+            }
         }
         if let Some(g) = &of {
             for t in terms(g) {
@@ -5086,8 +5309,63 @@ impl Block {
             for n in syms(g) {
                 *self.mentions.entry(n).or_insert(0) += 1;
             }
-            for x in factors(g) {
-                self.vars.entry(x).or_default().insert(at.clone());
+            if let Some((k, ends)) = &chain {
+                let at_ends = self
+                    .chain_ends
+                    .entry(k.clone())
+                    .or_insert_with(|| vec![imbl::OrdMap::new(); ends.len()]);
+                for (place, e) in at_ends.iter_mut().zip(ends) {
+                    *place.entry(e.clone()).or_insert(0) += 1;
+                }
+            }
+            if let Some(rec) = &recession {
+                if !self.recession.contains_key(&rec.key) {
+                    for x in rec_key_factors(&rec.key) {
+                        self.recession_vars
+                            .entry(x)
+                            .or_default()
+                            .insert(rec.key.clone());
+                    }
+                }
+                let chain_key = chain.as_ref().map(|(k, _)| k.clone());
+                self.recession
+                    .entry(rec.key.clone())
+                    .or_default()
+                    .add(&at, role, chain_key, rec);
+            } else if let (Some(pk), Some(pp)) = (&puncture_key, &puncture) {
+                if !self.punctures.contains_key(pk) {
+                    for x in pk.0.iter() {
+                        self.puncture_vars
+                            .entry(x.clone())
+                            .or_default()
+                            .insert(pk.clone());
+                    }
+                }
+                self.punctures
+                    .entry(pk.clone())
+                    .or_default()
+                    .insert(at.clone(), pp.clone());
+            } else if let Some(ck) = &cone {
+                if !self.cones.contains_key(ck) {
+                    for x in factors(g) {
+                        self.cone_vars.entry(x).or_default().insert(ck.clone());
+                    }
+                }
+                let bucket = self.cones.entry(ck.clone()).or_default();
+                match &chain {
+                    Some((k, _)) => *bucket.chains.entry(k.clone()).or_insert(0) += 1,
+                    None => {
+                        bucket.unchained.insert(at.clone());
+                    }
+                }
+            } else if let Some((k, _)) = &chain {
+                for x in factors(g) {
+                    self.chain_vars.entry(x).or_default().insert(k.clone());
+                }
+            } else {
+                for x in factors(g) {
+                    self.vars.entry(x).or_default().insert(at.clone());
+                }
             }
             if let Some((x, y, a, b)) = stair_row(g) {
                 let tree = self.stairs.entry((x, y)).or_default();
@@ -5101,7 +5379,6 @@ impl Block {
             let m = finiteness_mask(&u, &v, &self.names_at);
             (u, v, m)
         });
-        let chain = of.as_deref().and_then(chain_shape);
         if let Some((k, ends)) = &chain {
             self.chains
                 .entry(k.clone())
@@ -5117,6 +5394,10 @@ impl Block {
             bounds,
             pure_two_sym,
             chain,
+            puncture,
+            puncture_key,
+            recession,
+            cone,
         };
         self.parts.insert(at, Arc::new(part));
     }
@@ -5147,6 +5428,10 @@ impl Block {
                 }
             }
         }
+        let chain_id = match &part.chain {
+            Some((ck, _)) if part.recession.is_none() && part.puncture_key.is_none() => Some(ck),
+            _ => None,
+        };
         for n in &part.names {
             if let Some(us) = self.users.get_mut(n) {
                 us.of_role(part.role).remove(at);
@@ -5154,13 +5439,93 @@ impl Block {
                     self.users.remove(n);
                 }
             }
+            if part.recession.is_none() && part.puncture_key.is_none() {
+                if part.chain.is_some() {
+                    if let Some(cs) = self.chained_users.get_mut(n)
+                        && let Some(id) = chain_id
+                    {
+                        if let Some(cnt) = cs.get_mut(id) {
+                            *cnt -= 1;
+                            if *cnt == 0 {
+                                cs.remove(id);
+                            }
+                        }
+                        if cs.is_empty() {
+                            self.chained_users.remove(n);
+                        }
+                    }
+                } else if let Some(us) = self.unchained_users.get_mut(n) {
+                    us.of_role(part.role).remove(at);
+                    if us.is_empty() {
+                        self.unchained_users.remove(n);
+                    }
+                }
+            }
+        }
+        if let Some(rec) = &part.recession
+            && let Some(idx) = self.recession.get_mut(&rec.key)
+        {
+            let chain_key = part.chain.as_ref().map(|(k, _)| k);
+            idx.remove(at, part.role, chain_key, rec);
+            if idx.is_empty() {
+                self.recession.remove(&rec.key);
+                for x in rec_key_factors(&rec.key) {
+                    if let Some(ps) = self.recession_vars.get_mut(&x) {
+                        ps.remove(&rec.key);
+                        if ps.is_empty() {
+                            self.recession_vars.remove(&x);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(pk) = &part.puncture_key
+            && let Some(map) = self.punctures.get_mut(pk)
+        {
+            map.remove(at);
+            if map.is_empty() {
+                self.punctures.remove(pk);
+                for x in pk.0.iter() {
+                    if let Some(ps) = self.puncture_vars.get_mut(x) {
+                        ps.remove(pk);
+                        if ps.is_empty() {
+                            self.puncture_vars.remove(x);
+                        }
+                    }
+                }
+            }
         }
         if let Some((k, ends)) = &part.chain
             && let Some(set) = self.chains.get_mut(k)
         {
             set.remove(&(ends.clone(), at.clone()));
-            if set.is_empty() {
+            let empty_chain = set.is_empty();
+            if empty_chain {
                 self.chains.remove(k);
+                self.chain_ends.remove(k);
+            } else if let Some(at_ends) = self.chain_ends.get_mut(k) {
+                for (place, e) in at_ends.iter_mut().zip(ends) {
+                    if let Some(n) = place.get_mut(e) {
+                        *n -= 1;
+                        if *n == 0 {
+                            place.remove(e);
+                        }
+                    }
+                }
+            }
+            if part.recession.is_none()
+                && part.puncture_key.is_none()
+                && part.cone.is_none()
+                && empty_chain
+            {
+                for x in part.of.as_deref().map(factors).unwrap_or_default() {
+                    if let Some(ks) = self.chain_vars.get_mut(&x) {
+                        ks.remove(k);
+                        if ks.is_empty() {
+                            self.chain_vars.remove(&x);
+                        }
+                    }
+                }
             }
         }
         let Some(g) = &part.of else {
@@ -5182,11 +5547,45 @@ impl Block {
                 }
             }
         }
-        for x in factors(g) {
-            if let Some(ps) = self.vars.get_mut(&x) {
-                ps.remove(at);
-                if ps.is_empty() {
-                    self.vars.remove(&x);
+        if let Some(ck) = &part.cone
+            && let Some(bucket) = self.cones.get_mut(ck)
+        {
+            match &part.chain {
+                Some((k, _)) => {
+                    if let Some(n) = bucket.chains.get_mut(k) {
+                        *n -= 1;
+                        if *n == 0 {
+                            bucket.chains.remove(k);
+                        }
+                    }
+                }
+                None => {
+                    bucket.unchained.remove(at);
+                }
+            }
+            if bucket.unchained.is_empty() && bucket.chains.is_empty() {
+                self.cones.remove(ck);
+                for x in factors(g) {
+                    if let Some(ks) = self.cone_vars.get_mut(&x) {
+                        ks.remove(ck);
+                        if ks.is_empty() {
+                            self.cone_vars.remove(&x);
+                        }
+                    }
+                }
+            }
+        }
+        if part.recession.is_none()
+            && part.puncture_key.is_none()
+            && part.cone.is_none()
+            && part.chain.is_none()
+        {
+            for x in factors(g) {
+                if let Some(ps) = self.vars.get_mut(&x) {
+                    ps.remove(at);
+                    if ps.is_empty() {
+                        self.vars.remove(&x);
+                    }
                 }
             }
         }
@@ -5200,6 +5599,649 @@ impl Block {
             }
         }
         self.unindex_bounds(at, &part.bounds);
+    }
+
+    /// The part of chain key `k` whose ends lie at or below every other part's of the key in
+    /// every place ([`chain_below`]), when there is one. O(e log k) for e places.
+    fn chain_least(&self, k: &Arc<Vec<ChainAtom>>) -> Option<PartAt> {
+        let (ends, at) = self.chains.get(k)?.get_min()?;
+        let least = self.chain_ends.get(k)?;
+        let below = ends.len() == least.len()
+            && ends
+                .iter()
+                .zip(least)
+                .all(|(e, place)| place.get_min().is_some_and(|(m, _)| m == e));
+        below.then(|| at.clone())
+    }
+
+    /// Returns only the parts of `recession[rkey]` (excluding aggregates that currently hold)
+    /// that the recession-direction certificate cannot certify on the current group and
+    /// intervals `names`, in O(r + log k + output) for r rows in `split.base` and k parts at
+    /// `rkey`; `None` when the fragment is refused (an equality, an outside variable in the
+    /// group, a class or hole on a group variable, an unsatisfied unary base row, or an empty
+    /// strict recession cone), leaving non-managed parts of `rkey` to fall back to chain-least
+    /// / full wakeup.
+    fn recession_uncertified(
+        &self,
+        rkey: &RecKey,
+        group_vars: &BTreeSet<Factor>,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+    ) -> Option<Vec<PartAt>> {
+        let idx = self.recession.get(rkey)?;
+        let mut hub_buckets: Vec<&RecessionBucket> = Vec::with_capacity(3);
+        if !idx.plain.is_empty() {
+            hub_buckets.push(&idx.plain);
+        }
+        if !self.stair_managed && !idx.stair.is_empty() {
+            hub_buckets.push(&idx.stair);
+        }
+        if !self.ray_managed && !idx.ray.is_empty() {
+            hub_buckets.push(&idx.ray);
+        }
+        let has_hub = !hub_buckets.is_empty();
+        let has_pos = !idx.pos_leaf.is_empty();
+        let has_neg = !idx.neg_leaf.is_empty();
+        if !has_hub && !has_pos && !has_neg {
+            return Some(Vec::new());
+        }
+        if !self.split.eqs.is_empty() {
+            return None;
+        }
+        let (u, v) = (&rkey.0, &rkey.1);
+        let aux_sym: Option<&Arc<str>> = rkey.2.as_ref().or(self.leaf.as_ref());
+        let allowed_factor =
+            |f: &Factor| matches!(f, Factor::Sym(n) if n == u || n == v || aux_sym == Some(n));
+        if !group_vars.iter().all(allowed_factor) {
+            return None;
+        }
+        for sym in [Some(u), Some(v), rkey.2.as_ref()].into_iter().flatten() {
+            if let Some(&gid) = self.split.group.get(&Factor::Sym(sym.clone()))
+                && !self.split.groups[&gid].0.iter().all(allowed_factor)
+            {
+                return None;
+            }
+        }
+        let top = Product::top();
+        let pu = names.get(u).unwrap_or(&top);
+        let pv = names.get(v).unwrap_or(&top);
+        if classed(pu) || classed(pv) {
+            return None;
+        }
+        let (lu, hu) = pu.ints().only()?;
+        let (lv, hv) = pv.ints().only()?;
+        let aux_bounds = if let Some(w) = aux_sym {
+            let pw = names.get(w).unwrap_or(&top);
+            if classed(pw) {
+                if rkey.2.is_some() || has_pos || has_neg {
+                    return None;
+                }
+                None
+            } else {
+                match pw.ints().only() {
+                    Some((lw, hw)) => Some((lw.clone(), hw.clone())),
+                    None => {
+                        if rkey.2.is_some() || has_pos || has_neg {
+                            return None;
+                        }
+                        None
+                    }
+                }
+            }
+        } else {
+            if has_pos || has_neg {
+                return None;
+            }
+            None
+        };
+        let unary_holds = |k: &Int, lo: &End, hi: &End, c_const: &Int| -> bool {
+            if k.is_positive() {
+                matches!(lo, End::Fin(l) if &(k * &Int::from(l)) + c_const >= Int::ZERO)
+            } else {
+                matches!(hi, End::Fin(h) if &(k * &Int::from(h)) + c_const >= Int::ZERO)
+            }
+        };
+        let base_items: &[Formula] = match &*self.split.base {
+            Formula::And(gs) => gs,
+            f => std::slice::from_ref(f),
+        };
+        let coeff = |c: &Con, n: &Arc<str>| {
+            c.lin
+                .terms
+                .get(&Atom::Sym(n.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO)
+        };
+        let mut aux_rows: Vec<(Int, [Int; 2])> = Vec::new();
+        let mut uv_rows_full: Vec<([Int; 2], Int)> = Vec::new();
+        for f in base_items {
+            let Formula::Con(c) = f else {
+                return None;
+            };
+            if c.lin.terms.is_empty() {
+                return None;
+            };
+            let touches = c
+                .lin
+                .terms
+                .keys()
+                .any(|a| matches!(a, Atom::Sym(n) if n == u || n == v || aux_sym == Some(n)));
+            if !touches {
+                continue;
+            }
+            if c.rel != Rel::Ge {
+                return None;
+            }
+            if !c
+                .lin
+                .terms
+                .keys()
+                .all(|a| matches!(a, Atom::Sym(n) if n == u || n == v || aux_sym == Some(n)))
+            {
+                return None;
+            }
+            if c.lin.terms.len() == 1 {
+                let (Atom::Sym(n), k) = c.lin.terms.iter().next()? else {
+                    return None;
+                };
+                let ok = if n == u {
+                    unary_holds(k, lu, hu, &c.lin.constant)
+                } else if n == v {
+                    unary_holds(k, lv, hv, &c.lin.constant)
+                } else if let Some((lw, hw)) = &aux_bounds {
+                    unary_holds(k, lw, hw, &c.lin.constant)
+                } else {
+                    false
+                };
+                if !ok {
+                    return None;
+                }
+                continue;
+            }
+            if let Some(w) = aux_sym
+                && let Some(s) = c.lin.terms.get(&Atom::Sym(w.clone()))
+            {
+                if s.is_zero() {
+                    return None;
+                }
+                aux_bounds.as_ref()?;
+                aux_rows.push((s.clone(), [coeff(c, u), coeff(c, v)]));
+            } else {
+                let r = [coeff(c, u), coeff(c, v)];
+                if r[0].is_zero() || r[1].is_zero() {
+                    return None;
+                }
+                uv_rows_full.push((r, c.lin.constant.clone()));
+            }
+        }
+        let pos_v = *hv == End::PosInf && uv_rows_full.iter().all(|(r, _)| r[1].is_positive());
+        let neg_v = *lv == End::NegInf && uv_rows_full.iter().all(|(r, _)| r[1].is_negative());
+        let pos_u = *hu == End::PosInf && uv_rows_full.iter().all(|(r, _)| r[0].is_positive());
+        let neg_u = *lu == End::NegInf && uv_rows_full.iter().all(|(r, _)| r[0].is_negative());
+        let push_box_normals = |normals: &mut Vec<[Int; 2]>| {
+            if *lu != End::NegInf {
+                normals.push([Int::ONE, Int::ZERO]);
+            }
+            if *hu != End::PosInf {
+                normals.push([-&Int::ONE, Int::ZERO]);
+            }
+            if *lv != End::NegInf {
+                normals.push([Int::ZERO, Int::ONE]);
+            }
+            if *hv != End::PosInf {
+                normals.push([Int::ZERO, -&Int::ONE]);
+            }
+        };
+        let mut out = Vec::new();
+        if has_hub {
+            if (!pos_v && !neg_v) || (!pos_u && !neg_u) || aux_rows.len() > 1 {
+                return None;
+            }
+            if let Some((s, p_uv)) = aux_rows.first() {
+                let (lw, hw) = aux_bounds.as_ref()?;
+                if s.abs() != Int::ONE
+                    || (s.is_positive() && *hw != End::PosInf)
+                    || (s.is_negative() && *lw != End::NegInf)
+                    || (p_uv[0].is_zero() && p_uv[1].is_zero())
+                {
+                    return None;
+                }
+            }
+            match (pos_v, neg_v) {
+                (true, true) => {}
+                (true, false) => {
+                    let t = TurnEnd::At(Turn([Int::ZERO, Int::ONE]));
+                    for b in &hub_buckets {
+                        b.linear.report(&t, &t, &mut out);
+                    }
+                }
+                (false, true) => {
+                    let t = TurnEnd::At(Turn([Int::ZERO, -&Int::ONE]));
+                    for b in &hub_buckets {
+                        b.linear.report(&t, &t, &mut out);
+                    }
+                }
+                (false, false) => unreachable!("refused above"),
+            }
+            match (pos_u, neg_u) {
+                (true, true) => {}
+                (true, false) => {
+                    let t = TurnEnd::At(Turn([Int::ONE, Int::ZERO]));
+                    for b in &hub_buckets {
+                        b.linear.report(&t, &t, &mut out);
+                    }
+                }
+                (false, true) => {
+                    let t = TurnEnd::At(Turn([-&Int::ONE, Int::ZERO]));
+                    for b in &hub_buckets {
+                        b.linear.report(&t, &t, &mut out);
+                    }
+                }
+                (false, false) => unreachable!("refused above"),
+            }
+            if let Some((_, p_uv)) = aux_rows.first() {
+                let mut normals = Vec::with_capacity(uv_rows_full.len() + 5);
+                normals.push(p_uv.clone());
+                normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
+                push_box_normals(&mut normals);
+                let (r1, r2) = open_cone_sector(&normals)?;
+                for b in &hub_buckets {
+                    b.report_sector(&r1, &r2, &mut out);
+                }
+            }
+        }
+        if has_pos || has_neg {
+            if !(uv_rows_full.is_empty() || pos_v || neg_v)
+                || !(uv_rows_full.is_empty() || pos_u || neg_u)
+            {
+                return None;
+            }
+            let (lw, hw) = aux_bounds.as_ref()?;
+            if has_pos {
+                if *hw != End::PosInf
+                    || !aux_rows
+                        .iter()
+                        .all(|(s, p)| s.is_positive() && !(p[0].is_zero() && p[1].is_zero()))
+                {
+                    return None;
+                }
+                let mut normals: Vec<[Int; 2]> = aux_rows.iter().map(|(_, p)| p.clone()).collect();
+                normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
+                push_box_normals(&mut normals);
+                if normals.is_empty() {
+                    return None;
+                }
+                let (r1, r2) = open_cone_sector(&normals)?;
+                idx.pos_leaf.report_sector(&r1, &r2, &mut out);
+            }
+            if has_neg {
+                if *lw != End::NegInf
+                    || !aux_rows
+                        .iter()
+                        .all(|(s, p)| s.is_negative() && !(p[0].is_zero() && p[1].is_zero()))
+                {
+                    return None;
+                }
+                let mut normals: Vec<[Int; 2]> = aux_rows.iter().map(|(_, p)| p.clone()).collect();
+                normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
+                push_box_normals(&mut normals);
+                if normals.is_empty() {
+                    return None;
+                }
+                let (r1, r2) = open_cone_sector(&normals)?;
+                idx.neg_leaf.report_sector(&r1, &r2, &mut out);
+            }
+        }
+        Some(out)
+    }
+
+    fn wake_uncertified_subset(&mut self, mut uncert: Vec<PartAt>, due: &mut Vec<PartAt>) {
+        uncert.sort();
+        uncert.dedup_by(|a, b| a.0 == b.0 && a.1.cmp(&b.1).is_eq());
+        let mut by_chain: PartsByChain = BTreeMap::new();
+        for at in uncert {
+            let Some(p) = self.parts.get(&at) else {
+                continue;
+            };
+            if self.managed(p) {
+                continue;
+            }
+            if let Some((ck, ends)) = &p.chain {
+                by_chain
+                    .entry(ck.clone())
+                    .or_default()
+                    .push((ends.clone(), at));
+            } else {
+                self.fired.insert(at.clone());
+                due.push(at);
+            }
+        }
+        for (ck, mut members) in by_chain {
+            if members.len() == 1 {
+                let at = members.pop().unwrap().1;
+                self.fired.insert(at.clone());
+                due.push(at);
+                continue;
+            }
+            members.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            let below_all = members[1..]
+                .iter()
+                .all(|(e, _)| chain_below(&members[0].0, e));
+            if below_all {
+                let least = members[0].1.clone();
+                let rest: Vec<PartAt> = members.into_iter().skip(1).map(|(_, at)| at).collect();
+                self.fired.insert(least.clone());
+                match self.fired_chains.entry(ck) {
+                    std::collections::btree_map::Entry::Vacant(v) => {
+                        v.insert(Some(rest));
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut o) => {
+                        if let Some(existing) = o.get_mut() {
+                            existing.extend(rest);
+                            existing.sort();
+                            existing.dedup_by(|a, b| a.0 == b.0 && a.1.cmp(&b.1).is_eq());
+                        }
+                    }
+                }
+                due.push(least);
+            } else {
+                for (_, at) in members {
+                    self.fired.insert(at.clone());
+                    due.push(at);
+                }
+            }
+        }
+    }
+
+    fn wake_recession_bucket(&mut self, bucket: &RecessionBucket, due: &mut Vec<PartAt>) {
+        let unchained: Vec<PartAt> = bucket.unchained.iter().cloned().collect();
+        let chains: Vec<Arc<Vec<ChainAtom>>> = bucket.chains.keys().cloned().collect();
+        for at in unchained {
+            self.fired.insert(at.clone());
+            due.push(at);
+        }
+        for ck in chains {
+            if let Some(least) = self.chain_least(&ck) {
+                self.fired.insert(least.clone());
+                self.fired_chains.insert(ck, None);
+                due.push(least);
+            } else {
+                let all: Vec<PartAt> = self
+                    .chains
+                    .get(&ck)
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, at)| at.clone())
+                    .collect();
+                self.fired.extend(all.iter().cloned());
+                due.extend(all);
+            }
+        }
+    }
+
+    /// Wakes the parts of each case-changed group `v` in `case_groups` that no aggregate,
+    /// punctured-line certificate, recession certificate, or direction certificate
+    /// ([`Block::cone_certified`]) covers. Runs after `stair_managed` and
+    /// `ray_managed` are updated so covered aggregates are skipped in O(1).
+    fn wake_case_groups(
+        &mut self,
+        case_groups: &BTreeSet<BTreeSet<Factor>>,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        due: &mut Vec<PartAt>,
+    ) {
+        let top = Product::top();
+        let get = |n: &str| names.get(n).cloned().unwrap_or_else(|| top.clone());
+        let mut puncture_ctx: BTreeMap<NamePair, Option<PunctureContext>> = BTreeMap::new();
+        for v in case_groups.iter().filter(|v| v.len() >= 2) {
+            for at in holding_two(&self.vars, v) {
+                if self.parts.get(&at).is_some_and(|p| self.managed(p)) {
+                    continue;
+                }
+                self.fired.insert(at.clone());
+                due.push(at);
+            }
+            for k in holding_two(&self.chain_vars, v) {
+                if let Some(least) = self.chain_least(&k) {
+                    if self.parts.get(&least).is_some_and(|p| self.managed(p)) {
+                        continue;
+                    }
+                    self.fired.insert(least.clone());
+                    self.fired_chains.insert(k, None);
+                    due.push(least);
+                } else {
+                    let all: Vec<PartAt> = self
+                        .chains
+                        .get(&k)
+                        .into_iter()
+                        .flatten()
+                        .map(|(_, at)| at.clone())
+                        .filter(|at| !self.parts.get(at).is_some_and(|p| self.managed(p)))
+                        .collect();
+                    self.fired.extend(all.iter().cloned());
+                    due.extend(all);
+                }
+            }
+            for pk in holding_two(&self.puncture_vars, v) {
+                let Some(map) = self.punctures.get(&pk).cloned() else {
+                    continue;
+                };
+                let ctx = puncture_ctx
+                    .entry(pk.1.clone())
+                    .or_insert_with(|| PunctureContext::of(self, &get, &pk.1));
+                let uncert: Vec<PartAt> = match ctx {
+                    Some(c) => map
+                        .iter()
+                        .filter(|(_, pp)| !c.is_idle(pp))
+                        .map(|(at, _)| at.clone())
+                        .collect(),
+                    None => map.keys().cloned().collect(),
+                };
+                self.wake_uncertified_subset(uncert, due);
+            }
+            for rkey in holding_two(&self.recession_vars, v) {
+                if let Some(uncert) = self.recession_uncertified(&rkey, v, names) {
+                    self.wake_uncertified_subset(uncert, due);
+                } else if let Some(idx) = self.recession.get(&rkey).cloned() {
+                    if !idx.plain.is_empty() {
+                        self.wake_recession_bucket(&idx.plain, due);
+                    }
+                    if !self.stair_managed && !idx.stair.is_empty() {
+                        self.wake_recession_bucket(&idx.stair, due);
+                    }
+                    if !self.ray_managed && !idx.ray.is_empty() {
+                        self.wake_recession_bucket(&idx.ray, due);
+                    }
+                    if !idx.pos_leaf.is_empty() {
+                        self.wake_recession_bucket(&idx.pos_leaf, due);
+                    }
+                    if !idx.neg_leaf.is_empty() {
+                        self.wake_recession_bucket(&idx.neg_leaf, due);
+                    }
+                }
+            }
+            // Complexity tradeoff: naive version, each disjunction of `>=` rows that is neither
+            // a recession nor a punctured-line shape woken by its chain key, its least part
+            // projected in every case: one key per part when the rows differ in more than one
+            // coefficient, so k projections per case and O(k^2) per family (four names
+            // `x0 + j x1 + (j+1) x2 + (j+2) x3 >= 1 || ...`: 29.78x at 8n; split4: 52.34x; base
+            // 7.68x and 12.84x, but base wakes nothing in a case and is not exact). Used: such
+            // parts are keyed by their names and by which of a fixed list of directions some
+            // arm grows along ([`cone_shape`], once per part); a key is skipped in a case when
+            // [`Block::cone_certified`] shows, from the constraints and the box, that no part
+            // of the key narrows a name, and woken whole otherwise. O(d r t) per key per case
+            // for d = 22m directions over m names, r rows of t terms; the families above have
+            // O(1) keys, so O(log k) per case: four names 7.74x, split4 12.70x (its remainder
+            // is base's, PERF-refused-shape-disjunctions-quadratic). A part with an atom other
+            // than a name, an equality among the constraints, or a box that bounds every
+            // direction is woken as before. The certificate is the recession-cone argument of
+            // [`Block::recession_uncertified`] in m dimensions (R. T. Rockafellar, "Convex Analysis", Princeton, 1970, section 8; A. Schrijver,
+            // "Theory of Linear and Integer Programming", Wiley, 1986, section 8.2).
+            for ck in holding_two(&self.cone_vars, v) {
+                if self.cone_certified(&ck, names) {
+                    continue;
+                }
+                if let Some(bucket) = self.cones.get(&ck).cloned() {
+                    self.wake_cone_bucket(&bucket, due);
+                }
+            }
+        }
+    }
+
+    /// Wakes the parts of `bucket` no aggregate stands for: those of no chain, and the least
+    /// part of each chain key, as [`Block::wake_case_groups`] wakes a chain key.
+    fn wake_cone_bucket(&mut self, bucket: &ConeBucket, due: &mut Vec<PartAt>) {
+        let unchained: Vec<PartAt> = (bucket.unchained.iter())
+            .filter(|at| !self.parts.get(*at).is_some_and(|p| self.managed(p)))
+            .cloned()
+            .collect();
+        self.fired.extend(unchained.iter().cloned());
+        due.extend(unchained);
+        for k in bucket.chains.keys() {
+            if let Some(least) = self.chain_least(k) {
+                if self.parts.get(&least).is_some_and(|p| self.managed(p)) {
+                    continue;
+                }
+                self.fired.insert(least.clone());
+                self.fired_chains.insert(k.clone(), None);
+                due.push(least);
+            } else {
+                let all: Vec<PartAt> = (self.chains.get(k).into_iter().flatten())
+                    .map(|(_, at)| at.clone())
+                    .filter(|at| !self.parts.get(at).is_some_and(|p| self.managed(p)))
+                    .collect();
+                self.fired.extend(all.iter().cloned());
+                due.extend(all);
+            }
+        }
+    }
+
+    /// Whether no part of key `ck` can narrow a name in the box `names` inside a case, by the
+    /// direction certificate below; `false` when it cannot tell, and then the parts are woken.
+    ///
+    /// Proof. Let `B` be the points of the box that satisfy the constraints (`split.base`,
+    /// rows `r.z >= c_r`, no equalities), `n` a name and `z0` in `B`. Take a flagged direction
+    /// `w0 = d + rho * s` of [`cone_dirs`] (some arm `a` has `a.w0 > 0` for every small
+    /// `rho > 0`, [`cone_grows`]) whose moved names (those of `d`; `s` is on a name of `d`
+    /// and, `rho` small, keeps its sign) are free of a class and unbounded in the box in the
+    /// sign they move, and an escape `e` for each row with `r.w0 <= 0`: a name not of the key,
+    /// of one sign `t_e` in every row, free of a class and unbounded in the box in that sign.
+    /// With `w = w0 + C * sum t_e * e` (scaled to integers, `C` large) every row grows along
+    /// `w` (an escape grows each row it is in and no arm), so for `lambda` large `z0 + lambda
+    /// w` satisfies every row and the arm `a`, lies in the box (moved names past their last
+    /// hole, unbounded that way; the others unmoved, holes and classes on them do not matter),
+    /// and keeps every name off the moved names and escapes fixed, `n` with it when `n` is not
+    /// blocked by `w`. So when every name is unblocked by some such `w` (the blocked sets meet
+    /// in nothing) the projection of `g` and the constraints onto each name equals that of the
+    /// constraints alone, which the constraints' own part, woken in the case, gives: waking
+    /// `g` narrows nothing. Names of the group the part does not mention are covered alike:
+    /// they are never moved except as escapes, which are blocked.
+    fn cone_certified(&self, ck: &ConeKey, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        if !self.split.eqs.is_empty() {
+            return false;
+        }
+        let rows: &[Formula] = match &*self.split.base {
+            Formula::And(gs) => gs,
+            f => std::slice::from_ref(f),
+        };
+        let mut terms: Vec<&BTreeMap<Atom, Int>> = Vec::with_capacity(rows.len());
+        for r in rows {
+            let Formula::Con(c) = r else { return false };
+            if c.rel != Rel::Ge
+                || c.lin.terms.is_empty()
+                || !c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_)))
+            {
+                return false;
+            }
+            terms.push(&c.lin.terms);
+        }
+        let top = Product::top();
+        let get = |n: &Arc<str>| names.get(n).unwrap_or(&top);
+        let free = |n: &Arc<str>, up: bool| {
+            let p = get(n);
+            !classed(p)
+                && match p.ints().bounds() {
+                    Some((lo, hi)) => {
+                        if up {
+                            *hi == End::PosInf
+                        } else {
+                            *lo == End::NegInf
+                        }
+                    }
+                    None => false,
+                }
+        };
+        let (keyed, flags) = ck;
+        // The sign of each name off the key in the rows: Some(sign) while one sign.
+        let mut signs: BTreeMap<&Arc<str>, Option<bool>> = BTreeMap::new();
+        for t in &terms {
+            for (a, k) in t.iter() {
+                let Atom::Sym(n) = a else { continue };
+                if get(n).ints().bounds().is_none() {
+                    return false;
+                }
+                if keyed.binary_search(n).is_ok() {
+                    continue;
+                }
+                let up = k.is_positive();
+                signs
+                    .entry(n)
+                    .and_modify(|s| {
+                        if *s != Some(up) {
+                            *s = None
+                        }
+                    })
+                    .or_insert(Some(up));
+            }
+        }
+        if keyed.iter().any(|n| get(n).ints().bounds().is_none()) {
+            return false;
+        }
+        let escapes: BTreeSet<&Arc<str>> = (signs.into_iter())
+            .filter_map(|(n, s)| s.filter(|&up| free(n, up)).map(|_| n))
+            .collect();
+        let mut blocked: Option<BTreeSet<Arc<str>>> = None;
+        for (dir, _) in cone_dirs(keyed.len())
+            .iter()
+            .zip(flags.iter())
+            .filter(|(_, f)| **f)
+        {
+            if !(dir.d[..dir.len].iter()).all(|&(i, t)| free(&keyed[i], t > 0)) {
+                continue;
+            }
+            let mut here: BTreeSet<Arc<str>> = (dir.d[..dir.len].iter())
+                .map(|&(i, _)| keyed[i].clone())
+                .collect();
+            let mut ok = true;
+            for t in &terms {
+                if cone_grows(&cone_dot(t, keyed, dir)) {
+                    continue;
+                }
+                let escape = t.keys().find_map(|a| match a {
+                    Atom::Sym(n) if escapes.contains(n) => Some(n.clone()),
+                    _ => None,
+                });
+                match escape {
+                    Some(e) => {
+                        here.insert(e);
+                    }
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let now = match blocked.take() {
+                None => here,
+                Some(b) => b.intersection(&here).cloned().collect(),
+            };
+            if now.is_empty() {
+                return true;
+            }
+            blocked = Some(now);
+        }
+        false
     }
 
     /// Puts `entries` of the part at `at` in [`Block::bounds`].
@@ -5236,6 +6278,7 @@ impl Block {
     /// other parts are projected with what they were ([`PartWith`]) and mention the names
     /// they did, unless the equalities changed, or the constraints gain or lose a name some
     /// conjunct with a part does not mention: then `false`, and the block is to be made anew.
+    #[allow(clippy::too_many_arguments)]
     fn reframe(
         &mut self,
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
@@ -5244,6 +6287,7 @@ impl Block {
         due: &mut Vec<PartAt>,
         groups: bool,
         spent: &imbl::OrdSet<BoundsKey>,
+        case_groups: &mut BTreeSet<BTreeSet<Factor>>,
     ) -> bool {
         let split = self.split.update(&self.cons, removed_cons, added_cons);
         if split.eqs != self.split.eqs {
@@ -5266,34 +6310,44 @@ impl Block {
             self.remove_part(&(true, key.0));
         }
         let split = Arc::new(split);
-        // The groups each constraint added or gone since the groups were last read was in and
-        // is in ([`Split::with`]), when they are read now: outside the cases of a test. Within
-        // them the parts keep the groups of `outer`: a case's constraint is gone again once two
-        // cases or more are joined, and one case left is projected again outside them
-        // ([`Scope::join_kept`]). Two cases or more lose a narrowing that reaches a part only
-        // through a group (COMPLEXITY.md C52, FAIL-linked-case-group-wake): reading the groups
-        // here is exact but reads every part of the group in each case, 3k^2 reads on the star
-        // of k disjunctions on `x` and `y`, past that benchmark's limit.
+        // The groups each constraint added or gone was in and is in ([`Split::with`]). Outside
+        // the cases of a test they are read against `outer_cons` and update each affected part's
+        // [`PartWith`]. Within the cases of a test (`!groups`), the parts keep `outer` as their
+        // [`PartWith`] key so that case-local constraints leave outer records intact across the
+        // join, while the groups changed by multi-variable `removed_cons` and `added_cons` wake
+        // the parts they can narrow (`fired`, via [`Block::wake_case_groups`] after aggregate
+        // flags are updated).
         let mut vars: BTreeSet<BTreeSet<Factor>> = BTreeSet::new();
+        let (then_split, now_split) = if groups {
+            (self.outer.clone(), split.clone())
+        } else {
+            (self.split.clone(), split.clone())
+        };
+        let mut read_groups: BTreeSet<(bool, usize)> = BTreeSet::new();
+        let mut note = |g: &Formula| {
+            if let Some(x) = factors(g).into_iter().next() {
+                read_groups.extend(then_split.group.get(&x).map(|&i| (false, i)));
+                read_groups.extend(now_split.group.get(&x).map(|&i| (true, i)));
+            }
+        };
         if groups {
-            let mut groups: BTreeSet<(bool, usize)> = BTreeSet::new();
             for d in self.outer_cons.diff(&self.cons) {
                 let (imbl::ordset::DiffItem::Add(g) | imbl::ordset::DiffItem::Remove(g)) = d;
-                let Some(x) = factors(g).into_iter().next() else {
-                    continue;
-                };
-                groups.extend(self.outer.group.get(&x).map(|&i| (false, i)));
-                groups.extend(split.group.get(&x).map(|&i| (true, i)));
+                note(g);
             }
-            vars = groups
-                .into_iter()
-                .map(|(now, i)| {
-                    let s = if now { &*split } else { &*self.outer };
-                    s.groups[&i].0.clone()
-                })
-                .collect();
             self.outer = split.clone();
             self.outer_cons = self.cons.clone();
+        } else {
+            // Inside a case (`!groups`), `removed_cons` come only from an inner join dropping a
+            // branch-local constraint already projected on its branch, which only relaxes `cons`
+            // and cannot narrow any part; only `added_cons` add new variable links.
+            for g in added_cons {
+                note(g);
+            }
+        }
+        for (is_now, i) in read_groups {
+            let s = if is_now { &now_split } else { &then_split };
+            vars.insert(s.groups[&i].0.clone());
         }
         self.split = split;
         due.extend(self.add_constraints());
@@ -5303,33 +6357,65 @@ impl Block {
             .flatten()
             .cloned()
             .collect();
-        // The parts that hold two variables of a changed group or more ([`Block::vars`]). Such
-        // a part holds a variable of the group other than the one with the most parts, so the
-        // parts of the others are read and counted, and a part counted once is due if it also
-        // holds that one.
-        // Complexity tradeoff: naive version, every part of each variable of the group read,
-        // which is O(k) per test for k disjunctions that share one variable with the group
-        // (`n` of `n + m <= c` under `n - v_i >= 5 || n + v_i <= -5`), or a lookup of each pair
-        // of the group's v variables, O(v^2 log k) per test, with an index of O(s^2) pairs for
-        // a part of s variables. Used: the parts of every variable of the group but the one
-        // with the most, O((p + v) log k) for the p parts read, with a lookup in the parts of
-        // that one for each part read once. Two variables of the group that each have k parts
-        // the other lacks still cost O(k) per test (open). COMPLEXITY.md C52.
-        for v in vars.iter().filter(|v| v.len() >= 2) {
-            let count = |x: &Factor| self.vars.get(x).map_or(0, imbl::OrdSet::len);
-            let most = v.iter().max_by_key(|x| count(x));
-            let mut read: BTreeMap<&PartAt, usize> = BTreeMap::new();
-            for x in v.iter().filter(|&x| Some(x) != most) {
-                for at in self.vars.get(x).into_iter().flatten() {
-                    *read.entry(at).or_insert(0) += 1;
+        // Complexity tradeoff: naive version, waking every part holding two variables of a
+        // changed group inside each case costs O(k^2) reads and checks on the distinct-slope
+        // star `a >= x + y` with k disjunctions `x + j * y >= 1 || x - j * y >= 1` (and still
+        // O(k^2) worklist/join updates when grouped by chain key alone: 36.16G / 1.168G = 30.95x
+        // at k = 80 -> 640); skipping group wakes inside cases (main before XR-case-group-wake)
+        // loses narrowings that reach a part only through a group when two cases survive (seeds
+        // 216 and 14072984267085997581). Used: two-name (and star-leaf) `>=` disjunctions are
+        // indexed in a persistent priority search tree (`Pst`, `Block::recession`) over their
+        // closed angular failure arcs on `(-π, π]`, partitioned by aggregate [`Role`], so
+        // [`Block::wake_case_groups`] skips covered `Stair`/`Upper`/`Ray` aggregates in O(1) and
+        // [`Block::recession_uncertified`] wakes only the parts no strict integer recession ray
+        // of the group certifies, in O(r + log k + output) per changed group (measured: distinct
+        // star 849.6M / 7,425.7M = 8.74x at 80 -> 640); chains wake only [`Block::chain_least`]
+        // and expand only if that least part remains non-idle after its projection; all other
+        // shapes wake every matching part via [`holding_two`]. References: N. Sarnak and R. E.
+        // Tarjan, "Planar point location using persistent search trees", CACM 29(7), 1986,
+        // pp. 669-679; D. Amagata et al., "Efficient algorithms for top-k stabbing queries on
+        // weighted interval data", arXiv:2405.05601, 2024; G. Averkov and M. Schymura,
+        // "Complexity of linear relaxations in integer programming", Math. Program. 194, 2022,
+        // pp. 191-227; C. Schulte and P. J. Stuckey, "Efficient constraint propagation engines",
+        // arXiv:cs/0611009, 2006.
+        if groups {
+            for v in vars.iter().filter(|v| v.len() >= 2) {
+                for at in holding_two(&self.vars, v) {
+                    on.insert(at);
+                }
+                for k in holding_two(&self.chain_vars, v) {
+                    on.extend(
+                        self.chains
+                            .get(&k)
+                            .into_iter()
+                            .flatten()
+                            .map(|(_, at)| at.clone()),
+                    );
+                }
+                for pk in holding_two(&self.puncture_vars, v) {
+                    if let Some(map) = self.punctures.get(&pk) {
+                        on.extend(map.keys().cloned());
+                    }
+                }
+                for rkey in holding_two(&self.recession_vars, v) {
+                    if let Some(idx) = self.recession.get(&rkey) {
+                        idx.collect_all(&mut on, &self.chains);
+                    }
+                }
+                for ck in holding_two(&self.cone_vars, v) {
+                    if let Some(bucket) = self.cones.get(&ck) {
+                        on.extend(bucket.unchained.iter().cloned());
+                        for k in bucket.chains.keys() {
+                            on.extend(
+                                (self.chains.get(k).into_iter().flatten())
+                                    .map(|(_, at)| at.clone()),
+                            );
+                        }
+                    }
                 }
             }
-            let of_most = most.and_then(|x| self.vars.get(x));
-            for (at, k) in read {
-                if k >= 2 || of_most.is_some_and(|ps| ps.contains(at)) {
-                    on.insert(at.clone());
-                }
-            }
+        } else {
+            *case_groups = vars;
         }
         // Complexity tradeoff: naive versions: main's rule, a part due only when the constraints
         // on its own terms change, 7k + 1 projections for the star `a >= x + y` and k
@@ -5503,6 +6589,8 @@ impl Block {
         let mut next = self.clone();
         next.added = Vec::new();
         next.fired = BTreeSet::new();
+        next.fired_chains = BTreeMap::new();
+        next.case_groups = BTreeSet::new();
         next.spends = Vec::new();
         next.stair_due = None;
         let empty = imbl::OrdSet::new();
@@ -5604,6 +6692,7 @@ impl Block {
         // Outside the cases of a test, the groups are read again when they were last read within
         // them ([`Block::outer`]), though no constraint changed since.
         let stale = groups && next.outer_cons.diff(&next.cons).next().is_some();
+        let mut case_groups: BTreeSet<BTreeSet<Factor>> = BTreeSet::new();
         if (!changed.is_empty() || stale)
             && !next.reframe(
                 &changed,
@@ -5612,6 +6701,7 @@ impl Block {
                 &mut due,
                 groups,
                 spent,
+                &mut case_groups,
             )
         {
             return None;
@@ -5653,6 +6743,9 @@ impl Block {
             let first = next.of_role(Role::Ray).next().cloned();
             next.ray_due = first;
             due.extend(next.ray_due.iter().cloned());
+        }
+        if !case_groups.is_empty() {
+            next.case_groups = case_groups;
         }
         due.extend(next.released(self.stair_managed, self.ray_managed).cloned());
 
@@ -6249,7 +7342,8 @@ impl Scope {
                 }
             };
         block.ray_managed = block.ray_high(&self.names).is_some();
-        let due: Vec<PartAt> = maybe
+        let mut puncture_ctx: BTreeMap<NamePair, Option<PunctureContext>> = BTreeMap::new();
+        let mut due: Vec<PartAt> = maybe
             .into_iter()
             .filter(|at| {
                 let p = &block.parts[at];
@@ -6259,11 +7353,31 @@ impl Scope {
 
                 block.stair_due.as_ref() == Some(at)
                     || block.ray_due.as_ref() == Some(at)
-                    || block.fired.contains(at)
-                    || (!self.is_projected(&p.key, &p.with, &p.names)
-                        && !self.puncture_idle(&block, &p.key.0))
+                    || ((block.fired.contains(at) || !self.is_projected(&p.key, &p.with, &p.names))
+                        && !self.part_puncture_idle(&block, p, &mut puncture_ctx))
             })
             .collect();
+        // The case-changed groups are woken here, against `self.names`, before any part of
+        // the block projects. Waking them later, after the block's constraints part `(true, _)`
+        // has narrowed its names, gave answers narrower than the projection from scratch
+        // (a three-name case found by
+        // `case_wake::tests_on_three_names_give_the_projection_from_scratch` and minimized
+        // during XR-case-group-wake).
+        if !block.case_groups.is_empty() {
+            let cg = std::mem::take(&mut block.case_groups);
+            let mut woke = Vec::new();
+            block.wake_case_groups(&cg, &self.names, &mut woke);
+            for at in woke {
+                if let Some(p) = block.parts.get(&at).cloned()
+                    && !block.managed(&p)
+                    && !self.part_puncture_idle(&block, &p, &mut puncture_ctx)
+                {
+                    due.push(at);
+                }
+            }
+            due.sort();
+            due.dedup_by(|a, b| a.0 == b.0 && a.1.cmp(&b.1).is_eq());
+        }
         (block, due)
     }
 
@@ -11544,7 +12658,7 @@ impl Scope {
                 && self.project_threshold(shape)
             {
                 self.cover(&mut b, covered.is_some());
-                self.record(b, &start, &due);
+                self.record(b, &start, &due, &[], &[]);
                 return;
             }
         }
@@ -11569,11 +12683,12 @@ impl Scope {
         let mut initial_star_base: Option<PartAt> = None;
         let mut moved_by_base: BTreeSet<Arc<str>> = BTreeSet::new();
         if leaf.is_some()
-            && work.len() >= 2
-            && work.back().is_some_and(|at| at.0)
-            && let Some(base_at) = work.pop_back()
+            && let Some(pos) = work.iter().rposition(|at| at.0)
+            && let Some(base_at) = work.remove(pos)
         {
-            initial_star_base = Some(base_at.clone());
+            if !work.is_empty() {
+                initial_star_base = Some(base_at.clone());
+            }
             work.push_front(base_at);
         }
         let mut queued: BTreeSet<PartAt> = due.iter().cloned().collect();
@@ -11581,10 +12696,13 @@ impl Scope {
         // ([`Scope::idle_by_chain`]).
         let mut certified: BTreeMap<PartAt, bool> = BTreeMap::new();
         let mut certified_chains: BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>> = BTreeMap::new();
+        let mut puncture_ctx: BTreeMap<NamePair, Option<PunctureContext>> = BTreeMap::new();
+        let mut ran: Vec<PartAt> = Vec::new();
+        let mut released_loop: Vec<PartAt> = Vec::new();
         while let Some(i) = work.pop_front() {
             queued.remove(&i);
             let part = &b.parts[&i].clone();
-            if b.managed(part) || self.puncture_idle(&b, &part.key.0) {
+            if b.managed(part) || self.part_puncture_idle(&b, part, &mut puncture_ctx) {
                 continue;
             }
             // Complexity tradeoff: repeated projection is replaced by a sufficient
@@ -11626,6 +12744,9 @@ impl Scope {
                 && self.projected.contains_key(&part.key)
                 && self.idle_by_chain(&b, &i, part, &mut certified, &mut certified_chains)
             {
+                if let Some((k, _)) = &part.chain {
+                    b.fired_chains.remove(k);
+                }
                 continue;
             }
             // Complexity tradeoff: naive version, a covered block's names copied and their
@@ -11639,12 +12760,51 @@ impl Scope {
             let projected_now = b.formula(part);
             let refusals_before = self.refusals.clone();
             self.project_part(&projected_now);
+            ran.push(i.clone());
+            if self.bottom {
+                break;
+            }
             certified.clear();
             certified_chains.clear();
+            puncture_ctx.clear();
             let after_part = self.names.view().clone();
             let was = (b.stair_managed, b.ray_managed);
             covered = self.cover(&mut b, covered.is_some());
+            // Complexity tradeoff: naive version (`attempt-chain-least`), expanding
+            // `fired_chains` before projecting the least part enqueued all j - 2 higher chain
+            // members whenever the least part narrowed a star leaf (`203,841` enqueues at
+            // k = 640). Used: re-test `self.idle` on the least part at the post-projection
+            // domains; when it now holds (and records its ends in `certified_chains`), chain
+            // subsumption (`Q` implies `P`) certifies every higher member without queueing it;
+            // when a sector query reported only a subset (`Some(rest)`), expand only `rest`.
+            if let Some((k, c_ends)) = &part.chain
+                && let Some(subset) = b.fired_chains.remove(k)
+            {
+                let now_idle = !self.bottom && !b.ray_managed && self.idle(&b, part);
+                certified.insert(i.clone(), now_idle);
+                if now_idle {
+                    certified_chains.insert(k.clone(), c_ends.clone());
+                } else {
+                    match subset {
+                        Some(rest) => {
+                            for j in rest {
+                                if j != i && queued.insert(j.clone()) {
+                                    work.push_back(j);
+                                }
+                            }
+                        }
+                        None => {
+                            for (_, j) in b.chains.get(k).into_iter().flatten() {
+                                if j != &i && queued.insert(j.clone()) {
+                                    work.push_back(j.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             for j in b.released(was.0, was.1) {
+                released_loop.push(j.clone());
                 if queued.insert(j.clone()) {
                     work.push_back(j.clone());
                 }
@@ -11700,9 +12860,136 @@ impl Scope {
                 // (coordkk, coordmix, hole_end*_pad), against none for this trigger
                 // (2026-11-16). Cost: one O(1) piece count a moved name.
                 again |= p.ints().len() > 1;
-                for j in b.due_users(n) {
-                    if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
-                        work.push_back(j.clone());
+                if self.in_case && !b.ray_managed {
+                    let allow_self = aggregated.contains(n);
+                    if let Some(us) = b.unchained_users.get(n) {
+                        for j in us.due(b.stair_managed, b.ray_managed) {
+                            if (j != &i || allow_self) && queued.insert(j.clone()) {
+                                work.push_back(j.clone());
+                            }
+                        }
+                    }
+                    let cks: Vec<Arc<Vec<ChainAtom>>> = b
+                        .chained_users
+                        .get(n)
+                        .map(|m| m.keys().cloned().collect())
+                        .unwrap_or_default();
+                    for ck in cks {
+                        self.enqueue_chain_in_case(
+                            &mut b,
+                            ck,
+                            &i,
+                            allow_self,
+                            &mut certified,
+                            &mut certified_chains,
+                            &mut queued,
+                            &mut work,
+                        );
+                    }
+                    let in_base = b.split.base_syms.binary_search(n).is_ok();
+                    let pkeys: Vec<PunctureKey> = if in_base {
+                        b.punctures.keys().cloned().collect()
+                    } else {
+                        b.puncture_vars
+                            .get(&Factor::Sym(n.clone()))
+                            .map(|s| s.iter().cloned().collect())
+                            .unwrap_or_default()
+                    };
+                    for pk in pkeys {
+                        let Some(map) = b.punctures.get(&pk).cloned() else {
+                            continue;
+                        };
+                        let ctx = puncture_ctx
+                            .entry(pk.1.clone())
+                            .or_insert_with(|| PunctureContext::of(&b, &|m| self.get(m), &pk.1));
+                        let uncert: Vec<PartAt> = match ctx {
+                            Some(c) => map
+                                .iter()
+                                .filter(|(_, pp)| !c.is_idle(pp))
+                                .map(|(at, _)| at.clone())
+                                .collect(),
+                            None => map.keys().cloned().collect(),
+                        };
+                        self.enqueue_uncert_in_case(
+                            &mut b,
+                            uncert,
+                            &i,
+                            allow_self,
+                            &mut certified,
+                            &mut certified_chains,
+                            &mut queued,
+                            &mut work,
+                        );
+                    }
+                    let rkeys: Vec<RecKey> = if in_base {
+                        b.recession.keys().cloned().collect()
+                    } else {
+                        b.recession_vars
+                            .get(&Factor::Sym(n.clone()))
+                            .map(|s| s.iter().cloned().collect())
+                            .unwrap_or_default()
+                    };
+                    for rkey in rkeys {
+                        let rkey_group: BTreeSet<Factor> =
+                            rec_key_factors(&rkey).into_iter().collect();
+                        if let Some(uncert) =
+                            b.recession_uncertified(&rkey, &rkey_group, &self.names)
+                        {
+                            self.enqueue_uncert_in_case(
+                                &mut b,
+                                uncert,
+                                &i,
+                                allow_self,
+                                &mut certified,
+                                &mut certified_chains,
+                                &mut queued,
+                                &mut work,
+                            );
+                        } else if let Some(idx) = b.recession.get(&rkey).cloned() {
+                            let mut buckets = Vec::with_capacity(5);
+                            if !idx.plain.is_empty() {
+                                buckets.push(idx.plain);
+                            }
+                            if !b.stair_managed && !idx.stair.is_empty() {
+                                buckets.push(idx.stair);
+                            }
+                            if !b.ray_managed && !idx.ray.is_empty() {
+                                buckets.push(idx.ray);
+                            }
+                            if !idx.pos_leaf.is_empty() {
+                                buckets.push(idx.pos_leaf);
+                            }
+                            if !idx.neg_leaf.is_empty() {
+                                buckets.push(idx.neg_leaf);
+                            }
+                            for bucket in buckets {
+                                for j in &bucket.unchained {
+                                    if (j != &i || allow_self) && queued.insert(j.clone()) {
+                                        work.push_back(j.clone());
+                                    }
+                                }
+                                let b_cks: Vec<Arc<Vec<ChainAtom>>> =
+                                    bucket.chains.keys().cloned().collect();
+                                for ck in b_cks {
+                                    self.enqueue_chain_in_case(
+                                        &mut b,
+                                        ck,
+                                        &i,
+                                        allow_self,
+                                        &mut certified,
+                                        &mut certified_chains,
+                                        &mut queued,
+                                        &mut work,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for j in b.due_users(n) {
+                        if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
+                            work.push_back(j.clone());
+                        }
                     }
                 }
             }
@@ -11752,35 +13039,220 @@ impl Scope {
                 break;
             }
         }
-        self.record(b, &start, &due);
+        self.record(b, &start, &due, &ran, &released_loop);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_chain_in_case(
+        &mut self,
+        b: &mut Block,
+        ck: Arc<Vec<ChainAtom>>,
+        cur: &PartAt,
+        allow_self: bool,
+        certified: &mut BTreeMap<PartAt, bool>,
+        certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
+        queued: &mut BTreeSet<PartAt>,
+        work: &mut std::collections::VecDeque<PartAt>,
+    ) {
+        if let Some(least_at) = b.chain_least(&ck)
+            && let Some(lp) = b.parts.get(&least_at).cloned()
+            && !b.managed(&lp)
+            && self.projected.contains_key(&lp.key)
+        {
+            if &least_at == cur && !allow_self {
+                let now_idle = match certified.get(cur) {
+                    Some(v) => *v,
+                    None => {
+                        let v = !self.bottom && self.idle(b, &lp);
+                        certified.insert(cur.clone(), v);
+                        if v && let Some((_, c_ends)) = &lp.chain {
+                            certified_chains.insert(ck.clone(), c_ends.clone());
+                        }
+                        v
+                    }
+                };
+                if !now_idle {
+                    for (_, j) in b.chains.get(&ck).into_iter().flatten() {
+                        if j != cur
+                            && !b.parts.get(j).is_some_and(|p| b.managed(p))
+                            && queued.insert(j.clone())
+                        {
+                            work.push_back(j.clone());
+                        }
+                    }
+                }
+            } else {
+                b.fired_chains.insert(ck, None);
+                if queued.insert(least_at.clone()) {
+                    work.push_back(least_at);
+                }
+            }
+        } else {
+            for (_, j) in b.chains.get(&ck).into_iter().flatten() {
+                if (j != cur || allow_self)
+                    && !b.parts.get(j).is_some_and(|p| b.managed(p))
+                    && queued.insert(j.clone())
+                {
+                    work.push_back(j.clone());
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_uncert_in_case(
+        &mut self,
+        b: &mut Block,
+        mut uncert: Vec<PartAt>,
+        cur: &PartAt,
+        allow_self: bool,
+        certified: &mut BTreeMap<PartAt, bool>,
+        certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
+        queued: &mut BTreeSet<PartAt>,
+        work: &mut std::collections::VecDeque<PartAt>,
+    ) {
+        uncert.sort();
+        uncert.dedup_by(|x, y| x.0 == y.0 && x.1.cmp(&y.1).is_eq());
+        let mut by_chain: PartsByChain = BTreeMap::new();
+        for at in uncert {
+            let Some(p) = b.parts.get(&at) else {
+                continue;
+            };
+            if b.managed(p) {
+                continue;
+            }
+            if let Some((ck, ends)) = &p.chain {
+                by_chain
+                    .entry(ck.clone())
+                    .or_default()
+                    .push((ends.clone(), at));
+            } else if (&at != cur || allow_self) && queued.insert(at.clone()) {
+                work.push_back(at);
+            }
+        }
+        for (ck, mut members) in by_chain {
+            if members.len() == 1 {
+                let at = members.pop().unwrap().1;
+                if (&at != cur || allow_self) && queued.insert(at.clone()) {
+                    work.push_back(at);
+                }
+                continue;
+            }
+            members.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(&y.1)));
+            let below_all = members[1..]
+                .iter()
+                .all(|(e, _)| chain_below(&members[0].0, e));
+            let least_at = members[0].1.clone();
+            if below_all
+                && let Some(lp) = b.parts.get(&least_at).cloned()
+                && self.projected.contains_key(&lp.key)
+            {
+                if &least_at == cur && !allow_self {
+                    let now_idle = match certified.get(cur) {
+                        Some(v) => *v,
+                        None => {
+                            let v = !self.bottom && self.idle(b, &lp);
+                            certified.insert(cur.clone(), v);
+                            if v && let Some((_, c_ends)) = &lp.chain {
+                                certified_chains.insert(ck.clone(), c_ends.clone());
+                            }
+                            v
+                        }
+                    };
+                    if !now_idle {
+                        for (_, j) in members.into_iter().skip(1) {
+                            if &j != cur && queued.insert(j.clone()) {
+                                work.push_back(j);
+                            }
+                        }
+                    }
+                } else {
+                    let rest: Vec<PartAt> = members.into_iter().skip(1).map(|(_, j)| j).collect();
+                    match b.fired_chains.entry(ck) {
+                        std::collections::btree_map::Entry::Vacant(v) => {
+                            v.insert(Some(rest));
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut o) => {
+                            if let Some(existing) = o.get_mut() {
+                                existing.extend(rest);
+                                existing.sort();
+                                existing.dedup_by(|x, y| x.0 == y.0 && x.1.cmp(&y.1).is_eq());
+                            }
+                        }
+                    }
+                    if queued.insert(least_at.clone()) {
+                        work.push_back(least_at);
+                    }
+                }
+            } else {
+                for (_, j) in members {
+                    if (&j != cur || allow_self) && queued.insert(j.clone()) {
+                        work.push_back(j);
+                    }
+                }
+            }
+        }
     }
 
     /// Records the parts of `b` as projected, after a projection of it that began with the
-    /// names' products `start` and projected the parts `due`: those parts, and each part that
-    /// mentions a name the projection changed. Every other part was projected with its names'
-    /// intervals and classes as they still are, so its record stays. Then keeps the block.
+    /// names' products `start`, started from `due`, and executed `ran`: outside a case, those
+    /// parts and every user of a changed name; inside a case, `ran` and any due/released part not
+    /// yet recorded under `p.with`, leaving parts certified idle at their outer snapshot so
+    /// persistent-map B-tree nodes are shared in O(1) across [`Scope::join_settled`].
     ///
     /// Complexity tradeoff: naive version, every part of the block recorded again, O(k log k)
-    /// for `k` parts. Used: the parts due and the users of the names whose products differ
-    /// from `start`, found by a diff of persistent maps that skips what they share, in
-    /// O((d + c) log k) for `d` parts due and `c` changed names' parts. Tradeoffs: the
-    /// clone of the names' map at the start, O(1) by sharing. COMPLEXITY.md row C26.
-    fn record(&mut self, b: Block, start: &imbl::OrdMap<Arc<str>, Product>, due: &[PartAt]) {
+    /// for `k` parts (and within a case, recording all k `due_users` when a woken part tightened
+    /// a star leaf or `step` tightened `x` in `coordmix*` wrote O(k^2) snapshots and diffed
+    /// O(k^2) records at the join). Used: O((|due| + |ran|) log k) inside cases, keeping an older
+    /// snapshot on certified-idle parts, which is conservative for [`Scope::is_projected`] and
+    /// exact when the join restores the outer domain (Sarnak and Tarjan, CACM 29(7), 1986).
+    /// COMPLEXITY.md row C26.
+    fn record(
+        &mut self,
+        b: Block,
+        start: &imbl::OrdMap<Arc<str>, Product>,
+        due: &[PartAt],
+        ran: &[PartAt],
+        released_loop: &[PartAt],
+    ) {
         let mut writes: BTreeSet<&PartAt> =
-            due.iter().filter(|at| !b.managed(&b.parts[*at])).collect();
-        for d in start.diff(&self.names) {
-            if let DiffItem::Update {
-                old: (_, a),
-                new: (_, nb),
-            } = &d
-                && same_framed(a, nb)
-            {
-                continue;
+            ran.iter().filter(|at| !b.managed(&b.parts[*at])).collect();
+        if self.in_case {
+            let ran_set = writes.clone();
+            for at in due.iter().chain(released_loop) {
+                let p = &b.parts[at];
+                if b.managed(p) || ran_set.contains(at) {
+                    continue;
+                }
+                if self
+                    .projected
+                    .get(&p.key)
+                    .is_some_and(|(w, _)| w == &p.with)
+                {
+                    continue;
+                }
+                writes.insert(at);
             }
-            let (DiffItem::Add(n, _)
-            | DiffItem::Remove(n, _)
-            | DiffItem::Update { new: (n, _), .. }) = d;
-            writes.extend(b.due_users(n));
+        } else {
+            for at in due.iter().chain(released_loop) {
+                if !b.managed(&b.parts[at]) {
+                    writes.insert(at);
+                }
+            }
+            for d in start.diff(&self.names) {
+                if let DiffItem::Update {
+                    old: (_, a),
+                    new: (_, nb),
+                } = &d
+                    && same_framed(a, nb)
+                {
+                    continue;
+                }
+                let (DiffItem::Add(n, _)
+                | DiffItem::Remove(n, _)
+                | DiffItem::Update { new: (n, _), .. }) = d;
+                writes.extend(b.due_users(n));
+            }
         }
         for at in writes {
             let p = &b.parts[at];
@@ -12514,173 +13986,20 @@ impl Scope {
     // therefore be at a box edge. Only exact line/edge intersections can lose
     // support. The pendant's current lower end has a separate constructed
     // witness. No skipped projection changes a product or the again rule.
-    fn puncture_idle(&self, b: &Block, g: &Formula) -> bool {
-        self.puncture_support(b, g).unwrap_or(false)
-    }
-
-    fn puncture_support(&self, b: &Block, g: &Formula) -> Option<bool> {
-        let Formula::Or(arms) = g else { return None };
-        let c = arms.iter().find_map(|a| match a {
-            Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 2 => Some(c),
-            _ => None,
-        })?;
-        if !arms.iter().any(|a| {
-            matches!(a, Formula::Con(d)
-            if d.rel == Rel::Ge && d.lin.terms.len() == c.lin.terms.len()
-                && d.lin.terms.iter().zip(&c.lin.terms).all(|((n,k),(m,j))|
-                    n == m && k.is_positive() != j.is_positive() && *k == -j)
-                && &d.lin.constant + &c.lin.constant == -&Int::from(2))
-        }) {
-            return None;
-        }
-        let mut ts = c.lin.terms.iter();
-        let (Atom::Sym(x), p) = ts.next()? else {
-            return None;
+    fn part_puncture_idle(
+        &self,
+        b: &Block,
+        part: &Part,
+        cache: &mut BTreeMap<NamePair, Option<PunctureContext>>,
+    ) -> bool {
+        let Some(pp) = &part.puncture else {
+            return false;
         };
-        let (Atom::Sym(y), q) = ts.next()? else {
-            return None;
-        };
-        let forbidden = &-&c.lin.constant - &Int::ONE;
-        let domain = |n: &str| -> Option<(Int, Int)> {
-            let v = self.get(n);
-            if classed(&v) || v.ints().len() != 1 {
-                return None;
-            }
-            let (End::Fin(lo), End::Fin(hi)) = v.ints().bounds()? else {
-                return None;
-            };
-            Some((Int::from(lo), Int::from(hi)))
-        };
-        let (xd, yd) = (domain(x)?, domain(y)?);
-        let mut row: Option<&Con> = None;
-        let mut pendant: Option<&Con> = None;
-        for f in &b.cons {
-            let Formula::Con(r) = &**f else { return None };
-            if r.rel != Rel::Ge {
-                return None;
-            }
-            if b.leaf
-                .as_ref()
-                .is_some_and(|n| r.lin.terms.contains_key(&Atom::Sym(n.clone())))
-            {
-                if pendant.replace(r).is_some() {
-                    return None;
-                }
-            } else if r.lin.terms.len() == 1 {
-                let (Atom::Sym(n), k) = r.lin.terms.iter().next()? else {
-                    return None;
-                };
-                let v = self.get(n);
-                if classed(&v) {
-                    return None;
-                }
-                let (lo, hi) = v.ints().bounds()?;
-                let End::Fin(e) = (if k.is_positive() { lo } else { hi }) else {
-                    return None;
-                };
-                if &r.lin.constant + &(k * &Int::from(e)) < Int::ZERO {
-                    return None;
-                }
-            } else {
-                if r.lin
-                    .terms
-                    .keys()
-                    .any(|a| !matches!(a, Atom::Sym(n) if n == x || n == y))
-                {
-                    return None;
-                }
-                row = Some(match row {
-                    Some(old) if old.lin.terms != r.lin.terms => return None,
-                    Some(old) if old.lin.constant < r.lin.constant => old,
-                    _ => r,
-                });
-            }
-        }
-        let coefficient = |r: &Con, n: &Arc<str>| {
-            r.lin
-                .terms
-                .get(&Atom::Sym(n.clone()))
-                .cloned()
-                .unwrap_or(Int::ZERO)
-        };
-        let (a, d, e) = row
-            .map(|r| (coefficient(r, x), coefficient(r, y), r.lin.constant.clone()))
-            .unwrap_or((Int::ZERO, Int::ZERO, Int::ZERO));
-        // The feasible fiber in v when u is fixed, using integer floor/ceiling.
-        let fiber = |u: &Int, au: &Int, av: &Int, bounds: &(Int, Int)| -> Option<(Int, Int)> {
-            let mut lo = bounds.0.clone();
-            let mut hi = bounds.1.clone();
-            let t = -&(&e + &(au * u));
-            if av.is_positive() {
-                lo = lo.max(-&(-&t).div_floor(av));
-            } else if av.is_negative() {
-                hi = hi.min(t.div_floor(av));
-            } else if t.is_positive() {
-                return None;
-            }
-            (lo <= hi).then_some((lo, hi))
-        };
-        for (u, v, pu, pv, au, av) in [(&xd, &yd, p, q, &a, &d), (&yd, &xd, q, p, &d, &a)] {
-            // Half-plane projection is an interval; supported ends support its interior.
-            fiber(&u.0, au, av, v)?;
-            fiber(&u.1, au, av, v)?;
-            for edge in [&v.0, &v.1] {
-                let t = &forbidden - &(pv * edge);
-                if t.mod_floor(pu) != Int::ZERO {
-                    continue;
-                }
-                let at = t.div_floor(pu);
-                if at < u.0 || at > u.1 {
-                    continue;
-                }
-                let (lo, hi) = fiber(&at, au, av, v)?;
-                if lo == hi && &lo == edge {
-                    return Some(false);
-                }
-            }
-        }
-        if let Some(r) = pendant {
-            let leaf = b.leaf.as_ref()?;
-            if coefficient(r, leaf) != Int::ONE {
-                return None;
-            }
-            let lp = self.get(leaf);
-            if classed(&lp) || lp.ints().len() != 1 {
-                return None;
-            }
-            let (End::Fin(low), End::PosInf) = lp.ints().bounds()? else {
-                return None;
-            };
-            // Construct one minimising box edge, clamped by the base half-plane.
-            let cx = coefficient(r, x);
-            let cy = coefficient(r, y);
-            let vx = if cx.is_negative() { &xd.0 } else { &xd.1 };
-            let (lo, hi) = fiber(vx, &a, &d, &yd)?;
-            let vy = if cy.is_negative() { lo } else { hi };
-            if &(p * vx) + &(q * &vy) == forbidden {
-                return Some(false);
-            }
-            let mut value = &r.lin.constant + &Int::from(low);
-            for (atom, k) in &r.lin.terms {
-                let Atom::Sym(n) = atom else { return None };
-                if n == leaf {
-                    continue;
-                }
-                let v = if n == x {
-                    vx.clone()
-                } else if n == y {
-                    vy.clone()
-                } else {
-                    let (lo, hi) = domain(n)?;
-                    if k.is_negative() { lo } else { hi }
-                };
-                value = &value + &(k * &v);
-            }
-            if value < Int::ZERO {
-                return Some(false);
-            }
-        }
-        Some(true)
+        let get = |n: &str| self.get(n);
+        let ctx = cache
+            .entry(pp.pair.clone())
+            .or_insert_with(|| PunctureContext::of(b, &get, &pp.pair));
+        ctx.as_ref().is_some_and(|c| c.is_idle(pp))
     }
 
     fn project_part(&mut self, part: &Formula) {
@@ -15050,6 +16369,977 @@ impl PartialEq for Turn {
 
 impl Eq for Turn {}
 
+/// An endpoint on the cut circle `(-π, π]`, where `NegPi` stands below every direction of
+/// [`Turn`].
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TurnEnd {
+    NegPi,
+    At(Turn),
+}
+
+type PstEntry<X> = (X, X, PartAt);
+
+fn pst_hi_gt<X: Ord>(a: &PstEntry<X>, b: &PstEntry<X>) -> bool {
+    (&a.1, &a.0, &a.2) > (&b.1, &b.0, &b.2)
+}
+
+/// Persistent leaf-oriented AVL priority search tree over intervals `(lo, hi, at)` supporting
+/// 2D dominance / stabbing queries `lo <= q1 && hi >= q2` in deterministic `O(log k + output)`
+/// worst-case time, with `O(log k)` insertion and removal. Every tree walk follows children of
+/// strictly decreasing `height`, a topological order.
+/// References: N. Sarnak and R. E. Tarjan, "Planar point location using persistent search
+/// trees", CACM 29(7), 1986, pp. 669-679; D. Amagata, J. Yamada, Y. Ji, and T. Hara,
+/// "Efficient algorithms for top-k stabbing queries on weighted interval data",
+/// arXiv:2405.05601, 2024.
+#[derive(Clone)]
+struct Pst<X>(Option<Arc<PstNode<X>>>);
+
+impl<X> Default for Pst<X> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+#[derive(Clone)]
+enum PstKind<X> {
+    Leaf(PstEntry<X>),
+    Branch { left: Pst<X>, right: Pst<X> },
+}
+
+#[derive(Clone)]
+struct PstNode<X> {
+    slot: Option<PstEntry<X>>,
+    min_key: PstEntry<X>,
+    height: usize,
+    kind: PstKind<X>,
+}
+
+impl<X: Ord + Clone> Pst<X> {
+    fn height(&self) -> usize {
+        self.0.as_ref().map_or(0, |n| n.height)
+    }
+
+    fn slot(&self) -> Option<&PstEntry<X>> {
+        self.0.as_ref()?.slot.as_ref()
+    }
+
+    fn min_key(&self) -> &PstEntry<X> {
+        &self.0.as_ref().expect("a non-empty PST subtree").min_key
+    }
+
+    fn leaf(key: PstEntry<X>, slot: Option<PstEntry<X>>) -> Self {
+        Self(Some(Arc::new(PstNode {
+            slot,
+            min_key: key.clone(),
+            height: 1,
+            kind: PstKind::Leaf(key),
+        })))
+    }
+
+    fn raw_branch(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
+        Self(Some(Arc::new(PstNode {
+            slot,
+            min_key: left.min_key().clone(),
+            height: 1 + left.height().max(right.height()),
+            kind: PstKind::Branch { left, right },
+        })))
+    }
+
+    fn pop_slot(&self) -> (Option<PstEntry<X>>, Self) {
+        let Some(n) = &self.0 else {
+            return (None, Self(None));
+        };
+        if n.slot.is_none() {
+            return (None, self.clone());
+        }
+        match &n.kind {
+            PstKind::Leaf(k) => (n.slot.clone(), Self::leaf(k.clone(), None)),
+            PstKind::Branch { left, right } => match (left.slot(), right.slot()) {
+                (None, None) => (
+                    n.slot.clone(),
+                    Self::raw_branch(None, left.clone(), right.clone()),
+                ),
+                (Some(_), None) => {
+                    let (s, nl) = left.pop_slot();
+                    (n.slot.clone(), Self::raw_branch(s, nl, right.clone()))
+                }
+                (None, Some(_)) => {
+                    let (s, nr) = right.pop_slot();
+                    (n.slot.clone(), Self::raw_branch(s, left.clone(), nr))
+                }
+                (Some(ls), Some(rs)) => {
+                    if pst_hi_gt(ls, rs) {
+                        let (s, nl) = left.pop_slot();
+                        (n.slot.clone(), Self::raw_branch(s, nl, right.clone()))
+                    } else {
+                        let (s, nr) = right.pop_slot();
+                        (n.slot.clone(), Self::raw_branch(s, left.clone(), nr))
+                    }
+                }
+            },
+        }
+    }
+
+    fn pulled_branch(left: Self, right: Self) -> Self {
+        match (left.slot(), right.slot()) {
+            (None, None) => Self::raw_branch(None, left, right),
+            (Some(_), None) => {
+                let (s, nl) = left.pop_slot();
+                Self::raw_branch(s, nl, right)
+            }
+            (None, Some(_)) => {
+                let (s, nr) = right.pop_slot();
+                Self::raw_branch(s, left, nr)
+            }
+            (Some(ls), Some(rs)) => {
+                if pst_hi_gt(ls, rs) {
+                    let (s, nl) = left.pop_slot();
+                    Self::raw_branch(s, nl, right)
+                } else {
+                    let (s, nr) = right.pop_slot();
+                    Self::raw_branch(s, left, nr)
+                }
+            }
+        }
+    }
+
+    fn push_down(&self, x: PstEntry<X>) -> Self {
+        let n = self.0.as_ref().expect("target leaf exists in subtree");
+        match &n.kind {
+            PstKind::Leaf(k) => {
+                debug_assert!(k == &x && n.slot.is_none());
+                Self::leaf(k.clone(), Some(x))
+            }
+            PstKind::Branch { left, right } => match &n.slot {
+                None => Self::raw_branch(Some(x), left.clone(), right.clone()),
+                Some(cur) => {
+                    let (win, lose) = if pst_hi_gt(&x, cur) {
+                        (x, cur.clone())
+                    } else {
+                        (cur.clone(), x)
+                    };
+                    if &lose < right.min_key() {
+                        Self::raw_branch(Some(win), left.push_down(lose), right.clone())
+                    } else {
+                        Self::raw_branch(Some(win), left.clone(), right.push_down(lose))
+                    }
+                }
+            },
+        }
+    }
+
+    fn rotate_right(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
+        let l = left.0.as_ref().expect("a taller left branch");
+        let PstKind::Branch {
+            left: ll,
+            right: lr,
+        } = &l.kind
+        else {
+            unreachable!("height >= 2 is a branch")
+        };
+        let nr = Self::pulled_branch(lr.clone(), right);
+        let mut root = Self::pulled_branch(ll.clone(), nr);
+        for s in [l.slot.clone(), slot].into_iter().flatten() {
+            root = root.push_down(s);
+        }
+        root
+    }
+
+    fn rotate_left(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
+        let r = right.0.as_ref().expect("a taller right branch");
+        let PstKind::Branch {
+            left: rl,
+            right: rr,
+        } = &r.kind
+        else {
+            unreachable!("height >= 2 is a branch")
+        };
+        let nl = Self::pulled_branch(left, rl.clone());
+        let mut root = Self::pulled_branch(nl, rr.clone());
+        for s in [r.slot.clone(), slot].into_iter().flatten() {
+            root = root.push_down(s);
+        }
+        root
+    }
+
+    fn balanced(slot: Option<PstEntry<X>>, mut left: Self, mut right: Self) -> Self {
+        if left.height() > right.height() + 1 {
+            let l = left.0.as_ref().expect("a taller left child");
+            if let PstKind::Branch {
+                left: ll,
+                right: lr,
+            } = &l.kind
+                && lr.height() > ll.height()
+            {
+                left = Self::rotate_left(l.slot.clone(), ll.clone(), lr.clone());
+            }
+            return Self::rotate_right(slot, left, right);
+        }
+        if right.height() > left.height() + 1 {
+            let r = right.0.as_ref().expect("a taller right child");
+            if let PstKind::Branch {
+                left: rl,
+                right: rr,
+            } = &r.kind
+                && rl.height() > rr.height()
+            {
+                right = Self::rotate_right(r.slot.clone(), rl.clone(), rr.clone());
+            }
+            return Self::rotate_left(slot, left, right);
+        }
+        if slot.is_none() {
+            return Self::pulled_branch(left, right);
+        }
+        Self::raw_branch(slot, left, right)
+    }
+
+    fn insert_leaf(&self, x: &PstEntry<X>) -> Option<Self> {
+        let Some(n) = &self.0 else {
+            return Some(Self::leaf(x.clone(), None));
+        };
+        match &n.kind {
+            PstKind::Leaf(k) => match x.cmp(k) {
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Less => Some(Self::pulled_branch(
+                    Self::leaf(x.clone(), None),
+                    Self::leaf(k.clone(), n.slot.clone()),
+                )),
+                std::cmp::Ordering::Greater => Some(Self::pulled_branch(
+                    Self::leaf(k.clone(), n.slot.clone()),
+                    Self::leaf(x.clone(), None),
+                )),
+            },
+            PstKind::Branch { left, right } => {
+                if x < right.min_key() {
+                    let nl = left.insert_leaf(x)?;
+                    Some(Self::balanced(n.slot.clone(), nl, right.clone()))
+                } else {
+                    let nr = right.insert_leaf(x)?;
+                    Some(Self::balanced(n.slot.clone(), left.clone(), nr))
+                }
+            }
+        }
+    }
+
+    fn insert(&self, x: PstEntry<X>) -> Self {
+        match self.insert_leaf(&x) {
+            None => self.clone(),
+            Some(tree) => tree.push_down(x),
+        }
+    }
+
+    fn erase_slot(&self, x: &PstEntry<X>) -> (bool, Self) {
+        let Some(n) = &self.0 else {
+            return (false, Self(None));
+        };
+        let Some(s) = &n.slot else {
+            return (false, self.clone());
+        };
+        if s == x {
+            return (true, self.pop_slot().1);
+        }
+        match &n.kind {
+            PstKind::Leaf(_) => (false, self.clone()),
+            PstKind::Branch { left, right } => {
+                if x < right.min_key() {
+                    let (ok, nl) = left.erase_slot(x);
+                    let out = if ok {
+                        Self::raw_branch(Some(s.clone()), nl, right.clone())
+                    } else {
+                        self.clone()
+                    };
+                    (ok, out)
+                } else {
+                    let (ok, nr) = right.erase_slot(x);
+                    let out = if ok {
+                        Self::raw_branch(Some(s.clone()), left.clone(), nr)
+                    } else {
+                        self.clone()
+                    };
+                    (ok, out)
+                }
+            }
+        }
+    }
+
+    fn remove_empty_leaf(&self, x: &PstEntry<X>) -> Self {
+        let Some(n) = &self.0 else {
+            return Self(None);
+        };
+        match &n.kind {
+            PstKind::Leaf(k) => {
+                debug_assert!(k == x && n.slot.is_none());
+                Self(None)
+            }
+            PstKind::Branch { left, right } => {
+                if x < right.min_key() {
+                    let nl = left.remove_empty_leaf(x);
+                    match nl.0 {
+                        None => match &n.slot {
+                            Some(s) => right.push_down(s.clone()),
+                            None => right.clone(),
+                        },
+                        Some(_) => Self::balanced(n.slot.clone(), nl, right.clone()),
+                    }
+                } else {
+                    let nr = right.remove_empty_leaf(x);
+                    match nr.0 {
+                        None => match &n.slot {
+                            Some(s) => left.push_down(s.clone()),
+                            None => left.clone(),
+                        },
+                        Some(_) => Self::balanced(n.slot.clone(), left.clone(), nr),
+                    }
+                }
+            }
+        }
+    }
+
+    fn remove(&self, x: &PstEntry<X>) -> Self {
+        let (found, cleared) = self.erase_slot(x);
+        if !found {
+            return self.clone();
+        }
+        cleared.remove_empty_leaf(x)
+    }
+
+    /// Appends every entry `(lo, hi, at)` in `self` with `lo <= *q1 && hi >= *q2` to `out`, in
+    /// `O(log k + output)` time: at each depth at most one visited node has `slot.lo > *q1`
+    /// while `slot.hi >= *q2`, and every other visited node emits its `slot` to `out`.
+    fn report(&self, q1: &X, q2: &X, out: &mut Vec<PartAt>) {
+        let Some(n) = &self.0 else {
+            return;
+        };
+        let Some(s) = &n.slot else {
+            return;
+        };
+        if s.1 < *q2 {
+            return;
+        }
+        if s.0 <= *q1 {
+            out.push(s.2.clone());
+        }
+        if let PstKind::Branch { left, right } = &n.kind {
+            left.report(q1, q2, out);
+            if right.min_key().0 <= *q1 {
+                right.report(q1, q2, out);
+            }
+        }
+    }
+}
+
+type RecKey = (Arc<str>, Arc<str>, Option<Arc<str>>);
+/// Two hubs and the third name of a recession key's candidate, in the order of [`RecKey`].
+type HubTriple = (Arc<str>, Arc<str>, Arc<str>);
+/// Uncertified parts grouped by their chain, each with its offsets, to wake each chain from
+/// its least part.
+type PartsByChain = BTreeMap<Arc<Vec<ChainAtom>>, Vec<(Vec<Int>, PartAt)>>;
+type PunctureKey = (Arc<[Factor]>, NamePair);
+
+fn rec_key_factors(k: &RecKey) -> Vec<Factor> {
+    let mut out = vec![Factor::Sym(k.0.clone()), Factor::Sym(k.1.clone())];
+    if let Some(w) = &k.2 {
+        out.push(Factor::Sym(w.clone()));
+    }
+    out
+}
+
+#[derive(Clone)]
+struct PuncturePart {
+    pair: NamePair,
+    p: Int,
+    q: Int,
+    forbidden: Int,
+}
+
+fn puncture_part(g: &Formula) -> Option<PuncturePart> {
+    let Formula::Or(arms) = g else {
+        return None;
+    };
+    let c = arms.iter().find_map(|a| match a {
+        Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 2 => Some(c),
+        _ => None,
+    })?;
+    if !arms.iter().any(|a| {
+        matches!(a, Formula::Con(d)
+            if d.rel == Rel::Ge && d.lin.terms.len() == c.lin.terms.len()
+                && d.lin.terms.iter().zip(&c.lin.terms).all(|((n, k), (m, j))|
+                    n == m && k.is_positive() != j.is_positive() && *k == -j)
+                && &d.lin.constant + &c.lin.constant == -&Int::from(2))
+    }) {
+        return None;
+    }
+    let mut ts = c.lin.terms.iter();
+    let (Atom::Sym(x), p) = ts.next()? else {
+        return None;
+    };
+    let (Atom::Sym(y), q) = ts.next()? else {
+        return None;
+    };
+    let forbidden = &-&c.lin.constant - &Int::ONE;
+    Some(PuncturePart {
+        pair: (x.clone(), y.clone()),
+        p: p.clone(),
+        q: q.clone(),
+        forbidden,
+    })
+}
+
+struct PunctureContext {
+    xd: (Int, Int),
+    yd: (Int, Int),
+    a: Int,
+    d: Int,
+    e: Int,
+    pendant_pt: Option<(Int, Int)>,
+}
+
+impl PunctureContext {
+    fn fiber_with(u: &Int, au: &Int, av: &Int, e: &Int, bounds: &(Int, Int)) -> Option<(Int, Int)> {
+        let mut lo = bounds.0.clone();
+        let mut hi = bounds.1.clone();
+        let t = -&(e + &(au * u));
+        if av.is_positive() {
+            lo = lo.max(-&(-&t).div_floor(av));
+        } else if av.is_negative() {
+            hi = hi.min(t.div_floor(av));
+        } else if t.is_positive() {
+            return None;
+        }
+        (lo <= hi).then_some((lo, hi))
+    }
+
+    fn of(b: &Block, get: &impl Fn(&str) -> Product, pair: &NamePair) -> Option<PunctureContext> {
+        let (x, y) = (&pair.0, &pair.1);
+        let domain = |n: &str| -> Option<(Int, Int)> {
+            let v = get(n);
+            if classed(&v) || v.ints().len() != 1 {
+                return None;
+            }
+            let (End::Fin(lo), End::Fin(hi)) = v.ints().bounds()? else {
+                return None;
+            };
+            Some((Int::from(lo), Int::from(hi)))
+        };
+        let (xd, yd) = (domain(x)?, domain(y)?);
+        let mut row: Option<&Con> = None;
+        let mut pendant: Option<&Con> = None;
+        for f in &b.cons {
+            let Formula::Con(r) = &**f else { return None };
+            if r.rel != Rel::Ge {
+                return None;
+            }
+            if b.leaf
+                .as_ref()
+                .is_some_and(|n| r.lin.terms.contains_key(&Atom::Sym(n.clone())))
+            {
+                if pendant.replace(r).is_some() {
+                    return None;
+                }
+            } else if r.lin.terms.len() == 1 {
+                let (Atom::Sym(n), k) = r.lin.terms.iter().next()? else {
+                    return None;
+                };
+                let v = get(n);
+                if classed(&v) {
+                    return None;
+                }
+                let (lo, hi) = v.ints().bounds()?;
+                let End::Fin(e) = (if k.is_positive() { lo } else { hi }) else {
+                    return None;
+                };
+                if &r.lin.constant + &(k * &Int::from(e)) < Int::ZERO {
+                    return None;
+                }
+            } else {
+                if r.lin
+                    .terms
+                    .keys()
+                    .any(|a| !matches!(a, Atom::Sym(n) if n == x || n == y))
+                {
+                    return None;
+                }
+                row = Some(match row {
+                    Some(old) if old.lin.terms != r.lin.terms => return None,
+                    Some(old) if old.lin.constant < r.lin.constant => old,
+                    _ => r,
+                });
+            }
+        }
+        let coefficient = |r: &Con, n: &Arc<str>| {
+            r.lin
+                .terms
+                .get(&Atom::Sym(n.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO)
+        };
+        let (a, d, e) = row
+            .map(|r| (coefficient(r, x), coefficient(r, y), r.lin.constant.clone()))
+            .unwrap_or((Int::ZERO, Int::ZERO, Int::ZERO));
+        Self::fiber_with(&xd.0, &a, &d, &e, &yd)?;
+        Self::fiber_with(&xd.1, &a, &d, &e, &yd)?;
+        Self::fiber_with(&yd.0, &d, &a, &e, &xd)?;
+        Self::fiber_with(&yd.1, &d, &a, &e, &xd)?;
+        let mut pendant_pt = None;
+        if let Some(r) = pendant {
+            let leaf = b.leaf.as_ref()?;
+            if coefficient(r, leaf) != Int::ONE {
+                return None;
+            }
+            let lp = get(leaf);
+            if classed(&lp) || lp.ints().len() != 1 {
+                return None;
+            }
+            let (End::Fin(low), End::PosInf) = lp.ints().bounds()? else {
+                return None;
+            };
+            let cx = coefficient(r, x);
+            let cy = coefficient(r, y);
+            let vx = if cx.is_negative() {
+                xd.0.clone()
+            } else {
+                xd.1.clone()
+            };
+            let (lo, hi) = Self::fiber_with(&vx, &a, &d, &e, &yd)?;
+            let vy = if cy.is_negative() { lo } else { hi };
+            let mut value = &r.lin.constant + &Int::from(low);
+            for (atom, k) in &r.lin.terms {
+                let Atom::Sym(n) = atom else { return None };
+                if n == leaf {
+                    continue;
+                }
+                let v = if n == x {
+                    vx.clone()
+                } else if n == y {
+                    vy.clone()
+                } else {
+                    let (lo, hi) = domain(n)?;
+                    if k.is_negative() { lo } else { hi }
+                };
+                value = &value + &(k * &v);
+            }
+            if value < Int::ZERO {
+                return None;
+            }
+            pendant_pt = Some((vx, vy));
+        }
+        Some(PunctureContext {
+            xd,
+            yd,
+            a,
+            d,
+            e,
+            pendant_pt,
+        })
+    }
+
+    fn is_idle(&self, pp: &PuncturePart) -> bool {
+        for (u, v, pu, pv, au, av) in [
+            (&self.xd, &self.yd, &pp.p, &pp.q, &self.a, &self.d),
+            (&self.yd, &self.xd, &pp.q, &pp.p, &self.d, &self.a),
+        ] {
+            for edge in [&v.0, &v.1] {
+                let t = &pp.forbidden - &(pv * edge);
+                if t.mod_floor(pu) != Int::ZERO {
+                    continue;
+                }
+                let at = t.div_floor(pu);
+                if at < u.0 || at > u.1 {
+                    continue;
+                }
+                let Some((lo, hi)) = Self::fiber_with(&at, au, av, &self.e, v) else {
+                    return false;
+                };
+                if lo == hi && &lo == edge {
+                    return false;
+                }
+            }
+        }
+        if let Some((vx, vy)) = &self.pendant_pt
+            && &(&pp.p * vx) + &(&pp.q * vy) == pp.forbidden
+        {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Clone)]
+struct PartRecession {
+    key: RecKey,
+    leaf_sign: i8,
+    linear: Vec<(TurnEnd, TurnEnd)>,
+    wraps: Vec<(Turn, Turn)>,
+}
+
+#[derive(Clone, Default)]
+struct RecessionBucket {
+    unchained: imbl::OrdSet<PartAt>,
+    chains: imbl::OrdMap<Arc<Vec<ChainAtom>>, usize>,
+    linear: Pst<TurnEnd>,
+    wraps: Pst<Turn>,
+}
+
+impl RecessionBucket {
+    fn is_empty(&self) -> bool {
+        self.unchained.is_empty() && self.chains.is_empty()
+    }
+
+    fn add(&mut self, at: &PartAt, chain_key: Option<Arc<Vec<ChainAtom>>>, rec: &PartRecession) {
+        match chain_key {
+            Some(ck) => {
+                *self.chains.entry(ck).or_insert(0) += 1;
+            }
+            None => {
+                self.unchained.insert(at.clone());
+            }
+        }
+        for (lo, hi) in &rec.linear {
+            self.linear = self.linear.insert((lo.clone(), hi.clone(), at.clone()));
+        }
+        for (lo, hi) in &rec.wraps {
+            self.wraps = self.wraps.insert((lo.clone(), hi.clone(), at.clone()));
+        }
+    }
+
+    fn remove(
+        &mut self,
+        at: &PartAt,
+        chain_key: Option<&Arc<Vec<ChainAtom>>>,
+        rec: &PartRecession,
+    ) {
+        match chain_key {
+            Some(ck) => {
+                if let Some(n) = self.chains.get_mut(ck) {
+                    *n -= 1;
+                    if *n == 0 {
+                        self.chains.remove(ck);
+                    }
+                }
+            }
+            None => {
+                self.unchained.remove(at);
+            }
+        }
+        for (lo, hi) in &rec.linear {
+            self.linear = self.linear.remove(&(lo.clone(), hi.clone(), at.clone()));
+        }
+        for (lo, hi) in &rec.wraps {
+            self.wraps = self.wraps.remove(&(lo.clone(), hi.clone(), at.clone()));
+        }
+    }
+
+    fn report_sector(&self, r1: &Turn, r2: &Turn, out: &mut Vec<PartAt>) {
+        if r1 <= r2 {
+            self.linear
+                .report(&TurnEnd::At(r1.clone()), &TurnEnd::At(r2.clone()), out);
+        } else {
+            self.wraps.report(r1, r2, out);
+        }
+    }
+
+    fn collect_all(&self, out: &mut BTreeSet<PartAt>, all_chains: &ChainParts) {
+        out.extend(self.unchained.iter().cloned());
+        for ck in self.chains.keys() {
+            out.extend(
+                all_chains
+                    .get(ck)
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, at)| at.clone()),
+            );
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct PairRecession {
+    plain: RecessionBucket,
+    stair: RecessionBucket,
+    ray: RecessionBucket,
+    pos_leaf: RecessionBucket,
+    neg_leaf: RecessionBucket,
+}
+
+impl PairRecession {
+    fn is_empty(&self) -> bool {
+        self.plain.is_empty()
+            && self.stair.is_empty()
+            && self.ray.is_empty()
+            && self.pos_leaf.is_empty()
+            && self.neg_leaf.is_empty()
+    }
+
+    fn bucket_mut(&mut self, role: Role, leaf_sign: i8) -> &mut RecessionBucket {
+        if leaf_sign > 0 {
+            &mut self.pos_leaf
+        } else if leaf_sign < 0 {
+            &mut self.neg_leaf
+        } else {
+            match role {
+                Role::Stair | Role::Upper => &mut self.stair,
+                Role::Ray => &mut self.ray,
+                Role::Constraints | Role::Other => &mut self.plain,
+            }
+        }
+    }
+
+    fn add(
+        &mut self,
+        at: &PartAt,
+        role: Role,
+        chain_key: Option<Arc<Vec<ChainAtom>>>,
+        rec: &PartRecession,
+    ) {
+        self.bucket_mut(role, rec.leaf_sign).add(at, chain_key, rec);
+    }
+
+    fn remove(
+        &mut self,
+        at: &PartAt,
+        role: Role,
+        chain_key: Option<&Arc<Vec<ChainAtom>>>,
+        rec: &PartRecession,
+    ) {
+        self.bucket_mut(role, rec.leaf_sign)
+            .remove(at, chain_key, rec);
+    }
+
+    fn collect_all(&self, out: &mut BTreeSet<PartAt>, all_chains: &ChainParts) {
+        for b in [
+            &self.plain,
+            &self.stair,
+            &self.ray,
+            &self.pos_leaf,
+            &self.neg_leaf,
+        ] {
+            b.collect_all(out, all_chains);
+        }
+    }
+}
+
+/// Counter-clockwise boundary rays `(r1, r2)` of the non-empty open 2D cone
+/// `{ d : n · d > 0 for all n in normals }`, or `None` when that open cone is empty.
+fn open_cone_sector(normals: &[[Int; 2]]) -> Option<(Turn, Turn)> {
+    let first = normals.first()?;
+    let (p, q) = (&first[0], &first[1]);
+    if p.is_zero() && q.is_zero() {
+        return None;
+    }
+    let mut orig_lo = [q.clone(), -p];
+    let mut rot_lo = Turn([Int::ZERO, -&Int::ONE]);
+    let mut orig_hi = [-q, p.clone()];
+    let mut rot_hi = Turn([Int::ZERO, Int::ONE]);
+    for n in &normals[1..] {
+        let bx = &(p * &n[0]) + &(q * &n[1]);
+        let by = &(p * &n[1]) - &(q * &n[0]);
+        if by.is_zero() {
+            if !bx.is_positive() {
+                return None;
+            }
+        } else if by.is_positive() {
+            let cand_rot = Turn([by, -&bx]);
+            if cand_rot > rot_lo {
+                rot_lo = cand_rot;
+                orig_lo = [n[1].clone(), -&n[0]];
+            }
+        } else {
+            let cand_rot = Turn([-&by, bx]);
+            if cand_rot < rot_hi {
+                rot_hi = cand_rot;
+                orig_hi = [-&n[1], n[0].clone()];
+            }
+        }
+    }
+    (rot_lo < rot_hi).then_some((Turn(orig_lo), Turn(orig_hi)))
+}
+
+/// Classifies a disjunction `g` of `>=` rows on two hub names `(u, v)` (`u < v`) and
+/// optionally a third consistent-sign symbol `w` (`leaf` when `leaf` is present, or a unique
+/// least-mentioned consistent-sign symbol on a three-symbol disjunction) into its closed angular
+/// failure arcs `{ r != 0 : a_m · (r_u, r_v, 0) <= 0 for all arms m }` on `(-π, π]`.
+fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession> {
+    let Formula::Or(arms) = g else {
+        return None;
+    };
+    if arms.is_empty() {
+        return None;
+    }
+    for arm in arms.iter() {
+        let Formula::Con(c) = arm else {
+            return None;
+        };
+        if c.rel != Rel::Ge || c.lin.terms.is_empty() {
+            return None;
+        }
+    }
+    let mut syms_g: Vec<Arc<str>> = Vec::with_capacity(3);
+    for f in factors(g) {
+        let Factor::Sym(n) = f else {
+            return None;
+        };
+        syms_g.push(n);
+    }
+    let check_candidate = |u: &Arc<str>, v: &Arc<str>, w: Option<&Arc<str>>| {
+        let mut has_pos = false;
+        let mut has_neg = false;
+        let mut w_arms = 0usize;
+        let mut bs: Vec<[Int; 2]> = Vec::with_capacity(arms.len());
+        for arm in arms.iter() {
+            let Formula::Con(c) = arm else {
+                return None;
+            };
+            let mut cu = Int::ZERO;
+            let mut cv = Int::ZERO;
+            let mut cw = Int::ZERO;
+            for (a, k) in &c.lin.terms {
+                match a {
+                    Atom::Sym(n) if n == u => cu = k.clone(),
+                    Atom::Sym(n) if n == v => cv = k.clone(),
+                    Atom::Sym(n) if w == Some(n) => cw = k.clone(),
+                    _ => return None,
+                }
+            }
+            if cu.is_zero() && cv.is_zero() && cw.is_zero() {
+                return None;
+            }
+            if cw.is_positive() {
+                has_pos = true;
+                w_arms += 1;
+            } else if cw.is_negative() {
+                has_neg = true;
+                w_arms += 1;
+            }
+            if has_pos && has_neg {
+                return None;
+            }
+            if !(cu.is_zero() && cv.is_zero()) {
+                bs.push([-&cu, -&cv]);
+            }
+        }
+        if bs.is_empty() {
+            return None;
+        }
+        let sign: i8 = if has_pos {
+            1
+        } else if has_neg {
+            -1
+        } else {
+            0
+        };
+        if w.is_some() && sign == 0 {
+            return None;
+        }
+        Some((w_arms, sign, bs))
+    };
+    let (u, v, aux_sym, leaf_sign, bs) = match &syms_g[..] {
+        [s0, s1] => {
+            if leaf.is_some_and(|l| l == s0 || l == s1) {
+                return None;
+            }
+            let (_, sign, bs) = check_candidate(s0, s1, None)?;
+            (s0.clone(), s1.clone(), None, sign, bs)
+        }
+        [s0, s1, s2] => {
+            if let Some(l) = leaf {
+                let mut hubs: Vec<&Arc<str>> =
+                    [s0, s1, s2].into_iter().filter(|&s| s != l).collect();
+                if hubs.len() != 2 {
+                    return None;
+                }
+                let (hu, hv) = (hubs.remove(0), hubs.remove(0));
+                let (_, sign, bs) = check_candidate(hu, hv, Some(l))?;
+                (hu.clone(), hv.clone(), Some(l.clone()), sign, bs)
+            } else {
+                let cands = [(s1, s2, s0), (s0, s2, s1), (s0, s1, s2)];
+                let mut best: Option<(usize, HubTriple, i8, Vec<[Int; 2]>)> = None;
+                for (hu, hv, hw) in cands {
+                    if let Some((w_arms, sign, bs)) = check_candidate(hu, hv, Some(hw))
+                        && best.as_ref().is_none_or(|b| w_arms < b.0)
+                    {
+                        best = Some((w_arms, (hu.clone(), hv.clone(), hw.clone()), sign, bs));
+                    }
+                }
+                let (_, (hu, hv, hw), sign, bs) = best?;
+                (hu, hv, Some(hw), sign, bs)
+            }
+        }
+        _ => return None,
+    };
+    let key: RecKey = (u, v, aux_sym);
+    let (p, q) = (&bs[0][0], &bs[0][1]);
+    let mut orig_lo = [q.clone(), -p];
+    let mut rot_lo = Turn([Int::ZERO, -&Int::ONE]);
+    let mut orig_hi = [-q, p.clone()];
+    let mut rot_hi = Turn([Int::ZERO, Int::ONE]);
+    for b in &bs[1..] {
+        let bx = &(p * &b[0]) + &(q * &b[1]);
+        let by = &(p * &b[1]) - &(q * &b[0]);
+        if by.is_zero() {
+            if bx.is_negative() {
+                let mut linear = Vec::new();
+                for cand in [orig_lo, orig_hi] {
+                    if bs
+                        .iter()
+                        .all(|row| &(&row[0] * &cand[0]) + &(&row[1] * &cand[1]) >= Int::ZERO)
+                    {
+                        let t = TurnEnd::At(Turn(cand));
+                        if !linear.contains(&(t.clone(), t.clone())) {
+                            linear.push((t.clone(), t));
+                        }
+                    }
+                }
+                return Some(PartRecession {
+                    key,
+                    leaf_sign,
+                    linear,
+                    wraps: Vec::new(),
+                });
+            }
+        } else if by.is_positive() {
+            let cand_rot = Turn([by, -&bx]);
+            if cand_rot > rot_lo {
+                rot_lo = cand_rot;
+                orig_lo = [b[1].clone(), -&b[0]];
+            }
+        } else {
+            let cand_rot = Turn([-&by, bx]);
+            if cand_rot < rot_hi {
+                rot_hi = cand_rot;
+                orig_hi = [-&b[1], b[0].clone()];
+            }
+        }
+    }
+    if rot_lo > rot_hi {
+        return Some(PartRecession {
+            key,
+            leaf_sign,
+            linear: Vec::new(),
+            wraps: Vec::new(),
+        });
+    }
+    let t_lo = Turn(orig_lo);
+    let t_hi = Turn(orig_hi);
+    let (linear, wraps) = if t_lo <= t_hi {
+        (vec![(TurnEnd::At(t_lo), TurnEnd::At(t_hi))], Vec::new())
+    } else {
+        let pi = Turn([-&Int::ONE, Int::ZERO]);
+        (
+            vec![
+                (TurnEnd::At(t_lo.clone()), TurnEnd::At(pi)),
+                (TurnEnd::NegPi, TurnEnd::At(t_hi.clone())),
+            ],
+            vec![(t_lo, t_hi)],
+        )
+    };
+    Some(PartRecession {
+        key,
+        leaf_sign,
+        linear,
+        wraps,
+    })
+}
+
 /// The normal `n` over two names in the frame of end `end` ([`BoundsKey`]), turned so that the
 /// direction in which a constraint bounds that end is the positive first axis: a constraint
 /// `n · (u, v) + k >= 0` bounds the lower end of `u` when `(1, 0)` is a nonnegative
@@ -16447,6 +18737,46 @@ fn covers(mut spans: Vec<(End, End)>, lo: &End, hi: &End) -> bool {
     &need > hi
 }
 
+/// Whether the union of `spans` holds every integer of `ints` without allowing a non-trivial
+/// congruence class (`ints` has a single piece, or at least one piece of two or more consecutive
+/// integers so any sound modulus divides `(z + 1) - z = 1`).
+// Complexity tradeoff: naive version, `covers` tested `spans` against the convex hull `[lo, hi]`
+// of `ints`, rejecting `y = [..=-1, 1..]` after an inner join in `star_extra` (`O(k^2)` fallback
+// projections, 35.51x at k = 3 -> 24). Used: two-pointer sweep over sorted `spans` and `ints`
+// pieces in O(s log s + p) for s spans and p pieces (eliminated witness variables in `eliminate`
+// still require `only()`). Reference: W. Pugh, "The Omega test", Supercomputing '91, 1991.
+fn covers_set(mut spans: Vec<(End, End)>, ints: &IntervalSet) -> bool {
+    if let Some((lo, hi)) = ints.only() {
+        return covers(spans, lo, hi);
+    }
+    if ints.is_empty() || !ints.pieces().any(|(a, b)| a != b) {
+        return false;
+    }
+    spans.sort();
+    let mut idx = 0usize;
+    for (plo, phi) in ints.pieces() {
+        let mut need = plo.clone();
+        while &need <= phi && idx < spans.len() {
+            let (a, b) = &spans[idx];
+            if b < &need {
+                idx += 1;
+                continue;
+            }
+            if a > &need {
+                return false;
+            }
+            let End::Fin(bv) = b else {
+                return true;
+            };
+            need = End::Fin(bv + &Num::ONE);
+        }
+        if &need <= phi {
+            return false;
+        }
+    }
+    true
+}
+
 /// The least (`up` false) or greatest value of `lin` over the hulls of its names' intervals
 /// given by `get`, when every end it reads is finite.
 fn lin_end(lin: &Lin, up: bool, get: &impl Fn(&str) -> Product) -> Option<Num> {
@@ -16552,23 +18882,72 @@ impl Scope {
             let two = both(&rows);
             let shared =
                 eliminate(rows.clone(), None, &get).and_then(|r| Some((sums(&r, &get)?, r)));
+            // Complexity tradeoff: naive version, calling `range(r, s, n, ...)` for each of
+            // `|names|` names scanned all `|r|` rows per name, O(|names| * |r|), which took
+            // 52.4G instructions (12.59x at 8n) when a k-variable conjunction-arm disjunction
+            // (`unary_arms`, k = 12,288) was woken inside a case. Used: one sparse pass over
+            // `(r, s)` accumulates per-name `(up, down)` bounds and negative-sum row counts in
+            // O(sum(|terms|) log |names| + |names| log |names|), giving identical intervals.
+            let mut bad_rows = 0usize;
+            let mut bad_hits: BTreeMap<&Arc<str>, usize> = BTreeMap::new();
+            let mut shared_bounds: BTreeMap<&Arc<str>, Option<(End, End)>> = BTreeMap::new();
+            if let Some((s, r)) = &shared {
+                for ((terms, _), (s_val, free)) in r.iter().zip(s) {
+                    let is_bad = *free == 0 && s_val.signum() < 0;
+                    if is_bad {
+                        bad_rows += 1;
+                    }
+                    for (n, c) in terms {
+                        if two.contains(n) || !names.contains(n) {
+                            continue;
+                        }
+                        if is_bad {
+                            *bad_hits.entry(n).or_insert(0) += 1;
+                        }
+                        let entry = shared_bounds
+                            .entry(n)
+                            .or_insert_with(|| Some((End::NegInf, End::PosInf)));
+                        if let Some((up, down)) = entry {
+                            match top(c, &get(n)) {
+                                None => *entry = None,
+                                Some(opt_v) => {
+                                    let (m, row_free) = match opt_v {
+                                        Some(v) => (s_val - &v, *free),
+                                        None => (s_val.clone(), free - 1),
+                                    };
+                                    if row_free == 0 {
+                                        if c.signum() == 1 {
+                                            *up = up.clone().max(End::Fin(-&m.div_floor(c)));
+                                        } else {
+                                            *down = down.clone().min(End::Fin(m.div_floor(&-c)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             for n in &names {
-                let own = two
-                    .contains(n)
-                    .then(|| eliminate(rows.clone(), Some(n), &get));
-                let own = own.map(|r| r.and_then(|r| Some((sums(&r, &get)?, r))));
-                let Some((s, r)) = own.as_ref().unwrap_or(&shared) else {
-                    continue;
-                };
-                spans.entry(n).or_default().extend(range(r, s, n, &get(n)));
+                if two.contains(n) {
+                    let own = eliminate(rows.clone(), Some(n), &get)
+                        .and_then(|r| Some((sums(&r, &get)?, r)));
+                    if let Some((s, r)) = &own {
+                        spans.entry(n).or_default().extend(range(r, s, n, &get(n)));
+                    }
+                } else if shared.is_some() && bad_hits.get(n).copied().unwrap_or(0) == bad_rows {
+                    let span = match shared_bounds.get(n) {
+                        Some(None) => None,
+                        Some(Some((up, down))) => (up <= down).then(|| (up.clone(), down.clone())),
+                        None => Some((End::NegInf, End::PosInf)),
+                    };
+                    spans.entry(n).or_default().extend(span);
+                }
             }
         }
         names.iter().all(|n| {
             let p = self.get(n);
-            let Some((lo, hi)) = p.ints().bounds() else {
-                return false;
-            };
-            !classed(&p) && covers(spans.remove(n).unwrap_or_default(), lo, hi)
+            !classed(&p) && covers_set(spans.remove(n).unwrap_or_default(), p.ints())
         })
     }
 
@@ -17159,6 +19538,188 @@ mod tests {
                 .sum();
             check_ranks(&pot, &list);
             assert!(front || moved > 0, "no component ranked again");
+        }
+    }
+
+    /// Random insertions, removals, and 2D dominance queries on [`Pst`], and circular-sector
+    /// stabbing queries on [`PairRecession`] / [`open_cone_sector`], match brute-force
+    /// evaluation while maintaining AVL balance and heap/multiset invariants.
+    #[test]
+    fn priority_search_tree_and_recession_arcs_match_the_oracle() {
+        fn check_pst(
+            t: &Pst<i64>,
+            anc_slots: &mut Vec<PstEntry<i64>>,
+            leaves: &mut Vec<PstEntry<i64>>,
+            slots: &mut Vec<PstEntry<i64>>,
+        ) {
+            let Some(n) = &t.0 else {
+                return;
+            };
+            if let Some(s) = &n.slot {
+                for a in anc_slots.iter() {
+                    assert!(pst_hi_gt(a, s));
+                }
+                slots.push(s.clone());
+                anc_slots.push(s.clone());
+            }
+            match &n.kind {
+                PstKind::Leaf(k) => {
+                    assert_eq!(n.height, 1);
+                    assert_eq!(&n.min_key, k);
+                    if let Some(s) = &n.slot {
+                        assert_eq!(s, k);
+                    }
+                    leaves.push(k.clone());
+                }
+                PstKind::Branch { left, right } => {
+                    let (lh, rh) = (left.height(), right.height());
+                    assert!(lh >= 1 && rh >= 1 && lh.abs_diff(rh) <= 1);
+                    assert_eq!(n.height, 1 + lh.max(rh));
+                    assert_eq!(&n.min_key, left.min_key());
+                    if n.slot.is_none() {
+                        assert!(left.slot().is_none() && right.slot().is_none());
+                    }
+                    let mut l_leaves = Vec::new();
+                    let mut r_leaves = Vec::new();
+                    check_pst(left, anc_slots, &mut l_leaves, slots);
+                    check_pst(right, anc_slots, &mut r_leaves, slots);
+                    assert!(l_leaves.iter().all(|e| e < right.min_key()));
+                    assert!(r_leaves.iter().all(|e| e >= right.min_key()));
+                    leaves.extend(l_leaves);
+                    leaves.extend(r_leaves);
+                }
+            }
+            if n.slot.is_some() {
+                anc_slots.pop();
+            }
+        }
+
+        let mut seed: u64 = 0x517c_c1b7_2722_0a95;
+        let mut rng = |m: u64| -> i64 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % m) as i64
+        };
+        let dummy = |id: i64| -> PartAt {
+            let x = Lin::atom(Atom::Sym("x".into())).plus(&Lin::constant(id));
+            (
+                false,
+                Arc::new(Formula::Con(Con::ge(&x, &Lin::constant(0)))),
+            )
+        };
+        let mut tree: Pst<i64> = Pst::default();
+        let mut model: BTreeSet<PstEntry<i64>> = BTreeSet::new();
+        for step in 0..400 {
+            if !model.is_empty() && rng(3) == 0 {
+                let idx = rng(model.len() as u64) as usize;
+                let item = model.iter().nth(idx).cloned().expect("an entry");
+                model.remove(&item);
+                tree = tree.remove(&item);
+            } else {
+                let a = rng(25) - 12;
+                let b = a + rng(25);
+                let item = (a, b, dummy(step));
+                model.insert(item.clone());
+                tree = tree.insert(item);
+            }
+            let (mut leaves, mut slots) = (Vec::new(), Vec::new());
+            check_pst(&tree, &mut Vec::new(), &mut leaves, &mut slots);
+            assert!(leaves.windows(2).all(|w| w[0] < w[1]));
+            slots.sort();
+            assert_eq!(leaves, model.iter().cloned().collect::<Vec<_>>());
+            assert_eq!(slots, leaves);
+            for _ in 0..5 {
+                let q1 = rng(30) - 15;
+                let q2 = rng(30) - 15;
+                let mut got = Vec::new();
+                tree.report(&q1, &q2, &mut got);
+                got.sort();
+                let mut want: Vec<PartAt> = model
+                    .iter()
+                    .filter(|(lo, hi, _)| *lo <= q1 && *hi >= q2)
+                    .map(|(_, _, at)| at.clone())
+                    .collect();
+                want.sort();
+                assert_eq!(got, want);
+            }
+        }
+
+        // Check `recession_shape`, `PairRecession`, and `open_cone_sector` against exact ray evaluation.
+        let mut pair_idx = PairRecession::default();
+        let mut parts_arms: Vec<(PartAt, Vec<[i64; 2]>)> = Vec::new();
+        for id in 0..80 {
+            let n_arms = 1 + rng(4) as usize;
+            let mut arms = Vec::new();
+            let mut raw = Vec::new();
+            for _ in 0..n_arms {
+                let mut cx = rng(9) - 4;
+                let cy = rng(9) - 4;
+                if cx == 0 && cy == 0 {
+                    cx = 1;
+                }
+                raw.push([cx, cy]);
+                let lin = Lin::atom(Atom::Sym("x".into()))
+                    .times(cx)
+                    .plus(&Lin::atom(Atom::Sym("y".into())).times(cy))
+                    .plus(&Lin::constant(id));
+                arms.push(Formula::Con(Con { lin, rel: Rel::Ge }));
+            }
+            let g = Arc::new(Formula::Or(presburger::Shared::new(arms)));
+            if let Some(rec) = recession_shape(&g, None) {
+                let at = (false, g);
+                pair_idx.add(&at, Role::Other, None, &rec);
+                parts_arms.push((at, raw));
+            }
+        }
+        // Single-ray stabbing over all nonzero grid directions in [-5..=5]^2.
+        for rx in -5..=5i64 {
+            for ry in -5..=5i64 {
+                if rx == 0 && ry == 0 {
+                    continue;
+                }
+                let q = TurnEnd::At(Turn([Int::from(rx), Int::from(ry)]));
+                let mut got = Vec::new();
+                pair_idx.plain.linear.report(&q, &q, &mut got);
+                got.sort();
+                got.dedup();
+                let mut want: Vec<PartAt> = parts_arms
+                    .iter()
+                    .filter(|(_, arms)| arms.iter().all(|a| a[0] * rx + a[1] * ry <= 0))
+                    .map(|(at, _)| at.clone())
+                    .collect();
+                want.sort();
+                want.dedup();
+                assert_eq!(got, want, "ray=({rx}, {ry})");
+            }
+        }
+        // Sector queries via `open_cone_sector`: every part NOT reported must have an integer
+        // interior ray `d` of the open cone satisfying `a · d > 0` for at least one arm.
+        for _ in 0..100 {
+            let n1 = [Int::from(rng(7) - 3), Int::from(rng(7) - 3)];
+            let n2 = [Int::from(rng(7) - 3), Int::from(rng(7) - 3)];
+            let Some((r1, r2)) = open_cone_sector(&[n1.clone(), n2.clone()]) else {
+                continue;
+            };
+            let mut reported = Vec::new();
+            pair_idx.plain.report_sector(&r1, &r2, &mut reported);
+            let rep_set: BTreeSet<PartAt> = reported.into_iter().collect();
+            let mid = [-&r1.0[1], r1.0[0].clone()];
+            let half_plane = cross(&r1.0, &r2.0).is_zero();
+            for (at, arms) in &parts_arms {
+                let certified = arms.iter().any(|a| {
+                    let a0 = Int::from(a[0]);
+                    let a1 = Int::from(a[1]);
+                    (&(&a0 * &r1.0[0]) + &(&a1 * &r1.0[1])).is_positive()
+                        || (&(&a0 * &r2.0[0]) + &(&a1 * &r2.0[1])).is_positive()
+                        || (half_plane && (&(&a0 * &mid[0]) + &(&a1 * &mid[1])).is_positive())
+                });
+                assert_eq!(
+                    rep_set.contains(at),
+                    !certified,
+                    "sector ({r1:?}, {r2:?}) mismatch on {arms:?}"
+                );
+            }
         }
     }
 }

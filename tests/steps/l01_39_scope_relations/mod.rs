@@ -6,6 +6,7 @@
 //! L1.39, and the step's COMPLETENESS.md, are in l01_39_reduced_product; the folder is split so
 //! that an edit to either half rebuilds only that half (rule in docs/layout.md, Tests).
 
+mod case_wake;
 mod deep_condition;
 mod disjoint;
 mod families;
