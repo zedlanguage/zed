@@ -2357,12 +2357,20 @@ fn fns_outside(s: &Sig, may_hold: impl Fn(&Arc<str>) -> bool) -> Option<Vec<&Sig
     // it would leave its functions unread when this one is answered.
     let (mut rows, mut shapes) = (HashSet::new(), HashSet::new());
     let mut fns = Vec::new();
+    // A row or shape whose bits are empty holds no variable at any depth, inside functions
+    // too, own, bounded and held ones among them ([`VarFacts::names`]), so no variable for
+    // which `may_hold` is false is in it or in a function below it, and it is passed over.
+    // Complexity tradeoff (PERF-types-shared-row-bench-2ec6b9418): naive version, as before
+    // for rows, every row walked but the fixed ones, which hold no function: a row of n
+    // functions shared by the results of n nested function types was walked once for each
+    // of them, as these sets are each signature's own, O(n^2) on the first ask (16.1 times
+    // the instructions at 8n). Used: O(1) for a row that holds no variable.
     let mut stack: Vec<&Ty> = sig_tys(s).collect();
     while let Some(t) = stack.pop() {
         if !t.vars.iter().all(&may_hold) {
             return None;
         }
-        for r in t.tuples.iter().filter(|r| !r.0.fixed) {
+        for r in t.tuples.iter().filter(|r| r.holds_vars()) {
             if rows.insert(Arc::as_ptr(&r.0)) {
                 stack.extend(r.iter());
             }
@@ -7191,9 +7199,23 @@ impl<'m, 's> Comparing<'m, 's> {
     /// around is ever looked up, and neither are the rigid bounds, own bounds or names kept
     /// there (`rigid`, `own_bounds`, `owned`). The other state [`fits_in`] reads (`wide`,
     /// `free`, `bind_none`, `witnessed`, `q_arrows`, `within_q`, `compared`) it sets for itself
-    /// and gives back; the memos kept for the whole comparison (`kept_rows`, `kept_read`,
-    /// `kept_compared`, `fitted`, `fitted_written`) start empty in the state of its own and
-    /// are dropped with it, so none of their names is read outside it. What
+    /// and gives back; the memos `fitted` and `fitted_written` start empty in the state of its
+    /// own and are dropped with it, so none of their names is read outside it. The rows read
+    /// once for the whole comparison and their names (`kept_rows`, `kept_read`,
+    /// `kept_compared`, `fns`, `closed`) are carried into the state of its own and back
+    /// (PERF-types-shared-row-bench-2ec6b9418), which changes no verdict: (a) the comparison
+    /// inside looks up `fns` and `closed` only by the variables of the types it reads, and
+    /// `s` and `q` as written hold only names a program writes, with no quote in them, so of
+    /// the names carried in it meets only those of the kept rows it reads; the two reads of
+    /// the whole of `fns` give the same answer with names it never meets ([`closed_binds`]
+    /// binds only variables it meets, so its fast path on an empty `fns` answers as its walk
+    /// would; [`may_be_within`] tests membership); (b) a kept row reads alike in every state
+    /// but for the names of its functions, each kept with the empty environment (the proof
+    /// at [`Cx::read`]); (c) a verdict of `kept_compared` is that of two rows with no variable
+    /// at any depth compared alone ([`Self::kept_rows_in`]), the same in every state, as
+    /// [`Cx::kept_compared`] is already kept across the comparisons of function types nested
+    /// in each other. The names made in the state of its own are dropped with it, as before,
+    /// and the count is carried, so no name is made twice. What
     /// differs is the new names some own variables are read under where a scope around owns
     /// the same name, a renaming of the variables `s` and `q` bind, which sec:type_resolution's
     /// rule 4 gives no meaning (each signature binds its own). The one read of the
@@ -7230,16 +7252,32 @@ impl<'m, 's> Comparing<'m, 's> {
                     solve: open.solve,
                     count: open.count,
                     fitted_alone: std::mem::take(&mut open.fitted_alone),
+                    kept_rows: std::mem::take(&mut open.kept_rows),
+                    kept_read: std::mem::take(&mut open.kept_read),
+                    kept_compared: std::mem::take(&mut open.kept_compared),
+                    fns: std::mem::take(&mut open.fns),
+                    closed: std::mem::take(&mut open.closed),
                     ..Cx::default()
                 };
                 let ok = self
                     .fits(s.clone(), Env::new(), q.clone(), Env::new())
                     .await;
-                let inner = std::mem::replace(&mut *self.cx.borrow_mut(), open);
+                let mut inner = std::mem::replace(&mut *self.cx.borrow_mut(), open);
+                // A name made in the state of its own and not forgotten there is dropped
+                // with it, as before; the names kept for the whole comparison stay.
+                for w in &inner.made {
+                    inner.fns.remove(w);
+                    inner.closed.remove(w);
+                }
                 let why = inner.unchosen;
                 let mut cx = self.cx.borrow_mut();
                 cx.count = inner.count;
                 cx.fitted_alone = inner.fitted_alone;
+                cx.kept_rows = inner.kept_rows;
+                cx.kept_read = inner.kept_read;
+                cx.kept_compared = inner.kept_compared;
+                cx.fns = inner.fns;
+                cx.closed = inner.closed;
                 cx.fitted_alone
                     .insert(key, (s.clone(), q, (ok, why.clone())));
                 (ok, why)
