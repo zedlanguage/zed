@@ -2942,7 +2942,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return self.fit_lambda(m, params, body, sig, e.span);
             }
             if let Some(id) = self.declared(e) {
-                let t = self.fit_declared(id, &sig, e.span);
+                // The call this is an argument of, when it is one: `call_sig_step` pushes its
+                // frame and then the argument's, so it lies just below. O(1).
+                let call = match m.stack.as_slice() {
+                    [.., Job::K(Frame::CallSig(c)), Job::K(Frame::ArgOf(_))] => Some(c.span),
+                    _ => None,
+                };
+                let t = self.fit_declared(id, &sig, e.span, call);
                 return m.ty(t);
             }
         }
@@ -6650,7 +6656,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             let inst = self.instantiated(&s.sig, &s.got, &typed, s.wanted);
-            self.refit_declared(&s.sig, &inst, &mut s.got);
+            self.refit_declared(&s.sig, &inst, &mut s.got, s.span);
             s.inst = Some(inst);
         }
         // A queue taken from the front: O(1) a lambda, where `Vec::remove(0)` shifted the rest,
@@ -6716,7 +6722,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Cost: one comparison of each parameter with its instance and, for each function so
     /// fitted, the cost of [`Self::fit_declared`]; once per call of a function whose variable
     /// stands inside a function type.
-    fn refit_declared(&mut self, sig: &Sig, inst: &Sig, got: &mut [Option<Arg<'a>>]) {
+    fn refit_declared(&mut self, sig: &Sig, inst: &Sig, got: &mut [Option<Arg<'a>>], call: Span) {
         let ([was], [now]) = (&sig.arrows[..], &inst.arrows[..]) else {
             return;
         };
@@ -6732,7 +6738,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             if let Some(id) = self.declared(e) {
-                a.ty = self.fit_declared(id, &want, e.span);
+                a.ty = self.fit_declared(id, &want, e.span, Some(call));
             }
         }
     }
@@ -15484,8 +15490,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// A declared function in a slot of the function type `e`: the same number of positional
-    /// parameters and the same named ones, in any order, and types that fit.
-    fn fit_declared(&mut self, id: usize, e: &Arc<Sig>, span: Span) -> Ty {
+    /// parameters and the same named ones, in any order, and types that fit. `call` is the
+    /// call it is an argument of, if it is one, which a repair shows rewritten.
+    fn fit_declared(&mut self, id: usize, e: &Arc<Sig>, span: Span, call: Option<Span>) -> Ty {
         let f = self.t.funcs[&id];
         let own = self.env.get(&id).cloned().unwrap_or_else(Ty::dynamic);
         let Some(s) = only_fn(&own) else {
@@ -15586,6 +15593,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let what = format!("`{}`", f.name);
         let permuted = Arc::new(permuted);
         if !self.fits_slot(&permuted, e, &what, span) {
+            if let Some(lambda) = self.lambda_repair(&f.name, &s, &permuted, e, &from, span) {
+                self.wider_domain(&f.name, (&s, &permuted), e, &lambda, (span, call));
+                return Ty::func(e.clone());
+            }
             // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
             let why = match !permuted.holds_needs() {
                 true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
@@ -15616,6 +15627,139 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
         }
         Ty::func(e.clone())
+    }
+
+    /// The lambda that passes the parameters of the function type `e` to the declared function
+    /// `name`, of signature `s` and, with its parameters in `e`'s order, `permuted` (`from`
+    /// maps each parameter of `s` to its place in `e`), as `x -> inc(x: x)`, where that lambda
+    /// fits `e` though `name` does not (MSG-fn-domain-wider-repair): each arrow of `e`,
+    /// applied to `name`, is accepted, and the lambda of those arrows with the results the
+    /// applications give fits `e`. So `name` takes every argument `e` passes, and only its
+    /// exact domain, wider than `e`'s, keeps it out (DESIGN.md sec:type_language: an exact
+    /// domain is invariant under subtyping). `None` where it does not fit, or `e` holds a type
+    /// variable, which the applications would bind, or a repair is being tried.
+    ///
+    /// Complexity tradeoff: one trial application of `name` per arrow of `e` and one
+    /// comparison of signatures, each the cost of a call of `name` written in the program;
+    /// paid only for a function already refused in its slot. The naive way, writing the
+    /// lambda into the program's text and checking the program again, costs the program.
+    fn lambda_repair(
+        &mut self,
+        name: &str,
+        s: &Sig,
+        permuted: &Arc<Sig>,
+        e: &Arc<Sig>,
+        from: &[usize],
+        span: Span,
+    ) -> Option<String> {
+        if self.trying || !e.holds_no_variable() {
+            return None;
+        }
+        let mut arrows = Vec::with_capacity(e.arrows.len());
+        for qa in &e.arrows {
+            let args = (qa.params.iter())
+                .map(|t| Some(Arg::of(t.clone())))
+                .collect();
+            let label = Label::Text(name);
+            let result = self.tried(|ck| ck.apply(label, permuted, args, false, span).0)?;
+            arrows.push(Arrow {
+                params: qa.params.clone(),
+                result,
+                partial: qa.partial,
+            });
+        }
+        let lambda = Arc::new(Sig {
+            params: e.params.clone(),
+            arrows,
+            bounds: Default::default(),
+            data: false,
+            dense: false,
+            word: None,
+            needs: Vec::new(),
+            own: Default::default(),
+            held: Default::default(),
+            named: 0,
+            hull: None,
+            facts: Default::default(),
+        });
+        if !ty::fits_sig_with(&lambda, e, &|v| self.stale(v)) {
+            return None;
+        }
+        let names: Vec<&str> = e.params.iter().map(|p| &*p.name).collect();
+        let head = match names.as_slice() {
+            [one] => one.to_string(),
+            _ => format!("({})", names.join(", ")),
+        };
+        let call: Vec<String> = (s.params.iter().zip(from))
+            .map(|(p, &j)| match p.positional {
+                true => names[j].to_string(),
+                false => format!("{}: {}", p.name, names[j]),
+            })
+            .collect();
+        Some(format!("{head} -> {name}({})", call.join(", ")))
+    }
+
+    /// Rejects the declared function `name`, of signature `s` and, with its parameters in
+    /// `e`'s order, `permuted`, passed at `span` where the function type `e` is expected,
+    /// whose domain is wider than `e`'s and whose lambda `lambda` fits
+    /// ([`Self::lambda_repair`]): the headline says so, naming each parameter it takes more
+    /// of where each has one arrow, and ends with the call `call` it is an argument of
+    /// rewritten with the lambda in place of `name`, as `apply(f: x -> inc(x: x))`, or with
+    /// the lambda alone outside a call (DESIGN.md sec:diagnostics, a repair as code).
+    fn wider_domain(
+        &mut self,
+        name: &str,
+        (s, permuted): (&Sig, &Sig),
+        e: &Arc<Sig>,
+        lambda: &str,
+        (span, call): (Span, Option<Span>),
+    ) {
+        let (st, et) = (self.sig_text(s), self.sig_text(e));
+        // Each parameter whose type differs, `x` in `int | f64` where `e` takes `int`; at
+        // one arrow each, the parameters pair one to one. O(parameters).
+        let wider: Vec<String> = match (&permuted.arrows[..], &e.arrows[..]) {
+            ([sa], [qa]) => (sa.params.iter().zip(&qa.params).zip(&e.params))
+                .filter(|((x, y), _)| x != y)
+                .map(|((x, y), p)| {
+                    let (x, y) = (self.text(x), self.text(y));
+                    format!("`{}` in `{x}` where `{et}` takes `{y}`", p.name)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let more = match wider.is_empty() {
+            true => String::new(),
+            false => format!(", {}", wider.join(", and ")),
+        };
+        let mut text = format!(
+            "`{name}` is `{st}`, not `{et}`: its domain is wider than `{et}`'s{more}, and a \
+             function passed as `{et}` must take exactly that domain"
+        );
+        let note = Note {
+            span,
+            text: format!("repair: pass `{lambda}`, which calls `{name}` on what `{et}` passes"),
+        };
+        let at = call
+            .filter(|c| c.start <= span.start && span.end <= c.end)
+            .unwrap_or(span);
+        let noted = match self.t.text {
+            Some(_) => Rewrite::new(&[(span, &lambda)], &"", &lambda)
+                .map(|fix| NotedRepair {
+                    note: note.clone(),
+                    at,
+                    fix,
+                    tail: String::new(),
+                })
+                .into_iter()
+                .collect(),
+            None => {
+                text.push_str(&format!(". Try `{lambda}` instead"));
+                Vec::new()
+            }
+        };
+        let mut notes = self.derive(&[span]);
+        notes.push(note);
+        self.reject(None, span, Msg::noted(text, noted), notes);
     }
 
     /// Whether the function `s`, named `what` in messages, with its parameters in the order of

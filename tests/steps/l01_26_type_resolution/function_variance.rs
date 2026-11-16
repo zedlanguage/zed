@@ -85,3 +85,53 @@ fn a_wider_domain_is_rejected_and_its_lambda_accepted() {
     accepted("inc(x: int) = 1;\nuse(b: ((x: int) -> int,)) = 0;\nr = use(b: (inc,));\n");
     accepted("inc(x: int | f64) = 1;\nxs = [1, 2, 3];\nys = xs.map(inc);\n");
 }
+
+/// Row MSG-fn-domain-wider-repair, part (1): a function whose exact domain is wider than the
+/// slot's, where the lambda that calls it on the slot's arguments fits, is refused with a
+/// headline that says the domain is wider, naming each parameter, and ends with the call
+/// rewritten with that lambda, as code. The lambda each repair writes is accepted (the
+/// `accepted` cases), and none is offered where it would be refused too: a narrower domain,
+/// and a result the slot's arrow does not take (`x -> inc(x: x)` gives `int | f64` there).
+#[test]
+fn a_wider_domain_says_so_and_offers_its_lambda_as_code() {
+    assert_eq!(
+        type_errors(
+            "inc(x: int | f64) = 1;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: inc);\n"
+        ),
+        vec![
+            "`inc` is `(x: int | f64) -> 1`, not `(x: int) -> int`: its domain is wider than \
+             `(x: int) -> int`'s, `x` in `int | f64` where `(x: int) -> int` takes `int`, and a \
+             function passed as `(x: int) -> int` must take exactly that domain. Try \
+             `apply(f: x -> inc(x: x))` instead. [inc]"
+        ]
+    );
+    assert_eq!(
+        type_errors(
+            "inc(positional a: int | f64, b: int) = 1;\napply(f: (positional p: int, b: int) -> int) = f(3, b: 4);\nr = apply(f: inc);\n"
+        ),
+        vec![
+            "`inc` is `(int | f64, b: int) -> 1`, not `(int, b: int) -> int`: its domain is \
+             wider than `(int, b: int) -> int`'s, `p` in `int | f64` where \
+             `(int, b: int) -> int` takes `int`, and a function passed as \
+             `(int, b: int) -> int` must take exactly that domain. Try \
+             `apply(f: (p, b) -> inc(p, b: b))` instead. [inc]"
+        ]
+    );
+    accepted(
+        "inc(positional a: int | f64, b: int) = 1;\napply(f: (positional p: int, b: int) -> int) = f(3, b: 4);\nr = apply(f: (p, b) -> inc(p, b: b));\n",
+    );
+    for src in [
+        "inc(x: int) = 1;\napply(f: (x: int | f64) -> int) = 0;\nr = apply(f: inc);\n",
+        "inc(x: int | f64) = x;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: inc);\n",
+    ] {
+        let errors = type_errors(src);
+        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+        assert!(
+            !errors[0].contains("Try") && errors[0].contains("does not fit that one"),
+            "{src}: {errors:?}"
+        );
+    }
+    rejected(
+        "inc(x: int | f64) = x;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: x -> inc(x: x));\n",
+    );
+}
