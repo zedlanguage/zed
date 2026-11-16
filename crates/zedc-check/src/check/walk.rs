@@ -426,20 +426,20 @@ pub(super) enum Frame<'a> {
     /// `split`, `lines` or `concat`, an operand being checked (plan row FP-ops-strings;
     /// `strings_end`).
     Strings(Box<StringsF<'a>>),
-    /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
-    /// span (`reduce_by`).
-    ReduceFn(Ty, Span),
-    /// `x.scan(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
-    /// span (step L5.3; `reduce_by`, then `scan_end`).
-    ScanFn(Ty, Span),
+    /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type, the call's
+    /// span and `f`'s (`reduce_by`).
+    ReduceFn(Ty, Span, Span),
+    /// `x.scan(f)`, `f` not an operator section, waiting for `f`: `x`'s type, the call's span
+    /// and `f`'s (step L5.3; `reduce_by`, then `scan_end`).
+    ScanFn(Ty, Span, Span),
     /// `x.chunkBy(f)`, waiting for `f`: `x`'s type and the call's span (step L5.3;
     /// `chunk_by_end`).
     ChunkBy(Ty, Span),
     /// `m >< op`, waiting for `m`: the operator and the span of the reduction.
     Reduce(Reducer, Span),
-    /// `m >< f`, `f` not an operator section, waiting for `f`: `m` and the span of the
-    /// reduction (`reduce_by`).
-    ReduceBy(&'a Expr, Span),
+    /// `m >< f`, `f` not an operator section, waiting for `f`: `m`, the span of the reduction
+    /// and `f`'s (`reduce_by`).
+    ReduceBy(&'a Expr, Span, Span),
     /// `k in m`, waiting for `k`: `m`, the span of the test and the span of `k`.
     InKey(&'a Expr, Span, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
@@ -1136,17 +1136,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.got.push(a);
                 self.strings_step(m, s);
             }
-            Frame::ReduceFn(x, span) => {
+            Frame::ReduceFn(x, span, at) => {
                 let f = m.take_ty();
-                let t = match self.reduce_by(&f, span, FoldForm::Reduce) {
+                let t = match self.reduce_by(&f, span, at, FoldForm::Reduce) {
                     Some(r) => self.family_fold(r, &x, span, FoldForm::Reduce),
                     None => Ty::empty(),
                 };
                 m.ty(t);
             }
-            Frame::ScanFn(x, span) => {
+            Frame::ScanFn(x, span, at) => {
                 let f = m.take_ty();
-                let t = match self.reduce_by(&f, span, FoldForm::Scan) {
+                let t = match self.reduce_by(&f, span, at, FoldForm::Scan) {
                     Some(r) => self.scan_end(&x, r, span, Self::fold_level),
                     None => Ty::empty(),
                 };
@@ -1172,9 +1172,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.reduce_end(op, &x, span, span);
                 m.ty(t);
             }
-            Frame::ReduceBy(of, span) => {
+            Frame::ReduceBy(of, span, at) => {
                 let f = m.take_ty();
-                match self.reduce_by(&f, span, FoldForm::Infix) {
+                match self.reduce_by(&f, span, at, FoldForm::Infix) {
                     Some(r) => {
                         m.k(Frame::Reduce(r, span));
                         m.job(Job::Expr(of));
@@ -3278,7 +3278,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.job(Job::Expr(of));
                 }
                 _ => {
-                    m.k(Frame::ReduceBy(of, e.span));
+                    m.k(Frame::ReduceBy(of, e.span, f.span));
                     m.job(Job::Expr(f));
                 }
             },
@@ -4257,26 +4257,59 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// DESIGN.md sec:reduction): the prelude word `max` or `min`, whose associativity,
     /// commutativity and idempotence are built in (sec:reduction item 5). Any other function
     /// owes a proof of its associativity (rungs 2 and 5 of sec:reduction), which this zedc
-    /// does not build, so it is refused by name, with the left fold, which owes no law, as the
-    /// repair (row REDUCE-by-function).
-    fn reduce_by(&mut self, f: &Ty, span: Span, form: FoldForm) -> Option<Reducer> {
-        let word = match (f.pieces().as_slice(), f.loose().is_empty()) {
+    /// does not build, so it is refused by name (row REDUCE-by-function). The repair for a
+    /// fold is the left fold, which owes no law; for a scan it is a scan by an operator
+    /// section or by `max` or `min`, since a left fold gives one value where a scan gives one
+    /// per prefix (FAIL-reduce-scan-by-non-function). A value that is not a function at
+    /// all, as `1` in `p.scan(1)`, is told so, as `map` tells it: no zedc compiles that fold.
+    /// `at` is `f`'s span; errors about the fold itself are placed at `span`, the call's.
+    fn reduce_by(&mut self, f: &Ty, span: Span, at: Span, form: FoldForm) -> Option<Reducer> {
+        let (word, shape) = match form {
+            FoldForm::Infix => ("`><`", "`xs >< (+)`"),
+            FoldForm::Reduce => ("`reduce`", "`xs.reduce((+))`"),
+            FoldForm::Sum => ("`sum`", "`xs.sum`"),
+            FoldForm::Scan => ("`scan`", "`xs.scan((+))`"),
+        };
+        // The test `map_end` makes: neither one function nor a class a function may still
+        // flow into (a parameter `f` of `h(f, m) = m.reduce(f)` whose type is not written,
+        // which keeps the refusal below).
+        if only_fn(f).is_none() && self.class_of_ty(f).is_none() {
+            let t = self.text(f);
+            self.error_offering(
+                at,
+                format!("{word} takes a function, and this value is {t}"),
+                [format!(
+                    "repair: pass an operator section, `max` or `min`, as {shape}"
+                )],
+            );
+            return None;
+        }
+        let name = match (f.pieces().as_slice(), f.loose().is_empty()) {
             ([Piece::Fn(sig)], true) => sig.word.clone(),
             _ => None,
         };
-        let r = match word.as_deref() {
+        let r = match name.as_deref() {
             Some("max") => Reducer::Max,
             Some("min") => Reducer::Min,
             _ => {
+                let repair = match form {
+                    FoldForm::Scan => format!(
+                        "repair: scan by an operator section, `max` or `min` that combines \
+                         two entries as the function does, as {shape}"
+                    ),
+                    FoldForm::Infix | FoldForm::Reduce | FoldForm::Sum => {
+                        "repair: fold left to right, which owes no law, as \
+                         `xs.foldl(init, (a, x) -> f(a, x))`"
+                            .to_string()
+                    }
+                };
                 self.error_offering(
                     span,
                     zedc_base::rejection::not_yet(&format!(
                         "{} by a function other than `max`, `min` or an operator section",
                         form.fold_name()
                     )),
-                    ["repair: fold left to right, which owes no law, as \
-                      `xs.foldl(init, (a, x) -> f(a, x))`"
-                        .to_string()],
+                    [repair],
                 );
                 return None;
             }
@@ -7368,7 +7401,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(t);
                         }
                         _ => {
-                            m.k(Frame::ReduceFn(x.ty, span));
+                            m.k(Frame::ReduceFn(x.ty, span, f.span));
                             m.job(Job::Expr(f));
                         }
                     },
@@ -7390,7 +7423,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(t);
                         }
                         _ => {
-                            m.k(Frame::ScanFn(x.ty, span));
+                            m.k(Frame::ScanFn(x.ty, span, f.span));
                             m.job(Job::Expr(f));
                         }
                     },

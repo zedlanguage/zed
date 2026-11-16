@@ -345,6 +345,16 @@ fn a_misused_scan_or_chunk_by_is_rejected_in_plain_words() {
                 "[1, 2].scan((a, b) -> a)",
                 "a scan `.scan` by a function other than",
             ),
+            // A scan gives a family of running results, so its repair is a scan, never the
+            // left fold `.reduce` is offered, which gives one value.
+            (
+                "[1, 2].scan((a, b) -> a)",
+                "repair: scan by an operator section, `max` or `min` that combines two entries as the function does, as `xs.scan((+))`",
+            ),
+            (
+                "[1, 2].scan(1)",
+                "`scan` takes a function, and this value is 1",
+            ),
             ("(3).scan((+))", "`.scan` reads the entries of a family"),
             ("[1, 2].chunkBy()", "`chunkBy` takes one function"),
             ("[1, 2].chunkBy(3)", "`chunkBy` takes a function"),
@@ -428,6 +438,14 @@ fn a_misused_fold_or_end_is_rejected_in_plain_words() {
             (
                 "[1, 2].reduce((a, b) -> a)",
                 "a fold `.reduce` by a function other than",
+            ),
+            (
+                "[1, 2].reduce((a, b) -> a)",
+                "repair: fold left to right, which owes no law, as `xs.foldl(init, (a, x) -> f(a, x))`",
+            ),
+            (
+                "[1, 2].reduce(1)",
+                "`reduce` takes a function, and this value is 1",
             ),
         ],
     );

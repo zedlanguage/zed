@@ -129,10 +129,6 @@ fn forms_of_later_steps_and_layers() {
             "`map` takes a function, and this value is 1. [1]",
         ),
         (
-            "p = [1];\nx = p.scan(1);",
-            concat!(zed_tests::not_yet!("the prelude word `scan`"), " [p.scan]"),
-        ),
-        (
             "f = (x = 1) -> x;",
             "a lambda's parameter has a default only where an expected function type leaves \
              it out. [1]",
@@ -145,6 +141,51 @@ fn forms_of_later_steps_and_layers() {
     for (src, want) in cases {
         assert_eq!(one(&format!("{src}\n")), want, "{src}");
     }
+}
+
+/// A fold or scan by a value that is not a function is told so, as `map` tells it, at the
+/// value, and not that a later zedc compiles it (FAIL-reduce-scan-by-non-function: `.scan`
+/// and `.reduce` gave the "not yet" refusal for `1`).
+#[test]
+fn a_fold_or_scan_by_a_value_that_is_not_a_function_says_so() {
+    assert_eq!(
+        one("p = [1];\nx = p.scan(1);\n"),
+        "`scan` takes a function, and this value is 1. [1]"
+    );
+    assert_eq!(
+        one("p = [1];\nx = p.reduce(1);\n"),
+        "`reduce` takes a function, and this value is 1. [1]"
+    );
+    assert_eq!(
+        one("p = [1];\nx = p >< 1;\n"),
+        "`><` takes a function, and this value is 1. [1]"
+    );
+    assert_eq!(
+        one("p = [1];\nx = p.scan(\"max\");\n"),
+        "`scan` takes a function, and this value is \"max\". [\"max\"]"
+    );
+    // A parameter whose type is not written may still be a function, so it is not told it is
+    // not one: the fold keeps the refusal of a function this zedc does not fold.
+    assert_eq!(
+        one("h(positional f, positional m) = m.reduce(f);\nx = h((+), [1, 2]);\n"),
+        concat!(
+            zed_tests::not_yet!(
+                "a fold `.reduce` by a function other than `max`, `min` or an operator section"
+            ),
+            " [m.reduce(f)]"
+        )
+    );
+    // A lambda is a function, so it too keeps that refusal; its repair, a scan rather than a
+    // left fold, is tested in l03_15a_fp_ops_run, where the whole message is printed.
+    assert_eq!(
+        one("g = (a, x) -> a + x;\np = [1];\nx = p.scan(g);\n"),
+        concat!(
+            zed_tests::not_yet!(
+                "a scan `.scan` by a function other than `max`, `min` or an operator section"
+            ),
+            " [p.scan(g)]"
+        )
+    );
 }
 
 #[test]
