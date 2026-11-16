@@ -127,6 +127,43 @@ fn random_types_print_alike_in_every_order_of_their_atoms() {
     }
 }
 
+/// The type that `ZED_TEST_SEED=11060904907146018957` drew in
+/// [`random_types_print_alike_in_every_order_of_their_atoms`] (FAIL-print-alias-atom-order),
+/// built: `_ \ ((int,) & ((int,) | ((3,) \ (int,)) | (#a0,) & (2,)))`, whose tuples are kept as
+/// an expression in which `(int,)` is made twice, as the complement of `(_,) \ (int,)`. Printed,
+/// the first `(int,)` made was freed before the second was made, or not, by the order of the
+/// walk, which follows the order of the atoms: at salt `u64::MAX` the two were two nodes,
+/// each written out, and at salt 0 one node with a definition.
+#[test]
+fn a_part_made_twice_while_printing_is_one_part_in_every_order_of_the_atoms() {
+    let built = |salt: u64| {
+        std::thread::spawn(move || {
+            SALT.set(salt);
+            let one = |t: Type| Type::tuple(vec![t]);
+            // Every value but `(int,)`: its tuples of one component are the one literal.
+            let n = !&one(Type::int());
+            let d = &one(lit(3)) - &one(Type::int());
+            let e = &one(Type::atom("a0")) & &one(lit(2));
+            let t = &n | &(&n & &!&(&d | &e));
+            (exprs(&t), t.to_string(), t.surface().to_string())
+        })
+        .join()
+        .expect("the thread prints without panicking")
+    };
+    let first = built(0);
+    assert_eq!(
+        first.0, 1,
+        "the tuples are kept as an expression: {first:?}"
+    );
+    assert_eq!(
+        first.2,
+        "type Part1 = (int,);\n_ \\ (Part1 & (Part1 | ((3,) \\ (int,)) | (#a0,) & (2,)))"
+    );
+    for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+        assert_eq!(built(salt), first, "salt {salt:#x}");
+    }
+}
+
 #[test]
 fn a_union_of_tuple_types_less_another_prints_alike_in_every_order() {
     // The case of L1.37a repair#1: the two builds printed `((0, #a0) | (1, #a1)) \ (1, _)`

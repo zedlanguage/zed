@@ -494,6 +494,15 @@ struct Printer<'s> {
     post: Vec<usize>,
     /// Each node's item, until visited.
     items: Vec<Option<Item>>,
+    /// The items visited, kept for the printer's life. A diagram node is keyed by its id
+    /// ([`Item::key`]), and a node is shared among parts only while one holds it (`bdd::cell`
+    /// keeps a weak table): a diagram made again by an operand, as `!x` of a literal `x` turned
+    /// over twice is, has the id of the one met first only while that one is alive. Dropped
+    /// once visited, the node met first would be freed or kept by the order of the walk, and
+    /// with it whether the two uses are one node with a definition or two written out, which
+    /// depends on the order of the atoms (FAIL-print-alias-atom-order). Kept, a node is one node
+    /// however often it is made, at no cost but the items' memory, which the walk held already.
+    held: Vec<Item>,
     exact: bool,
     /// Whether a recursive member is written by its group's name for it ([`Type::surface_by_name`]).
     by_name: bool,
@@ -639,6 +648,7 @@ impl Printer<'_> {
                     let text = self.text(&item);
                     self.building = None;
                     self.fixed[i] = self.fixed_now;
+                    self.held.push(item);
                     stack.push(Step::Leave(i));
                     push_children(&mut stack, &text.segs);
                     self.texts[i] = Some(text);
