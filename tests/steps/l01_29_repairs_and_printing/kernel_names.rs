@@ -29,15 +29,18 @@ pub(super) fn kernel_name(out: &str) -> Option<&str> {
     })
 }
 
-/// `ok` over `x, y, z, w`, a cycle `3 * next - this >= 10` whose question the solver refuses
-/// (l01_38_presburger::checker, "tie"), with its parameters named by `names`. They are
-/// declared `int`, since the question is asked only of a function whose parameters take only
-/// `int`s, and bare literals leave the carrier open.
+/// `ok` over `x, y, z, w`, a cycle `3 * next - this >= 10` both ways, whose question the solver
+/// refuses (l01_38_presburger::checker, "tie"), with its parameters named by `names`. The
+/// cycle one way alone is decided, through its rotation. They are declared `int`, since the
+/// question is asked only of a function whose parameters take only `int`s, and bare literals
+/// leave the carrier open.
 fn tie(names: [&str; 4]) -> String {
     let [x, y, z, w] = names;
     format!(
         "ok({x}: int, {y}: int, {z}: int, {w}: int) = 3 * {y} - {x} - 10 >= 0 && 3 * {z} - {y} \
-         - 10 >= 0 && 3 * {w} - {z} - 10 >= 0 && 3 * {x} - {w} - 10 >= 0;\n"
+         - 10 >= 0 && 3 * {w} - {z} - 10 >= 0 && 3 * {x} - {w} - 10 >= 0 && 3 * {x} - {y} - 10 \
+         >= 0 && 3 * {y} - {z} - 10 >= 0 && 3 * {z} - {w} - 10 >= 0 && 3 * {w} - {x} - 10 >= \
+         0;\n"
     )
 }
 

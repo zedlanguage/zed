@@ -14911,24 +14911,39 @@ fn splinters(
     Ok(None)
 }
 
-/// The first tie `top` took by symmetry ([`Omega::untie`]) whose swaps do not each map onto
-/// themselves the rows its splinters are built from that were there at the tie: the rows of
-/// `base`, and the definitions and dark eliminations among the steps before the tie. The run
-/// itself reads neither, so only the splinters can tell the two orders of the tie apart, and
-/// only through these rows ([`Omega::splinter`]); `None` when the run left no splinters.
+/// The first tie `top` took by symmetry ([`Omega::untie`]) whose symmetries (swaps, or those
+/// [`System::symmetries`] found) do not each map onto themselves the rows its splinters are
+/// built from that were there at the tie: the rows of `base`, and the definitions and dark
+/// eliminations among the steps before the tie. The run itself reads neither, so only the
+/// splinters can tell two orders of the tie apart, and only through these rows
+/// ([`Omega::splinter`]); `None` when the run left no splinters.
 ///
-/// Complexity tradeoff: the rows are indexed once by the variables of the swaps, O(r·w log v)
-/// for r rows of w terms, and each swap then compares the rows of its two variables with
-/// their images, sorted, as [`System::swaps_onto_itself`] does at the tie; the splinters
-/// themselves copy every row of `base` each. A broken swap gives the tie's refusal, as the
-/// tie gave before symmetry was used, for both orders alike, since the rows compared are the
-/// same in both. Test: `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`.
+/// Checking the symmetries found is enough, and the result is the same for every order of
+/// the tie. For a swap, the swaps of the first tied variable with each other one are those
+/// [`Omega::untie`] checked, as before. For the symmetries [`System::symmetries`] found: the
+/// symmetries of the rows at the tie that also map these rows onto themselves form a group
+/// `K`; one symmetry of the rows sends the first tied variable `x` to each other `y` (the
+/// coloring with `x` alone tells every variable apart, so a symmetry that keeps `x` keeps
+/// everything), and the group the found ones make holds it; so every such symmetry lies in
+/// `K` exactly when each found one does. These are all the symmetries of the rows: a
+/// symmetry keeps each variable's fill, color and set of ranks, and the tie holds every
+/// variable of the least fill and color in those sets ([`System::least`]), so it sends `x`
+/// into the tie. Whichever generators are found, they make this one group.
+///
+/// Complexity tradeoff: the rows are indexed once by the variables the symmetries move,
+/// O(r·w log v) for r rows of w terms, and each symmetry then compares the rows of the
+/// variables it moves with their images, sorted, as [`System::swaps_onto_itself`] does at
+/// the tie; the splinters themselves copy every row of `base` each. A broken symmetry gives
+/// the tie's refusal, as the tie gave before symmetry was used, for every order alike, since
+/// the rows compared are the same in all. Tests:
+/// `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
+/// `l01_38_omega_test::names::a_tie_that_only_a_rotation_maps_onto_itself_is_decided`.
 fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
     if top.gray.is_empty() || top.swaps.is_empty() {
         return None;
     }
     let near: BTreeSet<usize> = (top.swaps.iter())
-        .flat_map(|(t, _)| t.vars.iter().copied())
+        .flat_map(|(_, perms, _)| perms.iter().flat_map(|p| p.iter().map(|m| m.0)))
         .collect();
     let dark: BTreeSet<usize> = (top.gray.iter())
         .flat_map(|(_, batch)| batch.iter().map(|(at, _)| *at))
@@ -14953,9 +14968,9 @@ fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
         }
     }
     let none = Vec::new();
-    let holds = |x: usize, y: usize, at: usize| {
-        let mut ns: Vec<usize> = (by_var.get(&x).unwrap_or(&none).iter())
-            .chain(by_var.get(&y).unwrap_or(&none))
+    let holds = |p: &[(usize, usize)], at: usize| {
+        let mut ns: Vec<usize> = (p.iter())
+            .flat_map(|m| by_var.get(&m.0).unwrap_or(&none))
             .copied()
             .filter(|n| read[*n].0.is_none_or(|i| i < at))
             .collect();
@@ -14966,18 +14981,15 @@ fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
         for n in ns {
             let (from, r, rel) = read[n];
             rows.push((from, r.a.to_vec(), &r.k, rel));
-            images.push((from, swapped(&r.a, x, y), &r.k, rel));
+            images.push((from, moved(&r.a, p), &r.k, rel));
         }
         rows.sort_unstable();
         images.sort_unstable();
         rows == images
     };
-    top.swaps.iter().find_map(|(t, at)| {
-        let [x, ref others @ ..] = t.vars[..] else {
-            unreachable!("a tie holds two variables or more")
-        };
-        (!others.iter().all(|&y| holds(x, y, *at))).then_some(t)
-    })
+    top.swaps
+        .iter()
+        .find_map(|(t, perms, at)| (!perms.iter().all(|p| holds(p, *at))).then_some(t))
 }
 
 /// The equalities `x - y == d` as a forest with union by rank, so that each root is found in
@@ -15407,6 +15419,26 @@ fn merge(x: &[Term], f: &Int, y: &[Term], g: &Int, skip: usize) -> Coefs {
 /// The coefficients of the opposite row.
 fn opposite(a: &[Term]) -> Vec<Term> {
     a.iter().map(|(i, c)| (*i, -c)).collect()
+}
+
+/// A permutation of the variables, as the pairs `(v, image of v)` of the variables it moves,
+/// in variable order.
+type Moves = Vec<(usize, usize)>;
+
+/// The coefficients with each variable `v` that `p` moves replaced by its image, in variable
+/// order. O(w log w + w log |p|) for w terms.
+fn moved(a: &[Term], p: &[(usize, usize)]) -> Vec<Term> {
+    moved_by(a, |i| {
+        p.binary_search_by_key(&i, |m| m.0).map_or(i, |at| p[at].1)
+    })
+}
+
+/// The coefficients with each variable `v` replaced by `image(v)`, a permutation, in variable
+/// order. O(w log w) for w terms, besides the calls of `image`.
+fn moved_by(a: &[Term], image: impl Fn(usize) -> usize) -> Vec<Term> {
+    let mut out: Vec<Term> = a.iter().map(|(i, c)| (image(*i), c.clone())).collect();
+    out.sort_unstable_by_key(|t| t.0);
+    out
 }
 
 /// The coefficients with the variables `x` and `y` swapped, in variable order.
@@ -15985,6 +16017,189 @@ impl System {
             let image = swapped(a, x, y);
             (self.rows.get(image.as_slice())).is_some_and(|held| held.k == self.rows[a].k)
         })
+    }
+
+    /// Permutations of the variables, each mapping the rows onto themselves with their
+    /// constants and keeping the colors, that together send the first tied variable `x` of
+    /// `tied` (variables of one color) to each other one; `None` when the method below finds
+    /// none for some tied variable. Each is given by the variables it moves ([`Moves`]).
+    ///
+    /// Method (individualization and refinement one level deep, as in McKay and Piperno's
+    /// nauty and Traces, here on the graph of [`stable_colors`]: a vertex for each variable
+    /// that some row holds, each row and each term, a term joined to its row and its variable,
+    /// starting from the colors of the variables, the constants of the rows and the
+    /// coefficients of the terms). The coloring `c_x` starts with `x` alone in a color of its
+    /// own and is refined ([`Refine`]); when two variables keep one color the answer is
+    /// `None`. Otherwise, for a tied `y` that the permutations found so far do not send `x`
+    /// to, the coloring `c_y` is refined in the same way from `y`, and the permutation `σ`
+    /// that sends the variable of each color of `c_x` to the variable of that color of `c_y`
+    /// is checked to keep the colors and map each row, with its constant, onto a row held;
+    /// a failed check gives `None`.
+    ///
+    /// Why the result does not depend on the names, nor on which of the tied variables is
+    /// `x` nor in what order the others are tried. A refinement numbers its colors by the
+    /// structure and the starting colors alone, so a symmetry `g` of the rows with `g(x) = y`
+    /// sends `c_x` to `c_y`: then `c_x` tells every variable apart exactly when `c_y` does,
+    /// and `σ` is `g`. Where `c_x` tells every variable apart, a symmetry that keeps `x`
+    /// keeps `c_x` and so every variable, so a symmetry is fixed by its image of `x` and there
+    /// are at most as many symmetries as variables; `σ` is the one sending `x` to `y` when
+    /// there is one, and fails its check otherwise. So the answer is not `None` exactly when
+    /// `c_x` tells every variable apart and a symmetry sends `x` to each tied variable, and
+    /// both hold for every tied variable when they hold for one.
+    ///
+    /// Complexity tradeoff: naive version, refine from each tied variable in turn, one
+    /// refinement per tied variable, O(t·N log N) for t tied variables and N vertices, which
+    /// is quadratic on a cycle of t variables tied at once. Used: a tied variable is refined
+    /// from only when the group the permutations found so far make does not send `x` to it.
+    /// Each new permutation makes that group strictly larger, and its size divides the number
+    /// of symmetries, which is at most v for v variables (above), so it at least doubles:
+    /// at most log2 v + 1 refinements and checks, O((log v + 1)·N log N) with the sorts of
+    /// the starting colors, and the orbit of `x` under the group, recomputed after each,
+    /// O(v log² v). Given up: a tie whose coloring from one tied variable still ties two
+    /// variables (two copies of one block of rows) is left to the refusal; that needs a search
+    /// tree of individualizations, exponential in the worst case. A run that met such a tie
+    /// at each of s steps would pay this cost s times, O(s·(log v + 1)·N log N); no system
+    /// that keeps a symmetry of this kind after its tied variable is eliminated is known here.
+    // Not proved: that [`Refine`] numbers its colors by the structure and the starting colors
+    // alone, so that a symmetry of the rows moves the coloring as it moves the starting
+    // colors (its doc and Berkholz, Bonsma and Grohe's section 3 say so;
+    // `l01_38_presburger/canonical.rs` tests it). Each permutation is checked on the rows, so
+    // if it failed no wrong permutation would be used: the tie would be refused under some
+    // namings and taken under others, a refusal that depends on the names, never a wrong
+    // answer. Evidence: `l01_38_omega_test::names::a_sum_over_a_cycle_of_differences_has_a_point_in_every_naming`
+    // and `a_tie_that_only_a_rotation_maps_onto_itself_is_decided` rename every system and
+    // compare the answers.
+    fn symmetries(&self, tied: &[usize]) -> Option<Vec<Moves>> {
+        let [x, ref others @ ..] = tied[..] else {
+            unreachable!("a tie holds two variables or more")
+        };
+        // Vertices: the variables some row holds, then the rows, then the terms.
+        let vars: Vec<usize> = (0..self.vars.len())
+            .filter(|&j| !self.vars[j].rows.is_empty())
+            .collect();
+        let n = vars.len();
+        let mut place = vec![usize::MAX; self.vars.len()];
+        for (p, &j) in vars.iter().enumerate() {
+            place[j] = p;
+        }
+        let rows: Vec<(&Coefs, &Held)> = self.rows.iter().collect();
+        let m = rows.len();
+        let terms: Vec<(usize, usize, &Int)> = (rows.iter().enumerate())
+            .flat_map(|(r, (a, _))| a.iter().map(move |(i, c)| (r, *i, c)))
+            .collect();
+        let size = n + m + terms.len();
+        // The starting colors, numbered by sorting: the variables by color, the rows by
+        // constant, the terms by coefficient.
+        let mut color = vec![0; size];
+        let mut next = 0;
+        let mut number = |color: &mut [usize],
+                          first: usize,
+                          count: usize,
+                          less: &dyn Fn(usize, usize) -> Ordering| {
+            let mut order: Vec<usize> = (0..count).collect();
+            order.sort_by(|&p, &q| less(p, q));
+            for (i, &p) in order.iter().enumerate() {
+                if i > 0 && less(order[i - 1], p) != Ordering::Equal {
+                    next += 1;
+                }
+                color[first + p] = next;
+            }
+            next += usize::from(count > 0);
+        };
+        let key = |p: usize| self.vars[vars[p]].key;
+        number(&mut color, 0, n, &|p, q| key(p).cmp(&key(q)));
+        number(&mut color, n, m, &|p, q| rows[p].1.k.cmp(&rows[q].1.k));
+        number(&mut color, n + m, terms.len(), &|p, q| {
+            terms[p].2.cmp(terms[q].2)
+        });
+        // The neighbors of vertex v are `adj[start[v]..start[v + 1]]`.
+        let mut start = vec![0; size + 1];
+        for (e, &(r, i, _)) in terms.iter().enumerate() {
+            start[place[i] + 1] += 1;
+            start[n + r + 1] += 1;
+            start[n + m + e + 1] = 2;
+        }
+        for v in 0..size {
+            start[v + 1] += start[v];
+        }
+        let mut adj = vec![0; start[size]];
+        let mut cursor = start[..size].to_vec();
+        let mut link = |a: usize, b: usize| {
+            adj[cursor[a]] = b;
+            cursor[a] += 1;
+        };
+        for (e, &(r, i, _)) in terms.iter().enumerate() {
+            let e = n + m + e;
+            link(place[i], e);
+            link(e, place[i]);
+            link(n + r, e);
+            link(e, n + r);
+        }
+        let degree = (0..size)
+            .map(|v| start[v + 1] - start[v])
+            .max()
+            .unwrap_or(0);
+        // The colors of the variables refined with `x[j]` alone in a color of its own, and
+        // the variable of each color, or `None` when two variables share a color.
+        let refined = |j: usize| -> Option<(Vec<usize>, HashMap<usize, usize>)> {
+            let mut first = color.clone();
+            first[place[j]] = next;
+            let mut refine = Refine::new(first, next + 1, degree);
+            refine.run(&start, &adj);
+            let mut of: HashMap<usize, usize> = HashMap::with_capacity(n);
+            for p in 0..n {
+                if of.insert(refine.color[p], p).is_some() {
+                    return None;
+                }
+            }
+            refine.color.truncate(n);
+            Some((refine.color, of))
+        };
+        let (from, _) = refined(x)?;
+        // The permutation, by place, that sends the variable of each color of `from` to the
+        // variable of that color refined from `y`, when it keeps the colors and the rows.
+        let symmetry = |y: usize| -> Option<Vec<usize>> {
+            let (_, of) = refined(y)?;
+            let sigma: Vec<usize> = (0..n)
+                .map(|p| of.get(&from[p]).copied())
+                .collect::<Option<_>>()?;
+            if (0..n).any(|p| key(p) != key(sigma[p])) {
+                return None;
+            }
+            let keeps = rows.iter().all(|(a, held)| {
+                let image: Vec<Term> = moved_by(a, |i| vars[sigma[place[i]]]);
+                (self.rows.get(image.as_slice())).is_some_and(|h| h.k == held.k)
+            });
+            keeps.then_some(sigma)
+        };
+        let mut found: Vec<Vec<usize>> = Vec::new();
+        let mut reached = vec![false; n];
+        reached[place[x]] = true;
+        for &y in others {
+            if reached[place[y]] {
+                continue;
+            }
+            found.push(symmetry(y)?);
+            // The orbit of `x` under the group the permutations found make.
+            reached.fill(false);
+            reached[place[x]] = true;
+            let mut todo = vec![place[x]];
+            while let Some(p) = todo.pop() {
+                for g in &found {
+                    if !reached[g[p]] {
+                        reached[g[p]] = true;
+                        todo.push(g[p]);
+                    }
+                }
+            }
+        }
+        let moves = |g: &Vec<usize>| -> Moves {
+            (0..n)
+                .filter(|&p| g[p] != p)
+                .map(|p| (vars[p], vars[g[p]]))
+                .collect()
+        };
+        Some(found.iter().map(moves).collect())
     }
 
     /// The value of the bound row of `x[j]` on the side `upper`, if it has one.
@@ -16897,9 +17112,10 @@ struct Omega {
     /// Whether the cycles of the rows have been searched for the equalities they imply
     /// ([`Omega::cycles`]).
     cycled: bool,
-    /// The ties taken by symmetry ([`Omega::untie`]), each with the number of steps before it,
-    /// which [`splinters`] checks against the rows the splinters are built from.
-    swaps: Vec<(Tied, usize)>,
+    /// The ties taken by symmetry ([`Omega::untie`]), each with the symmetries of the rows that
+    /// were found for it ([`Moves`]) and the number of steps before it, which [`splinters`]
+    /// checks against the rows the splinters are built from.
+    swaps: Vec<(Tied, Vec<Moves>, usize)>,
 }
 
 impl Omega {
@@ -17395,14 +17611,18 @@ impl Omega {
             // names would choose; refusing keeps every answer, refusals included, the same
             // under every naming of the variables, while trying every order is exponential
             // in the tied variables and telling them apart for good (canonical labeling of
-            // the rows) has no known polynomial algorithm. A tie that swapping the tied
-            // variables maps onto itself is taken instead (`Omega::untie`), since then every
-            // order gives the same answer. Trigger: two variables of one color, both of least
-            // fill, sharing a row, that no swap of the two maps the rows onto themselves (or
-            // with rows kept loose), in a system no other stage decides; the size of the
-            // system plays no part. Tests:
+            // the rows) has no known polynomial algorithm. A tie that symmetries of the rows
+            // map onto itself is taken instead (`Omega::untie`): swaps of the tied variables,
+            // or, when fixing one tied variable tells every variable apart, the symmetries
+            // that refinement then finds (`System::symmetries`); either way every order gives
+            // the same answer. Trigger: two variables of one color, both of least fill,
+            // sharing a row, where no swap maps the rows onto themselves and fixing one leaves
+            // two variables alike or no symmetry maps it onto the other (or with rows kept
+            // loose), in a system no other stage decides; the size of the system plays no
+            // part. Tests:
             // `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`,
             // `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
+            // `l01_38_omega_test::names::a_tie_that_only_a_rotation_maps_onto_itself_is_decided`,
             // `l01_38_omega_test::names::every_naming_gives_one_answer_on_the_regular_family_of_five_103`.
             // COMPLEXITY.md row NAME-ties. A complete solution would search every order of
             // the tied candidates, or decide the rows by a complete method (plan item
@@ -17883,10 +18103,22 @@ impl Omega {
 
     /// `least` as [`System::least`] gave it, with a tie the step will take (`taken` of its
     /// fill) turned into its first variable alone when, for each other tied variable, swapping
-    /// the two maps the rows onto themselves; the tie is kept in `swaps`.
+    /// the two maps the rows onto themselves, or else when [`System::symmetries`] finds, for
+    /// each other tied variable `y`, a permutation of the variables that maps the rows onto
+    /// themselves and the first tied variable onto `y` (a rotation of a cycle of rows, which
+    /// no swap of two variables gives); the tie is kept in `swaps`.
+    ///
+    /// Whether a tie is so taken does not depend on the names. That every swap of the first
+    /// tied variable with another maps the rows onto themselves holds for whichever variable
+    /// is first, since those swaps then make every permutation of the tied variables. That
+    /// [`System::symmetries`] finds its permutations holds, by its doc, exactly when the
+    /// coloring with the first tied variable alone tells every variable apart and some
+    /// symmetry of the rows sends it to each other tied variable; both hold for one tied
+    /// variable when they hold for another that a symmetry sends it to.
     ///
     /// Why this keeps every answer the same under every naming. Call the state of the run
-    /// `S`, and `τ` the swap of the first tied variable `x` with another, `y`. Here no
+    /// `S`, and `τ` a symmetry found (a swap, or a permutation of [`System::symmetries`]) that
+    /// sends the first tied variable `x` to another, `y`. Here no
     /// equality is left (the loop takes them first) and no rows were kept loose (declined
     /// otherwise), so what the loop reads from here on is the rows, which `τ` maps onto
     /// themselves, and flags that hold no variable. Every step of the loop is the same under
@@ -17900,14 +18132,19 @@ impl Omega {
     ///
     /// Complexity tradeoff: the check is one swap per other tied variable, each looking up
     /// the image of every row of the two variables, O(t·d·w log m) for t tied variables of d
-    /// rows of w terms among m rows, against the refusal it replaces. It is a sufficient test,
-    /// not a complete one: a tie whose variables a symmetry of the rows maps onto each other
-    /// only through other variables (a swap of `x` with `y` that needs `u` swapped with `v`
-    /// too) is still refused, and so is a tie when rows were kept loose. Why: a swap is
-    /// checked locally, while finding every symmetry is canonical labeling of the rows,
-    /// which has no known polynomial algorithm (the reason ties are refused at all). Trigger
-    /// for the refusal left: tied variables that only such a wider symmetry, or none, maps
-    /// onto each other. Tests: `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
+    /// rows of w terms among m rows, against the refusal it replaces; when a swap fails,
+    /// [`System::symmetries`] costs O((log v + 1)·N log N) for v variables and N the variables,
+    /// rows and terms of the system. Together they are a sufficient test, not a complete one:
+    /// a tie that only symmetries keeping the first tied variable in place leave unresolved
+    /// (two copies of one block of rows, whose coloring with one variable alone still ties
+    /// the variables of the other copy) is still refused, and so is a tie when rows were kept
+    /// loose. Why: past one variable set alone, finding every symmetry is canonical labeling
+    /// of the rows, a search of individualizations exponential in the worst case, with no
+    /// known polynomial algorithm (the reason ties are refused at all). Trigger for the
+    /// refusal left: tied variables that no symmetry maps onto each other, or that one maps
+    /// only where the coloring with one of them alone ties two variables. Tests:
+    /// `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
+    /// `l01_38_omega_test::names::a_tie_that_only_a_rotation_maps_onto_itself_is_decided`,
     /// `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`. COMPLEXITY.md row
     /// NAME-ties.
     // Assumption, not proved (ASSUME-documented): the argument above needs every step of the
@@ -17927,14 +18164,18 @@ impl Omega {
         let [x, ref others @ ..] = t.vars[..] else {
             unreachable!("a tie holds two variables or more")
         };
-        let symmetric = taken(fill)
-            && self.sys.loose.is_empty()
-            && self.es.order.is_empty()
-            && others.iter().all(|&y| self.sys.swaps_onto_itself(x, y));
-        if !symmetric {
+        if !(taken(fill) && self.sys.loose.is_empty() && self.es.order.is_empty()) {
             return Some((fill, Err(t)));
         }
-        self.swaps.push((t, self.steps.len()));
+        let perms = if others.iter().all(|&y| self.sys.swaps_onto_itself(x, y)) {
+            let swap = |y: usize| vec![(x.min(y), x.max(y)), (x.max(y), x.min(y))];
+            others.iter().map(|&y| swap(y)).collect()
+        } else if let Some(perms) = self.sys.symmetries(&t.vars) {
+            perms
+        } else {
+            return Some((fill, Err(t)));
+        };
+        self.swaps.push((t, perms, self.steps.len()));
         Some((fill, Ok(vec![x])))
     }
 

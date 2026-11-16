@@ -2,7 +2,9 @@
 
 use crate::names::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
+use zedc::store::presburger::{
+    Atom, Con, Formula, Lin, Refusal, decide, project_each, satisfiable,
+};
 
 #[test]
 fn decide_scales_over_copies_of_a_tie() {
@@ -159,30 +161,6 @@ fn decide_on_separate_tied_disjunctions_scales() {
     });
 }
 
-/// The cycle `v_i + 20 >= v_(i+1)` over `v0` to `v3` with `v0 + v1 + v2 + v3 >= 20` as the base,
-/// and one disjunction of `k` disjuncts, the `j`-th the cycle's rows and `u_j >= 0`. Each
-/// disjunct holds at the base's point, so `settle_as_sets` marks it proven, while a solve of its
-/// own rows is refused with a tie (FAIL-omega-alone-retry-scaling).
-fn disjuncts_a_solve_refuses(k: usize) -> Formula {
-    let c = Lin::constant;
-    let v: Vec<Lin> = (0..4)
-        .map(|i| Lin::atom(Atom::Sym(format!("v{i}").into())))
-        .collect();
-    let sum = v.iter().fold(c(0), |s, x| s.plus(x));
-    let cyc: Vec<Formula> = (0..4)
-        .map(|i| Formula::Con(Con::ge(&v[i].plus(&c(20)), &v[(i + 1) % 4])))
-        .collect();
-    let ds = (0..k)
-        .map(|j| {
-            let u = Lin::atom(Atom::Sym(format!("u{j}").into()));
-            let mut d = cyc.clone();
-            d.push(Formula::Con(Con::ge(&u, &c(0))));
-            Formula::and(d)
-        })
-        .collect();
-    Formula::and(vec![Formula::Con(Con::ge(&sum, &c(20))), Formula::or(ds)])
-}
-
 #[test]
 fn decide_on_disjuncts_a_solve_refuses_scales() {
     let n = 400;
@@ -199,22 +177,53 @@ fn decide_on_disjuncts_a_solve_refuses_scales() {
 
 #[test]
 fn satisfiable_past_disjuncts_a_solve_refuses_scales() {
-    // `Alone::point` tries each of the k disjuncts with the group's rows, and `solve` refuses
-    // each: k solves of a group of constant size. The answer is a refusal now
-    // (FAIL-alone-point-refused-at-model); a point, once found, must hold.
+    // `Alone::point` tries each of the k disjuncts with the group's rows: k solves of a group of
+    // constant size. The four tied variables of the cycle are told apart by its rotation
+    // (FAIL-alone-point-refused-at-model), so the answer is a point, and it must hold.
     let n = 400;
     let (small, large) = (
         disjuncts_a_solve_refuses(n),
         disjuncts_a_solve_refuses(n * scaling::FACTOR),
     );
     for f in [&small, &large] {
-        if let Ok(Some(m)) = satisfiable(f) {
-            assert!(f.holds(&m), "{m:?}");
-        }
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
     }
     scaling::check_order("a point past disjuncts a solve refuses", n, 1, |m| {
         let f = if m == n { &small } else { &large };
         let _ = std::hint::black_box(satisfiable(f));
+    });
+}
+
+/// The cycle of `names::cycle` over `n` variables, written sparsely: `3·v[i + 1] - v[i] >= 10`
+/// for each `i`, `v[n]` being `v[0]`.
+fn one_way_cycle(n: usize) -> Formula {
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{}", i % n).into()));
+    Formula::and(
+        (0..n)
+            .map(|i| Formula::Con(Con::ge(&v(i + 1).times(3), &v(i).plus(&Lin::constant(10)))))
+            .collect(),
+    )
+}
+
+/// `decide` on a cycle of `n` variables turned one way (FAIL-alone-point-refused-at-model): all
+/// `n` tie at the first step, no swap maps the rows onto themselves, and `System::symmetries`
+/// finds the turn of the cycle; one variable is eliminated, and the `n - 1` left tie again with
+/// no symmetry, which one more refinement shows, and are refused. So the run holds the swap
+/// checks and at most log2 n + 2 refinements of the rows, each O(N log N).
+#[test]
+fn decide_on_a_cycle_turned_one_way_scales() {
+    let n = 500;
+    let (small, large) = (one_way_cycle(n), one_way_cycle(n * scaling::FACTOR));
+    for (f, m) in [(&small, n), (&large, n * scaling::FACTOR)] {
+        match decide(f) {
+            Err(Refusal::Tie(t)) => assert_eq!(t.vars.len(), m - 1, "n = {m}"),
+            a => panic!("n = {m}: {a:?}"),
+        }
+    }
+    scaling::check("decide on a cycle turned one way", n, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
     });
 }
 

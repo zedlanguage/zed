@@ -559,20 +559,24 @@ fn a_symmetric_sum_of_two_conditionals_is_decided_alike_on_every_path() {
 }
 
 #[test]
-fn the_halves_of_the_triangle_inequality_are_refused_for_their_symmetry() {
+fn the_halves_of_the_triangle_inequality_are_proved_through_their_symmetry() {
     // Rung 5: the triangle inequality "splits once, on `a + b >= 0`, ... and both halves close
     // at rung 2 from the joins of the left side". Each half, the joins of `|a|` and `|b|`
-    // written as `p` and `q`, is symmetric under swapping `a` with `b` and `p` with `q`, and
-    // the Presburger layer refuses it ("When two atoms share a color the formula is not
-    // searched"). The two sentences of DESIGN disagree (docs/studies/ladder.md, defect D3);
-    // this test fixes what rung 2 does today.
+    // written as `p` and `q`, is symmetric under swapping `a` with `b` and `p` with `q` at
+    // once. Until FAIL-alone-point-refused-at-model the solver refused the tie of `a` with `b`
+    // (and of `p` with `q`), since no swap of two variables alone maps the rows onto
+    // themselves (docs/studies/ladder.md, defect D3). The double swap does, and fixing one of
+    // the tied variables tells every variable apart, so the solver takes the tie
+    // (`System::symmetries`) and both halves are proved, under either order of the binders.
     let abs = "ok(a, b, p, q) = p >= a && p >= -a && q >= b && q >= -b";
     for (cond, goal) in [
         ("a + b >= 0", "ok(a, b, p, q) = p + q >= a + b;"),
         ("a + b <= -1", "ok(a, b, p, q) = p + q >= -a - b;"),
     ] {
-        let e = rung2(&format!("{abs} && {cond};"), goal);
-        assert!(matches!(e, Entailment::Refused(_)), "{cond}: {e}");
+        assert_proved(&format!("{abs} && {cond};"), goal);
+        let swapped = "ok(b, a, q, p) = p >= a && p >= -a && q >= b && q >= -b";
+        let goal = goal.replace("ok(a, b, p, q)", "ok(b, a, q, p)");
+        assert_proved(&format!("{swapped} && {cond};"), &goal);
     }
     // Asymmetric, the same half is proved.
     assert_proved(

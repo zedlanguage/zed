@@ -156,12 +156,16 @@ const REFUSED: [Refused; 3] = [
             "-9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0",
         ],
     },
-    // Tie: the cycle `3 * next - this >= 10`, whose four names occur alike and share rows.
+    // Tie: the cycle `3 * next - this >= 10` and the same cycle turned the other way, whose
+    // four names occur alike and share rows. Each part alone is decided: its symmetries turn
+    // the cycle, and fixing one name tells the other three apart (System::symmetries), but
+    // both ways round the symmetries also reflect it, and fixing one name leaves its two
+    // neighbors alike (FAIL-alone-point-refused-at-model).
     Refused {
         name: "tie",
         rows: [
-            "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0",
-            "3 * w - z - 10 >= 0 && 3 * x - w - 10 >= 0",
+            "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * w - z - 10 >= 0 && 3 * x - w - 10 >= 0",
+            "3 * x - y - 10 >= 0 && 3 * y - z - 10 >= 0 && 3 * z - w - 10 >= 0 && 3 * w - x - 10 >= 0",
         ],
     },
 ];
@@ -270,7 +274,8 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
             "tie-block",
             "x, y, z, w",
             "ok(x, y, z, w) {\n  t = 3 * y - x - 10;\n  return t >= 0 && 3 * z - y - 10 >= 0 && 3 * w \
-             - z - 10 >= 0 && 3 * x - w - 10 >= 0;\n}"
+             - z - 10 >= 0 && 3 * x - w - 10 >= 0 && 3 * x - y - 10 >= 0 && 3 * y - z - 10 >= 0 \
+             && 3 * z - w - 10 >= 0 && 3 * w - x - 10 >= 0;\n}"
                 .to_string(),
             TIE.to_string(),
             ["out\n", "in\n"],
@@ -644,20 +649,23 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
              conditions on it conditions on the variables left. Its next step must choose among \
              the variables `w`, `x`, `z`, `y`, which occur alike in the conditions (with the \
              same coefficients, in conditions that are alike) and share the conditions \
-             `-w + 3 * x - 10 >= 0`, `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, \
-             `3 * z - y - 10 >= 0`, so only their names could order them, and the checker never \
-             lets a name change an answer. The checker stopped there, with no values found and \
-             none ruled out.\n  \
+             `-w + 3 * x - 10 >= 0`, `-w + 3 * z - 10 >= 0`, `3 * w - x - 10 >= 0`, \
+             `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, `3 * x - y - 10 >= 0`, \
+             `3 * z - y - 10 >= 0`, `-z + 3 * y - 10 >= 0`, so only their names could order \
+             them, and the checker never lets a name change an answer. The checker stopped \
+             there, with no values found and none ruled out.\n  \
              [1] 1:38: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
-             && w <= 3 * x - 10\n  {}",
+             && w <= 3 * x - 10 && 3 * x >= y + 10 && 3 * y >= z + 10 && w <= 3 * z - 10 && 3 \
+             * w >= x + 10\n  {}",
             head_in(&src),
             menu(
                 "w",
                 Some(("w", "x")),
                 &format!("{first} && {second}"),
                 [
-                    "3 * w - z - 10 >= 0",
-                    "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * x - w - 10 >= 0"
+                    "3 * w - z - 10 >= 0 && 3 * z - w - 10 >= 0",
+                    "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0 && 3 * x - w - 10 >= 0 && 3 * x \
+                     - y - 10 >= 0 && 3 * y - z - 10 >= 0 && 3 * w - x - 10 >= 0"
                 ]
             )
         )
