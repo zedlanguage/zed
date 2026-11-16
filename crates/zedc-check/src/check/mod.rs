@@ -5567,6 +5567,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 bounds: sig.bounds.clone(),
                 data: sig.data,
                 dense: sig.dense,
+                keys: sig.keys.clone(),
                 word: None,
                 needs: Vec::new(),
                 own: sig.own.clone(),
@@ -10020,6 +10021,7 @@ fn op_sig(op: Operator) -> Sig {
         bounds: BTreeMap::new(),
         data: false,
         dense: Dense::No,
+        keys: None,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -10130,6 +10132,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         bounds: BTreeMap::new(),
         data: false,
         dense: Dense::No,
+        keys: None,
         word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -10248,6 +10251,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
         bounds: BTreeMap::new(),
         data: false,
         dense: Dense::No,
+        keys: None,
         word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -10335,6 +10339,35 @@ pub(super) fn written_hull(ints: &IntervalSet) -> Option<WrittenRange> {
     };
     let (low, high) = (value(lo), value(hi));
     (low.is_some() || high.is_some()).then(|| WrittenRange::new(low, high))
+}
+
+/// The int `v` as an end of an interval, exact at any size; `None` for a value that is no int.
+pub(super) fn int_end(v: &Value) -> Option<End> {
+    match v {
+        Value::Int(n) => Some(End::of(*n)),
+        Value::Big(n) => Some(Fin(Num::from(&**n))),
+        _ => None,
+    }
+}
+
+/// The exact keys ([`Sig::keys`], row RANGE-literal-keys) of a family whose keys are the ints
+/// of `ints`: its least and greatest, where `ints` is one interval with two finite ends, and
+/// `int[0..=-1]` where it is empty, so that equal sets give equal values; `None` where it has
+/// several pieces or an infinite end, which [`Sig::keys`] does not hold. The inverse of
+/// [`written_ints`] on such a set. O(1).
+///
+/// [`Sig::keys`]: zedc_types::ty::Sig::keys
+pub(super) fn exact_keys(ints: &IntervalSet) -> Option<WrittenRange> {
+    if ints.is_empty() {
+        return Some(WrittenRange::new(Some(Value::Int(0)), Some(Value::Int(-1))));
+    }
+    match ints.only()? {
+        (Fin(lo), Fin(hi)) => Some(WrittenRange::new(
+            Some(Value::from(lo)),
+            Some(Value::from(hi)),
+        )),
+        _ => None,
+    }
 }
 
 /// A parameter declared a partial map of one key `K ->? V` (RANGE-keys), as
@@ -11245,6 +11278,7 @@ fn port(key: Carrier, io: bool) -> Ty {
             Carrier::Int => Dense::Ranks,
             _ => Dense::No,
         },
+        keys: None,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),

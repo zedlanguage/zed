@@ -446,10 +446,10 @@ pub(super) enum Frame<'a> {
     InKey(&'a Expr, Span, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
     InSet(Ty, Span),
-    /// `a ..< b`, `a ..= b` or `a ..`, waiting for `a`: `a`, `b` if written, and the span of
-    /// the range.
+    /// `a ..< b`, `a ..= b` or `a ..`, waiting for `a`: the range, `b` if written, and the span
+    /// of the range.
     RangeLo(&'a Expr, Option<&'a Expr>, Span),
-    /// The same, waiting for `b`: `a`, the type of `a`, and the span of the range.
+    /// The same, waiting for `b`: the range, the type of `a`, and the span of the range.
     RangeHi(&'a Expr, Ty, Span),
 }
 
@@ -1201,20 +1201,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.in_end(&k, &x, span);
                 m.ty(t);
             }
-            Frame::RangeLo(lo, Some(hi), span) => {
+            Frame::RangeLo(range, Some(hi), span) => {
                 let a = m.take_ty();
-                m.k(Frame::RangeHi(lo, a, span));
+                m.k(Frame::RangeHi(range, a, span));
                 m.job(Job::Expr(hi));
             }
             // `a ..`: no high end to check.
-            Frame::RangeLo(lo, None, span) => {
+            Frame::RangeLo(range, None, span) => {
                 let a = m.take_ty();
-                let t = self.range_end(lo, &a, None, span);
+                let t = self.range_end(range, &a, None, span);
                 m.ty(t);
             }
-            Frame::RangeHi(lo, a, span) => {
+            Frame::RangeHi(range, a, span) => {
                 let b = m.take_ty();
-                let t = self.range_end(lo, &a, Some(&b), span);
+                let t = self.range_end(range, &a, Some(&b), span);
                 m.ty(t);
             }
             Frame::Else1(e) => {
@@ -3288,7 +3288,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // `a ..< b`, `a ..= b`, and `a ..` where resolution admits it: read by a key, by
             // `in` or by `.first` (plan row RANGE-open).
             ExprKind::Range(from, to) => {
-                m.k(Frame::RangeLo(from, to.bound().map(|b| &**b), e.span));
+                m.k(Frame::RangeLo(e, to.bound().map(|b| &**b), e.span));
                 m.job(Job::Expr(from));
             }
             // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
@@ -3696,8 +3696,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                             false => w.union(&loose).union(&missed),
                         };
                     }
+                    // `where` keeps some keys, so neither every key of an interval nor the
+                    // exact keys hold; `map` keeps each key ([`Sig::keys`]).
                     if filter {
                         out_sig.dense = Dense::No;
+                        out_sig.keys = None;
                     }
                     out_sig.word = None;
                     out_sig.needs = Vec::new();
@@ -4932,7 +4935,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Dense::Interval`]); they are the ranks `0`, `1`, … ([`Dense::Ranks`]) when `lo`, the
     /// low end, is known to be `0`. With no `b`, the range `a ..` has the same type, its keys
     /// one interval with no upper end and never the ranks of a list (plan row RANGE-open).
-    fn range_end(&mut self, lo: &'a Expr, a: &Ty, b: Option<&Ty>, span: Span) -> Ty {
+    /// Where the text fixes both ends, the keys are known exactly ([`Sig::keys`]).
+    fn range_end(&mut self, range: &'a Expr, a: &Ty, b: Option<&Ty>, span: Span) -> Ty {
+        let ExprKind::Range(lo, to) = &range.kind else {
+            unreachable!("a range frame holds a range")
+        };
         let repair = match b {
             Some(_) => "repair: give both ends as integers, as `0 ..< n`",
             None => "repair: give the low end as an integer, as `0 ..`",
@@ -4973,10 +4980,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         // a list, which `flatMap` demands; `(2 ..< 5)` has the keys 2, 3, 4, which are no ranks.
         // `rangeFrom(a)` holds every integer `k >= a`: one interval too, with no upper end, so
         // never the ranks of a list.
-        sig.dense = match (b, self.known(lo).value) {
+        let low = self.known(lo).value;
+        sig.dense = match (b, &low) {
             (Some(_), Some(Value::Int(0))) => Dense::Ranks,
             _ => Dense::Interval,
         };
+        // The keys exactly, where the text fixes both ends (row RANGE-literal-keys): `a ..< b`
+        // holds each int k with a <= k <= b - 1, and `a ..= b` each with a <= k <= b, as
+        // `Prim::Range` makes them, so the set is `[a, b - 1]` or `[a, b]`, empty where that
+        // is. `known` gives an end's value only where the end is built from int literals,
+        // names bound to such, and the integer operators, exact at any size ([`Ck::known`]),
+        // the read that already decides `Dense::Ranks` above; so the run's range holds exactly
+        // these keys. A computed end, as a parameter, keeps `None`: only the arrows' `int`.
+        // Complexity tradeoff: O(1) more per range, two cached reads and two ends; the naive
+        // way, the keys listed in the arrow's key type as an array display's, costs O(b - a)
+        // (see [`Sig::keys`]).
+        let high = match to {
+            RangeEnd::Below(hi) => self
+                .known(hi)
+                .value
+                .as_ref()
+                .and_then(int_end)
+                .map(|e| e.pred()),
+            RangeEnd::Through(hi) => self.known(hi).value.as_ref().and_then(int_end),
+            RangeEnd::Open => None,
+        };
+        if let (Some(lo), Some(hi)) = (low.as_ref().and_then(int_end), high) {
+            sig.keys = exact_keys(&IntervalSet::range(lo, hi));
+        }
         sig.note_held();
         let t = Ty::func(Arc::new(sig)).union(&a.loose_ty());
         match b {
@@ -15865,6 +15896,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bounds: sig.bounds.clone(),
             data: false,
             dense: Dense::No,
+            keys: None,
             // A word applied to fewer arguments than its arity is not the word: `min` and `max`
             // take two tuples only when both are given (sec:reduction, item 5).
             word: None,
@@ -16365,6 +16397,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bounds: s.bounds.clone(),
             data: s.data,
             dense: s.dense,
+            keys: s.keys.clone(),
             word: s.word.clone(),
             needs: needs_in_order(&kept, &from),
             own: s.own.clone(),
@@ -16832,6 +16865,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bounds: Default::default(),
             data: false,
             dense: Dense::No,
+            keys: None,
             word: None,
             needs: Vec::new(),
             own: Default::default(),
@@ -23477,6 +23511,7 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         bounds: BTreeMap::new(),
         data: sig.data,
         dense: sig.dense,
+        keys: sig.keys.clone(),
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -23719,6 +23754,7 @@ mod tests {
             bounds: BTreeMap::new(),
             data: false,
             dense: Dense::No,
+            keys: None,
             word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),

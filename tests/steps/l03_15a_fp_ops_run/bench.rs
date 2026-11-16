@@ -17,7 +17,7 @@ use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold, hold_linear};
 
 use super::program;
-use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, with_prelude};
 use zed_tests::step_helpers::l01_36a_executables::interpreter;
 
 /// Entries of a kernel run.
@@ -486,6 +486,26 @@ fn a_zip_of_keyed_displays_runs_in_n_log_n() {
     whole_path("zip", "${XS.zip(XS).map(p -> p[0] + p[1]).sum}", |k| {
         format!("{}\n", k * (k - 1))
     });
+}
+
+/// Plan row RANGE-literal-keys: checking n statements, the i-th
+/// `((0 ..< i) ++ [i]).zip(0 ..= i).count`, is linear in n. A range with literal ends keeps
+/// its keys as two ends, O(1) whatever i, so the unit checks in O(n); listing each range's i
+/// keys in its key type, as an array display's, would check it in O(n²).
+#[test]
+fn ranges_with_literal_ends_check_in_linear_time() {
+    const N_UNIT: usize = 300;
+    let units = scaling::inputs(N_UNIT, |k| {
+        let text: String = (0..k)
+            .map(|i| format!("x{i} = ((0 ..< {i}) ++ [{i}]).zip(0 ..= {i}).count;\n"))
+            .collect();
+        checked(&text)
+    });
+    scaling::check(
+        "checking n statements `((0 ..< i) ++ [i]).zip(0 ..= i).count`",
+        N_UNIT,
+        |k| assert!(units[&k].check().errors.is_empty()),
+    );
 }
 
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries

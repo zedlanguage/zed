@@ -763,6 +763,72 @@ fn zip_pairs_equal_keys() {
     );
 }
 
+/// Plan row RANGE-literal-keys: a range whose two ends the text fixes holds exactly the keys
+/// between them, so `zip` and `++` read its keys as they read a list display's: zips of equal
+/// ranges, a range beside a list, `..=`, negative, folded and empty ends, and `++` of ranges.
+#[test]
+fn a_range_with_literal_ends_has_exact_keys() {
+    prints(
+        "range_keys",
+        &[
+            ("(0 ..< 3).zip(0 ..< 3) == [(0, 0), (1, 1), (2, 2)]", "true"),
+            ("(0 ..< 3).zip(0 ..< 3).count", "3"),
+            (
+                "(0 ..= 2).zip([5, 6, 7]) == [(0, 5), (1, 6), (2, 7)]",
+                "true",
+            ),
+            ("[5, 6, 7].zip(0 ..< 3) == [(5, 0), (6, 1), (7, 2)]", "true"),
+            ("(2 ..< 5).zip(2 ..= 4).map(p -> p[0] * p[1]).sum", "29"),
+            ("(-2 ..< 1).zip(-2 ..= 0).count", "3"),
+            ("(1 + 1 ..< 2 * 3).zip(2 ..< 6).count", "4"),
+            ("(3 ..< 3).zip(5 ..< 5).count", "0"),
+            ("(3 ..< 3).zip({}).count", "0"),
+            (
+                "((0 ..< 3) ++ [3]).zip([1, 2, 3, 4]) == [(0, 1), (1, 2), (2, 3), (3, 4)]",
+                "true",
+            ),
+            (
+                "([9] ++ (0 ..< 2)).zip(0 ..< 3) == [(9, 0), (0, 1), (1, 2)]",
+                "true",
+            ),
+            ("((0 ..< 2) ++ (0 ..< 2)).zip(0 ..< 4).count", "4"),
+            ("(0 ..< 3).zip(0 ..< 3).zip([7, 8, 9]).count", "3"),
+            ("(3 ..< 3) ++ [1] == [1]", "true"),
+            ("((3 ..< 3) ++ [1]).zip([5]).count", "1"),
+            // Ends past 64 bits, kept as two ends at check time and at run time.
+            (
+                "(2 ^ 70 ..< 2 ^ 70 + 2).zip(2 ^ 70 ..= 2 ^ 70 + 1).count",
+                "2",
+            ),
+        ],
+    );
+}
+
+/// Plan row RANGE-literal-keys: ranges of literal ends whose keys differ are still rejected,
+/// naming a key on one side only; a range with an end the text does not fix is unchanged.
+#[test]
+fn a_zip_of_ranges_with_unequal_keys_is_rejected() {
+    saying(
+        "range_keys",
+        &[
+            ("(0 ..< 3).zip(0 ..< 4)", "key 3 is in"),
+            ("(0 ..< 3).zip([1, 2])", "key 2 is in"),
+            ("(1 ..< 4).zip(0 ..< 3)", "key 3 is in"),
+            ("(0 ..< 0).zip([1])", "key 0 is in"),
+            // An end past 64 bits is two ends, not 10^20 listed keys.
+            ("(0 ..< 3).zip(0 ..< 100000000000000000000)", "key 3 is in"),
+            (
+                "(0 ..< [1, 2].where(x -> x > 1).count).zip(0 ..< 1)",
+                "nothing shows that each key of",
+            ),
+            (
+                "(0 ..< 2) ++ (1 ..< 3)",
+                "`++` joins lists, whose keys are the ranks",
+            ),
+        ],
+    );
+}
+
 /// The misuses of `++` and `zip`, each named in the program's own words: unequal keys, with
 /// the key that is on one side only; a family whose keys are not ranks; a string beside a
 /// list; a wrong argument list.

@@ -1004,6 +1004,7 @@ impl<'a> Same<'a> {
             bounds,
             data,
             dense,
+            keys,
             word,
             needs,
             own,
@@ -1014,6 +1015,7 @@ impl<'a> Same<'a> {
         } = x;
         *params == y.params
             && *hull == y.hull
+            && *keys == y.keys
             && arrows.len() == y.arrows.len()
             && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
                 p.params.len() == q.params.len()
@@ -1467,6 +1469,7 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
         bounds,
         data,
         dense,
+        keys,
         word,
         needs,
         own,
@@ -1498,6 +1501,8 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
         Dbg::Leaf(data),
         Dbg::Text(", dense: "),
         Dbg::Leaf(dense),
+        Dbg::Text(", keys: "),
+        Dbg::Leaf(keys),
         Dbg::Text(", word: "),
         Dbg::Leaf(word),
         Dbg::Text(", needs: "),
@@ -2619,6 +2624,7 @@ impl<'b> Replacer<'b> {
             bounds,
             data: s.data,
             dense: s.dense,
+            keys: s.keys.clone(),
             word: s.word.clone(),
             needs,
             own,
@@ -2957,6 +2963,7 @@ impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
             bounds: s.bounds.clone(),
             data: s.data,
             dense: s.dense,
+            keys: s.keys.clone(),
             word: s.word.clone(),
             needs,
             own: s.own.clone(),
@@ -3055,6 +3062,7 @@ impl Absorb {
             bounds: s.bounds.clone(),
             data: s.data,
             dense: s.dense,
+            keys: s.keys.clone(),
             word: s.word.clone(),
             needs,
             own: s.own.clone(),
@@ -3226,6 +3234,7 @@ impl Rebuild for Settle<'_> {
                 .collect(),
             data: s.data,
             dense: s.dense,
+            keys: s.keys.clone(),
             word: s.word.clone(),
             needs,
             own: s.own.iter().filter(open).cloned().collect(),
@@ -3250,7 +3259,9 @@ impl Rebuild for Settle<'_> {
 /// Complexity tradeoff: a tag set once where the family's type is made, and one comparison
 /// at each read and each `flatMap`, O(1). The naive way, the interval's ends kept in `Sig` and
 /// compared at each use, costs the same order but holds two integers where a read needs one
-/// of three cases (COMPLEXITY.md, RANGE-read-out-of-bounds).
+/// of three cases (COMPLEXITY.md, RANGE-read-out-of-bounds). Where both ends are known, as
+/// for `0 ..< 3`, they are kept as well, in [`Sig::keys`], for `zip` and `++`, which need the
+/// keys and not only the case (row RANGE-literal-keys).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Dense {
     /// Nothing more than its arrows say: a read that misses gives `#notFound`.
@@ -3297,6 +3308,23 @@ pub struct Sig {
     /// generic function, which the evaluator does one way for every family, misses with
     /// `#notFound`.
     pub dense: Dense,
+    /// Its keys exactly, where it is a family whose keys are each int from `low` through
+    /// `high` and no other, both ends known (row RANGE-literal-keys): a range `a ..< b` or
+    /// `a ..= b` whose two ends the checker's read of the text fixes, as `0 ..< 3`, and what
+    /// `++` and `zip` make of such families. `None` where its arrows and [`Sig::dense`] say all
+    /// that is known of its keys. The empty family is `int[0..=-1]`, so that equal key sets are
+    /// equal values. Its arrows stay `int ->? V` and print so, since no type text the parser
+    /// takes in that place says the keys are an interval (DESIGN.md sec:type_language, the
+    /// `m[k]` row, `lst : int[a..<b]`); `zip` and `++` read these keys as they read the listed
+    /// keys of an array display. A family with keys fits where one with the same keys or with
+    /// none is wanted, and not where other keys are ([`fits_sig`]).
+    ///
+    /// Complexity tradeoff: two ints, set in O(1) where the range is typed and compared in
+    /// O(1). The naive way, which the row first named, lists the keys in the arrow's key type
+    /// as an array display's are, `(0 | 1 | 2) -> int`: O(b - a) time and space for a text of
+    /// O(log(b - a)) digits, so `0 ..< 1000000000` would type a billion keys, the cost the lazy
+    /// range removed at run time (RANGE-lazy, RANGE-lazy-wide).
+    pub keys: Option<WrittenRange>,
     /// The prelude word it is, if it is one: the function itself, not its arrows. `min` and
     /// `max` take two tuples, which `+`, of the same arrows, does not (DESIGN.md
     /// sec:reduction, item 5), wherever the word is called from: by name, as a method, or
@@ -12223,6 +12251,12 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if !hull_fits {
         return false;
     }
+    // The exact keys of a family (row RANGE-literal-keys): wanted, they are a promise the
+    // value must make too, so only a family of the same keys fits; not wanted, any fits, as
+    // the keys only add to what the arrows say. O(1), two comparisons of the ends.
+    if q.keys.as_ref().is_some_and(|k| s.keys.as_ref() != Some(k)) {
+        return false;
+    }
     let same_params = s.params.len() == q.params.len()
         && s.params
             .iter()
@@ -13581,6 +13615,7 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
             .collect(),
         data: s.data,
         dense: s.dense,
+        keys: s.keys.clone(),
         word: None,
         needs: Vec::new(),
         own: vs
@@ -14861,7 +14896,7 @@ impl Sig {
         let hash = |s: &Sig| {
             *s.facts.2.get_or_init(|| {
                 let parts = (&s.params, &s.arrows, &s.bounds, s.data, s.dense, &s.word);
-                let more = (&s.needs, &s.own, &s.held, s.named, &s.hull);
+                let more = (&s.needs, &s.own, &s.held, s.named, &s.hull, &s.keys);
                 BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
             })
         };
@@ -15173,6 +15208,7 @@ impl Sig {
             bounds: BTreeMap::new(),
             data: false,
             dense: Dense::No,
+            keys: None,
             word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),
@@ -17406,6 +17442,7 @@ mod tests {
             bounds: BTreeMap::new(),
             data: false,
             dense: Dense::No,
+            keys: None,
             word: None,
             needs: Vec::new(),
             own: ["T".into(), "B".into()].into_iter().collect(),

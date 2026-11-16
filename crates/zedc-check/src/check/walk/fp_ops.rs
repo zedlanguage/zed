@@ -423,7 +423,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             for a in &mut s.arrows {
                 a.result = a.result.union(&not_found);
             }
+            // A run holds some of the keys, which `Sig::keys` would not describe.
             s.dense = Dense::No;
+            s.keys = None;
             s.word = None;
             s.needs = Vec::new();
             s.note_held();
@@ -676,6 +678,84 @@ impl<'t, 'a> Ck<'t, 'a> {
             .flatten()
     }
 
+    /// The bounds `L` and `U` of [`Self::key_bounds`] as sets of ints, where every family of
+    /// `sigs` has int keys: a family with exact keys ([`Sig::keys`]), as a range with literal
+    /// ends, holds just those, each sure; any other gives its key types' listed ints, sure
+    /// where the arrow is total and gives no miss. A key type of infinitely many ints, as
+    /// `int`, gives every int to `U` and none to `L`. `None` where a family may have a key
+    /// that is not an int. `sigs` is not empty.
+    ///
+    /// Proof that `L` holds only keys every family holds and `U` every key any may hold:
+    /// `Sig::keys` is the family's exact key set by its contract; a key type's ints are a
+    /// literal set (`KType::ints_listed`), turned into pieces one for one, or infinite, whose
+    /// ints lie in `top` and include those of the empty set. The infinite case loses no
+    /// verdict where these sets are read, beside a family with exact keys (`zip_end`,
+    /// `list_concat_end`): `zip` needs `U_a ⊆ L_b` and `U_b ⊆ L_a`; the `L` of the side with
+    /// exact keys is finite, so the other side's `U` must be, so its `L`, so this side's `U`;
+    /// so where a key type is infinite the exact test fails too. `list_concat_end` reads a
+    /// count only where `L = U` exactly, which a set made larger or smaller here cannot fake.
+    // Complexity tradeoff: O(k log k) for a family whose key type lists k ints, as an array
+    // display, the cost of its type, and O(1) for one with exact keys, against O(b - a) for
+    // listing the keys of `a ..< b` as the naive way would (row RANGE-literal-keys); a meet
+    // and a join of the piece sets per family, linear in their pieces.
+    fn key_ints(sigs: &[Arc<Sig>]) -> Option<(IntervalSet, IntervalSet)> {
+        let ints = Ty::carrier(Carrier::Int);
+        // The ints of the key type `t`, which holds only ints.
+        let of = |t: &Ty, infinite: IntervalSet| match t.set.ints_listed() {
+            Some(vs) => IntervalSet::from_pieces(
+                (vs.iter())
+                    .map(|v| int_end(v).expect("a key type's int"))
+                    .map(|e| (e.clone(), e))
+                    .collect(),
+            ),
+            None => infinite,
+        };
+        let mut l: Option<IntervalSet> = None;
+        let mut u = IntervalSet::empty();
+        for s in sigs {
+            let (sure, may) = match &s.keys {
+                Some(k) => (written_ints(k), written_ints(k)),
+                None => {
+                    let (sure, may) = Self::key_bounds(std::slice::from_ref(s));
+                    if !may.subtype(&ints) {
+                        return None;
+                    }
+                    (
+                        of(&sure, IntervalSet::empty()),
+                        of(&may, IntervalSet::top()),
+                    )
+                }
+            };
+            l = Some(match l {
+                None => sure,
+                Some(l) => l.meet(&sure),
+            });
+            u = u.join(&may);
+        }
+        Some((l?, u))
+    }
+
+    /// The count of every list of `sigs` where one count fits them all, as
+    /// [`Self::known_count`], reading exact keys ([`Sig::keys`]): `0 ..< 3` has 3 entries
+    /// whatever its digits. `None` where the count is not one known number. Each family is a
+    /// list ([`Self::list_concat_end`]), so its keys are `0 ..< n`; the count is `n` exactly
+    /// where `L = U`, every key sure, and that set is empty or `[0, n - 1]`.
+    // Complexity tradeoff: O(k log k) for listed keys and O(1) for exact ones (`key_ints`);
+    // `known_count` alone would need the keys listed, O(n) for a range of n.
+    fn ranks_count(sigs: &[Arc<Sig>]) -> Option<Num> {
+        let (l, u) = Self::key_ints(sigs)?;
+        if l != u {
+            return None;
+        }
+        if u.is_empty() {
+            return Some(Num::from(0i64));
+        }
+        match u.only()? {
+            (Fin(lo), Fin(hi)) if *lo == Num::from(0i64) => Some(hi + &Num::from(1i64)),
+            _ => None,
+        }
+    }
+
     /// `a ++ b` where an operand may be a family (step L5.2; DESIGN.md sec:joins, ordered
     /// concatenation): each family must be a list, its keys the ranks `0 ..< n`, and the
     /// result is the list of `a`'s entries and then `b`'s, the keys of `b` moved up by
@@ -693,11 +773,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut sigs = Vec::new();
             for p in a.ty.pieces() {
                 match p {
-                    // `{}` holds no key, the ranks `0 ..< 0`.
+                    // `{}` holds no key, the ranks `0 ..< 0`, as does an empty range such as
+                    // `3 ..< 3`, whose exact keys are none ([`Sig::keys`]).
                     Piece::Fn(sig)
                         if sig.data
                             && (sig.dense == Dense::Ranks
-                                || sig.arrows.iter().all(|a| a.params[0].is_empty())) =>
+                                || sig.arrows.iter().all(|a| a.params[0].is_empty())
+                                || (sig.keys.as_ref())
+                                    .is_some_and(|k| written_ints(k).is_empty())) =>
                     {
                         sigs.push(sig)
                     }
@@ -741,19 +824,38 @@ impl<'t, 'a> Ck<'t, 'a> {
             return out;
         }
         let values = Self::entries_of(&a).union(&Self::entries_of(&b));
-        let sig = match (Self::known_count(&a), Self::known_count(&b)) {
-            (Some(n), Some(m)) => {
-                let keys: Vec<Ty> = (0..(n + m) as i64)
-                    .map(|i| Ty::lit(&Value::Int(i)))
-                    .collect();
-                Sig::one(positional(1), vec![Ty::union_all(keys.iter())], values)
-            }
-            _ => {
+        let keyed = a.iter().chain(&b).any(|s| s.keys.is_some());
+        // With an operand of exact keys, as `0 ..< 3`, the result's keys are `0 ..< n + m`
+        // kept as two ends, the arrow the range's `int ->? V` (row RANGE-literal-keys). Proof:
+        // the run's list holds `a`'s n entries at `0 ..< n` and `b`'s m at `n ..< n + m`, and
+        // `ranks_count` gives each count exactly. Complexity tradeoff: O(1) for the two ends,
+        // where listing the keys `0 | 1 | … | n + m - 1` as below would cost O(n + m) for
+        // the text `0 ..< n` of O(log n) digits.
+        let sig = match (keyed, Self::ranks_count(&a), Self::ranks_count(&b)) {
+            (true, n, m) => {
                 let found = values.union(&Ty::set(KType::atom("notFound")));
                 let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
                 sig.arrows[0].partial = true;
+                if let (Some(n), Some(m)) = (n, m) {
+                    let last = &(&n + &m) - &Num::from(1i64);
+                    sig.keys = exact_keys(&IntervalSet::range(Fin(Num::from(0i64)), Fin(last)));
+                }
                 sig
             }
+            _ => match (Self::known_count(&a), Self::known_count(&b)) {
+                (Some(n), Some(m)) => {
+                    let keys: Vec<Ty> = (0..(n + m) as i64)
+                        .map(|i| Ty::lit(&Value::Int(i)))
+                        .collect();
+                    Sig::one(positional(1), vec![Ty::union_all(keys.iter())], values)
+                }
+                _ => {
+                    let found = values.union(&Ty::set(KType::atom("notFound")));
+                    let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
+                    sig.arrows[0].partial = true;
+                    sig
+                }
+            },
         };
         let mut sig = sig;
         sig.data = true;
@@ -809,23 +911,68 @@ impl<'t, 'a> Ck<'t, 'a> {
                  `(0 ..< min({p}.count, {q}.count)).map(i -> ({p}[i], {q}[i]))`"
             )
         });
-        for (from, (l_from, u_from, l_to, u_to)) in [(&la, &ua, &lb, &ub), (&lb, &ub, &la, &ua)]
-            .into_iter()
-            .enumerate()
-        {
-            if self.subtype(u_from, l_to) {
+        // Where an operand has exact keys, as a range with literal ends ([`Sig::keys`]), the
+        // bounds are sets of ints and the tests are on them (row RANGE-literal-keys): the
+        // keys of `0 ..< 3` are `[0, 2]`, two ends, not a key type. Complexity tradeoff: a
+        // subset test and a difference of piece sets, linear in their pieces, O(1) for two
+        // ranges; the naive way, each range's keys listed in its key type, costs O(b - a).
+        let keyed = a.iter().chain(&b).any(|s| s.keys.is_some());
+        let sets = match keyed {
+            true => Self::key_ints(&a).zip(Self::key_ints(&b)),
+            false => None,
+        };
+        for from in [0, 1] {
+            // The least key of the region `U_from - L_to`, the keys `from` may hold that the
+            // other side may lack, and whether `from` surely holds it and the other surely
+            // not; `Err` where the region is empty, as the join needs.
+            let found: Result<Option<(Value, bool)>, ()> = match &sets {
+                Some(((la, ua), (lb, ub))) => {
+                    let [(l_from, u_from), (l_to, u_to)] = match from {
+                        0 => [(la, ua), (lb, ub)],
+                        _ => [(lb, ub), (la, ua)],
+                    };
+                    let region = u_from.minus(l_to);
+                    match region.first() {
+                        None => Err(()),
+                        // A region with no least key, as every int below 0, names none.
+                        Some((Fin(k), _)) => {
+                            let e = Fin(k.clone());
+                            let sure = l_from.contains_end(&e) && !u_to.contains_end(&e);
+                            Ok(Some((Value::from(k), sure)))
+                        }
+                        Some(_) => Ok(None),
+                    }
+                }
+                None => {
+                    let [(l_from, u_from), (l_to, u_to)] = match from {
+                        0 => [(&la, &ua), (&lb, &ub)],
+                        _ => [(&lb, &ub), (&la, &ua)],
+                    };
+                    match self.subtype(u_from, l_to) {
+                        true => Err(()),
+                        false => {
+                            let region = u_from.diff(l_to);
+                            let one =
+                                (region.set.values_listed()).and_then(|vs| vs.into_iter().next());
+                            Ok(one.map(|v| {
+                                let sure = l_from.contains(&v) && !u_to.contains(&v);
+                                (v, sure)
+                            }))
+                        }
+                    }
+                }
+            };
+            let Ok(one) = found else {
                 continue;
-            }
-            let region = u_from.diff(l_to);
-            let one = (region.set.values_listed()).and_then(|vs| vs.into_iter().next());
+            };
             let (a, b) = (&names[from], &names[1 - from]);
             let head = "`zip` pairs the entries at equal keys, and";
             let message = match &one {
-                Some(v) if l_from.contains(v) && !u_to.contains(v) => {
+                Some((v, true)) => {
                     let key = self.text(&Ty::lit(v));
                     format!("{head} key {key} is in {a} but not in {b}")
                 }
-                Some(v) => {
+                Some((v, false)) => {
                     let key = self.text(&Ty::lit(v));
                     format!("{head} nothing shows that key {key} of {a} is in {b}")
                 }
@@ -837,7 +984,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
-        let mut sig = Sig::one(positional(1), vec![ua], pair);
+        // Shown above, `U_a ⊆ L_b ⊆ U_b ⊆ L_a ⊆ U_a`, so the four are one set, every key of
+        // it in every family of both sides. An operand none of whose families has exact keys
+        // writes that set as its key type `U`, a sure key type, as for two lists. Where both
+        // have exact keys, the set is one interval (the `L` of a side with exact keys lies in
+        // them, and equals `U`, which holds them), kept as two ends on the arrow `int ->?`.
+        let plain = |side: &[Arc<Sig>]| side.iter().all(|s| s.keys.is_none());
+        let mut sig = match (&sets, plain(&a), plain(&b)) {
+            (Some(((_, u), _)), false, false) => {
+                let found = pair.union(&Ty::set(KType::atom("notFound")));
+                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
+                sig.arrows[0].partial = true;
+                sig.keys = exact_keys(u);
+                sig
+            }
+            (_, _, true) => Sig::one(positional(1), vec![ub], pair),
+            _ => Sig::one(positional(1), vec![ua], pair),
+        };
         sig.data = true;
         // The two keyspaces were shown equal above, so what either side's type knows of its
         // keys holds for the pairs' keys: the ranks if either side is a list, else one

@@ -115,6 +115,7 @@ fn plain(a: &Ty, b: &Ty) -> bool {
                 bounds,
                 data,
                 dense,
+                keys,
                 word,
                 needs,
                 own,
@@ -133,6 +134,7 @@ fn plain(a: &Ty, b: &Ty) -> bool {
                 && *bounds == y.bounds
                 && *data == y.data
                 && *dense == y.dense
+                && *keys == y.keys
                 && *word == y.word
                 && *needs == y.needs
                 && *own == y.own

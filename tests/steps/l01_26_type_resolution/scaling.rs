@@ -433,6 +433,7 @@ pub(super) fn functions_holding_one(
             bounds: BTreeMap::new(),
             data: false,
             dense: zedc::check::ty::Dense::No,
+            keys: None,
             word: None,
             needs: Vec::new(),
             named: 0,
