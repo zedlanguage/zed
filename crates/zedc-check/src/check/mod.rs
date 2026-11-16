@@ -6441,13 +6441,43 @@ macro_rules! set {
 }
 
 impl Ck<'_, '_> {
-    /// Makes the write `w`, logging the value it replaces.
+    /// Makes the write `w`, logging the value it replaces. A fit at a span that holds another
+    /// fit already is refused instead, since the elaborator builds each span once, with the
+    /// one fit it finds there (`info.fits.get(&e.span)` in zedc-elab/src/elab/walk.rs), and
+    /// the fit replaced would be dropped without a word. A span is checked twice only inside
+    /// a lambda passed at an intersection of function types, whose body is checked once for
+    /// each arrow ([`Self::fit_step`]): `g` of `both(h: g -> apply(f: g))`, with `both(h:
+    /// ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int))` and `apply(f: (x: int
+    /// | f64) ->? int)`, is rebuilt with a test of `int` at the first arrow and of `f64` at
+    /// the second, and the run would call `small` on 2.5 at the second test kept alone
+    /// (PROOF-twice-lambda-placement).
     fn put(&mut self, w: Undo) {
         if self.replaying > 0 {
             return;
         }
+        if let Undo::Fit(at, Some(new)) = &w
+            && let Some(old) = self.info.fits.get(at)
+            && old != new
+        {
+            return self.fit_twice(*at);
+        }
         let undo = self.set(w);
         self.log.push(undo);
+    }
+
+    /// Refuses a second fit, of another kind or shape, at `at` ([`Self::put`]).
+    fn fit_twice(&mut self, at: Span) {
+        let code = self.code(Some(at)).unwrap_or("the value");
+        self.error_offering(
+            at,
+            format!("`{code}` is checked at two types and needs another rebuilding at each"),
+            [format!(
+                "a lambda passed as an intersection of function types is checked once for each \
+                 arrow, and at two arrows `{code}` is passed into a function type in two \
+                 different ways; the program runs one version of `{code}`, so this version of \
+                 zedc rebuilds it once"
+            )],
+        );
     }
 
     /// Makes the write `w` and gives the write that undoes it.

@@ -17389,31 +17389,42 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), steps, c),
             Some(_) => None,
         };
-        // No program reaches the refusal below (MSG-partial-slot-rebuild-kind-reason, row
-        // TEST-partial-slot-port-pe-routes), so a debug build stops on it as a fault of this
-        // proof:
-        // - `merged` is `None` only where the fit at `at` is not `Fit::Coerce`, or where
-        //   `rebuilt_too` meets two shapes or two domain tests at one place.
-        // - The fit at `at`, the span of an argument the call writes, is `Fit::Coerce` or none,
-        //   by the paragraph after the cases of the proof at `Self::coerce_forwarded`.
-        // - Every `Fit::Coerce` at `at` is a `Ck::coercion` of the type of the argument at
-        //   `at` in this check of the call: a span is checked again, at another type, only
-        //   inside a body checked once for each type it meets (a lambda's). An argument there
-        //   that reads such a lambda's parameter is placed at the argument of a call of the
-        //   lambda written in a generic body (`twice(f: g -> pass(x: g))` with `twice(f) =
-        //   f(small) + f(small4)` runs to its values) or is refused by `no_place` (the lambda
-        //   of `map`); one that reads no such parameter has one type in every check. Two
-        //   coercions of one type join ([`join_coercions`]).
-        // Probes of each kind (a reordered declared function and a lambda with a default at a
-        // slot whose domain is a variable, a lambda passed to a generic function and called
-        // there at two function types, one argument passed on to two slots that test it in two
-        // ways) all ran or were refused by other rules. The refusal stays in a release build,
-        // since a coercion dropped here would call a function outside its domain.
-        debug_assert!(
-            merged.is_some(),
-            "a second rebuilding at {at:?} that does not join with the first: the proof at \
-             `Ck::coerce_at` does not cover this program"
-        );
+        // `merged` is `None` where the fit at `at` is not `Fit::Coerce`, or where `rebuilt_too`
+        // meets two shapes or two domain tests at one place; the program is then refused
+        // (MSG-partial-slot-rebuild-kind-reason), since a coercion dropped here would call a
+        // function outside its domain. A span is checked at two types only inside a lambda
+        // passed at an intersection of function types, whose body is checked once for each
+        // arrow ([`Self::fit_step`]), and programs reach the refusal there: `pass(x: g)` in
+        // `both(h: g -> pass(x: g))`, with `both(h: ((g: (x: int) -> int) -> int) & ((g: (x:
+        // f64) -> int) -> int))`, rebuilds `g` with a test of `int` at the first arrow and of
+        // `f64` at the second (`a_lambda_checked_at_each_arrow_is_rebuilt_once`).
+        //
+        // A lambda passed to a generic function and called there at two function types never
+        // reaches it, and its rebuildings are put at the arguments of its calls in that
+        // function, not at the lambda's parameter (PROOF-twice-lambda-placement). For
+        // `twice(f) = f(small) + f(small4)` and `a = twice(f: g -> pass(x: g))`:
+        // 1. The slot of `f` is a variable, so no function type is wanted there and the lambda
+        //    is checked by `Self::lambda`, not fitted (`Self::fit_lambda`): its body is checked
+        //    once. `Self::lambda_sig` gives the parameter `g` a fresh variable `$g`.
+        // 2. In that body `pass(x: g)` is a call of a generic function on `$g`; the need
+        //    "`$g` into `(x: int | f64) ->? int`" of `pass`'s signature, replayed on `$g`,
+        //    reaches `Self::coercion`, which gives `Ok(None)` for a type that holds a variable,
+        //    so `Self::coerce_forwarded` returns and no fit is put at `g`. The need stays in the
+        //    lambda's signature (`Frame::LambdaEnd`: `Self::generalize` keeps the needs on the
+        //    lambda's own variables).
+        // 3. At `twice(f: ...)`, `Self::call_sig` pushes the frame of `twice`, whose need
+        //    "call `f` on `small`" is met by `Self::meet` with `f` the lambda's type. The
+        //    argument of that need has no span in this call; its type, `small`'s, holds no
+        //    variable, so `Self::need_arg_via` gives the span of `small` at each use of the
+        //    need (`Ck::call_written`, filled by `Self::need`).
+        // 4. `Self::call_found` calls the lambda's signature through `Self::call_sig`, which
+        //    pushes a frame whose argument 0 is forwarded (no span) with that `via`. Its need
+        //    on `$g`, now bound to `small`'s type, is replayed: `CallFrame::place` finds `$g`
+        //    as the whole argument 0, and `CallFrame::written` gives the `via` spans, so
+        //    `coerce_at` is called at the `small` written in `twice`. The same for `small4`.
+        // So each span gets the coercion of the one function written there, and two uses of
+        // `f(small)` share one need and one coercion, which joins with itself. The test
+        // `the_twice_lambda_rebuilds_each_function_at_its_own_argument` checks the spans.
         let Some(fit) = merged else {
             let code = self.code(Some(at)).unwrap_or("the value");
             let (t, wt) = (self.text(on), self.text(w));

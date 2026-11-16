@@ -1142,6 +1142,124 @@ fn arguments_the_rebuilt_here_proof_names_run_to_their_values() {
     }
 }
 
+/// Row PROOF-twice-lambda-placement: where the checker puts the rebuildings the proof at
+/// `Ck::coerce_at` names for a lambda passed to a generic function that calls it at two
+/// function types. For `twice(f) = f(small) + f(small4)` and `twice(f: g -> pass(x: g))`, each
+/// rebuilding sits at its own argument of `f` in `twice`, the same as `pass(x: small)` and
+/// `pass(x: small4)` put there written alone, and none at the `g` of `pass(x: g)`, where the
+/// two would meet at one place and not join. The values show the same from outside: at 2.5
+/// `small` misses and `small4` gives 2, at 3 `small` gives 4 and `small4` misses, in every
+/// order of the calls and with a function called twice.
+#[test]
+fn the_twice_lambda_rebuilds_each_function_at_its_own_argument() {
+    use zedc::check::Fit;
+    let head = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\n"
+        )
+    };
+    // The rebuilding of each function passed alone to `pass`, as the call writes it.
+    let alone = |name: &str| {
+        let src = format!("{}a = pass(x: {name});\n", head("3"));
+        let at = src.rfind(&format!("x: {name})")).expect("the argument") + 3;
+        let (info, _) = super::info(&src);
+        match info.fits.into_iter().find(|(s, _)| s.start == at) {
+            Some((s, Fit::Coerce(c))) if s.end == at + name.len() => c,
+            other => panic!("{src}: no rebuilding of `{name}` alone: {other:?}"),
+        }
+    };
+    let (small, small4) = (alone("small"), alone("small4"));
+    assert_ne!(small, small4, "the two domains differ");
+    for (twice, calls) in [
+        (
+            "twice(f) = f(small) + f(small4);\n",
+            ["small", "small4"].as_slice(),
+        ),
+        ("twice(f) = f(small4) + f(small);\n", &["small4", "small"]),
+        (
+            "twice(f) = f(small) + f(small4) + f(small);\n",
+            &["small", "small4", "small"],
+        ),
+    ] {
+        let rest = format!("{twice}a = twice(f: g -> pass(x: g));\n");
+        let src = format!("{}{rest}", head("3"));
+        // The argument of each call of `f` in `twice`, by where it starts, and the rebuilding
+        // of that function alone.
+        let line = src.find("twice(f) =").expect("twice");
+        let mut want = Vec::new();
+        let mut from = line;
+        for &name in calls {
+            let at = from + src[from..].find(&format!("f({name})")).expect("a call") + 2;
+            want.push((
+                at,
+                at + name.len(),
+                if name == "small" { &small } else { &small4 },
+            ));
+            from = at + name.len();
+        }
+        let g = src.rfind("pass(x: g)").expect("the lambda's call") + 8;
+        let (info, _) = super::info(&src);
+        let mut got: Vec<_> = (info.fits.iter())
+            .map(|(s, f)| (s.start, s.end, f.clone()))
+            .collect();
+        got.sort_by_key(|&(start, end, _)| (start, end));
+        let shown = || {
+            (got.iter())
+                .map(|(s, e, f)| format!("`{}` at {s}: {f:?}", &src[*s..*e]))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            got.iter().all(|&(s, _, _)| s != g),
+            "{src}: a fit at the `g` of `pass(x: g)`: {:?}",
+            shown()
+        );
+        let want: Vec<_> = (want.iter())
+            .map(|&(s, e, c)| (s, e, Fit::Coerce(c.clone())))
+            .collect();
+        assert_eq!(got, want, "{src}: {:?}", shown());
+        // At 2.5: `small` misses (6), `small4` gives 2; at 3: `small` gives 4, `small4` misses.
+        let (miss, hit) = match calls.len() {
+            3 => ("14", "14"),
+            _ => ("8", "10"),
+        };
+        runs_to(&format!("{}{rest}", head("2.5")), "a", miss);
+        runs_to(&src, "a", hit);
+    }
+}
+
+/// Row PROOF-twice-lambda-placement, the other route: a lambda passed at an intersection of
+/// function types is checked once for each arrow, so a function its parameter passes into a
+/// partial slot needs a test of `int` at one arrow and of `f64` at the other, both at the one
+/// `g`. The program runs one version of the lambda, so it is refused: through a generic
+/// function (`pass`, the rebuilding at `Ck::coerce_at`) and directly (`apply`, the rebuilding
+/// of the argument itself). Before the refusal the first stopped a debug build on the
+/// assertion at `Ck::coerce_at`, and the second kept the test of `f64` alone and called
+/// `small` on 2.5, a fault of zedc at run time. The same lambda with one arrow runs.
+#[test]
+fn a_lambda_checked_at_each_arrow_is_rebuilt_once() {
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
+    let twice = "`g` is checked at two types and needs another rebuilding at each. [g]";
+    for (body, want) in [
+        (
+            "pass(x: g)",
+            "`g : (x: f64) -> int` is passed on as `(x: int | f64) ->? int` and is rebuilt here \
+             already. Try `x: (x: int | f64) ->? int` instead. [g]",
+        ),
+        ("apply(f: g)", twice),
+        // The repair the first message offers, which meets the second refusal.
+        ("typed(x: g)", twice),
+    ] {
+        let typed = "typed(x: (x: int | f64) ->? int) = apply(f: x);\n";
+        let src = format!("{head}{typed}{both}a = both(h: g -> {body});\n");
+        assert_eq!(type_errors(&src), [want], "{src}");
+    }
+    let one = "one(h: (g: (x: int) -> int) -> int) = h(g: small);\n";
+    for body in ["pass(x: g)", "apply(f: g)"] {
+        runs_to(&format!("{head}{one}a = one(h: g -> {body});\n"), "a", "6");
+    }
+}
+
 /// Row TEST-partial-slot-port-pe-routes, the port-read case of the proof at
 /// `Ck::coerce_forwarded`, run by `zedc run`: a key read from a port reaches the function a
 /// generic body passes on, which misses outside its domain and is called inside it, whichever
