@@ -95,3 +95,34 @@ fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
         );
     }
 }
+
+#[test]
+fn a_unit_whose_factors_are_fixed_outside_its_set_empties_the_regime() {
+    // FAIL-omega-boundary-modes-flake: `x mod 6 == 2` fixes `x mod 2` and `x mod 3`, so
+    // `x mod 12 in {5, 6}` became the empty clause, which the regime step skipped; it gave
+    // the point 2, where `x mod 12 == 2`. No x has both: x mod 12 in {5, 6} gives x mod 6 in
+    // {5, 0}.
+    let i = |v: i64| Int::from(v);
+    let units: BTreeMap<Int, ResidueSet> =
+        [(i(6), vec![(i(2), i(2))]), (i(12), vec![(i(5), i(6))])]
+            .into_iter()
+            .collect();
+    let (lo, hi) = (Some(i(0)), Some(i(16)));
+    let mut stack = Vec::new();
+    let step = solve_regime_step(&lo, &hi, units.clone(), vec![], &mut stack);
+    assert!(matches!(step, RegimeOut::Empty), "step: {:?}", found(&step));
+    let whole = solve_regime_in(&lo, &hi, units, vec![]);
+    assert!(
+        matches!(whole, RegimeOut::Empty),
+        "whole: {:?}",
+        found(&whole)
+    );
+}
+
+/// The point a regime's answer gives, for messages.
+fn found(out: &RegimeOut) -> Option<Int> {
+    match out {
+        RegimeOut::Found(x) => Some(x.clone()),
+        _ => None,
+    }
+}

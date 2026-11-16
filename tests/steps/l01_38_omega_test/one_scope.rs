@@ -4841,11 +4841,46 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
     // with `x` itself renamed), and with its quotients and remainders
     // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
     // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
-    use zedc::store::presburger::{decide, satisfiable};
     let (from, to) = std::env::var("PNCX_CASES").map_or((0, 100), |s| {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
+    // 100 cases drawn with a new seed each run (author P169; 1,000 at one seed took 4.2 s).
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable boundary modes renamed");
+    let (answered, differ) = boundary_modes_renamed(&mut rng, from, to);
+    println!(
+        "renamed cases {from}..{to}: {answered} answered, {} differ",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+#[test]
+fn boundary_modes_of_the_seeds_that_failed_do_not_depend_on_names() {
+    // FAIL-omega-boundary-modes-flake: the cases of `one_variable_boundary_modes_do_not_depend_on_names`
+    // that failed, each under the seed that drew it. Seeds 89 (case 86) and 2644 (case 39):
+    // the modular solver skipped a unit `x mod m in s` whose factors were already fixed
+    // outside `s`, returned a point that failed the check, and the path after it refused
+    // under two namings. Seed 2125 (case 28): `settle_tied` solved the base with the first
+    // disjunct in name order, which `solve` refused under two namings and answered under the
+    // others. Each answers under all four namings.
+    for (seed, case) in [(89, 86), (2125, 28), (2644, 39)] {
+        let mut rng = zed_tests::instances::Rng::new(seed);
+        let (answered, differ) = boundary_modes_renamed(&mut rng, case, case + 1);
+        assert!(differ.is_empty(), "seed {seed}: {}", differ.join("\n"));
+        assert_eq!(answered, 1, "seed {seed} case {case}");
+    }
+}
+
+/// The formulas `case_idx` in `from..to` of [`modular_case_mode`] drawn from `rng` (those
+/// before `from` are drawn and passed over), each answered as written and renamed: how many
+/// `decide` answered as written, and each renamed answer that differs.
+fn boundary_modes_renamed(
+    rng: &mut zed_tests::instances::Rng,
+    from: usize,
+    to: usize,
+) -> (usize, Vec<String>) {
+    use zedc::store::presburger::{decide, satisfiable};
     let namings: [Naming<'_>; 4] = [
         ("aliases after", &|k| format!("x{k}"), &|i| i),
         (
@@ -4860,11 +4895,9 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
     ];
-    // 100 cases drawn with a new seed each run (author P169; 1,000 at one seed took 4.2 s).
-    let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable boundary modes renamed");
     let (mut differ, mut answered) = (Vec::new(), 0usize);
     for case_idx in 0..to {
-        let (f, ..) = modular_case_mode(&mut rng, case_idx, Some((case_idx % 4) as u8));
+        let (f, ..) = modular_case_mode(rng, case_idx, Some((case_idx % 4) as u8));
         if case_idx < from {
             continue;
         }
@@ -4892,11 +4925,7 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
             }
         }
     }
-    println!(
-        "renamed cases {from}..{to}: {answered} answered, {} differ",
-        differ.len()
-    );
-    assert!(differ.is_empty(), "{}", differ.join("\n"));
+    (answered, differ)
 }
 
 #[test]

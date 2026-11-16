@@ -3196,7 +3196,7 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
         return Ok(Settled::Empty);
     };
     // Settling solved the base, and showed a point of the base with each disjunct that
-    // `alone` takes (it takes only those [`AsSets::proven`] marks), so a point need not be
+    // `alone` offers (it offers only those [`AsSets::proven`] marks), so a point need not be
     // found again unless it is wanted.
     let lone = alone(&p, &proven);
     if !want && (p.ors.is_empty() || lone.is_some()) {
@@ -3210,19 +3210,21 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
         }
         Some(if want { m } else { Model::new() })
     };
-    let Some(cons) = lone.or_else(|| by_color(&p, color)) else {
-        if let Some(m) = try_tied_point(&p) {
-            return Ok(Settled::Point(m));
+    let solved = if let Some(lone) = lone {
+        // `want` holds here: without it, `lone` returned above.
+        lone.point()?
+    } else {
+        let Some(cons) = by_color(&p, color) else {
+            if let Some(m) = try_tied_point(&p) {
+                return Ok(Settled::Point(m));
+            }
+            return Ok(Settled::Left(p));
+        };
+        match solve(&cons, want) {
+            Ok(s) => s,
+            Err(e) if want => Some(point_or(&cons, e)?),
+            Err(e) => return Err(e),
         }
-        return Ok(Settled::Left(p));
-    };
-    let solved = match solve(&cons, want) {
-        Ok(s) => s,
-        Err(e) if want => one_row::OneRow::of_cons(&cons)
-            .and_then(|b| b.point())
-            .map(Some)
-            .ok_or(e)?,
-        Err(e) => return Err(e),
     };
     Ok(match solved {
         Some(mut m) => {
@@ -3240,22 +3242,106 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
     })
 }
 
-/// The constraints of the settled parts `p` with one disjunct of each disjunction, when no
-/// two disjunctions are linked, through rows of the base or through each other's disjuncts,
-/// and each has a disjunct with no disjunction of its own that `proven` marks; otherwise
-/// `None`. Settling left disjuncts that it did not show empty, and `proven`
-/// ([`AsSets::proven`]) marks those shown to have a point with the base: each was tested
-/// against the rows linked to it, or holds at a point of the base as it now stands
+/// A point of the rows `cons`, after [`solve`] refused them with `e`: the point of
+/// [`one_row::OneRow`] when the rows are of that form, otherwise the refusal `e`.
+fn point_or(cons: &[&Con], e: Refusal) -> Result<Model, Refusal> {
+    one_row::OneRow::of_cons(cons)
+        .and_then(|b| b.point())
+        .ok_or(e)
+}
+
+/// The settled parts as [`alone`] splits them: the rows linked to no disjunction, and for
+/// each disjunction the rows linked to it and its disjuncts that may be taken.
+struct Alone<'a> {
+    free: Vec<&'a Con>,
+    groups: Vec<(Vec<&'a Con>, Vec<&'a Parts>)>,
+}
+
+impl Alone<'_> {
+    /// A point of the parts with one disjunct of each disjunction, `None` when the free rows,
+    /// or the rows of some group with each of its disjuncts, have no point, or the least
+    /// refusal ([`Refusal`]'s order) met when neither holds. The groups share no atom, so
+    /// their points, and the point of the free rows, combine into one point.
+    ///
+    /// Proof that the answer does not depend on the names (FAIL-omega-boundary-modes-flake):
+    /// each group's outcome is "a point" when some disjunct's system (the group's rows and the
+    /// disjunct's constraints) has one, else the least refusal when some system was refused,
+    /// else "none". That is a function of the set of outcomes of its systems, and [`solve`]
+    /// answers one system by its rows, whatever their names or order; the groups, their rows
+    /// and their disjuncts are fixed by the links, which no renaming changes. The answer is
+    /// "none" when some outcome is "none", else the least refusal when some outcome is a
+    /// refusal, else the point: a function of the set of outcomes again. Only which point is
+    /// found depends on the order of the disjuncts. Before, the first disjunct of each
+    /// disjunction in name order was solved alone with all the rows, and on seed 2125 of
+    /// `one_variable_boundary_modes_do_not_depend_on_names` that system was refused under
+    /// one naming (`Shadows`) and had a point under another.
+    ///
+    /// Complexity tradeoff: the naive way, one [`solve`] of every row with the first disjunct
+    /// of each disjunction, costs one solve of the whole system, and its answer depends on the
+    /// names. Here each group is solved apart, with its disjuncts in turn until one has a
+    /// point: the same rows in total when the first disjunct of each group has a point. Each
+    /// group holds one disjunction ([`alone`] gives `None` otherwise), so a disjunction of `k`
+    /// disjuncts over a group of `r` rows costs up to `k` solves of `r` rows and a disjunct,
+    /// O(k r) solved rows, only when the first `k - 1` systems are refused or have no point:
+    /// a case the naive way refused or answered by the names. Settling tested each disjunct
+    /// not holding at the base's point against those `r` rows already ([`settle_as_sets`]), so
+    /// the bound exceeds settling's cost only for disjuncts it read at that point or through a
+    /// projection. COMPLEXITY.md row FAIL-omega-boundary-modes-flake.
+    fn point(&self) -> Result<Option<Model>, Refusal> {
+        let point_of = |sys: &[&Con]| match solve(sys, true) {
+            Ok(s) => Ok(s),
+            Err(e) => point_or(sys, e).map(Some),
+        };
+        let least = |r: Option<Refusal>, e: Refusal| Some(r.map_or(e.clone(), |r| r.min(e)));
+        let mut m = Model::new();
+        let mut refused: Option<Refusal> = None;
+        match point_of(&self.free) {
+            Ok(Some(g)) => m.extend(g),
+            Ok(None) => return Ok(None),
+            Err(e) => refused = least(refused, e),
+        }
+        for (rows, ds) in &self.groups {
+            let mut found = None;
+            let mut group_refused = None;
+            for d in ds {
+                let sys: Vec<&Con> = rows.iter().copied().chain(d.cons.iter()).collect();
+                match point_of(&sys) {
+                    Ok(Some(g)) => {
+                        found = Some(g);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(e) => group_refused = least(group_refused, e),
+                }
+            }
+            match (found, group_refused) {
+                (Some(g), _) => m.extend(g),
+                (None, None) => return Ok(None),
+                (None, Some(e)) => refused = least(refused, e),
+            }
+        }
+        match refused {
+            Some(e) => Err(e),
+            None => Ok(Some(m)),
+        }
+    }
+}
+
+/// The settled parts `p` split into the rows linked to no disjunction and one group for each
+/// disjunction, of the rows linked to it and its disjuncts that may be taken, when no two
+/// disjunctions are linked, through rows of the base or through each other's disjuncts, and
+/// each has a disjunct with no disjunction of its own that `proven` marks; otherwise `None`.
+/// Only those disjuncts may be taken. Settling left disjuncts that it did not show empty,
+/// and `proven` ([`AsSets::proven`]) marks those shown to have a point with the base: each
+/// was tested against the rows linked to it, or holds at a point of the base as it now stands
 /// ([`settle_as_sets`]). A disjunct that [`solve`] refused is not marked and never taken,
 /// even when it comes first: taking it would read a refusal as a point. The rows a disjunct
 /// is linked to are linked to no other disjunction, so the points of separate groups
 /// combine into one point of the base with every disjunct taken. Whether `p` has such a
-/// point is then fixed by the links, which no renaming changes; the disjunct taken in each
-/// disjunction is the first marked one with no disjunction of its own, which the names
-/// order, so only the point found by [`satisfiable`] may change with them. The groups are
-/// found by union and find over the atoms with path halving, linking each row and each
-/// disjunction's atoms.
-fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Vec<&'a Con>> {
+/// point is then fixed by the links, which no renaming changes; [`Alone::point`] finds one
+/// so that its answer does not change with the names either. The groups are found by union
+/// and find over the atoms with path halving, linking each row and each disjunction's atoms.
+fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
     fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
             parent[i] = parent[parent[i]];
@@ -3284,25 +3370,40 @@ fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Vec<&'a Con>> {
         }
         root
     };
-    p.cons.iter().for_each(|c| {
-        link(&mut c.lin.terms.keys());
-    });
+    let rows: Vec<Option<usize>> = (p.cons.iter())
+        .map(|c| link(&mut c.lin.terms.keys()))
+        .collect();
     let roots: Vec<Option<usize>> = (p.ors.iter())
         .map(|ds| link(&mut ds.iter().flat_map(|d| d.atoms().iter())))
         .collect();
-    let mut seen = vec![false; parent.len()];
-    for r in roots.into_iter().flatten() {
-        let r = find(&mut parent, r);
-        if std::mem::replace(&mut seen[r], true) {
+    // The group of each root that a disjunction's atoms reach; a disjunction with no atom
+    // has a group with no rows.
+    let mut group_of: Vec<Option<usize>> = vec![None; parent.len()];
+    let mut groups: Vec<(Vec<&Con>, Vec<&Parts>)> = Vec::with_capacity(p.ors.len());
+    for (r, (ds, shown)) in roots.into_iter().zip(p.ors.iter().zip(proven)) {
+        if let Some(r) = r {
+            let r = find(&mut parent, r);
+            if group_of[r].replace(groups.len()).is_some() {
+                return None;
+            }
+        }
+        let taken: Vec<&Parts> = (ds.iter().zip(shown))
+            .filter(|&(d, &s)| s && d.ors.is_empty())
+            .map(|(d, _)| &**d)
+            .collect();
+        if taken.is_empty() {
             return None;
         }
+        groups.push((Vec::new(), taken));
     }
-    let mut cons: Vec<&Con> = p.cons.iter().collect();
-    for (ds, shown) in p.ors.iter().zip(proven) {
-        let (d, _) = (ds.iter().zip(shown)).find(|&(d, &s)| s && d.ors.is_empty())?;
-        cons.extend(d.cons.iter());
+    let mut free = Vec::new();
+    for (c, r) in p.cons.iter().zip(rows) {
+        match r.and_then(|r| group_of[find(&mut parent, r)]) {
+            Some(g) => groups[g].0.push(c),
+            None => free.push(c),
+        }
     }
-    Some(cons)
+    Some(Alone { free, groups })
 }
 
 /// The key of a constraint that no renaming of its atoms changes, given their colors: its

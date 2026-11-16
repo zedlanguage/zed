@@ -159,6 +159,21 @@ fn decide_on_separate_tied_disjunctions_scales() {
     });
 }
 
+#[test]
+fn satisfiable_on_separate_tied_disjunctions_scales() {
+    // The points `settle_tied` builds with `want` through `alone` and `Alone::point`, which
+    // solves each disjunction's group apart (FAIL-omega-boundary-modes-flake).
+    let (small, large) = (separate_pairs(9000), separate_pairs(9000 * scaling::FACTOR));
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order("a point of separate pairs of tied atoms", 9000, 1, |n| {
+        let f = if n == 9000 { &small } else { &large };
+        let _ = std::hint::black_box(satisfiable(f));
+    });
+}
+
 /// `names::tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together`
 /// as first written, 1.19 s (2026-11-14, load 25): every one of the 5040 namings of each system.
 #[test]

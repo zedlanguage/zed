@@ -2365,6 +2365,15 @@ fn solve_regime_step(
             return RegimeOut::Undecided;
         };
         for cl in cnf {
+            // A clause with no literal is the empty disjunction, false: `literal_to_base_cnf`
+            // gives one when every factor of `m` is already fixed to one residue and their CRT
+            // combination lies outside `s`. Skipping it, as this loop did, dropped the
+            // conjunct, so a point outside `s` was returned (FAIL-omega-boundary-modes-flake:
+            // `x mod 6 == 2 && x mod 12 in {5, 6}` on `[0, 16]` gave 2). Proof of `Empty`: the
+            // unit `x mod m in s` is a conjunct of the regime and is false at every point.
+            if cl.is_empty() {
+                return RegimeOut::Empty;
+            }
             if cl.len() == 1 {
                 let Some((i, s_i)) = cl.into_iter().next() else {
                     return RegimeOut::Undecided;
@@ -2431,6 +2440,12 @@ fn solve_regime_step(
             }
         }
         for c in dist {
+            // A product clause with no literal is false (each literal it was built from gave the
+            // empty clause, as above), so the clause `cl` is false: every one of its literals is
+            // false wherever `allowed` holds, and `cl` is a conjunct of the regime.
+            if c.is_empty() {
+                return RegimeOut::Empty;
+            }
             if c.len() == 1 {
                 let Some((i, s_i)) = c.into_iter().next() else {
                     return RegimeOut::Undecided;
