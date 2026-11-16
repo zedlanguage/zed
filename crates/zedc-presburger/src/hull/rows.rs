@@ -23,7 +23,9 @@ struct Node {
     right: Tree,
 }
 
-/// A deterministic splitmix64 priority from a pivot.
+/// A deterministic splitmix64 priority from a pivot. The treap's expected logarithmic depth
+/// assumes these act as independent uniform priorities, which is not proved and fails for chosen
+/// pivots (COMPLEXITY.md K123).
 fn prio_of(key: &Atom) -> u64 {
     let mut h = DefaultHasher::new();
     key.hash(&mut h);

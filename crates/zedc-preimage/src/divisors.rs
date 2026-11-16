@@ -64,7 +64,9 @@ impl Sets {
             return k;
         }
         let k = self.keys.len() as u32;
-        // A hash of fixed keys, so that one set has one shape on every run.
+        // A hash of fixed keys, so that one set has one shape on every run. The treaps' expected
+        // logarithmic depth assumes these act as independent uniform priorities, which is not
+        // proved and fails for chosen divisors (COMPLEXITY.md K123).
         let priority = BuildHasherDefault::<DefaultHasher>::default().hash_one(d);
         self.keys.push((d.clone(), priority));
         self.numbers.insert(d.clone(), k);

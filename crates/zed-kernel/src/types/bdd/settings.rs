@@ -57,6 +57,9 @@ impl<A: Atom> Drop for Node<A> {
     }
 }
 
+/// The priority of `key`, a fixed hash of its digest. The sets' expected `O(log n)` depth
+/// assumes these act as independent uniform priorities, which is not proved and fails for chosen
+/// settings (COMPLEXITY.md K123).
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
     mix(mix(17, key.0.digest()), u64::from(key.1))
 }

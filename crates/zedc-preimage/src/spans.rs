@@ -47,7 +47,9 @@ pub(crate) struct Spans {
 }
 
 /// The priority of the span `[l, h]`: a hash fixed for every run, so that the tree's shape
-/// depends on its spans alone.
+/// depends on its spans alone. The tree's expected logarithmic depth assumes these act as
+/// independent uniform priorities, which is not proved and fails for chosen spans
+/// (COMPLEXITY.md K123).
 fn priority(l: &Num, h: &Num) -> u64 {
     let mut s = DefaultHasher::new();
     (l, h).hash(&mut s);

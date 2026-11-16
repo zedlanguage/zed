@@ -365,7 +365,8 @@ impl<T> Tree<T> {
 
 /// A priority from the bucket's count of changes: splitmix64, untruncated in the build with
 /// short hashes, so that priorities do not follow the nodes' order and the treap's depth is
-/// `O(log b)` in expectation.
+/// `O(log b)` in expectation. That expectation assumes the sequence acts as independent uniform
+/// priorities, which is not proved (COMPLEXITY.md K123).
 fn priority(seed: u32) -> u64 {
     let mut z = u64::from(seed).wrapping_add(0x9e37_79b9_7f4a_7c15);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

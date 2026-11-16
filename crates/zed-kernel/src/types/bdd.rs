@@ -2882,7 +2882,9 @@ mod list {
     /// it only when it outranks the `k` there, with probability `1 / (k + 1)` in any order of
     /// adding: a block edited in place keeps its cell's place, and its atoms are carried over
     /// ([`replace`]). A priority hashed from the whole block moved the cell at each edit and made
-    /// its atoms again, `O(k)` each.
+    /// its atoms again, `O(k)` each. "Uniform" and "with probability" take the hashes as
+    /// independent uniform priorities, which is not proved and fails for chosen literals
+    /// (COMPLEXITY.md K123).
     fn priority<A: Literal>(block: &Set<A>) -> u64 {
         mix(mix(19, block.key.0.digest()), u64::from(block.key.1))
     }

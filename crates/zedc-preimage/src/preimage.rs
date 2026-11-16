@@ -12249,7 +12249,9 @@ fn compose(inner: (i128, i128), outer: (i128, i128)) -> Option<(i128, i128)> {
     Some((mul, add))
 }
 
-/// A deterministic splitmix64 priority from the piece's ends.
+/// A deterministic splitmix64 priority from the piece's ends. The treap's expected logarithmic
+/// depth assumes these act as independent uniform priorities, which is not proved and fails for
+/// chosen pieces (COMPLEXITY.md K123).
 fn prio_of(lo: &End, hi: &End) -> u64 {
     let code = |e: &End| -> u64 {
         match e {

@@ -30,7 +30,9 @@ thread_local! {
 /// shape, never the set it holds, so answers do not depend on it. Not drawn from the ends, as
 /// in `holes`: a node keeps its ends relative to its offset, and a chain repeating one step
 /// makes nodes with the same relative ends at every step, whose equal priorities would make
-/// the tree a path (measured: 17 to 33 times the work at n and 8n on such a chain).
+/// the tree a path (measured: 17 to 33 times the work at n and 8n on such a chain). The
+/// expected logarithmic depth assumes the sequence acts as independent uniform priorities, which
+/// is not proved (COMPLEXITY.md K123).
 fn prio_of() -> u64 {
     let mut z = PRIO.with(|s| {
         let z = s.get().wrapping_add(0x9e37_79b9_7f4a_7c15);

@@ -2,13 +2,20 @@
 //! blocks of a decision list (module `list`) and the atoms of an exclusive or (`Part::xor`).
 //!
 //! A node's priority is a hash of its literal, ties broken by the literal's order, so the
-//! priorities are distinct and one set has one shape whatever order its literals were added
-//! in. The live nodes of a thread are kept in a table by literal and children, so one set is
-//! one node: two sets are equal exactly when their roots are one node, and a set built in two
-//! orders is found again. The table holds each node weakly, and a node leaves it when it is
-//! dropped (step TABLE-life). An insertion or removal rebuilds the path to the place it changes,
-//! `O(log n)` nodes in expectation, each looked up in the table in `O(1)` expected; the walks keep
-//! stacks of their own, so a set of any shape is walked on a small stack.
+//! nodes are ordered by priority with no ties and one set has one shape whatever order its
+//! literals were added in. The live nodes of a thread are kept in a table by literal and
+//! children, so one set is one node: two sets are equal exactly when their roots are one node,
+//! and a set built in two orders is found again. The table holds each node weakly, and a node
+//! leaves it when it is dropped (step TABLE-life). An insertion or removal rebuilds the path to
+//! the place it changes, `O(log n)` nodes in expectation, each looked up in the table in `O(1)`
+//! expected; the walks keep stacks of their own, so a set of any shape is walked on a small
+//! stack.
+//!
+//! The `O(log n)` depth is not proved for these priorities: it holds when the priorities of
+//! distinct literals act as independent uniform numbers (Seidel and Aragon 1996), and a fixed
+//! hash of a digest the program's text decides is not that; some sets of literals make a path
+//! (COMPLEXITY.md K123). The tests in `set/tests.rs` check keys built the way programs build
+//! them.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering as Atomic;
@@ -100,6 +107,10 @@ impl<A: Atom> Drop for Set<A> {
     }
 }
 
+/// The priority of `key`: a fixed hash of its digest and whether it is taken. That these act as
+/// independent uniform priorities, which every treap bound here needs, is not proved, and fails
+/// for chosen literals (COMPLEXITY.md K123); atoms of one digest share one priority, each class
+/// adding at most its size to a depth.
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
     mix(mix(13, key.0.digest()), u64::from(key.1))
 }
@@ -608,3 +619,6 @@ pub(super) fn same<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests;

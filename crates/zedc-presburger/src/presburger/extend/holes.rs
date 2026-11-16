@@ -31,7 +31,9 @@ struct Node {
     right: Tree,
 }
 
-/// A deterministic splitmix64 priority from an interval's ends.
+/// A deterministic splitmix64 priority from an interval's ends. The treap's expected
+/// logarithmic depth assumes these act as independent uniform priorities, which is not proved
+/// and fails for chosen intervals (COMPLEXITY.md K123).
 fn prio_of(lo: &Int, hi: &Int) -> u64 {
     let mut h = DefaultHasher::new();
     lo.hash(&mut h);

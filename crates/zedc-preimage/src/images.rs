@@ -189,7 +189,8 @@ fn join<L: Sum>(a: Tree<L>, b: Tree<L>) -> Tree<L> {
 }
 
 /// The priority of `key`: its bytes hashed by FNV-1a and mixed by splitmix64, the same in every
-/// run.
+/// run. The tree's expected `O(log h)` depth assumes these act as independent uniform
+/// priorities, which is not proved and fails for chosen names (COMPLEXITY.md K123).
 fn prio(key: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in key.bytes() {
