@@ -3075,13 +3075,13 @@ pub struct Sig {
 /// And, for a family, the functions and kind-wide parts its entries hold ([`Entries`]), so a
 /// type that holds the family reads them at the cost of its outer level.
 ///
-/// And whether it or a function it returns has needs ([`Sig::holds_needs`],
-/// [`Sig::may_hold_needs`]), so a nest of functions asked from the outermost in is walked once,
-/// not once from each level.
+/// And whether it holds no variable at any depth ([`Sig::holds_no_variable`]) and whether it or
+/// a function it returns has needs ([`Sig::holds_needs`], [`Sig::may_hold_needs`]), so a nest of functions asked from
+/// the outermost in is walked once, not once from each level.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: eight `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: nine `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -3092,6 +3092,7 @@ pub struct Facts(
     std::sync::OnceLock<VarBits>,
     std::sync::OnceLock<Arc<[Arc<str>]>>,
     std::sync::OnceLock<Entries>,
+    std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
 );
@@ -9802,7 +9803,7 @@ impl Ty {
     // Θ(n^2) for n nested calls that each hold the last result in a tuple, or that each return
     // a function returning the one before. Used: the answer kept on each row and shape when
     // made and on each signature when first asked, so this reads the outer level, O(width).
-    // Tradeoffs: every row and shape pays for its answer when made, read or not; an eighth
+    // Tradeoffs: every row and shape pays for its answer when made, read or not; a ninth
     // `OnceLock` per signature.
     pub fn may_hold_needs(&self) -> bool {
         self.may_hold_needs_outside_fns() || self.fns.iter().any(|s| s.may_hold_needs())
@@ -13543,24 +13544,86 @@ impl Sig {
         })
     }
 
+    /// Whether it holds no variable at any depth, functions it holds included: whether
+    /// [`Sig::vars_order`] is empty. Worked out at the first call, for it and for each function
+    /// it holds that lacks the answer, innermost first, and kept, as the other facts are: a
+    /// signature is not changed once made, and a clone starts with no facts.
+    ///
+    /// The walk is that of `vars_of`: the types `sig_tys` gives, entering each row that is
+    /// not fixed and each payload shape that may hold a variable, once each; a function met is
+    /// read by its own answer (or its kept order) in place of being entered. It holds no
+    /// variable when none of those types does and each function met holds none, as `vars_of`
+    /// then adds nothing (`found_in_nest`).
+    // Complexity tradeoff (FAIL-l01-26-deep-bench-bytes): the naive version, `vars_order()`
+    // and a test for empty, keeps an order only for the signature asked, so asked of each of n
+    // nested functions from the outermost in, as a comparison reads them (`Cx::read_outer`),
+    // each walk enters every function below it: Θ(n^2) time and bytes, 2,051,638,488 bytes on
+    // the first comparison of `(int) -> …` 8,000 deep against 48,546,152 at 1,000 (42.3 times).
+    // Keeping the order at each function met is O(n^2) in memory for nested lambdas that each
+    // hold all n variables (FAIL-returned-chain-quadratic, at `vars_of`). Used: one answer per
+    // signature, filled innermost first, so the types of each signature outside functions are
+    // walked once in all, O(size) for a nest asked in any order. Tradeoffs: a seventh
+    // `OnceLock` per signature, which keeps whether it holds a variable.
+    pub fn holds_no_variable(&self) -> bool {
+        /// Whether it holds a variable, if known: kept, or read from its kept order.
+        fn known(s: &Sig) -> Option<bool> {
+            (s.facts.6.get().copied()).or_else(|| s.facts.4.get().map(|o| !o.is_empty()))
+        }
+        /// The functions the types of `s` hold outside functions, as [`vars_of`] meets them,
+        /// or none if one of those types holds a variable outside functions.
+        fn outside(s: &Sig) -> Option<Vec<&Sig>> {
+            // By address: every row and shape is borrowed from `s` for the whole walk, so no
+            // key names a freed node, and the sets are only read by insert, never iterated.
+            // The sets are this signature's own: a row skipped here because another signature
+            // of the chain walked it would leave its functions unread when this one is answered.
+            let (mut rows, mut shapes) = (HashSet::new(), HashSet::new());
+            let mut fns = Vec::new();
+            let mut stack: Vec<&Ty> = sig_tys(s).collect();
+            while let Some(t) = stack.pop() {
+                if !t.vars.is_empty() {
+                    return None;
+                }
+                for r in t.tuples.iter().filter(|r| !r.0.fixed) {
+                    if rows.insert(Arc::as_ptr(&r.0)) {
+                        stack.extend(r.iter());
+                    }
+                }
+                for sh in t.payload_shapes().filter(|sh| !sh.bits.is_empty()) {
+                    if shapes.insert(Arc::as_ptr(&sh.0)) {
+                        stack.extend(sh.items.iter().chain(sh.fields.values()));
+                    }
+                }
+                fns.extend(t.fns.iter().map(|f| &**f));
+            }
+            Some(fns)
+        }
+        !found_in_nest(
+            self,
+            known,
+            |s, b| {
+                let _ = s.facts.6.set(b);
+            },
+            outside,
+        )
+    }
+
     /// Whether it has needs, or a function its arrows return at any depth has: such a
     /// function is checked by its calls, not as a type alone. Only the functions each result
     /// holds at its top are read, not those in its tuples or payloads. Worked out at the first
     /// call, for it and each function so returned that lacks the answer, innermost first, and
-    /// kept, as the other facts are: a signature is not changed once made, and a clone starts
-    /// with no facts.
+    /// kept, as [`Sig::holds_no_variable`] is.
     // Complexity tradeoff (FAIL-power-returned-n-deep-ratio): the naive version walks the
     // functions returned below it at each ask, with a set of those seen, so a call through each
     // of n nested returned functions walks the n below it: Θ(n^2) (31 times the work at 8n for
     // `2 ^ k` returned through n arrows). Used: one answer per signature, filled innermost
     // first ([`found_in_nest`]), so each signature's arrows are read once in all. Tradeoffs:
-    // a seventh `OnceLock` per signature.
+    // an eighth `OnceLock` per signature.
     pub fn holds_needs(&self) -> bool {
         found_in_nest(
             self,
-            |s| s.facts.6.get().copied(),
+            |s| s.facts.7.get().copied(),
             |s, b| {
-                let _ = s.facts.6.set(b);
+                let _ = s.facts.7.set(b);
             },
             |s| {
                 let fns = s.arrows.iter().flat_map(|a| a.result.fns.iter());
@@ -13578,13 +13641,13 @@ impl Sig {
     // naive walk of the results below it at each ask is Θ(n^2) for a call through each of n
     // nested returned functions. Used: one answer per signature ([`found_in_nest`]); each
     // result's outer level is read once, its rows and shapes keeping their own answers.
-    // Tradeoffs: an eighth `OnceLock` per signature.
+    // Tradeoffs: a ninth `OnceLock` per signature.
     pub fn may_hold_needs(&self) -> bool {
         found_in_nest(
             self,
-            |s| s.facts.7.get().copied(),
+            |s| s.facts.8.get().copied(),
             |s, b| {
-                let _ = s.facts.7.set(b);
+                let _ = s.facts.8.set(b);
             },
             |s| {
                 let results = || s.arrows.iter().map(|a| &a.result);
@@ -18489,6 +18552,53 @@ mod tests {
             let returns = Arc::new(Sig::one(vec![], vec![], open));
             assert!(Ty::func(returns.clone()).may_hold_needs());
             assert!(!returns.holds_needs());
+        }
+    }
+
+    /// A signature holds no variable exactly when its order of variables is empty, for nests
+    /// of functions that hold a variable at the top, at the bottom, in a row or in none, asked
+    /// from the outermost in or the innermost out, and a nest asked from the outermost in is
+    /// answered at each level without keeping an order (FAIL-l01-26-deep-bench-bytes).
+    #[test]
+    fn a_signature_holds_no_variable_exactly_when_its_order_is_empty() {
+        /// `n` functions, each returning the one below; the innermost returns `bottom`, and
+        /// the one at depth `at` takes `extra` as well.
+        fn nest(n: usize, bottom: Ty, at: usize, extra: Ty) -> Vec<Arc<Sig>> {
+            let mut out: Vec<Arc<Sig>> = Vec::new();
+            let mut result = bottom;
+            for d in (0..n).rev() {
+                let params = if d == at { vec![extra.clone()] } else { vec![] };
+                let s = Arc::new(Sig::one(vec![], params, result));
+                result = Ty::func(s.clone());
+                out.push(s);
+            }
+            out.reverse();
+            out
+        }
+        let int = || Ty::carrier(Carrier::Int);
+        let in_row = Ty::tuple(vec![int(), Ty::var("R".into())]);
+        let cases = [
+            (int(), 99, int()),
+            (Ty::var("B".into()), 99, int()),
+            (int(), 0, Ty::var("T".into())),
+            (int(), 3, in_row),
+        ];
+        for (bottom, at, extra) in cases {
+            for outermost_first in [true, false] {
+                let sigs = nest(6, bottom.clone(), at, extra.clone());
+                let mut asked: Vec<&Arc<Sig>> = sigs.iter().collect();
+                if !outermost_first {
+                    asked.reverse();
+                }
+                let answers: Vec<bool> = asked.iter().map(|s| s.holds_no_variable()).collect();
+                assert!(sigs.iter().all(|s| s.facts.4.get().is_none()));
+                let fresh = nest(6, bottom.clone(), at, extra.clone());
+                let mut want: Vec<bool> = fresh.iter().map(|s| s.vars_order().is_empty()).collect();
+                if !outermost_first {
+                    want.reverse();
+                }
+                assert_eq!(answers, want, "bottom {bottom:?}, at {at}");
+            }
         }
     }
 
