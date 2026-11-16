@@ -3,7 +3,7 @@
 //! parser matches it as the `e (sep e)*` it stands for, node for node.
 
 use zedc::lex::lex;
-use zedc::parse::{Error, Grammar, Node, TOP, parse_with};
+use zedc::parse::{Error, Expr, Grammar, Node, TOP, parse_with};
 
 /// The nodes and root of the parse of `text` as `List`, or the error.
 fn parsed(g: &Grammar, text: &str) -> Result<(Vec<Node>, usize), Error> {
@@ -73,4 +73,27 @@ fn chains_and_nests_of_separators_are_read() {
             assert!(parsed(&g, "x, x").is_ok(), "{text}");
         }
     }
+}
+
+/// A character class names a character by its code point with `\u{…}`, as a string's escape
+/// does, so DESIGN's lexical grammar can name the `Bidi_Control` characters (sec:lexical,
+/// `BidiControl`) without holding them. A range that runs downward, as the reader once made of
+/// `\u{202A}-\u{202E}` by reading `\u` as `u`, is an error, not a class that matches nothing.
+#[test]
+fn a_character_class_reads_code_points_and_refuses_a_downward_range() {
+    let g = Grammar::read_open(&["C = [\\u{61C}a\\u{202A}-\\u{202E}] L1\n"]).unwrap();
+    let r = g.rule("C").unwrap();
+    match &g.rules[r].alts[0].expr {
+        Expr::Class(ranges) => assert_eq!(
+            ranges,
+            &[('\u{61c}', '\u{61c}'), ('a', 'a'), ('\u{202a}', '\u{202e}')]
+        ),
+        e => panic!("{e:?}"),
+    }
+    let e = Grammar::read_open(&["C = [z-a] L1\n"]).unwrap_err();
+    assert!(e.contains("runs downward"), "{e}");
+    let e = Grammar::read_open(&["C = [\\u{D800}] L1\n"]).unwrap_err();
+    assert!(e.contains("is no character"), "{e}");
+    let e = Grammar::read_open(&["C = [\\u{41] L1\n"]).unwrap_err();
+    assert!(e.contains("has no `}`"), "{e}");
 }

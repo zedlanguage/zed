@@ -318,13 +318,28 @@ fn escaped(c: char) -> char {
     }
 }
 
-/// The ranges of a character class's body: `a-z` is a range unless `-` is first or last.
+/// The ranges of a character class's body: `a-z` is a range unless `-` is first or last, and
+/// must not run downward; `\u{…}` is a character by its code point.
 fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
     // `None` is a range's `-`.
     let mut chars: Vec<Option<char>> = Vec::with_capacity(body.len());
     let mut i = 0;
     while i < body.len() {
         match body[i] {
+            '\\' if body.get(i + 1) == Some(&'u') && body.get(i + 2) == Some(&'{') => {
+                // `\u{…}`: a character by its code point in hexadecimal, as a string's escape.
+                let close = body[i + 3..]
+                    .iter()
+                    .position(|&c| c == '}')
+                    .ok_or("a `\\u{` in a character class has no `}`")?;
+                let hex: String = body[i + 3..i + 3 + close].iter().collect();
+                let c = u32::from_str_radix(&hex, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| format!("`\\u{{{hex}}}` in a character class is no character"))?;
+                chars.push(Some(c));
+                i += 4 + close;
+            }
             '\\' => {
                 let c = *body.get(i + 1).ok_or("a `\\` ends a character class")?;
                 chars.push(Some(escaped(c)));
@@ -346,6 +361,9 @@ fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
         let low = chars[k].ok_or("a character class holds `--`")?;
         if k + 2 < chars.len() && chars[k + 1].is_none() {
             let high = chars[k + 2].ok_or("a character class holds `--`")?;
+            if high < low {
+                return Err(format!("the range `{low}-{high}` of a character class runs downward"));
+            }
             ranges.push((low, high));
             k += 3;
         } else {

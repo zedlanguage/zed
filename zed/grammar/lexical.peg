@@ -1,7 +1,9 @@
 Source        = (Space | Comment | Token)* !ANY                                   L1
 Space         = [ \t\r\n]+                                                         L1
-Comment       = '//' (!'\n' ANY)* | BlockComment                                   L1
-BlockComment  = '/*' (BlockComment | !'*/' ANY)* '*/'                              L1
+Comment       = '//' (!'\n' TextChar)* | BlockComment                              L1
+BlockComment  = '/*' (BlockComment | !'*/' TextChar)* '*/'                         L1
+TextChar      = !BidiControl ANY                                                   L1
+BidiControl   = [\u{61C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]        L1
 Token         = Number | String | AtomLit | AnnotLit | InfixName | Keyword | Wildcard | Ident | Operator   L1
 
 Number        = (Rational | Float | Integer) !NameChar                             L1
@@ -16,13 +18,13 @@ Decimal       = [0-9] ('_'? [0-9])*                                             
 
 String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char1)* '"'           L1
 String1       = '"""' (!'"""' !'\n' Char1)* '"""' | '"' (!'"' !'\n' Char1)* '"'    L1
-Char          = Escape | Hole | !('\\' | '${') ANY                                 L1
-Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') ANY           L1
+Char          = Escape | Hole | !('\\' | '${') TextChar                            L1
+Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') TextChar      L1
 Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')                                  L1
 Hole          = '${' HoleText '}'                                                  L1
 HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*                  L1
-HoleText1     = (String1 | '//' (!'\n' ANY)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*   L1
-BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' ANY)* '*/'                       L1
+HoleText1     = (String1 | '//' (!'\n' TextChar)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*   L1
+BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' TextChar)* '*/'                  L1
 
 AtomLit       = '#' Name                                                           L1
 AnnotLit      = '@' Name                                                           L1

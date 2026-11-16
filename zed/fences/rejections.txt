@@ -112,6 +112,9 @@ Display in body position
 Syntax error
 Arithmetic operator written without parentheses in an operand of an infix call
 Reserved word written where a name stands
+`Bidi_Control` character in a comment or in the text of a string literal
+`<-` written where a comparison with a negative operand was meant
+`=` written in a condition where `==` was meant
 Named argument before a positional one
 `positional` parameter after a named one
 Argument in the wrong form
