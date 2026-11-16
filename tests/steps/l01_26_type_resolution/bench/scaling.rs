@@ -902,3 +902,31 @@ fn a_variable_standing_n_times_is_found_repeated_in_linear_time() {
         assert!(fits_sig(s, q));
     });
 }
+
+/// A function type whose parameter is a tuple shared n levels deep, P(0) = (T,) and P(k) =
+/// (P(k-1), P(k-1)), n + 1 rows in memory, holding a bounded variable `T in int | f64`, passed
+/// as itself with `X` for `T`, is compared in time linear in the rows in memory
+/// (PERF-types-shared-tuple-vars). It took time doubling with each level: 9.5 s at depth 16.
+#[test]
+fn a_variable_in_a_tuple_shared_n_levels_deep_is_compared_in_linear_time() {
+    use zedc::check::ty::fits_sig;
+    let classes = Carrier::Int.bit() | Carrier::F64.bit();
+    let sig = |v: &str, m: usize| {
+        let mut p = Ty::tuple(vec![Ty::var(v.into())]);
+        for _ in 0..m {
+            p = Ty::tuple(vec![p.clone(), p]);
+        }
+        let mut s = exact_arrows(vec![(vec![p], Ty::carrier(Carrier::Int))]);
+        s.own.insert(v.into());
+        s.bounds.insert(v.into(), classes);
+        s.note_held();
+        s
+    };
+    // Depth 2 and 16: 2^14 times the work if each path is walked.
+    let n = 2;
+    let sigs = scaling::inputs(n, |m| (sig("T", m), sig("X", m)));
+    scaling::check("a variable in a tuple shared n levels deep", n, |m| {
+        let (s, q) = &sigs[&m];
+        assert!(fits_sig(s, q));
+    });
+}

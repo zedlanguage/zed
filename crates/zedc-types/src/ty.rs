@@ -4912,16 +4912,40 @@ impl Cx<'_> {
             }
         }
         let mut memo: HashMap<NodeId, Shape> = HashMap::new();
+        // Complexity tradeoff (PERF-types-shared-tuple-vars): a shared row is read once, by its
+        // number, as a shared shape is. Naive, as before: each row read once per path to it,
+        // so P(0) = (T,), P(k) = (P(k-1), P(k-1)), n + 1 rows in memory, was read as 2^(n+1) - 1
+        // rows, O(2^n), and every memo keyed by node number after it, [`Cx::compared`] among
+        // them, met each copy as a new row: the comparison walked every path too. Now O(rows in
+        // memory) lookups and reads, and the rows read are shared as written. Proof that the
+        // reading is the same: [`Self::read_outer`] reads a type from its own rows, shapes,
+        // functions and variables and `env`, which is fixed for the walk; the only state it
+        // changes is the new name made for each function met, so a row read once gives, at its
+        // second path, the row the first gave with the same new names, where before it made new
+        // ones. Each such name stands for the same function in the same `env` ([`Cx::fns`]),
+        // and a function variable is never bound ([`holds_bindable`] passes over `fns`), so the
+        // two names were read alike: compared by [`Comparing::fits_read`], which keys its
+        // verdict by the pair of names and gives the same verdict for each copy, as the shapes
+        // read once here already did. Cost: one map entry per row read.
+        let mut rows: HashMap<NodeId, Row> = HashMap::new();
         let mut stack = vec![start(t)];
         loop {
             let top = stack
                 .last_mut()
                 .expect("the type being read is on the stack");
             if let Some(cs) = top.t.tuples.get(top.rows.len()) {
+                // No component read yet: the row is not started, and may be read already.
+                if top.row.is_empty() {
+                    if let Some(done) = rows.get(&cs.node()) {
+                        top.rows.push(done.clone());
+                        continue;
+                    }
+                }
                 match cs.get(top.row.len()) {
                     Some(c) => stack.push(start(c)),
                     None => {
-                        let row = std::mem::take(&mut top.row).into_iter().collect();
+                        let row: Row = std::mem::take(&mut top.row).into_iter().collect();
+                        rows.insert(cs.node(), row.clone());
                         top.rows.push(row);
                     }
                 }
@@ -15815,6 +15839,30 @@ mod tests {
         let q = one_param(tup(int.clone()), int.clone(), &[], false);
         let s = one_param(tup(v("B")), int.clone(), &[], true);
         assert!(fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    /// A row shared by two paths is read once, under the comparison's names, and stays shared
+    /// (PERF-types-shared-tuple-vars): read once per path, `P(k) = (P(k-1), P(k-1))` became
+    /// 2^(k+1) - 1 rows, each of a number of its own, and the comparisons after it, kept by
+    /// those numbers, walked every path. A function a shared row holds is read as one new name.
+    #[test]
+    fn a_shared_row_is_read_once_under_the_comparison_s_names() {
+        let int = Ty::carrier(Carrier::Int);
+        let f = Ty::func(Arc::new(one_param(int.clone(), int, &[], false)));
+        let p0 = Ty::tuple(vec![Ty::var("T".into()), f]);
+        let p = Ty::tuple(vec![p0.clone(), p0]);
+        let mut cx = Cx::default();
+        let mut env = Env::new();
+        env.insert("T".into(), Read::Rigid("T'1".into()));
+        let read = cx.read(&p, &env);
+        let row = read.tuples.iter().next().expect("one row");
+        let cs = row.to_vec();
+        let (a, b) = (cs[0].tuples.iter().next(), cs[1].tuples.iter().next());
+        assert_eq!(a.map(Row::node), b.map(Row::node), "{read}");
+        assert_eq!(cx.fns.len(), 1, "{read}");
+        let mut vs = Vars::default();
+        read.vars_in(&mut vs);
+        assert!(vs.contains("T'1") && !vs.contains("T"), "{read}");
     }
 
     /// An overload with a bounded variable fits where one of its arrows is expected
