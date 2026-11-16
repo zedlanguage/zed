@@ -2867,38 +2867,3 @@ fn a_hole_left_with_two_cases_wakes_the_parts_of_their_groups() {
     );
     hole_false_gives_the_projection_from_scratch(3, &steps, &hole);
 }
-
-// PERF-refused-shape-disjunctions-quadratic: k disjunctions over four names (base 7.7; the
-// round-1 Gemini patch and the round-2 Opus patch 29.7).
-fn four_name_run(k: usize) {
-    let ns = named(5, "x");
-    let p = Premises::new();
-    let base = r2_row(&[-1, -1, -1, -1, 1], 0);
-    let mut s = ints(&ns).assume(&base, true, &p);
-    for j in 1..=k as i64 {
-        let t = prim(
-            Prim::Or,
-            r2_row(&[1, j, j + 1, j + 2, 0], -1),
-            r2_row(&[1, -j, -j - 1, -j - 2, 0], -1),
-        );
-        s = s.assume(&t, true, &p);
-    }
-    assert!(!s.bottom);
-}
-#[test]
-fn refused_four_names_scaling() {
-    scaling::check_order("four-name disjunctions (refused)", 8, 1, four_name_run);
-}
-
-// The row `c + sum(cs[i] * x_i) >= 0` over x0..x4 (Sol's helper, round 2).
-fn r2_row(cs: &[i64], c: i64) -> Term {
-    let mut sum = int(c);
-    for (i, k) in cs.iter().enumerate().filter(|(_, k)| **k != 0) {
-        sum = prim(
-            Prim::Add,
-            sum,
-            prim(Prim::Mul, int(*k), var(&format!("x{i}"))),
-        );
-    }
-    prim(Prim::Ge, sum, int(0))
-}

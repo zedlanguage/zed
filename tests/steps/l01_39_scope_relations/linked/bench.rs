@@ -487,3 +487,40 @@ fn holes_that_leave_one_case_on_a_chain_take_time_near_their_number() {
         tests.iter().fold(s.clone(), |s, t| s.assume(t, false, &p));
     });
 }
+
+#[test]
+fn disjunctions_over_four_names_take_time_near_their_number() {
+    // k disjunctions over four names after one row on five (row
+    // PERF-refused-shape-disjunctions-quadratic). Measured 7.76 at 8n, as on main (7.7);
+    // waking every part reached through a group in the cases, with no certificate, gave 29.7.
+    scaling::check_order("disjunctions over four names", 8, 1, four_name_run);
+}
+
+fn four_name_run(k: usize) {
+    let ns = named(5, "x");
+    let p = Premises::new();
+    let base = row(&[-1, -1, -1, -1, 1], 0);
+    let mut s = ints(&ns).assume(&base, true, &p);
+    for j in 1..=k as i64 {
+        let t = prim(
+            Prim::Or,
+            row(&[1, j, j + 1, j + 2, 0], -1),
+            row(&[1, -j, -j - 1, -j - 2, 0], -1),
+        );
+        s = s.assume(&t, true, &p);
+    }
+    assert!(!s.bottom);
+}
+
+/// The row `c + sum(cs[i] * x_i) >= 0` over x0..x4.
+fn row(cs: &[i64], c: i64) -> Term {
+    let mut sum = int(c);
+    for (i, k) in cs.iter().enumerate().filter(|(_, k)| **k != 0) {
+        sum = prim(
+            Prim::Add,
+            sum,
+            prim(Prim::Mul, int(*k), var(&format!("x{i}"))),
+        );
+    }
+    prim(Prim::Ge, sum, int(0))
+}

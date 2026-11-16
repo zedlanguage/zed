@@ -480,9 +480,9 @@ fn tests_on_differences_reaching_a_part_through_a_group_give_the_projection_from
     run(Aim::Diff, "case wake: differences");
 }
 
-/// The history of the difference found on R1_GEMINI.patch (Three, seed 6, case 13, step 1)
-/// without its assumption 4, which R1_GEMINI.patch, waking the groups of a case only after the
-/// block's constraints part had projected, made narrower than from scratch.
+/// A history from the random test on three names (seed 6, case 13, step 1) without its
+/// assumption 4. Waking the groups of a case only after the block's constraints part had
+/// projected made its answer narrower than the projection from scratch.
 #[test]
 fn a_test_on_three_names_in_a_case_gives_the_projection_from_scratch() {
     three_names_in_a_case(&[4]);

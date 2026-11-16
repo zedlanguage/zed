@@ -7360,9 +7360,7 @@ impl Scope {
         // The case-changed groups are woken here, against `self.names`, before any part of
         // the block projects. Waking them later, after the block's constraints part `(true, _)`
         // has narrowed its names, gave answers narrower than the projection from scratch
-        // (a three-name case found by
-        // `case_wake::tests_on_three_names_give_the_projection_from_scratch` and minimized
-        // during XR-case-group-wake).
+        // (`case_wake::a_test_on_three_names_in_a_case_gives_the_projection_from_scratch`).
         if !block.case_groups.is_empty() {
             let cg = std::mem::take(&mut block.case_groups);
             let mut woke = Vec::new();
