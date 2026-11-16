@@ -660,3 +660,27 @@ fn union_all_of_literal_types_is_the_union_joined_one_at_a_time() {
         );
     }
 }
+
+/// A change of one row of an exclusive or of the `c` one-tuples `(i | (i, i))` reaches a number
+/// of nodes of the listing's graph that does not grow with `c` (PERF-kernel-ratios-9-to-10_5).
+/// The exclusive or of two literals is a union of two lists of two rows each, `!a & b` and
+/// `a & !b`, and of one row a list with its literal taken or not taken; read as choices, the
+/// chain of unions and meets that builds the exclusive or of the `c` terms is one exclusive or
+/// ([`Graph::parities`]). Read as unions and meets, a change reached 81 nodes at `c = 64`; read
+/// as one exclusive or, 4 at both sizes.
+#[test]
+fn a_change_of_a_row_of_an_exclusive_or_reaches_few_nodes() {
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).unwrap();
+    for c in [64, 512] {
+        let t = (0..c)
+            .map(|i| Type::tuple(vec![&lit(i) | &Type::tuple(vec![lit(i), lit(i)])]))
+            .fold(Type::empty(), |x, t| &(&x - &t) | &(&t - &x));
+        let p = t.p();
+        let part = &p.tuples.lens[&1];
+        let mut rows = part.distinct_atoms();
+        rows.sort();
+        let graph = Graph::new(&rows, part);
+        let most = (0..rows.len()).map(|i| graph.reach(i)).max();
+        assert!(most <= Some(6), "c = {c}: a change reaches {most:?} nodes");
+    }
+}

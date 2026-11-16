@@ -5544,23 +5544,37 @@ impl Graph {
     /// meets `t(i) = s & r(i)` with a common side, made as `(x - t) | (t - x)` one at a time,
     /// is otherwise a chain of `n` such choices and their complements, every link of which a
     /// change of `r(0)` changes (LIST-box-overlap); merged ([`Graph::merged`]), it is one
-    /// exclusive or that counts its operands that hold.
+    /// exclusive or that counts its operands that hold. A list of one row is the same list with
+    /// the literal's other value and the block's value and tail swapped, so the literal and its
+    /// complement are known complements in either form. The exclusive or of two rows the diagram
+    /// joins as `!a & b | a & !b` has lists for its two meets, not nodes, and a list of two rows
+    /// in one block is read as the union or meet of its two literals; such a choice is known by
+    /// its two rows, and the choices above it then are exclusive ors (PERF-kernel-ratios-9-to-10_5:
+    /// the exclusive or of the `c` one-tuples `(i | (i, i))`).
     // Complexity tradeoff: each node is checked once, in constant time but for its key, a
     // list's blocks or an exclusive or's two operands; a choice whose halves are not known
     // complements by these forms stays a union of meets. Naive version (COMPLEXITY.md K69,
     // item 10): the chain left as built, `n` choices and their complements, each changed by a
     // change of `r(0)`, so a check reads order `n` nodes per tuple, O(n²) over the listing;
-    // used: one pass over the nodes, O(nodes), then a change reaches one exclusive or.
+    // used: one pass over the nodes, O(nodes), then a change reaches one exclusive or. Before
+    // the lists of two rows were read as choices, a choice at the bottom of the diagram was not
+    // known, none above it was, and a change of one row of `(i | (i, i))` reached 81 nodes at
+    // `c = 64` (about `log² c`, the depth of the diagram's balanced exclusive or of unions and
+    // meets); read, it reaches 4 at any `c` (`a_change_of_a_row_of_an_exclusive_or_reaches_few_
+    // nodes`), and the bench went from 9.94 to 8.65 times the instructions at 8n.
     fn parities(mut self) -> Graph {
         let mut canon: Vec<(usize, bool)> = Vec::with_capacity(self.nodes.len());
         // A list by its rows and each block's value, flipped so its tail is false.
         type ListKey = (Vec<(usize, usize, bool)>, Vec<bool>);
         let mut lists: HashMap<ListKey, (usize, bool)> = HashMap::new();
         let mut xors: HashMap<[usize; 2], (usize, bool)> = HashMap::new();
-        for n in 0..self.nodes.len() {
-            let opposite = |canon: &[(usize, bool)], a: usize, b: usize| {
-                canon[a].0 == canon[b].0 && canon[a].1 != canon[b].1
-            };
+        let len = self.nodes.len();
+        // The literal "row `i` holds" as an operand of a choice when it is no node of its own
+        // (inside a list of two rows, below), numbered past the nodes: `(len + i, false)`, and
+        // its complement `(len + i, true)`.
+        let literal = |i: usize, holds: bool| (len + i, !holds);
+        for n in 0..len {
+            let opposite = |a: (usize, bool), b: (usize, bool)| a.0 == b.0 && a.1 != b.1;
             // The two operands of a binary node.
             let two = |v: &Vertex| match v {
                 Vertex::Or(xs) | Vertex::And(xs) if xs.len() == 2 => Some([xs[0], xs[1]]),
@@ -5569,39 +5583,63 @@ impl Graph {
             let choice = match &self.nodes[n] {
                 Vertex::Or(_) | Vertex::And(_) => (|| {
                     let [p, q] = two(&self.nodes[n])?;
-                    let inner = |x: usize| {
-                        let alike = matches!(
-                            (&self.nodes[n], &self.nodes[x]),
-                            (Vertex::Or(_), Vertex::And(_)) | (Vertex::And(_), Vertex::Or(_))
-                        );
-                        alike.then(|| two(&self.nodes[x])).flatten()
+                    let union = matches!(self.nodes[n], Vertex::Or(_));
+                    // The two operands of `x`, a meet under a union or a union under a meet, by
+                    // their canonical nodes. A list of one block of two rows whose value is not
+                    // its tail is one too: `(r_i = t_i or r_j = t_j) ? v : !v` is the union of
+                    // the two literals when `v` is true and the meet of their complements when
+                    // it is false. So the exclusive or of two literals, whose two meets are
+                    // such lists (module `xor` of `bdd`), is a choice.
+                    let inner = |x: usize| -> Option<[(usize, bool); 2]> {
+                        match (&self.nodes[n], &self.nodes[x]) {
+                            (Vertex::Or(_), Vertex::And(_)) | (Vertex::And(_), Vertex::Or(_)) => {
+                                two(&self.nodes[x]).map(|[a, b]| [canon[a], canon[b]])
+                            }
+                            (_, Vertex::List(l)) => {
+                                let b = &self.lists[*l].0;
+                                let [(i, 0, ti), (j, 0, tj)] = b.of_row[..] else {
+                                    return None;
+                                };
+                                let [v] = b.values[..] else { return None };
+                                // A meet (`v` false) under a union, a union (`v` true) under a
+                                // meet.
+                                (v != b.tail && v != union)
+                                    .then(|| [literal(i, ti == v), literal(j, tj == v)])
+                            }
+                            _ => None,
+                        }
                     };
                     let ([a, b], [c, d]) = (inner(p)?, inner(q)?);
-                    let pairs = opposite(&canon, a, c) && opposite(&canon, b, d)
-                        || opposite(&canon, a, d) && opposite(&canon, b, c);
+                    let pairs =
+                        opposite(a, c) && opposite(b, d) || opposite(a, d) && opposite(b, c);
                     // `a&b | !a&!b` is `!(a ^ b)`; `(a|b) & (!a|!b)` is `a ^ b`.
-                    let negated = matches!(self.nodes[n], Vertex::Or(_));
-                    (pairs && canon[a].0 != canon[b].0).then_some((a, b, negated))
+                    (pairs && a.0 != b.0).then_some((a, b, union))
                 })(),
                 _ => None,
             };
             let own = (n, false);
             let c = match (&self.nodes[n], choice) {
-                (_, Some((a, b, negated))) => {
-                    let ((x, px), (y, py)) = (canon[a], canon[b]);
+                (_, Some(((x, px), (y, py), negated))) => {
                     let constant = negated ^ px ^ py;
                     let key = [x.min(y), x.max(y)];
                     let &mut (e, ce) = xors.entry(key).or_insert((n, constant));
-                    self.nodes[n] = Vertex::Xor(key.to_vec(), constant);
+                    // An exclusive or of two literals of no node of their own stays the union
+                    // or meet of its two lists; it is known by its canonical node all the same.
+                    if key[1] < len {
+                        self.nodes[n] = Vertex::Xor(key.to_vec(), constant);
+                    }
                     (e, constant ^ ce)
                 }
                 (Vertex::List(l), None) => {
                     let b = &self.lists[*l].0;
-                    let flip = b.tail;
-                    let key = (
-                        b.of_row.clone(),
-                        b.values.iter().map(|&v| v ^ flip).collect(),
-                    );
+                    // A list of one row, `r = t ? v : u`, is also `r = !t ? u : v`: taken as the
+                    // form with `t` true, so a literal and its complement share their key.
+                    let (rows, values, tail) = match (&b.of_row[..], &b.values[..]) {
+                        (&[(i, 0, false)], &[v]) => (vec![(i, 0, true)], vec![b.tail], v),
+                        _ => (b.of_row.clone(), b.values.clone(), b.tail),
+                    };
+                    let flip = tail;
+                    let key = (rows, values.iter().map(|&v| v ^ flip).collect());
                     let &mut (e, fe) = lists.entry(key).or_insert((n, flip));
                     (e, flip ^ fe)
                 }
@@ -5838,6 +5876,22 @@ impl Graph {
             }
         }
         out
+    }
+
+    /// How many nodes a change of row `row` can reach: the lists it is in and every node above
+    /// them.
+    #[cfg(test)]
+    fn reach(&self, row: usize) -> usize {
+        let mut seen = HashSet::new();
+        let mut stack: Vec<usize> = (self.lists_of_row[row].iter())
+            .map(|&l| self.lists[l].1)
+            .collect();
+        while let Some(n) = stack.pop() {
+            if seen.insert(n) {
+                stack.extend(&self.parents[n]);
+            }
+        }
+        seen.len()
     }
 
     /// The part's value on `base` changed by `under` and then by `over`, made from it.
