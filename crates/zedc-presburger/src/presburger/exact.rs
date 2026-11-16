@@ -106,8 +106,6 @@ thread_local! {
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.
     pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
-    /// Test control: write the model, cell and counted work of each question to stderr.
-    pub static EXACT_TRACE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The units of work used and allowed.
@@ -141,12 +139,6 @@ impl Work {
     fn ask(&mut self, q: &Formula) -> Result<Option<Model>, Refusal> {
         let before = self.used;
         let answer = self.metered(|| super::satisfiable(q));
-        if EXACT_TRACE.get() {
-            eprintln!(
-                "EXACT ask before={before} after={} q={q} answer={answer:?}",
-                self.used
-            );
-        }
         QUESTION_WORK.set(QUESTION_WORK.get().saturating_add(self.used - before));
         answer?
     }
@@ -252,9 +244,6 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     // Sorting only the initial solver left these model-based choices order dependent.
     let ordered = super::canonical_parts(f);
     let f = &ordered;
-    if EXACT_TRACE.get() {
-        eprintln!("EXACT begin syms={syms:?} h={found:?} f={f}");
-    }
     let (each, _) = found;
     let size = constraints(f);
     let factors = factors(f);
@@ -317,12 +306,6 @@ fn cover(
             if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
                 work.read(size)?;
                 let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
-                if EXACT_TRACE.get() {
-                    eprintln!(
-                        "EXACT cell s={s} model={m:?} set={c} holed={holed:?} work={}",
-                        work.used
-                    );
-                }
                 if !holed.is_empty() {
                     // The parts with holes and no end of every cell so far, joined: where the
                     // values found fill a tail up to an end, the values left of it are listed.

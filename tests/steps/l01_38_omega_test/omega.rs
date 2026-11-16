@@ -505,12 +505,6 @@ pub(super) fn reordered_formulas_agree(rng: &mut Rng, from: usize, to: usize) ->
         }
         disjunctive += usize::from(f != g);
         assert_eq!(satisfiable(&f), satisfiable(&g), "{f} and {g}");
-        zedc::store::presburger::exact::EXACT_TRACE.set(
-            std::env::var("ZED_EXACT_TRACE_CASE")
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok())
-                == Some(i),
-        );
         for s in ["a", "b", "c"] {
             // The hull and the causes of a disjunction left out: a reordering changes neither.
             assert_eq!(
@@ -519,7 +513,6 @@ pub(super) fn reordered_formulas_agree(rng: &mut Rng, from: usize, to: usize) ->
                 "case {i} symbol {s}: {f} and {g}"
             );
         }
-        zedc::store::presburger::exact::EXACT_TRACE.set(false);
     }
     disjunctive
 }
