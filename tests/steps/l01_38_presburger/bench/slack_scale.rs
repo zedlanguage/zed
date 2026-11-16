@@ -323,7 +323,11 @@ fn ss_project_each_costs_at_most_four_decides() {
         return;
     }
     // The solver alone: with the join of row sums (module `row_sums`) the questions the
-    // halving asks are narrow enough for it, and q is the exact empty set.
+    // halving asks are narrow enough for it, and q is the exact empty set. Alone also means
+    // without the exact cover ([`solver_alone`]), as in the halves above (R1-4): what is
+    // measured is the solver's endpoint report against its halving (`Hull::tighten`). With the
+    // cover, p and q are both `Questions` at `EXACT_LIMIT`, and the check below still fails at
+    // a thousand times that limit, so the check cannot hold (PRES-pugh-xr round 2, C).
     ROW_SUMS_OFF.with(|o| o.set(true));
     let f = subset_sum_dp(&weights(64));
     let y0 = [sym("y0")];
@@ -335,14 +339,14 @@ fn ss_project_each_costs_at_most_four_decides() {
     };
     let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
     let reported = least(&mut meter, &|| {
-        drop(std::hint::black_box(project_each(&f, &y0)))
+        drop(std::hint::black_box(solver_alone(|| project_each(&f, &y0))))
     });
-    let (p, _) = project_each(&f, &y0).expect("ss 64 project");
+    let (p, _) = solver_alone(|| project_each(&f, &y0)).expect("ss 64 project");
     HULL_BISECT.with(|c| c.set(true));
     let halved = least(&mut meter, &|| {
-        drop(std::hint::black_box(project_each(&f, &y0)))
+        drop(std::hint::black_box(solver_alone(|| project_each(&f, &y0))))
     });
-    let (q, _) = project_each(&f, &y0).expect("ss 64 project, halving");
+    let (q, _) = solver_alone(|| project_each(&f, &y0)).expect("ss 64 project, halving");
     HULL_BISECT.with(|c| c.set(false));
     // The endpoint report is never coarser than the halving on this formula.
     assert!(

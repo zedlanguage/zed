@@ -184,6 +184,9 @@ thread_local! {
     /// The units the questions of the cover have used on this thread, read by tests and
     /// benchmarks.
     pub static QUESTION_WORK: Cell<u64> = const { Cell::new(0) };
+    /// The units the fast paths of the cover ([`tried`]) have used on this thread, answered or
+    /// not, read by tests: counted in [`EXACT_WORK`] but not against a cover's limit.
+    pub static FAST_WORK: Cell<u64> = const { Cell::new(0) };
 }
 
 /// The units of [`EXACT_LIMIT`] one unit of the solver's work counts for: a row, term or
@@ -259,13 +262,25 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
         .flat_map(|(i, p)| p.atoms.iter().map(move |a| (a, i)))
         .collect();
     let mut wider = false;
-    let out: Vec<Result<IntervalSet, Refusal>> = (syms.iter().zip(each))
+    // Each symbol once, in the order of `Atom`, whatever the order of `syms`: a cover reads the
+    // points the covers before it found in its part, so its work, and a refusal past the limit,
+    // would depend on the symbols covered before it (`tests::the_answers_do_not_depend_on_the_
+    // order_of_the_symbols`). With `f` canonical, as its caller gives it, the answers are then a
+    // function of `f` up to the order of its parts and of the set of `syms`. Complexity
+    // tradeoff: O(k log k) more for k symbols, and a symbol named twice is covered once. The
+    // points a cover keeps are those of the model enumeration (Monniaux, CAV 2010, sec. 3);
+    // fixing the order of the symbols is this module's own choice, from no paper.
+    let mut sorted: BTreeMap<&Atom, Result<IntervalSet, Refusal>> = BTreeMap::new();
+    for (s, got) in syms.iter().zip(each) {
+        sorted.entry(s).or_insert(got);
+    }
+    let answers: BTreeMap<&Atom, Result<IntervalSet, Refusal>> = (sorted.into_iter())
         .map(|(s, got)| {
             // Each symbol's cover has a limit of its own, as each refusal names one symbol: a
-            // limit shared by the call would refuse a symbol by the work of those before it,
-            // so by the order of `syms`, and batch where single answers.
+            // limit shared by the call would refuse a symbol by the work of those before it in
+            // the order above, and batch where single answers (PRES-pugh-xr round 2, D).
             let mut work = Work { used: 0, limit };
-            (|| {
+            let answer = (|| {
                 let h = got?;
                 let at = part_of.get(s).copied();
                 let Some(i) = at.or((!many).then_some(0)) else {
@@ -277,9 +292,11 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
                     cover(&p.f, s, &h, p.size, &p.factors, &mut points[i], &mut work)?;
                 wider |= kept;
                 Ok(set)
-            })()
+            })();
+            (s, answer)
         })
         .collect();
+    let out: Vec<Result<IntervalSet, Refusal>> = syms.iter().map(|s| answers[s].clone()).collect();
     if !many {
         return (
             out,
@@ -539,6 +556,8 @@ fn has_points(
     work: &mut Work,
 ) -> Result<bool, Refusal> {
     let none = Atom::Sym("#none".into());
+    // The fast paths' allowance, shared by the parts, as `work` is (`tried`).
+    let mut fast = work.limit / 4;
     for (p, found) in parts.iter().zip(points.iter_mut()) {
         if !found.is_empty() {
             continue;
@@ -550,7 +569,7 @@ fn has_points(
             continue;
         }
         if p.factors.is_empty()
-            && let Some(set) = tried(work, |w| direct(&p.f, &none, w))?
+            && let Some(set) = tried(&mut fast, |w| direct(&p.f, &none, w))
         {
             if set.is_empty() {
                 return Ok(false);
@@ -601,7 +620,7 @@ fn cover(
     // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
     // another part has no point, and then every answer is made empty (`exact_each`).
     if factors.is_empty() {
-        if let Some(set) = tried(work, |w| direct(f, s, w))? {
+        if let Some(set) = tried(&mut (work.limit / 4), |w| direct(f, s, w)) {
             return Ok((set, false));
         }
     }
@@ -811,26 +830,35 @@ enum Part {
     Set(IntervalSet, HashSet<Atom>),
 }
 
-/// `run`, a fast path, given a quarter of the work left: its answer, or `None` where it is
-/// refused, so that the loop, the complete method, takes over with three quarters of the work
-/// left at least. Its work is charged to `work`.
-// Complexity tradeoff: a fast path that runs to the limit itself would refuse a symbol that the
-// loop answers at once (`direct` on a deep nest, see there). A quarter bounds what a failed
-// fast path takes from the loop; the loop alone, as before, would answer wherever it does with
-// three quarters of the limit.
+/// `run`, a fast path, given what is left of `fast`, the fast paths' own allowance (a quarter
+/// of the limit, set by the caller once for its `Work`): its answer, or `None` where it fails
+/// or passes that allowance. Its work is counted in [`EXACT_WORK`] and [`FAST_WORK`] and taken
+/// from `fast`, never from `work`, so the complete method after it (the loop of [`cover`], or
+/// the questions of [`has_points`]) runs with the same limit and the same work as with no fast
+/// path, and refuses exactly where it would have.
+// Complexity tradeoff: before, a failed fast path was charged to the limit, up to a quarter of
+// the work left, so the loop could refuse a cover needing more than three quarters of the limit
+// that it answers alone (`tests::the_work_limit_is_met_alike_on_both_sides`). Used: an
+// allowance of its own, so the work of a cover is at most 5/4 of the limit (the limit, and a
+// quarter for the fast paths), each step past it by at most its own charge. A fast path that
+// answers adds no work to the loop's either, so a refusal with fast paths is a refusal
+// without them, for the same points found before (`exact_each`). The loop is the lazy model
+// enumeration of Monniaux, "Quantifier Elimination by Lazy Model Enumeration", CAV 2010,
+// sec. 2.2 and 3; a fast path is a cheaper try in front of it, so it gets a share of its own
+// rather than a share of the loop's. Not derived: the quarter itself, which no measurement places
+// at the point where a failed fast path stops paying for itself (PRES-pugh-xr round 3, B).
 fn tried<T>(
-    work: &mut Work,
+    fast: &mut u64,
     run: impl FnOnce(&mut Work) -> Result<Option<T>, Refusal>,
-) -> Result<Option<T>, Refusal> {
+) -> Option<T> {
     let mut part = Work {
         used: 0,
-        limit: work.limit.saturating_sub(work.used) / 4,
+        limit: *fast,
     };
     let got = run(&mut part);
-    // Already counted in `EXACT_WORK` by `part`; at most a quarter of what was left, so within
-    // the limit.
-    work.used = work.used.saturating_add(part.used.min(part.limit));
-    Ok(got.ok().flatten())
+    FAST_WORK.set(FAST_WORK.get().saturating_add(part.used));
+    *fast = fast.saturating_sub(part.used);
+    got.ok().flatten()
 }
 
 /// The exact projection of `f` onto `s`, read from the structure of `f` with no question of
@@ -860,7 +888,8 @@ fn tried<T>(
 // groups the rows moved up from below it again, so a nest of conjunctions k deep costs O(k n)
 // for n rows: 448,000 units at 131 constraints 64 deep and past the limit at 1027 512 deep
 // (`l01_38_presburger::nest_empty`), where the loop answers with no question. So it runs
-// under a quarter of the work left (`tried`) and the loop takes over past it. Each
+// under an allowance of its own, a quarter of the limit (`tried`), and the loop takes over
+// past it. Each
 // elimination is O(m log m) (`shadow`), each constraint charged as the cover charges a
 // constraint read. Not exact for a conjunction that ties a disjunction to other
 // parts through a shared atom (`y == x + 1 and (x <= 3 or x >= 10)`), nor where a stride
@@ -1976,6 +2005,46 @@ mod tests {
         assert!(refused.len() <= 3, "seed {seed}: {refused:#?}");
     }
 
+    /// The answers and refusals of a call do not depend on the order of its symbols, nor on a
+    /// symbol named twice: random formulas as above, at limits from a few questions' work to
+    /// the full one, each symbol answered alike for `[x, y, z]`, `[z, y, x]` and `[y, x, z, y]`.
+    /// Before the symbols were taken in one order (`exact_each`), a symbol covered after
+    /// another read the points that one's questions found, so its work, and a refusal past the
+    /// limit, depended on the order of the call.
+    #[test]
+    fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
+        let seed = crate::seed::seed("the_answers_do_not_depend_on_the_order_of_the_symbols");
+        let mut rng = Rng(seed | 1);
+        let orders: [&[&str]; 3] = [&["x", "y", "z"], &["z", "y", "x"], &["y", "x", "z", "y"]];
+        let mut differ = Vec::new();
+        for round in 0..120 {
+            let f = boxed(formula(&mut rng, 3));
+            for limit in [3_000, 10_000, 30_000, 100_000, EXACT_LIMIT] {
+                EXACT_LIMIT_SET.set(Some(limit));
+                let answers: Vec<_> = (orders.iter())
+                    .map(|o| {
+                        let syms: Vec<Atom> = o.iter().map(|n| a(n)).collect();
+                        let got = project_each(&f, &syms);
+                        let mut by: Vec<(&str, String)> = (o.iter().copied())
+                            .zip(match &got {
+                                Ok((each, _)) => each.iter().map(|r| format!("{r:?}")).collect(),
+                                Err(e) => vec![format!("{e:?}"); o.len()],
+                            })
+                            .collect();
+                        by.sort();
+                        by.dedup();
+                        (by, got.map(|g| g.1).unwrap_or_default())
+                    })
+                    .collect();
+                EXACT_LIMIT_SET.set(None);
+                if answers.iter().any(|a| a != &answers[0]) {
+                    differ.push(format!("round {round} limit {limit}: {answers:?}: {f}"));
+                }
+            }
+        }
+        assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
+    }
+
     /// A value that each disjunction allows through a different disjunct, where no one
     /// combination of them does: `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 ||
     /// x == 3 && y == 0)` has no point, while the solver's meet of the unions of hulls keeps
@@ -2139,23 +2208,29 @@ mod tests {
     }
 
     /// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, the
-    /// solver's work for its questions included, it answers with the exact set (the even
-    /// values); allowed one unit less, it refuses ([`Refusal::Questions`]) and never answers
-    /// with the solver's set, which has values with no point (PRES-pugh-work-budget). The
-    /// work is counted, so a second run uses the same.
+    /// solver's work for its questions included and that of its fast path left out (`tried`:
+    /// `direct` reads the rows of `evens` and fails, a projected disjunction grouped with the
+    /// bound on `z`), it answers with the exact set (the even values); allowed one unit
+    /// less, it refuses ([`Refusal::Questions`]) and never answers with the solver's set, which
+    /// has values with no point (PRES-pugh-work-budget). The work is counted, so a second run
+    /// uses the same. Before `tried` had an allowance of its own, the failed fast path was
+    /// charged to the limit, and the cover was refused at the limit its loop needs.
     #[test]
     fn the_work_limit_is_met_alike_on_both_sides() {
         let f = evens(20);
         let want =
             IntervalSet::from_pieces((0..=20).map(|v| (End::of(2 * v), End::of(2 * v))).collect());
         EXACT_WORK.set(0);
+        FAST_WORK.set(0);
         assert_eq!(project(&f, "x"), want);
-        let used = EXACT_WORK.replace(0);
+        let fast = FAST_WORK.replace(0);
+        let used = EXACT_WORK.replace(0) - fast;
         assert!(used > 0);
+        assert!(fast > 0, "the fast path read nothing");
         EXACT_LIMIT_SET.set(Some(used));
         assert_eq!(project(&f, "x"), want);
         assert_eq!(
-            EXACT_WORK.replace(0),
+            EXACT_WORK.replace(0) - FAST_WORK.replace(0),
             used,
             "the work is not the same on a second run"
         );
