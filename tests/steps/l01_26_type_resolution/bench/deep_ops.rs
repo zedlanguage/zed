@@ -3,6 +3,7 @@
 //! few levels deep are checked in `deep_ops`.
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
@@ -110,13 +111,94 @@ fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
 }
 
 /// Checks that `op` on what `build` makes for each size takes time linear in the size, on a
-/// 2 MiB stack; what is built is not measured.
-fn linear<T: Sync>(what: &str, n: usize, build: impl Fn(usize) -> T, op: impl Fn(&T) + Sync) {
-    let made: BTreeMap<usize, T> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, build(k)))
-        .collect();
-    on_small_stack(|| scaling::check_order(what, n, 1, |k| op(&made[&k])));
+/// 2 MiB stack; what is built is not measured. Each run reads an input of its own, all built
+/// before any run is timed and kept until the check ends, so neither their building nor their
+/// release is timed. One input per size, read by every run, let the first run fill the facts a
+/// type keeps once found (such as a row's keys), so the meter, which holds the second run at n
+/// against the first at 8n, compared a warm run with a cold one: the meet of two tuples read
+/// 8.93 times the instructions and 9.33 times the bytes, while its first runs on inputs of their
+/// own take 8.000 times both (FAIL-ratio-meet-deep). The inputs are built at once, each on a
+/// thread of its own: built one after another, the two at 8n put `meets` of 320,000 levels
+/// over the time a piece may take (22.6 s against 22 s at load 34).
+///
+/// Complexity tradeoff: one input per size costs one build at n and one at 8n but measures a
+/// warm run against a cold one; an input per run costs `Meter::runs` builds per size (two
+/// each on a count of instructions, one at 8n left unread when the first run at 8n is under
+/// the note) and twice the memory of the inputs, and measures cold against cold.
+fn linear<T: Send + Sync>(
+    what: &str,
+    n: usize,
+    build: impl Fn(usize) -> T + Sync,
+    op: impl Fn(&T) + Sync,
+) {
+    let (small, large) = scaling::Meter::new().runs();
+    let made: BTreeMap<usize, Mutex<Vec<T>>> = std::thread::scope(|s| {
+        let build = &build;
+        let building: Vec<_> = [(n, small), (scaling::FACTOR * n, large)]
+            .into_iter()
+            .map(|(k, runs)| {
+                (
+                    k,
+                    (0..runs)
+                        .map(|_| s.spawn(move || build(k)))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        building
+            .into_iter()
+            .map(|(k, threads)| {
+                let inputs = threads
+                    .into_iter()
+                    .map(|t| t.join().expect("an input built"));
+                (k, Mutex::new(inputs.collect()))
+            })
+            .collect()
+    });
+    let kept = Mutex::new(Vec::new());
+    on_small_stack(|| {
+        scaling::check_order(what, n, 1, |k| {
+            let input = made[&k]
+                .lock()
+                .expect("the inputs of a size")
+                .pop()
+                .expect("one input per run");
+            op(&input);
+            kept.lock().expect("the inputs read").push(input);
+        })
+    });
+    // Released at once too, each on a thread of its own: one after another, the inputs of
+    // `meets` of shared tuples (512,000 levels) took 5 to 6 s to release at load 80.
+    let inputs = kept.into_inner().expect("the inputs read").into_iter();
+    let left = made
+        .into_values()
+        .flat_map(|m| m.into_inner().expect("the inputs of a size"));
+    std::thread::scope(|s| {
+        for input in inputs.chain(left) {
+            s.spawn(move || drop(input));
+        }
+    });
+}
+
+/// What [`linear`] relies on in giving each run an input of its own: copies built alike share
+/// no facts found by a run, so the first meet of each allocates the same, and each run of a
+/// check reads a cold input. One copy read by every run compared a warm run at n with a cold
+/// one at 8n (FAIL-ratio-meet-deep).
+#[test]
+fn the_first_meets_of_tuples_built_alike_allocate_the_same() {
+    let meet = |(a, b): &(ty::Ty, ty::Ty)| {
+        scaling::on_a_thread(2 << 20, || {
+            scaling::Meter::new()
+                .work(|| assert!(!a.meet(b).is_empty()))
+                .bytes
+        })
+    };
+    let copies: Vec<_> = (0..3).map(|_| (tuples(64, z()), tuples(64, z()))).collect();
+    let first: Vec<u64> = copies.iter().map(meet).collect();
+    assert!(
+        first.iter().all(|&b| b == first[0]),
+        "the first meets of copies built alike allocated {first:?} bytes"
+    );
 }
 
 /// Besides its ratio: the meet of equal tuples is not empty. Small instance:
