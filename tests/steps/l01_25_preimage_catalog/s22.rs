@@ -1193,8 +1193,10 @@ fn holed(rng: &mut Rng) -> IntervalSet {
 /// and a `z` with holes, asked for a set with holes. Each preimage is compared with the
 /// transfer before and both boxes with the interpreter ([`Diffs::preimage`]); a box wider
 /// than the one before is found. Seeds 101 to 120 and `indep_2j` were the only checks of the
-/// summary, all of slope 0 or 1. No box is wider than before; 2 are narrower and keep every
-/// point the interpreter finds. With `pa_image` giving the hull of its values, the test fails.
+/// summary, all of slope 0 or 1. No box is wider than before and every box keeps each point
+/// the interpreter finds; 2 inexact boxes are narrower, and 2 more lie inside the box before
+/// and are exact wherever it was (counted as `reflected`). With `pa_image` giving the hull of
+/// its values, the test fails (no box narrower).
 #[test]
 fn steep_summaries_of_two_inputs_keep_the_holes_of_their_demand() {
     let mut rng = Rng::new(0x5_7ee9);
@@ -1212,7 +1214,17 @@ fn steep_summaries_of_two_inputs_keep_the_holes_of_their_demand() {
         let d = Demand::Ints(holed(&mut rng));
         diffs.preimage(&format!("case {case}"), &t, &ds, &d);
     }
-    diffs.none(60, 2);
+    // 17 results differ from the ones before only in the names of their relations' variables
+    // (S22-transfer-rem), which `explained` allows.
+    let (narrower, reflected) = (diffs.narrower, diffs.reflected);
+    let (finer, wide) = (diffs.reference_finer, diffs.wide);
+    diffs.explained(60);
+    assert_eq!(
+        (finer, wide),
+        (0, 0),
+        "a box before is narrower than the box now"
+    );
+    assert_eq!((narrower, reflected), (2, 2), "the narrower boxes changed");
 }
 
 /// The `let` form of `indep_2j k=2` is not refused on a tie of `b1` and `b2`, whose rows
