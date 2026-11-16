@@ -10169,7 +10169,7 @@ fn strings_rank() -> Ty {
     let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], result);
     sig.arrows[0].partial = true;
     sig.data = true;
-    sig.dense = true;
+    sig.dense = Dense::Ranks;
     sig.note_held();
     Ty::func(Arc::new(sig))
 }
