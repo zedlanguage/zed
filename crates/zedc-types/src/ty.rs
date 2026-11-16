@@ -8438,7 +8438,10 @@ impl<'m, 's> Comparing<'m, 's> {
             let groups = (filed.payloads.get(n)).expect("each payload union `t` lists is filed");
             let mut searched = Searched::new();
             let mut bound = BoundTable::new();
-            for l in ls {
+            // The shapes of `rs` near each of `ls` ([`near_pairs`]), made the first time a
+            // shape no one shape holds is tried against them together ([`Self::held_together`]).
+            let mut nears = None;
+            for (i, l) in ls.iter().enumerate() {
                 let g = shape_group(l);
                 let Some(choices) = groups.get(&g) else {
                     return false;
@@ -8461,9 +8464,15 @@ impl<'m, 's> Comparing<'m, 's> {
                     binds,
                     fit,
                 );
-                match found.await {
-                    Ok(true) => {}
-                    Ok(false) => return false,
+                let found = found.await;
+                if matches!(found, Ok(true)) {
+                    continue;
+                }
+                if self.held_together(l, i, ls, rs, t, &mut nears).await {
+                    continue;
+                }
+                match found {
+                    Ok(_) => return false,
                     Err((first, k, id)) => {
                         self.refuse(|| {
                             let cx = self.cx.borrow();
@@ -8492,6 +8501,61 @@ impl<'m, 's> Comparing<'m, 's> {
             }
         }
         true
+    }
+
+    /// Whether the payload shape `l`, number `i` of `ls`, held by no one shape of `rs` (the
+    /// shapes `t` lists for its atom), is held by the shapes of `rs` near it together: where
+    /// `l`, those shapes and `t` are exact (no variable, unknown or function; [`ShapeData::exact`]),
+    /// it is when the rest of `l` less them ([`Self::shape_rest`]) is empty. `nears` keeps the
+    /// shapes of `rs` near each of `ls` ([`near_pairs`]), made on the first call.
+    ///
+    /// Why (FAIL-types-shape-union-sub-incomplete): `#a(int, int, int)` was not found within
+    /// the union of the cuts `#a(B_j, B_j, B_j)` (B_j the numbers below 8 with bit j set) and
+    /// the rest of `#a(int, int, int)` less them. Both sides are exact, so
+    /// [`Comparing::by_form`] asks the kernel, which refuses: it would have to split more than
+    /// one item into cases at once (`TupleSplit`). The rule of one shape then failed, since no
+    /// one shape holds `l`, though [`Ty::diff`] found the difference empty.
+    ///
+    /// Proof that a yes is sound: the values of `l` outside every shape of `rs` are those
+    /// outside the shapes near it, as a shape [`apart`] from `l` shares no value with it. The
+    /// rest [`Self::shape_rest`] gives holds every one of them: it is the difference with no
+    /// value lost (proof there), given that a meet of two items ([`Ty::meet`]) holds no value
+    /// outside both, which the proof there assumes; a part it drops is one
+    /// [`Ty::is_empty`] proves empty (the kernel's search counts a type it does not prove empty
+    /// as inhabited, `KType::is_empty`), or a row with a component that lists nothing; and the
+    /// items it compares are compared by [`Ty::diff`], whose rest may hold more than the
+    /// difference and never less. So an empty rest means no value of `l` is outside `rs`. A
+    /// rest that is not empty decides nothing, and the answer is the search's. Not proved
+    /// here: that [`Ty::meet`] of two items of data is no wider than their meet, the claim
+    /// the exact path of [`Self::diff`] rests on too (PROOF-diff-exact-skip).
+    ///
+    /// Complexity tradeoff: naive version, the rest made for every shape before the search,
+    /// which costs each shape held by one shape a rest it does not need. Used: the rest only
+    /// for a shape the search did not find held, the near shapes listed once for all of `ls`
+    /// at the first such shape, O((l·G + r·H)·w + p) as for [`Self::diff`], and the rest at the
+    /// cost [`Self::shape_rest`] states, at most w^k shapes for k near shapes of w items, which
+    /// some inputs need. Prior work: the decomposition of a product type into a union of
+    /// products in semantic subtyping (Frisch, Castagna and Benzaken, "Semantic subtyping",
+    /// JACM 2008), here item by item with the parts held by the same shapes joined.
+    async fn held_together(
+        &'m self,
+        l: &Shape,
+        i: usize,
+        ls: &[Shape],
+        rs: &[Shape],
+        t: &Ty,
+        nears: &mut Option<Vec<Vec<usize>>>,
+    ) -> bool {
+        if t.dynamic || !t.vars.is_empty() || l.0.exact.is_none() {
+            return false;
+        }
+        let near = nears.get_or_insert_with(|| near_pairs(ls.iter(), rs.iter()));
+        let cut: Vec<Shape> = near[i].iter().map(|&j| rs[j].clone()).collect();
+        if cut.is_empty() || cut.iter().any(|c| c.0.exact.is_none()) {
+            return false;
+        }
+        let solve = self.cx.borrow().solve;
+        self.shape_rest(l, &cut, solve).await.is_empty()
     }
 
     /// Whether the tuple piece `cs` of a type is in the tuple shapes of `t` of its length: in

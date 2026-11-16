@@ -2701,6 +2701,43 @@ fn a_payload_less_many_cuts_is_the_difference_in_few_shapes() {
 
 mod bench;
 
+/// A payload shape within a union of shapes that together hold it is a subtype of the union
+/// (FAIL-types-shape-union-sub-incomplete): `#a(int, …, int)` within the cuts `#a(B_j, …, B_j)`
+/// (B_j the numbers below 2^k with bit j set) and the rest of it less them, which the kernel
+/// refuses to decide, as it would split more than one item at once. With the last cut left
+/// out, the point `#a(2^(k-1), …)` is in no shape, and the answer is no. Each point of numbers
+/// below 2^k, or 99, is in the union, as a check of the union apart from the comparison.
+#[test]
+fn a_payload_shape_held_by_many_shapes_together_is_a_subtype_of_their_union() {
+    for k in 1..=3 {
+        for w in 1..=3 {
+            let c = |j: usize| numbers((0..1 << k).filter(|v| v >> j & 1 == 1));
+            let (whole, cuts) = wide_payload_cuts(w, k, &c);
+            let all = whole.diff(&cuts).union(&cuts);
+            assert!(whole.diff(&all).is_empty(), "control, w = {w}, k = {k}");
+            assert!(whole.subtype(&all), "w = {w}, k = {k}: {all}");
+            let fewer = match k {
+                1 => Ty::empty(),
+                _ => wide_payload_cuts(w, k - 1, &c).1,
+            };
+            let partial = whole.diff(&cuts).union(&fewer);
+            assert!(!whole.subtype(&partial), "w = {w}, k = {k}: {partial}");
+            let values: Vec<usize> = (0..1 << k).chain([99]).collect();
+            let mut point = vec![0; w];
+            loop {
+                let text = point.iter().map(|&p| values[p].to_string());
+                let p = ty(&format!("#a({})", text.collect::<Vec<_>>().join(", ")));
+                assert!(p.subtype(&all), "w = {w}, k = {k}: {p} in {all}");
+                let Some(at) = point.iter().position(|&p| p + 1 < values.len()) else {
+                    break;
+                };
+                point[at] += 1;
+                point[..at].fill(0);
+            }
+        }
+    }
+}
+
 /// A random payload item of data, `d` levels deep: literals, `int`, `bool`, an atom, tuples,
 /// payloads, unions and meets.
 fn random_item(r: &mut zed_tests::instances::Rng, d: usize) -> String {
