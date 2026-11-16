@@ -437,8 +437,22 @@ struct Held {
     /// once per run: a function a test calls is made once per row, each row a run of its own.
     /// It is a function of `term` alone, so a copy may keep it, and [`Shared::make_mut`],
     /// which changes `term`, clears it.
-    reads: OnceLock<Arc<[Arc<str>]>>,
+    reads: ReadsMemo,
 }
+
+/// The memo in [`Held`]'s `reads`, a type of its own so that clippy.toml can name it in
+/// `ignore-interior-mutability`: clippy's `mutable_key_type` otherwise refuses every map or set
+/// keyed by a type that holds a [`Shared`] (zedc-preimage's `Address`). It takes no part in any
+/// equality, order or hash. `Shared`'s equality reads the id and the term; no `Hash` or `Ord` is
+/// implemented for `Shared` or `Term`; the memo is private to this crate and read only through
+/// [`Shared::reads_memo`], whose only callers are in `eval/made.rs`.
+// Complexity tradeoff: naive version, the memo kept outside the node, in a table keyed by the
+// node's id, so that the node holds no cell: one hash lookup per made function where the memo
+// in the node costs one pointer read, and a table that outlives the nodes it names, with no
+// point at which an entry can be freed. Used: the memo in the node, O(1) to read, freed with
+// the node, and named in clippy.toml with the proof above. Nothing is given up.
+#[derive(Clone, Default)]
+struct ReadsMemo(OnceLock<Arc<[Arc<str>]>>);
 
 impl Shared {
     /// `t`, shared, with a new id.
@@ -446,13 +460,13 @@ impl Shared {
         Shared(Arc::new(Held {
             id: fresh_id(),
             term: t,
-            reads: OnceLock::new(),
+            reads: ReadsMemo::default(),
         }))
     }
 
     /// The memo of the names the term reads (see [`Held`]'s `reads`).
     pub(crate) fn reads_memo(&self) -> &OnceLock<Arc<[Arc<str>]>> {
-        &self.0.reads
+        &self.0.reads.0
     }
 
     /// The id of the subterm: copies share it, and no other subterm has it. Ids are only
@@ -466,7 +480,7 @@ impl Shared {
     pub fn make_mut(this: &mut Shared) -> &mut Term {
         let held = Arc::make_mut(&mut this.0);
         held.id = fresh_id();
-        held.reads = OnceLock::new();
+        held.reads = ReadsMemo::default();
         &mut held.term
     }
 

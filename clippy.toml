@@ -13,10 +13,17 @@
 # its members it fills on first use (zedc-types src/ty.rs, `Members`).
 # A range's hash, order and equality read its entries, which its two ends fix, and the map of
 # them it fills on first walk holds the same entries (zed-kernel src/value.rs, `Span`).
+# A kernel subterm's equality reads its id and its term, never the names the term reads, which
+# the evaluator fills on first use (zed-kernel src/term.rs, `ReadsMemo`): the memo is private to
+# zed-kernel, read only through `Shared::reads_memo` by src/eval/made.rs, and no `Hash` or `Ord`
+# is implemented for `Shared` or `Term`. So the order of a written constraint's address
+# (zedc-preimage src/address.rs, `Address`), which reads its digest, node ids and canonical
+# term, never reads it either.
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
   "zed_kernel::value::Span",
+  "zed_kernel::term::ReadsMemo",
   "zedc_int::int::Memo",
   "zedc_types::ty::Facts",
   "zedc_types::ty::Members",
