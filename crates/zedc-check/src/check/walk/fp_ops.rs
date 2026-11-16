@@ -474,8 +474,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Dyn => self.any(&quoted, span),
                 Piece::Var(_) => {
-                    let what = "`concat` of a family whose entry type is a type parameter";
-                    self.error(at, zedc_base::rejection::not_yet(what));
+                    let what = match self.code(p.at).map(str::trim).filter(|c| !c.contains('\n')) {
+                        Some(c) => {
+                            format!("`concat` of `{c}`, whose entries are of a generic type,")
+                        }
+                        None => "`concat` of a family whose entries are of a generic type".into(),
+                    };
+                    self.error(at, zedc_base::rejection::not_yet(&what));
                     return Ty::empty();
                 }
                 e if self.subtype(&e.ty(), &Ty::carrier(Carrier::Str)) => {}
@@ -503,8 +508,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         for p in a.ty.without_loose().pieces() {
             match p {
                 Piece::Dyn => self.any(&format!("`{word}`"), span),
+                // The program may write no type parameter, as `l` of `m.stdin.map(l -> …)`, so
+                // the operand is named by its code and its type called generic, the word for a
+                // type decided where the function is applied (plan row
+                // FAIL-l01-37a-split-snapshot).
                 Piece::Var(_) => {
-                    let what = format!("`{word}` on a value whose type is a type parameter");
+                    let what = match self.code(a.at).map(str::trim).filter(|c| !c.contains('\n')) {
+                        Some(c) => format!("`{word}` on `{c}`, whose type is generic here,"),
+                        None => format!("`{word}` on a value whose type is generic here"),
+                    };
                     self.error(at, zedc_base::rejection::not_yet(&what));
                     return false;
                 }

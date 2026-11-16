@@ -36,8 +36,22 @@ expression: without_addresses(&out)
 08-utf8-percent.zed:44:43: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 08-utf8-percent.zed:44:79: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 08-utf8-percent.zed:46:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-09-canonical-equal.zed (L3): does not load: 09-canonical-equal.zed:7:23: the prelude word `split` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-09-canonical-equal.zed:11:13: the prelude word `split` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+09-canonical-equal.zed (L3): does not load: 09-canonical-equal.zed:7:23: `concat` takes a family of strings, and an optional separator `sep:` by name.
+  [1] 7:23: repair: write `s.lower.split("-").concat`
+      7 | canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");
+        |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [2] 7:23: repair: write `s.lower.split("-").concat(sep: "")`
+09-canonical-equal.zed:7:23: `concat` takes a family of strings, and an optional separator `sep:` by name.
+  [1] 7:23 to 7:73: repair: write `s.lower.split("-").concat("").split(" ").concat`
+      line 7 is shown above
+  [2] 7:23 to 7:73: repair: write `s.lower.split("-").concat("").split(" ").concat(sep: "")`
+09-canonical-equal.zed:11:13: `split` on `l`, whose type is generic here, is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+  [1] 11:13: `l` is _ here
+      11 |     parts = l.split(" | ");
+         |             ^
+  [2] 10:27: `l` is bound here
+      10 |   m.stdout <- m.stdin.map(l -> {
+         |                           ^
 10-regex-matcher/main.zed (L19): does not load: 10-regex-matcher/main.zed:11:43: `char32` is not defined.
 10-regex-matcher/main.zed:11:60: `char32` is not defined.
 10-regex-matcher/main.zed:12:43: `char32` is not defined.

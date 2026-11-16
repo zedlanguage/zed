@@ -578,6 +578,23 @@ fn a_misshapen_string_call_is_repaired_with_the_programs_operands() {
     );
 }
 
+/// `split` on a value whose type is generic, as a line of `m.stdin` in a function passed to
+/// `map` is, is not compiled yet; the message names the operand by its code and does not call
+/// its type a type parameter, which the program does not write (plan row
+/// FAIL-l01-37a-split-snapshot, as corpus 09-canonical-equal does at 11:13).
+#[test]
+fn a_string_word_on_a_generic_operand_names_the_operand() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat(l.split(\",\")));\n}\n";
+    let out = run("fp_ops/strings_generic", src, "", &[]);
+    let want = "`split` on `l`, whose type is generic here, is part of";
+    assert!(
+        out.status != 0 && out.stderr.contains(want) && !out.stderr.contains("type parameter"),
+        "status {}\n{}",
+        out.status,
+        out.stderr
+    );
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {
