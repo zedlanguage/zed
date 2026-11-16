@@ -295,9 +295,12 @@ fn parity_built_a_literal_at_a_time_scales() {
 #[test]
 fn exclusive_ors_scale() {
     // The exclusive ors of the first half and of the last three quarters of `n` atoms, which
-    // share a quarter, are joined in `O(n)`: their sets' symmetric difference is join-based,
-    // `O(m log(n/m + 1))` for sets of `m <= n` literals (`set::symmetric`), and here `m` is
-    // about `n`. Each size has atoms of its own. Small
+    // share a quarter, are joined by their sets' join-based symmetric difference
+    // (`set::symmetric`): proved `O(n log n)` expected here, where `m` is about `n`; Blelloch,
+    // Ferizovic and Sun's `O(m log(n/m + 1))`, `O(n)` here, is proved only for priorities drawn
+    // independently and identically (plan row PROOF-join-work-limited-independence); the ratio
+    // measured is near 8 (COMPLEXITY.md K123), within `scaling::check`'s limit either way. Each
+    // size has atoms of its own. Small
     // instances: `exclusive_ors_with_atoms_in_common_join_in_an_exclusive_or`.
     let n = 1 << 13;
     let halves = scaling::inputs(n, overlapping_xors);

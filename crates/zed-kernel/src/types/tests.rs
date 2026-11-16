@@ -486,6 +486,10 @@ fn the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type() {
         let t = &x & &y;
         let part = kind_wide_part_met_last(&t, &tuples, &structs);
         assert_eq!(t.function_part(), Some(part), "{i}: {}", t.surface());
+        // `(r1 | r2) & (r1 | r3)`, two sets sharing one row (round 2, Gemini R2-F1).
+        let t = &x & &(&pair(&tuples, &atom(1)) | &pair(&Type::int(), &atom(3)));
+        let part = kind_wide_part_met_last(&t, &tuples, &structs);
+        assert_eq!(t.function_part(), Some(part), "{i}: {}", t.surface());
     }
 }
 

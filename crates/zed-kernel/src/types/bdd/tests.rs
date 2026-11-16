@@ -613,6 +613,30 @@ fn a_choice_whose_branches_are_the_halves_of_an_exclusive_or_is_that_exclusive_o
     assert_eq!(merged.id(), and(&a.not(), &b).id(), "{merged:?}");
 }
 
+/// A choice whose meets are lists that `zip` joins as lists is that list, not a union kept as an
+/// expression: `a&(a|b) | !a&b` is `a|b` (cross-review of PERF-xor-shape-free, round 2, Sol
+/// X2-F4). And a choice with one branch `true`, `c | !c&y`, is `c|y` when `!c&y` is a list (Opus
+/// N1); when it is not, plan row CANON-choose-true-branch.
+#[test]
+fn a_choice_whose_meets_are_lists_is_their_list() {
+    let [a, b, c, d] = [0, 1, 2, 3].map(|i| Part::literal(atom(i)));
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let any = or(&a, &b);
+    let half = |w: &Part<Row>| or(&and(&a, &and(&any, w)), &and(&a.not(), &and(&b, w)));
+    let merged = or(&half(&c), &half(&c.not()));
+    assert_eq!(merged.id(), any.id(), "{merged:?} is not the list {any:?}");
+    // `c?a:b | c?!a:d`: the branches join to `true` and `b|d`.
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| or(&and(c, x), &and(&c.not(), y));
+    let merged = or(&pick(&c, &a, &b), &pick(&c, &a.not(), &d));
+    let direct = or(&c, &or(&b, &d));
+    assert_eq!(
+        merged.id(),
+        direct.id(),
+        "{merged:?} is not the list {direct:?}"
+    );
+}
+
 #[test]
 fn exclusive_ors_built_in_any_order_are_one_node() {
     let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
@@ -648,6 +672,29 @@ fn exclusive_ors_built_in_any_order_are_one_node() {
     // Restricted to one atom's value, an exclusive or is the one of the others.
     let fixed = forward.restrict(&|a: &Row| (*a == atom(2)).then_some(true));
     assert_eq!(fixed.id(), fold(&[0, 1, 3, 4, 5], xor_by_or).not().id());
+}
+
+/// An exclusive or built from two others holds its complement, so taking the complement next
+/// costs a lookup, not a frame of `Connect` and a node made again. `xor_of` made the exclusive or
+/// with the other constant and returned its complement, dropping the node that held that
+/// complement (cross-review of PERF-xor-shape-free, round 2, Sol X2-F3: 296 nodes made and 98
+/// complements made again for parity of 100 atoms, against 198 and none).
+#[test]
+fn an_exclusive_or_built_from_two_holds_its_complement() {
+    let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+    let holds = |p: &Part<Row>| {
+        assert!(p.xor_tag().is_some(), "not an exclusive or: {p:?}");
+        matches!(p, Part::Expr(e) if e.known().is_some())
+    };
+    for k in 3..=6 {
+        let by_or = (1..k).fold(lits[0].clone(), |f, i| xor_by_or(&f, &lits[i]));
+        assert!(holds(&by_or), "by `|`, {k} atoms: {by_or:?}");
+        let by_and = (1..k).fold(lits[0].clone(), |f, i| xor_by_and(&f, &lits[i]));
+        assert!(holds(&by_and), "by `&`, {k} atoms: {by_and:?}");
+        let x = (2..k).fold(lits[1].clone(), |f, i| xor_by_or(&f, &lits[i]));
+        let choice = xor::xor_choice(&lits[0], &x, &x.not()).expect("an exclusive or of two");
+        assert!(holds(&choice), "a choice, {k} atoms: {choice:?}");
+    }
 }
 
 #[test]
@@ -2246,4 +2293,33 @@ fn a_long_meet_joined_to_short_meets_is_kept_as_an_expression() {
             );
         }
     }
+}
+
+/// `a&(a|b)&w | !a&(!a|d)&w`, joined with the same over `!w` for an exclusive or `w`, is
+/// everything: the meets of the choice on `w` are Bdds that `zip_chain` joins to the leaf `true`
+/// (round 2 cross-review, Gemini R2-F3 Case I). On base e48f7567d the union stayed an expression,
+/// and a morphism set of that shape was not `decidable()`.
+#[test]
+fn a_choice_on_an_exclusive_or_whose_branches_cover_everything_is_the_leaf() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [a, b, d, p, q] = [0, 1, 2, 3, 4].map(|i| Part::literal(atom(i)));
+    let w = xor_by_or(&p, &q);
+    let (x, y) = (or(&a, &b), or(&a.not(), &d));
+    let half = |w: &Part<Row>| or(&and(&a, &and(&x, w)), &and(&a.not(), &and(&y, w)));
+    assert_eq!(or(&half(&w), &half(&w.not())).is_leaf(), Some(true));
+    // The same shape over morphisms.
+    let m = |i: i64| {
+        let l = Type::lit(&Value::Int(i)).unwrap();
+        Type::morphism(l.clone(), l, Type::int())
+    };
+    let (ma, mb, md, mp, mq) = (m(0), m(1), m(2), m(3), m(4));
+    let all = Type::universe(crate::types::Universe::Morphism);
+    let not = |t: &Type| &all - t;
+    let mw = &(&mp & &not(&mq)) | &(&not(&mp) & &mq);
+    let (mx, my) = (&ma | &mb, &not(&ma) | &md);
+    let mhalf = |w: &Type| &(&ma & &(&mx & w)) | &(&not(&ma) & &(&my & w));
+    let merged = &mhalf(&mw) | &mhalf(&not(&mw));
+    assert!(merged.subtype(&all) && all.subtype(&merged));
+    assert!(merged.decidable(), "{}", merged.surface());
 }

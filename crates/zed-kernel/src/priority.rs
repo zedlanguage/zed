@@ -25,12 +25,15 @@
 //! its priority is above every other of the keys from `x` to `y` (Seidel and Aragon's Lemma 4.3,
 //! whose proof holds in any tree heap-ordered by priority, however ties are broken: the least
 //! common ancestor of `x` and `y` lies between them and is above both), so the depth of `x` is
-//! at most `T` plus the number of untied `y` that hold the strict maximum of their range. Each
-//! such `y`, met in the order of distance from `x` on one side, holds a key whose point of `q`
-//! is new to the range (a key whose point is met before it in the range ties with that key), so
-//! the `k`-th of them is the strict maximum of at least `k` distinct points of `q`, with
-//! probability at most `c/k` given the points: the depth is at most `E[T] + 2c H_n` in
-//! expectation. Two keys at distinct points of `q` tie with probability `1/p`. Keys whose points
+//! at most `T` plus the number of untied `y` that hold the strict maximum of their range. Only a
+//! key whose point of `q` is new to the range from `x` can be such a `y` (a key whose point is
+//! met before it in the range ties with that key). Which keys these are is fixed by the keys,
+//! not by the draw: on one side of `x`, let `y_k` be the `k`-th of them in the order of distance
+//! from `x`. The range from `x` to `y_k` holds at least `k` distinct points of `q`, so `y_k`
+//! holds its strict maximum with probability at most `c/k`, and the sum over the fixed `y_k` of
+//! both sides bounds the depth by `E[T] + 2c H_n` in expectation. (The `k`-th untied ancestor
+//! met is not a fixed key; the sum is over the `y_k`, each counted whether or not it is an
+//! ancestor.) Two keys at distinct points of `q` tie with probability `1/p`. Keys whose points
 //! are equal tie always: their number adds to `T` whatever the draw, and each use below says what
 //! makes two keys one point. In all, a node's expected depth is at most
 //! `T0 + n(n - 1)/p + 2c H_n`, `T0` the keys that share their point with another key of the

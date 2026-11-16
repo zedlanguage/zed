@@ -18,8 +18,9 @@
 //! A part is decided (module `empty`) by three-valued operations: it is evaluated with some
 //! atoms known (`Part::eval3`) and restricted to them (`Part::restrict`), each in time linear in
 //! its literals once the forms it reads are made (an exclusive or of `n` atoms makes its forms on
-//! first read, `O(n log n)` expected over all of them, module `xor`); asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
-//! on a list and in one pass over the nodes of an expression (COMPLEXITY.md K32); and settled on
+//! first read, `O(n log n)` expected over all of them, module `xor`); asked which atoms every
+//! value takes or refuses (`Part::forced`), in `O(n log n)` on a list and in one pass over the
+//! nodes of an expression (COMPLEXITY.md K32); and settled on
 //! its shared subexpressions (`Part::settle`), one evaluation per shared subexpression in each
 //! round. The last is above the rule of low complexity, an open item (DESIGN.md L1.23). Listing
 //! values takes one pass over a list's first nodes, as a diagram would have them
@@ -1149,13 +1150,22 @@ impl<'m> Connect<'m> {
             let [p, q] = parts;
             [q, p]
         };
-        // The meets may be a leaf, or the two halves of an exclusive or (`a&!b`, `!a&b`), whose
-        // one form is not this union (module `xor`), as `Connect::zipped` finds them. Both tests
-        // take constant time when they fail; when the second fits it joins the two sets of atoms
-        // (`xor::join`), as `zipped` does.
-        Part::zip_at_once(&a, &b, Op::Or)
-            .or_else(|| xor::xor_of(&a, &b, Op::Or))
-            .unwrap_or_else(|| Part::expr(Form::Or(a, b)))
+        // The meets may be a leaf, the two halves of an exclusive or (`a&!b`, `!a&b`), whose one
+        // form is not this union (module `xor`), or two lists that `zip_chain` joins as lists
+        // (`a&(a|b) | !a&b` is `a|b`; cross-review of PERF-xor-shape-free, round 2, Sol X2-F4),
+        // as `Connect::zipped` finds them. `zipped` itself is not called on the meets: its rules
+        // for choices can find this choice again. The first two tests take constant time when
+        // they fail; when the second fits it joins the two sets of atoms (`xor::join`), in the
+        // work of `set::symmetric`. The third is the call `zipped` makes on two lists, at its cost.
+        if let Some(z) = Part::zip_at_once(&a, &b, Op::Or).or_else(|| xor::xor_of(&a, &b, Op::Or)) {
+            return z;
+        }
+        if let (Part::Bdd(x), Part::Bdd(y)) = (&a, &b)
+            && let Some(z) = x.zip_chain(y, Op::Or)
+        {
+            return Part::Bdd(z);
+        }
+        Part::expr(Form::Or(a, b))
     }
 
     /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
@@ -2512,9 +2522,12 @@ mod xor {
     //! `O(log n)` expected new expressions per literal added, `O(1)` each; its digest and form
     //! followed the tree's shape, so the set's priorities had to be a fixed hash, and a program
     //! could choose literals whose set is a path, `O(n)` per literal. Used: one expression per set,
-    //! `O(1)` plus the set's `O(log n)` expected per literal added, its digest the set's sum, so
-    //! the priorities are drawn per run and the depth bound of Seidel and Aragon ("Randomized
-    //! search trees", Algorithmica 16, 1996) holds for every program. Given up: reading the whole
+    //! `O(1)` plus the set's depth per literal added, its digest the set's sum, so the priorities
+    //! are drawn per run and no longer a fixed hash: every node's expected depth is at most
+    //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica 16,
+    //! 1996, for 5-wise independent priorities; module `set`), with no condition on the hash
+    //! beyond `T0`, the literals sharing a digest, which a program can still make large (plan row
+    //! PERF-set-tied-digest-depth). Given up: reading the whole
     //! form of an exclusive or of `n` atoms makes its `n - 1` nested ones, a removal from a set
     //! each, `O(n log n)` expected, where the tree's form was `O(n)`.
 
@@ -2542,11 +2555,14 @@ mod xor {
         x.1 != y.1 && set::same(&x.0, &y.0)
     }
 
-    /// The exclusive or of `x` and `y`.
-    fn join<A: Literal>(x: &Tag<A>, y: &Tag<A>) -> Part<A> {
+    /// The exclusive or of `x` and `y`, complemented when `flip` holds. The complement is made
+    /// here, not by `not` on the result: the node made holds its complement and the complement
+    /// holds it only weakly, so `join(..).not()` returned a node whose complement was dropped,
+    /// and a later `not` made it again (cross-review of PERF-xor-shape-free, round 2, Sol X2-F3).
+    fn join<A: Literal>(x: &Tag<A>, y: &Tag<A>, flip: bool) -> Part<A> {
         Part::xor(
             set::symmetric(&Some(x.0.clone()), &Some(y.0.clone())),
-            x.1 != y.1,
+            (x.1 != y.1) != flip,
         )
     }
 
@@ -2713,8 +2729,7 @@ mod xor {
             return None;
         }
         // `u&v | !u&!v` is `!(u ^ v)`; `(u|v) & (!u|!v)` is `u ^ v`.
-        let x = join(&u, &v);
-        Some(if op == Op::Or { x.not() } else { x })
+        Some(join(&u, &v, op == Op::Or))
     }
 
     /// The choice `c&x | !c&y` as an exclusive or in its one form, when `y` is `!x` and `c` and `x`
@@ -2724,7 +2739,7 @@ mod xor {
         if !opposite(&tx, &ty) {
             return None;
         }
-        Some(join(&c.xor_tag()?, &tx).not())
+        Some(join(&c.xor_tag()?, &tx, true))
     }
 }
 mod list {

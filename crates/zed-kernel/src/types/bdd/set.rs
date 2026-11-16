@@ -598,10 +598,18 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// The literals of `x` whose atom is not in `y`, or `None` when an atom is in both, taken in
 /// one and not in the other. Each node of `y` from the root down splits the part of `x` it
 /// covers at its atom, after removing the literal on that atom, and the two sides are joined
-/// past the node; two subtrees that are one node leave nothing. For `m <= n` literals,
-/// the expected work is `O(m log(n/m + 1))` in all, its splits and joins included (Blelloch,
-/// Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016); the walk keeps a stack
-/// of its own.
+/// past the node; two subtrees that are one node leave nothing. The walk keeps a stack of its
+/// own. For `m <= n` literals the expected work is `O(m (1 + D))`, `D` the bound on a node's
+/// expected depth in module `priority` for `N = n + m` keys (`O(log N)` when no two keys share
+/// a point): there are at most `m` splits, one at each node of `y`; a split or a removal walks
+/// one search path of a treap whose keys are a range of what is left of `x`, whose ancestors
+/// are among those in the treap of all that is left, so `1 + D` in expectation; and a join walks
+/// the facing spines of its two sides, two paths of the treap of at most `N` keys it makes.
+/// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016) prove
+/// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 5-wise
+/// independent draw of module `priority` that is not proved, and it was measured with a
+/// constant near 4 (cross-review of PERF-xor-shape-free, round 2; plan row
+/// PROOF-join-work-limited-independence).
 pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Tree<A>> {
     /// A pair of subtrees whose difference is wanted, or the join of the last two differences.
     enum Step<A: Atom> {
@@ -655,9 +663,16 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // removes each of the smaller set's `m` literals in the larger's `n`, `O(m log n)` expected, and
 // makes `O(log n)` nodes for each literal, most of them dropped at the next. Used: the join-based
 // set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016),
-// difference with the literals of `y` kept: `O(m log(n/m + 1))` expected work in all, its splits
-// and joins included, so `O(n)` when `m` is near `n`, and the nodes made are
-// those of the result's changed paths. For `m = 1` both make one path, and the one literal is
+// difference with the literals of `y` kept, and the nodes made are those of the result's changed
+// paths. Proved for the draw of module `priority`: `O(m (1 + D))` expected work in all, its splits
+// and joins included, `D` the bound on a node's expected depth there for `N = n + m` keys, so
+// `O(m log N)` when no two keys share a point (each split, removal or join walks paths of treaps
+// of at most `N` keys; cross-review of PERF-xor-shape-free, round 2, Opus §4). Blelloch,
+// Ferizovic and Sun's `O(m log(n/m + 1))`, `O(n)` when `m` is near `n`, is proved for priorities
+// drawn independently and identically, not for the 5-wise independent draw; measured with a
+// constant near 4 under it (plan row PROOF-join-work-limited-independence). The proved bound is
+// of the naive method's order, so the gain over it, in work and in nodes made, is measured, not
+// proved (COMPLEXITY.md K123). For `m = 1` both make one path, and the one literal is
 // added or removed directly, which the step stack would make about 17% dearer (parity, 4.55G
 // against 3.89G instructions at 8,192 literals).
 pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
