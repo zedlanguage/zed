@@ -3045,19 +3045,27 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Records in [`Ck::default_ints`] the ints the default `d` of the parameter `p` may be,
-    /// `t` being the type its check gave. A default that reads no name has one value at every
-    /// call, among the ints its facts give, so a call that leaves the parameter out may read
+    /// `t` being the type its check gave, so a call that leaves the parameter out may read
     /// them for a range need ([`Self::floors_at`]). Only a default whose type is a nonempty
-    /// part of `int` is recorded, so its facts cover every value it may take. One that reads
-    /// a name is not recorded: its value differs from call to call, and such a call stays
-    /// refused.
+    /// part of `int` is recorded, so its facts cover every value it may take.
+    ///
+    /// Proof that the default's value at every call lies in the recorded ints, also for a
+    /// default that reads names, as `x: int[0..=9] = h(y: 2)` or `x: int[0..=3] = y`
+    /// (TEST-default-ints-from-calls): [`Ck::known`] reads a name as top unless it is a
+    /// parameter declared with a range, whose ints hold at every call since each call is
+    /// checked to pass one in it ([`Self::floors_at`], also where it takes its default), or a
+    /// `name = value` binder, which has one value, read from that value; a call as its
+    /// callee's result hull ([`Ck::call_hull`]), which holds every int the callee gives for
+    /// arguments the checker accepts; an `if` as the join of both branches; anything else as
+    /// top. So each read covers the value the default takes at any call, whichever names it
+    /// reads, and a set that is not shown inside the range leaves the call refused.
     ///
     /// Complexity tradeoff: O(1) expected per default, one hash insert, and at each call that
     /// leaves the parameter out one lookup and one containment test, linear in the intervals
     /// of the default's set. The naive way reads the default's text again at each such call,
     /// O(d) per call for a default of d nodes (COMPLEXITY.md, RANGE-default-in-range).
     fn note_default_ints(&mut self, p: &SParam, d: &'a Expr, t: &Ty) {
-        let Some((binder, index, true)) = p.default else {
+        let Some((binder, index, _)) = p.default else {
             return;
         };
         if t.is_empty() || !self.subtype(t, &Ty::carrier(Carrier::Int)) {
@@ -3076,6 +3084,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = &s.tys[s.i];
             let d = p.default.as_ref().expect("a default");
             let what = format!("the default of `{}`", p.name);
+            // At a declared type of one numeric carrier, a default whose type is a class of
+            // generic literals alone, as `1 + 2` or `if c { 1 } else { 2 + 3 }` (a function's
+            // defaults are checked inside it, where such an operation makes a class of its
+            // own), takes that carrier, as a lone literal does ([`Self::expr_at`]): DESIGN.md
+            // L1.26a, an integer literal is that integer "in whichever numeric carrier its use
+            // needs", and the use is the parameter (FAIL-default-literal-sum-carrier). The
+            // class is restricted to the carrier, as an argument's class is at a parameter of
+            // it ([`Self::flow`]), so its literals are read at it; a class that cannot take the
+            // carrier is left as it is and refused below. It takes the carrier before its ints
+            // are recorded, so `x: int[0..=3] = 1 + 2` is read as the int 3. Cost: O(1) per
+            // default, one read of its type's first two pieces ([`Ck::class_of_ty`]) and one
+            // restriction of a class's mask.
+            let dt = match (class, t.numeric_carrier(), self.class_of_ty(&dt)) {
+                (None, Some(c), Some(k))
+                    if self.classes[k].generic && self.restrict(k, c.bit(), &what, d.span) =>
+                {
+                    Ty::carrier(c)
+                }
+                _ => dt,
+            };
             self.note_default_ints(&s.params[s.i], d, &dt);
             match class {
                 Some(k) => {
@@ -3084,8 +3112,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let shown = self.show(t);
                         let mut notes = self.derive(&[d.span]);
                         notes.extend(self.reasons(t));
-                        let both =
-                            format!("{} | {}", self.show_in_union(t), self.text_in_union(&dt));
+                        // One union of both types, so a member of both is written once.
+                        let both = self.show(&t.union(&dt));
                         let dt = self.text(&dt);
                         notes.extend(default_repairs(&p.name, &dt, &shown, &both, d.span));
                         self.error_with(
@@ -3101,8 +3129,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => {
                     if !self.subtype(&dt, t) {
                         let why = dt.refused(t);
-                        let both =
-                            format!("{} | {}", self.text_in_union(t), self.text_in_union(&dt));
+                        // One union of both types, so a member of both is written once.
+                        let both = self.show(&t.union(&dt));
                         let (dt, t) = (self.text(&dt), self.text(t));
                         let menu = default_repairs(&p.name, &dt, &t, &both, d.span);
                         self.error_offering(
@@ -13682,11 +13710,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 chain
             };
             let Some(a) = args.get(*param).and_then(Option::as_ref) else {
-                // A parameter left out takes its default. One that reads no name has the ints
-                // recorded where the function was checked ([`Ck::default_ints`]): the call
-                // meets the need when they are some ints and all lie in the domain, as
-                // `g(x: int[0..=3] = 2)` called `g()` does (RANGE-default-in-range). Any other
-                // default's value the call does not show, and the call is refused.
+                // A parameter left out takes its default, whose ints were recorded where the
+                // function was checked ([`Ck::default_ints`]): the call meets the need when they
+                // are some ints and all lie in the domain, as `g(x: int[0..=3] = 2)` called
+                // `g()` does (RANGE-default-in-range). Any other default's value the call does
+                // not show, and the call is refused.
                 let default = sig.params.get(*param).and_then(|p| p.default);
                 let shown_in = default
                     .and_then(|(binder, index, _)| self.default_ints.get(&(binder, index)))

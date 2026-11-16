@@ -4332,15 +4332,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             .text_spelled(true, &|v| self.spelling(v))
     }
 
-    /// [`Self::show`] as one operand of a union, `T | U`: a function in it is parenthesized.
-    fn show_in_union(&self, t: &Ty) -> String {
-        let t = &self.as_literals(&self.settled(t));
-        match self.masks(t) {
-            masks if masks.is_empty() => t.text_spelled(true, &|v| self.spelling(v)),
-            masks => show_with(t, &masks, &|v| self.spelling(v)),
-        }
-    }
-
     /// The text of `s` in a message.
     fn sig_text(&self, s: &Sig) -> String {
         s.solved_with(&|v| self.stale(v)).to_string()
@@ -10833,7 +10824,7 @@ impl<'a> Ck<'_, 'a> {
     /// with the hull; the names of a cycle are bound to no function (recursion is rejected
     /// until step L6), so a call of one reads as any int. A call that leaves out a parameter
     /// with a default gives an int, the parameter taking its default; such a call is accepted
-    /// only where the default reads no name and its ints all lie in the range (`floors_at`
+    /// only where the ints the checker reads of the default all lie in the range (`floors_at`
     /// with [`Ck::default_ints`], RANGE-default-in-range), so the parameter is in its range
     /// there too. Any other call that leaves parameters out gives a function, which holds no
     /// int, so the hull holds each of its ints.
