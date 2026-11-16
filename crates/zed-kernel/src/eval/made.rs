@@ -15,10 +15,11 @@
 //! this file imports nothing from eval.rs and the two make no import cycle (step S.1f, row
 //! S1F-kernel-eval-made-cycle).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::term::{FixKind, Prim, Shared, Term};
+use crate::term::walk::{Binds, Kid, kids};
+use crate::term::{Prim, Shared, Term};
 use crate::value::{Fields, HeldFamily, Value};
 
 /// A value a run gives, functions and all: its nodes, each part before the value that holds
@@ -87,101 +88,173 @@ pub enum MadeShape {
     Family(HeldFamily),
 }
 
-/// The names a body reads, each once, sorted: every variable of the body, those it binds
-/// itself too. A name the body binds and its environment binds as well is a capture it never
-/// reads, which costs a binding of a value that exists.
-// Complexity tradeoff: the naive set is the free names of the body, which needs every binder
-// of the calculus (a lambda's, a `let`'s, a `fam`'s, a `fix`'s and the patterns') walked with a
-// scope. Used: every variable, a superset of the free ones, O(the body's distinct subterms)
-// with a visited set over shared subterms, since a term the back end built is a graph that a
-// walk of every path would cross exponentially often. Tradeoff: a name bound in the body and
-// in the environment is captured though never read.
-pub(super) fn reads(body: &Shared) -> Vec<Arc<str>> {
-    let mut names: HashSet<Arc<str>> = HashSet::new();
-    let mut seen: HashSet<u64> = HashSet::new();
-    let mut stack: Vec<&Term> = Vec::new();
-    // The shared subterms of the term in hand, entered after it unless entered before.
-    let mut kids: Vec<&Shared> = Vec::new();
-    seen.insert(body.id());
-    stack.push(body);
-    while let Some(t) = stack.pop() {
-        let mut push = |s| kids.push(s);
-        match t {
-            Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => {}
-            Term::Var(x) => {
-                names.insert(x.clone());
-            }
-            Term::Lam(_, b) => push(b),
-            Term::App(f, args) => {
-                push(f);
-                stack.extend(args.iter());
-            }
-            Term::Prim(_, args) => stack.extend(args.iter()),
-            Term::Let(_, e, b) => {
-                push(e);
-                push(b);
-            }
-            Term::If(c, a, b) => {
-                push(c);
-                push(a);
-                push(b);
-            }
-            Term::Match(s, arms) => {
-                push(s);
-                stack.extend(arms.iter().map(|(_, t)| t));
-            }
-            Term::Fam { domain, body, .. } => {
-                push(domain);
-                push(body);
-            }
-            Term::Reindex { family, kf, vf, .. } => {
-                push(family);
-                push(kf);
-                push(vf);
-            }
-            Term::Discard { family, sel } => {
-                push(family);
-                push(sel);
-            }
-            Term::Fold {
-                family,
-                op,
-                identity,
-                ..
-            } => {
-                push(family);
-                push(op);
-                if let Some(i) = identity {
-                    push(i);
+/// The names a lambda body reads, each once, sorted: R(body), every free name of the body and
+/// perhaps more. The body's region (its parts outside its lambdas) is read once with a scope,
+/// the count of each name the binders around the part in hand bind ([`kids`] gives each
+/// binder's names, as the evaluator binds them). A part held in a node the region reaches once
+/// is read under its one parent's scope; a node reached twice or more is read once, apart,
+/// under no scope. A variable is kept unless its name is in scope, and a lambda `ps -> b`
+/// adds R(b) less `ps` and less the names in scope at the lambda.
+///
+/// R holds every free name: a free occurrence of `x` is a path from the body to it on which
+/// nothing binds `x`. The scope a part is read under holds only binders on the chain of
+/// once-reached nodes above it, and every path to the part runs through that chain, so a name
+/// in that scope is bound on every path; by induction on the nesting of lambdas, the same
+/// holds of R(b). On a region with no shared node R is exact; at a node reached twice the
+/// names the binders above it bind are kept, though bound, as the evaluator then binds a
+/// name to a value that exists. R(body) is kept on the body ([`Shared::reads_memo`]), found
+/// once for the life of the term, so each lambda body is read once whatever the number of
+/// runs and closures made of it.
+// Complexity tradeoff: the exact free names of each shared node, kept per node, cost O(n²) on a
+// chain of n `let`s whose last body reads them all, and taking them along each path instead
+// crosses a shared graph exponentially often. The former set was every variable of the body:
+// it kept every name a `let`, a pattern or a `fam` binds inside the body, so a closure of a
+// function whose body binds n names (`x * i` is elaborated to a `let` of `x`) looked up n
+// names each time it was made, Θ(n²) for n test rows that each make it
+// (FAIL-elab-rows-reaching-ratio); and its nested lambdas' bodies were walked again for each
+// enclosing body and on each run, Θ(n²) per run for n nested lambdas
+// (FAIL-map-nest-bench-ratio-again). Used: per lambda body, one pass counting the references
+// to each shared node of the region and one pass reading it with the scope, O(its distinct
+// parts + the names its binders bind), and per nested lambda O(r log p) for r names and p
+// parameters from its memo; in all O(Σ over lambda bodies of (region + Σ r log p)), where a
+// region shared by k lambda bodies is read k times. Tradeoff: a name bound above a node
+// reached twice is kept (exact by the common part of the parents' scopes would need a meet of
+// scopes per shared node), and the memo costs a cell on each shared node.
+pub(super) fn reads(body: &Shared) -> Arc<[Arc<str>]> {
+    if let Some(r) = body.reads_memo().get() {
+        return r.clone();
+    }
+    // A lambda body to enter, or one whose nested lambdas' sets are all found, with the names
+    // of its region and its nested lambdas. Terms are acyclic (a `Shared` is immutable once
+    // built), so a body's `Exit` comes after every nested body entered from it has its memo.
+    enum Job<'a> {
+        Enter(&'a Shared),
+        Exit(&'a Shared, Region<'a>),
+    }
+    let mut entered: HashSet<u64> = HashSet::new();
+    let mut jobs = vec![Job::Enter(body)];
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Enter(b) => {
+                if b.reads_memo().get().is_some() || !entered.insert(b.id()) {
+                    continue;
                 }
+                let r = region(b);
+                let lams = r.lams.clone();
+                jobs.push(Job::Exit(b, r));
+                jobs.extend(lams.into_iter().map(Job::Enter));
             }
-            Term::Fix {
-                init, step, kind, ..
-            } => {
-                push(init);
-                push(step);
-                // A lattice ascent's join is a function of its scope too (row
-                // CLOSURE-captures-read-only: a name only it reads was missed).
-                if let FixKind::Lattice { join } = kind {
-                    push(join);
-                }
-            }
-            Term::Gen {
-                init, step, guard, ..
-            } => {
-                push(init);
-                push(step);
-                push(guard);
-            }
-            Term::Push(_, v) => push(v),
-        }
-        for s in kids.drain(..) {
-            if seen.insert(s.id()) {
-                stack.push(s);
+            Job::Exit(b, r) => {
+                let mut names: Vec<_> = scoped_names(b, &r.refs).into_iter().collect();
+                names.sort();
+                // Another thread may have set it first: R is a function of the term, so the
+                // two sets are equal.
+                let _ = b.reads_memo().set(names.into());
             }
         }
     }
-    let mut names: Vec<_> = names.into_iter().collect();
-    names.sort();
+    body.reads_memo()
+        .get()
+        .expect("the body's own `Exit` sets it")
+        .clone()
+}
+
+/// A lambda body's region, its parts outside its lambdas: the number of references the region
+/// makes to each node it reaches, and the bodies of its lambdas.
+struct Region<'a> {
+    refs: HashMap<u64, u32>,
+    lams: Vec<&'a Shared>,
+}
+
+/// The region of `body` ([`Region`]), each node read once. [`kids`] lists every part, a
+/// lattice `fix`'s join included (row CLOSURE-captures-read-only: a name only it reads was
+/// missed).
+fn region(body: &Shared) -> Region<'_> {
+    let mut refs: HashMap<u64, u32> = HashMap::new();
+    let mut lams = Vec::new();
+    let mut stack: Vec<&Term> = vec![body];
+    while let Some(t) = stack.pop() {
+        if let Term::Lam(_, b) = t {
+            lams.push(b);
+            continue;
+        }
+        kids(t, |k, _| match k {
+            Kid::Inline(u) => stack.push(u),
+            Kid::Shared(s) => {
+                let n = refs.entry(s.id()).or_insert(0);
+                *n += 1;
+                if *n == 1 {
+                    stack.push(s);
+                }
+            }
+        });
+    }
+    Region { refs, lams }
+}
+
+/// R(body) as [`reads`] defines it, given the references `refs` of its region and the sets of
+/// its lambdas' bodies, each read from its memo.
+fn scoped_names<'a>(body: &'a Shared, refs: &HashMap<u64, u32>) -> HashSet<Arc<str>> {
+    // A part to read, or the names a binder binds over the part read between the two.
+    enum Step<'a> {
+        Read(&'a Term),
+        Bind(Binds<'a>),
+        Unbind(Binds<'a>),
+    }
+    let mut names: HashSet<Arc<str>> = HashSet::new();
+    let mut scope: HashMap<&'a str, u32> = HashMap::new();
+    // The nodes reached twice or more, each read once under no scope.
+    let mut apart: Vec<&'a Term> = vec![body];
+    let mut queued: HashSet<u64> = HashSet::new();
+    let mut steps: Vec<Step<'a>> = Vec::new();
+    let mut ps: Vec<&'a Arc<str>> = Vec::new();
+    while let Some(root) = apart.pop() {
+        debug_assert!(scope.is_empty(), "each binder is undone after its part");
+        steps.push(Step::Read(root));
+        while let Some(step) = steps.pop() {
+            match step {
+                Step::Bind(b) => b.each(|x| *scope.entry(&**x).or_insert(0) += 1),
+                Step::Unbind(b) => b.each(|x| {
+                    let n = scope.get_mut(&**x).expect("bound before");
+                    *n -= 1;
+                    if *n == 0 {
+                        scope.remove(&**x);
+                    }
+                }),
+                Step::Read(Term::Var(x)) => {
+                    if !scope.contains_key(&**x) {
+                        names.insert(x.clone());
+                    }
+                }
+                Step::Read(Term::Lam(xs, l)) => {
+                    let inner = l.reads_memo().get().expect("a nested body is found first");
+                    ps.clear();
+                    ps.extend(xs.iter());
+                    ps.sort();
+                    names.extend(
+                        (inner.iter())
+                            .filter(|y| !scope.contains_key(&***y) && ps.binary_search(y).is_err())
+                            .cloned(),
+                    );
+                }
+                Step::Read(t) => kids(t, |k, b| {
+                    let u = match k {
+                        Kid::Inline(u) => u,
+                        Kid::Shared(s) if refs[&s.id()] == 1 => &**s,
+                        Kid::Shared(s) => {
+                            if queued.insert(s.id()) {
+                                apart.push(s);
+                            }
+                            return;
+                        }
+                    };
+                    // Popped in reverse: the names are bound, the part read, then unbound.
+                    steps.push(Step::Unbind(b));
+                    steps.push(Step::Read(u));
+                    steps.push(Step::Bind(b));
+                }),
+            }
+        }
+    }
     names
 }

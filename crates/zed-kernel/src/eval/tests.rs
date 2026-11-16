@@ -422,7 +422,7 @@ fn a_run_under_globals_given_an_evaluator_set_to_stop_panics() {
 #[test]
 fn a_closure_holds_only_the_values_its_body_reads() {
     use super::{Closure, Drops, HashMap, Machine, Rc, V, bind};
-    use crate::term::build::{lam, var};
+    use crate::term::build::{app, lam, var};
     let unit = crate::Shared::new(crate::Term::Lit(Value::Int(0)));
     // The lambda, and whether `a` and `b` are kept. The terms outlive the closures made of them.
     let cases = [
@@ -430,6 +430,15 @@ fn a_closure_holds_only_the_values_its_body_reads() {
         (lam(&["x"], lam(&["y"], var("a"))), true, false),
         (lam(&["x"], var("b")), false, true),
         (lam(&["x"], var("x")), false, false),
+        // A nested lambda's parameter is not read from the scope (rows
+        // FAIL-map-nest-bench-ratio-again, FAIL-elab-rows-reaching-ratio: every variable of
+        // the body was kept before), unless the outer body reads the name itself.
+        (lam(&["x"], lam(&["a"], var("a"))), false, false),
+        (
+            lam(&["x"], app(lam(&["a"], var("a")), vec![var("a")])),
+            true,
+            false,
+        ),
     ];
     let mut ev = super::Evaluator::new(super::World::new());
     let drops: Rc<Drops<'_>> = Rc::default();
@@ -453,7 +462,6 @@ fn a_closure_holds_only_the_values_its_body_reads() {
             short_paths: Vec::new(),
             failed: None,
             vals: Vec::new(),
-            reads: HashMap::new(),
         };
         let env = bind(None, "a", V::Closure(a.clone()), None);
         let env = bind(env, "b", V::Closure(b.clone()), None);
@@ -518,6 +526,151 @@ fn a_closure_that_keeps_what_it_reads_runs() {
     );
     let want = Value::Family(Family::set([1i64, 2]));
     assert_eq!(ev.run(&joined).expect("a set"), want);
+}
+
+/// The names a lambda body reads ([`super::made::reads`]) in a nest of lambdas, each reading
+/// its own parameter and that of the lambda around it, are those two, at every depth: a nested
+/// lambda's parameters are taken out of what it adds to the bodies around it. Every variable
+/// of the body was kept before, `n - i` names at depth `i`, Θ(n²) in all (row
+/// FAIL-map-nest-bench-ratio-again). The nest is deep enough that a walk by recursion would
+/// need a stack of its depth. The sets are kept on the bodies, found once: a second call gives
+/// the same set, and a body changed in place has its set found again.
+#[test]
+fn the_names_a_nest_of_lambdas_reads_are_its_free_names() {
+    use crate::term::build::{lam, lit, prim, var};
+    use crate::term::{Prim, Shared, Term};
+    let n = 10_000;
+    let q = |i: usize| format!("q{i}");
+    let mut body = lit(0i64);
+    for i in (0..n).rev() {
+        let outer = if i == 0 { lit(0i64) } else { var(&q(i - 1)) };
+        body = lam(&[&q(i)], prim(Prim::Tuple, vec![var(&q(i)), outer, body]));
+    }
+    let Term::Lam(_, top) = &body else {
+        panic!("a lambda")
+    };
+    let names = |b: &Shared| -> Vec<String> {
+        super::made::reads(b)
+            .iter()
+            .map(|x| x.to_string())
+            .collect()
+    };
+    assert_eq!(names(top), ["q0"]);
+    // Every body below: its own parameter and the one around it.
+    let mut b = top.clone();
+    for i in 1..n {
+        let Term::Prim(_, parts) = &*b else {
+            panic!("a tuple")
+        };
+        let Term::Lam(_, inner) = &parts[2] else {
+            panic!("a lambda")
+        };
+        b = inner.clone();
+        let mut want = [q(i - 1), q(i)];
+        want.sort();
+        assert_eq!(names(&b), want);
+    }
+    // Kept: a second call gives the set found, not a new one.
+    let mut top = top.clone();
+    assert!(std::sync::Arc::ptr_eq(
+        &super::made::reads(&top),
+        &super::made::reads(&top)
+    ));
+    // Changed in place: found again.
+    *Shared::make_mut(&mut top) = var("z");
+    assert_eq!(names(&top), ["z"]);
+}
+
+/// The names a lambda body reads ([`super::made::reads`]) leave out those its own binders bind
+/// where they bind them, as the evaluator binds them: a `let`'s name over its body only, a
+/// `match` arm's pattern names over the arm, a `fam`'s key over its body, a definedness `fix`'s
+/// `this` and `key` over its step; a lattice `fix` binds nothing over its step or join. A
+/// chain of n `let`s, each read inside its own body, reads only the name the first is bound to
+/// (`x * i` is elaborated to such a `let`): every `let`'s name was kept before, and each of n
+/// test rows that made the function's closure looked all n up (row
+/// FAIL-elab-rows-reaching-ratio). A node reached twice is read under no scope, so a name bound
+/// above it is kept, never a free one missed.
+#[test]
+fn the_names_a_body_reads_leave_out_those_its_binders_bind() {
+    use crate::term::build::{let_, lit, prim, var};
+    use crate::term::{Evidence, FixKind, Pattern, Prim, Shared, Term};
+    let names = |t: Term| -> Vec<String> {
+        let b = Shared::new(t);
+        super::made::reads(&b)
+            .iter()
+            .map(|x| x.to_string())
+            .collect()
+    };
+    let add = |a: Term, b: Term| prim(Prim::Add, vec![a, b]);
+    // A `let`'s name is bound over its body, not over its value.
+    assert_eq!(names(let_("k", var("x"), var("k"))), ["x"]);
+    assert_eq!(names(let_("k", var("k"), var("k"))), ["k"]);
+    assert_eq!(
+        names(add(let_("k", var("x"), var("k")), var("k"))),
+        ["k", "x"]
+    );
+    // A chain of n `let`s, each read inside its own body.
+    let n = 10_000;
+    let mut chain = var("x");
+    for i in (0..n).rev() {
+        let k = format!("$k{i}");
+        chain = let_(&k, var("x"), add(var(&k), chain));
+    }
+    assert_eq!(names(chain), ["x"]);
+    // A `match` arm's pattern binds over the arm, nested patterns too, not over the scrutinee or
+    // the other arms.
+    let pat = Pattern::Tuple(vec![
+        Pattern::Bind("p".into()),
+        Pattern::Atom("a".into(), vec![Pattern::Bind("q".into())]),
+    ]);
+    let m = Term::Match(
+        Shared::new(var("p")),
+        vec![
+            (pat, add(var("p"), add(var("q"), var("r")))),
+            (Pattern::Wild, var("q")),
+        ],
+    );
+    assert_eq!(names(m), ["p", "q", "r"]);
+    // A `fam`'s key over its body, not over its domain.
+    let fam = |d: Term| Term::Fam {
+        domain: Shared::new(d),
+        var: "i".into(),
+        body: Shared::new(add(var("i"), var("y"))),
+    };
+    assert_eq!(names(fam(var("d"))), ["d", "y"]);
+    assert_eq!(names(fam(var("i"))), ["i", "y"]);
+    // A definedness `fix` binds `this` and `key` over its step; a lattice one binds nothing.
+    let fix = |kind| Term::Fix {
+        init: Shared::new(var("this")),
+        step: Shared::new(add(var("this"), var("k"))),
+        this: "this".into(),
+        key: "k".into(),
+        kind,
+        ev: Evidence::new(),
+    };
+    assert_eq!(names(fix(FixKind::Definedness)), ["this"]);
+    let lattice = FixKind::Lattice {
+        join: Shared::new(var("k")),
+    };
+    assert_eq!(names(fix(lattice)), ["k", "this"]);
+    // A node reached twice, once under a `let` of its name and once not: kept.
+    let shared = Shared::new(var("k"));
+    let twice = Term::Let(
+        "k".into(),
+        Shared::new(lit(0i64)),
+        Shared::new(Term::If(
+            Shared::new(var("c")),
+            shared.clone(),
+            shared.clone(),
+        )),
+    );
+    assert_eq!(names(twice), ["c", "k"]);
+    let both = Term::If(
+        Shared::new(var("c")),
+        shared.clone(),
+        Shared::new(Term::Let("k".into(), Shared::new(lit(0i64)), shared)),
+    );
+    assert_eq!(names(both), ["c", "k"]);
 }
 
 /// The run of [`a_run_under_globals_given_an_evaluator_set_to_stop_panics`] on a fresh

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::deep;
 
@@ -432,6 +432,12 @@ pub struct Shared(Arc<Held>);
 struct Held {
     id: Id,
     term: Term,
+    /// The names the term reads, as the evaluator finds them for a lambda body
+    /// (`eval/made.rs`'s `reads`), found once for the life of the subterm rather than
+    /// once per run: a function a test calls is made once per row, each row a run of its own.
+    /// It is a function of `term` alone, so a copy may keep it, and [`Shared::make_mut`],
+    /// which changes `term`, clears it.
+    reads: OnceLock<Arc<[Arc<str>]>>,
 }
 
 impl Shared {
@@ -440,7 +446,13 @@ impl Shared {
         Shared(Arc::new(Held {
             id: fresh_id(),
             term: t,
+            reads: OnceLock::new(),
         }))
+    }
+
+    /// The memo of the names the term reads (see [`Held`]'s `reads`).
+    pub(crate) fn reads_memo(&self) -> &OnceLock<Arc<[Arc<str>]>> {
+        &self.0.reads
     }
 
     /// The id of the subterm: copies share it, and no other subterm has it. Ids are only
@@ -454,6 +466,7 @@ impl Shared {
     pub fn make_mut(this: &mut Shared) -> &mut Term {
         let held = Arc::make_mut(&mut this.0);
         held.id = fresh_id();
+        held.reads = OnceLock::new();
         &mut held.term
     }
 

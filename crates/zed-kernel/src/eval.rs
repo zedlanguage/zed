@@ -725,7 +725,6 @@ impl Evaluator {
             short_paths: Vec::new(),
             failed: None,
             vals: Vec::new(),
-            reads: HashMap::new(),
         };
         let out = machine.run(term, env);
         let ran = out.is_ok();
@@ -1149,9 +1148,6 @@ struct Machine<'e, 't> {
     failed: Option<usize>,
     /// Spare room for the data arguments of a primitive ([`Self::prim`]), empty between steps.
     vals: Vec<Value>,
-    /// The names each lambda body the run has made a closure of reads ([`made::reads`]), by
-    /// the body's id, found the first time.
-    reads: HashMap<u64, Rc<[Arc<str>]>>,
 }
 
 impl<'t> Machine<'_, 't> {
@@ -1299,29 +1295,22 @@ impl<'t> Machine<'_, 't> {
     // Complexity tradeoff: the naive closure keeps `env` whole, O(1) per closure since `env` is
     // a persistent map, but every value in scope then lives as long as the closure, read or
     // not: a closure made beside a large value it never reads keeps that value. Used: the
-    // names the body reads are found once per body per run, O(the body's distinct subterms)
-    // ([`made::reads`]), kept by the body's id, and each closure copies the bindings of those
-    // names, O(r log n) for r names read in a scope of n, into a map of r entries, O(r)
-    // memory. Tradeoff: a closure costs O(r log n) where it cost O(1). A map restricted in
-    // place would share `env`'s nodes and so keep its other values alive, which is what this
-    // removes. The names are every variable of the body, a superset of the free ones (see
-    // [`made::reads`]): a name the body binds itself, by a parameter, a `let`, a pattern, a
-    // `fam`'s key or a `fix`'s names, that `env` also binds is kept though never read. The
-    // elaborator names each binder of a program apart (zedc-elab `Elab::new`), so in a
-    // program it elaborated no inner binder meets an outer name; that this holds for every
-    // binder it adds itself is not proved, and a term built by hand may shadow. The exact set
-    // of free names of a term that shares subterms costs, by sets kept per shared subterm,
-    // O(n²) on a chain of n `let`s whose last body reads them all (zedc-stage `Sets` keeps
-    // that down by hash-consed tries with no proved bound), so the superset is kept. Test
+    // names the body reads are found once per body for the life of the term ([`made::reads`],
+    // kept on the body), and each closure copies the bindings of those names, O(r log n) for
+    // r names read in a scope of n, into a map of r entries, O(r) memory. Tradeoff: a closure
+    // costs O(r log n) where it cost O(1). A map restricted in place would share `env`'s nodes
+    // and so keep its other values alive, which is what this removes. The names are a
+    // superset of the free ones (see [`made::reads`]): the lambda's own parameters, which
+    // `env` may also bind, and a name bound above a node the body shares, that `env` also
+    // binds, are kept though never read from `env`. The exact set of free names of a term
+    // that shares subterms costs, by sets kept per shared subterm, O(n²) on a chain of n
+    // `let`s whose last body reads them all (zedc-stage `Sets` keeps that down by hash-consed
+    // tries with no proved bound), so at a shared node the superset is kept. Test
     // `eval::tests::a_closure_holds_only_the_values_its_body_reads`; scaling benchmarks
     // `l01_34_memory::bench::closures_made_in_a_scope_of_n_names_scale` and
     // `closures_kept_from_a_scope_of_n_names_scale`.
     fn captures(&mut self, body: &'t Shared, env: &Env<'t>) -> Env<'t> {
-        let names = self
-            .reads
-            .entry(body.id())
-            .or_insert_with(|| made::reads(body).into())
-            .clone();
+        let names = made::reads(body);
         names.iter().fold(None, |out, x| match env::entry(env, x) {
             Some((name, b)) => env::insert(out, name, b.clone()),
             None => out,
@@ -3239,11 +3228,7 @@ impl<'t> Machine<'_, 't> {
                                 out.push(i);
                                 continue;
                             }
-                            let names = self
-                                .reads
-                                .entry(c.body.id())
-                                .or_insert_with(|| made::reads(c.body).into())
-                                .clone();
+                            let names = made::reads(c.body);
                             let mut caps = Vec::new();
                             let mut vals = Vec::new();
                             for x in names.iter() {

@@ -4079,8 +4079,16 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A `HashMap` from a shared subterm's id to the names its body reads, filled on first use and kept for the run, written through `&mut self` | `Machine::captures`, `Machine::made` (`Machine.reads`) | Identity (gap 1), mutation (gap 11) | The names read kept beside each lambda term when it is built, or a memo table threaded through the run |
+| A `HashMap` from a shared subterm's id to the names its body reads, filled on first use and kept for the run, written through `&mut self` | `Machine::captures`, `Machine::made` (`Machine.reads`; replaced by the entries from FAIL-elab-rows-reaching-ratio) | Identity (gap 1), mutation (gap 11) | The names read kept beside each lambda term when it is built, or a memo table threaded through the run |
 | `Rc::strong_count` read by a test to see that a value is released | `eval::tests::a_closure_holds_only_the_values_its_body_reads` | No reference counts in the language | A release observed by a foreign value's release function, or the runtime's live-cell count |
+
+## Entries from FAIL-elab-rows-reaching-ratio and FAIL-map-nest-bench-ratio-again (`zed-kernel/src/term.rs` `Held::reads`, `eval/made.rs` `reads`, `region`, `scoped_names`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceLock` in each shared term node holding the names its body reads, filled on first use, cleared by `Shared::make_mut`, set by whichever thread finds it first | `Held::reads`, `Shared::reads_memo`, `made::reads` | Lazy once-only cells (gap 3), identity (gap 1) | The names read computed when the lambda term is built and kept as a field of the term, or a memo keyed by the node's id threaded through the run |
+| Explicit `Vec` stacks of jobs (`Enter`/`Exit`, `Read`/`Bind`/`Unbind`) and a `HashMap<&str, u32>` scope changed in place while walking | `made::reads`, `scoped_names` | Mutation (gap 11) | A fold over the term with the scope as a persistent map passed down; the counting stack is only there to avoid recursion depth |
+| A `HashMap<u64, u32>` of references by node id | `region` | Identity (gap 1) | The node ids the kernel gives terms, as in the CLOSURE-captures-read-only entry |
 
 ## Entries from PORT-expr-stmt (`zedc-check/src/check/ports.rs` `silent_tail`, `check/walk.rs` `Ck::expr_stmt`)
 
