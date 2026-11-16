@@ -13,6 +13,7 @@ Operator outside the normal forms
 A definition that reads its own value
 Compile-time value needed to check its own computation
 Quantifier in a law over a domain that is not finite
+A read of a range with no upper end that takes every entry
 Obligation below proof grade
 Work above its cost claim
 Unbounded work under a cost claim
