@@ -422,6 +422,30 @@ fn a_function_part_is_found_at_any_depth() {
     }
 }
 
+/// The part found is fixed by the type, whatever the draw of the treap priorities: the tuple
+/// types a path takes come in their order (`Bdd::taken_toward`), not in the shapes' order, which
+/// gave `(..)` under some draws and `{..}` under others (PERF-xor-shape-free; the cross-review's
+/// probe, run under 16 values of `ZED_TREAP_SEED`). The atoms' names come after both kind-wide
+/// parts, so the rows' order is the parts' and the names'; the last row is walked first.
+#[test]
+fn the_function_part_of_a_union_of_pairs_is_fixed_by_the_type() {
+    let tuples = Type::universe(Universe::Tuple);
+    let structs = Type::universe(Universe::Struct);
+    let pair = |x: &Type, y: &Type| Type::tuple(vec![x.clone(), y.clone()]);
+    let mut t = Type::empty();
+    let mut rows = Vec::new();
+    for i in 0..8 {
+        let wide = if i % 2 == 0 { &tuples } else { &structs };
+        let row = pair(wide, &Type::atom(&format!("a{i}")));
+        rows.push(Row::new(vec![wide.clone(), Type::atom(&format!("a{i}"))]));
+        t = &t | &row;
+    }
+    // The walk pops the last row of the order first, and its last component first; that
+    // component is an atom, which holds no kind-wide part, so the part is the row's first.
+    let last = rows.iter().max().expect("eight rows");
+    assert_eq!(t.function_part(), Some(last[0].clone()), "{}", t.surface());
+}
+
 #[test]
 fn a_function_part_follows_only_the_tuple_types_a_path_to_true_takes() {
     let (int, a) = (Type::int(), Type::atom("a"));

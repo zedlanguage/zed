@@ -1033,15 +1033,9 @@ fn the_connectives_on_parts_hold_at_small_depths() {
     }
 }
 
-/// The entries of this thread's tables of tuple nodes, in all: sets, cells, exclusive ors and
-/// the exclusive ors of inner nodes.
+/// The entries of this thread's tables of tuple nodes, in all: sets, cells and exclusive ors.
 fn entries() -> usize {
-    Row::table(|t| {
-        t.sets.values().map(|b| b.len()).sum::<usize>()
-            + t.cells.len()
-            + t.xors.len()
-            + t.inners.len()
-    })
+    Row::table(|t| t.sets.values().map(|b| b.len()).sum::<usize>() + t.cells.len() + t.xors.len())
 }
 
 /// The exclusive or of the atoms `base..base + k`.
@@ -1234,6 +1228,45 @@ pub(super) fn blocks(base: u64, m: usize) -> Bdd<Row> {
     Bdd::assemble(prefix, &Bdd::Leaf(m.is_multiple_of(2)))
 }
 
+/// The atoms a list's paths to a value take are given in the list's order, the blocks first to
+/// last and the literals of a block in order, whatever the draw that shapes the cells and sets
+/// (PERF-xor-shape-free): the callers keep the first atom found or build unions in the order
+/// given. A walk that took a node before its sides gives another order but at a draw in about
+/// `1/8!` for each block of 8.
+#[test]
+fn the_atoms_taken_toward_a_value_come_in_the_lists_order() {
+    let k = 8u64;
+    let m = 16u64;
+    let block = |i: u64| {
+        // Every third literal is not taken, so both kinds of call are met.
+        let keys = (0..k).map(|j| (atom(1000 + i * k + j), j % 3 != 1));
+        let mut keys: Vec<_> = keys.collect();
+        keys.sort();
+        set::from_sorted(keys).expect("non-empty")
+    };
+    let blocks: Vec<_> = (0..m).map(block).collect();
+    let prefix = (0..m as usize)
+        .map(|i| (i % 2 == 0, Some(blocks[i].clone())))
+        .collect();
+    let list = Bdd::assemble(prefix, &Bdd::Leaf(m.is_multiple_of(2)));
+    assert_eq!(list.list().blocks.len(), m as usize);
+    for to in [false, true] {
+        let mut expected = Vec::new();
+        for (i, b) in blocks.iter().enumerate() {
+            for (a, taken) in set::iter(Some(b)) {
+                if (i % 2 == 0) == to || !taken {
+                    expected.push(a.clone());
+                }
+            }
+        }
+        let mut got = Vec::new();
+        let mut seen = crate::digest::DigestSet::default();
+        list.taken_toward(to, &mut seen, &mut |a| got.push(a.clone()));
+        assert!(expected.len() > k as usize, "{to}");
+        assert_eq!(got, expected, "{to}");
+    }
+}
+
 #[test]
 fn restricting_with_a_shared_memo_gives_the_lists_restricted_alone() {
     // Item CHAIN-restrict-memo: a memo kept across lists that share cells gives each list
@@ -1372,14 +1405,12 @@ fn expr_of(p: &Part<Row>) -> &Arc<Expr<Row>> {
 
 #[test]
 fn the_halves_of_an_exclusive_or_are_made_on_first_read() {
-    // Item KERNEL-parity-lazy-halves: an exclusive or with an operand that is an expression is
-    // made with its digest alone, and its two meets when its form is first read; one of two
-    // literals, whose meets are lists, is made whole at once. The form made on first read is
-    // the one `zip` makes from the same pair, `p&!q | !p&q` or `p&q | !p&!q`, its operands in
-    // their order, and its digest is the one the expression was made with.
-    let two = parity(9500, 2);
-    assert!(!unmade(&two) && !unmade(&two.not()));
-    for k in 3..12 {
+    // Items KERNEL-parity-lazy-halves and PERF-xor-shape-free: an exclusive or is made with its
+    // digests alone, its set's and its constant's, and its two meets when its form is first
+    // read. The form made on first read is the one `zip` makes of `p&!q | !p&q` or
+    // `p&q | !p&!q`, for `p` the literal of the smallest atom and `q` the exclusive or of the
+    // others, its operands in their order.
+    for k in 2..12 {
         let x = parity(9600 + 20 * k, k);
         // Ordering two exclusive ors of distinct digests reads no form.
         let y = parity(9601 + 20 * k, k);
@@ -1389,18 +1420,24 @@ fn the_halves_of_an_exclusive_or_are_made_on_first_read() {
         }
         for p in [x.clone(), x.not()] {
             let e = expr_of(&p);
-            let (pair, constant) = e.xor.as_ref().expect("an exclusive or");
-            let (q, r) = (&pair.p, &pair.q);
+            let (s, constant) = e.xor.as_ref().expect("an exclusive or");
+            let first = set::min(s);
+            let q = Part::literal(first.0.clone());
+            let r = Part::xor(set::remove(s, first), false);
             let (a, b) = match constant {
-                true => (q.zip(r, Op::And), q.not().zip(&r.not(), Op::And)),
-                false => (q.zip(&r.not(), Op::And), q.not().zip(r, Op::And)),
+                true => (q.zip(&r, Op::And), q.not().zip(&r.not(), Op::And)),
+                false => (q.zip(&r.not(), Op::And), q.not().zip(&r, Op::And)),
             };
             let (a, b) = if a.before(&b) { (a, b) } else { (b, a) };
             let Form::Or(u, v) = e.form() else {
                 panic!("an exclusive or is a union: {p:?}")
             };
             assert!(*u == a && *v == b, "{k} {constant}");
-            assert_eq!(joined_digest(Op::Or, a.digest(), b.digest()), e.digest);
+            let digest = |d: u64| mix(mix(11, d), u64::from(*constant));
+            assert_eq!(
+                (e.digest, e.name_digest),
+                (digest(s.digest), digest(s.name_digest))
+            );
             assert!(!unmade(&p));
         }
         for bits in 0..1u32 << k {
@@ -1414,7 +1451,7 @@ fn the_halves_of_an_exclusive_or_are_made_on_first_read() {
 #[test]
 fn an_exclusive_or_made_again_from_its_pair_is_made_on_first_read() {
     // The complement of an exclusive or whose own complement was dropped is made again from
-    // their pair (`xor::mate`), with its digest alone, equal to the one dropped.
+    // their set (`xor::mate`), with its digest alone, equal to the one dropped.
     let first = parity(9900, 9);
     let (digest, text) = (first.digest(), format!("{first:?}"));
     let n = first.not();
@@ -1430,11 +1467,10 @@ fn an_exclusive_or_made_again_from_its_pair_is_made_on_first_read() {
 
 #[test]
 fn the_complement_of_an_exclusive_or_is_its_live_mate() {
-    // An exclusive or dropped while its complement lives, and built again from the same tree
-    // node of its atoms, is the complement's complement, taken from the table (`xor::mate`),
-    // not made a third time (TEST-bench-move-l0123, author P188: before, only a benchmark of
-    // l01_23 reached it, 2 times in 15,000 complements). Built again by `parity`, the tree node
-    // is a new one, and the complement is made again from its pair, as in
+    // An exclusive or dropped while its complement lives, and built again from the same set of
+    // its atoms, is the complement's complement, taken from the table (`xor::mate`), not made
+    // a third time (TEST-bench-move-l0123, author P188: before, only a benchmark of l01_23
+    // reached it, 2 times in 15,000 complements), as in
     // `an_exclusive_or_made_again_from_its_pair_is_made_on_first_read`.
     for k in [2, 3, 9] {
         let base = 9970 + 10 * k;
@@ -1448,9 +1484,8 @@ fn the_complement_of_an_exclusive_or_is_its_live_mate() {
             matches!((&again, &x), (Part::Expr(a), Part::Expr(b)) if Arc::ptr_eq(a, b)),
             "{k}"
         );
-        // `x` was made with a complement of its own beside it (`xor::xor2`): equal to `n`, not
-        // the same node.
-        assert_eq!(x.not(), n, "{k}");
+        // `x` was made as `n`'s complement, so its own complement is `n`.
+        assert_eq!(x.not().id(), n.id(), "{k}");
         for bits in 0..1u32 << k {
             let holds = |a: &Row| (0..k).any(|i| bits >> i & 1 == 1 && *a == atom(base + i));
             assert_eq!(x.eval(&holds), odd(bits, k as u32), "{k} {bits:b}");
@@ -1482,7 +1517,7 @@ fn the_halves_of_an_exclusive_or_read_on_many_threads_are_made_once() {
             .collect()
     });
     assert!(seen.iter().all(|&a| a == seen[0]), "{seen:?}");
-    assert_eq!(expr_of(&x).form().digest(), x.digest());
+    assert!(matches!(expr_of(&x).form(), Form::Or(..)));
 }
 
 /// What `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` records of a part: its
@@ -1500,9 +1535,8 @@ fn record(p: &Part<Row>) -> Record {
 }
 
 /// One round of `exclusive_ors_shared_by_threads_are_the_ones_built_on_one` for thread `t`:
-/// three literals each joined to the part `p` another thread built, so that the tree nodes
-/// rebuilt keep `p`'s left subtrees and atoms, then all three in turn. Returns the records and
-/// the last part.
+/// three literals each joined to the part `p` another thread built, so that the sets made share
+/// nodes of `p`'s set, then all three in turn. Returns the records and the last part.
 fn extend(p: Part<Row>, round: u64, t: u64) -> (Vec<Record>, Part<Row>) {
     let lits: Vec<_> = (0..3)
         .map(|i| Part::literal(atom(60_000 + round * 100 + t * 10 + i)))
@@ -1518,10 +1552,9 @@ fn exclusive_ors_shared_by_threads_are_the_ones_built_on_one() {
     // Each thread keeps its own tables (`TUPLES` in `types.rs`), and parts are shared between
     // threads. Eight threads each start from an exclusive or of 40 atoms; in each round a
     // thread takes the part another thread built in the round before, joins literals to it,
-    // and hands its result on, so that a thread rebuilds tree nodes whose left subtree and atom
-    // another thread made (`xor::inner`), and a part is dropped on a thread other than the one
-    // that built it. Every part built is recorded, and the records equal those of the same
-    // rounds run on one thread.
+    // and hands its result on, so that a thread makes sets over nodes another thread made, and
+    // a part is dropped on a thread other than the one that built it. Every part built is
+    // recorded, and the records equal those of the same rounds run on one thread.
     const THREADS: u64 = 8;
     const ROUNDS: u64 = 6;
     let start = |t: u64| parity(50_000 + t * 1_000, 40);

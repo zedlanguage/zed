@@ -1,33 +1,39 @@
 //! Sets of literals, each an atom and whether it is taken, as treaps whose nodes are shared: the
 //! blocks of a decision list (module `list`) and the atoms of an exclusive or (`Part::xor`).
 //!
-//! A node's priority is a hash of its literal, ties broken by the literal's order, so the
-//! nodes are ordered by priority with no ties and one set has one shape whatever order its
-//! literals were added in. The live nodes of a thread are kept in a table by literal and
-//! children, so one set is one node: two sets are equal exactly when their roots are one node,
-//! and a set built in two orders is found again. The table holds each node weakly, and a node
-//! leaves it when it is dropped (step TABLE-life). An insertion or removal rebuilds the path to
-//! the place it changes, `O(log n)` nodes in expectation, each looked up in the table in `O(1)`
-//! expected; the walks keep stacks of their own, so a set of any shape is walked on a small
-//! stack.
+//! A node's priority is drawn once per run for its literal ([`priority`]), ties broken by the
+//! literal's order, so the nodes are ordered by priority with no ties and, in one run, one set
+//! has one shape whatever order its literals were added in. The live nodes of a thread are kept
+//! in a table by literal and children, so one set is one node: two sets are equal exactly when
+//! their roots are one node, and a set built in two orders is found again. The table holds each
+//! node weakly, and a node leaves it when it is dropped (step TABLE-life). An insertion or
+//! removal rebuilds the path to the place it changes, `O(log n)` nodes in expectation, each
+//! looked up in the table in `O(1)` expected; the walks keep stacks of their own, so a set of
+//! any shape is walked on a small stack.
 //!
-//! The `O(log n)` depth is not proved for these priorities: it holds when the priorities of
-//! distinct literals act as independent uniform numbers (Seidel and Aragon 1996), and a fixed
-//! hash of a digest the program's text decides is not that; some sets of literals make a path
-//! (COMPLEXITY.md K123). The tests in `set/tests.rs` check keys built the way programs build
-//! them. The priorities are not yet drawn per run as the other treaps' are (module
-//! [`crate::priority`]): the exclusive ors (module `xor`) build their expressions over a set's
-//! tree, so a drawn shape would reach the digests and the printed form of every type that holds
-//! an exclusive or (row PERF-xor-shape-free).
+//! The depth. The priority of a literal is the run's random polynomial `q` of degree 4, one for
+//! each value of `taken`, at its point, its atom's digest modulo `p = 2^64 - 59`. Fix a set of
+//! `n` literals, chosen with no knowledge of the draw (nothing the kernel computes reads a shape,
+//! paragraph below). Let `T0` be the literals whose point another of the set shares: they tie
+//! whatever the draw. Literals at distinct points take 5-wise independent uniform priorities, two
+//! of them equal with probability `1/p`, so every node's expected depth is at most
+//! `T0 + n(n - 1)/p + 2c H_n`, `c` the constant of Seidel and Aragon's Lemma 6.1 ("Randomized
+//! search trees", Algorithmica 16, 1996, Lemma 4.3, Theorem 4.7 and section 6; the proof, ties
+//! included, is in module [`crate::priority`]). Not proved for every program: `T0` is a function
+//! of the fixed digests, and a program can name many atoms of one digest (each step of a digest,
+//! `digest::step`, can be inverted in each argument), whose set is then a path whatever the draw
+//! (PERF-xor-shape-free, COMPLEXITY.md K123; plan row PERF-set-tied-digest-depth).
 //!
-//! A set's digests are sums over its literals ([`make`]), the same for every shape of the set,
-//! a first step to drawing the priorities. The order of types still compares two sets of equal
-//! digests root first (`Walk::Sets` in module `types`), which reads the shape, a function of
-//! the literals while the priorities are a fixed hash.
+//! The shape follows the draw, so nothing printed or ordered reads it (rule
+//! deterministic-checking): a set's digests are sums over its literals ([`make`]), the same for
+//! every shape; the order of types compares two sets of equal digests by their literals in order
+//! (`Walk::Sets` in module `types`); and the exclusive or of a set (module `xor`) is built from
+//! its smallest literal and the rest, not over its tree.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering as Atomic;
 
+use crate::priority::Priorities;
 use crate::types::bucket::{self, Bucket};
 use crate::types::hash::mix;
 
@@ -115,12 +121,29 @@ impl<A: Atom> Drop for Set<A> {
     }
 }
 
-/// The priority of `key`: a fixed hash of its digest and whether it is taken. That these act as
-/// independent uniform priorities, which every treap bound here needs, is not proved, and fails
-/// for chosen literals (COMPLEXITY.md K123); atoms of one digest share one priority, each class
-/// adding at most its size to a depth.
+/// The priorities of the literals, drawn once per run (module [`crate::priority`]): two uses, so
+/// that the taken and the refused literal of one atom are two independent points.
+static PRIORITIES: [Priorities; 2] = [Priorities::new(11), Priorities::new(12)];
+
+/// The priority of `key`: the run's random polynomial of degree 4 at its atom's digest, one for
+/// each value of `taken`. Distinct points take 5-wise independent uniform priorities, which
+/// bounds every node's expected depth by `O(log n)` plus the literals that share a point
+/// (module comment; Seidel and Aragon 1996, Theorem 3.3 and section 6; the proof is in module
+/// [`crate::priority`]). Atoms whose digests are equal modulo `2^64 - 59` share a point: they
+/// tie whatever the draw, and each such atom adds at most one to a depth.
+// Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the fixed hash this replaces,
+// `mix(mix(13, digest), taken)`, cost two mixes and gave one shape whatever the run, but no
+// bound: a program can name literals whose hashes rise in their order, and their set is a path
+// (2,030 of the first 2^20 integer literals, test `chosen_literals_give_a_logarithmic_height`),
+// `O(n)` per insertion. The draw costs four multiplications modulo `2^64 - 59` per new literal
+// (nodes rebuilt over new children keep theirs, [`remake`]) and gives depth `O(log n)` in
+// expectation plus the number of literals that share a point, for every input. Given up: the
+// shape of a set follows the draw, so nothing printed or ordered reads it (`set::same` still
+// does, as one draw serves the whole process). Still open: atoms of one digest tie, and a
+// program can name many (plan row PERF-set-tied-digest-depth); a priority that tells them
+// apart needs a random function of an atom's whole content, which no node keeps.
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
-    mix(mix(13, key.0.digest()), u64::from(key.1))
+    PRIORITIES[usize::from(key.1)].of(key.0.digest())
 }
 
 /// Whether a node of literal `key` and priority `prio` stands above `n`.
@@ -170,6 +193,16 @@ pub(super) fn len<A: Atom>(t: Option<&Arc<Set<A>>>) -> usize {
 
 /// The node of `key` over `left` and `right`, the one in the table if there is one.
 fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
+    make_at(priority(&key), key, left, right)
+}
+
+/// The node of `n`'s literal over `left` and `right`: its priority is `n`'s, not computed again.
+fn remake<A: Atom>(n: &Set<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
+    make_at(n.prio, n.key.clone(), left, right)
+}
+
+/// [`make`] with the priority of `key`, `prio`, given.
+fn make_at<A: Atom>(prio: u64, key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     let k = slot(&key, id(left.as_ref()), id(right.as_ref()));
     // No comparison or drop runs while the table is borrowed (module `bucket`); a bucket nearly
     // always holds one node at most.
@@ -192,7 +225,7 @@ fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
             name_digest(left.as_ref()),
             name_digest(right.as_ref()),
         ),
-        prio: priority(&key),
+        prio,
         slot: place.slot(),
         key,
         len: 1 + len(left.as_ref()) + len(right.as_ref()),
@@ -230,6 +263,13 @@ pub(super) fn min<A: Atom>(t: &Arc<Set<A>>) -> &Key<A> {
     &n.key
 }
 
+impl<A: Atom> Set<A> {
+    /// The number of literals of the set under the node.
+    pub(in crate::types) fn len(&self) -> usize {
+        self.len
+    }
+}
+
 /// The set split into its literals before `key` and those after; `key` is not in it.
 fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
     let (mut lefts, mut rights) = (Vec::new(), Vec::new());
@@ -243,13 +283,20 @@ fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
             cur = n.left.as_ref();
         }
     }
-    let mut l = None;
+    // A node whose side below is all on its side of `key` is kept as it is, with no lookup.
+    let mut l: Tree<A> = None;
     for n in lefts.into_iter().rev() {
-        l = Some(make(n.key.clone(), n.left.clone(), l));
+        l = Some(match id(l.as_ref()) == id(n.right.as_ref()) {
+            true => n.clone(),
+            false => remake(n, n.left.clone(), l),
+        });
     }
-    let mut r = None;
+    let mut r: Tree<A> = None;
     for n in rights.into_iter().rev() {
-        r = Some(make(n.key.clone(), r, n.right.clone()));
+        r = Some(match id(r.as_ref()) == id(n.left.as_ref()) {
+            true => n.clone(),
+            false => remake(n, r, n.right.clone()),
+        });
     }
     (l, r)
 }
@@ -299,7 +346,8 @@ pub(super) fn from_sorted<A: Atom>(keys: Vec<Key<A>>) -> Tree<A> {
         if ready {
             let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
             let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
-            made[i] = Some(make(keys[i].take().expect("each key made once"), l, r));
+            let key = keys[i].take().expect("each key made once");
+            made[i] = Some(make_at(prios[i], key, l, r));
             continue;
         }
         todo.push((i, true));
@@ -317,9 +365,9 @@ pub(super) fn from_sorted<A: Atom>(keys: Vec<Key<A>>) -> Tree<A> {
 fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<A> {
     for (n, left) in path.into_iter().rev() {
         node = Some(if left {
-            make(n.key.clone(), node, n.right.clone())
+            remake(n, node, n.right.clone())
         } else {
-            make(n.key.clone(), n.left.clone(), node)
+            remake(n, n.left.clone(), node)
         });
     }
     node
@@ -343,7 +391,7 @@ pub(super) fn insert<A: Atom>(t: Option<&Arc<Set<A>>>, key: Key<A>) -> Arc<Set<A
         };
     }
     let (l, r) = split(cur, &key);
-    rebuild(path, Some(make(key, l, r))).expect("a set with a literal added has a root")
+    rebuild(path, Some(make_at(prio, key, l, r))).expect("a set with a literal added has a root")
 }
 
 /// The set without `key`, which is in it.
@@ -435,7 +483,7 @@ pub(super) fn retain<A: Atom>(t: &Arc<Set<A>>, mut keep: impl FnMut(&Key<A>) -> 
                 {
                     Some(n.clone())
                 } else {
-                    Some(make(n.key.clone(), l, r))
+                    Some(remake(n, l, r))
                 });
             }
         }
@@ -484,7 +532,7 @@ pub(super) fn union<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>> {
 
 /// The union of two sets, or `None` when one holds an atom with the other `taken` than the
 /// other set: from the roots down, the higher root kept and the other set split at its atom,
-/// past each pair of subtrees that is one node. A set has one shape, so the union is the node
+/// past each pair of subtrees that is one node. A set has one shape in a run, so the union is the node
 /// that adding the literals one at a time makes. For `k` literals into `n`, `O(k log(n/k + 1))`
 /// nodes are visited in expectation, each splitting in `O(log n)`, and two sets that differ on
 /// `d` paths cost only those paths; the walk keeps a stack of its own.
@@ -492,16 +540,16 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
     /// A pair of subtrees to join, or a literal to make over the two joined last.
     enum Step<A: Atom> {
         Join(Tree<A>, Tree<A>),
-        Make(Key<A>),
+        Make(Arc<Set<A>>),
     }
     let mut todo = vec![Step::Join(Some(x.clone()), Some(y.clone()))];
     let mut done: Vec<Tree<A>> = Vec::new();
     while let Some(step) = todo.pop() {
         let (x, y) = match step {
-            Step::Make(key) => {
+            Step::Make(n) => {
                 let r = done.pop().expect("the right side is joined");
                 let l = done.pop().expect("the left side is joined");
-                done.push(Some(make(key, l, r)));
+                done.push(Some(remake(&n, l, r)));
                 continue;
             }
             Step::Join(None, t) | Step::Join(t, None) => {
@@ -525,7 +573,7 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
             if *taken != lo.key.1 {
                 return None;
             }
-            todo.push(Step::Make(hi.key.clone()));
+            todo.push(Step::Make(hi.clone()));
             todo.push(Step::Join(hi.right.clone(), lo.right.clone()));
             todo.push(Step::Join(hi.left.clone(), lo.left.clone()));
             continue;
@@ -536,7 +584,7 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
             Some(_) => return None,
         };
         let (l, r) = split(lo.as_ref(), &hi.key);
-        todo.push(Step::Make(hi.key.clone()));
+        todo.push(Step::Make(hi.clone()));
         todo.push(Step::Join(hi.right.clone(), r));
         todo.push(Step::Join(hi.left.clone(), l));
     }
@@ -597,22 +645,94 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
     Some(done.pop().expect("the difference is made"))
 }
 
-/// The literals in exactly one of the two sets: each of the smaller's added to the larger, or
-/// removed from it when there.
+/// The literals in exactly one of the two sets; an atom in both is taken alike in both (the
+/// sets of exclusive ors, every atom taken). From the roots down, as [`union_if_agree`]: a
+/// literal at both roots leaves, and the two sides are joined past it; otherwise the higher
+/// root is kept and the other set split at its literal. Two subtrees that are one node leave
+/// nothing. A set has one shape in a run, so the result is the node that adding or removing the
+/// literals one at a time makes.
+// Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the naive method adds or
+// removes each of the smaller set's `m` literals in the larger's `n`, `O(m log n)` expected, and
+// makes `O(log n)` nodes for each literal, most of them dropped at the next. Used: the join-based
+// set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016),
+// difference with the literals of `y` kept: `O(m log(n/m + 1))` nodes visited in expectation, so
+// `O(n)` when `m` is near `n`, each with a split or a join in `O(log n)`, and the nodes made are
+// those of the result's changed paths. For `m = 1` both make one path, and the one literal is
+// added or removed directly, which the step stack would make about 17% dearer (parity, 4.55G
+// against 3.89G instructions at 8,192 literals).
 pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
-    let (big, small) = if len(x.as_ref()) >= len(y.as_ref()) {
-        (x, y)
-    } else {
-        (y, x)
-    };
-    let mut out = big.clone();
-    for k in iter(small.as_ref()) {
-        out = match &out {
-            Some(o) if get(Some(o), &k.0) == Some(k.1) => remove(o, k),
-            _ => Some(insert(out.as_ref(), k.clone())),
-        };
+    /// A pair of subtrees to take the symmetric difference of, a literal to make over the two
+    /// made last, or the join of the two made last.
+    enum Step<A: Atom> {
+        Both(Tree<A>, Tree<A>),
+        Make(Arc<Set<A>>),
+        Join,
     }
-    out
+    // One literal, as parity built a literal at a time takes: added or removed along one path,
+    // with no stack of steps.
+    for (one, other) in [(x, y), (y, x)] {
+        if let (Some(k), Some(o)) = (one.as_ref().and_then(single_key), other) {
+            return match get(Some(o), &k.0) {
+                Some(taken) => {
+                    debug_assert_eq!(taken, k.1, "an atom in both sets is taken alike");
+                    remove(o, k)
+                }
+                None => Some(insert(Some(o), k.clone())),
+            };
+        }
+    }
+    let mut todo = vec![Step::Both(x.clone(), y.clone())];
+    let mut done: Vec<Tree<A>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let (x, y) = match step {
+            Step::Make(n) => {
+                let r = done.pop().expect("the right side is made");
+                let l = done.pop().expect("the left side is made");
+                let kept = id(l.as_ref()) == id(n.left.as_ref())
+                    && id(r.as_ref()) == id(n.right.as_ref());
+                done.push(Some(if kept { n } else { remake(&n, l, r) }));
+                continue;
+            }
+            Step::Join => {
+                let r = done.pop().expect("the right side is made");
+                let l = done.pop().expect("the left side is made");
+                done.push(join(l.as_ref(), r.as_ref()));
+                continue;
+            }
+            Step::Both(None, t) | Step::Both(t, None) => {
+                done.push(t);
+                continue;
+            }
+            Step::Both(Some(x), Some(y)) if x.id == y.id => {
+                done.push(None);
+                continue;
+            }
+            Step::Both(Some(x), Some(y)) => (x, y),
+        };
+        let (hi, lo) = if above(x.prio, &x.key, &y) {
+            (x, y)
+        } else {
+            (y, x)
+        };
+        if hi.key.0 == lo.key.0 {
+            // One atom at both roots: it leaves, and the children are taken side by side.
+            debug_assert_eq!(hi.key.1, lo.key.1, "an atom in both sets is taken alike");
+            todo.push(Step::Join);
+            todo.push(Step::Both(hi.right.clone(), lo.right.clone()));
+            todo.push(Step::Both(hi.left.clone(), lo.left.clone()));
+            continue;
+        }
+        // `hi`'s literal is not in `lo`: a literal's priority is a function of the literal, and
+        // a set's root is its highest literal by (priority, literal), so had `lo` held it, `lo`'s
+        // root would be at least as high as it, and so be it. So `lo` splits with nothing left
+        // out, and `hi` stays over the two sides.
+        debug_assert!(get(Some(&lo), &hi.key.0).is_none(), "taken alike");
+        let (l, r) = split(Some(&lo), &hi.key);
+        todo.push(Step::Make(hi.clone()));
+        todo.push(Step::Both(hi.right.clone(), r));
+        todo.push(Step::Both(hi.left.clone(), l));
+    }
+    done.pop().expect("the symmetric difference is made")
 }
 
 /// The one literal of a set of one.
@@ -623,8 +743,9 @@ pub(super) fn single_key<A: Atom>(t: &Arc<Set<A>>) -> Option<&Key<A>> {
 /// Whether two sets have the same literals. Equal sets made on one thread are one node, so
 /// their ids agree; equal sets made on two threads are not (each thread has its table), so
 /// trees of one digest are walked side by side, from a stack, past each pair of subtrees that
-/// is one node. A set has one shape, its priorities a hash of its literals, so equal sets
-/// match node by node (item XOR-cross-thread).
+/// is one node. A set has one shape in a run, its priorities one draw for the process and
+/// ties broken by the literals, so equal sets match node by node (item XOR-cross-thread); the
+/// answer is a yes or no, the same for every draw.
 // Complexity tradeoff: two equal sets made on two threads are compared in `O(k)` for their `k`
 // literals at each comparison, rather than made one node by a table of the process, which
 // would take a lock at each set node made on every thread; on one thread the ids decide.

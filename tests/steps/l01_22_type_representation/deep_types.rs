@@ -129,9 +129,10 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // PERF-set-digest-shape-free makes the digest of a set a sum over its literals and that of a
     // list an ordered fold over its blocks, which changes the digests and so the order of
     // operands. The text is the same when this test runs alone, among the others and on one
-    // thread, and under the draws of the treaps' priorities checked (`ZED_TREAP_SEED` 0 to 4);
-    // the sets' priorities are not drawn yet, since the exclusive ors are built over a set's
-    // shape (row PERF-xor-shape-free).
+    // thread, and under the draws of the treaps' priorities checked (`ZED_TREAP_SEED` 0 to 4).
+    // PERF-xor-shape-free draws the sets' priorities too and makes an exclusive or one
+    // expression for its set of atoms, its digest a hash of the set's, which changes the digests
+    // of four samples (lines 13 to 15 and 30) and so the order of some operands.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());

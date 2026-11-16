@@ -1083,6 +1083,15 @@ fn tuple_lens<'a>(
 }
 
 /// One step of [`order()`] on two diagrams, expressions or parts of one universe.
+/// The step that compares two literals of sets (`(atom, taken)`): whether taken, then the atoms.
+/// One step either way, so that it can wait on the stack behind the literals before it.
+fn literals<'a, A: Ordered>(a: &'a (A, bool), b: &'a (A, bool)) -> Step<'a> {
+    match a.1.cmp(&b.1) {
+        Ordering::Equal => A::atoms(&a.0, &b.0),
+        c => Step::Is(c),
+    }
+}
+
 fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal) -> Ordering {
     match w {
         Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),
@@ -1100,9 +1109,15 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             }
             walk(Walk::Cells(Some(a), Some(b)), steps, equal)
         }
-        Walk::Cells(None, None) | Walk::Sets(None, None) => Ordering::Equal,
-        Walk::Cells(None, Some(_)) | Walk::Sets(None, Some(_)) => Ordering::Less,
-        Walk::Cells(Some(_), None) | Walk::Sets(Some(_), None) => Ordering::Greater,
+        Walk::Cells(None, None) | Walk::Sets(None, None) | Walk::SetsInOrder(None, None) => {
+            Ordering::Equal
+        }
+        Walk::Cells(None, Some(_)) | Walk::Sets(None, Some(_)) | Walk::SetsInOrder(None, Some(_)) => {
+            Ordering::Less
+        }
+        Walk::Cells(Some(_), None) | Walk::Sets(Some(_), None) | Walk::SetsInOrder(Some(_), None) => {
+            Ordering::Greater
+        }
         Walk::Cells(Some(a), Some(b)) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {
@@ -1124,26 +1139,62 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
             }
-            let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest))
-                .then(a.key.1.cmp(&b.key.1));
+            // A set's digests are sums over its literals, the same for every shape.
+            let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest));
             if c == Ordering::Equal {
-                // A set's shape is a function of its literals (its priorities are a fixed hash,
-                // module `bdd::set`), so sets of tied digests are compared root first, with no
-                // allocation: the atoms are pushed last, so they are compared first, then the
-                // left sets.
-                // Complexity tradeoff: comparing them in order (`bdd::Rest`, as sequences are)
-                // would not read the shape, which drawn priorities would need (row
-                // PERF-xor-shape-free), but took three allocations a block: 38% more
-                // instructions and twice the bytes comparing equal lists built on two threads.
-                steps.extend([
-                    Step::Equal(key.0, key.1),
-                    A::walk(Walk::Sets(a.right.as_deref(), b.right.as_deref())),
-                    A::walk(Walk::Sets(a.left.as_deref(), b.left.as_deref())),
-                    A::atoms(&a.key.0, &b.key.0),
-                ]);
+                // Compared by their literals at once (one level, not a step on the stack);
+                // `SetsInOrder` records the pair as equal once its literals compare equal.
+                return walk(Walk::SetsInOrder(Some(a), Some(b)), steps, equal);
             }
             c
         }
+        Walk::SetsInOrder(Some(a), Some(b)) => {
+            // Two sets of tied digests, or two subtrees at one place in them, compared by their
+            // literals in order. The shape follows the run's draw of priorities (module
+            // `bdd::set`), but one draw gives one set one shape, so two subtrees of one size at
+            // one place are compared subtree by subtree, with no allocation: when the left
+            // subtrees have one size, the sequences compare as the left subtrees (of one
+            // length), then the literals, then the right subtrees, each pair compared again the
+            // same way; the right subtrees may differ in length, and an empty one is before a
+            // non-empty one (`SetsInOrder(None, Some(_))`), a prefix first. Where the left sizes
+            // differ, the two are distinct sets whose digests collide, and the rest of the two
+            // is read in order by pieces (`bdd::Rest`, as sequences of blocks are). No digest
+            // of a subtree is compared: which literals a subtree holds follows the draw.
+            // Complexity tradeoff (PERF-xor-shape-free): the naive method compared the sets
+            // root first, their roots' literals then their subtrees by digest, `O(1)` where the
+            // roots differ, but reading the shape, which drawn priorities make a function of
+            // the draw; read in order by pieces from the start, it took three allocations a
+            // pair, 38% more instructions comparing equal lists built on two threads. Used:
+            // `O(n)` with no allocation where the shapes agree, as they do for equal sets, one
+            // step per pair of nodes; `O(k + d)` for a first difference at the `k`-th literal,
+            // with the three allocations, only where they differ, which takes a collision of
+            // two sets' 64-bit digests. Comparing by rank (`Set::select`) where they differ
+            // would allocate nothing but cost `O(k d)`.
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let (l, m) = (a.left.as_deref(), b.left.as_deref());
+            if l.map_or(0, |s| s.len()) == m.map_or(0, |s| s.len()) {
+                steps.extend([
+                    Step::Equal(key.0, key.1),
+                    A::walk(Walk::SetsInOrder(a.right.as_deref(), b.right.as_deref())),
+                    literals(&a.key, &b.key),
+                    A::walk(Walk::SetsInOrder(l, m)),
+                ]);
+            } else {
+                steps.push(A::walk(Walk::SetRest(bdd::Rest::new(a, b))));
+            }
+            Ordering::Equal
+        }
+        Walk::SetRest(mut rest) => match rest.next(|x, y| equal.contains(&(x, y))) {
+            Err(c) => c,
+            Ok((x, y)) => {
+                // The literals are compared before the rest, which waits below them.
+                steps.extend([A::walk(Walk::SetRest(rest)), literals(&x.key, &y.key)]);
+                Ordering::Equal
+            }
+        },
         Walk::CellRest(mut rest) => match rest.next(|x, y| equal.contains(&(x, y))) {
             Err(c) => c,
             Ok((x, y)) => {
@@ -1165,6 +1216,23 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             let c = digests_cmp((a.digest, a.name_digest), (b.digest, b.name_digest));
             if c != Ordering::Equal {
                 return c;
+            }
+            // An exclusive or in its one form is compared by its constant and set, which its
+            // digests are made from (module `bdd::xor`), before every other expression.
+            match (a.xor_set(), b.xor_set()) {
+                (Some((s, c)), Some((t, d))) => {
+                    let c = c.cmp(&d);
+                    if c == Ordering::Equal {
+                        steps.extend([
+                            Step::Equal(key.0, key.1),
+                            A::walk(Walk::Sets(Some(s), Some(t))),
+                        ]);
+                    }
+                    return c;
+                }
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
+                (None, None) => {}
             }
             let (x, y) = (a.form().operands(), b.form().operands());
             let c = x.0.cmp(&y.0);

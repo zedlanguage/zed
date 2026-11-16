@@ -80,7 +80,6 @@ pub(super) struct Tables<A: Literal> {
     sets: set::SetTable<A>,
     cells: list::CellTable<A>,
     xors: xor::XorTable<A>,
-    inners: xor::InnerTable<A>,
 }
 
 impl<A: Literal> Tables<A> {
@@ -89,7 +88,6 @@ impl<A: Literal> Tables<A> {
             sets: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             cells: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             xors: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
-            inners: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
         }
     }
 }
@@ -167,24 +165,14 @@ impl<A: Literal> set::Atom for A {
         Owned::Set(set).release();
     }
 }
-/// An expression leaves its thread's table of exclusive ors, or of the exclusive ors inside a
-/// tree node's, if it is in one, and its operands, if they were made, and complement are freed
-/// in a loop, as a cell's next cell is.
+/// An expression leaves its thread's table of exclusive ors, if it is in one, and its operands,
+/// if they were made, complement and set of atoms are freed in a loop, as a cell's next cell is.
 impl<A: Literal> Drop for Expr<A> {
     fn drop(&mut self) {
         let is_self = |w: &Weak<Expr<A>>| std::ptr::eq(w.as_ptr(), self);
-        if let Some((pair, constant)) = &self.xor {
-            match &pair.atoms {
-                Some(s) => {
-                    let key = (s.id, *constant);
-                    A::untable(|t| untable(&mut t.xors, key, is_self));
-                }
-                None if !constant => {
-                    let key = pair.inner_key();
-                    A::untable(|t| untable(&mut t.inners, key, is_self));
-                }
-                None => {}
-            }
+        if let Some((s, constant)) = &self.xor {
+            let key = (s.id, *constant);
+            A::untable(|t| untable(&mut t.xors, key, is_self));
         }
         if let Some(mut f) = self.form.take() {
             free_form(&mut f);
@@ -195,8 +183,9 @@ impl<A: Literal> Drop for Expr<A> {
         if let Some(c) = self.complement.take() {
             Owned::Part(c).release();
         }
-        // The pair frees its parts in the loop when it is dropped.
-        self.xor.take();
+        if let Some((s, _)) = self.xor.take() {
+            Owned::Set(s).release();
+        }
     }
 }
 
@@ -620,7 +609,8 @@ pub(super) struct Expr<A: Literal> {
     pub(super) name_digest: u64,
     /// The connective and its operands ([`Expr::form`]). An exclusive or's two halves are made
     /// when the form is first read, from `xor` (module `xor`); every other form is set when the
-    /// expression is made.
+    /// expression is made. An exclusive or's digests are its set's and constant's, not its
+    /// form's ([`xor::halves`]); every other expression's are its form's.
     form: std::sync::OnceLock<Form<A>>,
     /// The complement, made once and held, so that a chain of choices is negated in steps, not
     /// walked. It is not set when the complement holds the expression (`!e` made as `Not(e)`,
@@ -639,21 +629,25 @@ pub(super) struct Expr<A: Literal> {
     /// Whether the complement is `Not` of the expression: no choice was found in it, so a
     /// complement made again skips the search.
     plain: AtomicBool,
-    /// The two halves the expression was made from as an exclusive or, and its constant
-    /// (module `xor`), if it was; its complement is made again from them.
-    xor: Option<(Arc<xor::Pair<A>>, bool)>,
+    /// The set of atoms and the constant of the expression as an exclusive or in its one form
+    /// (module `xor`), if it is one; its form and its complement are made from them.
+    xor: Option<xor::Tag<A>>,
 }
 
 impl<A: Literal> Expr<A> {
     /// The connective and its operands, an exclusive or's halves made on the first read.
     pub(super) fn form(&self) -> &Form<A> {
         self.form.get_or_init(|| {
-            let (pair, constant) = (self.xor.as_ref())
-                .expect("only an exclusive or is made without its form (`xor::half`)");
-            let form = xor::halves(pair, *constant);
-            debug_assert!(form.digest() == self.digest, "{}", self.id);
-            form
+            let (s, constant) = (self.xor.as_ref())
+                .expect("only an exclusive or is made without its form (`xor::node`)");
+            xor::halves(s, *constant)
         })
+    }
+
+    /// The set of atoms and the constant of the expression as an exclusive or in its one form
+    /// (module `xor`), if it is one.
+    pub(super) fn xor_set(&self) -> Option<(&Set<A>, bool)> {
+        self.xor.as_ref().map(|(s, c)| (&**s, *c))
     }
 
     /// Whether the form is `Or`, read without making an exclusive or's halves: an exclusive or
@@ -863,22 +857,17 @@ impl<A: Literal> Part<A> {
     }
 
     fn expr(form: Form<A>) -> Part<A> {
-        Part::expr_xor(form, None)
-    }
-
-    /// The expression of `form`, the one form of the exclusive or `xor` when given.
-    fn expr_xor(form: Form<A>, xor: Option<(Arc<xor::Pair<A>>, bool)>) -> Part<A> {
         Part::made(
             form.digest(),
             form.name_digest(),
             std::sync::OnceLock::from(form),
-            xor,
+            None,
         )
     }
 
-    /// The exclusive or `xor` of the digest `digest`, its halves made when its form is first
-    /// read ([`Expr::form`]).
-    fn expr_unmade(digest: u64, name_digest: u64, xor: (Arc<xor::Pair<A>>, bool)) -> Part<A> {
+    /// The exclusive or `xor` of the digests `digest` and `name_digest`, its halves made when
+    /// its form is first read ([`Expr::form`]).
+    fn expr_unmade(digest: u64, name_digest: u64, xor: xor::Tag<A>) -> Part<A> {
         Part::made(digest, name_digest, std::sync::OnceLock::new(), Some(xor))
     }
 
@@ -887,7 +876,7 @@ impl<A: Literal> Part<A> {
         digest: u64,
         name_digest: u64,
         form: std::sync::OnceLock<Form<A>>,
-        xor: Option<(Arc<xor::Pair<A>>, bool)>,
+        xor: Option<xor::Tag<A>>,
     ) -> Part<A> {
         Part::Expr(Arc::new(Expr {
             id: NEXT.fetch_add(1, Atomic::Relaxed),
@@ -1022,10 +1011,9 @@ impl<'m> Connect<'m> {
                 Source::NotOfThis => Part::expr(Form::Not(p.clone())),
                 Source::Form(f) => Part::expr(f.clone()),
             }
-        } else if let Some((pair, constant)) = &e.xor {
-            // An exclusive or's complement is made again as it was first made beside it, so
-            // that the two are equal as built.
-            xor::mate(pair, !constant)
+        } else if let Some((s, constant)) = &e.xor {
+            // An exclusive or's complement is the one of its set and the other constant.
+            xor::mate(s, !constant)
         } else if let Form::Not(q) = e.form() {
             if let Part::Expr(m) = q {
                 let _ = m.source.set(Source::NotOfThis);
@@ -2258,55 +2246,102 @@ pub(super) enum Walk<'a, A: Literal> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
     Cells(Option<&'a Cell<A>>, Option<&'a Cell<A>>),
     Sets(Option<&'a Set<A>>, Option<&'a Set<A>>),
+    /// Two sets, or two subtrees at one place in two sets, of tied digests, compared by their
+    /// literals in order, a prefix first; their digests are not compared, since a subtree's
+    /// literals follow the run's draw of priorities.
+    SetsInOrder(Option<&'a Set<A>>, Option<&'a Set<A>>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
     /// The rest of two sequences of blocks of tied digests, compared block by block in order.
-    CellRest(Box<Rest<'a, A>>),
+    CellRest(Box<Rest<'a, Cell<A>>>),
+    /// The rest of two sets of tied digests whose shapes differ, compared literal by literal in
+    /// order.
+    SetRest(Box<Rest<'a, Set<A>>>),
 }
 
-/// A piece of a sequence of blocks still to be read in order: every block under a cell, or the
-/// cell's own.
-pub(super) enum Piece<'a, A: Literal> {
-    Tree(&'a Cell<A>),
-    Key(&'a Cell<A>),
+/// A node of a treap read in order by [`Rest`]: its id, the number of keys under it, and its two
+/// sides.
+pub(super) trait InOrder {
+    fn id(&self) -> u64;
+    fn len(&self) -> usize;
+    fn left(&self) -> Option<&Self>;
+    fn right(&self) -> Option<&Self>;
 }
 
-/// What is left of two sequences of blocks compared block by block in order (module `types`,
-/// `walk`): for each, the pieces still to read, the next last.
+impl<A: Literal> InOrder for Cell<A> {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn left(&self) -> Option<&Self> {
+        self.left.as_deref()
+    }
+    fn right(&self) -> Option<&Self> {
+        self.right.as_deref()
+    }
+}
+
+impl<A: Literal> InOrder for Set<A> {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn len(&self) -> usize {
+        Set::len(self)
+    }
+    fn left(&self) -> Option<&Self> {
+        self.left.as_deref()
+    }
+    fn right(&self) -> Option<&Self> {
+        self.right.as_deref()
+    }
+}
+
+/// A piece of a sequence still to be read in order: every key under a node, or the node's own.
+pub(super) enum Piece<'a, N> {
+    Tree(&'a N),
+    Key(&'a N),
+}
+
+/// What is left of two sequences, of blocks (the cells of two lists) or of literals (two sets),
+/// compared key by key in order (module `types`, `walk`): for each, the pieces still to read,
+/// the next last.
 ///
 /// Complexity tradeoff: two sequences whose digests tie were compared by their roots, then
 /// their subtrees, which is `O(1)` where the roots differ but reads the shapes, which follow the
 /// run's draw of priorities (module [`crate::priority`]), so the order of two distinct sequences
 /// of one digest would follow the draw. Read in order, they are compared by their contents only,
-/// in `O(k + d)` for a first difference at the `k`-th block and treaps of depth `d`, `O(n)` at
-/// worst, as the walk by roots was. Two pieces that are one cell are passed over whole, as are
-/// two found equal before. Given up: one allocation of the box and two of its stacks for each
-/// pair of sequences compared this way.
-pub(super) struct Rest<'a, A: Literal> {
-    a: Vec<Piece<'a, A>>,
-    b: Vec<Piece<'a, A>>,
+/// in `O(k + d)` for a first difference at the `k`-th key and treaps of depth `d` (the nodes
+/// opened are those on the paths to the first `k + 1` keys), `O(n)` at worst, as the walk by
+/// roots was. Two pieces that are one node are passed over whole, as are two found equal before.
+/// Given up: one allocation of the box and two of its stacks for each pair of sequences compared
+/// this way; two equal sets have one shape and are compared without it (`SetsInOrder`).
+pub(super) struct Rest<'a, N> {
+    a: Vec<Piece<'a, N>>,
+    b: Vec<Piece<'a, N>>,
 }
 
-impl<'a, A: Literal> Rest<'a, A> {
-    pub(super) fn new(a: &'a Cell<A>, b: &'a Cell<A>) -> Box<Rest<'a, A>> {
+impl<'a, N: InOrder> Rest<'a, N> {
+    pub(super) fn new(a: &'a N, b: &'a N) -> Box<Rest<'a, N>> {
         Box::new(Rest {
             a: vec![Piece::Tree(a)],
             b: vec![Piece::Tree(b)],
         })
     }
 
-    /// The next two blocks' cells, one of each sequence, or the order of the sequences' lengths
+    /// The next two keys' nodes, one of each sequence, or the order of the sequences' lengths
     /// when one of them has no more: `Err(Equal)` when both end together. `equal` says whether
-    /// two cells, by id, were found equal before.
+    /// two nodes, by id, were found equal before.
     pub(super) fn next(
         &mut self,
         equal: impl Fn(u64, u64) -> bool,
-    ) -> Result<(&'a Cell<A>, &'a Cell<A>), Ordering> {
-        /// Puts the pieces of `n`'s subtree in place of it: the right, the cell, the left.
-        fn open<'a, A: Literal>(pieces: &mut Vec<Piece<'a, A>>, n: &'a Cell<A>) {
-            pieces.extend(n.right.as_deref().map(Piece::Tree));
+    ) -> Result<(&'a N, &'a N), Ordering> {
+        /// Puts the pieces of `n`'s subtree in place of it: the right, the node, the left.
+        fn open<'a, N: InOrder>(pieces: &mut Vec<Piece<'a, N>>, n: &'a N) {
+            pieces.extend(n.right().map(Piece::Tree));
             pieces.push(Piece::Key(n));
-            pieces.extend(n.left.as_deref().map(Piece::Tree));
+            pieces.extend(n.left().map(Piece::Tree));
         }
         loop {
             match (self.a.pop(), self.b.pop()) {
@@ -2315,12 +2350,12 @@ impl<'a, A: Literal> Rest<'a, A> {
                 (Some(_), None) => return Err(Ordering::Greater),
                 (Some(Piece::Key(x)), Some(Piece::Key(y))) => return Ok((x, y)),
                 (Some(Piece::Tree(x)), Some(Piece::Tree(y))) => {
-                    if x.id == y.id || equal(x.id, y.id) {
+                    if x.id() == y.id() || equal(x.id(), y.id()) {
                         continue;
                     }
                     // The larger is opened, both when of one size, so that two subtrees that
-                    // hold the same blocks meet as pieces.
-                    match x.len.cmp(&y.len) {
+                    // hold the same keys meet as pieces.
+                    match x.len().cmp(&y.len()) {
                         Ordering::Less => {
                             self.a.push(Piece::Tree(x));
                             open(&mut self.b, y);
@@ -2426,81 +2461,50 @@ mod xor {
     //! and a constant joined to them, so that the exclusive or of one set of atoms is one node
     //! whatever order it was built in.
     //!
-    //! The node of a set is built over the set's tree: a tree node's exclusive or joins those of
-    //! its two subtrees and its own atom, two at a time, each as `p&!q | !p&q`, with the
-    //! complement `p&q | !p&!q` made beside it. Since one set is one tree, of one shape, its node
-    //! is one expression, kept in a table of the thread by the tree node's id and the constant,
-    //! as are those of its subtrees. A set with a literal added or removed has `O(log n)` new
-    //! tree nodes in expectation, and only those take new expressions, each in constant time.
+    //! The exclusive or of a set of two or more atoms is one expression ([`node`]), kept in a
+    //! table of the thread by the set's id and the constant, with the complement, the other
+    //! constant, made beside it; an exclusive or of one atom is its literal. Its digests are the
+    //! set's and the constant's, so they, the order of parts (`Walk::Exprs` in module `types`)
+    //! and its printed form are functions of its atoms and constant alone, the same in every run
+    //! whatever shape the set's tree takes under the run's priorities (rule
+    //! deterministic-checking, row PERF-xor-shape-free). A set with a literal added or removed
+    //! has `O(log n)` new tree nodes in expectation and one new expression.
     //!
-    //! An exclusive or is made with its digest alone, computed from the digests of `p`, `q` and
-    //! their complements, and its two meets are made when its form is first read
-    //! ([`Expr::form`], [`halves`]): the digest, the order of parts and the tables need no more,
-    //! and most are never read. One of two literals is made whole at once, since its meets are
-    //! lists (step KERNEL-parity-lazy-halves).
+    //! Its form is made when first read ([`Expr::form`], [`halves`]): `p&!q | !p&q`, or
+    //! `p&q | !p&!q` with the constant `true`, for `p` the literal of the smallest atom and `q`
+    //! the exclusive or of the others. The digest, the order of parts and the tables need no
+    //! more, and most forms are never read (step KERNEL-parity-lazy-halves).
     //!
     //! The table holds each node weakly, and a node leaves it when it is dropped (step
-    //! TABLE-life). The two expressions made beside each other share the halves they were made
-    //! from (`Pair`), and the one dropped first is made again from them when its complement is
-    //! asked for ([`mate`]), equal as built to the one dropped.
-    //!
-    //! A tree node with two children joins its left subtree and its atom first, and that inner
-    //! exclusive or, which tags no set, is kept in a table of its own by the ids of its two
-    //! halves while it lives ([`InnerTable`]): a literal added on the right of a tree node, or of
-    //! a node split off on the left of it, leaves the left subtree and the atom as they were, so
-    //! the node rebuilt takes the inner exclusive or the one it replaces held, equal as built.
+    //! TABLE-life); one dropped is made again from its set when its complement is asked for
+    //! ([`mate`]), equal to the one dropped.
     //!
     //! An exclusive or is recognized when it is built from two others ([`xor_of`], [`xor_choice`]),
     //! and a literal is one, of one atom; any other part is not taken for one.
+    //!
+    //! Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the naive method built the
+    //! exclusive or over the set's tree, a node per tree node joining its subtrees' and its atom,
+    //! `O(log n)` expected new expressions per literal added, `O(1)` each; its digest and form
+    //! followed the tree's shape, so the set's priorities had to be a fixed hash, and a program
+    //! could choose literals whose set is a path, `O(n)` per literal. Used: one expression per set,
+    //! `O(1)` plus the set's `O(log n)` expected per literal added, its digest the set's sum, so
+    //! the priorities are drawn per run and the depth bound of Seidel and Aragon ("Randomized
+    //! search trees", Algorithmica 16, 1996) holds for every program. Given up: reading the whole
+    //! form of an exclusive or of `n` atoms makes its `n - 1` nested ones, a removal from a set
+    //! each, `O(n log n)` expected, where the tree's form was `O(n)`.
 
     use std::collections::HashMap;
     use std::sync::{Arc, Weak};
 
     use super::set::{self, Set, Tree};
-    use super::{Bdd, Digest, Expr, Form, Literal, Op, Operands, Owned, Part, joined_digest};
+    use super::{Bdd, Digest, Expr, Form, Literal, Op, Operands, Part, mix};
 
     /// An exclusive or: the set of its atoms, each taken, and the constant joined to them.
     pub(super) type Tag<A> = (Arc<Set<A>>, bool);
 
-    /// The halves `p` and `q` that an exclusive or and its complement are made from, and the set of
-    /// atoms they are the one form of, if they are.
-    pub(super) struct Pair<A: Literal> {
-        pub(super) p: Part<A>,
-        pub(super) q: Part<A>,
-        pub(super) atoms: Option<Arc<Set<A>>>,
-    }
-
-    /// A pair's halves and set are freed in a loop (module `deep`), as an expression's operands
-    /// are.
-    impl<A: Literal> Drop for Pair<A> {
-        fn drop(&mut self) {
-            for part in [&mut self.p, &mut self.q] {
-                if part.is_leaf().is_none() {
-                    Owned::Part(std::mem::replace(part, Part::leaf(false))).release();
-                }
-            }
-            if let Some(s) = self.atoms.take() {
-                Owned::Set(s).release();
-            }
-        }
-    }
-
-    impl<A: Literal> Pair<A> {
-        /// The key of the pair's exclusive or in an [`InnerTable`]: the ids of its halves.
-        pub(super) fn inner_key(&self) -> (u64, u64) {
-            (self.p.id(), self.q.id())
-        }
-    }
-
-    /// The live exclusive ors of a thread, by the id of their set's tree node and their constant.
+    /// The live exclusive ors of a thread, by the id of their set and their constant.
     pub(in crate::types) type XorTable<A> =
         HashMap<(u64, bool), Weak<Expr<A>>, std::hash::BuildHasherDefault<Digest>>;
-
-    /// The live inner exclusive ors of a thread, each of a tree node's left subtree and its atom
-    /// ([`node`]), by the ids of the two ([`Pair::inner_key`]); the constant is `false`, and the
-    /// complement is held by the exclusive or.
-    pub(in crate::types) type InnerTable<A> =
-        HashMap<(u64, u64), Weak<Expr<A>>, std::hash::BuildHasherDefault<Digest>>;
 
     /// The exclusive or of the one literal on `atom`, taken or refused.
     fn literal<A: Literal>(atom: &A, taken: bool) -> Tag<A> {
@@ -2521,7 +2525,7 @@ mod xor {
         )
     }
 
-    /// The live exclusive or of the set's tree node `id` and `constant`.
+    /// The live exclusive or of the set `id` and `constant`.
     fn found<A: Literal>(id: u64, constant: bool) -> Option<Part<A>> {
         A::table(|t| t.xors.get(&(id, constant)).and_then(Weak::upgrade)).map(Part::Expr)
     }
@@ -2531,10 +2535,7 @@ mod xor {
         pub(super) fn xor_tag(&self) -> Option<Tag<A>> {
             match self {
                 Part::Bdd(b) => b.as_literal().map(|(a, taken)| literal(a, taken)),
-                Part::Expr(e) => {
-                    let (pair, constant) = e.xor.as_ref()?;
-                    Some((pair.atoms.clone()?, *constant))
-                }
+                Part::Expr(e) => e.xor.clone(),
             }
         }
 
@@ -2548,201 +2549,74 @@ mod xor {
 
         /// The exclusive or of `atoms`, each taken, and `constant`, in its one form.
         pub(super) fn xor(atoms: Tree<A>, constant: bool) -> Part<A> {
-            let Some(root) = atoms else {
+            let Some(s) = atoms else {
                 return Part::leaf(constant);
             };
-            if constant && let Some(n) = found(root.id, true) {
-                return n;
-            }
-            let x = node(&root);
+            let x = if let Some((atom, _)) = set::single_key(&s) {
+                Part::literal(atom.clone())
+            } else if let Some(x) = found(s.id, constant) {
+                return x;
+            } else if let Some(n) = found(s.id, !constant) {
+                // When only the complement lives, the one asked for is its complement's (`mate`):
+                // made anew beside a complement of its own, it would replace the live one in the
+                // table, and one function would have two nodes (test
+                // `an_exclusive_or_is_found_again_when_only_its_complement_lives`).
+                return n.not();
+            } else {
+                let x = node(&s, false);
+                let n = node(&s, true);
+                if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
+                    let _ = e.complement.set(n.clone());
+                    m.set_back(e);
+                }
+                x
+            };
             if constant { x.not() } else { x }
         }
     }
 
-    /// The exclusive or of the atoms of the tree under `n`, built for each tree node below that has
-    /// none yet, children first, from a stack. The parts of the children of the tree nodes not yet
-    /// built are held on a second stack, each by its tree node's id, above those of the nodes
-    /// visited before: when a node is built, those of its children are the top ones.
-    fn node<A: Literal>(n: &Arc<Set<A>>) -> Part<A> {
-        // A node with no children is the literal of its atom, and takes no entry in the table.
-        // When only the complement lives, the one asked for is its complement, made again from
-        // the complement's pair (`mate`): built anew, its pair's complement would replace the
-        // live one in the table, and one function would have two nodes (test
-        // `an_exclusive_or_is_found_again_when_only_its_complement_lives`). One lookup more on a
-        // miss.
-        let known = |n: &Arc<Set<A>>| match (&n.left, &n.right) {
-            (None, None) => Some(Part::literal(n.key.0.clone())),
-            _ => found(n.id, false).or_else(|| found(n.id, true).map(|t| t.not())),
-        };
-        if let Some(x) = known(n) {
-            return x;
-        }
-        let mut held: Vec<(u64, Part<A>)> = Vec::new();
-        let mut stack = vec![(n, false)];
-        while let Some((m, ready)) = stack.pop() {
-            if !ready {
-                stack.push((m, true));
-                for c in [&m.left, &m.right].into_iter().flatten() {
-                    match known(c) {
-                        Some(x) => held.push((c.id, x)),
-                        None => stack.push((c, false)),
-                    }
-                }
-                continue;
-            }
-            let (mut l, mut r) = (None, None);
-            for c in [&m.left, &m.right].into_iter().flatten() {
-                let (id, x) = held
-                    .pop()
-                    .expect("a tree node's children are built before it");
-                match m.left.as_ref().is_some_and(|c| c.id == id) {
-                    true => l = Some(x),
-                    false => r = Some(x),
-                }
-                debug_assert!(
-                    m.left.iter().chain(&m.right).any(|c| c.id == id),
-                    "{}",
-                    c.id
-                );
-            }
-            let k = Part::literal(m.key.0.clone());
-            let x = match (l, r) {
-                (Some(l), None) => xor2(&l, &k, Some(m)),
-                (None, Some(r)) => xor2(&k, &r, Some(m)),
-                (Some(l), Some(r)) => xor2(&inner(&l, &k), &r, Some(m)),
-                (None, None) => unreachable!("a tree node with no children is a literal, known"),
-            };
-            held.push((m.id, x));
-        }
-        let (id, x) = held.pop().expect("the root is built last");
-        debug_assert!(id == n.id && held.is_empty(), "the root is built last");
-        x
-    }
-
-    /// `l ^ k` for the part `l` of a tree node's left subtree and the literal `k` of its atom: the
-    /// live one of the thread, or made by [`xor2`] and kept.
-    // Complexity tradeoff: a lookup in a table for each tree node with two children, and an entry
-    // kept while the inner exclusive or lives, against building it again, six expressions and a
-    // pair, each made and later freed, when the left subtree and the atom are those of a node
-    // that lives: on a literal added below the node's right, and for the nodes that a split
-    // leaves on the left. Measured on parity built a literal at a time (KERNEL-parity-cost).
-    fn inner<A: Literal>(l: &Part<A>, k: &Part<A>) -> Part<A> {
-        let key = (l.id(), k.id());
-        if let Some(x) = A::table(|t| t.inners.get(&key).and_then(Weak::upgrade)) {
-            return Part::Expr(x);
-        }
-        let x = xor2(l, k, None);
+    /// The exclusive or of the set `s` of two or more atoms and `constant`, made with its digests
+    /// alone and kept in the thread's table; its form is made when first read ([`halves`]). The
+    /// digests are the set's, sums over its literals, with the constant, so they are the same for
+    /// every shape of the set's tree.
+    fn node<A: Literal>(s: &Arc<Set<A>>, constant: bool) -> Part<A> {
+        let digest = |d: u64| mix(mix(11, d), u64::from(constant));
+        let x = Part::expr_unmade(
+            digest(set::digest(Some(s))),
+            digest(set::name_digest(Some(s))),
+            (s.clone(), constant),
+        );
         if let Part::Expr(e) = &x {
-            // An entry left by a node dropped on another thread is replaced.
-            A::table(|t| t.inners.insert(key, Arc::downgrade(e)));
-        }
-        x
-    }
-
-    /// `p&!q | !p&q`, made as it stands, with its complement `p&q | !p&!q` held as its own; both
-    /// tagged as the exclusive ors of `atoms` when given.
-    fn xor2<A: Literal>(p: &Part<A>, q: &Part<A>, atoms: Option<&Arc<Set<A>>>) -> Part<A> {
-        let pair = Arc::new(Pair {
-            p: p.clone(),
-            q: q.clone(),
-            atoms: atoms.cloned(),
-        });
-        let (np, nq) = (p.not(), q.not());
-        let x = half(&pair, false, &np, &nq);
-        let n = half(&pair, true, &np, &nq);
-        if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
-            let _ = e.complement.set(n.clone());
-            m.set_back(e);
-        }
-        x
-    }
-
-    /// The exclusive or of `pair` with `constant`: `p&!q | !p&q` when `false`, `p&q | !p&!q` when
-    /// `true`, `np` and `nq` the halves' complements; kept in the thread's table when the pair is
-    /// the one form of a set. Its two meets are made when its form is first read
-    /// ([`halves`]), unless both are lists, which are not expressions and whose digests are
-    /// those of their contents.
-    // Complexity tradeoff: the naive version makes the two meets with the union, three
-    // expressions where one is kept, and frees them with it; most are never read, since the
-    // digest, the order and the tables need only the union's digest, which is made here from the
-    // operands' digests in constant time without allocating. A meet is made on its first read, a
-    // lock and the two meets, the same work as before, so no input costs more than a constant
-    // more. Measured on parity built a literal at a time (KERNEL-parity-lazy-halves, COMPLEXITY
-    // row of that name).
-    fn half<A: Literal>(
-        pair: &Arc<Pair<A>>,
-        constant: bool,
-        np: &Part<A>,
-        nq: &Part<A>,
-    ) -> Part<A> {
-        let (p, q) = (&pair.p, &pair.q);
-        let r = if let (Part::Bdd(_), Part::Bdd(_)) = (p, q) {
-            let (x, y) = meets(pair, constant, np, nq);
-            Part::expr_xor(Form::Or(x, y), Some((pair.clone(), constant)))
-        } else {
-            // Each meet has an operand that is an expression, as `p` or `q` is one and so is its
-            // complement. A digest made of two equal digests is the same in either order, so
-            // the order of contents, which decides a tie, is not needed for it.
-            let meet_digest = |a: &Part<A>, b: &Part<A>| {
-                let (a, b) = (a.digest(), b.digest());
-                joined_digest(Op::And, a.min(b), a.max(b))
-            };
-            let (x, y) = if constant {
-                (meet_digest(p, q), meet_digest(np, nq))
-            } else {
-                (meet_digest(p, nq), meet_digest(np, q))
-            };
-            let digest = joined_digest(Op::Or, x.min(y), x.max(y));
-            let meet_hash = |a: &Part<A>, b: &Part<A>| {
-                let (a, b) = ((a.digest(), a.name_digest()), (b.digest(), b.name_digest()));
-                let (a, b) = if a <= b { (a, b) } else { (b, a) };
-                (
-                    joined_digest(Op::And, a.0, b.0),
-                    joined_digest(Op::And, a.1, b.1),
-                )
-            };
-            let (x, y) = if constant {
-                (meet_hash(p, q), meet_hash(np, nq))
-            } else {
-                (meet_hash(p, nq), meet_hash(np, q))
-            };
-            let (x, y) = if x <= y { (x, y) } else { (y, x) };
-            let name_digest = joined_digest(Op::Or, x.1, y.1);
-            Part::expr_unmade(digest, name_digest, (pair.clone(), constant))
-        };
-        if let (Some(s), Part::Expr(e)) = (&pair.atoms, &r) {
             // An entry left by a node dropped on another thread is replaced.
             A::table(|t| t.xors.insert((s.id, constant), Arc::downgrade(e)));
         }
-        r
+        x
     }
 
-    /// The form of the exclusive or of `pair` with `constant` ([`half`]): its two meets, made.
-    pub(super) fn halves<A: Literal>(pair: &Pair<A>, constant: bool) -> Form<A> {
-        let (x, y) = meets(pair, constant, &pair.p.not(), &pair.q.not());
-        Form::Or(x, y)
-    }
-
-    /// The two meets of the exclusive or of `pair` with `constant`, in their order, `np` and `nq`
-    /// the complements of the pair's parts.
-    fn meets<A: Literal>(
-        pair: &Pair<A>,
-        constant: bool,
-        np: &Part<A>,
-        nq: &Part<A>,
-    ) -> (Part<A>, Part<A>) {
-        let (p, q) = (&pair.p, &pair.q);
+    /// The form of the exclusive or of the set `s` of two or more atoms and `constant`: for `p`
+    /// the literal of its smallest atom and `q` the exclusive or of the others, `p&!q | !p&q`
+    /// when `false` and `p&q | !p&!q` when `true`, its two meets in their order. A function of
+    /// the set's atoms, not of its tree's shape.
+    pub(super) fn halves<A: Literal>(s: &Arc<Set<A>>, constant: bool) -> Form<A> {
+        let first = set::min(s);
+        let p = Part::literal(first.0.clone());
+        let q = Part::xor(set::remove(s, first), false);
+        let (np, nq) = (p.not(), q.not());
         let (x, y) = if constant {
-            (meet(p, q), meet(np, nq))
+            (meet(&p, &q), meet(&np, &nq))
         } else {
-            (meet(p, nq), meet(np, q))
+            (meet(&p, &nq), meet(&np, &q))
         };
-        if x.before(&y) { (x, y) } else { (y, x) }
+        if x.before(&y) {
+            Form::Or(x, y)
+        } else {
+            Form::Or(y, x)
+        }
     }
 
-    /// `a & b` for `a` and `b` each a literal or an exclusive or made by [`half`] (or the
-    /// complement of one), over disjoint sets of atoms: the halves of a pair, which [`node`]
-    /// takes from a tree node's subtrees and its own atom. It is the part `a.zip(b, Op::And)`
+    /// `a & b` for `a` and `b` each a literal or an exclusive or made by [`node`] (or the
+    /// complement of one), over disjoint sets of atoms: the halves of an exclusive or, which
+    /// [`halves`] takes from its smallest atom and the others. It is the part `a.zip(b, Op::And)`
     /// makes, without the search `Connect::zipped` runs, none of whose rules fits such operands:
     /// they are not complements and not equal, since their atoms differ; two literals are two
     /// lists, joined as a chain, which is built here at once; neither is an operand of
@@ -2771,15 +2645,10 @@ mod xor {
         Part::expr(Form::And(a.clone(), b.clone()))
     }
 
-    /// The exclusive or of `pair` with `constant`, the complement of the one with the other
-    /// constant: the live one of the table, or made again as it was first made.
-    pub(super) fn mate<A: Literal>(pair: &Arc<Pair<A>>, constant: bool) -> Part<A> {
-        if let Some(s) = &pair.atoms
-            && let Some(x) = found(s.id, constant)
-        {
-            return x;
-        }
-        half(pair, constant, &pair.p.not(), &pair.q.not())
+    /// The exclusive or of the set `s` of two or more atoms and `constant`, the complement of the
+    /// one with the other constant: the live one of the table, or made again.
+    pub(super) fn mate<A: Literal>(s: &Arc<Set<A>>, constant: bool) -> Part<A> {
+        found(s.id, constant).unwrap_or_else(|| node(s, constant))
     }
 
     /// The two operands of `p` under `op`, each an exclusive or in its one form.
@@ -3003,16 +2872,17 @@ mod list {
 
     /// The priorities of the cells, by the value of `taken` of the literal at the root of their
     /// block, drawn once per run (module [`crate::priority`]). The root is picked by the
-    /// priorities of the literals in sets (module `set`), a fixed hash, not drawn.
+    /// priorities of the literals in sets (module `set`), drawn by sites of their own.
     static PRIORITIES: [Priorities; 2] = [Priorities::new(13), Priorities::new(14)];
 
     /// The priority of the cell of `block`: the run's random polynomial of degree 4 at the digest
     /// of the literal at the root of the block's treap, the literal of highest priority there
     /// (module `set`), one polynomial for each value of `taken`.
     ///
-    /// The bound. Each block's root is a function of the block alone, fixed before the draw (and,
-    /// were the sets' priorities drawn too, by a draw independent of this one), so the cells'
-    /// priorities are the polynomials of this draw at points fixed before it. No atom is in two
+    /// The bound. Each block's root is a function of the block and the sets' draw, which is
+    /// independent of this one (other sites, module [`crate::priority`]), so given the sets'
+    /// draw the cells' priorities are the polynomials of this draw at points fixed before it.
+    /// No atom is in two
     /// blocks of a list (module comment), so the roots of two cells of one sequence are distinct
     /// literals, and distinct points unless their atoms' digests are equal: cells at distinct points take 5-wise independent uniform priorities, which bounds
     /// every cell's expected depth by `O(log m)` for `m` blocks, whatever the blocks (Seidel and
@@ -3022,9 +2892,10 @@ mod list {
     /// A literal added to a block changes this priority only when it becomes the block's root, so
     /// a block edited in place mostly keeps its cell's place, and its atoms are carried over
     /// ([`replace`]); a priority hashed from the whole block moved the cell at each edit and made
-    /// its atoms again, `O(k)` for a block of `k`. How often the root changes is not proved for
-    /// these priorities (for independent uniform ones it is `1 / (k + 1)` per literal added); no
-    /// bound here rests on it.
+    /// its atoms again, `O(k)` for a block of `k`. How often the root changes follows the sets'
+    /// draw: a literal added to a block of `k` at distinct points becomes its root with
+    /// probability at most `c / (k + 1)` (the 1-max property, Seidel and Aragon 1996, section 6);
+    /// no bound here rests on it.
     fn priority<A: Literal>(block: &Set<A>) -> u64 {
         PRIORITIES[usize::from(block.key.1)].of(block.key.0.digest())
     }
@@ -3629,13 +3500,29 @@ mod list {
         /// is `to`; in the one form ([`finish`]) a last block of one literal is the whole list, a
         /// literal, which is answered alone. Each cell and each set node is walked once for each
         /// value of `to` relative to its own first block, by `seen` (ids of cells, sets and
-        /// expressions come from one counter), from a stack.
+        /// expressions come from one counter), from a stack, in order: the blocks first to last,
+        /// the literals of a block in order. A node passed over by `seen` was walked whole
+        /// before (a node is not under itself), so the calls are those of the walk of every
+        /// node, in its order, less some calls repeated; the first call on each atom comes in
+        /// an order fixed by the list's contents, whatever the draw.
+        /// Complexity tradeoff (PERF-xor-shape-free): the naive walk took a node, then its
+        /// right, then its left side, `O(n)` for `n` nodes, but its order followed the shapes,
+        /// which follow the run's draw of priorities, and the callers keep the first atom found
+        /// (`Type::function_part`) or build unions in the order given (`first_components`). In
+        /// order it is `O(n)` as well, at one more step on the stack for each node.
         pub(super) fn taken_toward<'a>(
             &'a self,
             to: bool,
             seen: &mut crate::digest::DigestSet<(u64, bool)>,
             f: &mut impl FnMut(&'a A),
         ) {
+            /// A step of the walk; a cell or a set node with the value of its first block or of
+            /// its own (`Cell`, `Set`), or a set node's own literal (`Key`).
+            enum Job<'a, A: Literal> {
+                Cell(&'a Cell<A>, bool),
+                Set(&'a Set<A>, bool),
+                Key(&'a Set<A>, bool),
+            }
             let Bdd::List(root, first) = self else { return };
             if let Some((a, taken)) = self.as_literal() {
                 if taken == to {
@@ -3644,28 +3531,34 @@ mod list {
                 return;
             }
             // Each cell with whether its first block has the value `to`; the blocks of a
-            // sequence alternate in value, first to last.
-            let mut cells: Vec<(&'a Cell<A>, bool)> = vec![(&**root, *first == to)];
-            let mut sets: Vec<&'a Set<A>> = Vec::new();
-            while let Some((c, first)) = cells.pop() {
-                if !seen.insert((c.id, first)) {
-                    continue;
-                }
-                let left = c.left.as_deref();
-                let own = first != left.is_some_and(|l| l.len % 2 == 1);
-                cells.extend(left.map(|l| (l, first)));
-                cells.extend(c.right.as_deref().map(|r| (r, !own)));
-                sets.push(&c.block);
-                while let Some(s) = sets.pop() {
-                    if !seen.insert((s.id, own)) {
-                        continue;
+            // sequence alternate in value, first to last. The steps are pushed last first.
+            let mut jobs: Vec<Job<'a, A>> = vec![Job::Cell(&**root, *first == to)];
+            while let Some(job) = jobs.pop() {
+                match job {
+                    Job::Cell(c, first) => {
+                        if !seen.insert((c.id, first)) {
+                            continue;
+                        }
+                        let left = c.left.as_deref();
+                        let own = first != left.is_some_and(|l| l.len % 2 == 1);
+                        jobs.extend(c.right.as_deref().map(|r| Job::Cell(r, !own)));
+                        jobs.push(Job::Set(&c.block, own));
+                        jobs.extend(left.map(|l| Job::Cell(l, first)));
                     }
-                    let (a, taken) = &s.key;
-                    if own || !*taken {
-                        f(a);
+                    Job::Set(s, own) => {
+                        if !seen.insert((s.id, own)) {
+                            continue;
+                        }
+                        jobs.extend(s.right.as_deref().map(|r| Job::Set(r, own)));
+                        jobs.push(Job::Key(s, own));
+                        jobs.extend(s.left.as_deref().map(|l| Job::Set(l, own)));
                     }
-                    sets.extend(s.left.as_deref());
-                    sets.extend(s.right.as_deref());
+                    Job::Key(s, own) => {
+                        let (a, taken) = &s.key;
+                        if own || !*taken {
+                            f(a);
+                        }
+                    }
                 }
             }
         }
