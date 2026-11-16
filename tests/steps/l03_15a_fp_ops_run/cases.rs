@@ -920,6 +920,15 @@ fn repairs_write_the_operands_as_the_program_wrote_them() {
             ("(1).split(\"\")", "as `\"a,b\".split(\",\")`"),
             ("1 ++ [2]", "as `[1] ++ [2]`"),
             ("[2] ++ 1", "as `[2] ++ [1]`"),
+            // The other operand keeps its place, and parentheses only where `++` needs them:
+            // none on the left, since `++` groups from the left; on the right, a `++`.
+            ("[2] ++ [3] ++ 1", "as `[2] ++ [3] ++ [1]`"),
+            ("1 ++ ([2] ++ [3])", "as `[1] ++ ([2] ++ [3])`"),
+            (
+                "1 ++ ([\")\"] ++ [\"(\"])",
+                "as `[1] ++ ([\")\"] ++ [\"(\"])`",
+            ),
+            ("1 ++ [[2]][0]", "as `[1] ++ [[2]][0]`"),
         ],
     );
 }

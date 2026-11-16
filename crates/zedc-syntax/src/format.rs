@@ -171,6 +171,24 @@ fn binary_level(op: BinaryOp) -> u8 {
     }
 }
 
+/// The lowest levels the left and the right operand of `op` are written at with no parentheses.
+fn operand_levels(op: BinaryOp) -> (u8, u8) {
+    let l = binary_level(op);
+    match l {
+        POWER => (POSTFIX, PREFIX),
+        EQUALITY | RELATION => (l + 1, l + 1),
+        _ => (l, l + 1),
+    }
+}
+
+/// Whether `e`, written as the left operand of `op` (`right` false) or its right operand,
+/// needs parentheses there, as the formatter writes it: `a ++ b` needs none on the left of
+/// `++`, but needs them on its right. O(1).
+pub fn operand_needs_parens(e: &Expr, op: BinaryOp, right: bool) -> bool {
+    let (l, r) = operand_levels(op);
+    level(e) < if right { r } else { l }
+}
+
 /// Whether `e`'s text starts with a block or a record display, which a lambda's body or an
 /// `else` default that is not itself a block may not.
 fn starts_with_block(mut e: &Expr) -> bool {
@@ -1248,12 +1266,11 @@ impl<'a> Formatter<'a> {
                 }
             },
             ExprKind::Binary(op, a, b) => {
-                let l = binary_level(*op);
+                let (lmin, rmin) = operand_levels(*op);
                 // `^` is written with no spaces, as in mathematics: `0..=2^48`, `x * 2^k`.
-                let (lmin, rmin, op) = match l {
-                    POWER => (POSTFIX, PREFIX, Cow::Borrowed(op.as_str())),
-                    EQUALITY | RELATION => (l + 1, l + 1, Cow::Owned(format!(" {op} "))),
-                    _ => (l, l + 1, Cow::Owned(format!(" {op} "))),
+                let op = match binary_level(*op) {
+                    POWER => Cow::Borrowed(op.as_str()),
+                    _ => Cow::Owned(format!(" {op} ")),
                 };
                 then![stack; at(a, lmin), put(op), at(b, rmin)];
             }

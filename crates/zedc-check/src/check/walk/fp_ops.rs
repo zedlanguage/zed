@@ -33,6 +33,28 @@ fn postfix_operand(c: &str) -> String {
     }
 }
 
+/// Whether the operand text `c` is one group in parentheses, as `([2] ++ [3])`, and not
+/// `([2]) ++ ([3])`: its first token is a `(` that closes at its last. A group has no node of
+/// its own, only its operand's span widened over the parentheses, so the text tells it.
+/// Counted on the tokens of `c`, so a parenthesis inside a string is not counted, where a
+/// count on the characters, as [`postfix_operand`] does, would be. O(length of `c`).
+fn in_parens(c: &str) -> bool {
+    let Ok(tokens) = lex(c) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (i, t) in tokens.iter().enumerate() {
+        match t.tok {
+            Tok::Op("(") => depth += 1,
+            Tok::Op(")") if depth == 1 => return i + 1 == tokens.len(),
+            Tok::Op(")") => depth = depth.saturating_sub(1),
+            _ if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// The operand `e`, written `c`, before a `.` or `::`: a string literal as written, whose
 /// quotes [`postfix_operand`] would wrap in parentheses it does not need, any other operand
 /// as [`postfix_operand`] writes it.
@@ -1020,12 +1042,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                     p => {
                         let t = self.text(&p.ty());
                         // The repair with both operands as the program wrote them, where on
-                        // one line, this one in a list (plan row MSG-example-repairs).
+                        // one line, this one in a list (plan row MSG-example-repairs). The other
+                        // operand keeps its place, so it takes parentheses only where `++`
+                        // needs them there (author rule P191), as the formatter decides, and
+                        // the parentheses the program wrote around it are kept.
                         let other = [x, y][1 - side];
                         let this = self.operand_text(a.at).unwrap_or_else(|| "x".to_string());
-                        let other = match self.operand_text(other.at) {
-                            Some(c) => postfix_subject(other.expr, &c),
-                            None => "xs".to_string(),
+                        let other = match (self.operand_text(other.at), other.expr) {
+                            (Some(c), Some(e))
+                                if zedc_syntax::format::operand_needs_parens(
+                                    e,
+                                    BinaryOp::Concat,
+                                    side == 0,
+                                ) && !in_parens(&c) =>
+                            {
+                                format!("({c})")
+                            }
+                            (Some(c), Some(_)) => c,
+                            (Some(c), None) => postfix_operand(&c),
+                            (None, _) => "xs".to_string(),
                         };
                         let form = match side {
                             0 => format!("[{this}] ++ {other}"),
