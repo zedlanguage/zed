@@ -57,6 +57,8 @@ rows! {
     // `zedc::store::schedule::Refusal`.
     NeededToCheckItsOwnComputation => "Compile-time value needed to check its own computation",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
+    // `Resolver::unending` (zedc-resolve), plan row RANGE-open-walk.
+    OpenRangeEveryEntry => "A read of a range with no upper end that takes every entry",
     BelowProofGrade =>
         "Obligation below proof grade",
     // No diagnostic uses the next two rows yet: step L18.2a emits them.

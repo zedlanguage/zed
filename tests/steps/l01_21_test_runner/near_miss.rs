@@ -382,6 +382,19 @@ const NEAR_MISSES: &[NearMiss] = &[
              language, and this version of zedc does not compile them yet.",
         ),
     ),
+    // RANGE-open-walk: `.first` stops at the entry that decides it; `.count` needs every
+    // entry of `0 ..`, which never run out.
+    (
+        Row::OpenRangeEveryEntry,
+        "",
+        "n = (0 ..).first;\n",
+        "n = (0 ..).count;\n",
+        "1:5",
+        Some(
+            "give the range an upper end, as in `a ..< n`, or read it with `.first`, \
+             `.find(p)`, `.any(p)` or `.all(p)`, which stop at the entry that decides them",
+        ),
+    ),
     // Step L1.29d: the repair deletes the token the parse stopped at.
     (
         Row::SyntaxError,

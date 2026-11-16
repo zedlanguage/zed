@@ -4804,10 +4804,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// share the functions they hold, as `g(0)(1)…(n)` does, and are settled once each, not
     /// once for each signature that holds them. Each message then writes the definitions its
     /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
+    ///
+    /// The caller runs [`Ck::settle_calls`] first, so that the signatures recorded at calls
+    /// include those given to calls alike before the classes' types are put in them. The
+    /// call is made there, in walk.rs, and not here: `settle_calls` is written in walk.rs,
+    /// which imports this file, and a call from here would make the two files an import
+    /// cycle (tests/steps/s_01f_import_graph).
     fn finish(&mut self) {
-        // Before the classes' types are put in the signatures recorded at calls, which then
-        // include those given to calls alike.
-        self.settle_calls();
         // Each fold takes the identity of its one carrier. A fold of a generic function
         // checked at two carriers where any of them has an identity cannot elaborate to one
         // fold: that fold cannot give `-inf` at `f64` and `#empty` at `int`, and an empty

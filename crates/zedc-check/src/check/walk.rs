@@ -90,6 +90,8 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     {
         ck.rejects_with(Row::NonblockingCanBlock, span, message, notes);
     }
+    // Before `finish` puts the classes' types in the signatures recorded at calls.
+    ck.settle_calls();
     ck.finish();
     #[cfg(debug_assertions)]
     clean_check::flush();
@@ -126,6 +128,8 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     ck.env.insert(id, given);
     ck.bounds();
     ck.walk(rest);
+    // Before `finish` puts the classes' types in the signatures recorded at calls.
+    ck.settle_calls();
     ck.finish();
     ck.info.errors.iter_mut().for_each(Error::sentence);
     ck.info.errors.dedup();

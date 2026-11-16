@@ -2852,7 +2852,7 @@ impl Resolver<'_> {
     /// (plan row RANGE-open-walk).
     fn unending(&mut self, span: Span, what: &str, why: &str) {
         self.errors.push(Error {
-            row: None,
+            row: Some(Row::OpenRangeEveryEntry),
             menu: String::new(),
             span,
             message: format!(
