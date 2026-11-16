@@ -4585,16 +4585,14 @@ struct Visit {
     listed: bool,
     /// Its first columns not yet read.
     firsts: Vec<Type>,
-    /// The least number of a type being filed that it reaches (Tarjan's low link).
-    low: usize,
     /// The keys of the first columns filed before it was done, each read once.
     below: Vec<Filed>,
 }
 
 impl Visit {
-    /// The type `ty`, numbered `number` in its walk, with its own keys and first columns, and
-    /// with [`Reading::Payloads`] the payload types of its atom names.
-    fn new(ty: Type, reading: Reading, number: usize) -> Visit {
+    /// The type `ty`, with its own keys and first columns, and with [`Reading::Payloads`] the
+    /// payload types of its atom names.
+    fn new(ty: Type, reading: Reading) -> Visit {
         let (mut keys, mut listed, mut next) = (Vec::new(), true, Vec::new());
         let p = ty.p();
         for b in [false, true] {
@@ -4633,7 +4631,6 @@ impl Visit {
             keys,
             listed,
             firsts: next,
-            low: number,
             below: Vec::new(),
         }
     }
@@ -4643,8 +4640,8 @@ impl Filer {
     /// The keys of the column type `t`: those of every type it reaches through first columns
     /// ([`firsts`]). The types are walked depth first, and the types that reach each other, as
     /// a type recursive in its first component does itself, are filed together when the walk
-    /// leaves the first of them (Tarjan's strongly connected components), each with the keys of
-    /// all of them and of the types below them, which were filed before.
+    /// leaves the first of them (Tarjan's strongly connected components, [`zed_graph::Search`]),
+    /// each with the keys of all of them and of the types below them, which were filed before.
     // Complexity tradeoff: the naive form, one walk per column with a visited set that lives
     // for the walk, read every type the column reaches again for each column, O(n²) for a
     // chain of n types each holding the one before in its first component, as the makers of
@@ -4655,61 +4652,75 @@ impl Filer {
     // type with keys of its own beside a set below, or two distinct sets below, merges them,
     // in O(k log k) for the k keys it reads; a row reading the type copies those k keys into
     // its index anyway ([`Keyed::add`]). The cost is a map of every type filed, each with a
-    // shared set, held until the makers are built.
+    // shared set, held until the makers are built. The types are numbered as the walk meets
+    // them (`FileWalk::numbers`), since the column types have no numbers of their own; the
+    // search is the workspace's one Tarjan search, which takes nodes numbered as met
+    // (GRAPH-lazy-tarjan), in place of a copy of it here, at the same O(T + E).
     fn file(&mut self, t: &Type, reading: Reading) -> Filed {
         let filed = &mut self.filed[reading as usize];
         if let Some(f) = filed.get(t) {
             return f.clone();
         }
-        // Each type of this walk by its number, the position of its visit.
-        let mut numbers: HashMap<Type, usize> = HashMap::from([(t.clone(), 0)]);
-        let mut visits = vec![Visit::new(t.clone(), reading, 0)];
-        // The types walked and not yet filed, in the order of their numbers, and the types
-        // from `t` to the one being read.
-        let (mut open, mut path) = (vec![0], vec![0]);
-        while let Some(&v) = path.last() {
-            if let Some(c) = visits[v].firsts.pop() {
-                if let Some(f) = filed.get(&c) {
-                    visits[v].below.push(f.clone());
-                } else if let Some(&w) = numbers.get(&c) {
-                    // Walked and not yet filed: `c` reaches `v`, and is filed with it.
-                    visits[v].low = visits[v].low.min(w);
-                } else {
-                    let w = visits.len();
-                    numbers.insert(c.clone(), w);
-                    visits.push(Visit::new(c, reading, w));
-                    open.push(w);
-                    path.push(w);
-                }
-                continue;
-            }
-            path.pop();
-            let low = visits[v].low;
-            if low < v {
-                let u = *path
-                    .last()
-                    .expect("a type reaching an earlier one is not the first");
-                visits[u].low = visits[u].low.min(low);
-                continue;
-            }
-            // `v` and the types walked after it and not yet filed reach each other.
-            let at = open.partition_point(|&w| w < v);
-            let (mut keys, mut listed, mut below) = (Vec::new(), true, Vec::new());
-            for &w in &open[at..] {
-                let visit = &mut visits[w];
-                keys.append(&mut visit.keys);
-                listed &= visit.listed;
-                below.append(&mut visit.below);
-            }
-            let f = merged(keys, listed, below);
-            for w in open.drain(at..) {
-                filed.insert(visits[w].ty.clone(), f.clone());
-            }
-            if let Some(&u) = path.last() {
-                visits[u].below.push(f);
+        let mut walk = FileWalk {
+            filed,
+            reading,
+            numbers: HashMap::from([(t.clone(), 0)]),
+            visits: vec![Visit::new(t.clone(), reading)],
+        };
+        zed_graph::Search::new().run(&mut walk, [0]);
+        walk.filed[t].clone()
+    }
+}
+
+/// The walk of [`Filer::file`] over the types below a column type, read one way.
+struct FileWalk<'f> {
+    /// The types filed, by this walk and earlier ones.
+    filed: &'f mut HashMap<Type, Filed>,
+    reading: Reading,
+    /// Each type of this walk by its number, the position of its visit.
+    numbers: HashMap<Type, usize>,
+    visits: Vec<Visit>,
+}
+
+impl zed_graph::Walk for FileWalk<'_> {
+    /// A visit's first columns not yet read are kept in the visit.
+    type At = ();
+
+    /// The next first column of type `v` not yet filed; a filed one adds its keys to `v`'s.
+    fn next(&mut self, v: usize, _: &mut ()) -> Option<usize> {
+        while let Some(c) = self.visits[v].firsts.pop() {
+            if let Some(f) = self.filed.get(&c) {
+                self.visits[v].below.push(f.clone());
+            } else if let Some(&w) = self.numbers.get(&c) {
+                // Walked and not yet filed: `c` reaches `v`, and is filed with it.
+                return Some(w);
+            } else {
+                let w = self.visits.len();
+                self.numbers.insert(c.clone(), w);
+                self.visits.push(Visit::new(c, self.reading));
+                return Some(w);
             }
         }
-        filed[t].clone()
+        None
+    }
+
+    /// Files the types that reach each other with the keys of all of them and of the types
+    /// below them, and adds those keys to the type the walk reached them from.
+    fn found(&mut self, members: &mut [usize], from: Option<usize>) {
+        let (mut keys, mut listed, mut below) = (Vec::new(), true, Vec::new());
+        for &w in &*members {
+            let visit = &mut self.visits[w];
+            keys.append(&mut visit.keys);
+            listed &= visit.listed;
+            below.append(&mut visit.below);
+        }
+        let f = merged(keys, listed, below);
+        for &w in &*members {
+            self.filed.insert(self.visits[w].ty.clone(), f.clone());
+        }
+        if let Some(u) = from {
+            self.visits[u].below.push(f);
+        }
     }
 }
 

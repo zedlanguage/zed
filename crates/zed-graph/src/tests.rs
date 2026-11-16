@@ -1,4 +1,6 @@
-use super::{components, on_cycle, tarjan};
+use std::collections::HashMap;
+
+use super::{Search, Walk, components, on_cycle, tarjan};
 
 /// A step of xorshift64, the random numbers of these tests.
 fn next(state: &mut u64) -> u64 {
@@ -160,4 +162,221 @@ fn a_long_chain_needs_no_deep_stack() {
         .join()
         .unwrap();
     assert!(cyclic.iter().all(|&c| c));
+}
+
+/// A graph whose nodes are labels, numbered by the walk as it meets them, as a caller with no
+/// numbering of its own does; it records each component found, by labels, with the label it
+/// was reached from, and the label of each node whose edges the search read.
+struct Labeled<'g> {
+    edges: &'g HashMap<u64, Vec<u64>>,
+    number: HashMap<u64, usize>,
+    label: Vec<u64>,
+    found: Vec<(Vec<u64>, Option<u64>)>,
+    read: Vec<u64>,
+}
+
+impl<'g> Labeled<'g> {
+    fn new(edges: &'g HashMap<u64, Vec<u64>>) -> Self {
+        Labeled {
+            edges,
+            number: HashMap::new(),
+            label: Vec::new(),
+            found: Vec::new(),
+            read: Vec::new(),
+        }
+    }
+
+    /// The number of `x`, given the first time `x` is met.
+    fn number(&mut self, x: u64) -> usize {
+        *self.number.entry(x).or_insert_with(|| {
+            self.label.push(x);
+            self.label.len() - 1
+        })
+    }
+}
+
+impl Walk for Labeled<'_> {
+    type At = usize;
+
+    fn next(&mut self, v: usize, k: &mut usize) -> Option<usize> {
+        let x = self.label[v];
+        if *k == 0 {
+            self.read.push(x);
+        }
+        let w = *self.edges[&x].get(*k)?;
+        *k += 1;
+        Some(self.number(w))
+    }
+
+    fn found(&mut self, members: &mut [usize], from: Option<usize>) {
+        let members = members.iter().map(|&m| self.label[m]).collect();
+        self.found.push((members, from.map(|f| self.label[f])));
+    }
+}
+
+/// The label of node `v` of a graph of the tests: spread out, so the numbers the walk gives
+/// are not the nodes' own.
+fn label(v: usize) -> u64 {
+    (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5555
+}
+
+fn labeled(edges: &[Vec<usize>]) -> HashMap<u64, Vec<u64>> {
+    (0..edges.len())
+        .map(|v| (label(v), edges[v].iter().map(|&w| label(w)).collect()))
+        .collect()
+}
+
+/// Checks the components a [`Search`] gives over `walk` against reach in `edges`, the
+/// components of every run so far being in `walk.found`, and the nodes `roots` of each run in
+/// `roots`: each node in one component, the members of one component exactly the nodes that
+/// reach each other, every component after those it reaches, each node's edges read once, and
+/// `from` the node an edge reached the first member by, `None` only for a root. Returns the
+/// pairs of distinct nodes put in one component and those put apart.
+fn lazy_agree(edges: &[Vec<usize>], walk: &Labeled, roots: &[usize]) -> (usize, usize) {
+    let n = edges.len();
+    let node: HashMap<u64, usize> = (0..n).map(|v| (label(v), v)).collect();
+    let mut comp = vec![usize::MAX; n];
+    for (c, (members, from)) in walk.found.iter().enumerate() {
+        for x in members {
+            assert_eq!(
+                comp[node[x]],
+                usize::MAX,
+                "{edges:?}: node {} twice",
+                node[x]
+            );
+            comp[node[x]] = c;
+        }
+        let first = node[&members[0]];
+        match from {
+            Some(f) => assert!(edges[node[f]].contains(&first), "{edges:?}: from {f}"),
+            None => assert!(roots.contains(&first), "{edges:?}: {first} is no root"),
+        }
+    }
+    let reach = reaches(edges);
+    let mut reached = vec![false; n];
+    for &r in roots {
+        reached[r] = true;
+        for w in 0..n {
+            reached[w] |= reach[r][w];
+        }
+    }
+    let mut read: Vec<usize> = walk.read.iter().map(|x| node[x]).collect();
+    read.sort();
+    let expected: Vec<usize> = (0..n).filter(|&v| reached[v]).collect();
+    assert_eq!(read, expected, "{edges:?}: the nodes read");
+    let (mut merged, mut split) = (0, 0);
+    for u in (0..n).filter(|&u| reached[u]) {
+        for v in (0..n).filter(|&v| reached[v]) {
+            let same = u == v || (reach[u][v] && reach[v][u]);
+            assert_eq!(comp[u] == comp[v], same, "{edges:?}: nodes {u} and {v}");
+            if u != v {
+                if same { merged += 1 } else { split += 1 }
+            }
+        }
+        for &w in &edges[u] {
+            assert!(comp[w] <= comp[u], "{edges:?}: edge {u} -> {w}");
+        }
+    }
+    (merged, split)
+}
+
+#[test]
+fn a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach() {
+    // Both outcomes on the built graph from root 0: 0 and 1 merged, 2 not reached; from both
+    // roots, 2 apart from them.
+    let built: Vec<Vec<usize>> = BUILT.iter().map(|e| e.to_vec()).collect();
+    let map = labeled(&built);
+    let mut walk = Labeled::new(&map);
+    let roots = [walk.number(label(0))];
+    Search::new().run(&mut walk, roots);
+    assert_eq!(walk.found, [(vec![label(0), label(1)], None)]);
+    assert_eq!(lazy_agree(&built, &walk, &[0]), (2, 0));
+    let mut walk = Labeled::new(&map);
+    let roots: Vec<usize> = [2, 0].iter().map(|&v| walk.number(label(v))).collect();
+    Search::new().run(&mut walk, roots);
+    let (merged, split) = lazy_agree(&built, &walk, &[2, 0]);
+    assert!(merged > 0 && split > 0, "{built:?}");
+    let mut state =
+        crate::seed::seed("a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach");
+    for _ in 0..5000 {
+        let edges = random_graph(&mut state);
+        let n = edges.len();
+        // A random subset of the nodes as roots, in a random order, some twice.
+        let roots: Vec<usize> = (0..1 + next(&mut state) % (n as u64 + 1))
+            .map(|_| next(&mut state) as usize % n)
+            .collect();
+        let map = labeled(&edges);
+        let mut walk = Labeled::new(&map);
+        let numbers: Vec<usize> = roots.iter().map(|&r| walk.number(label(r))).collect();
+        Search::new().run(&mut walk, numbers);
+        lazy_agree(&edges, &walk, &roots);
+    }
+}
+
+#[test]
+fn a_search_run_again_after_its_graph_grows_reads_only_the_new_nodes() {
+    let mut state =
+        crate::seed::seed("a_search_run_again_after_its_graph_grows_reads_only_the_new_nodes");
+    let (mut merged_new, mut split_new) = (0, 0);
+    for _ in 0..5000 {
+        // Old nodes 0..a with edges among themselves; new nodes a..n with edges to any node.
+        let old = random_graph(&mut state);
+        let a = old.len();
+        let n = a + 1 + (next(&mut state) % 8) as usize;
+        let mut edges = old;
+        edges.resize(n, Vec::new());
+        for _ in 0..next(&mut state) % (3 * (n - a) as u64 + 1) {
+            let u = a + next(&mut state) as usize % (n - a);
+            edges[u].push(next(&mut state) as usize % n);
+        }
+        let map = labeled(&edges);
+        let mut walk = Labeled::new(&map);
+        let mut search = Search::new();
+        let first: Vec<usize> = (0..a).map(|v| walk.number(label(v))).collect();
+        search.run(&mut walk, first);
+        let (found, read) = (walk.found.len(), walk.read.len());
+        assert_eq!(read, a, "{edges:?}: the first run reads the old nodes only");
+        let second: Vec<usize> = (a..n).rev().map(|v| walk.number(label(v))).collect();
+        search.run(&mut walk, second);
+        let is_new = |x: &u64| (a..n).any(|v| label(v) == *x);
+        assert!(
+            walk.read[read..].iter().all(is_new),
+            "{edges:?}: the second run reads an old node"
+        );
+        for (members, _) in &walk.found[found..] {
+            assert!(
+                members.iter().all(is_new),
+                "{edges:?}: an old node found again"
+            );
+            if members.len() > 1 {
+                merged_new += 1;
+            } else {
+                split_new += 1;
+            }
+        }
+        let all: Vec<usize> = (0..n).collect();
+        lazy_agree(&edges, &walk, &all);
+    }
+    // Both outcomes among the new nodes: a component of several new nodes and one of one.
+    assert!(merged_new > 0 && split_new > 0, "{merged_new} {split_new}");
+}
+
+#[test]
+fn a_search_with_no_roots_finds_nothing_and_a_root_found_before_is_passed_over() {
+    let edges = [vec![0], vec![0]];
+    let map = labeled(&edges);
+    let mut walk = Labeled::new(&map);
+    let mut search = Search::new();
+    search.run(&mut walk, []);
+    assert!(walk.found.is_empty() && walk.read.is_empty());
+    let r = walk.number(label(0));
+    search.run(&mut walk, [r, r]);
+    search.run(&mut walk, [r]);
+    // 0 is found once, as a root, its self-loop read once.
+    assert_eq!(walk.found, [(vec![label(0)], None)]);
+    assert_eq!(walk.read, [label(0)]);
+    let r = walk.number(label(1));
+    search.run(&mut walk, [r]);
+    assert_eq!(walk.found[1], (vec![label(1)], None));
+    assert_eq!(walk.read, [label(0), label(1)]);
 }

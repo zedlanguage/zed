@@ -9,8 +9,9 @@
 //! asking for one node at a time, and which node it asks for next may depend on the answers it
 //! has. A component that holds a once node is refused ([`Refusal`]).
 //!
-//! The search is Tarjan's (DESIGN.md \[Tarjan72\]): one depth-first search with an explicit
-//! stack, each node visited once and each read walked once, the components emitted as they
+//! The search is Tarjan's (DESIGN.md \[Tarjan72\]), the workspace's one copy of it
+//! ([`zed_graph::Search`]), run again for each demand on the graph as it has grown: one
+//! depth-first search with an explicit stack, each node visited once and each read walked once, the components emitted as they
 //! close, every component a node reads closed before it. A once node is polled with each answer
 //! as it comes: a read of a final node is answered at once, a read of an unvisited node descends
 //! into it, and a read of a node still on the search stack leaves the once node waiting on it,
@@ -54,8 +55,10 @@
 //! breadth-first search inside each refused component. A once node is polled once per answer, so
 //! a node that asks k times costs O(k) here when it keeps its own continuation, as the checker's
 //! frame machine does; re-running it from its start for each answer, as a restarting build system
-//! does, would cost O(k²). Cost: the search keeps four 32-bit words per node besides its value,
-//! and its two stacks. Tests:
+//! does, would cost O(k²). Cost: per node besides its value, one 64-bit word in the search (its
+//! number, or that its component is found) and two 32-bit words here (`waits`, `mark`), 16
+//! bytes, as the four 32-bit words of this module's own copy of the search took before
+//! GRAPH-lazy-tarjan; and the search's two stacks. Tests:
 //! `m0_05_widening_and_iteration::bench::schedule::scaling`; COMPLEXITY.md row S-sched.
 
 /// What a node is.
@@ -129,45 +132,34 @@ impl<V> Values<V> {
     }
 }
 
-/// No node: the number of a node not yet visited, a frame that is not waiting on a child, a
-/// node outside the component being refused.
+/// No node: a once node that is not waiting, a node outside the component being refused.
 const NONE: u32 = u32::MAX;
 /// A member of the component being refused that its breadth-first search has not reached.
 const UNREACHED: u32 = u32::MAX - 1;
 
-/// One node the search is in, with where it is in its reads.
-#[derive(Clone, Copy)]
-struct Frame {
-    v: u32,
-    /// For an iterable node, the next of its reads to walk. For a once node, 0 until it is
-    /// polled the first time and 1 after.
-    cursor: u32,
-    /// The node the search descended into from here and has not yet come back from, or
-    /// [`NONE`].
-    child: u32,
+/// Where the search is in the reads of a node on its path ([`zed_graph::Walk::At`]).
+#[derive(Default)]
+struct At {
+    /// For an iterable node, the place of the next of its reads to walk.
+    read: usize,
+    /// For a once node, the node its last step asked for, once it is polled; `None` before.
+    asked: Option<u32>,
 }
 
 /// The scheduler: the final values and the search's state, kept across demands so a later
 /// demand reuses every value an earlier one made final.
 pub struct Schedule<V> {
     values: Values<V>,
-    /// Each node's number in the order the search reached it, [`NONE`] before.
-    index: Vec<u32>,
-    /// Tarjan's lowlink: the least number of a node on the stack that this node reaches by
-    /// edges walked so far.
-    low: Vec<u32>,
     /// For a once node that is waiting, the node it waits on; [`NONE`] otherwise.
     waits: Vec<u32>,
     /// During a refusal, each member's breadth-first parent, [`UNREACHED`] for a member not
     /// reached yet; [`NONE`] for every other node and at every other time.
     mark: Vec<u32>,
-    /// Tarjan's stack: the nodes reached whose component has not closed. A node is on it
-    /// exactly when it has a number and no value, so no flag is kept.
-    stack: Vec<u32>,
-    /// The search's own stack, in place of recursion, so a long chain of reads cannot overflow
-    /// the thread's stack.
-    calls: Vec<Frame>,
-    next_index: u32,
+    /// Tarjan's search, on an explicit stack in place of recursion, so a long chain of reads
+    /// cannot overflow the thread's stack. A node is on its stack exactly when it has a number
+    /// and no value. It is run again for each demand: a node it found in an earlier one is
+    /// final and is passed over.
+    search: zed_graph::Search<At>,
 }
 
 impl<V> Default for Schedule<V> {
@@ -176,7 +168,7 @@ impl<V> Default for Schedule<V> {
     }
 }
 
-/// `v` as a node number of the search's arrays.
+/// `v` as a node number of the arrays `waits` and `mark`.
 fn node(v: usize) -> u32 {
     let n = u32::try_from(v).expect("a build has fewer than 2^32 - 2 facts");
     assert!(n < UNREACHED, "a build has fewer than 2^32 - 2 facts");
@@ -188,13 +180,9 @@ impl<V> Schedule<V> {
     pub fn new() -> Self {
         Schedule {
             values: Values { of: Vec::new() },
-            index: Vec::new(),
-            low: Vec::new(),
             waits: Vec::new(),
             mark: Vec::new(),
-            stack: Vec::new(),
-            calls: Vec::new(),
-            next_index: 0,
+            search: zed_graph::Search::new(),
         }
     }
 
@@ -204,21 +192,27 @@ impl<V> Schedule<V> {
     }
 
     /// Makes node `root` final, and every node it reads.
+    // Complexity tradeoff: the search is the workspace's one Tarjan search
+    // ([`zed_graph::Search`], GRAPH-lazy-tarjan), run again for each demand on the graph as it
+    // has grown, in place of a copy of it here; each run reads only nodes no earlier one
+    // reached, so all the demands together cost O(n + e), as the copy did. The naive method, a
+    // search from scratch per demand, costs O(n + e) per demand.
     pub fn demand<F: Facts<Value = V>>(&mut self, facts: &mut F, root: usize) {
-        self.grow(facts.count());
-        assert!(root < self.index.len(), "node {root} does not exist");
-        if self.is_final(root) {
+        let mut walk = Demand {
+            facts,
+            values: &mut self.values,
+            waits: &mut self.waits,
+            mark: &mut self.mark,
+            ready: None,
+        };
+        walk.grow();
+        assert!(root < walk.values.of.len(), "node {root} does not exist");
+        if walk.values.get(root).is_some() {
             return;
         }
-        // Between demands the search's stacks are empty, so a node without a value has no
+        // Between demands the search's stack is empty, so a node without a value has no
         // number either.
-        self.enter(node(root));
-        while let Some(&Frame { v, .. }) = self.calls.last() {
-            match facts.kind(v as usize) {
-                Kind::Iterable => self.step_iterable(facts),
-                Kind::Once => self.step_once(facts),
-            }
-        }
+        self.search.run(&mut walk, [root]);
     }
 
     /// [`Schedule::demand`] for each root in turn: the build demands every definition in the
@@ -232,190 +226,47 @@ impl<V> Schedule<V> {
             self.demand(facts, r);
         }
     }
+}
 
+/// One demand's walk over the reads of the nodes, as [`zed_graph::Search`] reads them.
+struct Demand<'s, F: Facts> {
+    facts: &'s mut F,
+    values: &'s mut Values<F::Value>,
+    waits: &'s mut Vec<u32>,
+    mark: &'s mut Vec<u32>,
+    /// The value of the once node that just finished, with the node, until its component,
+    /// which is that node alone, gets it.
+    ready: Option<(usize, F::Value)>,
+}
+
+impl<F: Facts> Demand<'_, F> {
     /// Makes room for the nodes an evaluation added.
-    fn grow(&mut self, count: usize) {
-        if self.index.len() < count {
+    fn grow(&mut self) {
+        let count = self.facts.count();
+        if self.values.of.len() < count {
             node(count - 1);
             self.values.of.resize_with(count, || None);
-            self.index.resize(count, NONE);
-            self.low.resize(count, NONE);
             self.waits.resize(count, NONE);
             self.mark.resize(count, NONE);
         }
     }
 
-    fn is_final(&self, v: usize) -> bool {
-        self.values.of[v].is_some()
-    }
-
-    /// A read of node `u`, checked to exist.
-    fn read<F: Facts<Value = V>>(&mut self, facts: &F, from: u32, u: usize) -> u32 {
-        self.grow(facts.count());
+    /// A read of node `u` by node `from`, checked to exist.
+    fn read(&mut self, from: usize, u: usize) -> usize {
+        self.grow();
         assert!(
-            u < self.index.len(),
+            u < self.values.of.len(),
             "node {from} reads node {u}, which does not exist"
         );
-        node(u)
-    }
-
-    fn enter(&mut self, v: u32) {
-        let i = self.next_index;
-        self.next_index += 1;
-        self.index[v as usize] = i;
-        self.low[v as usize] = i;
-        self.stack.push(v);
-        self.calls.push(Frame {
-            v,
-            cursor: 0,
-            child: NONE,
-        });
-    }
-
-    /// Walks the reads of the iterable node on top of the search, from where it stopped, until
-    /// one needs a descent or none is left.
-    fn step_iterable<F: Facts<Value = V>>(&mut self, facts: &mut F) {
-        let top = self.calls.len() - 1;
-        let Frame { v, cursor, child } = self.calls[top];
-        let vu = v as usize;
-        if child != NONE {
-            self.calls[top].child = NONE;
-            if !self.is_final(child as usize) {
-                // The child's component is still open, so it holds a node on the stack below
-                // `v`, or `v` itself: the tree edge of Tarjan's search.
-                self.low[vu] = self.low[vu].min(self.low[child as usize]);
-            }
-        }
-        let count = facts.reads(vu).len();
-        let mut i = cursor as usize;
-        while i < count {
-            let r = facts.reads(vu)[i];
-            i += 1;
-            let u = self.read(facts, v, r);
-            let uu = u as usize;
-            if self.is_final(uu) {
-                continue;
-            }
-            if self.index[uu] == NONE {
-                self.calls[top].cursor = node(i);
-                self.calls[top].child = u;
-                self.enter(u);
-                return;
-            }
-            // On the stack: the back or cross edge of Tarjan's search.
-            self.low[vu] = self.low[vu].min(self.index[uu]);
-        }
-        self.finish(facts, v, None);
-    }
-
-    /// Polls the once node on top of the search with each answer it can have now, until it
-    /// finishes, needs a descent, or waits on a node on the stack.
-    fn step_once<F: Facts<Value = V>>(&mut self, facts: &mut F) {
-        let top = self.calls.len() - 1;
-        let Frame { v, cursor, child } = self.calls[top];
-        let vu = v as usize;
-        let mut step = if child != NONE {
-            self.calls[top].child = NONE;
-            let c = child as usize;
-            match self.values.of[c].as_ref() {
-                Some(answer) => facts.poll(vu, Some(answer)),
-                None => {
-                    self.low[vu] = self.low[vu].min(self.low[c]);
-                    self.waits[vu] = child;
-                    self.finish(facts, v, None);
-                    return;
-                }
-            }
-        } else {
-            debug_assert_eq!(
-                cursor, 0,
-                "a once node on top of the search is new or back from a child"
-            );
-            self.calls[top].cursor = 1;
-            facts.poll(vu, None)
-        };
-        loop {
-            match step {
-                Poll::Ready(value) => {
-                    self.finish(facts, v, Some(value));
-                    return;
-                }
-                Poll::Pending(r) => {
-                    let u = self.read(facts, v, r);
-                    let uu = u as usize;
-                    if let Some(answer) = self.values.of[uu].as_ref() {
-                        step = facts.poll(vu, Some(answer));
-                        continue;
-                    }
-                    if self.index[uu] == NONE {
-                        self.calls[top].child = u;
-                        self.enter(u);
-                        return;
-                    }
-                    self.low[vu] = self.low[vu].min(self.index[uu]);
-                    self.waits[vu] = u;
-                    self.finish(facts, v, None);
-                    return;
-                }
-            }
-        }
-    }
-
-    /// Leaves node `v`; if it is the first node of its component, the component closes and gets
-    /// its values. `ready` is the value of a once node that finished.
-    fn finish<F: Facts<Value = V>>(&mut self, facts: &mut F, v: u32, ready: Option<V>) {
-        self.calls.pop();
-        let vu = v as usize;
-        if self.low[vu] != self.index[vu] {
-            // A once node that finished read only final nodes, so it is the first node of its
-            // own component.
-            debug_assert!(
-                ready.is_none(),
-                "a finished once node closes its own component"
-            );
-            return;
-        }
-        let at = self
-            .stack
-            .iter()
-            .rposition(|&m| m == v)
-            .expect("a node being left is on the stack");
-        let members: Vec<usize> = self.stack.drain(at..).map(|m| m as usize).collect();
-        let values = match ready {
-            Some(value) => {
-                debug_assert_eq!(
-                    members,
-                    [vu],
-                    "a finished once node is alone in its component"
-                );
-                vec![value]
-            }
-            None if members.iter().all(|&m| facts.kind(m) == Kind::Iterable) => {
-                facts.solve(&members, &self.values)
-            }
-            None => {
-                let cycle = self.cycle(facts, &members);
-                facts.refuse(&Refusal {
-                    members: members.clone(),
-                    cycle,
-                })
-            }
-        };
-        assert_eq!(
-            values.len(),
-            members.len(),
-            "one value per member of a component"
-        );
-        for (m, value) in members.into_iter().zip(values) {
-            self.values.of[m] = Some(value);
-        }
+        u
     }
 
     /// The shortest cycle through the once member of least key of a component being refused,
     /// starting there: a breadth-first search over the component's own edges, each node's edges
     /// in their order, the first edge back to the start ending it. Every member waits only on
     /// members or on final nodes, and the component is strongly connected, so a cycle exists.
-    fn cycle<F: Facts<Value = V>>(&mut self, facts: &F, members: &[usize]) -> Vec<usize> {
+    fn cycle(&mut self, members: &[usize]) -> Vec<usize> {
+        let facts = &*self.facts;
         let start = members
             .iter()
             .copied()
@@ -461,5 +312,94 @@ impl<V> Schedule<V> {
             self.mark[m] = NONE;
         }
         cycle
+    }
+}
+
+impl<F: Facts> zed_graph::Walk for Demand<'_, F> {
+    type At = At;
+
+    /// The next node `v` reads that is not final. An iterable node walks its reads from where
+    /// it stopped; a once node is polled with each answer it can have now, until it finishes,
+    /// asks for a node that is not final, or waits on one.
+    fn next(&mut self, v: usize, at: &mut At) -> Option<usize> {
+        if self.facts.kind(v) == Kind::Iterable {
+            while let Some(&r) = self.facts.reads(v).get(at.read) {
+                at.read += 1;
+                let u = self.read(v, r);
+                if self.values.get(u).is_none() {
+                    return Some(u);
+                }
+            }
+            return None;
+        }
+        let mut step = match at.asked {
+            None => self.facts.poll(v, None),
+            Some(u) => match self.values.of[u as usize].as_ref() {
+                Some(answer) => self.facts.poll(v, Some(answer)),
+                None => {
+                    // The node asked for is on the search's stack: `v` waits on it, that read
+                    // being its one edge in its component.
+                    self.waits[v] = u;
+                    return None;
+                }
+            },
+        };
+        loop {
+            match step {
+                Poll::Ready(value) => {
+                    self.ready = Some((v, value));
+                    return None;
+                }
+                Poll::Pending(r) => {
+                    let u = self.read(v, r);
+                    if let Some(answer) = self.values.of[u].as_ref() {
+                        step = self.facts.poll(v, Some(answer));
+                        continue;
+                    }
+                    at.asked = Some(node(u));
+                    return Some(u);
+                }
+            }
+        }
+    }
+
+    /// Gives a component its values: a once node that finished, alone, its value; a component
+    /// of iterable nodes what [`Facts::solve`] gives; a component with a waiting once node what
+    /// [`Facts::refuse`] gives.
+    fn found(&mut self, members: &mut [usize], _from: Option<usize>) {
+        let members = &*members;
+        let values = match self.ready.take() {
+            Some((v, value)) => {
+                // A once node that finished read only final nodes, so it is the first node of
+                // its own component.
+                debug_assert_eq!(
+                    members,
+                    [v],
+                    "a finished once node is alone in its component"
+                );
+                vec![value]
+            }
+            None if members
+                .iter()
+                .all(|&m| self.facts.kind(m) == Kind::Iterable) =>
+            {
+                self.facts.solve(members, self.values)
+            }
+            None => {
+                let cycle = self.cycle(members);
+                self.facts.refuse(&Refusal {
+                    members: members.to_vec(),
+                    cycle,
+                })
+            }
+        };
+        assert_eq!(
+            values.len(),
+            members.len(),
+            "one value per member of a component"
+        );
+        for (&m, value) in members.iter().zip(values) {
+            self.values.of[m] = Some(value);
+        }
     }
 }

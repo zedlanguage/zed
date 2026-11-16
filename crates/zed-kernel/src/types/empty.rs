@@ -11610,30 +11610,27 @@ thread_local! {
 }
 
 /// The state of the walk of [`group_of`]: per type met, by its number in the order met, the
-/// type, its parts read, its group's number once its walk ends (`usize::MAX` before), and the
-/// lowest number it reaches through types whose groups are not made; the types met whose
-/// groups are not made, in order; and the walk, each type with its next type inside, by edge
-/// and by place under the edge.
+/// type, its parts read, and its group's number once its walk ends (`usize::MAX` before); the
+/// number of groups made; and what reading a type's parts needs.
 struct Walked<'a> {
     number: HashMap<&'a Type, usize>,
     types: Vec<&'a Type>,
     locals: Vec<Local<'a>>,
     group: Vec<usize>,
-    low: Vec<usize>,
-    open: Vec<usize>,
-    walk: Vec<(usize, usize, usize)>,
+    groups: usize,
+    held: &'a Held,
+    none: &'a Type,
 }
 
 impl<'a> Walked<'a> {
-    fn visit(&mut self, t: &'a Type, held: &'a Held, none: &Type) {
+    /// Numbers `t`, met for the first time, and reads its parts; returns its number.
+    fn visit(&mut self, t: &'a Type) -> usize {
         let v = self.types.len();
         self.number.insert(t, v);
         self.types.push(t);
-        self.locals.push(local(t.p_held(held), none));
+        self.locals.push(local(t.p_held(self.held), self.none));
         self.group.push(usize::MAX);
-        self.low.push(v);
-        self.open.push(v);
-        self.walk.push((v, 0, 0));
+        v
     }
 
     /// Makes the group `g` of `members`, whose walks have ended, and keeps it for each member:
@@ -11746,9 +11743,52 @@ impl<'a> Walked<'a> {
     }
 }
 
+impl<'a> zed_graph::Walk for Walked<'a> {
+    /// The place of the next type to read: the kid of the type, and the place under the kid.
+    type At = (usize, usize);
+
+    /// The next type inside type `v` whose group is not made before this walk, numbered when
+    /// met for the first time.
+    fn next(&mut self, v: usize, (k, j): &mut (usize, usize)) -> Option<usize> {
+        loop {
+            let kid = self.locals[v].kids.get(*k)?;
+            let Some(&x) = kid.inside.get(*j) else {
+                (*k, *j) = (*k + 1, 0);
+                continue;
+            };
+            *j += 1;
+            if let Some(&u) = self.number.get(x) {
+                return Some(u);
+            }
+            if !GROUPS.with(|m| m.borrow().contains_key(x)) {
+                return Some(self.visit(x));
+            }
+        }
+    }
+
+    /// Makes the group of `members` and numbers it.
+    fn found(&mut self, members: &mut [usize], _from: Option<usize>) {
+        // The members last reached first, the order a pop of Tarjan's stack gives, which makes
+        // the trie of the group from the member last reached.
+        members.reverse();
+        for &m in &*members {
+            self.group[m] = self.groups;
+        }
+        self.make(members, self.groups);
+        self.groups += 1;
+    }
+}
+
 /// The group of `t` and its node there ([`Group`]), made with each group below it not yet
-/// made, by Tarjan's walk over the types inside, which reads each type's parts once: a group
-/// is made when its walk ends, after the groups below it.
+/// made, by Tarjan's walk over the types inside ([`zed_graph::Search`]), which reads each
+/// type's parts once: a group is made when its walk ends, after the groups below it.
+// Complexity tradeoff: the naive form, a search of what each type reaches and is reached by,
+// to find the types of its group, is O(T (T + E)) for the T types and E places of types inside
+// types met. Tarjan's search is O(T + E), each type's parts read once (`local`), plus the
+// making of each group (`Walked::make`). The types are numbered as the walk meets them
+// (`Walked::number`), since types have no numbers of their own; the search is the workspace's
+// one Tarjan search, which takes nodes numbered as met (GRAPH-lazy-tarjan), in place of a copy
+// of it here, at the same cost.
 fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
     if let Some(g) = GROUPS.with(|m| m.borrow().get(t).cloned()) {
         return g;
@@ -11760,56 +11800,128 @@ fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
         types: Vec::new(),
         locals: Vec::new(),
         group: Vec::new(),
-        low: Vec::new(),
-        open: Vec::new(),
-        walk: Vec::new(),
+        groups: 0,
+        held: &held,
+        none: &none,
     };
-    w.visit(t, &held, &none);
-    let mut groups = 0;
-    while let Some(&(v, k, j)) = w.walk.last() {
-        let top = w.walk.len() - 1;
+    let root = w.visit(t);
+    zed_graph::Search::new().run(&mut w, [root]);
+    GROUPS
+        .with(|m| m.borrow().get(t).cloned())
+        .expect("the group of `t` is made")
+}
+
+/// The groups [`group_of`] would make for `t`, each as its members in the order given to
+/// [`Walked::make`], by the walk `group_of` ran before GRAPH-lazy-tarjan (base 37a14617d), kept
+/// as the reference its port onto [`zed_graph::Search`] is tested against. Makes no group.
+#[cfg(test)]
+fn groups_by_old_walk(t: &Type) -> Vec<Vec<Type>> {
+    if GROUPS.with(|m| m.borrow().contains_key(t)) {
+        return Vec::new();
+    }
+    let none = Type::empty();
+    let held = Held::default();
+    let mut w = Walked {
+        number: HashMap::new(),
+        types: Vec::new(),
+        locals: Vec::new(),
+        group: Vec::new(),
+        groups: 0,
+        held: &held,
+        none: &none,
+    };
+    let root = w.visit(t);
+    let (mut low, mut open, mut walk) = (vec![root], vec![root], vec![(root, 0, 0)]);
+    let mut made = Vec::new();
+    while let Some(&(v, k, j)) = walk.last() {
+        let top = walk.len() - 1;
         let kids = &w.locals[v].kids;
         if k < kids.len() {
             if j == kids[k].inside.len() {
-                w.walk[top] = (v, k + 1, 0);
+                walk[top] = (v, k + 1, 0);
                 continue;
             }
             let x = kids[k].inside[j];
-            w.walk[top] = (v, k, j + 1);
+            walk[top] = (v, k, j + 1);
             match w.number.get(x) {
                 Some(&x) => {
                     if w.group[x] == usize::MAX {
-                        w.low[v] = w.low[v].min(x);
+                        low[v] = low[v].min(x);
                     }
                 }
                 None => {
                     if !GROUPS.with(|m| m.borrow().contains_key(x)) {
-                        w.visit(x, &held, &none);
+                        let u = w.visit(x);
+                        low.push(u);
+                        open.push(u);
+                        walk.push((u, 0, 0));
                     }
                 }
             }
             continue;
         }
-        w.walk.pop();
-        if let Some(&(u, _, _)) = w.walk.last() {
-            w.low[u] = w.low[u].min(w.low[v]);
+        walk.pop();
+        if let Some(&(u, _, _)) = walk.last() {
+            low[u] = low[u].min(low[v]);
         }
-        if w.low[v] == v {
+        if low[v] == v {
             let mut members = Vec::new();
-            while let Some(m) = w.open.pop() {
-                w.group[m] = groups;
-                members.push(m);
+            while let Some(m) = open.pop() {
+                w.group[m] = made.len();
+                members.push(w.types[m].clone());
                 if m == v {
                     break;
                 }
             }
-            w.make(&members, groups);
-            groups += 1;
+            made.push(members);
         }
     }
-    GROUPS
-        .with(|m| m.borrow().get(t).cloned())
-        .expect("the group of `t` is made")
+    made
+}
+
+/// The groups [`group_of`] makes for `t`, each as its members in the order given to
+/// [`Walked::make`]; makes them, as `group_of` does.
+#[cfg(test)]
+fn groups_by_search(t: &Type) -> Vec<Vec<Type>> {
+    /// [`Walked`], recording the members of each group after it orders them.
+    struct Recorded<'w, 'a> {
+        w: &'w mut Walked<'a>,
+        made: Vec<Vec<Type>>,
+    }
+    impl zed_graph::Walk for Recorded<'_, '_> {
+        type At = (usize, usize);
+        fn next(&mut self, v: usize, at: &mut (usize, usize)) -> Option<usize> {
+            self.w.next(v, at)
+        }
+        fn found(&mut self, members: &mut [usize], from: Option<usize>) {
+            self.w.found(members, from);
+            let types = &self.w.types;
+            self.made
+                .push(members.iter().map(|&m| types[m].clone()).collect());
+        }
+    }
+    if GROUPS.with(|m| m.borrow().contains_key(t)) {
+        return Vec::new();
+    }
+    let none = Type::empty();
+    let held = Held::default();
+    let mut w = Walked {
+        number: HashMap::new(),
+        types: Vec::new(),
+        locals: Vec::new(),
+        group: Vec::new(),
+        groups: 0,
+        held: &held,
+        none: &none,
+    };
+    let root = w.visit(t);
+    let mut r = Recorded {
+        w: &mut w,
+        made: Vec::new(),
+    };
+    zed_graph::Search::new().run(&mut r, [root]);
+    assert!(GROUPS.with(|m| m.borrow().contains_key(t)));
+    r.made
 }
 
 /// The root of `i` in the union-find `parent`, halving the path.

@@ -730,6 +730,65 @@ fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
     classes_met_and_apart_built(met, apart);
 }
 
+/// Checks that [`group_of`], ported onto `zed_graph::Search` (GRAPH-lazy-tarjan), makes the
+/// same groups as its walk before the port ([`groups_by_old_walk`]) for `t` and each type
+/// inside it, in the same order and each with its members in the same order, so each group's
+/// trie is made from the same member. Returns the number of groups of two or more members.
+fn group_of_agrees_with_its_old_walk(case: usize, t: &Type) -> usize {
+    let none = Type::empty();
+    let held = Held::default();
+    let mut ts = vec![t.clone()];
+    for kid in local(t.p_held(&held), &none).kids {
+        ts.extend(kid.inside.into_iter().cloned());
+    }
+    let mut shared = 0;
+    for t in &ts {
+        let old = groups_by_old_walk(t);
+        let new = groups_by_search(t);
+        assert_eq!(new, old, "case {case}: the groups of {t:?}");
+        shared += new.iter().filter(|g| g.len() > 1).count();
+    }
+    shared
+}
+
+/// The groups of [`group_of`] are those of its walk before GRAPH-lazy-tarjan, members in the
+/// same order: on the two-member group of `classes_inside_a_recursive_group_follow_its_merged_
+/// nodes`, from each member, and on the types of random cells over random groups, with the
+/// groups made by earlier cases kept, as `overlaps` keeps them, and made again after
+/// `Type::forget_emptiness`.
+#[test]
+fn group_of_makes_the_groups_of_its_walk_before_the_shared_search() {
+    use super::super::rec::{Def, Expr, Group};
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let def = |name: &str, other: usize, not: i64| Def {
+        name: name.into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Atom("a".into(), vec![Expr::Ref(other, vec![])]),
+            Expr::Type(&Type::int() - &lit(not)),
+        ]),
+    };
+    for first in 0..2 {
+        Type::forget_emptiness();
+        let group = Group::new(vec![def("P", 1, 1), def("Q", 0, 2)]).expect("a group");
+        let pq = group.instance(vec![]);
+        assert_eq!(group_of_agrees_with_its_old_walk(first, &pq[first]), 1);
+    }
+    let mut s =
+        crate::seed::seed("group_of_makes_the_groups_of_its_walk_before_the_shared_search") | 1;
+    let mut shared = 0;
+    Type::forget_emptiness();
+    for case in 0..400 {
+        if case == 200 {
+            Type::forget_emptiness();
+        }
+        for t in random_cells(&mut s) {
+            shared += group_of_agrees_with_its_old_walk(case, &t);
+        }
+    }
+    eprintln!("{shared} groups of two or more members compared");
+}
+
 /// A random component: one of the integers 0 to 2, every integer, or every integer but one.
 fn random_component(s: &mut u64) -> Type {
     let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("a literal");

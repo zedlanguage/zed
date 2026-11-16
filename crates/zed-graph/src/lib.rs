@@ -1,12 +1,157 @@
 //! Graph algorithms shared by every crate of the workspace. It depends on no other crate, so
 //! zed-kernel, the lowest of the others, can use it too, and each search below is written once.
 //!
-//! [`tarjan`] finds the strongly connected components of a directed graph whose nodes are
-//! `0..n` (R. Tarjan, "Depth-First Search and Linear Graph Algorithms", SIAM Journal on
-//! Computing 1(2), 146-160, 1972), on an explicit stack in place of recursion, so a long chain
-//! of nodes cannot overflow the thread's stack. Each node and each edge is read once: O(n + e)
-//! time and O(n) space beside the graph. [`components`] and [`on_cycle`] are its two common
-//! uses.
+//! [`Search`] finds the strongly connected components of a directed graph (R. Tarjan,
+//! "Depth-First Search and Linear Graph Algorithms", SIAM Journal on Computing 1(2), 146-160,
+//! 1972), on an explicit stack in place of recursion, so a long chain of nodes cannot overflow
+//! the thread's stack. Its caller gives the edges one at a time ([`Walk`]), so the nodes may be
+//! found and numbered as the search meets them, and one search may be run again from new roots
+//! after its graph has grown. Each node and each edge is read once: O(n + e) time and O(n) space
+//! beside the graph. [`tarjan`] is the search over a graph whose nodes are `0..n` and whose edges
+//! are lists, and [`components`] and [`on_cycle`] are its two common uses.
+
+use std::marker::PhantomData;
+
+/// The edges of a graph as [`Search::run`] reads them, and what it does with each component.
+pub trait Walk {
+    /// Where the search is in the edges of a node on its path; it starts at
+    /// `Default::default()` when the search reaches the node, and only [`Walk::next`] changes it.
+    type At: Default;
+    /// The node that the next edge out of `v` goes to, `at` saying where the edges read so far
+    /// end, or `None` when every edge of `v` is read. A node met for the first time may be
+    /// numbered here: the search keeps one word per number up to the largest it has met, so the
+    /// numbers should be dense, as `0, 1, 2, …` in the order met are. An edge the walk leaves
+    /// out, as one to a node whose component an earlier search found, is simply not given.
+    fn next(&mut self, v: usize, at: &mut Self::At) -> Option<usize>;
+    /// A strongly connected component, found once every component it reaches is found, so the
+    /// components come in a reverse topological order. Its members are in the order the search
+    /// reached them, so the first is the one it reached the component by; `found` may reorder
+    /// them. `from` is the node the search reached that first member from, `None` for a root.
+    fn found(&mut self, members: &mut [usize], from: Option<usize>);
+}
+
+/// No number yet: a node the search has not reached.
+const NEW: usize = usize::MAX;
+/// A node whose component is found.
+const DONE: usize = usize::MAX - 1;
+
+/// One node on the search's path.
+struct Frame<A> {
+    v: usize,
+    /// Its place on the search's stack.
+    first: usize,
+    /// The least number of a node on the stack that it reaches by the edges read so far
+    /// (Tarjan's low link).
+    low: usize,
+    /// Where it is in its edges ([`Walk::At`]).
+    at: A,
+}
+
+/// A depth-first search for strongly connected components that can be run more than once: a
+/// node whose component one run found is passed over by every later run, as a node of a
+/// component found earlier in the same run is, so a caller whose graph grows between runs
+/// (new nodes, with edges to old ones, but no new edge out of an old node) searches only what
+/// is new.
+// Complexity tradeoff: the low link lives on the path, not per node, since only the node whose
+// edges are being read and the node it was reached from ever change theirs; with a node's place
+// on the stack kept on the path too, a node costs one word (`index`), where the usual form keeps
+// three (number, low link, on-stack flag or place). Each node is entered once and each edge given
+// once, O(n + e) over every run together; `index` grows to the largest number met, so a caller
+// numbering nodes as met pays O(n) for it.
+pub struct Search<A> {
+    /// Per node: [`NEW`]; its number in the order reached while its component is open; then
+    /// [`DONE`].
+    index: Vec<usize>,
+    /// The nodes reached whose component is not yet found.
+    stack: Vec<usize>,
+    /// The path of the search, each node with where it is in its edges.
+    path: Vec<Frame<A>>,
+    /// The number of the next node reached.
+    count: usize,
+}
+
+impl<A: Default> Default for Search<A> {
+    fn default() -> Self {
+        Search::new()
+    }
+}
+
+impl<A: Default> Search<A> {
+    /// A search that has reached no node.
+    pub fn new() -> Self {
+        Search::with_capacity(0)
+    }
+
+    /// A search with room for the nodes `0..n`.
+    pub fn with_capacity(n: usize) -> Self {
+        Search {
+            index: vec![NEW; n],
+            stack: Vec::new(),
+            path: Vec::new(),
+            count: 0,
+        }
+    }
+
+    fn state(&self, v: usize) -> usize {
+        self.index.get(v).copied().unwrap_or(NEW)
+    }
+
+    fn enter(&mut self, v: usize) {
+        if v >= self.index.len() {
+            self.index.resize(v + 1, NEW);
+        }
+        let i = self.count;
+        self.count += 1;
+        self.index[v] = i;
+        self.path.push(Frame {
+            v,
+            first: self.stack.len(),
+            low: i,
+            at: A::default(),
+        });
+        self.stack.push(v);
+    }
+
+    /// Searches from each of `roots` in turn that no run has reached, and only the nodes
+    /// reached from them, calling [`Walk::found`] with each component.
+    pub fn run<W: Walk<At = A>>(&mut self, walk: &mut W, roots: impl IntoIterator<Item = usize>) {
+        for root in roots {
+            if self.state(root) != NEW {
+                continue;
+            }
+            self.enter(root);
+            while let Some(top) = self.path.last_mut() {
+                if let Some(w) = walk.next(top.v, &mut top.at) {
+                    match self.state(w) {
+                        NEW => self.enter(w),
+                        DONE => {}
+                        // On the stack: `w` reaches the node being read, so they are one
+                        // component.
+                        i => {
+                            let top = self.path.last_mut().expect("the node being read");
+                            top.low = top.low.min(i);
+                        }
+                    }
+                    continue;
+                }
+                // Every edge of `v` is read: its low link passes to the node the search came
+                // from.
+                let Frame { v, first, low, .. } = self.path.pop().expect("the node being read");
+                let from = self.path.last_mut().map(|u| {
+                    u.low = u.low.min(low);
+                    u.v
+                });
+                if low == self.index[v] {
+                    for &w in &self.stack[first..] {
+                        self.index[w] = DONE;
+                    }
+                    walk.found(&mut self.stack[first..], from);
+                    self.stack.truncate(first);
+                }
+            }
+        }
+    }
+}
 
 /// Calls `found` with the members of each strongly connected component of the graph whose
 /// nodes are `0..n`, in the order Tarjan's search completes them: a component is completed
@@ -28,53 +173,48 @@ pub fn tarjan<'g, E: 'g>(
     n: usize,
     roots: impl IntoIterator<Item = usize>,
     out: impl Fn(usize) -> &'g [E],
-    mut head: impl FnMut(&E) -> Option<usize>,
-    mut found: impl FnMut(&mut [usize]),
+    head: impl FnMut(&E) -> Option<usize>,
+    found: impl FnMut(&mut [usize]),
 ) {
-    const NEW: usize = usize::MAX;
-    // When each node was reached; the least of those of the nodes on the stack it reaches by the
-    // edges read so far (the low link); and its place on the stack while its component is open,
-    // NEW before and after, so a node is on the stack exactly when its place is not NEW.
-    let (mut index, mut low, mut at) = (vec![NEW; n], vec![0; n], vec![NEW; n]);
-    // The nodes reached whose component is not yet complete, and the path of the search, each
-    // node on it with the place of its next edge to read.
-    let (mut stack, mut path): (Vec<usize>, Vec<(usize, usize)>) = (Vec::new(), Vec::new());
-    let mut next = 0;
-    for root in roots {
-        if index[root] != NEW {
-            continue;
-        }
-        path.push((root, 0));
-        while let Some(&mut (v, ref mut k)) = path.last_mut() {
-            if *k == 0 {
-                (index[v], low[v], at[v]) = (next, next, stack.len());
-                next += 1;
-                stack.push(v);
-            }
-            if let Some(e) = out(v).get(*k) {
-                *k += 1;
-                let Some(w) = head(e) else { continue };
-                if index[w] == NEW {
-                    path.push((w, 0));
-                } else if at[w] != NEW {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            // Every edge of `v` is read: its low link passes to the node the search came from.
-            path.pop();
-            if let Some(&(u, _)) = path.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                let first = at[v];
-                for &w in &stack[first..] {
-                    at[w] = NEW;
-                }
-                found(&mut stack[first..]);
-                stack.truncate(first);
+    let mut lists = Lists {
+        out,
+        head,
+        found,
+        edge: PhantomData,
+    };
+    Search::with_capacity(n).run(&mut lists, roots);
+}
+
+/// The graph [`tarjan`] searches: edges given as a list per node.
+struct Lists<'g, E, O, H, F> {
+    out: O,
+    head: H,
+    found: F,
+    edge: PhantomData<&'g E>,
+}
+
+impl<'g, E: 'g, O, H, F> Walk for Lists<'g, E, O, H, F>
+where
+    O: Fn(usize) -> &'g [E],
+    H: FnMut(&E) -> Option<usize>,
+    F: FnMut(&mut [usize]),
+{
+    /// The place in `out(v)` of the next edge to read.
+    type At = usize;
+
+    fn next(&mut self, v: usize, k: &mut usize) -> Option<usize> {
+        let edges = (self.out)(v);
+        while let Some(e) = edges.get(*k) {
+            *k += 1;
+            if let Some(w) = (self.head)(e) {
+                return Some(w);
             }
         }
+        None
+    }
+
+    fn found(&mut self, members: &mut [usize], _from: Option<usize>) {
+        (self.found)(members);
     }
 }
 

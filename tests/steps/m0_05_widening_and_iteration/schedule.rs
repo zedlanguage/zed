@@ -594,6 +594,59 @@ fn an_evaluation_may_add_the_nodes_a_check_reads_next() {
     assert_eq!(s.values().get(type_order), Some(&Num(7)));
 }
 
+/// A fact made final by one demand is not run again by a later demand on the same schedule,
+/// nor polled again within its own demand: each once fact is polled from its start once and
+/// then once per answer, whichever demand reached it (GRAPH-lazy-tarjan: the search is run
+/// again for each demand and passes over the nodes earlier runs finished). Each later demand
+/// here reads facts an earlier one finished, from a once fact, an iterable fact and a refused
+/// pair, and the demands repeat roots already final.
+#[test]
+fn a_fact_finished_by_one_demand_is_not_run_again_by_a_later_one() {
+    let mut p = Program::new();
+    let a = p.node("eval(a)");
+    let b = p.node("check(b)");
+    let ty = p.node("type(t)");
+    let c = p.node("check(c)");
+    let x = p.node("eval(x)");
+    let y = p.node("eval(y)");
+    let d = p.node("check(d)");
+    p.set(a, reads_all(&[]));
+    p.set(b, reads_all(&[a]));
+    p.set(ty, iterable(2, 1, vec![b, ty]));
+    p.set(c, reads_all(&[a, ty, b]));
+    // `x` and `y` each ask for the other: refused together.
+    p.set(x, reads_all(&[y]));
+    p.set(y, reads_all(&[x]));
+    p.set(d, reads_all(&[x, c, a, y]));
+    let mut m = p.model();
+    let mut s = Schedule::new();
+    let mut before = m.polls.clone();
+    for (root, polled) in [
+        (b, vec![a, b]),
+        (b, vec![]),
+        (c, vec![c]),
+        (x, vec![x, y]),
+        (d, vec![d]),
+        (a, vec![]),
+        (d, vec![]),
+    ] {
+        s.demand(&mut m, root);
+        let now: Vec<usize> = (0..m.polls.len())
+            .filter(|&v| m.polls[v] != before[v])
+            .collect();
+        assert_eq!(now, polled, "the facts demand {} polls", p.name(root));
+        for &v in &now {
+            assert_eq!(before[v], 0, "{} polled by two demands", p.name(v));
+        }
+        before = m.polls.clone();
+        m.assert_protocol();
+    }
+    assert_eq!(m.solves, [vec![ty]]);
+    assert_eq!(m.refusals.len(), 1);
+    assert_eq!(m.answers[d], [Refused]);
+    assert_eq!(m.polls[c], 4);
+}
+
 #[test]
 #[should_panic(expected = "node 0 reads node 7, which does not exist")]
 fn a_read_of_a_node_that_does_not_exist_stops_the_build() {
