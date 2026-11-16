@@ -6,7 +6,7 @@
 //! `lines` and `concat` of plan row FP-ops-strings (step L3.2); and, by plan row
 //! FP-ops-concat-zip, `a ++ b` on lists and `a.zip(b)` (step L5.2).
 
-use super::remap::Apply;
+use super::remap::{Apply, NeedFn};
 use crate::check::*;
 
 /// `Ck::fold_level`, the check of the fold of one level, passed in by walk.rs as `Apply` is.
@@ -491,7 +491,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// words): the parts that hold no such class are checked here, and the call records one
     /// need ([`NeedKind::Strings`]) of all its operands, which `meet` checks again with the
     /// class replaced by its type. The need is recorded only where the parts checked here gave
-    /// no error, so a call never reports again what the definition reported.
+    /// no error, so a call never reports again what the definition reported. `need` is
+    /// `Ck::need`, passed in by walk.rs as `apply` is to [`Self::quantifier_end`]: a call of it
+    /// written here would close an import cycle (step S.1f, plan row
+    /// S1F-check-limits-fp-ops-cycle).
     // Complexity tradeoff: the naive method, a need per class an operand holds, as
     // `level_word` makes one per variable, would check `split`'s separator piece by piece, and
     // `if b { "" } else { "," }` would then be rejected for its `""` alone where the whole
@@ -502,7 +505,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     // reads one class fewer of the definition's, or classes of the caller, which a call of
     // the caller replaces in turn; the classes of a program are finite, and `need` records
     // each pair of a class and a use once (the visited set of P207), as at `level_word`.
-    pub(super) fn strings_end(&mut self, word: &str, args: Vec<Arg<'a>>, span: Span) -> Ty {
+    pub(super) fn strings_end(
+        &mut self,
+        word: &str,
+        args: Vec<Arg<'a>>,
+        span: Span,
+        need: NeedFn<'t, 'a>,
+    ) -> Ty {
         let Some((args, generic)) = self.strings_classes(word, args, span) else {
             return Ty::empty();
         };
@@ -516,7 +525,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     word: word.into(),
                     tys: args.iter().map(|a| a.ty.clone()).collect(),
                 };
-                out.union(&self.need(r, kind, true, span))
+                out.union(&need(self, r, kind, true, span))
             }
             _ if word == "concat" => out.union(&Ty::carrier(Carrier::Str)),
             _ => out.union(&strings_rank()),

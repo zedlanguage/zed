@@ -8032,7 +8032,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.job(Job::Arg(e, Want::default()));
             }
             None => {
-                let t = self.strings_end(s.word, s.got, s.span);
+                let t = self.strings_end(s.word, s.got, s.span, Self::need);
                 m.ty(t);
             }
         }
@@ -11310,7 +11310,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .iter()
                     .map(|t| Arg::of(self.bound(t, &mut binds)))
                     .collect();
-                self.strings_end(word, args, span)
+                self.strings_end(word, args, span, Self::need)
             }
             NeedKind::Remap { at, src, .. } => {
                 let src = self.remap_src(n, src, &on, binds);
