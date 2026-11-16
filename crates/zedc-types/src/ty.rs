@@ -7759,63 +7759,228 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// The rest of the payload shape `s` once the shapes `cut` are taken from it, as shapes.
     /// `s` and `cut` have kernel types, so they have items and no fields ([`ShapeData::exact`]),
-    /// and [`near_pairs`] lists only shapes of as many items. Each shape of `cut` splits each
-    /// shape left so far that it meets, by the difference of products: `(A1, A2) \ (B1, B2)`
-    /// is `(A1 \ B1, A2)` with `(A1 & B1, A2 \ B2)`, and so on for more items, each part with
-    /// no value left out. A shape left that the shape of `cut` does not meet, found at the
-    /// first item whose meet is empty, is kept whole.
+    /// and [`near_pairs`] lists only shapes of as many items. The shapes are built item by
+    /// item. At item i, below a prefix of items already fixed, the values of `s`'s item i are
+    /// split by which shapes of `cut` (of those still holding the prefix) hold them at item i:
+    /// the parts of a Venn diagram of those items. A part held by no shape of `cut` gives a
+    /// shape, the prefix, the part and `s`'s items after i; a part held by some is carried on
+    /// to item i + 1 with them, and at the last item nothing of it is left. This is the
+    /// difference of products: for one shape of `cut`, `(A1, A2) \ (B1, B2)` is
+    /// `(A1 \ B1, A2)` with `(A1 & B1, A2 \ B2)`, as before.
     ///
-    /// Cost: for each shape left and each shape of `cut`, up to w meets and w differences of
-    /// items, for w items. A shape of `cut` turns each shape it meets into at most w shapes;
-    /// `cut` holds the shapes `near_pairs` lists for `s`, which may share a value with it, so
-    /// a shape held in part by one shape of `cut` costs O(w) operations on items and leaves at
-    /// most w shapes.
+    /// Two reductions keep the shapes few. Of the shapes of `cut` holding a part, one whose
+    /// items after i are each within those of another of them is dropped ([`Self::widest`]):
+    /// what it would take from the rest, the other takes. Then parts held by the same shapes
+    /// are joined into one, so a prefix goes on once for each set of shapes, not once for each
+    /// part. Proof that the shapes left are the difference, with no value lost or added: the
+    /// parts at item i are disjoint and cover `s`'s item i; a value of the part held by the
+    /// set H of shapes, followed by a tail t, is in some shape of `cut` (all of whose items
+    /// before i hold the prefix, by the induction) exactly when t is in the items after i of a
+    /// shape of H; so the rest below the part is the rest of the tails less H's, which depends
+    /// on H only, and less H's widest shapes is the same set, since the dropped tails lie in
+    /// kept ones. At the last item no tail is left, so a part held by any shape is all taken.
+    ///
+    /// Cost: before (FAIL-types-shape-rest-many-cuts) each shape of `cut` split every shape
+    /// left that it met into up to w shapes, so k shapes of `cut` left up to w^k shapes, and
+    /// k nested shapes `#a(0..j, …, 0..j)` with w items left C(k + w - 1, w - 1) shapes where
+    /// w are enough (969 for w = 4, k = 16, measured); now they leave w. With k shapes of `cut`
+    /// meeting the prefix and r parts at an item, the split costs O(k·r) meets and
+    /// differences of items, and the reduction compares each held shape with the widest ones
+    /// kept, O(k·a) for a kept, each comparison of two items done once ([`Self::widest`]).
+    /// For one shape of `cut` this is the old O(w) operations and w shapes. Some inputs need
+    /// w^k shapes in any answer kept as a union of shapes: for `cut` the k shapes
+    /// `#a(B_j, …, B_j)` with B_j the numbers below 2^k with bit j set, each choice of one
+    /// item lacking bit j for every j gives a value of the rest, w^k of them, and no shape
+    /// holds two, since it would also hold a value whose items all have the bit at which the
+    /// two choices differ; that answer is the one left here. For k shapes of `cut` in a chain,
+    /// each meeting the next, the work grows about 8.4 times at 8 times k
+    /// (`kinds::bench::the_difference_of_a_wide_payload_and_many_overlapping_cuts_scales`;
+    /// 54 times before).
     async fn shape_rest(
         &'m self,
         s: &Shape,
         cut: &[Shape],
         solve: Option<Solve<'s>>,
     ) -> Vec<Shape> {
-        // Assumption, not proved (ASSUME-documented): the cost in the doc above, O(w) item
-        // operations and at most w shapes left, is shown for one shape of `cut` meeting `s`.
-        // Each further shape of `cut` maps every shape in `left` to up to w shapes, so k shapes
-        // of `cut` that each split `s` can leave up to w^k shapes. The code assumes `near_pairs`
-        // gives few shapes of `cut` that each split `s`. Evidence:
-        // `kinds::bench::the_difference_of_many_payloads_held_in_part_scales` (8.61x), whose
-        // shapes meet one or two shapes of `cut`, and 201 random seeds passing. If false, time
-        // and the number of shapes grow as w^k; every answer stays exact.
-        let mut left = vec![s.items.clone()];
-        for c in cut {
-            let mut next = Vec::with_capacity(left.len());
-            for b in left {
-                let mut met = Vec::with_capacity(b.len());
-                for (x, y) in b.iter().zip(&c.items) {
-                    let m = x.meet(y);
-                    if m.is_empty() {
-                        break;
-                    }
-                    met.push(m);
+        let w = s.items.len();
+        // The shapes of `cut` as far as they meet `s`; one that misses `s` at an item is
+        // dropped, as it takes nothing.
+        let mut cuts: Vec<Vec<Ty>> = Vec::with_capacity(cut.len());
+        'cut: for c in cut {
+            let mut met = Vec::with_capacity(w);
+            for (x, y) in s.items.iter().zip(&c.items) {
+                let m = x.meet(y);
+                if m.is_empty() {
+                    continue 'cut;
                 }
-                if met.len() < b.len() {
-                    next.push(b);
+                met.push(m);
+            }
+            cuts.push(met);
+        }
+        let mut within = HashMap::new();
+        let mut out = Vec::new();
+        let mut work: Vec<(Vec<Ty>, Vec<usize>)> = vec![(Vec::new(), (0..cuts.len()).collect())];
+        while let Some((prefix, held)) = work.pop() {
+            let i = prefix.len();
+            let parts = self.parts(&cuts, &held, i, s.items[i].clone(), solve).await;
+            let mut joined: BTreeMap<Vec<usize>, Vec<Ty>> = BTreeMap::new();
+            for (r, h) in parts {
+                let h = if h.is_empty() || i + 1 == w {
+                    h
+                } else {
+                    self.widest(&cuts, h, i + 1, &mut within, solve).await
+                };
+                joined.entry(h).or_default().push(r);
+            }
+            for (h, rs) in joined {
+                if !h.is_empty() && i + 1 == w {
                     continue;
                 }
-                for (i, (x, y)) in b.iter().zip(&c.items).enumerate() {
-                    let rest = self.diff_deep(x.clone(), y.clone(), solve).await;
-                    if !rest.is_empty() {
-                        let items = (met[..i].iter().cloned())
-                            .chain(std::iter::once(rest))
-                            .chain(b[i + 1..].iter().cloned());
-                        next.push(items.collect());
-                    }
+                let mut items = prefix.clone();
+                items.push(Ty::union_all(&rs));
+                if h.is_empty() {
+                    items.extend(s.items[i + 1..].iter().cloned());
+                    out.push(Shape::new(items, BTreeMap::new()));
+                } else {
+                    work.push((items, h));
                 }
             }
-            left = next;
         }
-        (left.into_iter())
-            .map(|items| Shape::new(items, BTreeMap::new()))
-            .filter(|s| !s.void)
-            .collect()
+        out.retain(|s| !s.void);
+        out
+    }
+
+    /// The values of `x` split by which shapes of `held` (indices into `cuts`, in increasing
+    /// order) hold them at item `i`: each part with the shapes holding it, in increasing order,
+    /// the parts disjoint and covering `x` ([`Self::shape_rest`]).
+    ///
+    /// The shapes of `held` are halved over and over into a balanced tree, each node with the
+    /// union of its shapes' items `i`. A part meets a node: what it has outside the node's
+    /// union is held by none of the node's shapes and goes on to the next node; what it has
+    /// inside goes into the node's two halves in turn, or, at a single shape, is held by it.
+    /// Complexity tradeoff: meeting every part with every shape, as the first version of this
+    /// split did, costs O(k·r) meets for k shapes and r parts, quadratic for a chain of k
+    /// shapes each meeting the next (35 times the instructions at 8 times the shapes,
+    /// measured); here a part goes down only the nodes whose union it meets, O(log k) nodes
+    /// for a part met by few shapes, and each node's union is formed once, O(k log k) items
+    /// in all.
+    async fn parts(
+        &'m self,
+        cuts: &[Vec<Ty>],
+        held: &[usize],
+        i: usize,
+        x: Ty,
+        solve: Option<Solve<'s>>,
+    ) -> Vec<(Ty, Vec<usize>)> {
+        let mut unions: HashMap<(usize, usize), Ty> = HashMap::new();
+        let mut out = Vec::new();
+        // Each task: a part, the shapes holding it so far, and the nodes still to meet, the
+        // next last.
+        type Task = (Ty, Vec<usize>, Vec<(usize, usize)>);
+        let mut work: Vec<Task> = vec![(x, Vec::new(), vec![(0, held.len())])];
+        while let Some((r, h, mut nodes)) = work.pop() {
+            let Some((lo, hi)) = nodes.pop() else {
+                out.push((r, h));
+                continue;
+            };
+            if hi == lo {
+                work.push((r, h, nodes));
+                continue;
+            }
+            let u = (unions.entry((lo, hi)))
+                .or_insert_with(|| Ty::union_all(held[lo..hi].iter().map(|&c| &cuts[c][i])))
+                .clone();
+            let m = r.meet(&u);
+            if m.is_empty() {
+                work.push((r, h, nodes));
+                continue;
+            }
+            let o = self.diff_deep(r, u, solve).await;
+            if !o.is_empty() {
+                work.push((o, h.clone(), nodes.clone()));
+            }
+            if hi - lo == 1 {
+                let mut h = h;
+                h.push(held[lo]);
+                work.push((m, h, nodes));
+            } else {
+                let mid = lo + (hi - lo) / 2;
+                nodes.push((mid, hi));
+                nodes.push((lo, mid));
+                work.push((m, h, nodes));
+            }
+        }
+        out
+    }
+
+    /// The shapes of `held` (indices into `cuts`, in increasing order) whose items from `from`
+    /// on are not each within those of another shape of `held`; of shapes with the same such
+    /// items, the first. [`Self::shape_rest`] takes the rest of the tails less these, the same
+    /// set as less all of `held`. `within` keeps, for shapes `a` and `b` and an item `j`,
+    /// whether `a`'s item `j` is within `b`'s, so each pair of items is compared once.
+    ///
+    /// Cost: each shape of `held` is compared with the shapes kept so far, at most a of them,
+    /// O(k·a) comparisons of tails for k shapes. Complexity tradeoff: comparing every pair
+    /// would be O(k²) for a chain of k nested shapes, where a stays 1.
+    async fn widest(
+        &'m self,
+        cuts: &[Vec<Ty>],
+        held: Vec<usize>,
+        from: usize,
+        within: &mut HashMap<(usize, usize, usize), bool>,
+        solve: Option<Solve<'s>>,
+    ) -> Vec<usize> {
+        let mut kept: Vec<usize> = Vec::with_capacity(held.len());
+        for c in held {
+            let mut dropped = false;
+            for &d in &kept {
+                if self.tail_within(cuts, c, d, from, within, solve).await {
+                    dropped = true;
+                    break;
+                }
+            }
+            if dropped {
+                continue;
+            }
+            let mut wider = Vec::with_capacity(kept.len() + 1);
+            for d in kept {
+                if !self.tail_within(cuts, d, c, from, within, solve).await {
+                    wider.push(d);
+                }
+            }
+            wider.push(c);
+            kept = wider;
+        }
+        kept.sort_unstable();
+        kept
+    }
+
+    /// Whether each item of `cuts[a]` from `from` on is within the item of `cuts[b]` at its
+    /// place, each pair of items compared once ([`Self::widest`]).
+    async fn tail_within(
+        &'m self,
+        cuts: &[Vec<Ty>],
+        a: usize,
+        b: usize,
+        from: usize,
+        within: &mut HashMap<(usize, usize, usize), bool>,
+        solve: Option<Solve<'s>>,
+    ) -> bool {
+        for (j, (x, y)) in cuts[a].iter().zip(&cuts[b]).enumerate().skip(from) {
+            let held = match within.get(&(a, b, j)) {
+                Some(&held) => held,
+                None => {
+                    let rest = self.diff_deep(x.clone(), y.clone(), solve).await;
+                    let held = rest.is_empty();
+                    within.insert((a, b, j), held);
+                    held
+                }
+            };
+            if !held {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether each component and field of the payload `a` is in the one of `b` at its place
@@ -8680,18 +8845,24 @@ impl<'m, 's> Comparing<'m, 's> {
                         solve,
                         ..Cx::default()
                     };
-                    let one = payload_ty(n, vec![s.clone()]);
                     let cut: Vec<Shape> = near.into_iter().map(|j| us[j].clone()).collect();
+                    // Where both are exact the rest decides alone whether `u` holds the shape,
+                    // as it is empty exactly then (proof at [`Self::shape_rest`]), so the shape
+                    // is not first compared with its near shapes. Complexity tradeoff: that
+                    // comparison goes to the kernel's test of whether a set of tuples is
+                    // empty, which grew past n^2 for n shapes each meeting the next
+                    // (FAIL-types-shape-rest-many-cuts, sampled).
+                    let exact = s.0.exact.is_some() && cut.iter().all(|c| c.0.exact.is_some());
+                    if exact_u && exact {
+                        left.extend(self.shape_rest(s, &cut, solve).await);
+                        changed = true;
+                        continue;
+                    }
+                    let one = payload_ty(n, vec![s.clone()]);
                     let near = payload_ty(n, cut.clone());
                     let mut b = Binds::new();
                     let held = self.sub_near(&one, &near, None, &mut b).await;
                     if self.cx.borrow().decided(held) && b.is_empty() {
-                        changed = true;
-                        continue;
-                    }
-                    let exact = s.0.exact.is_some() && cut.iter().all(|c| c.0.exact.is_some());
-                    if exact_u && exact {
-                        left.extend(self.shape_rest(s, &cut, solve).await);
                         changed = true;
                         continue;
                     }

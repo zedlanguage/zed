@@ -2626,4 +2626,70 @@ fn function_types_whose_variables_share_names_across_the_two_fit() {
     }
 }
 
+/// `#a(int, …, int)` with `w` items, and the union of the `k` cuts `#a(c(j), …, c(j))` with
+/// `w` items, for j < k.
+fn wide_payload_cuts(w: usize, k: usize, c: &dyn Fn(usize) -> String) -> (Ty, Ty) {
+    let whole = format!("#a({})", vec!["int"; w].join(", "));
+    let cuts: Vec<String> = (0..k)
+        .map(|j| format!("#a({})", vec![format!("({})", c(j)); w].join(", ")))
+        .collect();
+    (ty(&whole), ty(&cuts.join(" | ")))
+}
+
+/// The numbers in `range`, as a union of literals.
+fn numbers(range: impl Iterator<Item = usize>) -> String {
+    range.map(|v| v.to_string()).collect::<Vec<_>>().join(" | ")
+}
+
+/// The number of payload shapes of `#a` in `t`.
+fn shapes_of_a(t: &Ty) -> usize {
+    t.payloads
+        .get("a")
+        .and_then(|s| s.as_ref())
+        .map_or(0, |s| s.len())
+}
+
+#[test]
+fn a_payload_less_many_cuts_is_the_difference_in_few_shapes() {
+    // FAIL-types-shape-rest-many-cuts: the rest of a payload shape held in part by k shapes
+    // is built item by item, the values of each item split by which shapes hold them. Before,
+    // each shape cut every shape left into up to w, so k nested cuts `#a(0..j, …)` left
+    // C(k + w - 1, w - 1) shapes where w hold the rest (969 for w = 4, k = 16). The cuts by
+    // bit need w^k shapes in any union of shapes (proof at `shape_rest`), and get that many.
+    for w in 1..=4 {
+        for k in 1..=5 {
+            let nested = wide_payload_cuts(w, k, &|j| numbers(0..=j));
+            let bits =
+                wide_payload_cuts(w, k, &|j| numbers((0..1 << k).filter(|v| v >> j & 1 == 1)));
+            for (what, (whole, cuts), want) in
+                [("nested", nested, w), ("by bit", bits, w.pow(k as u32))]
+            {
+                let rest = whole.diff(&cuts);
+                assert!(
+                    rest.meet(&cuts).is_empty(),
+                    "{what}, w = {w}, k = {k}: {rest}"
+                );
+                assert!(rest.subtype(&whole), "{what}, w = {w}, k = {k}: {rest}");
+                // The rest and the cuts together hold the whole. This asks whether the
+                // difference is empty, not `whole.subtype(…)`, which answers no for the cuts
+                // by bit at w = k = 3 (FAIL-types-shape-union-sub-incomplete).
+                assert!(
+                    whole.diff(&rest.union(&cuts)).is_empty(),
+                    "{what}, w = {w}, k = {k}: {rest}"
+                );
+                assert_eq!(shapes_of_a(&rest), want, "{what}, w = {w}, k = {k}: {rest}");
+            }
+        }
+    }
+    // Cuts that overlap in a chain, and one that misses `s` at its last item.
+    let (whole, cuts) = wide_payload_cuts(3, 6, &|j| numbers(2 * j..2 * j + 3));
+    let cuts = cuts.union(&ty("#a(int, int, String)"));
+    let rest = whole.diff(&cuts);
+    assert!(
+        rest.meet(&cuts).is_empty() && rest.subtype(&whole),
+        "{rest}"
+    );
+    assert!(whole.diff(&rest.union(&cuts)).is_empty(), "{rest}");
+}
+
 mod bench;

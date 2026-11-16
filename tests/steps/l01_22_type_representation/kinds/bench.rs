@@ -562,6 +562,25 @@ fn the_difference_of_many_payloads_held_in_part_scales() {
 }
 
 #[test]
+fn the_difference_of_a_wide_payload_and_many_overlapping_cuts_scales() {
+    // `#a(int, int, int, int)` less n shapes `#a(2j | 2j+1 | 2j+2, …)`, each meeting the next
+    // at one number: the rest is built item by item, the values of each item split by which
+    // shapes hold them (FAIL-types-shape-rest-many-cuts). Before, each shape split every shape
+    // left that it met into up to four.
+    let inputs = scaling::inputs(64, |n| {
+        wide_payload_cuts(4, n, &|j| numbers(2 * j..2 * j + 3))
+    });
+    scaling::check(
+        "#a(int, int, int, int) less n overlapping shapes of four items",
+        64,
+        |n| {
+            let (whole, cuts) = &inputs[&n];
+            assert!(!whole.diff(cuts).is_empty());
+        },
+    );
+}
+
+#[test]
 fn the_difference_of_many_wide_tuple_types_scales() {
     // Each tuple type of the left side that the right side holds in part loses what the right
     // side's tuple types near it hold, found as for the meet: n tuple types less n costs n
