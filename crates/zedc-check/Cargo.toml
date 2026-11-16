@@ -44,6 +44,10 @@ zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 # Records each type the checker prints on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build; zedc's feature `printed-types` turns it on.
 printed-types = ["zedc-types/printed-types"]
+# Counts, on the eager path of the checker, the calls design D of row FAIL-map-chain-needs-quadratic
+# would admit and where each would be forced (row FAIL-map-chain-step0, `check/probe.rs`). Off in
+# a release build; on in this crate's own tests.
+forward-probe = []
 
 # A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds this
 # crate and zedc-types with the feature the workspace build gives them (the step tests turn on

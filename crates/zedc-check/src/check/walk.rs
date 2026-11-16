@@ -10343,6 +10343,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             level, self.level,
             "the level that ends is the innermost one"
         );
+        #[cfg(any(test, feature = "forward-probe"))]
+        self.probe_generalize(level);
         // The roots of this level, and the classes whose roots have a type by now: each of
         // the latter takes its root's type in `sig`. A class of a function around goes to
         // that function's list.
@@ -10688,6 +10690,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let key = (kind, gives);
+        #[cfg(any(test, feature = "forward-probe"))]
+        self.probe_need(r, &key, span);
         if let Some((result, first)) = self.classes[r].known.get(&key) {
             if !self.trying && *first != span {
                 self.same_use.push((span, *first));
@@ -19933,7 +19937,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let names = sig.params.iter().map(|p| p.name.clone()).collect();
         self.call_frames
             .push(CallFrame::new(span, &arrow.params, forwarded, names));
+        #[cfg(any(test, feature = "forward-probe"))]
+        let rec = self.probe_admit(sig, args, partial, span);
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
+        #[cfg(any(test, feature = "forward-probe"))]
+        if let Some(rec) = rec {
+            let result = arrow.result.replace(&binds);
+            self.probe_recorded(rec, args, &result);
+        }
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it

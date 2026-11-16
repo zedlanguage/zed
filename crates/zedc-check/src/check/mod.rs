@@ -43,6 +43,7 @@ mod coprime;
 pub use coprime::Pool;
 mod limits;
 pub mod ports;
+pub mod probe;
 pub mod read;
 pub use zedc_types::ty;
 pub mod widen;
@@ -1676,8 +1677,9 @@ struct Ck<'t, 'a> {
     /// The other operations that build a number in full within the address space, by span
     /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
-    /// The classes; class `k` is the type variable `$k`.
-    classes: Vec<Class>,
+    /// The classes; class `k` is the type variable `$k`. A plain `Vec<Class>` but under
+    /// `cfg(test)` and the feature `forward-probe` ([`probe`]).
+    classes: probe::Classes,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
     /// they hold at any depth had a data need from it, which the class keeps, so a later check
     /// of data that meets one again has nothing to add and does not enter it. Kept in the log
@@ -2054,7 +2056,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),
             wide_builds: BTreeMap::new(),
-            classes: Vec::new(),
+            classes: Default::default(),
             data_checked: HashSet::new(),
             clean: HashMap::new(),
             gens: Vec::new(),
@@ -3736,6 +3738,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Logs class `r` before a change, while a repair is tried.
     fn touch(&mut self, r: usize) {
         if self.trying {
+            #[cfg(any(test, feature = "forward-probe"))]
+            self.probe_event(r, "touch-trying");
             self.log
                 .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
@@ -3878,6 +3882,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             if self.classes[r].level <= level || self.classes[r].resolved.is_some() {
                 continue;
             }
+            #[cfg(any(test, feature = "forward-probe"))]
+            self.probe_event(r, "lower-walk");
             self.touch(r);
             self.classes[r].level = level;
             let mut more = Vars::default();
