@@ -3,6 +3,7 @@
 //! a correctness test of the module whose name each file bears.
 
 mod bare_key;
+mod conditions;
 mod deep;
 mod grammar_read;
 mod grammar_scaling;

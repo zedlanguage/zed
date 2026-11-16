@@ -2,6 +2,7 @@
 //! trees are the trees of the spec's bracketing cases and the rings of the fences.
 
 mod alternatives;
+mod assign_in_condition;
 mod bare_key;
 mod bench;
 mod cases;
@@ -18,6 +19,7 @@ mod later_names;
 mod left_recursion;
 mod lr4_assoc;
 mod plain_names;
+mod push_or_less;
 mod recovery_edges;
 mod reserved;
 mod rings;

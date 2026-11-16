@@ -1,8 +1,9 @@
 //! The messages for a parse that stops in a `with` clause that gives a sentinel value, and for
 //! a reserved word written where a name stands, for the removed declaration `mutable x = e;`,
 //! for a word other than `carryForward` after `with` at the end of an `initial` statement, and for
-//! a union, intersection or difference written bare as a key, guarantee or permission (DESIGN.md
-//! sec:generations, sec:lexical, sec:grammar, sec:diagnostics).
+//! a union, intersection or difference written bare as a key, guarantee or permission, and for
+//! `<-` or `=` written in a condition (DESIGN.md sec:generations, sec:lexical, sec:grammar,
+//! sec:diagnostics).
 //!
 //! Since 2026-11-11 the sentinel value of a variable a loop updates is the statement `initial x
 //! = e;`, and a `with` clause stands only on an indexed definition, each item with its key,
@@ -19,6 +20,13 @@
 //! found by the parser itself: the parse is run once more with a name in the word's place, and
 //! the word is the cause when that parse gets past the token the first one stopped at and past
 //! the token after the word (row "Reserved word written where a name stands").
+//!
+//! In a condition, `if x<-1 {` (an R habit: `<-` is one token, a push) and `if x = 3 {` (a
+//! C habit: `=` binds) stop the parse at the `<-` or the `=`, or just after the `<-`. Each is
+//! found the same way: the parse is run once more with `< -` or `==` in its place, and the row
+//! applies when it gets past where the first stopped (rows "`<-` written where a comparison
+//! with a negative operand was meant" and "`=` written in a condition where `==` was
+//! meant").
 
 use std::collections::HashSet;
 
@@ -255,6 +263,12 @@ impl Toks<'_, '_> {
     /// Whether `repair` parses in place of tokens `first` through `close`: the parse gets past
     /// the last of its tokens.
     fn parses(&self, first: usize, close: usize, repair: &str) -> bool {
+        self.parses_past(first, close, repair, 0)
+    }
+
+    /// Whether `repair` parses in place of tokens `first` through `close` and the parse gets
+    /// `more` tokens past the last of its tokens.
+    fn parses_past(&self, first: usize, close: usize, repair: &str, more: usize) -> bool {
         let Ok(tokens) = crate::lex::lex(repair) else {
             return false;
         };
@@ -267,7 +281,7 @@ impl Toks<'_, '_> {
         fixed.extend_from_slice(&new);
         let edit = fixed.len() - 1;
         fixed.extend_from_slice(&self.toks[close + 1..]);
-        reaches(self.g, self.ring, self.start, &fixed, edit)
+        reaches(self.g, self.ring, self.start, &fixed, edit + more)
     }
 
     /// Whether the parse, with the name `name` in place of each token of `at`, gets past token
@@ -316,7 +330,8 @@ impl Toks<'_, '_> {
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
 /// sentinel value, at or after a reserved word written where a name stands, at the removed
 /// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
-/// of an `initial` statement, or at a union, intersection or difference written bare as a key.
+/// of an `initial` statement, or at a union, intersection or difference written bare as a key,
+/// or at `<-` or `=` in a condition.
 /// The scans run over the statement, its block, its line or the type, and each check of a word
 /// or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
@@ -325,6 +340,183 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| mutable_decl(t, far))
         .or_else(|| carry_word(t, far))
         .or_else(|| bare_key(t, far))
+        .or_else(|| push_or_less(t, far))
+        .or_else(|| binding_in_condition(t, far))
+}
+
+/// The condition around token `at`: its keyword, `if`, `while`, `until` or the word `where`, and the
+/// token that ends it, `{`, `;` or `->`, both outside brackets. The keyword is found by going
+/// back from `at`, out of any `(` or `[` but never past a `{` or `}`, a `;`, a `,`, an `=` or a
+/// `->` outside brackets, which a condition does not hold; None when no keyword comes first.
+/// O(c) for a condition of c tokens, and O(s) in the statement around it.
+fn condition(t: &Toks<'_, '_>, at: usize) -> Option<(usize, usize)> {
+    let mut k = at;
+    let mut n = 0;
+    loop {
+        k = k.checked_sub(1)?;
+        let tok = t.t(k);
+        if n == 0 {
+            if matches!(tok, ";" | "," | "=" | "->" | "{" | "}") {
+                return None;
+            }
+            let kind = t.toks.get(k).map(|x| x.0);
+            if matches!(tok, "if" | "while" | "until") && kind == Some(Kind::Keyword) {
+                break;
+            }
+            // `where` is no keyword: the lexer reads it as a name, and the grammar takes it
+            // after a pattern or a generator. At the start of a statement it is a name.
+            if tok == "where"
+                && kind == Some(Kind::Ident)
+                && k > 0
+                && !matches!(t.t(k - 1), ";" | "{" | "}")
+            {
+                break;
+            }
+        }
+        // Going back, a closing bracket opens a group, and an opening one closes it, or, at
+        // `n == 0`, leads out of the bracket `at` stands in.
+        n = (n - depth(tok)).max(0);
+    }
+    let mut n = 0;
+    let end = (k + 1..t.tokens.len()).find(|&i| {
+        let tok = t.t(i);
+        let ends = n == 0 && matches!(tok, "{" | ";" | "->");
+        n += depth(tok);
+        ends
+    })?;
+    (end > at).then_some((k, end))
+}
+
+/// The text of tokens `a` through `b` with `with` in place of token `at`.
+fn swapped(t: &Toks<'_, '_>, (a, b): (usize, usize), at: usize, with: &str) -> String {
+    let (lo, hi) = (t.span(a).start, t.span(b).end);
+    let (s, e) = (t.span(at).start, t.span(at).end);
+    format!("{}{with}{}", &t.text[lo..s], &t.text[e..hi])
+}
+
+/// The token that ends the top-level declaration around token `at`: the first `;` or `}` at
+/// or after `at` where every bracket opened since the start of the unit is closed; when there
+/// is none, as when a bracket is left open, the end of the unit, so that only a parse of the
+/// whole unit gets past it. One scan of the unit, O(n).
+///
+/// Complexity tradeoff (COMPLEXITY.md, PITFALL-push-vs-less): the naive check that a repair
+/// makes the declaration parse would parse the whole unit with it, O(n), and would withhold the
+/// repair for an error in a later declaration. Used: the parse need only get past this token,
+/// which is also O(n) but stops at the declaration, and judges the repair by its own
+/// declaration alone.
+fn decl_end(t: &Toks<'_, '_>, at: usize) -> usize {
+    let mut d = 0;
+    for i in 0..t.tokens.len() {
+        d += depth(t.t(i));
+        if i >= at && d <= 0 && matches!(t.t(i), ";" | "}") {
+            return i;
+        }
+    }
+    t.tokens.len().max(at)
+}
+
+/// Whether `s` can be quoted in a headline: one line, and no backtick, which would end the
+/// quotation.
+fn quotable(s: &str) -> bool {
+    !s.contains(['\n', '`'])
+}
+
+/// The [`Clause`] for `<-` written where a comparison with a negative operand was meant (row
+/// "`<-` written where a comparison with a negative operand was meant"): `if x<-1 { … }`,
+/// where `<-` is one token, a push, which only a statement makes. The parse stops at the `<-`
+/// or at the token after it; the row applies when the text with `< -` in its place gets past
+/// the token where the parse stopped. The repair is the condition (or else the statement) with
+/// `< -` in place of `<-`, offered when the declaration then parses: the parse with it gets past
+/// the token that ends the declaration ([`decl_end`]). Two parses more and one scan of the
+/// unit, on the error path only: linear in the unit.
+fn push_or_less(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let push = |i: usize| t.toks.get(i).is_some_and(|x| *x == (Kind::Op, "<-"));
+    let at = [Some(far), far.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .find(|&i| push(i))?;
+    if !t.parses_past(at, at, "< -", far - at) {
+        return None;
+    }
+    let (first, end) = condition(t, at).unwrap_or_else(|| {
+        let first = t.stmt_first(at);
+        let stop = t.stmt_stop(at);
+        (first, if t.t(stop) == ";" { stop } else { stop - 1 })
+    });
+    if end < at {
+        return None;
+    }
+    let written = t.between(first, end);
+    let (lo, s, e, hi) = (
+        t.span(first).start,
+        t.span(at).start,
+        t.span(at).end,
+        t.span(end).end,
+    );
+    let repaired = format!(
+        "{} < -{}",
+        t.text[lo..s].trim_end(),
+        t.text[e..hi].trim_start()
+    );
+    if !quotable(written) {
+        return None;
+    }
+    let span = t.span(at);
+    let mut message = format!("`<-` is one token, a push: `{written}`.");
+    let mut notes = vec![(
+        span,
+        "`<-` pushes a value into a port, an accumulator or a next generation, which only a \
+         statement does; written with a space, `< -`, it compares with a negative number"
+            .to_string(),
+    )];
+    if t.parses_past(at, at, "< -", decl_end(t, at) - at) {
+        message.push_str(&format!(" Try `{repaired}` instead."));
+        notes.push((span, format!("repair: `{repaired}`")));
+    }
+    Some(Clause {
+        row: Some(Row::PushWhereLessMeant),
+        message,
+        span,
+        notes,
+    })
+}
+
+/// The [`Clause`] for `=` written in a condition where `==` was meant (row "`=` written in a
+/// condition where `==` was meant"): `if x = 3 { … }`, where `=` binds a name, which only a
+/// statement does. The parse stops at the `=`, in the head of an `if`, the expression of a
+/// `while` or an `until`, or a guard after `where` ([`condition`]); the row applies when the
+/// text with `==` in its place gets past it. The repair is the condition with `==` in place of
+/// `=`, its parentheses kept as written, offered when the declaration then parses, as in
+/// [`push_or_less`]. Two parses more and one scan of the unit, on the error path only: linear
+/// in the unit.
+fn binding_in_condition(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    if t.toks.get(far) != Some(&(Kind::Op, "=")) {
+        return None;
+    }
+    let (first, end) = condition(t, far)?;
+    let written = t.between(first, end);
+    if !quotable(written) || !t.parses(far, far, "==") {
+        return None;
+    }
+    let repaired = swapped(t, (first, end), far, "==");
+    let span = t.span(far);
+    let mut message = format!("A binding is no condition: `{written}`.");
+    let mut notes = vec![(
+        span,
+        "`=` binds a name in a statement and gives no value, so it cannot stand in a \
+         condition; `==` compares"
+            .to_string(),
+    )];
+    if t.parses_past(far, far, "==", decl_end(t, far) - far) {
+        message.push_str(&format!(" Try `{repaired}` instead."));
+        notes.push((span, format!("repair: `{repaired}`")));
+    }
+    Some(Clause {
+        row: Some(Row::BindingInCondition),
+        message,
+        span,
+        notes,
+    })
 }
 
 fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
