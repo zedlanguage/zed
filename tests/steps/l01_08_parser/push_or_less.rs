@@ -36,9 +36,8 @@ pub(super) fn program(body: &str) -> String {
 }
 
 /// The note on what `<-` is.
-const PUSH: &str = "`<-` pushes a value into a port, an accumulator or a next generation, which \
-                    only a statement does; written with a space, `< -`, it compares with a \
-                    negative number";
+const PUSH: &str = "`<-` pushes a value into a port, an accumulator or the next generation, and can only be \
+                    used as a statement; `x < -1`, with a space, compares `x` with a negative number";
 
 /// Checks that `src` is refused at the `<-` of `written`, with the condition `written` in the headline
 /// and, when the declaration then parses, `repaired` offered.
@@ -47,7 +46,7 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
     assert_eq!(e.row, Some(Row::PushWhereLessMeant), "{src}");
     let at = src.find(written).unwrap() + written.find("<-").unwrap();
     assert_eq!((e.span.start, e.span.end), (at, at + 2), "{src}");
-    let mut message = format!("`<-` is one token, a push: `{written}`.");
+    let mut message = format!("Invalid use of the push operator `<-` in a condition: `{written}`.");
     let mut notes = vec![PUSH.to_string()];
     if let Some(r) = repaired {
         message += &format!(" Try `{r}` instead.");
@@ -73,7 +72,7 @@ fn a_push_where_a_comparison_stands_offers_the_comparison() {
     let e = rejected(src);
     let headline = e.lines().next().unwrap();
     assert!(headline.contains("Try `if x < -1 {"), "{e}");
-    assert!(e.contains("`<-` is one token"), "{e}");
+    assert!(e.contains("`<-` pushes a value"), "{e}");
 }
 
 /// The head of an `if`, the condition of a `while` and a guard after `where`, each up to the

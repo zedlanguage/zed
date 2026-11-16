@@ -1,6 +1,6 @@
 //! `=` written in a condition where `==` was meant (DESIGN.md sec:lexical, the `x = e` row of
 //! the operator table; row "`=` written in a condition where `==` was meant" of
-//! sec:diagnostics; item PITFALL-assign-in-condition): `=` binds a name in a statement, so
+//! sec:diagnostics; item PITFALL-assign-in-condition): `=` binds a name and can only be used as a statement, so
 //! `if x = 3 {` stops the parse. The error is reported at the `=`, shows the condition as
 //! written, and offers it with `==`, its parentheses kept, when the declaration then parses.
 //! An `=` outside a condition stays a syntax error.
@@ -19,8 +19,8 @@ fn rejected(src: &str) -> String {
 }
 
 /// The note on what `=` is.
-const BINDS: &str = "`=` binds a name in a statement and gives no value, so it cannot stand in a \
-                     condition; `==` compares";
+const BINDS: &str =
+    "`=` binds a name and can only be used as a statement; `==` compares two values";
 
 /// Checks that `src` is refused at the `=` of `written` with `written` in the headline and,
 /// when the declaration then parses, `repaired` offered.
@@ -29,7 +29,7 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
     assert_eq!(e.row, Some(Row::BindingInCondition), "{src}");
     let at = src.find(written).unwrap() + written.find(" = ").unwrap() + 1;
     assert_eq!((e.span.start, e.span.end), (at, at + 1), "{src}");
-    let mut message = format!("A binding is no condition: `{written}`.");
+    let mut message = format!("Invalid use of `=` in a condition: `{written}`.");
     let mut notes = vec![BINDS.to_string()];
     if let Some(r) = repaired {
         message += &format!(" Try `{r}` instead.");
@@ -44,7 +44,7 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
     }
 }
 
-/// Zed already rejects the program, as a binding is no expression; the headline should say
+/// Zed already rejects the program, since `x = 3` is not an expression; the headline should say
 /// why and offer `==`.
 #[test]
 fn a_binding_where_a_condition_stands_offers_equality() {

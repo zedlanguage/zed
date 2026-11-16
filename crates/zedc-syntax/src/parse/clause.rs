@@ -462,11 +462,11 @@ fn push_or_less(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         return None;
     }
     let span = t.span(at);
-    let mut message = format!("`<-` is one token, a push: `{written}`.");
+    let mut message = format!("Invalid use of the push operator `<-` in a condition: `{written}`.");
     let mut notes = vec![(
         span,
-        "`<-` pushes a value into a port, an accumulator or a next generation, which only a \
-         statement does; written with a space, `< -`, it compares with a negative number"
+        "`<-` pushes a value into a port, an accumulator or the next generation, and can only be \
+         used as a statement; `x < -1`, with a space, compares `x` with a negative number"
             .to_string(),
     )];
     if t.parses_past(at, at, "< -", decl_end(t, at) - at) {
@@ -500,11 +500,10 @@ fn binding_in_condition(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     }
     let repaired = swapped(t, (first, end), far, "==");
     let span = t.span(far);
-    let mut message = format!("A binding is no condition: `{written}`.");
+    let mut message = format!("Invalid use of `=` in a condition: `{written}`.");
     let mut notes = vec![(
         span,
-        "`=` binds a name in a statement and gives no value, so it cannot stand in a \
-         condition; `==` compares"
+        "`=` binds a name and can only be used as a statement; `==` compares two values"
             .to_string(),
     )];
     if t.parses_past(far, far, "==", decl_end(t, far) - far) {
