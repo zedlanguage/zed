@@ -131,6 +131,14 @@ fn releasing_a_deep_value_scales() {
 /// thread of 64 KiB: the frame of each is larger than that thread's stack. The work is
 /// linear in the width: the code generator's passes, Cranelift's at `OptLevel::None`
 /// (COMPLEXITY.md Z15), and the stack probes, which touch each page of the frame once.
+///
+/// Each run starts its own thread of 64 KiB inside the meter's run. The whole check ran on such
+/// a thread until FAIL-deep-heap-wide-fn-stack-overflow: the meter's own frames and the thread
+/// it runs each run on (`scaling::alone`, which gets what is left of its caller's stack) took
+/// about 22 KiB of it, and compiling and running took the rest and overflowed, at every width.
+/// Measured 2026-11-15 (debug build, the thread's least stack found by halving): compiling and
+/// running `wide(k)` on a thread of its own needs 51 KiB for k = 1, 100, 1,000, 5,000 and 40,000,
+/// so the stack it uses is bounded, not growing with the width.
 #[test]
 fn a_wide_function_runs_in_time_linear_in_its_width() {
     let programs = [WIDE, scaling::FACTOR * WIDE].map(|k| {
@@ -138,16 +146,16 @@ fn a_wide_function_runs_in_time_linear_in_its_width() {
         let p = plan(g.graph(), true);
         (k, g, p)
     });
-    scaling::on_a_thread(SMALL_STACK, || {
-        scaling::check(
-            "native compile and run of a function of n concatenations",
-            WIDE,
-            |k| {
-                let (_, g, p) = programs.iter().find(|(m, _, _)| *m == k).unwrap();
+    scaling::check(
+        "native compile and run of a function of n concatenations",
+        WIDE,
+        |k| {
+            let (_, g, p) = programs.iter().find(|(m, _, _)| *m == k).unwrap();
+            scaling::on_a_thread(SMALL_STACK, || {
                 drop(zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap());
-            },
-        )
-    });
+            });
+        },
+    );
 }
 
 /// How deep the values of the tests below go, on the 2 MiB stack of a test thread: above the
