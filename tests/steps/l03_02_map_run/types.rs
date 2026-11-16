@@ -64,11 +64,12 @@ fn a_fold_of_a_row_that_may_be_empty_needs_else() {
 #[test]
 fn a_fold_by_a_non_associative_operator_is_rejected() {
     // Bare `><` folds in any grouping and so needs an associative operator (DESIGN.md
-    // sec:reduction); the repairs are the directional folds, which owe no law.
+    // sec:reduction); the repairs are the directional folds, which owe no law, written with the
+    // program's own operand (MSG-example-repairs).
     let e = refused("minus", "${[1, 2] >< (-)}");
     assert!(e.contains("`-` is not associative"), "{e}");
-    assert!(e.contains("xs.foldl(init, (a, x) -> a - x)"), "{e}");
-    assert!(e.contains("xs.foldr((x, a) -> x - a, init)"), "{e}");
+    assert!(e.contains("`[1, 2].foldl(init, (a, x) -> a - x)`"), "{e}");
+    assert!(e.contains("`[1, 2].foldr((x, a) -> x - a, init)`"), "{e}");
 }
 
 #[test]
