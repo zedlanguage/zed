@@ -374,19 +374,17 @@ fn a_function_is_not_shown_and_may_be_held_in_a_tuple() {
     rejected(INC, r#""${inc}""#);
     assert_eq!(
         rejected(INC, "String(inc)"),
-        "3:15: `String` takes data, and this value may hold a function, `T -> T for T in int \
-         | f32 | f64 | rat`: data is a value that holds no function at any depth.\n  \
+        "3:15: Cannot show a value that may hold a function: `inc : T -> T for T in int | f32 \
+         | f64 | rat` in `String(inc)`.\n  \
          [1] 3:22: `inc` is T -> T for T in int | f32 | f64 | rat here\n      \
          3 |   m.stdout <- String(inc);\n        \
-         |               ^^^^^^^^^^^ [3, 4]\n        \
+         |               ^^^^^^^^^^^ [3]\n        \
          |                      ^^^ [1]\n  \
          [2] 1:1: `inc` is declared here with no type written for `x` or its result; the type \
          the checker found for `inc` is `T -> T for T in int | f32 | f64 | rat`\n      \
          1 | inc(positional x) = x + 1;\n        \
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
-         [3] 3:15: repair: call the function before the value gets here, so that the value \
-         holds its result and not the function\n  \
-         [4] 3:15: repair: keep the function under its own name, out of the value"
+         [3] 3:15: data is a value that holds no function at any depth"
     );
     // A tuple may hold a function (DESIGN.md step L1.17, QUESTIONS A43): building one is no
     // error, a component that is data is shown, and showing the tuple itself is refused.

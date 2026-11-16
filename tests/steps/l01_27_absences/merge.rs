@@ -144,10 +144,26 @@ fn the_readme_examples_give_these_values() {
 /// the merge at that operand (row FIX-functions-in-tuples); the signature is the same.
 #[test]
 fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
-    for (payload, data) in [("5", true), ("5, 6", true)]
-        .into_iter()
-        .chain(["g", "h", "min", "abs", "q", "if p { g } else { q }"].map(|f| (f, false)))
-    {
+    // Each payload, with the type of the failure that holds it when it holds a function.
+    for (payload, held) in [
+        ("5", None),
+        ("5, 6", None),
+        ("g", Some("int -> int")),
+        ("h", Some("(int, int) -> int")),
+        (
+            "min",
+            Some(
+                "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat) & \
+                 ((f32, f32) -> f32)",
+            ),
+        ),
+        (
+            "abs",
+            Some("(int -> int) & (f64 -> f64) & (rat -> rat) & (f32 -> f32)"),
+        ),
+        ("q", Some("T -> T")),
+        ("if p { g } else { q }", Some("T -> T")),
+    ] {
         let t = format!(
             "g(positional k: int) = k;\nh(positional k: int, positional j: int) = k;\nq(positional k) = k;\n\
              a(positional p: bool) = if p {{ 1 }} else {{ #errs({payload}) }};\n\
@@ -155,17 +171,16 @@ fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
              x(positional p: bool) = a(p) + c(p);\n"
         );
         let errors = type_errors(&t);
-        if data {
-            assert_eq!(errors, Vec::<String>::new(), "{t}");
-        } else {
-            assert_eq!(errors.len(), 1, "{t}\n{errors:?}");
-            assert!(
-                errors[0].starts_with(
-                    "`#errs`, which `+` merges the failures of its operands into, takes data"
-                ) && errors[0].ends_with("[a(p)]"),
-                "{t}\n{errors:?}"
-            );
-        }
+        let want: Vec<String> = held
+            .map(|f| {
+                format!(
+                    "Cannot merge a failure that may hold a function into `#errs`: `a(p) : \
+                     #errs({f})`. [a(p)]"
+                )
+            })
+            .into_iter()
+            .collect();
+        assert_eq!(errors, want, "{t}");
         assert_eq!(sig(&t, "x"), "bool -> int | #bad | #errs(..)", "{t}");
     }
 }

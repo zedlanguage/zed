@@ -308,23 +308,23 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
-  [1] 3:8: `boxed` holds the function here
+        "3:8: Cannot compare a value that may hold a function: `boxed : #box(T -> T for T in int | f32 | f64 | rat)` in `boxed == boxed`.
+  [1] 3:8: `#box(T -> T for T in int | f32 | f64 | rat)` holds the function `T -> T for T in int | f32 | f64 | rat`
       3 | same = boxed == boxed;
-        |        ^^^^^ [1]
-        |        ^^^^^^^^^^^^^^ [7, 8]
-  [2] 2:9: `boxed` is defined here
+        |        ^^^^^ [2]
+        |        ^^^^^^^^^^^^^^ [1, 8]
+  [2] 3:8: `boxed` holds the function here
+  [3] 2:9: `boxed` is defined here
       2 | boxed = #box(inc);
-        |         ^^^^^^^^^ [2, 3]
-        |              ^^^ [4]
-  [3] 2:9: this atom `#box` holds the function in its payload
-  [4] 2:14: `inc` is T -> T for T in int | f32 | f64 | rat here
-  [5] 1:7: `inc` is defined as this expression, T -> T for T in int | f32 | f64 | rat
+        |         ^^^^^^^^^ [3, 4]
+        |              ^^^ [5]
+  [4] 2:9: this atom `#box` holds the function in its payload
+  [5] 2:14: `inc` is T -> T for T in int | f32 | f64 | rat here
+  [6] 1:7: `inc` is defined as this expression, T -> T for T in int | f32 | f64 | rat
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is T -> T for T in int | f32 | f64 | rat
-  [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
-  [8] 3:8: repair: keep the function under its own name, out of the value"
+  [7] 1:7: this expression is T -> T for T in int | f32 | f64 | rat
+  [8] 3:8: data is a value that holds no function at any depth"
     );
 }
 
@@ -342,16 +342,15 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
-  [1] 3:36: `g` needs this of its argument here
-      3 | g(positional x) { p = f(x); return p == p; }
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
-        |                                    ^^^^^^ [1]
-  [2] 3:1: `g` is declared here with no type written for `x` or its result; the type the checker found for `g` is `_ -> bool`
-  [3] 4:5: repair: call the function before the value gets here, so that the value holds its result and not the function
+        "4:5: Cannot compare a value that may hold a function: `T -> T for T in int | f32 | f64 | rat` in `g(h)`.
+  [1] 4:5: data is a value that holds no function at any depth
       4 | s = g(h);
         |     ^^^^
-  [4] 4:5: repair: keep the function under its own name, out of the value"
+  [2] 3:36: `g` needs this of its argument here
+      3 | g(positional x) { p = f(x); return p == p; }
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3]
+        |                                    ^^^^^^ [2]
+  [3] 3:1: `g` is declared here with no type written for `x` or its result; the type the checker found for `g` is `_ -> bool`"
     );
 }
 
@@ -365,16 +364,16 @@ fn a_merge_of_failures_that_hold_a_function_follows_each_to_the_function() {
         "scale(positional x: int) = x;\nboth(positional n: int) = (if n > 2 { #box(scale) } else { n }) + (if n > 3 { #bag(scale) } else { n });\n",
     );
     assert_eq!(
-        out.matches("`#errs`, which `+` merges the failures of its operands into, takes data")
+        out.matches("Cannot merge a failure that may hold a function into `#errs`: ")
             .count(),
         2,
         "{out}"
     );
     for step in [
-        "[3]  2:31: `n` is int here",
-        "[7]  2:39: this atom `#box` holds the function in its payload",
-        "[8]  2:44: `scale` is int -> int here",
-        "[7]  2:79 to 2:89: this atom `#bag` holds the function in its payload",
+        "[4]  2:31: `n` is int here",
+        "[8]  2:39: this atom `#box` holds the function in its payload",
+        "[9]  2:44: `scale` is int -> int here",
+        "[8]  2:79 to 2:89: this atom `#bag` holds the function in its payload",
     ] {
         assert!(out.contains(step), "{step}:\n{out}");
     }
@@ -389,8 +388,8 @@ fn a_held_tuple_with_a_call_for_its_function_part_shows_the_call() {
         "scale(positional x: int) = x;\nid(positional a) = a;\nt = (id(scale), 1);\nsame = t == t;\n",
     );
     for step in [
-        "[3] 3:5: this tuple holds the function",
-        "[4] 3:6: this call of `id` gives int -> int",
+        "[4] 3:5: this tuple holds the function",
+        "[5] 3:6: this call of `id` gives int -> int",
         "the type the checker found for `id` is `T -> T`",
     ] {
         assert!(out.contains(step), "{step}:\n{out}");

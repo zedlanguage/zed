@@ -15,10 +15,11 @@ use super::{info, type_errors};
 /// `n`, on main too (follow-up GENERIC-nested-quadratic).
 const SCALE: &str = "scale(positional x) = x * int(2);\n";
 
-/// The one error `==` on a value that holds `scale` gives, at `at`.
-fn compares_scale(at: &str) -> String {
+/// The one error `{name} == #b` gives, where `name` is a value of `value`, which holds `scale`.
+fn compares_scale(name: &str, value: &str) -> String {
     format!(
-        "`==` takes data, and this value may hold a function, `int -> int`: data is a value that holds no function at any depth. [{at}]"
+        "Cannot compare a value that may hold a function: `{name} : {value}` in `{name} == #b`. \
+         [{name} == #b]"
     )
 }
 
@@ -34,7 +35,7 @@ fn a_function_in_nested_tuples_is_one_error_where_it_is_compared() {
     assert_eq!(type_errors(&text), Vec::<String>::new());
     assert_eq!(
         type_errors(&compared(&text, "settings")),
-        [compares_scale("settings == #b")]
+        [compares_scale("settings", "((int -> int, 1), 2)")]
     );
 }
 
@@ -44,7 +45,7 @@ fn a_function_in_a_tuple_named_and_nested_again_is_one_error_where_it_is_compare
     assert_eq!(type_errors(&text), Vec::<String>::new());
     assert_eq!(
         type_errors(&compared(&text, "four")),
-        [compares_scale("four == #b")]
+        [compares_scale("four", "(((int -> int, 1), 2), 3)")]
     );
 }
 
@@ -55,11 +56,11 @@ fn a_function_wrapped_in_tuples_by_calls_is_one_error_where_it_is_compared() {
     let wrap = "wrap(positional x) = (x, 1);\n";
     let once = format!("{SCALE}{wrap}boxed = wrap(scale);\n");
     let twice = format!("{SCALE}{wrap}boxed = wrap(wrap(scale));\n");
-    for text in [&once, &twice] {
+    for (text, value) in [(&once, "(int -> int, 1)"), (&twice, "((int -> int, 1), 1)")] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
         assert_eq!(
             type_errors(&compared(text, "boxed")),
-            [compares_scale("boxed == #b")],
+            [compares_scale("boxed", value)],
             "{text}"
         );
     }
@@ -143,12 +144,17 @@ pub(super) fn in_a_wide_payload(n: usize, leaf: &str) -> String {
 fn a_function_in_an_atom_s_payload_is_one_error() {
     // A payload and a tuple may hold a function (DESIGN.md, `#atom(t)`, step L1.17), and `==`
     // compares payloads: the function is reported once, at the `==`.
-    let at_eq = compares_scale("t == #b");
     assert_eq!(
         type_errors(&in_atoms_and_tuples(3, "scale")),
-        std::slice::from_ref(&at_eq)
+        [compares_scale(
+            "t",
+            "#a((#a((#a((#a(int -> int), 1)), 1)), 1))"
+        )]
     );
-    assert_eq!(type_errors(&in_a_wide_payload(3, "scale")), [at_eq]);
+    assert_eq!(
+        type_errors(&in_a_wide_payload(3, "scale")),
+        [compares_scale("t", "#a(0, 1, 2, int -> int)")]
+    );
     assert_eq!(
         type_errors(&in_atoms_and_tuples(3, "1")),
         Vec::<String>::new()
@@ -190,18 +196,16 @@ pub(super) fn in_atoms_by_calls(n: usize, leaf: &str) -> String {
 #[test]
 fn a_function_in_atoms_nested_in_atoms_is_refused_by_equality() {
     // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads.
-    let at_eq = |at: &str| {
-        format!(
-            "`==` takes data, and this value may hold a function, `int -> int`: data is a value that holds no function at any depth. [{at}]"
-        )
-    };
     type Family = fn(usize, &str) -> String;
-    for (text, at) in [
-        (in_atoms as Family, "t == #b"),
-        (in_atoms_by_bindings, "t2 == #b"),
-        (in_atoms_by_calls, "t == #b"),
+    for (text, name) in [
+        (in_atoms as Family, "t"),
+        (in_atoms_by_bindings, "t2"),
+        (in_atoms_by_calls, "t"),
     ] {
-        assert_eq!(type_errors(&text(3, "scale")), [at_eq(at)]);
+        assert_eq!(
+            type_errors(&text(3, "scale")),
+            [compares_scale(name, "#a(#a(#a(int -> int)))")]
+        );
         assert_eq!(type_errors(&text(3, "1")), Vec::<String>::new());
     }
 }
@@ -239,30 +243,34 @@ fn notes_of(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The notes on `scale` and the two repairs at `at`, which end each derivation below.
-fn scale_and_repairs(at: &str) -> [String; 4] {
+/// The note at `at` that opens each derivation below: the value of `value` holds `scale`.
+fn holds_scale(at: &str, value: &str) -> String {
+    format!("[{at}] `{value}` holds the function `int -> int`")
+}
+
+/// The notes on `scale` and what data is, at `at`, which end each derivation below.
+fn scale_and_data(at: &str) -> [String; 3] {
     [
         "[scale] `scale` is int -> int here".into(),
         "[scale(positional x) = x * int(2);] `scale` is declared here with no type written for `x` or its result; the type the checker found for `scale` is `int -> int`".into(),
-        format!("[{at}] repair: call the function before the value gets here, so that the value holds its result and not the function"),
-        format!("[{at}] repair: keep the function under its own name, out of the value"),
+        format!("[{at}] data is a value that holds no function at any depth"),
     ]
 }
 
-/// The number of notes the one error of [`in_one_expression`] has: one for the name, one for
-/// its definition, one for each tuple, and [`scale_and_repairs`].
+/// The number of notes the one error of [`in_one_expression`] has: [`holds_scale`], one for
+/// the name, one for its definition, one for each tuple, and [`scale_and_data`].
 pub(super) fn notes_in_one_expression(n: usize) -> usize {
     n + 6
 }
 
-/// The number of notes the one error of [`in_named_steps`] has: three for each binding, the
-/// name, its definition and its tuple, and [`scale_and_repairs`].
+/// The number of notes the one error of [`in_named_steps`] has: [`holds_scale`], three for
+/// each binding, the name, its definition and its tuple, and [`scale_and_data`].
 pub(super) fn notes_in_named_steps(n: usize) -> usize {
     3 * n + 4
 }
 
-/// The number of notes the one error of [`in_calls`] has: the name, its definition, the
-/// outer call with its type and the declaration of `wrap`, and the two repairs.
+/// The number of notes the one error of [`in_calls`] has: [`holds_scale`], the name, its
+/// definition, the outer call with its type and the declaration of `wrap`, and what data is.
 pub(super) fn notes_in_calls(_: usize) -> usize {
     6
 }
@@ -282,7 +290,8 @@ fn a_function_in_nested_tuples_is_one_error_with_the_path_to_it() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t == #b"));
+    expected.insert(0, holds_scale("t == #b", "(((int -> int, 1), 1), 1)"));
+    expected.extend(scale_and_data("t == #b"));
     assert_eq!(notes_of(&in_one_expression(3)), expected);
     let mut expected: Vec<String> = [
         "[t2] `t2` holds the function here",
@@ -297,7 +306,8 @@ fn a_function_in_nested_tuples_is_one_error_with_the_path_to_it() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t2 == #b"));
+    expected.insert(0, holds_scale("t2 == #b", "(((int -> int, 1), 1), 1)"));
+    expected.extend(scale_and_data("t2 == #b"));
     assert_eq!(notes_of(&in_named_steps(3)), expected);
     for (text, count) in [
         (in_one_expression(3), notes_in_one_expression(3)),
@@ -320,7 +330,8 @@ fn a_function_in_an_atom_s_payload_is_shown_through_each_atom() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t1 == #b"));
+    expected.insert(0, holds_scale("t1 == #b", "#a(#a(int -> int))"));
+    expected.extend(scale_and_data("t1 == #b"));
     assert_eq!(notes_of(&in_atoms_by_bindings(2, "scale")), expected);
 }
 
@@ -336,7 +347,8 @@ fn a_part_with_no_function_is_left_out_of_the_path() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t == #b"));
+    expected.insert(0, holds_scale("t == #b", "((1, 2), (int -> int, 3))"));
+    expected.extend(scale_and_data("t == #b"));
     assert_eq!(notes_of(&text), expected);
 }
 
@@ -375,7 +387,8 @@ fn a_function_in_nested_families_is_one_error_with_the_path_to_it() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t1 == #b"));
+    expected.insert(0, holds_scale("t1 == #b", "\"k\" -> \"k\" -> int -> int"));
+    expected.extend(scale_and_data("t1 == #b"));
     assert_eq!(notes_of(&in_families_by_bindings(2, "scale")), expected);
     let mut expected: Vec<String> = [
         "[t] `t` holds the function here",
@@ -385,7 +398,8 @@ fn a_function_in_nested_families_is_one_error_with_the_path_to_it() {
     ]
     .map(String::from)
     .into();
-    expected.extend(scale_and_repairs("t == #b"));
+    expected.insert(0, holds_scale("t == #b", "\"k\" -> \"k\" -> int -> int"));
+    expected.extend(scale_and_data("t == #b"));
     assert_eq!(
         notes_of(&in_families_in_one_expression(2, "scale")),
         expected
@@ -423,27 +437,48 @@ fn a_function_in_nested_families_is_one_error_with_the_path_to_it() {
 #[test]
 fn each_use_that_needs_data_rejects_a_family_of_functions() {
     let b = "b = { \"a\" -> (y -> y + 1), \"b\" -> (y -> y * 2) };\n";
-    let f = "`T -> T for T in int | f32 | f64 | rat`";
-    for (use_, op) in [
-        ("a = \"${b}\";\n", "interpolation"),
-        ("a = String(b);\n", "`String`"),
+    let f = "T -> T for T in int | f32 | f64 | rat";
+    let fam = format!("(\"a\" | \"b\") -> ({f}) | ({f})");
+    let show = "Cannot show a value that may hold a function: ";
+    let compare = "Cannot compare a value that may hold a function: ";
+    for (use_, want) in [
+        (
+            "a = \"${b}\";\n",
+            format!("{show}`b : {fam}` in `\"${{b}}\"`."),
+        ),
+        (
+            "a = String(b);\n",
+            format!("{show}`b : {fam}` in `String(b)`."),
+        ),
         // An operand that is data, so the one error is the family's.
-        ("a = b == #c;\n", "`==`"),
-        ("a = b != #c;\n", "`!=`"),
+        (
+            "a = b == #c;\n",
+            format!("{compare}`b : {fam}` in `b == #c`."),
+        ),
+        (
+            "a = b != #c;\n",
+            format!("{compare}`b : {fam}` in `b != #c`."),
+        ),
         // Through a tuple, an atom, an outer family and a generic parameter.
-        ("t = (b, 1);\na = \"${t}\";\n", "interpolation"),
-        ("t = #box(b);\na = t == #c;\n", "`==`"),
-        ("t = { 1 -> b };\na = \"${t}\";\n", "interpolation"),
+        (
+            "t = (b, 1);\na = \"${t}\";\n",
+            format!("{show}`t : ({fam}, 1)` in `\"${{t}}\"`."),
+        ),
+        (
+            "t = #box(b);\na = t == #c;\n",
+            format!("{compare}`t : #box({fam})` in `t == #c`."),
+        ),
+        (
+            "t = { 1 -> b };\na = \"${t}\";\n",
+            format!("{show}`t : 1 -> {fam}` in `\"${{t}}\"`."),
+        ),
         (
             "show(positional v) = \"${v}\";\na = show(b);\n",
-            "interpolation",
+            format!("{show}`{fam}` in `show(b)`."),
         ),
     ] {
         let text = format!("{b}{use_}");
         let got = type_errors(&text);
-        let want = format!(
-            "{op} takes data, and this value may hold a function, {f}: data is a value that holds no function at any depth."
-        );
         assert_eq!(got.len(), 1, "{text}\n{got:#?}");
         assert!(got[0].starts_with(&want), "{text}\n{got:#?}");
     }
@@ -457,7 +492,8 @@ fn each_use_that_needs_data_rejects_a_family_of_functions() {
     assert_eq!(got.len(), 1, "{text}\n{got:#?}");
     assert!(
         got[0].starts_with(
-            "interpolation takes data, and this value may hold a function, `int -> int`"
+            "Cannot show a value that may hold a function: `b : \"a\" -> int -> int` in \
+             `\"${b}\"`."
         ),
         "{text}\n{got:#?}"
     );
@@ -471,28 +507,42 @@ fn each_use_that_needs_data_rejects_a_family_of_functions() {
 #[test]
 fn a_key_that_holds_a_function_is_rejected() {
     let b = "b = { \"a\" -> (y -> y + 1) };\n";
-    for (use_, op, f) in [
-        ("c = { scale -> 1 };\n", "a key of a family", "`int -> int`"),
+    let key = "Cannot use a value that may hold a function as a key: ";
+    for (use_, piece, whole, at) in [
+        (
+            "c = { scale -> 1 };\n",
+            "scale : int -> int",
+            "scale -> 1",
+            "scale",
+        ),
         (
             "c = { (scale, 1) -> 1 };\n",
-            "a key of a family",
-            "`int -> int`",
+            "(scale, 1) : (int -> int, 1)",
+            "(scale, 1) -> 1",
+            "(scale, 1)",
         ),
-        ("c = { scale };\n", "a key of a family", "`int -> int`"),
+        ("c = { scale };\n", "scale : int -> int", "", "scale"),
         (
             "c = { b -> 1 };\n",
-            "a key of a family",
-            "`T -> T for T in int | f32 | f64 | rat`",
+            "b : \"a\" -> (T -> T for T in int | f32 | f64 | rat)",
+            "b -> 1",
+            "b",
         ),
-        ("c = (scale, 1) in { 1 -> 1 };\n", "`in`", "`int -> int`"),
+        (
+            "c = (scale, 1) in { 1 -> 1 };\n",
+            "(scale, 1) : (int -> int, 1)",
+            "(scale, 1) in { 1 -> 1 }",
+            "(scale, 1)",
+        ),
     ] {
         let text = format!("{SCALE}{b}{use_}");
         let got = type_errors(&text);
-        let want = format!(
-            "{op} takes data, and this value may hold a function, {f}: data is a value that holds no function at any depth."
-        );
-        assert_eq!(got.len(), 1, "{text}\n{got:#?}");
-        assert!(got[0].starts_with(&want), "{text}\n{got:#?}");
+        // A set's element names no expression it lies in: its entry is itself.
+        let within = match whole {
+            "" => String::new(),
+            w => format!(" in `{w}`"),
+        };
+        assert_eq!(got, [format!("{key}`{piece}`{within}. [{at}]")], "{text}");
     }
     // Keys that are data, a tuple and a family of data among them, are accepted.
     let text = "d = { \"a\" -> 1 };\nc = { (1, 2) -> 1 };\ng = { d -> 2 };\ne = (1, 2) in c;\n";
@@ -562,14 +612,19 @@ fn failures_holding_functions_that_merge_are_refused() {
     let pick = "g(positional a) = a;\nbox(positional n: int) = if n > 2 { g(#box(scale)) } else \
                 { n };\nbag(positional n: int) = if n > 3 { g(#bag(scale)) } else { n };\n";
     let merged = format!("{SCALE}{pick}both(positional n: int) = box(n) + bag(n);\n");
-    let held = |at: &str| {
+    let held = |at: &str, value: &str| {
         format!(
-            "`#errs`, which `+` merges the failures of its operands into, takes data, and this \
-             value may hold a function, `int -> int`: data is a value that holds no function \
-             at any depth. [{at}]"
+            "Cannot merge a failure that may hold a function into `#errs`: `{at} : {value}`. \
+             [{at}]"
         )
     };
-    assert_eq!(type_errors(&merged), [held("box(n)"), held("bag(n)")]);
+    assert_eq!(
+        type_errors(&merged),
+        [
+            held("box(n)", "#box(int -> int)"),
+            held("bag(n)", "#bag(int -> int)")
+        ]
+    );
     let one = format!("{SCALE}{pick}one(positional n: int) = box(n) + n;\n");
     assert_eq!(type_errors(&one), Vec::<String>::new());
     let data = "g(positional a) = a;\nbox(positional n: int) = if n > 2 { g(#box(1)) } else { n \

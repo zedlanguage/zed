@@ -465,6 +465,9 @@ pub(super) struct StrF<'a> {
     holes: Vec<Ty>,
     /// The hole being checked.
     hole: Option<&'a Expr>,
+    /// The string, for a message, where it holds one hole: each of `k` holes named in it
+    /// would make `k` messages `O(k)` long.
+    span: Option<Span>,
 }
 
 pub(super) struct TupleF<'a> {
@@ -970,7 +973,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let k = m.take_ty();
                 // `in` compares `k` with the family's keys, so it is data, as a key of a
                 // display is ([`Ck::display_step`]).
-                self.data(&k, "`in`", at, at);
+                self.data(&k, "`in`", DataUse::Key, at, at, Some(span));
                 m.k(Frame::InSet(k, span));
                 m.job(Job::Expr(set));
             }
@@ -2941,6 +2944,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     text: String::new(),
                     holes: Vec::new(),
                     hole: None,
+                    span: (parts
+                        .iter()
+                        .filter(|p| matches!(p, StrPart::Hole(_)))
+                        .count()
+                        == 1)
+                        .then_some(e.span),
                 };
                 self.str_step(m, Box::new(s));
             }
@@ -3022,7 +3031,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn str_step(&mut self, m: &mut M<'a>, mut s: Box<StrF<'a>>) {
         if let Some(h) = s.hole.take() {
             let t = m.take_ty();
-            self.data(&t, "interpolation", h.span, h.span);
+            self.data(&t, "interpolation", DataUse::Show, h.span, h.span, s.span);
             // A hole gives no carrier to a literal its value ends in through a branch, a
             // block, an index or a call either, `"${if c { 0.5 } else { 1 }}"`. In a
             // function's body such a literal may join a parameter's class, which the call
@@ -3113,10 +3122,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             Display::Map => 0..s.es.len(),
         };
         let step = if s.kind == Display::Map { 2 } else { 1 };
+        // The headline names the entry the key lies in, `key -> value` of a map, and of a set,
+        // whose entry is the key, nothing more; never the whole display.
+        // Complexity tradeoff: each of the `n` keys' headlines quotes its own entry, `O(1)` text
+        // for an entry of bounded size, so `n` errors cost `O(n)` in all; quoting the whole
+        // display in each, the naive choice, is `O(n)` text per error and `O(n^2)` in all.
         for i in keys_at.step_by(step) {
             let at = s.es[i].span;
+            let entry = match s.kind {
+                Display::Map => Some(Span {
+                    start: at.start,
+                    end: s.es[i + 1].span.end,
+                }),
+                _ => None,
+            };
             let t = s.out[i].clone();
-            self.data(&t, "a key of a family", at, at);
+            self.data(&t, "a key of a family", DataUse::Key, at, at, entry);
         }
         let (keys, values) = match s.kind {
             Display::Array => {
@@ -5119,8 +5140,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.equal_classes(op, &mut x, &mut y, span);
                 }
                 let from = self.errors.len();
-                self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
-                self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
+                let what = format!("`{op}`");
+                self.data(
+                    &x.ty,
+                    &what,
+                    DataUse::Compare,
+                    span,
+                    x.at.unwrap_or(span),
+                    Some(span),
+                );
+                self.data(
+                    &y.ty,
+                    &what,
+                    DataUse::Compare,
+                    span,
+                    y.at.unwrap_or(span),
+                    Some(span),
+                );
                 // Whether each operand's cast to `f64` is exact, for the repairs of a rejected
                 // comparison ([`Comparison::exact`]). Cost: one read of what the text shows of an
                 // operand ([`Self::exact_in_f64`]), only where it has an int part and the other
@@ -5752,7 +5788,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if w == "String" {
-            self.data(&x.ty, "`String`", span, x.at.unwrap_or(span));
+            self.data(
+                &x.ty,
+                "`String`",
+                DataUse::Show,
+                span,
+                x.at.unwrap_or(span),
+                Some(span),
+            );
             // `String` takes every carrier, so it gives a literal none: an integer literal is
             // `int`, and a decimal one, as in `String(0.5)`, is rejected (step L1.26b).
             if let Some(l) = x.lit.as_ref().filter(|l| l.bare)
@@ -9383,7 +9426,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// made of; so a call met twice checks its needs once.
     fn need(&mut self, k: usize, kind: NeedKind, gives: bool, span: Span) -> Ty {
         let r = self.find(k);
-        let data = matches!(kind, NeedKind::Data(_));
+        let data = matches!(kind, NeedKind::Data(..));
         if data && self.classes[r].data {
             return Ty::empty();
         }
@@ -9680,8 +9723,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 self.call_found(&on, what, args, *curry, span)
             }
-            NeedKind::Data(what) => {
-                self.data(&on, what, span, span);
+            NeedKind::Data(what, does) => {
+                self.data(&on, what, *does, span, span, Some(span));
                 Ty::empty()
             }
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
@@ -12514,21 +12557,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some((self.code(Some(span))?, before, after))
     }
 
-    /// The failures `atoms` of the operands of `what`, each given at its span in `froms`, where
-    /// two of them can fail at once ([`ty::merges`]): they then merge into `#errs` of the set
-    /// of the distinct failures (DESIGN.md sec:failure; step M0.9, reference semantics (a)),
-    /// which compares them, so each is checked as data ([`Self::data`]), and a failure whose
-    /// payload may hold a function is a use that needs data (step L1.17, QUESTIONS A43):
-    /// `#box(f) + #bag(f)`, which the kernel refuses with "`+` given several failures, one of
-    /// which holds a function, which `#errs` cannot hold". One failure alone passes through
-    /// with its payload as it is, so nothing is checked when no merge can happen.
+    /// The failures `atoms` of the operands of the operation at `whole`, each given at its span
+    /// in `froms`, where two of them can fail at once ([`ty::merges`]): they then merge into
+    /// `#errs` of the set of the distinct failures (DESIGN.md sec:failure; step M0.9, reference
+    /// semantics (a)), which compares them, so each is checked as data ([`Self::data`]), and a
+    /// failure whose payload may hold a function is a use that needs data (step L1.17,
+    /// QUESTIONS A43): `#box(f) + #bag(f)`, which the kernel refuses with "`+` given several
+    /// failures, one of which holds a function, which `#errs` cannot hold". One failure alone
+    /// passes through with its payload as it is, so nothing is checked when no merge can happen.
     // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
     // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
     // O(size of its failures' payload types), the walk the memo of checked rows already bounds.
     // The naive form, no check, accepts a program the kernel stops in, which soundness forbids.
     // COMPLEXITY.md row CHK-merged-data. Test:
     // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`.
-    fn merged_data(&mut self, what: Label<'_>, atoms: &[Ty], froms: &[Span]) {
+    fn merged_data(&mut self, atoms: &[Ty], froms: &[Span]) {
         let sets: Vec<KType> = atoms
             .iter()
             .map(Ty::atoms)
@@ -12537,55 +12580,61 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !ty::merges(sets.iter()) {
             return;
         }
-        let what = format!(
-            "`#errs`, which {} merges the failures of its operands into,",
-            what.text()
-        );
         for (t, &at) in atoms.iter().zip(froms) {
-            self.data(t, &what, at, at);
+            self.data(t, "`#errs`", DataUse::Merge, at, at, None);
         }
     }
 
-    /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
-    /// function at any depth. A function it holds is reported at `span` with the derivation of
-    /// the expression at `from`, which gave the value.
-    fn data(&mut self, t: &Ty, what: &str, span: Span, from: Span) {
+    /// Checks that a value of `t` is data, as the use `what` at `span` needs (L1.17): it holds
+    /// no function at any depth. The use does with the value what `does` says. A function it
+    /// holds is reported at `span`, with a headline in code form ([`Self::data_headline`]):
+    /// the code at `from`, which gave the value, with its type, in the code at `whole`, the
+    /// expression of the use; the notes give the derivation of the expression at `from`.
+    fn data(
+        &mut self,
+        t: &Ty,
+        what: &str,
+        does: DataUse,
+        span: Span,
+        from: Span,
+        whole: Option<Span>,
+    ) {
         // A function held at any depth is reported here, at the use that needs data, with the
         // derivation of the function through the tuples, atoms and names that hold it
         // ([`Ck::derive_held`]).
+        let note = |text: String| Note { span, text };
         if let Some(s) = t.unchecked_function() {
-            let s = self.sig_text(s);
-            let mut notes = self.derive_held(from);
-            notes.extend(data_repairs(span));
-            self.error_with(
-                span,
-                format!(
-                    "{what} takes data, and this value may hold a function, `{s}`: data is a \
-                     value that holds no function at any depth"
-                ),
-                notes,
-            );
+            // Spelled as the value is, so a value that is the function itself has no note.
+            let s = self.text(&self.shown(&Ty::func(s.clone())));
+            let value = self.text(&self.shown(t));
+            let (message, repair) = self.data_headline(t, &value, does, from, whole);
+            let mut notes = Vec::new();
+            if s != value {
+                notes.push(note(format!("`{value}` holds the function `{s}`")));
+            }
+            notes.extend(self.derive_held(from));
+            notes.push(note(DATA.to_string()));
+            notes.extend(repair.map(|r| note(format!("repair: `{r}`"))));
+            self.error_with(span, message, notes);
         } else if let Some(w) = t.held_wide() {
             // `(..)` and `{..}` hold every tuple and struct, those that hold a function too: a
             // block that ends `return h, 1` gives one.
             // The value's type is written, and the part, when that is not all of it, as for
             // `(int, (..))`, whose part `(..)` is not the type of the value.
-            let notes = data_repairs(span);
             let value = self.shown(t).to_string();
             let part = Ty::set(w).to_string();
             let holds = match value == part {
                 true => String::new(),
                 false => format!(" holds `{part}`, which"),
             };
-            self.error_with(
-                span,
-                format!(
-                    "{what} takes data, and this value, of `{value}`, may hold a function: data \
-                     is a value that holds no function at any depth, and `{value}`{holds} holds \
-                     every value of its shape, functions too"
-                ),
-                notes,
-            );
+            let (message, _) = self.data_headline(t, &value, does, from, whole);
+            let notes = vec![
+                note(format!(
+                    "`{value}`{holds} holds every value of its shape, functions too"
+                )),
+                note(DATA.to_string()),
+            ];
+            self.error_with(span, message, notes);
         }
         // A class, at any depth, needs data of each of its values. A row that holds no class
         // or unknown is not entered; nor is one whose classes were checked as data when it
@@ -12619,7 +12668,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             for v in &t.vars {
                 if let Some(k) = self.class_of(&Piece::Var(v.clone())) {
-                    self.need(k, NeedKind::Data(what.into()), false, span);
+                    self.need(k, NeedKind::Data(what.into(), does), false, span);
                 }
             }
             if t.dynamic {
@@ -12644,6 +12693,77 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.log.push(Undo::DataChecked(n, false));
             }
         }
+    }
+
+    /// The headline of the rejection of a value of `t`, its type shown as `value`, at a use
+    /// that takes data and does with it what `does` says, in code form (DESIGN.md
+    /// sec:diagnostics, "A short headline, the detail in the notes"): the code at `from` with
+    /// its type, in the code at `whole`, each where the program's text has it on one line,
+    /// `` Cannot show a value that may hold a function: `b : int -> int` in `"${b}"`. `` A
+    /// replayed need has no code of its own (`from` is `whole`, the call that met it), so its
+    /// type is shown alone, in the call. With no `whole`, the code at `from` is named alone:
+    /// an operand of a merge, an element of a set, or a hole of a string of several holes.
+    /// With the repair, also given: where the use shows the value and the code at `from` names
+    /// a function of no parameters whose result is data ([`Self::calls_to_data`]), `whole`
+    /// with that function called (or the call alone, with no `whole`), which the checker
+    /// accepts there, as interpolation and `String` take every data value.
+    // Complexity tradeoff: the headline is `O(text at whole)`. Where one expression of `n`
+    // parts can give `n` of these errors, a string of `n` holes, a display of `n` keys or a
+    // chain of `n` merges, its callers name no `whole` or a part of bounded size, so the `n`
+    // headlines are `O(n)` in all; naming the whole expression in each, as the rule does for
+    // the one error of `x < y`, would be `O(n^2)`.
+    fn data_headline(
+        &self,
+        t: &Ty,
+        value: &str,
+        does: DataUse,
+        from: Span,
+        whole: Option<Span>,
+    ) -> (String, Option<String>) {
+        let line = |at: Span| self.code(Some(at)).filter(|c| !c.contains('\n'));
+        let code = line(from).filter(|_| whole != Some(from));
+        let written = whole.and_then(line);
+        let piece = match code {
+            Some(c) => format!("`{c} : {value}`"),
+            None => format!("`{value}`"),
+        };
+        let within = written.map_or(String::new(), |w| format!(" in `{w}`"));
+        let repair = match (does, code) {
+            (DataUse::Show, Some(c)) if is_name(c) && self.calls_to_data(t) => {
+                match (whole, written) {
+                    (None, _) => Some(format!("{c}()")),
+                    (Some(w), Some(ws)) if w.start <= from.start && from.end <= w.end => {
+                        let (a, b) = (from.start - w.start, from.end - w.start);
+                        Some(format!("{}{c}(){}", &ws[..a], &ws[b..]))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let cannot = does.cannot();
+        let message = match &repair {
+            Some(r) => format!("Cannot {cannot}: {piece}{within}. Try `{r}` instead."),
+            None => format!("Cannot {cannot}: {piece}{within}."),
+        };
+        (message, repair)
+    }
+
+    /// Whether `t` is one function of no parameters, no family, whose result is data: no
+    /// function at any depth, no class or type variable, no `_` at any depth, and no `(..)` or `{..}`.
+    fn calls_to_data(&self, t: &Ty) -> bool {
+        let Some(sig) = only_fn(t) else {
+            return false;
+        };
+        let r = Ty::union_all(sig.arrows.iter().map(|a| &a.result));
+        !sig.data
+            && sig.params.is_empty()
+            && r.unchecked_function().is_none()
+            && r.held_wide().is_none()
+            && !r.holds_vars()
+            && !r.dynamic
+            && !r.tuples.iter().any(|w| w.dynamic())
+            && !(r.payloads.values().flatten().flatten()).any(|s| s.dynamic())
     }
 
     /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
@@ -14138,9 +14258,35 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out = out.union(&r);
                 }
                 Piece::Fn(sig) => {
-                    if let Some(r) = self.key_outside(&sig, &x, of, span, dense) {
+                    // A family finds its entry by comparing the key with its keys, so the key
+                    // is data, as a key of a display is ([`Self::display_step`]); a function
+                    // takes any argument, a function too, as `ap(f, k) = f[k]` with `k` a
+                    // function. A key whose type holds a class gives the class a data need,
+                    // which each call meets with the type it binds (`get(c, k) = c[k]`), and a
+                    // family that is a class meets its `Index` need here, at the call, with the
+                    // key type the call binds. A key that holds a function is this one error, and
+                    // not also a key outside the family's keys ([`Self::key_outside`]), which it
+                    // always is: so `c[(f, 1)]` and `get(c, (f, 1))` give the same message.
+                    // Complexity tradeoff: one [`Self::data`] walk of the key type per read,
+                    // O(size of the key type) and less where [`Self::data_checked`] already
+                    // holds its rows; the naive form, no check, accepts a program the kernel
+                    // stops in, at the hash of the key. Test:
+                    // `l01_17_value_representation::function_in_family::a_key_that_holds_a_function_is_rejected_at_a_read`.
+                    let holds = sig.data && x.ty.unchecked_function().is_some();
+                    if !holds && let Some(r) = self.key_outside(&sig, &x, of, span, dense) {
                         out = out.union(&r);
                         continue;
+                    }
+                    if sig.data {
+                        let from = x.at.unwrap_or(span);
+                        self.data(
+                            &x.ty,
+                            "a key of a family",
+                            DataUse::Key,
+                            span,
+                            from,
+                            Some(span),
+                        );
                     }
                     let r = match self.key_overlaps(&sig, &x.ty) {
                         Some(r) => r,
@@ -16539,7 +16685,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let atoms: Vec<Ty> = given.iter().map(|a| a.ty.loose_ty()).collect();
             let froms: Vec<Span> = given.iter().map(|a| a.at.unwrap_or(span)).collect();
-            self.merged_data(what, &atoms, &froms);
+            self.merged_data(&atoms, &froms);
             passed(&mut out, atoms.iter());
             for a in args.iter_mut().flatten() {
                 a.ty = a.ty.without_loose();
@@ -16581,7 +16727,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 froms.push(at);
                 self.pass_at(span, at, &refused);
             }
-            self.merged_data(what, &atoms, &froms);
+            self.merged_data(&atoms, &froms);
             passed(&mut out, atoms.iter());
         }
         // `min` and `max` take two tuples, wherever they are called from; they are told apart by
@@ -18655,19 +18801,17 @@ fn callee(what: &str) -> String {
     }
 }
 
-/// The repairs of a value that holds a function where data is taken, at `span`.
-fn data_repairs(span: Span) -> Vec<Note> {
-    [
-        "repair: call the function before the value gets here, so that the value holds its \
-         result and not the function",
-        "repair: keep the function under its own name, out of the value",
-    ]
-    .into_iter()
-    .map(|text| Note {
-        span,
-        text: text.to_string(),
-    })
-    .collect()
+/// The note of a rejection by [`Ck::data`]: what data is.
+const DATA: &str = "data is a value that holds no function at any depth";
+
+/// Whether `code` is a name as the program writes one (author decision: ASCII names,
+/// `[A-Za-z_][A-Za-z0-9_]*` and a suffix `'`), so that `code()` calls what it names.
+fn is_name(code: &str) -> bool {
+    let body = code.strip_suffix('\'').unwrap_or(code);
+    let mut cs = body.chars();
+    cs.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Why an argument outside the ints `d` is refused: the use it reaches needs ints in `d`.
@@ -20821,7 +20965,7 @@ mod tests {
         let at = Span { start: 1, end: 2 };
         let saved = ck.mark();
         ck.trying = true;
-        ck.data(&row, "interpolation", at, at);
+        ck.data(&row, "interpolation", DataUse::Show, at, at, Some(at));
         assert_eq!(ck.bound(&row, &mut Binds::new()), row);
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
@@ -20831,7 +20975,7 @@ mod tests {
         assert!(!ck.classes[k].data);
         assert!(!ck.data_checked.contains(&node));
         assert!(!ck.clean.contains_key(&node));
-        ck.data(&row, "interpolation", at, at);
+        ck.data(&row, "interpolation", DataUse::Show, at, at, Some(at));
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
     }

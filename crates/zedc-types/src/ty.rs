@@ -1573,7 +1573,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Text(" }"),
         ]),
         k @ (NeedKind::Destructure { .. }
-        | NeedKind::Data(_)
+        | NeedKind::Data(..)
         | NeedKind::Payload { .. }
         | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_))
         | NeedKind::NoInt(_)
@@ -3395,6 +3395,32 @@ impl FoldForm {
     }
 }
 
+/// What a use that takes data does with its value ([`NeedKind::Data`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DataUse {
+    /// Interpolation and `String`: the value is shown as text.
+    Show,
+    /// `==` and `!=`.
+    Compare,
+    /// A key: of a family display, of `in`, or of a read of a family.
+    Key,
+    /// A failure merged into `#errs`.
+    Merge,
+}
+
+impl DataUse {
+    /// What the use cannot do with a value that may hold a function, as the headline of its
+    /// rejection says it after "Cannot".
+    pub fn cannot(self) -> &'static str {
+        match self {
+            DataUse::Show => "show a value that may hold a function",
+            DataUse::Compare => "compare a value that may hold a function",
+            DataUse::Key => "use a value that may hold a function as a key",
+            DataUse::Merge => "merge a failure that may hold a function into `#errs`",
+        }
+    }
+}
+
 /// The uses a [`Need`] records.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NeedKind {
@@ -3425,8 +3451,9 @@ pub enum NeedKind {
         /// Whether the call ends in `...`.
         curry: bool,
     },
-    /// A use, `what`, that takes data: the value holds no function.
-    Data(Arc<str>),
+    /// A use, `what`, that takes data: the value holds no function. The use does with the
+    /// value what [`DataUse`] says, which its message names.
+    Data(Arc<str>, DataUse),
     /// An argument, of `what`, at a parameter of the closed type `ty`.
     Into {
         /// The function called.
@@ -3807,7 +3834,7 @@ impl Need {
                     named: named.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
                     curry: *curry,
                 },
-                NeedKind::Data(what) => NeedKind::Data(what.clone()),
+                NeedKind::Data(what, does) => NeedKind::Data(what.clone(), *does),
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
@@ -3862,7 +3889,7 @@ impl Need {
         let (index, positional, named): (_, &[Ty], &[(Arc<str>, Ty)]) = match &self.kind {
             NeedKind::Component { .. }
             | NeedKind::Destructure { .. }
-            | NeedKind::Data(_)
+            | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
@@ -3893,7 +3920,7 @@ impl Need {
     fn every_ty(&self) -> Vec<&Ty> {
         let more: Vec<&Ty> = match &self.kind {
             NeedKind::Destructure { .. }
-            | NeedKind::Data(_)
+            | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
@@ -3928,7 +3955,7 @@ impl Need {
     fn into_tys(self) -> impl Iterator<Item = Ty> {
         let more: Vec<Ty> = match self.kind {
             NeedKind::Destructure { .. }
-            | NeedKind::Data(_)
+            | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }

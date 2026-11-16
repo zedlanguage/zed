@@ -431,6 +431,16 @@ fn shapes(n: usize) -> (Ty, Ty) {
     (Ty::union_all(&ts), ty("(..) \\ (0, 0)"))
 }
 
+/// What the last note of a rejection for want of data says.
+const DATA: &str = "data is a value that holds no function at any depth";
+
+/// The notes of the one error of `text`, a rejection for want of data.
+fn data_notes(text: &str) -> Vec<String> {
+    let (i, _) = zed_tests::step_helpers::l01_26_type_resolution::info(text);
+    assert_eq!(i.errors.len(), 1, "{text}: {:?}", i.errors);
+    i.errors[0].notes.iter().map(|n| n.text.clone()).collect()
+}
+
 #[test]
 fn a_use_that_takes_data_refuses_every_tuple() {
     // A block that ends `return h, 1` builds a tuple that holds a function, and `(..)` takes it,
@@ -438,21 +448,34 @@ fn a_use_that_takes_data_refuses_every_tuple() {
     // written, at any depth, as they are on a value whose function is known.
     let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     let call = "g() = f(x: { h(y) = y; return h, 1; });\n";
-    for (body, what, at) in [
-        ("x == x", "`==`", "x == x"),
-        ("\"a${x}b\"", "interpolation", "x"),
-        ("String(x)", "`String`", "String(x)"),
+    for (body, does, at) in [
+        ("x == x", "compare", "x == x"),
+        ("\"a${x}b\"", "show", "x"),
+        ("String(x)", "show", "String(x)"),
     ] {
         let text = format!("f(x: (..)) = {body};\n{call}");
         let want = format!(
-            "{what} takes data, and this value, of `(..)`, may hold a function: data is a value that holds no function at any depth, and `(..)` holds every value of its shape, functions too. [{at}]"
+            "Cannot {does} a value that may hold a function: `x : (..)` in `{body}`. [{at}]"
         );
         assert_eq!(errors(&text), [want], "{text}");
+        assert_eq!(
+            data_notes(&text),
+            ["`(..)` holds every value of its shape, functions too", DATA],
+            "{text}"
+        );
     }
+    let text = "f(x: (int, (..))) = x == x;\n";
     assert_eq!(
-        errors("f(x: (int, (..))) = x == x;\n"),
+        errors(text),
         [
-            "`==` takes data, and this value, of `(int, (..))`, may hold a function: data is a value that holds no function at any depth, and `(int, (..))` holds `(..)`, which holds every value of its shape, functions too. [x == x]"
+            "Cannot compare a value that may hold a function: `x : (int, (..))` in `x == x`. [x == x]"
+        ]
+    );
+    assert_eq!(
+        data_notes(text),
+        [
+            "`(int, (..))` holds `(..)`, which holds every value of its shape, functions too",
+            DATA
         ]
     );
     // A tuple whose shape is written holds what its components hold.
@@ -525,9 +548,12 @@ fn a_kind_wide_part_met_with_a_shape_that_holds_one_may_hold_a_function() {
         ),
     ] {
         let want = format!(
-            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too. [String(p)]"
+            "Cannot show a value that may hold a function: `p : {value}` in `String(p)`. [String(p)]"
         );
         assert_eq!(errors(text), [want], "{text}");
+        let holds =
+            format!("`{value}` holds `(..)`, which holds every value of its shape, functions too");
+        assert_eq!(data_notes(text), [holds.as_str(), DATA], "{text}");
     }
 }
 
@@ -572,9 +598,12 @@ fn a_tuple_type_subtracted_twice_or_left_beside_a_difference_may_hold_a_function
         ),
     ] {
         let want = format!(
-            "`String` takes data, and this value, of `{value}`, may hold a function: data is a value that holds no function at any depth, and `{value}` holds `(..)`, which holds every value of its shape, functions too. [String(p)]"
+            "Cannot show a value that may hold a function: `p : {value}` in `String(p)`. [String(p)]"
         );
         assert_eq!(errors(text), [want], "{text}");
+        let holds =
+            format!("`{value}` holds `(..)`, which holds every value of its shape, functions too");
+        assert_eq!(data_notes(text), [holds.as_str(), DATA], "{text}");
     }
 }
 

@@ -62,9 +62,9 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
                 "inc(positional x: int) = x + 1;\n{}",
                 reading("  m.stdout <- String(inc == inc);")
             ),
-            "4:22: `==` takes data, and this value may hold a function, `int -> int`: data is \
-             a value that holds no function at any depth.",
-            vec!["repair: call the function before the value gets here"],
+            "4:22: Cannot compare a value that may hold a function: `inc : int -> int` in \
+             `inc == inc`.",
+            vec!["data is a value that holds no function at any depth"],
         ),
         (
             reading("  m.stdout <- String(min((n, 2), (1, 2, 3)));"),

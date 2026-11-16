@@ -36,17 +36,26 @@ fn a_value_held_twice_at_each_level_is_data() {
 fn a_function_held_twice_at_each_level_is_one_error_per_compared_operand() {
     // A tuple may hold a function (DESIGN.md step L1.17), so no tuple is an error; `==` needs
     // data, and each of its operands holds the function, once each, however many paths reach it.
-    let at = |site: &str| {
+    // The value: `leaf` in `levels` levels of pairs.
+    let value = |leaf: &str, levels: usize| {
+        (0..levels).fold(leaf.to_string(), |v, _| format!("({v}, {v})"))
+    };
+    let at = |t: &str, value: &str| {
         format!(
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [{site}]"
+            "Cannot compare a value that may hold a function: `{t} : {value}` in `{t} == {t}`. \
+             [{t} == {t}]"
         )
     };
+    let f = "T -> T for T in int | f32 | f64 | rat";
+    let by_calls_value = value(f, 3);
     assert_eq!(
         type_errors(&by_calls(3, "scale")),
-        [at("t == t"), at("t == t")]
+        [at("t", &by_calls_value), at("t", &by_calls_value)]
     );
+    // The bindings start from `(scale, 1)`, then pair it twice.
+    let by_bindings_value = value(&format!("({f}, 1)"), 2);
     assert_eq!(
         type_errors(&by_bindings(3, "scale")),
-        [at("t2 == t2"), at("t2 == t2")]
+        [at("t2", &by_bindings_value), at("t2", &by_bindings_value)]
     );
 }

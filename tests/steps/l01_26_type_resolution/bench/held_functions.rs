@@ -12,8 +12,9 @@ use super::super::{Resolved, type_errors};
 
 /// Each key of a display and each `in` test is checked as data, `O(1)` for a key whose
 /// type's outer level is `O(1)` ([`Ck::data`] reads rows and families at their outer level),
-/// so `n` keys cost `O(n)`; with a function in each key, `n` errors of `O(1)` notes each.
-/// Small instances: `held_functions::a_key_that_holds_a_function_is_rejected`.
+/// so `n` keys cost `O(n)`; with a function in each key, `n` errors of `O(1)` notes each, each
+/// headline naming its own entry and not the display. Small instances:
+/// `held_functions::a_key_that_holds_a_function_is_rejected`.
 #[test]
 fn keys_of_a_display_and_in_tests_are_checked_as_data_in_linear_time() {
     // `n` keys `(leaf, i)`, then `n` tests `(leaf, i) in t`.
@@ -41,6 +42,87 @@ fn keys_of_a_display_and_in_tests_are_checked_as_data_in_linear_time() {
         scaling::check_order(what, 500, 1, |n| {
             let info = units[&n].check();
             assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
+        });
+    }
+}
+
+/// Each read of a family at a key is checked as data, at the read or, through a generic
+/// function, at each call, which meets the data need of the key's class once: `O(1)` for a key
+/// whose type's outer level is `O(1)`, so `n` reads cost `O(n)`; with a function in each key,
+/// `n` errors of `O(1)` notes each. A walk of all earlier keys at each read would be `O(n^2)`.
+/// Small instances: `l01_17_value_representation::function_in_family::
+/// a_key_that_holds_a_function_is_rejected_at_a_read` (row FAIL-generic-get-function-key).
+#[test]
+fn keys_of_reads_are_checked_as_data_in_linear_time() {
+    // `n` plain reads `c[(leaf, 1)]`, then `n` reads through `get`; with an integer leaf, each
+    // key is found.
+    let text = |n: usize, leaf: &str| {
+        let reads = vec![format!("c[({leaf}, 1)] else 0"); n];
+        let calls = vec![format!("get(c, ({leaf}, 1))"); n];
+        format!(
+            "scale(positional x) = x * int(2);\nget(positional c, positional k) = c[k] else 0;\n\
+             c = {{ (1, 1) -> 1 }};\nu = ({});\nv = ({});\n",
+            reads.join(", "),
+            calls.join(", ")
+        )
+    };
+    for (what, leaf, errors) in [
+        (
+            "n reads and n reads through a call, each key holding a function",
+            "scale",
+            2,
+        ),
+        ("n reads and n reads through a call, each key found", "1", 0),
+    ] {
+        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, leaf))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
+        });
+    }
+}
+
+/// One expression of `n` parts can give `n` errors, each a use that needs data: a string of `n`
+/// holes, each a function, and a chain of `n` merges, each of a failure that holds one. Each
+/// headline names its own piece and no expression that holds all `n` (`Ck::data_headline`), so
+/// the `n` messages are `O(n)` long in all; naming the whole string or chain in each was
+/// `O(n^2)`, 51 times the bytes at `8n`. Small instances:
+/// `l01_17_value_representation::function_in_family::a_value_that_may_hold_a_function_is_rejected_with_the_use_in_code`
+/// and `held_functions::failures_holding_functions_that_merge_are_refused`.
+#[test]
+fn many_errors_in_one_expression_have_headlines_of_bounded_length() {
+    type Text = fn(usize) -> String;
+    fn string(n: usize) -> String {
+        format!(
+            "scale(positional x) = x * int(2);\na = \"{}\";\n",
+            "${scale}".repeat(n)
+        )
+    }
+    fn chain(n: usize) -> String {
+        format!(
+            "g(positional k: int) = k;\na(positional p: bool) = if p {{ 1 }} else {{ #errs(g) \
+             }};\nx(positional p: bool) = a(p){};\n",
+            " + a(p)".repeat(n)
+        )
+    }
+    for (what, text, more) in [
+        ("a string of n holes, each a function", string as Text, 0),
+        (
+            "a chain of n merges of failures holding a function",
+            chain,
+            1,
+        ),
+    ] {
+        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), n + more, "{what} at {n}");
         });
     }
 }

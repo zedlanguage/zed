@@ -46,7 +46,8 @@ fn functions_compare_only_over_an_enumerable_domain() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [inc == also]"
+            "Cannot compare a value that may hold a function: `also : T -> T for T in int | f32 | f64 | rat` in `inc == also`. [inc == also]",
+            "Cannot compare a value that may hold a function: `inc : T -> T for T in int | f32 | f64 | rat` in `inc == also`. [inc == also]"
         ]
     );
     let id = || lam(&["x"], var("x"));
@@ -71,7 +72,7 @@ fn a_function_deep_in_a_tuple_is_reported_once_where_data_is_needed() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [pair == pair]"
+            "Cannot compare a value that may hold a function: `pair : ((T -> T for T in int | f32 | f64 | rat, 1), 2)` in `pair == pair`. [pair == pair]"
         ]
     );
 }
@@ -84,14 +85,14 @@ fn a_function_in_an_atom_s_payload_is_refused_by_equality() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [x == x]"
+            "Cannot compare a value that may hold a function: `x : #a(T -> T for T in int | f32 | f64 | rat)` in `x == x`. [x == x]"
         ]
     );
     let named = "h = x -> x + 1;\nx = #a(f: h, n: 1);\nsame = x != x;\n";
     assert_eq!(
         errors(named),
         [
-            "`!=` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [x != x]"
+            "Cannot compare a value that may hold a function: `x : #a(f: T -> T for T in int | f32 | f64 | rat, n: 1)` in `x != x`. [x != x]"
         ]
     );
 }
@@ -104,14 +105,14 @@ fn a_function_nested_in_payloads_and_tuples_is_refused() {
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [x == #c]"
+            "Cannot compare a value that may hold a function: `x : #a(#b(T -> T for T in int | f32 | f64 | rat))` in `x == #c`. [x == #c]"
         ]
     );
     let src = "h = x -> x + 1;\nx = #a((1, #b(f: h)));\nsame = x == #c;\n";
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [x == #c]"
+            "Cannot compare a value that may hold a function: `x : #a((1, #b(f: T -> T for T in int | f32 | f64 | rat)))` in `x == #c`. [x == #c]"
         ]
     );
 }
@@ -126,7 +127,7 @@ fn a_tuple_of_an_atom_whose_payload_holds_a_function_is_built_and_refused_by_equ
     assert_eq!(
         errors(src),
         [
-            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [pair == pair]"
+            "Cannot compare a value that may hold a function: `pair : (#a(T -> T for T in int | f32 | f64 | rat), 1)` in `pair == pair`. [pair == pair]"
         ]
     );
 }
@@ -155,15 +156,15 @@ fn a_function_reaching_a_payload_through_a_generic_call_is_refused_by_equality()
     // inside the payload was not seen, so the call was accepted).
     let refused = |what: &str| {
         [format!(
-            "{what} takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [use(scale)]"
+            "Cannot {what} a value that may hold a function: `T -> T for T in int | f32 | f64 | rat` in `use(scale)`. [use(scale)]"
         )]
     };
     for (body, what) in [
-        ("#a(x), 1", "`==`"),
-        ("1, #a(n: 1, f: x)", "`==`"),
-        ("#a(#b(#c(x))), 1", "`==`"),
-        ("(1, #a(x)), 1", "`==`"),
-        ("#a((x, 1)), 1", "`==`"),
+        ("#a(x), 1", "compare"),
+        ("1, #a(n: 1, f: x)", "compare"),
+        ("#a(#b(#c(x))), 1", "compare"),
+        ("(1, #a(x)), 1", "compare"),
+        ("#a((x, 1)), 1", "compare"),
     ] {
         assert_eq!(
             errors(&compared_after_a_call(body, "scale")),

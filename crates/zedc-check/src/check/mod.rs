@@ -84,9 +84,10 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, FoldForm, IntDomain, Names, Narrow, Need, NeedKind, NodeId,
-    OTHER, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet,
-    Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
+    Arrow, Binds, Carrier, DataUse, EVERY, FoldForm, IntDomain, Names, Narrow, Need, NeedKind,
+    NodeId, OTHER, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts,
+    VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs, fresh_name,
+    mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.

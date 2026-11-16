@@ -75,7 +75,11 @@ fn a_fold_by_a_non_associative_operator_is_rejected() {
 fn a_section_is_a_function_and_not_data() {
     // `(+)` outside `><` is the function `(a, b) -> a + b`; interpolation takes data.
     let e = refused("section", "${(+)}");
-    assert!(e.contains("interpolation takes data"), "{e}");
+    assert!(
+        e.contains("Cannot show a value that may hold a function: `(+) : (T, T) -> T for T in int | f32 | f64 | rat` \
+             in `\"${(+)}\"`."),
+        "{e}"
+    );
     let e = refused("section_map", "${[1, 2].map((+))}");
     assert!(
         e.contains("`map` calls its function with one argument, and this function needs 2"),

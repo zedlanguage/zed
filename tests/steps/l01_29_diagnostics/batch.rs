@@ -164,7 +164,11 @@ fn batch_and_single_file_checking_agree() {
         .as_deref()
         .expect("a rejection");
     assert!(
-        answer.starts_with("4:18: interpolation takes data, and this value may hold a function"),
+        answer.starts_with(
+            "4:18: Cannot show a value that may hold a function: `c : 1 -> (\"a\" | \"b\") -> \
+             (T -> T for T in int | f32 | f64 | rat) | (T -> T for T in int | f32 | f64 | rat)` \
+             in `\"${c}\"`."
+        ),
         "{answer}"
     );
     assert_eq!(batch[at("a family of functions read and applied")], None);

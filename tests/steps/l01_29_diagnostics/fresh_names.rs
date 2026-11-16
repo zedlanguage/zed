@@ -13,14 +13,16 @@ use zedc::check::ty::{ProgramNames, Sig};
 
 use super::rejected;
 
-/// The type of the function the first line of the rejection of `src` says `==` cannot take.
+/// The type of the operand the first line of the rejection of `src` says `==` cannot compare,
+/// shown as `` `name : type` in `code` ``.
 fn compared(src: &str) -> String {
     let out = rejected(src);
     let first = out.lines().next().expect("a message");
     let (_, rest) = first
-        .split_once("may hold a function, `")
-        .unwrap_or_else(|| panic!("no function type shown:\n{out}"));
-    rest[..rest.find('`').expect("the end of the type")].into()
+        .split_once("Cannot compare a value that may hold a function: `")
+        .and_then(|(_, rest)| rest.split_once(" : "))
+        .unwrap_or_else(|| panic!("no operand and type shown:\n{out}"));
+    rest[..rest.find("` in `").expect("the end of the type")].into()
 }
 
 /// That `text`, written as a parameter's type in a program that binds the names `defs` does,

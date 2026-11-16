@@ -173,8 +173,7 @@ fn interpolation_shows_each_hole_and_passes_an_atom_through() {
     // DESIGN.md L1.17: interpolation shows data, so a function is a type error there.
     assert_eq!(
         one("x = \"${f}\"; f(positional n) = n;"),
-        "interpolation takes data, and this value may hold a function, `T -> T`: data is a \
-         value that holds no function at any depth. [f]"
+        "Cannot show a value that may hold a function: `f : T -> T` in `\"${f}\"`. [f]"
     );
 }
 

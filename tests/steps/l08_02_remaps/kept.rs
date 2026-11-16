@@ -255,11 +255,11 @@ fn a_block_function_named_in_a_form_refused_before_elaboration_drops_nothing() {
         ),
         (
             format!("a = {{ {H} s = \"${{h}}\"; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
-            "interpolation takes data, and this value may hold a function",
+            "Cannot show a value that may hold a function: `h : _ -> _` in `\"${h}\"`.",
         ),
         (
             format!("a = {{ {H} s = h == h; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
-            "`==` takes data, and this value may hold a function",
+            "Cannot compare a value that may hold a function: `h : _ -> _` in `h == h`.",
         ),
     ] {
         let src = at(&body);
