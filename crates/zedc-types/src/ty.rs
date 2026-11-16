@@ -2431,7 +2431,7 @@ struct Replacer<'b> {
 /// of each: both are shared, so a walk without it would rebuild one once per path to it,
 /// `2^n` times for `n` rows or shapes that each hold the one below twice. The addresses are
 /// those of rows and shapes the input holds: each walk ([`Replacer`], [`Subst`], [`Widen`],
-/// [`Settle`]) is made and dropped within one call that borrows the input, so no key names a
+/// [`HeldFns`], [`Settle`]) is made and dropped within one call that borrows the input, so no key names a
 /// freed node, and the maps are only read by key, never iterated.
 #[derive(Default)]
 struct Made {
@@ -2795,6 +2795,55 @@ impl Rebuild for Widen {
             .filter(|c| !(&s & &c.ty()).is_empty())
             .collect();
         held.into_iter().fold(s, |s, c| &s | &c.ty())
+    }
+}
+
+/// [`Ty::with_held_fns`]: each function a type holds outside functions replaced by what
+/// `each` makes of it, without entering it; a row or payload shape that holds no function at
+/// any depth outside functions is kept whole, and each other is made once, by address
+/// ([`Made`]).
+struct HeldFns<F> {
+    each: F,
+    made: Made,
+}
+
+impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
+    fn known_ty(&mut self, _: &Ty) -> Option<Ty> {
+        None
+    }
+
+    fn known_row(&mut self, r: &Row) -> Option<Row> {
+        match r.0.held {
+            None => Some(r.clone()),
+            Some(_) => self.made.rows.get(&Arc::as_ptr(&r.0)).cloned(),
+        }
+    }
+
+    fn made_row(&mut self, r: &Row, out: &Row) {
+        self.made.rows.insert(Arc::as_ptr(&r.0), out.clone());
+    }
+
+    fn known_shape(&mut self, s: &Shape) -> Option<Shape> {
+        match s.held {
+            None => Some(s.clone()),
+            Some(_) => self.made.shapes.get(&s.as_ptr()).cloned(),
+        }
+    }
+
+    fn made_shape(&mut self, s: &Shape, out: &Shape) {
+        self.made.shapes.insert(s.as_ptr(), out.clone());
+    }
+
+    fn known_held(&mut self, s: &Arc<Sig>) -> Option<Arc<Sig>> {
+        Some((self.each)(s))
+    }
+
+    fn made_held(&mut self, _: &Arc<Sig>, _: Vec<Arrow>, _: Vec<Need>) -> Arc<Sig> {
+        unreachable!("`with_held_fns` gives each function from `each`, so it enters none")
+    }
+
+    fn binding(&self, _: &str) -> Option<Cow<'_, Ty>> {
+        None
     }
 }
 
@@ -9994,6 +10043,58 @@ impl Ty {
     /// the number of distinct rows and shapes, however many paths lead to them.
     pub fn carriers(&self) -> Ty {
         rebuild_ty(&mut Widen::default(), self)
+    }
+
+    /// It with each function it holds outside functions, itself or at any depth in its tuples
+    /// and its atoms' payloads, replaced by what `each` makes of it; the functions are not
+    /// entered, so one a function returns is left to that function. A family is a function
+    /// here, and its entries are not entered. A row or payload shape that holds no function
+    /// is kept whole, and each other is made once, on the walk's own stack (`rebuild`), so
+    /// the cost is the number of distinct rows and shapes that hold a function, plus one call
+    /// of `each` for each function met (one shared by two rows is met twice).
+    pub fn with_held_fns(&self, each: impl FnMut(&Arc<Sig>) -> Arc<Sig>) -> Ty {
+        let made = Made::default();
+        rebuild_ty(&mut HeldFns { each, made }, self)
+    }
+
+    /// Each function it holds outside functions, as [`Ty::with_held_fns`] meets them: itself,
+    /// or at any depth in its tuples and its atoms' payloads, a family counted as a function
+    /// and not entered. Only rows and payload shapes that hold a function are entered, each
+    /// once (by number, as [`Ty::vars_outside`] does), on the walk's own stack, so the cost is
+    /// the number of distinct such rows and shapes plus one call of `each` per function met.
+    pub fn each_held_fn<'a>(&'a self, mut each: impl FnMut(&'a Arc<Sig>)) {
+        enum Walk<'a> {
+            Ty(&'a Ty),
+            Row(&'a Row),
+            Shape(&'a Shape),
+        }
+        let mut entered: HashSet<NodeId> = HashSet::new();
+        let mut stack = vec![Walk::Ty(self)];
+        while let Some(w) = stack.pop() {
+            match w {
+                Walk::Row(r) => {
+                    if entered.insert(r.node()) {
+                        stack.extend(r.iter().map(Walk::Ty));
+                    }
+                }
+                Walk::Shape(s) => {
+                    if entered.insert(s.node()) {
+                        stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
+                    }
+                }
+                Walk::Ty(t) => {
+                    t.fns.iter().for_each(&mut each);
+                    stack.extend(
+                        t.tuples
+                            .iter()
+                            .filter(|r| r.0.held.is_some())
+                            .map(Walk::Row),
+                    );
+                    let holding = t.payload_shapes().filter(|s| s.held.is_some());
+                    stack.extend(holding.map(Walk::Shape));
+                }
+            }
+        }
     }
 
     /// It with each class variable `solve` gives a type replaced by that type at every depth,

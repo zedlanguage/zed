@@ -5908,44 +5908,89 @@ fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
 
 /// `t` with each of `needs` joined to the functions in it whose types share a variable with
 /// the need, those variables becoming the function's own, and the needs no function takes.
+/// The functions are those `t` holds outside functions: itself, or at any depth in its tuples
+/// and its atoms' payloads ([`Ty::with_held_fns`]), so the need of `f` in
+/// `h(positional f) = (f(1), z -> f(z))` goes with the lambda in the tuple, as it does with
+/// the lambda `h(positional f) = z -> f(z)` returns bare (row FAIL-tuple-lambda-calls-param;
+/// before, only `t`'s own functions were looked at, and the need was checked at the call with
+/// the lambda's parameter unknown, refusing `h(x -> x + 1)`). The call defers the needs on the
+/// parameters of the same functions ([`Ty::each_held_fn`]), so each need it defers has one
+/// to join. A family is one function here and its entries are not entered, so a lambda in a
+/// family's entry still has its need checked at the call (row FAIL-family-lambda-calls-param).
+/// A variable `t` holds outside
+/// its functions is shared with the rest of the value, so it becomes no function's own: the
+/// rule for `t`'s own variables, taken through its tuples and payloads ([`Ty::vars_outside`]).
 /// Whether a function holds a variable is read from its facts ([`Sig::facts`]), and a
 /// function no need joins is kept as it is: walking each function whole cost the depth of
 /// the functions `g(0)(1)…(n)` returns at each call (CHK-carrier).
+// Complexity tradeoff: O(r + V + Σ min(w, u)·log + h·log h) for r distinct rows and payload
+// shapes of `t` that hold a function (each made once, `Ty::with_held_fns`), V the variables of
+// all needs together, u the distinct ones, w the variables a function met holds (its kept
+// facts) and h the needs joined; the walk of the variables outside functions enters only rows
+// and shapes that hold one. Each function looks up the smaller side in the other: its own
+// variables in the index of the needs' variables, or the needs' variables in its facts. With
+// no need, `t` is given back as it is, with no walk. Naive, each function tests each need,
+// O(m·n·v) for m functions, n needs of v variables: quadratic for the n lambdas of
+// `h(positional f) = (z -> f(z), …)`, each with its own need (measured: ratio 11.4 at 8n,
+// `bench::n_lambdas_that_call_a_parameter_in_a_returned_tuple_run_in_linear_time`). Entering
+// every row and function costs the depth of nested returned functions at each call
+// (CHK-carrier); looking only at `t`'s own functions, as before, left the needs of a function
+// in a tuple to be checked at the call.
 fn hold(t: &Ty, needs: Vec<Need>, is_class: impl Fn(&str) -> bool) -> (Ty, Vec<Need>) {
-    let mut fns: Vec<Option<Sig>> = vec![None; t.fns.len()];
-    let mut now = Vec::new();
-    for n in needs {
-        let mut v = Vars::default();
-        n.vars_in(&mut v);
-        let at: Vec<usize> = (0..t.fns.len())
-            .filter(|&i| v.order.iter().any(|x| t.fns[i].facts().holds(x)))
-            .collect();
-        if at.is_empty() {
-            now.push(n);
-            continue;
-        }
-        for i in at {
-            let own = v
-                .order
-                .iter()
-                .filter(|x| !is_class(x) && !t.vars.contains(x));
-            let s = fns[i].get_or_insert_with(|| (*t.fns[i]).clone());
-            s.own.extend(own.cloned());
-            s.needs.push(n.clone());
+    if needs.is_empty() {
+        return (t.clone(), needs);
+    }
+    let vars: Vec<Vars> = (needs.iter())
+        .map(|n| {
+            let mut v = Vars::default();
+            n.vars_in(&mut v);
+            v
+        })
+        .collect();
+    // Each variable of a need, with the needs that hold it, in order.
+    let mut by_var: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, v) in vars.iter().enumerate() {
+        for x in &v.order {
+            by_var.entry(&**x).or_default().push(i);
         }
     }
-    let held = Ty {
-        fns: (t.fns.iter().zip(fns))
-            .map(|(was, s)| match s {
-                Some(mut s) => {
-                    s.note_held();
-                    Arc::new(s)
-                }
-                None => was.clone(),
-            })
-            .collect(),
-        ..t.clone()
-    };
+    let mut outside = Vars::default();
+    t.vars_outside(&mut outside);
+    let mut taken = vec![false; needs.len()];
+    let held = t.with_held_fns(|s| {
+        let facts = s.facts();
+        let mut hits: Vec<usize> = Vec::new();
+        if facts.classes.len() + facts.names.len() < by_var.len() {
+            let mine = facts.classes.iter().chain(facts.names.iter());
+            mine.filter_map(|x| by_var.get(&**x))
+                .for_each(|is| hits.extend(is));
+        } else {
+            let shared = by_var.iter().filter(|(x, _)| facts.holds(x));
+            shared.for_each(|(_, is)| hits.extend(is));
+        }
+        // The needs in their own order, each once, whichever side was read.
+        hits.sort_unstable();
+        hits.dedup();
+        let mut joined: Option<Sig> = None;
+        for i in hits {
+            let (n, v) = (&needs[i], &vars[i]);
+            taken[i] = true;
+            let own = (v.order.iter()).filter(|x| !is_class(x) && !outside.contains(x));
+            let j = joined.get_or_insert_with(|| (**s).clone());
+            j.own.extend(own.cloned());
+            j.needs.push(n.clone());
+        }
+        match joined {
+            Some(mut j) => {
+                j.note_held();
+                Arc::new(j)
+            }
+            None => s.clone(),
+        }
+    });
+    let now = (needs.into_iter().zip(taken))
+        .filter_map(|(n, taken)| (!taken).then_some(n))
+        .collect();
     (held, now)
 }
 

@@ -17799,17 +17799,29 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         // The variables of the parameters of a function the call gives, which only its calls
-        // bind: the needs on them are its own.
+        // bind: the needs on them are its own. The function may be the result, or held at any
+        // depth in its tuples or its atoms' payloads, as the lambda of
+        // `h(positional f) = (f(1), z -> f(z))`: the need "`f` takes `z`" waits for the
+        // lambda's calls, and `hold` joins it to the lambda (row FAIL-tuple-lambda-calls-param;
+        // reading only the result's own functions checked it here with `z` unknown, refusing
+        // `h(x -> x + 1)`). Both read the functions `Ty::each_held_fn` meets, so a need
+        // deferred here is one `hold` can join to its function.
+        // Complexity tradeoff: O(r + m·p) for r distinct rows and payload shapes of the result
+        // that hold a function, m functions met and p the size of their parameter types; the
+        // old walk was O(m·p) over the result's own functions only. Entering the functions too
+        // would cost the depth of the functions `g(0)(1)…(n)` returns at each call
+        // (CHK-carrier), and their parameters are bound by the calls of the function that
+        // returns them, not by this one.
         let partial = !defer.is_empty();
         let mut defer = defer;
         let mut taken = Vars::default();
         arrow.params.iter().for_each(|p| p.vars_in(&mut taken));
         let mut inner = Vars::default();
-        for s in &arrow.result.fns {
+        arrow.result.each_held_fn(|s| {
             s.arrows
                 .iter()
                 .for_each(|a| a.params.iter().for_each(|p| p.vars_in(&mut inner)));
-        }
+        });
         defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
         let passing = self.need_passed.len();
         // The arguments of this call, for a repair of a need of a function it passes to name

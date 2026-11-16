@@ -949,6 +949,12 @@ fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
         // The returned function passed on to a function that runs it.
         "h3(positional f, positional y) = (f(y), f);\nr(positional g, positional zs) = g(zs);\n\
          a = { p = h3(x -> x >< max, m[\"a\"]); (p[0], r(p[1], mi[\"a\"])) };\n",
+        // A lambda in the tuple that calls `f` (row FAIL-tuple-lambda-calls-param), at depth 1
+        // and 2: the need on `f` goes with the lambda, and the call stays one `f` may run after.
+        "ht(positional f, positional y) = (f(y), z -> f(z));\n\
+         a = { p = ht(x -> x >< max, m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        "ht(positional f, positional y) = (f(y), (1, z -> f(z)));\n\
+         a = { p = ht(x -> top(x), m[\"a\"]); (p[0], p[1][1](mi[\"a\"])) };\n",
     ] {
         rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
     }
@@ -968,6 +974,10 @@ fn a_function_a_call_returns_and_runs_at_the_same_carrier_runs_at_its_identity()
          a = { p = h5(x -> x >< max, m[\"a\"]); (p[0], p[1][0][1](m[\"b\"])) };\n",
         "hz(positional f, positional y) = (f(y), z -> (z, f));\n\
          a = { p = hz(x -> top(x), m[\"a\"]); (p[0], p[1](0)[1](m[\"b\"])) };\n",
+        "ht(positional f, positional y) = (f(y), z -> f(z));\n\
+         a = { p = ht(x -> x >< max, m[\"a\"]); (p[0], p[1](m[\"b\"])) };\n",
+        "ht(positional f, positional y) = (f(y), (1, z -> f(z)));\n\
+         a = { p = ht(x -> top(x), m[\"a\"]); (p[0], p[1][1](m[\"b\"])) };\n",
     ] {
         prints(&format!("{TOP}{F}{I}{body}"), "a", "(-inf, 5.0)");
     }
@@ -996,6 +1006,10 @@ fn a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after()
         ("h5", "", "(f(y), [(1, f)])"),
         ("h8", "", "(f(y), #box(f))"),
         ("hk", "k(positional t: (..)) = t;\n", "(f(y), k((1, f)))"),
+        // A lambda that calls `f`, in a tuple, a nested tuple and a payload.
+        ("ht", "", "(f(y), z -> f(z))"),
+        ("hn", "", "(f(y), (1, z -> f(z)))"),
+        ("hb", "", "(f(y), #box(z -> f(z)))"),
     ] {
         let src = format!(
             "{TOP}{F}{I}{decls}{h}(positional f, positional y) = {body};\n\
@@ -1009,6 +1023,78 @@ fn a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after()
             info.escaping_calls
         );
     }
+}
+
+#[test]
+fn a_call_whose_result_holds_an_earlier_call_s_result_is_found_by_what_that_one_held() {
+    // Each `hw` call decides `top`'s fold (only such calls are listed), and its result holds
+    // its third argument in a payload as it is, so the answer for escaping calls reads what
+    // was found in that argument's rows and payloads at the earlier call (`Ty::may_hold_needs`
+    // keeps it on each row and shape, row FAIL-escaping-calls-nested-ratio). Around `ht`'s result,
+    // which holds a lambda with needs, each `hw` call is escaping; around `1` neither is.
+    let src = format!(
+        "{TOP}{F}{I}ht(positional f, positional y) = (f(y), z -> f(z));\n\
+         hw(positional f, positional y, positional x) = (f(y), #a(x));\n\
+         a = {{ p = ht(x -> top(x), m[\"a\"]); q = hw(x -> top(x), m[\"a\"], p); \
+         s = hw(x -> top(x), m[\"a\"], q); s[0] }};\n\
+         b = {{ q = hw(x -> top(x), m[\"a\"], 1); s = hw(x -> top(x), m[\"a\"], q); s[0] }};\n\
+         c = top(mi[\"a\"]);\n"
+    );
+    let info = zed_tests::step_helpers::l01_16_elaboration::checked(&src).info;
+    let starts: Vec<usize> = info.escaping_calls.iter().map(|c| c.start).collect();
+    let at = |from: usize, call: &str| from + src[from..].find(call).unwrap();
+    let (a, b) = (src.find("a = {").unwrap(), src.find("b = {").unwrap());
+    let cases = [
+        (at(a, "ht(x"), true),
+        (at(a, "hw(x"), true),
+        (at(at(a, "s = "), "hw(x"), true),
+        (at(b, "hw(x"), false),
+        (at(at(b, "s = "), "hw(x"), false),
+    ];
+    for (at, escaping) in cases {
+        assert_eq!(starts.contains(&at), escaping, "{}: {starts:?}", &src[at..]);
+    }
+}
+
+// ---- A lambda that calls a parameter, returned inside a tuple (row
+// FAIL-tuple-lambda-calls-param) ----
+
+#[test]
+fn a_tuple_holding_a_lambda_that_calls_a_parameter_runs() {
+    // DESIGN.md sec:values_morphisms (application): `f(1)` is 2 and `p[1](2)` is `f(2)`, 3.
+    // The need "`f` takes what the lambda is passed" goes with the lambda wherever the result
+    // holds it, as it does for the lambda returned bare, `h(positional f) = z -> f(z)`.
+    prints(
+        "h(positional f) = (f(1), z -> f(z));\na = { p = h(x -> x + 1); (p[0], p[1](2)) };\n",
+        "a",
+        "(2, 3)",
+    );
+    prints(
+        "h(positional f, positional y) = (y, z -> f(z));\na = { p = h(x -> x + 1, 1); p[1](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f) = (f(1), z -> f(z));\nsucc(positional x) = x + 1;\na = h(succ)[1](2);\n",
+        "a",
+        "3",
+    );
+    // The lambda one tuple deeper, and two lambdas that each call `f`.
+    prints(
+        "h(positional f) = (f(1), (0, z -> f(z)));\na = { p = h(x -> x + 1); p[1][1](2) };\n",
+        "a",
+        "3",
+    );
+    prints(
+        "h(positional f) = (z -> f(z), w -> f(f(w)));\na = { p = h(x -> x + 1); (p[0](1), p[1](1)) };\n",
+        "a",
+        "(2, 3)",
+    );
+    // A lambda that does not take what `f` takes stays refused at its own call.
+    rejected(
+        "h(positional f) = (f(1), z -> f(z));\na = { p = h(x -> x + 1); p[1](\"s\") };\n",
+        &["does not take"],
+    );
 }
 
 // ---- `sum(x)` is `x.sum`, and a receiver that may be a family or a tuple is summed region by

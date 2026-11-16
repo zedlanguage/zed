@@ -853,3 +853,44 @@ fn n_partial_map_parameters_with_a_ranged_key_passed_on_take_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_lambdas_that_call_a_parameter_in_a_returned_tuple_run_in_linear_time() {
+    // Each of `h`'s n lambdas calls `f`, so the call `h(x -> x + 1)` defers n needs and joins
+    // each to its lambda (`hold` in crates/zedc-check/src/check/mod.rs; row
+    // FAIL-tuple-lambda-calls-param). Small instances:
+    // `empty::a_tuple_holding_a_lambda_that_calls_a_parameter_runs`.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let lambdas = (0..n)
+            .map(|i| format!("z -> f(z) + {i}"))
+            .collect::<Vec<_>>();
+        format!(
+            "h(positional f) = ({});\na = {{ p = h(x -> x + 1); p[{}](1) }};\n",
+            lambdas.join(", "),
+            n - 1
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n + 1).to_string());
+    scaling::check(
+        "n lambdas that call a parameter, returned in one tuple and one of them run, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn a_lambda_that_calls_a_parameter_n_tuples_deep_runs_in_linear_time() {
+    // The call walks the n rows above the lambda once to defer its need and once to join it
+    // (`Ty::each_held_fn`, `Ty::with_held_fns`).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let deep = (0..n).fold("z -> f(z)".to_string(), |t, _| format!("(0, {t})"));
+        let path = "[1]".repeat(n);
+        format!("h(positional f) = {deep};\na = {{ p = h(x -> x + 1); p{path}(2) }};\n")
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "3");
+    scaling::check(
+        "a lambda that calls a parameter, n tuples deep in the result, run, whole path",
+        N_LEVELS,
+        run,
+    );
+}
