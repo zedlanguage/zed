@@ -4974,6 +4974,13 @@ struct Cx<'s> {
     /// some cover found an instance within an arrow of `q` ([`instance_within`]): the witness
     /// [`permitted`] asks of such an arrow where it cannot try each carrier.
     witnessed: HashSet<Vec<Ty>>,
+    /// The arrows of `q` as read, in the innermost comparison of function types open now
+    /// ([`fits_in`]): the permission an instance of an arrow of `s` is compared with where it
+    /// is not within the arrow of `q` it covers alone ([`instance_within`]).
+    q_arrows: Arc<[Arrow]>,
+    /// For each instance compared with all of `q_arrows` ([`within_q`]), by its parameter types,
+    /// whether it is within them, in the innermost comparison of function types open now.
+    within_q: HashMap<Vec<Ty>, bool>,
     /// Whether the comparisons made now, in the innermost comparison of function types open,
     /// bind no variable ([`within_as_is`]): [`accepts`] then binds none, so a search goes on to
     /// a shape that holds a piece as it is, and the memo of rows ([`Cx::compared`]) keeps
@@ -10913,10 +10920,13 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         return false;
     }
     let (mark, sas, qas, renamed, free, wide) = c.cx.borrow_mut().open(s, se, q, qe);
+    let qas: Arc<[Arrow]> = qas.into();
     let outer = std::mem::replace(&mut c.cx.borrow_mut().free, free);
     let outer_wide = std::mem::replace(&mut c.cx.borrow_mut().wide, wide);
     let outer_bind_none = std::mem::replace(&mut c.cx.borrow_mut().bind_none, false);
     let outer_witnessed = std::mem::take(&mut c.cx.borrow_mut().witnessed);
+    let outer_q_arrows = std::mem::replace(&mut c.cx.borrow_mut().q_arrows, qas.clone());
+    let outer_within_q = std::mem::take(&mut c.cx.borrow_mut().within_q);
     // The bounds of `s` by the names its arrows are read with: a function type inside another
     // whose bounded variable has the name of one the comparison around it reads as itself is
     // read under a new name, and its bound, kept under the name written, was not checked
@@ -10956,6 +10966,8 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     cx.wide = outer_wide;
     cx.bind_none = outer_bind_none;
     cx.witnessed = outer_witnessed;
+    cx.q_arrows = outer_q_arrows;
+    cx.within_q = outer_within_q;
     cx.forget(mark);
     fits
 }
@@ -11323,11 +11335,27 @@ fn holds_bindable(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
 /// (sec:type_resolution). Not proved: a bounded variable left unbound stays a variable, which
 /// no parameter of `q` holds without binding, so the arrow is refused (the safe path).
 ///
-/// Complexity tradeoff: the parameters of the instance are compared with those of `qa` alone,
-/// not with the union of `q`'s arrows ([`permitted`]), which needs no other arrow at each fit:
-/// one comparison per parameter. What is given up: an instance that takes the keys of two
-/// arrows of `q` at once, `(x: T | bool) -> ...` fitting `(x: int) -> ...` beside `(x: bool)
-/// -> ...`, is refused.
+/// The instance is compared first with `qa`'s parameters, and where it is not within them,
+/// with the permission of all of `q`'s arrows ([`within_q`]), as [`permitted`] compares an
+/// arrow that holds no variable the comparison binds (FAIL-types-generic-arrow-overload-cover:
+/// `(x0: #k0 | #k1, x1: T) -> int for T in int` was refused beside `(x0: #k0, x1: int) ->
+/// int` and `(x0: #k1, x1: int) -> int`, though `T` can only be `int`, and the same arrow
+/// with `int` written for `T` fit). Proof that this is the permission asked: the arrow's
+/// permission holds where the keys its instance takes are keys some arrow of `q` takes
+/// ([`every_arrow_fits`]); `qa` is one of those arrows, so the first comparison is a
+/// sufficient test, and the second is [`arrow_permitted`]'s test of the union, exact for one
+/// parameter and sound for more. Neither binds a variable ([`within_as_is`]). Which arrow of
+/// `s` answers a key is the cover's question, asked of each arrow of `q` apart, not this one's.
+///
+/// Complexity tradeoff: naive version, each instance compared with the union of `q`'s arrows,
+/// an index of `q` built per fit, O(m) for each of up to n·m fits, O(n·m²). Used: `qa` first,
+/// one comparison per parameter, which most instances pass, and the union only where that
+/// fails, kept by the instance's parameter types for the comparison of function types around
+/// ([`Cx::within_q`]), so a generic arrow that covers each of `m` arrows of `q` at the same
+/// instance builds one index: O(m) in all. Distinct instances that each fail `qa` still cost
+/// an index each, O(m) per instance. Test:
+/// `a_generic_arrow_covering_many_arrows_is_compared_in_linear_time`, 8.19 and 7.58 times at
+/// 8n; with the memo off, 63.1 times.
 ///
 /// A bounded variable is an instance only where it is bound to whole carriers
 /// ([`whole_carriers`]): a call fixes it to one carrier of its bound (rule 6), so `(x0: B) ->
@@ -11370,16 +11398,58 @@ async fn instance_within<'m>(
     // instances of `y` ([`Cx::wide`], [`repeated`]). Compared as variables of their own, the
     // `X0` of `(X0,) | (X1,)`, bound by `X0 in int` and read as rigid, was not within the
     // `int` its own variable was widened to on `q`'s side.
-    for (x, y) in sa.params.iter().zip(&qa.params) {
-        if !within_as_is(&x.subst(&b).subst(&wide), &y.subst(&wide), c).await {
-            return false;
+    let params: Vec<Ty> = sa.params.iter().map(|x| x.subst(&b).subst(&wide)).collect();
+    let mut alone = true;
+    for (x, y) in params.iter().zip(&qa.params) {
+        if !within_as_is(x, &y.subst(&wide), c).await {
+            alone = false;
+            break;
         }
+    }
+    if !alone && !within_q(params, sa, s.params.len(), c).await {
+        return false;
     }
     let mut cx = c.cx.borrow_mut();
     if several && cx.unchosen.is_none() {
         cx.witnessed.insert(sa.params.clone());
     }
     true
+}
+
+/// Whether the parameter types `params` of an instance of the arrow `sa`, of `width`
+/// parameters, take only keys some arrow of `q` takes ([`Cx::q_arrows`], read with `q`'s own
+/// variables widened as [`permitted`] reads them): [`arrow_permitted`] of the instance. Kept by
+/// `params` in [`Cx::within_q`] for the comparison of function types around, which fixes the
+/// arrows of `q`, their widening and the reading of every variable; a verdict found after a
+/// refusal ([`Cx::unchosen`]) is not kept, as a refusal decides the comparison anyway.
+async fn within_q<'m>(params: Vec<Ty>, sa: &Arrow, width: usize, c: &'m Comparing<'m, '_>) -> bool {
+    if let Some(&ok) = c.cx.borrow().within_q.get(&params) {
+        return ok;
+    }
+    let (qas, wide) = {
+        let cx = c.cx.borrow();
+        (cx.q_arrows.clone(), cx.wide.clone())
+    };
+    let widened: Vec<Arrow> = qas
+        .iter()
+        .map(|a| Arrow {
+            params: a.params.iter().map(|p| p.subst(&wide)).collect(),
+            result: a.result.clone(),
+            partial: a.partial,
+        })
+        .collect();
+    let instance = Arrow {
+        params,
+        result: sa.result.clone(),
+        partial: sa.partial,
+    };
+    let mut index = None;
+    let ok = arrow_permitted(&instance, &widened, width, &mut index, c).await;
+    let mut cx = c.cx.borrow_mut();
+    if cx.unchosen.is_none() {
+        cx.within_q.insert(instance.params, ok);
+    }
+    ok
 }
 
 /// Whether the scalars of `t`, what a bounded variable is bound to, hold every value of each

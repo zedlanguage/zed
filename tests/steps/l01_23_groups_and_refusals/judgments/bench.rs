@@ -348,6 +348,42 @@ fn nested_function_results_beside_a_shared_row_are_compared_in_linear_time() {
     );
 }
 
+/// One generic arrow over `n` atoms, `((#k0 | … | #k(n-1), T) -> int for T in int)`, against
+/// `n` arrows `((#ki, int) -> int)` (FAIL-types-generic-arrow-overload-cover): the cover of
+/// each binds `T` to `int`, and each instance, the same one, is outside that arrow alone and
+/// within all of them, which is compared once for the comparison, not once per arrow of `q`.
+/// With one more atom on the left, `#kn`, no arrow takes it, and the answer is no.
+#[test]
+fn a_generic_arrow_covering_many_arrows_is_compared_in_linear_time() {
+    use zedc::check::read::parse_type;
+    let n = 64;
+    let atoms = |n: usize| {
+        (0..n)
+            .map(|i| format!("#k{i}"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let pairs = scaling::inputs(n, |n| {
+        let q: Vec<String> = (0..n).map(|i| format!("((#k{i}, int) -> int)")).collect();
+        let q = parse_type(&q.join(" & ")).unwrap();
+        let s = parse_type(&format!("(({}, T) -> int for T in int)", atoms(n))).unwrap();
+        let wider = parse_type(&format!("(({}, T) -> int for T in int)", atoms(n + 1))).unwrap();
+        (s, wider, q)
+    });
+    scaling::check("a generic arrow over n atoms within n arrows", n, |m| {
+        let (s, _, q) = &pairs[&m];
+        assert!(s.subtype(q));
+    });
+    scaling::check(
+        "a generic arrow over n + 1 atoms not within n arrows",
+        n,
+        |m| {
+            let (_, wider, q) = &pairs[&m];
+            assert!(!wider.subtype(q));
+        },
+    );
+}
+
 /// `nested_sets_of_every_atom_are_cut_in_linear_time` against the union of the one shape and
 /// `(1, 2)` (PERF-types-cut-rows-union-scaling): the kernel splits the first components into
 /// the class of the `n` nested sets and that of `1`, and decides the class of the nested sets

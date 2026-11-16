@@ -1612,6 +1612,36 @@ fn a_generic_function_is_within_an_arrow_for_each_atom_of_its_domain() {
             "((#k0, T) -> int for T in int) & ((#k1, U) -> int for U in int)",
             true,
         ),
+        // A key no arrow of `q` takes.
+        (
+            "((#k0 | #k1 | #k2, T) -> int for T in int)",
+            "((#k0, int) -> int) & ((#k1, int) -> int)",
+            false,
+        ),
+        // One parameter, the instance's keys those of two arrows.
+        (
+            "((T | bool) -> int for T in int)",
+            "(int -> int) & (bool -> int)",
+            true,
+        ),
+        (
+            "((T | bool) -> int for T in int)",
+            "(int -> int) & (f64 -> int)",
+            false,
+        ),
+        // At `#k1` both arrows of `s` apply, and rule 6 of sec:type_resolution intersects their
+        // results, `int & String`, which holds no value and so is within `String`: the
+        // generic arrow agrees with the one written without `T`.
+        (
+            "((#k0 | #k1, int) -> int) & ((#k1, int) -> String)",
+            "((#k0, int) -> int) & ((#k1, int) -> String)",
+            true,
+        ),
+        (
+            "((#k0 | #k1, T) -> int for T in int) & ((#k1, U) -> String for U in int)",
+            "((#k0, int) -> int) & ((#k1, int) -> String)",
+            true,
+        ),
     ]);
 }
 
