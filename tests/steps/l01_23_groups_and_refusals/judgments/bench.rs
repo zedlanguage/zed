@@ -477,3 +477,37 @@ fn crossing_sets_against_a_wider_second_component_are_decided_in_linear_time() {
         },
     );
 }
+
+/// One row `(#_, 0 | … | m)` against `m` shapes `(q_i, i | i + 1)`, with `q_i` = `#_` for the
+/// first and last shape and `#_ \ #c_i` between: every piece `take_out_piece` can take rests on
+/// a fork (PERF-take-out-forked-scan). Before, 11.9M and 878M instructions at `m` 16 and 128,
+/// 73.7 times.
+fn forked_pairs(m: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let values: Vec<String> = (0..=m).map(|v| v.to_string()).collect();
+    let left = format!("(#_, {})", values.join(" | "));
+    let right: Vec<String> = (0..m)
+        .map(|i| {
+            let q = if i == 0 || i + 1 == m {
+                "#_".to_string()
+            } else {
+                format!("(#_ \\ #c{i})")
+            };
+            format!("({q}, {i} | {})", i + 1)
+        })
+        .collect();
+    (
+        parse_type(&left).unwrap(),
+        parse_type(&right.join(" | ")).unwrap(),
+    )
+}
+
+#[test]
+fn a_row_against_shapes_whose_pieces_all_rest_on_forks_is_decided_in_linear_time() {
+    let n = 16;
+    let pairs = scaling::inputs(n, forked_pairs);
+    scaling::check("a row against forked shapes", n, |m| {
+        let (left, right) = &pairs[&m];
+        assert!(left.subtype(right));
+    });
+}

@@ -1224,7 +1224,7 @@ impl Simulation {
                     continue;
                 }
                 // The rows sharing the first column, a choice that may leave out a row that holds
-                // `x`, or the rows that may hold `x` by the atom names of one column
+                // `x`, or the rows that may hold `x` by the atom names or literals of one column
                 // ([`ByName`]), whichever are fewer; every row when neither applies.
                 let near = (*len > 0).then(|| first.get(&x[0])).flatten();
                 // One row of `b` leaves nothing to choose: it is taken without filing it.
@@ -1303,17 +1303,41 @@ fn tuple_rows(t: &Type) -> Option<Vec<Row>> {
 /// row with no column listing a name is still compared with every row (or those sharing its
 /// first column); and rows that each share a name with many rows in every column still meet
 /// them all.
+///
+/// Literals are filed the same way (PERF-disjoint-rows-shared-shapes): [`Simulation::rows`]
+/// fails a pair whose left side holds a literal of a kind (`int`, `rat`, `f64`, `f32`,
+/// `string`) that the right side's set of that kind leaves out, so a row whose column `j` lists
+/// the literal `v` lies only under rows whose column `j` lists `v` among a finite set of its
+/// kind or holds a cofinite set of it. Complexity tradeoff: `m` rows `((#_, i) \ (#a, i), 0)`
+/// against `m` rows `((#_, int), i | i + 1)` list no atom name in any column and share no first
+/// column, so each row was compared with every row: `m^2` choices, 357 ms of 595 ms at
+/// `m = 256` (load 44). Filed by literal, the column `0` meets one row: O(Σ literals) to file,
+/// the size of the right side's literal sets, and O(len) lookups per row. Given up as for names:
+/// a column listing many literals costs them to file each time the rows are filed.
 struct ByName<'a> {
     named: HashMap<(usize, &'a str), Vec<&'a Row>>,
     /// Per column, the rows whose component there holds the atoms of every name it does not
     /// list.
     open: Vec<Vec<&'a Row>>,
+    /// The rows by column, kind of literal ([`literal_sets`]) and a literal their component
+    /// there lists in a finite set of that kind.
+    valued: HashMap<(usize, usize, Value), Vec<&'a Row>>,
+    /// Per column and kind of literal, the rows whose component there holds a cofinite set of
+    /// that kind.
+    open_valued: Vec<[Vec<&'a Row>; 5]>,
+}
+
+/// The literal sets of a component by kind, in the order [`ByName`] numbers the kinds.
+fn literal_sets(p: &Parts) -> [&Lits; 5] {
+    [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
 }
 
 impl<'a> ByName<'a> {
     fn new(ys: &'a [Row], len: usize) -> Self {
         let mut named = HashMap::<(usize, &str), Vec<&Row>>::new();
         let mut open = vec![Vec::new(); len];
+        let mut valued = HashMap::<(usize, usize, Value), Vec<&Row>>::new();
+        let mut open_valued: Vec<[Vec<&Row>; 5]> = (0..len).map(|_| Default::default()).collect();
         for y in ys {
             for (j, open) in open.iter_mut().enumerate() {
                 match y[j].atom_names() {
@@ -1324,21 +1348,52 @@ impl<'a> ByName<'a> {
                     }
                     None => open.push(y),
                 }
+                let p = y[j].p();
+                for (k, lits) in literal_sets(&p).into_iter().enumerate() {
+                    if lits.cofinite {
+                        open_valued[j][k].push(y);
+                    } else {
+                        for v in lits.values.iter() {
+                            valued.entry((j, k, v.clone())).or_default().push(y);
+                        }
+                    }
+                }
             }
         }
-        ByName { named, open }
+        ByName {
+            named,
+            open,
+            valued,
+            open_valued,
+        }
     }
 
-    /// The rows that may hold `x` by the column of `x` whose first atom name the fewest rows
-    /// may hold, or none when no column of `x` lists a name and holds no unlisted one.
+    /// The rows that may hold `x` by the column of `x` and its first atom name, or its first
+    /// literal of a kind, that the fewest rows may hold; or none when no column of `x` lists a
+    /// name or a literal in a finite set.
     fn rows(&self, x: &Row) -> Option<Vec<&'a Row>> {
-        let lists = (0..self.open.len()).filter_map(|j| {
-            let (n, _) = x[j].atom_names()?.next()?;
-            let named = self.named.get(&(j, n)).map_or(&[][..], Vec::as_slice);
-            Some((named, &self.open[j]))
-        });
-        let (named, open) = lists.min_by_key(|(named, open)| named.len() + open.len())?;
-        Some(named.iter().chain(open).copied().collect())
+        let mut lists: Vec<(&[&'a Row], &[&'a Row])> = Vec::new();
+        for j in 0..self.open.len() {
+            if let Some((n, _)) = x[j].atom_names().and_then(|mut names| names.next()) {
+                let named = self.named.get(&(j, n)).map_or(&[][..], Vec::as_slice);
+                lists.push((named, &self.open[j]));
+            }
+            let p = x[j].p();
+            for (k, lits) in literal_sets(&p).into_iter().enumerate() {
+                let Some(v) = lits.values.iter().next().filter(|_| !lits.cofinite) else {
+                    continue;
+                };
+                let listed = self
+                    .valued
+                    .get(&(j, k, v.clone()))
+                    .map_or(&[][..], Vec::as_slice);
+                lists.push((listed, &self.open_valued[j][k]));
+            }
+        }
+        let (listed, open) = lists
+            .into_iter()
+            .min_by_key(|(listed, open)| listed.len() + open.len())?;
+        Some(listed.iter().chain(open).copied().collect())
     }
 }
 
@@ -5061,10 +5116,11 @@ impl<'m> Searching<'m> {
                 // part of `n` nodes. Measured
                 // (2026-11-15, not kept): no family reached a third pass. `n` rows against a
                 // chain of shapes `((#_, int), i | i + 1)`, two passes per frame; one row
-                // `(#_, 0 | … | m)` against `(#_ \ #c_i, i | i + 1)`, one pass whose `C` tries all
-                // rest on forks (`take_out_piece` then tries every cell before it takes the
-                // forked piece), 73.7 times the instructions at 8 times `m`, order `C n` in one
-                // pass (PERF-take-out-forked-scan). COMPLEXITY.md K118.
+                // `(#_, 0 | … | m)` against `(#_ \ #c_i, i | i + 1)`, one pass. In that row's
+                // pass every piece rests on a fork, and `take_out_piece` alone tried every cell
+                // before it took a forked piece, order `C n` (73.7 times the instructions at 8
+                // times `m`); `take_out_points`, tried first, takes the fork-free pieces in
+                // groups (8.96 times, PERF-take-out-forked-scan). COMPLEXITY.md K118.
                 if self.nested_cover(g, &f, &open).await || self.take_out_piece(g, &f, &open).await
                 {
                     continue;
@@ -5433,6 +5489,134 @@ impl<'m> Searching<'m> {
         Some(l)
     }
 
+    /// Takes out of the box `g`, on the first component that lists finitely many literals, on
+    /// which every tuple type of `open` is open with a cell that lists finitely many literals
+    /// too, every piece `a & r` (the meet of the component `r` with an open cell `a`) on which
+    /// narrowing alone proves `f` empty with no fork, and whether it took one out. The pieces
+    /// are tested in groups: their order by first point is halved, and for a group's union `U`
+    /// the part is restricted from its parent group's part to the tuple types whose cell meets
+    /// `U`. A group whose restricted part is `false` is taken out whole with no narrowing; a
+    /// group of more than one piece whose part is not `false` is halved; a single piece is
+    /// narrowed on the box with the component set to its points, and taken out when that
+    /// proves it empty with no fork.
+    ///
+    /// Proof that this takes out what DESIGN.md L1.23 takes out: a tuple type whose cell
+    /// misses `U` misses the box, so it is false there and restricting it to `false` is
+    /// narrowing's own first step. A group whose part is `false` is a union of pieces, each
+    /// within `U`, on each of which that first step alone leaves `false`, so narrowing proves
+    /// each of them empty with no fork (narrowing is monotone, the proof at `nested_cover`),
+    /// and DESIGN takes each out; once some are out, each other is the meet of its cell with
+    /// the box as it then stands, within the piece proved, so proved too. Taking out `U` whole
+    /// is therefore taking out those pieces one after another. Sound whatever the order: no
+    /// tuple of `U` is in `f`. A piece whose proof rests on a fork is not taken here, so the
+    /// loop below still takes such a piece only when no piece's proof is fork-free.
+    ///
+    /// Complexity tradeoff (PERF-take-out-forked-scan, COMPLEXITY.md K118): naive, the loop
+    /// below narrows the whole part once per piece it tries, order `C n` per pass for `C` open
+    /// cells, and taking out `C` pieces one by one costs `C` such narrowings: a row
+    /// `(#_, 0 | … | m)` against `m` shapes `(q_i, i | i + 1)` cost 11.9M and 878M
+    /// instructions at `m` 16 and 128 (73.6 times at 8 times `m`, limit 10.5). Used: the
+    /// halving above. A tuple type is in the part of a group only when its cell meets the
+    /// group's union, and each group is restricted from its parent's part, so a level of the
+    /// halving reads the parts of the level above; when each cell meets the unions of `O(1)`
+    /// groups per level, as cells of `O(1)` points in point order do, the parts of one level
+    /// sum to order `n` and the `O(log C)` levels to `n log C`, against `C n`. Finding the
+    /// points costs the literals the cells list, times `log P` for `P` points. Only single
+    /// pieces are narrowed, so at most `C` narrowings run, each on a part restricted to the
+    /// tuple types meeting that piece. Given up: a cell meeting most groups' unions, such as
+    /// one holding all points but one, is in most groups' parts, so no group above single
+    /// pieces is `false` and each of the `C` single pieces is narrowed on a part holding that
+    /// cell, up to order `C n`, the naive order, before the loop below runs. Tests:
+    /// `l01_23_groups_and_refusals::judgments::bench::a_row_against_shapes_whose_pieces_all_rest_on_forks_is_decided_in_linear_time`.
+    async fn take_out_points(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
+        let held = Held::default();
+        'component: for j in 0..g.r.len() {
+            if open.iter().any(|&k| !g.is_open(k, j)) {
+                continue;
+            }
+            let Some(points) = literal_keys(g.r[j].p_held(&held)) else {
+                continue;
+            };
+            let at: BTreeMap<&Key, usize> =
+                points.iter().enumerate().map(|(i, p)| (p, i)).collect();
+            // For each point, the open cells holding it; for each distinct piece, its points in
+            // order and the cells whose meet with the component it is.
+            let mut cells_at: Vec<Vec<usize>> = vec![Vec::new(); points.len()];
+            let mut pieces: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
+            for c in g.open_cells(j, open) {
+                let Some(keys) = literal_keys(g.cells[j][c].ty.p_held(&held)) else {
+                    continue 'component;
+                };
+                // `keys` is in order, so the points are too.
+                let ps: Vec<usize> = keys.iter().filter_map(|k| at.get(k).copied()).collect();
+                for &p in &ps {
+                    cells_at[p].push(c);
+                }
+                pieces.entry(ps).or_default().push(c);
+            }
+            let pieces: Vec<(Vec<usize>, Vec<usize>)> = pieces.into_iter().collect();
+            if pieces.is_empty() {
+                continue;
+            }
+            let mut out: BTreeSet<usize> = BTreeSet::new();
+            let mut halves = vec![(f.clone(), 0..pieces.len())];
+            while let Some((part, this)) = halves.pop() {
+                let u: BTreeSet<usize> = pieces[this.clone()]
+                    .iter()
+                    .flat_map(|(ps, _)| ps.iter().copied())
+                    .collect();
+                if u.iter().all(|p| out.contains(p)) {
+                    continue;
+                }
+                let meets: BTreeSet<usize> = u
+                    .iter()
+                    .flat_map(|&p| &cells_at[p])
+                    .flat_map(|&c| g.cells[j][c].rows.iter().copied())
+                    .collect();
+                let part = part.restrict(&|a| (!meets.contains(&g.index[a])).then_some(false));
+                let proved = if part.is_leaf() == Some(false) {
+                    true
+                } else if this.len() > 1 {
+                    false
+                } else {
+                    let mut r = g.r.clone();
+                    r[j] = Type::union_all(u.iter().map(|&p| key_type(&points[p])));
+                    let snap = self.fork_snapshot();
+                    let mut h = self.region(r, &part).await;
+                    let hit = self.narrow_tuples(&mut h, &mut part.clone()).await;
+                    let proved = hit && self.take_fork(snap, None).is_none();
+                    if !proved {
+                        self.discard_since(snap);
+                    }
+                    proved
+                };
+                if proved {
+                    out.extend(u);
+                } else if this.len() > 1 {
+                    let m = this.start + this.len() / 2;
+                    halves.push((part.clone(), m..this.end));
+                    halves.push((part, this.start..m));
+                }
+            }
+            if out.is_empty() {
+                continue;
+            }
+            let gone = Type::union_all(out.iter().map(|&p| key_type(&points[p])));
+            let left = &g.r[j] - &gone;
+            g.shrink(j, left);
+            // A cell all of whose points are out misses the component now.
+            for (ps, cs) in &pieces {
+                if ps.iter().all(|p| out.contains(p)) {
+                    for &c in cs {
+                        g.close(j, c, true);
+                    }
+                }
+            }
+            return true;
+        }
+        false
+    }
+
     /// Takes out of the box `g` the pieces of one component, each cut by an open cell of the
     /// tuple types `open` (its meet with the component or what the component holds outside it),
     /// on which narrowing alone proves `f` empty (DESIGN.md L1.23), and whether it took one out.
@@ -5451,6 +5635,9 @@ impl<'m> Searching<'m> {
     /// `l01_23_groups_and_refusals::judgments::bench::crossing_sets_against_a_wider_second_component_are_decided_in_linear_time`.
     /// COMPLEXITY.md K118.
     async fn take_out_piece(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
+        if self.take_out_points(g, f, open).await {
+            return true;
+        }
         let mut order: Vec<(usize, BTreeSet<usize>)> =
             (0..g.r.len()).map(|j| (j, g.open_cells(j, open))).collect();
         order.sort_by_key(|(j, cells)| (cells.len(), *j));
@@ -5694,6 +5881,9 @@ impl<'m> Searching<'m> {
                 }
             }
         }
+        if let Some(found) = self.laminar_pieces(&types).await {
+            return found;
+        }
         // Only cells pairwise nested or disjoint on the component are cut here: DESIGN (sec.
         // L1.23) takes out of the box "each piece on which narrowing alone proves the part
         // empty", a piece being the meet of the component with one open tuple type's cell, so
@@ -5772,6 +5962,94 @@ impl<'m> Searching<'m> {
         }
         pieces.sort_by(|a, b| a.0.cmp(&b.0));
         Some(pieces)
+    }
+
+    /// The pieces `nested_pieces` gives for the distinct cells `types`, each with the cells
+    /// holding it, found from the cells two at a time: `Some(Some(_))` when the cells are
+    /// pairwise nested or disjoint, `Some(None)` when two cross, `None` when a test is not
+    /// decided (`nested_pieces` then cuts the pieces one cell at a time).
+    ///
+    /// Two cells shown apart by their keys ([`meeting_pairs`]) are disjoint; every other pair
+    /// is tested: disjoint, the first within the second, the second within the first, or
+    /// crossing. Two equal cells count the later one within the earlier. Each cell within
+    /// another meets it, so it is inhabited, and the cells holding it meet each other, so each
+    /// such pair was tested and found nested: they form a chain, each holding all those outside
+    /// it, and its parent, the smallest, is the one held by the most. The piece of a cell is the
+    /// cell less its children, left out when shown empty, and is held by the cell and every cell
+    /// around it, and missed by the rest: a cell meeting it meets the cell, so is nested with
+    /// it, and one inside the cell is inside a child. The pieces are pairwise disjoint and cover
+    /// the cells, as those `nested_pieces` cuts one cell at a time are, so they are the same
+    /// sets with the same cells holding them: the same pieces, each written as its cell less
+    /// its children.
+    ///
+    /// Complexity tradeoff (PERF-disjoint-rows-shared-shapes): `nested_pieces` cuts the pieces
+    /// one cell at a time, testing each new cell against the union of those before it and
+    /// against each piece so far, so `m` cells take order `m²` emptiness tests, and the union
+    /// and the pieces grow with the cells: `m` rows `((#_, i) \ (#a, i), 0)` against the shapes
+    /// `((#_, int), i | i + 1)` put `m` disjoint cells and one around them all on the first
+    /// component, each test a search over up to `m` cells, 1.15G and 285G instructions at
+    /// `m` = 32 and 256 (248 times at 8 times `m`). Here each test is of two cells, and only
+    /// the pairs that share a key are tested: order `p` small tests for `p` such pairs, `p`
+    /// the `m` pairs of the outer cell with each row here, plus one test of each cell less its
+    /// children, and the keys cost the size of the cells. Worst case: every pair shares a key,
+    /// `m²/2` tests of two cells, the order of the cut one cell at a time. With this, the
+    /// literal filing in `ByName` and the keyed pairs, that family takes 50.2M and 630M
+    /// instructions at `m` 32 and 256 (12.56 times, load 44): still over 10.5, from the
+    /// narrowing of each piece against the whole part at `nested_cover` (plan row
+    /// PERF-nested-cover-narrow-per-piece, which holds the scaling test). COMPLEXITY.md K118.
+    async fn laminar_pieces(
+        &'m self,
+        types: &[(Type, BTreeSet<usize>)],
+    ) -> Option<Option<Vec<(Type, BTreeSet<usize>)>>> {
+        let n = types.len();
+        let ts: Vec<&Type> = types.iter().map(|(t, _)| t).collect();
+        // `outside[a]`: the cells `a` is within (the later of two equal cells is within the
+        // earlier).
+        let mut outside: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (a, b) in meeting_pairs(&ts) {
+            if self.shown(&(ts[a] & ts[b])).await? {
+                continue;
+            }
+            let a_within = self.shown(&(ts[a] - ts[b])).await?;
+            let b_within = self.shown(&(ts[b] - ts[a])).await?;
+            match (a_within, b_within) {
+                (_, true) => outside[b].push(a),
+                (true, false) => outside[a].push(b),
+                (false, false) => return Some(None),
+            }
+        }
+        let parent: Vec<Option<usize>> = outside
+            .iter()
+            .map(|o| o.iter().copied().max_by_key(|&x| outside[x].len()))
+            .collect();
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (c, p) in parent.iter().enumerate() {
+            if let Some(p) = *p {
+                children[p].push(c);
+            }
+        }
+        let mut pieces = Vec::with_capacity(n);
+        for c in 0..n {
+            let piece = if children[c].is_empty() {
+                ts[c].clone()
+            } else {
+                let inside = Type::union_all(children[c].iter().map(|&x| ts[x].clone()));
+                let piece = ts[c] - &inside;
+                if self.shown(&piece).await? {
+                    continue;
+                }
+                piece
+            };
+            let mut held = types[c].1.clone();
+            let mut up = parent[c];
+            while let Some(p) = up {
+                held.extend(&types[p].1);
+                up = parent[p];
+            }
+            pieces.push((piece, held));
+        }
+        pieces.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(Some(pieces))
     }
 
     /// Whether `t` is shown empty with no fork, `Some(true)`, or shown inhabited with no
@@ -11332,6 +11610,145 @@ enum Key {
     /// A whole universe: 0 to 4 the literals of `Lits`, 5 the atoms, 6 the tuples, 7 the
     /// structs, 8 the morphisms.
     All(usize),
+}
+
+/// The booleans and literals of `p`, as keys in order, when it lists finitely many booleans,
+/// numbers and strings and nothing else (`Parts::finite_literals_only`); else `None`.
+fn literal_keys(p: &Parts) -> Option<Vec<Key>> {
+    if !p.finite_literals_only() {
+        return None;
+    }
+    let bools = (0..2).filter(|b| p.bools & (1 << b) != 0).map(Key::Bool);
+    let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
+        .into_iter()
+        .enumerate()
+        .flat_map(|(u, l)| l.values.iter().map(move |v| Key::Lit(u, v.clone())));
+    Some(bools.chain(lits).collect())
+}
+
+/// The keys of component `c` of the tuples of `p`, when `p` holds tuples only, none of length
+/// `c` or less, and at each length a part `false` with no tuple type holding whose tuple types
+/// taken toward `true` hold finitely many booleans and literals at component `c`; `None`
+/// otherwise. A tuple of such a part lies in a tuple type it takes toward `true`
+/// (`Part::taken_toward`), so its component `c` is one of these keys.
+fn component_keys(p: &Parts, c: usize, held: &Held) -> Option<Vec<Key>> {
+    if p.has_scalars()
+        || !p.atoms.is_default()
+        || p.structs
+        || p.morphisms.is_leaf() != Some(false)
+        || p.tuples.rest
+    {
+        return None;
+    }
+    let mut keys = Vec::new();
+    for (&n, f) in &p.tuples.lens {
+        if f.is_leaf() == Some(false) {
+            continue;
+        }
+        if n <= c || f.eval3(&|_| Some(false)) != Some(false) {
+            return None;
+        }
+        let mut seen = DigestSet::default();
+        let mut finite = true;
+        f.taken_toward(
+            true,
+            &mut seen,
+            &mut |row: &Row| match literal_keys(row[c].p_held(held)) {
+                Some(ks) => keys.extend(ks),
+                None => finite = false,
+            },
+        );
+        if !finite {
+            return None;
+        }
+    }
+    keys.sort();
+    keys.dedup();
+    Some(keys)
+}
+
+/// The pairs `(a, b)`, `a < b`, of the types `ts` by index that are not shown disjoint by
+/// their keys: two types in different classes of [`overlaps`] are disjoint, and within a class
+/// two types keyed by their literals ([`literal_keys`]) or by one component of their tuples
+/// ([`component_keys`]) that share no key are disjoint. A type with no such keys pairs with
+/// every type of its class. Per class, the keying that leaves the fewest pairs is used: its
+/// literals, or the component, of those of the longest tuple, that does.
+// Complexity tradeoff: the classes cost O(S log S) for types of size S (K36); each keying reads
+// each type once, one for the literals and one per component, and the pairs are those of each
+// key plus each unkeyed type with its class: order `m²` when every type shares a key, the cost
+// of testing every pair, and order `m` for `m` types each with keys of its own beside a few
+// unkeyed ones (PERF-disjoint-rows-shared-shapes).
+fn meeting_pairs(ts: &[&Type]) -> BTreeSet<(usize, usize)> {
+    let held = Held::default();
+    let mut pairs = BTreeSet::new();
+    for class in overlaps(ts.iter().copied()) {
+        if class.len() < 2 {
+            continue;
+        }
+        let parts: Vec<&Parts> = class.iter().map(|&i| ts[i].p_held(&held)).collect();
+        let longest = (parts.iter())
+            .filter_map(|p| p.tuples.lens.keys().next_back().copied())
+            .max()
+            .unwrap_or(0);
+        let keyings = std::iter::once(None).chain((0..longest).map(Some));
+        let keyings = keyings.map(|mode| {
+            let keys: Vec<Option<Vec<Key>>> = (parts.iter())
+                .map(|p| match mode {
+                    None => literal_keys(p).map(|mut ks| {
+                        ks.sort();
+                        ks.dedup();
+                        ks
+                    }),
+                    Some(c) => component_keys(p, c, &held),
+                })
+                .collect();
+            let mut by_key: BTreeMap<&Key, usize> = BTreeMap::new();
+            for k in keys.iter().flatten().flatten() {
+                *by_key.entry(k).or_default() += 1;
+            }
+            let wide = keys.iter().filter(|k| k.is_none()).count();
+            let count = wide * class.len() + by_key.values().map(|b| b * b).sum::<usize>();
+            (count, keys)
+        });
+        let (_, keys) = keyings
+            .min_by_key(|(count, _)| *count)
+            .expect("the literals are always one keying");
+        let mut by_key: BTreeMap<&Key, Vec<usize>> = BTreeMap::new();
+        for (x, ks) in keys.iter().enumerate() {
+            match ks {
+                Some(ks) => {
+                    for k in ks {
+                        by_key.entry(k).or_default().push(class[x]);
+                    }
+                }
+                None => {
+                    for &y in &class {
+                        if y != class[x] {
+                            pairs.insert((y.min(class[x]), y.max(class[x])));
+                        }
+                    }
+                }
+            }
+        }
+        for at in by_key.values() {
+            for (i, &a) in at.iter().enumerate() {
+                for &b in &at[i + 1..] {
+                    pairs.insert((a.min(b), a.max(b)));
+                }
+            }
+        }
+    }
+    pairs
+}
+
+/// The type of the one value of a key of [`literal_keys`].
+fn key_type(k: &Key) -> Type {
+    let v = match k {
+        Key::Bool(b) => Value::Bool(*b == 1),
+        Key::Lit(_, v) => v.clone(),
+        _ => unreachable!("literal_keys gives booleans and literals only"),
+    };
+    Type::lit(&v).expect("a boolean or literal has a type of its own")
 }
 
 /// The keys `p` lists in universe `u` (0 to 4 the literals of `Lits`, 5 the atoms, 6 the
