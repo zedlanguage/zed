@@ -115,7 +115,7 @@ fn stated_sig(s: &Sig, scope: &Arc<HashSet<Arc<str>>>) -> Arc<Sig> {
     s.needs.clear();
     s.own.clear();
     s.data = false;
-    s.dense = false;
+    s.dense = zedc::check::ty::Dense::No;
     for a in s.arrows.iter_mut() {
         for p in a.params.iter_mut() {
             *p = stated_in(p, scope.clone());

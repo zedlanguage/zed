@@ -3354,7 +3354,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let mut sig = Sig::one(super::positional(1), vec![keys], values);
         sig.data = true;
-        sig.dense = s.kind == Display::Array;
+        sig.dense = match s.kind {
+            Display::Array => Dense::Ranks,
+            Display::Set | Display::Map => Dense::No,
+        };
         sig.note_held();
         m.ty(Ty::func(Arc::new(sig)));
     }
@@ -3482,7 +3485,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         };
                     }
                     if filter {
-                        out_sig.dense = false;
+                        out_sig.dense = Dense::No;
                     }
                     out_sig.word = None;
                     out_sig.needs = Vec::new();
@@ -4581,7 +4584,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (DESIGN.md sec:grammar, rule Range): the set of the integers between them, each key
     /// mapping to itself, with the loose atoms of either end, which pass through as they do
     /// through any primitive. An end that may be other than an integer is rejected. The keys are
-    /// the ranks `0`, `1`, … (`Sig::dense`) when `lo`, the low end, is the literal `0`.
+    /// one integer interval, every key present, so a read that misses gives `#outOfBounds`
+    /// ([`Dense::Interval`]); they are the ranks `0`, `1`, … ([`Dense::Ranks`]) when `lo`, the
+    /// low end, is known to be `0`.
     fn range_end(&mut self, lo: &'a Expr, a: &Ty, b: &Ty, span: Span) -> Ty {
         for (end, t) in [("low", a), ("high", b)] {
             for p in t.without_loose().pieces() {
@@ -4611,13 +4616,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut sig = Sig::one(super::positional(1), vec![int], found);
         sig.arrows[0].partial = true;
         sig.data = true;
-        // Only a low end of the literal `0` makes the keys the ranks. A range from another
-        // low end is not `dense`, so a read of it that misses gives `#notFound` where DESIGN.md
-        // (sec:type_language, the `m[k]` row) gives `#outOfBounds` at a level whose keys are one
-        // integer interval; `dense` also means the keys are `0 ..< n` to the directional folds
-        // (`fold_dir_end`), which read the entries at `0`, `1`, … in turn (plan row
-        // RANGE-read-out-of-bounds).
-        sig.dense = self.known(lo).value == Some(Value::Int(0));
+        // The kernel's `range(a, b)` holds every integer `k` with `a <= k < b` and no other key
+        // (`Prim::Range`), so its keys are one integer interval with every key present, empty
+        // when `b <= a`, whatever `a` is: a read that misses gives `#outOfBounds` (DESIGN.md
+        // sec:type_language, the `m[k]` row, whose own example is `lst : int[a..<b]`; plan row
+        // RANGE-read-out-of-bounds). Only a low end known to be `0` makes the keys the ranks,
+        // a list, which `flatMap` demands; `(2 ..< 5)` has the keys 2, 3, 4, which are no ranks.
+        sig.dense = match self.known(lo).value {
+            Some(Value::Int(0)) => Dense::Ranks,
+            _ => Dense::Interval,
+        };
         sig.note_held();
         Ty::func(Arc::new(sig))
             .union(&a.loose_ty())
@@ -15284,7 +15292,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrows,
             bounds: sig.bounds.clone(),
             data: false,
-            dense: false,
+            dense: Dense::No,
             // A word applied to fewer arguments than its arity is not the word: `min` and `max`
             // take two tuples only when both are given (sec:reduction, item 5).
             word: None,
@@ -15314,7 +15322,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             match p {
                 Piece::Fn(sig) => {
                     family = true;
-                    dense &= sig.data && sig.dense;
+                    dense &= sig.data && sig.dense.interval();
                 }
                 Piece::Tuple(_) => {}
                 p if p.is_atoms() => {}
@@ -16174,7 +16182,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrows,
             bounds: Default::default(),
             data: false,
-            dense: false,
+            dense: Dense::No,
             word: None,
             needs: Vec::new(),
             own: Default::default(),
@@ -23008,7 +23016,7 @@ mod tests {
             }],
             bounds: BTreeMap::new(),
             data: false,
-            dense: false,
+            dense: Dense::No,
             word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),

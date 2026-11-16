@@ -432,7 +432,7 @@ pub(super) fn functions_holding_one(
             params: Vec::new(),
             bounds: BTreeMap::new(),
             data: false,
-            dense: false,
+            dense: zedc::check::ty::Dense::No,
             word: None,
             needs: Vec::new(),
             named: 0,

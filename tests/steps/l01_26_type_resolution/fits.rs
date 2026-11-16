@@ -507,7 +507,7 @@ fn sig_of(
         }],
         bounds: Default::default(),
         data: false,
-        dense: false,
+        dense: zedc::check::ty::Dense::No,
         word: None,
         needs: Vec::new(),
         own: own.iter().filter_map(|v| v.vars.first().cloned()).collect(),
@@ -590,7 +590,7 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
                 .filter_map(|v| bound.map(|m| ((*v).into(), m)))
                 .collect::<BTreeMap<_, _>>(),
             data: false,
-            dense: false,
+            dense: zedc::check::ty::Dense::No,
             word: None,
             needs: Vec::new(),
             own: own.iter().map(|v| (*v).into()).collect(),
@@ -646,7 +646,7 @@ pub(super) fn own_sig(
             .filter_map(|v| bound.map(|m| (v.as_str().into(), m)))
             .collect(),
         data: false,
-        dense: false,
+        dense: zedc::check::ty::Dense::No,
         word: None,
         needs: Vec::new(),
         own: names.iter().map(|v| v.as_str().into()).collect(),

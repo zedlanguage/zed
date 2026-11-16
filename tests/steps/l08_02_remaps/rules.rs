@@ -456,6 +456,18 @@ fn flat_map_s_own_errors() {
         "xs = [1, 2];\nx = xs.flatMap(v -> xs.where(w -> w > v));\n",
         &["`flatMap` adjoins the list its function gives for each entry as a rank level"],
     );
+    // A range from `2` has the keys 2, 3, 4, one interval but no ranks, so it is no list
+    // either, though a read past it misses with `#outOfBounds` as a list's does
+    // (RANGE-read-out-of-bounds); a range from `0` is one.
+    rejected(
+        "xs = [1, 2];\nx = xs.flatMap(v -> 2 ..< 5);\n",
+        &["`flatMap` adjoins the list its function gives for each entry as a rank level"],
+    );
+    same(
+        "xs = [1, 2];\nx = xs.flatMap(v -> 0 ..< 2);\nwant = [[0, 1], [0, 1]];\n",
+        "x",
+        "want",
+    );
     rejected(
         "n = 3;\nx = n.flatMap(v -> [v]);\n",
         &["`map` works on each entry of a family"],

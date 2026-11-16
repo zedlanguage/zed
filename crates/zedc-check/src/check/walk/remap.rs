@@ -947,7 +947,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let entries = all.without_loose();
             // A dynamic entry, or one of a class not yet resolved, is checked where it is known.
             let families = (entries.pieces().iter()).all(|q| {
-                matches!(q, Piece::Fn(s) if s.data && s.dense)
+                matches!(q, Piece::Fn(s) if s.data && s.dense == Dense::Ranks)
                     || matches!(q, Piece::Dyn | Piece::Var(_))
             });
             if !families {
@@ -1109,7 +1109,7 @@ fn family(keys: Ty, values: Ty) -> Ty {
     let mut sig = Sig::one(super::super::positional(1), vec![keys], values);
     sig.arrows[0].partial = true;
     sig.data = true;
-    sig.dense = false;
+    sig.dense = Dense::No;
     sig.note_held();
     Ty::func(Arc::new(sig))
 }

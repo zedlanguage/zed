@@ -658,7 +658,7 @@ fn shapes_of_variables(
         }],
         bounds: BTreeMap::new(),
         data: false,
-        dense: false,
+        dense: zedc::check::ty::Dense::No,
         word: None,
         needs: Vec::new(),
         own: (vs.iter())
@@ -813,7 +813,7 @@ fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
             .collect(),
         bounds: BTreeMap::new(),
         data: false,
-        dense: false,
+        dense: zedc::check::ty::Dense::No,
         word: None,
         needs: Vec::new(),
         own: Default::default(),

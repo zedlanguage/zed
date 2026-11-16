@@ -379,11 +379,50 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 bin(Prim::Eq, bin(Prim::Mod, v, lit(2)), lit(0))
             }),
         ),
-        // A range is `int ->? int`: a read may miss, with `#outOfBounds` from a low end of `0`.
+        // A range is `int ->? int`: a read may miss, and since its keys are one integer
+        // interval, every key present, the miss is `#outOfBounds` whatever its low end
+        // (DESIGN.md sec:type_language, the `m[k]` row, `lst : int[a..<b]`).
         ("a_read_in_a_range", "${(0 ..< 3)[1] else -1}", lit(1)),
         (
             "a_read_past_a_range_from_0",
             "${(0 ..< 3)[3] is #outOfBounds}",
+            lit(true),
+        ),
+        (
+            "a_read_in_a_range_from_2",
+            "${(2 ..< 5)[3] else -1}",
+            lit(3),
+        ),
+        (
+            "a_read_past_a_range_from_2",
+            "${(2 ..< 5)[5] is #outOfBounds}",
+            lit(true),
+        ),
+        (
+            "a_read_below_a_range_from_2",
+            "${(2 ..< 5)[1] is #outOfBounds}",
+            lit(true),
+        ),
+        (
+            "a_read_past_a_range_from_a_negative_end",
+            "${(-2 ..= 1)[2] is #outOfBounds}",
+            lit(true),
+        ),
+        (
+            "a_read_past_a_range_with_computed_ends",
+            "${(2 - 1 ..< 2 + 1)[0] is #outOfBounds}",
+            lit(true),
+        ),
+        // `map` keeps the keys, so a mapped range still misses with `#outOfBounds`; `where`
+        // may drop any key, so a filtered one misses with `#notFound`.
+        (
+            "a_read_past_a_mapped_range_from_2",
+            "${(2 ..< 5).map(x -> x * x)[5] is #outOfBounds}",
+            lit(true),
+        ),
+        (
+            "a_read_past_a_filtered_range_from_2",
+            "${(2 ..< 5).where(x -> x > 2)[2] is #notFound}",
             lit(true),
         ),
     ]

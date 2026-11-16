@@ -3234,6 +3234,33 @@ impl Rebuild for Settle<'_> {
     }
 }
 
+/// What a family's keys are known to be ([`Sig::dense`]). A key type `int` holds no interval,
+/// so this is the one place a family's type says that its keys are one interval, every key
+/// present, and whether that interval starts at `0`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Dense {
+    /// Nothing more than its arrows say: a read that misses gives `#notFound`.
+    No,
+    /// One integer interval, every key present, whose low end is not known to be `0`: a range
+    /// `a ..< b` or `a ..= b`. A read that misses gives `#outOfBounds` (DESIGN.md
+    /// sec:type_language, the `m[k]` row, `lst : int[a..<b]`).
+    Interval,
+    /// The ranks `0 ..< n`, every one present: an array display, a range from the literal
+    /// `0`, a `Lines` input, the `CommandLine` arguments. A read that misses gives
+    /// `#outOfBounds`, and the family is a list, which `flatMap` demands of each entry's result
+    /// (DESIGN.md sec:grouping, "`flatMap` on `K -> V0` with body `V0 -> Seq(V)` yields
+    /// `K -> rank -> V`").
+    Ranks,
+}
+
+impl Dense {
+    /// Whether the keys are one integer interval, every key present, so that a read that
+    /// misses gives `#outOfBounds`.
+    pub fn interval(self) -> bool {
+        self != Dense::No
+    }
+}
+
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
 /// together are an intersection, and the carriers each bounded type variable ranges over.
 #[derive(Clone, Eq)]
@@ -3248,14 +3275,14 @@ pub struct Sig {
     /// Whether it is a family: a morphism held as data (sec:values_morphisms), shown, compared
     /// and put in a tuple as a value, and looked up through its arrows.
     pub data: bool,
-    /// Whether it is a family whose keys are one integer interval, every key present: a
-    /// `Lines` input or the `CommandLine` arguments. A read of it at a site whose receiver is
-    /// known to be such a family misses with `#outOfBounds`, not `#notFound` (DESIGN.md
-    /// sec:type_language, the `m[k]` row). Its arrows still answer `#notFound`, and are printed
-    /// so, since no type text says that its keys are one interval; it fits where `int ->? V` is
-    /// wanted, and a read there, or in a generic function, which the evaluator does one way for
-    /// every family, misses with `#notFound`.
-    pub dense: bool,
+    /// Whether it is a family whose keys are one integer interval, every key present
+    /// ([`Dense`]). A read of it at a site whose receiver is known to be such a family misses
+    /// with `#outOfBounds`, not `#notFound` (DESIGN.md sec:type_language, the `m[k]` row). Its
+    /// arrows still answer `#notFound`, and are printed so, since no type text says that its
+    /// keys are one interval; it fits where `int ->? V` is wanted, and a read there, or in a
+    /// generic function, which the evaluator does one way for every family, misses with
+    /// `#notFound`.
+    pub dense: Dense,
     /// The prelude word it is, if it is one: the function itself, not its arrows. `min` and
     /// `max` take two tuples, which `+`, of the same arrows, does not (DESIGN.md
     /// sec:reduction, item 5), wherever the word is called from: by name, as a method, or
@@ -14774,7 +14801,7 @@ impl Sig {
             }],
             bounds: BTreeMap::new(),
             data: false,
-            dense: false,
+            dense: Dense::No,
             word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),
@@ -17007,7 +17034,7 @@ mod tests {
             arrows,
             bounds: BTreeMap::new(),
             data: false,
-            dense: false,
+            dense: Dense::No,
             word: None,
             needs: Vec::new(),
             own: ["T".into(), "B".into()].into_iter().collect(),

@@ -84,7 +84,7 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, DataUse, EVERY, FoldForm, IntDomain, KeyUse, Names, Narrow, Need,
+    Arrow, Binds, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, Names, Narrow, Need,
     NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig,
     Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id,
     errs, fresh_name, mask_text,
@@ -9961,7 +9961,7 @@ fn op_sig(op: Operator) -> Sig {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
-        dense: false,
+        dense: Dense::No,
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -10071,7 +10071,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
-        dense: false,
+        dense: Dense::No,
         word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -10175,7 +10175,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
         }],
         bounds: BTreeMap::new(),
         data: false,
-        dense: false,
+        dense: Dense::No,
         word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
@@ -11165,7 +11165,10 @@ fn port(key: Carrier, io: bool) -> Ty {
         }],
         bounds: BTreeMap::new(),
         data: key == Carrier::Int,
-        dense: key == Carrier::Int,
+        dense: match key {
+            Carrier::Int => Dense::Ranks,
+            _ => Dense::No,
+        },
         word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
