@@ -2998,6 +2998,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// part of `int` is recorded, so its facts cover every value it may take. One that reads
     /// a name is not recorded: its value differs from call to call, and such a call stays
     /// refused.
+    ///
+    /// Complexity tradeoff: O(1) expected per default, one hash insert, and at each call that
+    /// leaves the parameter out one lookup and one containment test, linear in the intervals
+    /// of the default's set. The naive way reads the default's text again at each such call,
+    /// O(d) per call for a default of d nodes (COMPLEXITY.md, RANGE-default-in-range).
     fn note_default_ints(&mut self, p: &SParam, d: &'a Expr, t: &Ty) {
         let Some((binder, index, true)) = p.default else {
             return;

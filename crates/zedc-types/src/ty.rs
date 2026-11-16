@@ -3237,6 +3237,11 @@ impl Rebuild for Settle<'_> {
 /// What a family's keys are known to be ([`Sig::dense`]). A key type `int` holds no interval,
 /// so this is the one place a family's type says that its keys are one interval, every key
 /// present, and whether that interval starts at `0`.
+///
+/// Complexity tradeoff: a tag set once where the family's type is made, and one comparison
+/// at each read and each `flatMap`, O(1). The naive way, the interval's ends kept in `Sig` and
+/// compared at each use, costs the same order but holds two integers where a read needs one
+/// of three cases (COMPLEXITY.md, RANGE-read-out-of-bounds).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Dense {
     /// Nothing more than its arrows say: a read that misses gives `#notFound`.
