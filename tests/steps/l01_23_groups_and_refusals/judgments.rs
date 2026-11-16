@@ -716,7 +716,10 @@ fn a_meet_of_a_union_holding_the_unknown_is_the_other_side() {
             "((_) | ((()) -> (()))) & (((String) | (String)) -> (((String), (#b), (String))))",
             "String -> (String, #b, String)",
         ),
-        ("(((#a) ->? (())) | (_)) & ((rat) ->? (bool))", "rat ->? bool"),
+        (
+            "(((#a) ->? (())) | (_)) & ((rat) ->? (bool))",
+            "rat ->? bool",
+        ),
         (
             "((_) | ((bool) ->? (bool))) & ((#pair((()), (rat))) -> (#box((bool))))",
             "#pair((), rat) -> #box(bool)",
@@ -726,7 +729,10 @@ fn a_meet_of_a_union_holding_the_unknown_is_the_other_side() {
             "(bool -> int) | #box(#a)",
         ),
         ("(String -> int) & (_ | (int -> ()))", "String -> int"),
-        ("((_ | (int -> ())), bool) & ((String -> int), bool)", "(String -> int, bool)"),
+        (
+            "((_ | (int -> ())), bool) & ((String -> int), bool)",
+            "(String -> int, bool)",
+        ),
     ] {
         assert!(
             within(meet, other) && within(other, meet),
