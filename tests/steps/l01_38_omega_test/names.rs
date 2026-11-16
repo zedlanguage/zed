@@ -1382,6 +1382,148 @@ fn disjunctions_whose_atoms_share_a_color() {
     });
 }
 
+/// A row given by its terms (variable, coefficient), its constant, and whether it is an
+/// equation.
+type Sparse = (Vec<(usize, i64)>, i64, bool);
+
+/// The rows `rows` over `n` variables.
+fn dense(n: usize, rows: &[Sparse]) -> Vec<Row> {
+    rows.iter()
+        .map(|(t, k, e)| {
+            let mut c = vec![0; n];
+            for (i, x) in t {
+                c[*i] += x;
+            }
+            Row { c, k: *k, eq: *e }
+        })
+        .collect()
+}
+
+/// A system of 16 variables drawn at random (chains of two- and three-term rows, three of the
+/// variables boxed) with one disjunction, `v5 - v4 == 3 || v5 - v4 == 1`, each of whose
+/// disjuncts the base rules out: the system has no point.
+fn a_chain_and_a_choice_with_no_point() -> (usize, Disjunctive) {
+    let rows: Vec<Sparse> = vec![
+        (vec![(8, 1)], 4, false),
+        (vec![(8, -1)], 4, false),
+        (vec![(10, 1)], 4, false),
+        (vec![(10, -1)], 4, false),
+        (vec![(11, 1)], 4, false),
+        (vec![(11, -1)], 4, false),
+        (vec![(1, -3), (0, 3)], 1, false),
+        (vec![(2, 1), (1, 1)], 6, true),
+        (vec![(3, -1), (2, -1)], -1, false),
+        (vec![(4, -3), (1, 1)], -1, false),
+        (vec![(5, -1), (1, 3)], 4, false),
+        (vec![(6, -1), (0, -1)], 3, false),
+        (vec![(7, 2), (2, -3)], 2, false),
+        (vec![(8, -3), (3, 2)], 5, false),
+        (vec![(9, 2), (7, -1)], 6, false),
+        (vec![(10, 1), (5, -2)], 6, false),
+        (vec![(11, -1), (4, -1)], 1, false),
+        (vec![(12, 1), (9, 1)], 4, false),
+        (vec![(13, 3), (6, 1)], 0, false),
+        (vec![(14, -1), (8, 2)], -2, false),
+        (vec![(15, -3), (6, -1)], 4, false),
+        (vec![(1, 2), (0, -1)], 6, false),
+        (vec![(2, -1), (0, -1)], 4, false),
+        (vec![(3, -1), (0, 1)], 1, false),
+        (vec![(4, 1), (0, -1)], 3, false),
+        (vec![(5, -1), (4, -1), (0, 1)], 6, false),
+        (vec![(6, 1), (3, 1)], 2, false),
+        (vec![(7, 1), (3, -3)], 5, false),
+        (vec![(8, 1), (2, 1)], 1, false),
+        (vec![(9, 3), (2, 1)], -2, false),
+        (vec![(10, -1), (3, -1), (8, -2)], -1, false),
+        (vec![(11, 2), (7, -1)], -2, false),
+        (vec![(12, 1), (11, -1)], 1, false),
+        (vec![(13, -1), (10, -1)], 1, false),
+        (vec![(14, -2), (12, 3)], 5, false),
+        (vec![(15, 1), (9, -2)], 3, false),
+        (vec![(1, -1), (0, -3)], 4, false),
+    ];
+    let n = 16;
+    let ors = vec![vec![
+        dense(n, &[(vec![(5, 1), (4, -1)], -3, true)]),
+        dense(n, &[(vec![(5, 1), (4, -1)], -1, true)]),
+    ]];
+    (n, (dense(n, &rows), ors))
+}
+
+/// `sys` over `n` variables beside [`triangles_and_a_hexagon`] over the next twelve, whose
+/// atoms share a color that no swap maps onto itself, so that the whole is settled as a tied
+/// formula ([`settle_tied`] in the library) and not renamed.
+fn beside_the_tied_gadget(n: usize, sys: &Disjunctive) -> Disjunctive {
+    let widen = |r: &Row, at: usize| {
+        let mut c = vec![0; n + 12];
+        c[at..at + r.c.len()].copy_from_slice(&r.c);
+        Row {
+            c,
+            k: r.k,
+            eq: r.eq,
+        }
+    };
+    let widen_ors = |ors: &[Vec<Vec<Row>>], at: usize| -> Vec<Vec<Vec<Row>>> {
+        (ors.iter())
+            .map(|ds| {
+                (ds.iter())
+                    .map(|d| d.iter().map(|r| widen(r, at)).collect())
+                    .collect()
+            })
+            .collect()
+    };
+    let (gb, go) = triangles_and_a_hexagon();
+    let mut base: Vec<Row> = sys.0.iter().map(|r| widen(r, 0)).collect();
+    base.extend(gb.iter().map(|r| widen(r, n)));
+    let mut ors = widen_ors(&sys.1, 0);
+    ors.extend(widen_ors(&go, n));
+    (base, ors)
+}
+
+/// A tied formula's disjuncts were tested against the base projected onto their atoms, and
+/// that projection was made by eliminations in an order the names chose, so the solver refused
+/// it under some namings and showed the disjunct empty under others; the base rows linked to
+/// the disjunct, tried after a refusal, are refused under all. The chain below beside the tied
+/// gadget was decided `false` under 46 of 60 random namings and refused with
+/// `Refusal::Unordered` under 14 (seed 2; 41 and 19 at seed 4), before and after 5213e08d6
+/// (PROOF-settle-marks-naming-free). The projections are now made over names given by the
+/// structure ([`stage_kernels`] in the library). A new seed each run (author P169).
+#[test]
+fn a_tied_formula_settled_with_projections_gives_one_answer_under_every_naming() {
+    let (n, chain) = a_chain_and_a_choice_with_no_point();
+    let sys = beside_the_tied_gadget(n, &chain);
+    let n = n + 12;
+    let (mut rng, seed) = Rng::fresh("namings of a chain beside a tied gadget");
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for r in 0..24 {
+        let perm: Vec<usize> = if r == 0 {
+            (0..n).collect()
+        } else {
+            shuffled(&mut rng, n)
+        };
+        let f = disjunctive_formula(&sys, &perm);
+        let found = match satisfiable(&f) {
+            Ok(Some(m)) => panic!("a point of a system with none: {m:?}"),
+            Ok(None) => "no point",
+            // Its kind alone: the variables it names change with the naming.
+            Err(Refusal::Unordered(_)) => "Unordered",
+            Err(Refusal::Tie(_)) => "Tie",
+            Err(_) => "another refusal",
+        };
+        *seen.entry(format!("{} / {found}", answer(&f))).or_insert(0) += 1;
+    }
+    // The chain's component has no two atoms of one color, so its projection is made over the
+    // names its structure gives; the solver refuses that projection (Growth), as it refused
+    // the projections of 14 namings in 60 before, and the rows linked to the disjuncts, so the
+    // formula is refused under every naming. `false` is the true answer: the refusal is the
+    // cost of answering alike (PROOF-settle-marks-naming-free).
+    assert_eq!(
+        seen.keys().collect::<Vec<_>>(),
+        ["Err(Unordered, 12 variables, 12 disjunctions) / Unordered"],
+        "seed {seed}: {seen:?}"
+    );
+}
+
 #[test]
 fn the_formulas_whose_atoms_share_a_color_that_changed_answer_with_the_naming_give_one_answer() {
     let mut rng = Rng::new(0x5eed);

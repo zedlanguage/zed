@@ -2229,6 +2229,40 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
     }
 }
 
+/// The rows `cs`, in their order, with each atom renamed `#i` for the place `i` of its first
+/// appearance, reading the rows in order and the terms of each in their order (a product's
+/// factors are renamed, and the product by them). The renaming is one to one, so two lists of
+/// rows give equal values exactly when one is the other renamed, row by row in order.
+fn renamed_by_appearance(cs: &[&Con]) -> Vec<Con> {
+    let mut to: HashMap<Atom, Arc<str>> = HashMap::new();
+    let name = |a: Atom, to: &mut HashMap<Atom, Arc<str>>| {
+        let i = to.len();
+        to.entry(a).or_insert_with(|| Arc::from(format!("#{i}")));
+    };
+    for c in cs {
+        for a in c.lin.terms.keys() {
+            match a {
+                Atom::Product(x, y) => {
+                    name(x.atom(), &mut to);
+                    name(y.atom(), &mut to);
+                }
+                Atom::Sym(_) | Atom::Aux(_) => name(a.clone(), &mut to),
+            }
+        }
+    }
+    (cs.iter())
+        .map(|c| Con {
+            lin: Lin {
+                terms: (c.lin.terms.iter())
+                    .map(|(a, k)| (rename(&to, a), k.clone()))
+                    .collect(),
+                constant: c.lin.constant.clone(),
+            },
+            rel: c.rel,
+        })
+        .collect()
+}
+
 /// A formula with disjunctions, its atoms renamed by the structure of its constraints, so that
 /// the search through its disjunctions ([`pick`], [`probe`], [`project_parts`]) reads one
 /// formula under every naming of its variables. That search takes, in each disjunction, the
@@ -2971,11 +3005,14 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// ([`stage_kernels`]), as [`settle`] and [`project_parts`] test theirs, and against the base
 /// rows linked to it only when the solver refuses that. The projection has a point with the
 /// disjunct exactly when the base has one, so where both tests answer they answer alike, and
-/// the answer is a fact of the rows, not of their order. Not proved: that the solver refuses a
-/// projection under every naming alike. The projection's rows come from eliminations whose
-/// order follows the names and the order of the stage, so a disjunct whose projection the
-/// solver refuses under one naming and answers under another, and whose linked rows it
-/// refuses, would be marked proven under the second naming only.
+/// the answer is a fact of the rows, not of their order. The projection is made over names
+/// that the structure gives, so every naming gets the same projection, renamed, or none
+/// ([`stage_kernels`], with the proof), and the solver answers a system and its renaming
+/// alike; before, the eliminations followed the names, and a disjunct whose projection the
+/// solver refused under one naming was shown empty under another
+/// (PROOF-settle-marks-naming-free). Not proved where two atoms of the disjunction's component
+/// share a color: that component is projected over its names as given
+/// (PROOF-settle-tied-kernels-naming-free).
 /// On a chain of `n` stages with a disjunction at each, every test read the whole chain
 /// before, `n` solves of `n` rows (COMPLEXITY.md PROJECT-dead2-quadratic).
 ///
@@ -3004,9 +3041,48 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 // `names::decide_on_disjuncts_a_solve_refuses_scales` 8.49 → 8.14, but 3.5 times the
 // instructions at each size (78.3 M → 274.3 M at 400 disjuncts), where every disjunct held at
 // the point and is now solved; `satisfiable_on_disjuncts_with_loose_rows_scales` 8.93 → 8.50,
-// 1.8 times the instructions. COMPLEXITY.md row FAIL-settle-proven-marks-names.
+// 1.8 times the instructions. COMPLEXITY.md row FAIL-settle-proven-marks-names. Since
+// PERF-settle-every-projection-cost the answers of tests that are one system renamed are kept
+// (`answers`, below): at 400 disjuncts 284.2 M → 111.4 M instructions (8.39 times at 8n) and
+// 486.6 M → 313.8 M with loose rows (8.77 times), load 52 to 59.
 fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
     let mut base = Linked::reduced(std::mem::take(&mut p.cons));
+    // Whether a test's rows have a point (`Some`) or the solver refused them (`None`), by the
+    // rows renamed in the order their atoms appear. Two tests with the same key are the same
+    // rows in the same order, renamed one to one ([`renamed_by_appearance`]), and [`solve`]
+    // answers a system and its renaming alike, refusals included (its doc), so the answer
+    // kept is the answer the solver would give: every test answers as without the memo, and
+    // the marks are the same. Only how often the solver runs depends on the names.
+    // Complexity tradeoff (PERF-settle-every-projection-cost): naive version, one solve for each
+    // test, as before: the k disjuncts of a disjunction that differ only in a variable of their
+    // own (`names::disjuncts_a_solve_refuses`) cost k solves of the projection and, where the
+    // solver refuses those, k more of the linked rows, 3.5 times the instructions of the code
+    // that marked them proven at the base's point. Used: the answers kept in a hash map by
+    // the renamed rows, O(r) to rename and hash a test of r rows, against a solve of at least
+    // O(r); renaming the rows into the key costs about a copy of them. Measured (load 52 to 66,
+    // at 400 disjuncts): 284.2 M instructions before, 310.9 M with keys built and never found,
+    // 111.4 M with them found; with loose rows 486.6 M, 513.3 M, 313.8 M. Given up: tests that
+    // differ in more than the names of their atoms or in the order of their rows are solved
+    // apart, as before; the rest above the 78.3 M of the code that solved none of these
+    // disjuncts is work done for each disjunct (its linked rows, its key and hash), inferred and
+    // not profiled. Tests
+    // `l01_38_omega_test::names::decide_on_disjuncts_a_solve_refuses_scales`,
+    // `satisfiable_past_disjuncts_a_solve_refuses_scales`,
+    // `satisfiable_on_disjuncts_with_loose_rows_scales`; COMPLEXITY.md row
+    // PERF-settle-every-projection-cost.
+    let mut answers: HashMap<Vec<Con>, Option<bool>> = HashMap::new();
+    let mut ask = |cs: &[&Con]| -> Option<bool> {
+        let key = renamed_by_appearance(cs);
+        if let Some(&a) = answers.get(&key) {
+            return a;
+        }
+        let a = match solve(cs, false) {
+            Ok(m) => Some(m.is_some()),
+            Err(_) => None,
+        };
+        answers.insert(key, a);
+        a
+    };
     loop {
         if solve(&base.cons, false)?.is_none() {
             return Ok(None);
@@ -3056,18 +3132,18 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
                         if let Some(k) = &kernel {
                             let mut cs = k.around(&d.cons);
                             cs.extend(d.cons.iter());
-                            match solve(&cs, false) {
-                                Ok(None) => return None,
-                                Ok(Some(_)) => return Some((d, true)),
-                                Err(_) => {}
+                            match ask(&cs) {
+                                Some(false) => return None,
+                                Some(true) => return Some((d, true)),
+                                None => {}
                             }
                         }
                         let mut cs = base.around(&d.cons);
                         cs.extend(d.cons.iter());
-                        match solve(&cs, false) {
-                            Ok(None) => None,
-                            Ok(Some(_)) => Some((d, true)),
-                            Err(_) => Some((d, false)),
+                        match ask(&cs) {
+                            Some(false) => None,
+                            Some(true) => Some((d, true)),
+                            None => Some((d, false)),
                         }
                     })
                     .unzip();
@@ -3101,10 +3177,61 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
 }
 
 /// For each disjunction of `stage`, the rows of `base` projected ([`by_halves`]) onto the atoms
-/// of its disjuncts' own constraints; `None` for each on the old path. The stage
-/// adds no rows to the base while it is tested, so every projection is of the base as the
-/// stage began. On a chain or a tree of `m` rows, `k` disjunctions cost O((m + k) log k)
-/// instead of a solve of the whole linked group for each disjunct.
+/// of its disjuncts' own constraints; `None` for each on the old path. The stage adds no rows to
+/// the base while it is tested, so every projection is of the base as the stage began. On a
+/// chain or a tree of `m` rows, `k` disjunctions cost O((m + k) log k) instead of a solve of
+/// the whole linked group for each disjunct.
+///
+/// The projections are made over names that the structure gives, so that under every naming of
+/// the atoms each disjunction gets the same rows, renamed (PROOF-settle-marks-naming-free),
+/// except in a component two of whose plain atoms the coloring does not tell apart (a tied
+/// component, below), whose projections are made over the names as given, as before.
+/// [`shadow`] eliminates atoms in an order that their names and the order of the rows and of
+/// the disjunctions break ties in, and different orders give different rows, which [`solve`]
+/// may refuse under one naming and answer under another: before, a chain beside a tied gadget
+/// was decided `false` under 46 of 60 namings and refused under 14
+/// (`l01_38_omega_test::names::a_tied_formula_settled_with_projections_gives_one_answer_under_every_naming`).
+///
+/// Proof that the kernels are the same under every naming, renamed. Let `π` rename the atoms of
+/// the formula. (1) The rows linked to the stage's atoms, the disjuncts' rows, and the rows
+/// joining each product to its factors are taken to their images by `π`, as sets: the base
+/// after `π` is the base renamed, and the groups of [`Linked`] are its connected components,
+/// which renaming keeps. (2) [`stable_colors`] numbers colors by the structure alone, not by
+/// names or the order of rows (its doc), so each atom `a` has the color of `π(a)`. (3) The
+/// components below join the atoms of each row and of each disjunction's atoms; `π` maps
+/// them onto the components of the renamed system, and a component has two plain atoms of one
+/// color exactly when its image does, so the same components are tied. (4) In an untied
+/// component each plain atom is renamed `#c` for its color `c`, and a product by its renamed
+/// factors, so `a` and `π(a)` get one new name; the renamed rows, sorted, and the distinct
+/// renamed atom sets of its disjunctions, sorted, are then the same values under both namings.
+/// (5) [`by_halves`] is a function of its rows and atom sets: it reads no names but those, and
+/// iterates no hash map whose order it depends on (its maps are looked up, and its sets are
+/// `BTreeSet`s), so it returns the same projections, which the old names are put back into.
+/// So each disjunction `D` of an untied component gets, under `π`, the image by `π` of its
+/// kernel, or `None` under both; [`solve`] answers a system and its renaming alike (its doc),
+/// so the tests of [`settle_as_sets`] that use a kernel answer alike. Step (5) for
+/// [`shadow`]'s own choices is checked by the test above and by the renamings of
+/// `l01_38_omega_test::names`, not proved line by line.
+///
+/// Not proved for a tied component: there the atoms of one color keep their own names, which
+/// order the eliminations, so a disjunct whose projection the solver refuses under one naming
+/// and answers under another, and whose linked rows it refuses, is still marked by the names
+/// (plan row PROOF-settle-tied-kernels-naming-free). Renaming such a component canonically
+/// needs a canonical labeling, exponential in the worst case; leaving it without a projection
+/// tests each disjunct against the whole group, O(k r) for k disjunctions over r rows, which
+/// made `decide_scales_over_a_sum_of_conditionals_tied_jointly` 19.2 times the instructions at
+/// 8n and `satisfiable_on_disjuncts_with_loose_rows_scales` run past its limit.
+// Complexity tradeoff: naive version, the projections made over the names as given, as
+// before: O((m + k) log k), with the answer depending on the names. A complete version would
+// rename tied components by a canonical labeling, exponential in the worst case
+// ([`Renamed::individualized`]). Used: one color refinement of the rows, O(L log L) for `L`
+// terms, a union-find over the atoms, near O(L), a sort of each component's renamed rows and
+// atom sets, O(L log L), and one [`by_halves`] per component, whose costs sum to that of one
+// over all of them. Given up: a tied component, as in a symmetric cycle, is projected over its
+// names as given, so its marks may still follow the names (above); and where the solver
+// refuses the projection made in the order of the structural names, every naming refuses,
+// where some namings answered before (the test above: `false` under 46 of 60 namings before,
+// a refusal under all now). COMPLEXITY.md row PROOF-settle-marks-naming-free.
 fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>> {
     let mut kernels: Vec<Option<Linked>> = stage.iter().map(|_| None).collect();
     if old_path() {
@@ -3117,14 +3244,139 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
                 .collect()
         })
         .collect();
-    let rows: Vec<Con> = (base.around_atoms(keep.iter().flatten()).into_iter())
-        .cloned()
+    let rows: Vec<&Con> = base.around_atoms(keep.iter().flatten());
+    // The atoms, with each product's factors, and the rows joining each product to them, as in
+    // [`Renamed::colored`].
+    let mut atoms: BTreeSet<Atom> = keep.iter().flatten().cloned().collect();
+    for c in &rows {
+        atoms.extend(c.lin.terms.keys().cloned());
+    }
+    let joins: Vec<Con> = (atoms.iter())
+        .filter_map(|a| match a {
+            Atom::Product(x, y) => {
+                let factors = Lin::atom(x.atom()).plus(&Lin::atom(y.atom()));
+                Some(Con::eq(
+                    &Lin::atom(a.clone()).plus(&factors),
+                    &Lin::default(),
+                ))
+            }
+            Atom::Sym(_) | Atom::Aux(_) => None,
+        })
         .collect();
-    let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
-        kernels[i] = k.map(Linked::of);
-        Ok(Vec::new())
-    });
-    filled.expect("no leaf fails");
+    for c in &joins {
+        atoms.extend(c.lin.terms.keys().cloned());
+    }
+    let atoms: Vec<Atom> = atoms.into_iter().collect();
+    let place = |a: &Atom| atoms.binary_search(a).expect("an atom of the stage");
+    let disjunct_rows = (stage.iter()).flat_map(|ds| ds.iter().flat_map(|d| d.cons.iter()));
+    let colored: Vec<&Con> = (rows.iter().copied())
+        .chain(disjunct_rows)
+        .chain(joins.iter())
+        .collect();
+    let mut color = stable_colors(&atoms, &colored, &[], &[]);
+    color.truncate(atoms.len());
+    // The components: the atoms of each row, join and disjunction are joined.
+    let mut up: Vec<usize> = (0..atoms.len()).collect();
+    fn root(up: &mut [usize], mut i: usize) -> usize {
+        while up[i] != i {
+            up[i] = up[up[i]];
+            i = up[i];
+        }
+        i
+    }
+    let join = |up: &mut Vec<usize>, of: &mut dyn Iterator<Item = &Atom>| {
+        if let Some(first) = of.next() {
+            let r = root(up, place(first));
+            for a in of {
+                let s = root(up, place(a));
+                up[s] = r;
+            }
+        }
+    };
+    for c in rows.iter().copied().chain(joins.iter()) {
+        join(&mut up, &mut c.lin.terms.keys());
+    }
+    for k in &keep {
+        join(&mut up, &mut k.iter());
+    }
+    let roots: Vec<usize> = (0..atoms.len()).map(|i| root(&mut up, i)).collect();
+    // A component is tied when two of its plain atoms share a color.
+    let mut by_color: Vec<usize> = (0..atoms.len())
+        .filter(|&i| !matches!(atoms[i], Atom::Product(..)))
+        .collect();
+    by_color.sort_unstable_by_key(|&i| (roots[i], color[i]));
+    let mut tied = vec![false; atoms.len()];
+    for w in by_color.windows(2) {
+        if (roots[w[0]], color[w[0]]) == (roots[w[1]], color[w[1]]) {
+            tied[roots[w[0]]] = true;
+        }
+    }
+    // Each component's rows and disjunctions, those of an untied one renamed.
+    let width = atoms.len().saturating_sub(1).to_string().len();
+    let to: HashMap<Atom, Arc<str>> = (by_color.iter())
+        .filter(|&&i| !tied[roots[i]])
+        .map(|&i| {
+            (
+                atoms[i].clone(),
+                Arc::from(format!("#{:0width$}", color[i])),
+            )
+        })
+        .collect();
+    let back: HashMap<Atom, Atom> = (atoms.iter())
+        .filter(|a| !tied[roots[place(a)]])
+        .map(|a| (rename(&to, a), a.clone()))
+        .collect();
+    let renamed = |c: &Con, to_map: &dyn Fn(&Atom) -> Atom| Con {
+        lin: Lin {
+            terms: (c.lin.terms.iter())
+                .map(|(a, k)| (to_map(a), k.clone()))
+                .collect(),
+            constant: c.lin.constant.clone(),
+        },
+        rel: c.rel,
+    };
+    // For each component, by its root: its rows, and each of its disjunctions with its atoms.
+    type Component = (Vec<Con>, Vec<(usize, BTreeSet<Atom>)>);
+    let mut parts: BTreeMap<usize, Component> = BTreeMap::new();
+    for c in &rows {
+        let Some(a) = c.lin.terms.keys().next() else {
+            continue;
+        };
+        let r = roots[place(a)];
+        parts
+            .entry(r)
+            .or_default()
+            .0
+            .push(renamed(c, &|a| rename(&to, a)));
+    }
+    for (j, k) in keep.iter().enumerate() {
+        let Some(a) = k.iter().next() else {
+            continue;
+        };
+        let r = roots[place(a)];
+        let set = k.iter().map(|a| rename(&to, a)).collect();
+        parts.entry(r).or_default().1.push((j, set));
+    }
+    for (mut rows, ors) in parts.into_values() {
+        rows.sort_unstable();
+        let mut sets: Vec<&BTreeSet<Atom>> = ors.iter().map(|(_, s)| s).collect();
+        sets.sort_unstable();
+        sets.dedup();
+        let sets: Vec<BTreeSet<Atom>> = sets.into_iter().cloned().collect();
+        let mut made: Vec<Option<Vec<Con>>> = vec![None; sets.len()];
+        let filled: Result<(), ()> = by_halves(rows, &sets, |i, k| {
+            made[i] = k;
+            Ok(Vec::new())
+        });
+        filled.expect("no leaf fails");
+        for (j, set) in &ors {
+            let i = sets.binary_search(set).expect("a set of the component");
+            kernels[*j] = made[i].as_ref().map(|k| {
+                let old = |a: &Atom| back.get(a).cloned().unwrap_or_else(|| a.clone());
+                Linked::of(k.iter().map(|c| renamed(c, &old)).collect())
+            });
+        }
+    }
     kernels
 }
 
