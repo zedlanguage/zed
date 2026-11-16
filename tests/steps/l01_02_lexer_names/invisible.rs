@@ -1,12 +1,17 @@
 //! Invisible and look-alike characters (DESIGN.md sec:lexical, sec:grammar `Space`,
-//! `Comment`, `Char`, `Name`). A character that is neither a space nor a name character
-//! starts no token: U+FEFF after the start of the file, NUL, a zero-width joiner anywhere in a
-//! name, and every `Bidi_Control` character are lexical errors in code, the code of a hole
-//! included, and are taken by `ANY` in a comment and in the text of a string literal. A message
+//! `Comment`, `Char`, `TextChar`, `Name`). A character that is neither a space nor a name
+//! character starts no token: U+FEFF after the start of the file, NUL, a zero-width joiner
+//! anywhere in a name, and every `Bidi_Control` character are lexical errors in code, the code
+//! of a hole included. A comment and the text of a string literal take the others, but no
+//! `Bidi_Control` character (`TextChar`; row "`Bidi_Control` character in a comment or in the
+//! text of a string literal" of sec:diagnostics). A message
 //! names an invisible character by its code point and writes it in its escape form, never as
 //! itself. The module `ignorable` tests every Default_Ignorable_Code_Point character.
 
-use zedc::lex::{ErrorKind, Tok, lex};
+use std::sync::Arc;
+
+use zedc::lex::{ErrorKind, Part, Tok, lex};
+use zedc::rejection::Row;
 
 /// The `Bidi_Control` characters DESIGN.md sec:lexical lists.
 const BIDI: [char; 12] = [
@@ -134,11 +139,212 @@ fn bidi_controls_are_errors_in_code_in_a_name_and_in_a_hole() {
     }
 }
 
+/// The headline for the `Bidi_Control` character `c` in a comment, or in a string whose
+/// repair is `repair`.
+fn text_direction(c: char, repair: Option<&str>) -> String {
+    let code = c as u32;
+    match repair {
+        None => format!("Text-direction character U+{code:04X} in a comment. Remove it."),
+        Some(r) => format!("Text-direction character U+{code:04X} in a string. Try `{r}` instead."),
+    }
+}
+
+/// A `Bidi_Control` character reorders how an editor shows the text around it, so a comment or
+/// a string holding one can make code look commented out, or a string look closed, when the
+/// compiler reads it otherwise (Trojan Source, CVE-2021-42574). It is a lexical error in a
+/// comment and in a string's text too, named by its code point and never printed; a comment's
+/// repair removes it, and a string's writes it as an escape, `"\u{202E}"`, which the headline
+/// offers as the whole literal.
 #[test]
-fn invisible_characters_are_taken_in_comments_and_in_string_text() {
-    let mut taken: Vec<char> = BIDI.to_vec();
-    taken.extend(['\u{feff}', '\u{0}', '\u{200d}']);
-    for c in taken {
+fn bidi_controls_are_errors_in_comments_and_in_string_text() {
+    for c in BIDI {
+        let hex = format!("{:X}", c as u32);
+        let width = c.len_utf8();
+        for (text, at, in_string, repair) in [
+            (format!("a = 1; // {c} x\n"), 10, false, "//  x".to_string()),
+            (format!("/* {c} */ a = 1;"), 3, false, "/*  */".to_string()),
+            (
+                format!("a = \"x{c}y\";"),
+                6,
+                true,
+                format!("\"x\\u{{{hex}}}y\""),
+            ),
+            (
+                format!("a = \"${{b}}{c}\";"),
+                9,
+                true,
+                format!("\"${{b}}\\u{{{hex}}}\""),
+            ),
+        ] {
+            let (kind, span, message) = error(&text);
+            let expected = ErrorKind::TextDirection {
+                c,
+                in_string,
+                repair: Some(repair.clone()),
+            };
+            let headline = text_direction(c, in_string.then_some(repair.as_str()));
+            assert_eq!(
+                (kind, span, &message),
+                (expected, (at, at + width), &headline),
+                "{text:?}"
+            );
+            assert!(!message.contains(c), "{text:?}");
+            // As an error of the source it names its row, says why, and offers the repair.
+            let e = zedc::ast::Error::from(lex(&text).unwrap_err());
+            assert_eq!(e.row, Some(Row::BidiControlInText), "{text:?}");
+            let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+            assert_eq!(notes.len(), 2, "{text:?}: {notes:?}");
+            assert!(
+                notes[0].contains("changes the order in which an editor shows the text"),
+                "{text:?}: {notes:?}"
+            );
+            assert_eq!(notes[1], format!("repair: `{repair}`"), "{text:?}");
+            assert!(notes.iter().all(|n| !n.contains(c)), "{text:?}");
+        }
+    }
+    // The escape form is accepted and gives the character.
+    let tokens = lex("a = \"x\\u{202E}y\";").unwrap();
+    assert_eq!(
+        tokens[2].tok,
+        Tok::Str(vec![Part::Text(Arc::new("x\u{202e}y".into()))])
+    );
+}
+
+#[test]
+fn a_bidi_control_in_a_doc_comment_or_a_triple_quoted_string_is_an_error() {
+    let c = '\u{202e}';
+    let (kind, span, _) = error(&format!("/// x {c}\nf() = 1;"));
+    assert_eq!(
+        (kind, span),
+        (
+            ErrorKind::TextDirection {
+                c,
+                in_string: false,
+                repair: Some("/// x ".into())
+            },
+            (6, 9)
+        )
+    );
+    let text = format!("a = \"\"\"x{c}\"\"\";");
+    let (kind, _, message) = error(&text);
+    let repair = "\"\"\"x\\u{202E}\"\"\"";
+    assert_eq!(
+        kind,
+        ErrorKind::TextDirection {
+            c,
+            in_string: true,
+            repair: Some(repair.into())
+        }
+    );
+    assert_eq!(message, text_direction(c, Some(repair)));
+}
+
+/// The repair is quoted on one line, so a comment or a string over several lines, or one
+/// holding a backtick, is offered none; the string's headline then says to write the escape.
+#[test]
+fn a_bidi_control_where_the_repair_cannot_be_quoted_gets_no_repair() {
+    let c = '\u{2067}';
+    for (text, at, in_string) in [
+        (format!("/* a\n {c} */ x = 1;"), 6, false),
+        (format!("a = 1; // `b` {c}\n"), 14, false),
+        (format!("a = \"\"\"\n  x{c}\n  \"\"\";"), 11, true),
+        (format!("a = \"`{c}\";"), 6, true),
+    ] {
+        let (kind, span, message) = error(&text);
+        assert_eq!(
+            (kind, span),
+            (
+                ErrorKind::TextDirection {
+                    c,
+                    in_string,
+                    repair: None
+                },
+                (at, at + c.len_utf8())
+            ),
+            "{text:?}"
+        );
+        let expected = if in_string {
+            "Text-direction character U+2067 in a string. Write it as its escape, `\\u{2067}`."
+                .to_string()
+        } else {
+            text_direction(c, None)
+        };
+        assert_eq!(message, expected, "{text:?}");
+        let e = zedc::ast::Error::from(lex(&text).unwrap_err());
+        assert_eq!(e.notes.len(), 1, "{text:?}");
+    }
+}
+
+/// In a hole, the first `Bidi_Control` character in the order of the text is reported: one in
+/// a string in the hole with that string's repair, one in a comment there as a comment's, and
+/// one in the hole's code as a character that starts no token. A string whose hole holds one
+/// gets no repair, since the repair would print it.
+#[test]
+fn a_bidi_control_in_a_hole_is_reported_where_it_stands() {
+    let c = '\u{202d}';
+    let w = c.len_utf8();
+    // A string in the hole holds one: that string's own repair.
+    let text = format!("a = \"${{f(\"x{c}\")}}\";");
+    assert_eq!(
+        error(&text).0,
+        ErrorKind::TextDirection {
+            c,
+            in_string: true,
+            repair: Some("\"x\\u{202D}\"".into())
+        },
+        "{text:?}"
+    );
+    // A comment in the hole.
+    let text = format!("a = \"${{b /* {c} */}}\";");
+    assert_eq!(
+        error(&text).0,
+        ErrorKind::TextDirection {
+            c,
+            in_string: false,
+            repair: Some("/*  */".into())
+        },
+        "{text:?}"
+    );
+    // Code in the hole before a string in the hole that holds one too: the code's, first.
+    let text = format!("a = \"${{b {c} \"{c}\"}}\";");
+    assert_eq!(
+        error(&text),
+        (ErrorKind::Unexpected(c), (9, 9 + w), invisible("202D")),
+        "{text:?}"
+    );
+    // Text before a hole whose code holds one: the text's, with no repair.
+    let text = format!("a = \"{c}${{b {c}}}\";");
+    assert_eq!(
+        error(&text).0,
+        ErrorKind::TextDirection {
+            c,
+            in_string: true,
+            repair: None
+        },
+        "{text:?}"
+    );
+}
+
+/// Letters of right-to-left scripts are no `Bidi_Control` characters: a comment and a
+/// string's text take them, as they take all other text beyond ASCII.
+#[test]
+fn hebrew_and_arabic_letters_are_taken_in_comments_and_in_string_text() {
+    for word in ["שלום", "سلام", "\u{5d0}\u{5b8}"] {
+        for text in [
+            format!("a = 1; // {word}\n"),
+            format!("/* {word} */ a = 1;"),
+            format!("a = \"x{word}y\";"),
+        ] {
+            assert!(lex(&text).is_ok(), "{text:?}: {}", lex(&text).unwrap_err());
+        }
+        // In code, a word of such letters is no name.
+        assert!(lex(&format!("{word} = 1;")).is_err(), "{word}");
+    }
+}
+
+#[test]
+fn invisible_characters_other_than_bidi_controls_are_taken_in_comments_and_in_string_text() {
+    for c in ['\u{feff}', '\u{0}', '\u{200d}'] {
         for text in [
             format!("a = 1; // {c} x\n"),
             format!("/* {c} */ a = 1;"),

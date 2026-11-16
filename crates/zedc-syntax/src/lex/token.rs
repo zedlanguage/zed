@@ -117,6 +117,18 @@ pub enum ErrorKind {
     BadInfix(String),
     /// A number literal whose digits the system refused the memory to copy.
     Unread(TooLarge),
+    /// A `Bidi_Control` character ([`is_bidi_control`]) in a comment or in the text of a
+    /// string literal (DESIGN.md sec:lexical, `TextChar`): the character, whether it is in a
+    /// string, and the repair, when it can be quoted on one line: the comment with each such
+    /// character removed, or the string literal with each written as its escape `\u{…}`.
+    TextDirection {
+        /// The character.
+        c: char,
+        /// Whether it is in the text of a string, not in a comment.
+        in_string: bool,
+        /// The comment or the string literal repaired.
+        repair: Option<String>,
+    },
 }
 
 /// A lexical error and its span.
@@ -140,8 +152,67 @@ impl fmt::Display for Error {
             }
             ErrorKind::Unread(r) => write!(f, "{}", unread_literal(r)),
             ErrorKind::NonAsciiName { word, repair } => f.write_str(&non_ascii(word, repair)),
+            ErrorKind::TextDirection {
+                c,
+                in_string,
+                repair,
+            } => {
+                // The character is named by its code point and never printed: printed, it
+                // reorders the rest of the reader's terminal line (sec:diagnostics).
+                let code = *c as u32;
+                let place = if *in_string { "string" } else { "comment" };
+                write!(f, "Text-direction character U+{code:04X} in a {place}. ")?;
+                match (in_string, repair) {
+                    (false, _) => f.write_str("Remove it."),
+                    (true, Some(r)) => write!(f, "Try `{r}` instead."),
+                    (true, None) => write!(f, "Write it as its escape, `\\u{{{code:X}}}`."),
+                }
+            }
         }
     }
+}
+
+/// Whether `c` has the Unicode property Bidi_Control (PropList.txt), the characters
+/// DESIGN.md sec:grammar names `BidiControl`: U+061C, U+200E, U+200F, U+202A to U+202E and
+/// U+2066 to U+2069. Each changes the order in which an editor shows the text after it.
+pub fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// The first `Bidi_Control` character of `s` and its byte offset.
+///
+/// Complexity tradeoff: the naive scan decodes each character of `s` and tests it, O(n) with
+/// a decode per character. Used: in UTF-8 each `Bidi_Control` character starts with the byte
+/// 0xD8 (U+061C) or 0xE2 (the others), and neither byte starts an ASCII character, so a byte
+/// search finds each candidate and only a candidate is decoded. Both are O(n); the byte search
+/// does no decoding on ASCII text, the common case for a comment.
+pub(super) fn first_bidi_control(s: &str) -> Option<(usize, char)> {
+    let bytes = s.as_bytes();
+    let mut k = 0;
+    while let Some(i) = bytes[k..].iter().position(|&b| b == 0xD8 || b == 0xE2) {
+        let at = k + i;
+        // A lead byte starts a character, so `at` is a character boundary.
+        let c = s[at..].chars().next()?;
+        if is_bidi_control(c) {
+            return Some((at, c));
+        }
+        k = at + c.len_utf8();
+    }
+    None
+}
+
+/// Why a comment or a string's text may not hold the `Bidi_Control` character `c` (the note of
+/// the sec:diagnostics row), which a message names by its code point.
+pub fn text_direction_note(c: char) -> String {
+    format!(
+        "the character U+{:04X} changes the order in which an editor shows the text after it, \
+         so the line can show other code than the compiler reads; a string writes it as an \
+         escape, `\\u{{{:X}}}`, which gives the same string",
+        c as u32, c as u32
+    )
 }
 
 /// The message for `word`, which is a name but for a character beyond ASCII, with the ASCII

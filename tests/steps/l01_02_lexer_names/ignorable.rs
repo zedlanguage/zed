@@ -4,7 +4,8 @@
 //! U+13441, U+13442 and U+16FE4. A name is ASCII (NAME-ascii-only), so none is a name
 //! character; each is an error in code, after a name, at its start or end, after the wildcard, a
 //! number or a keyword, and in the code of a hole, with the message of a character that may not
-//! show, which names it by its code point. A comment and the text of a string take it. The
+//! show, which names it by its code point. A comment and the text of a string take it, but for the
+//! twelve `Bidi_Control` characters among them, which are errors there too (`TextChar`). The
 //! lexer and the grammar engine both follow the rule.
 //!
 //! `default_ignorable.txt` and `format.txt` are the sections of Default_Ignorable_Code_Point in
@@ -17,8 +18,8 @@ use std::sync::Arc;
 use zed_tests::step_helpers::m0_03_grammar_tools::{design, spec_dir};
 use zed_tools::spec::Spec;
 use zedc::lex::{
-    ErrorKind, Part, Tok, UNICODE_VERSION, is_blank, is_default_ignorable, is_format,
-    is_name_continue, is_name_start, lex, may_not_show, name_end,
+    ErrorKind, Part, Tok, UNICODE_VERSION, is_bidi_control, is_blank, is_default_ignorable,
+    is_format, is_name_continue, is_name_start, lex, may_not_show, name_end,
 };
 
 use super::invisible::invisible;
@@ -253,7 +254,20 @@ fn a_message_names_a_character_that_may_not_show_by_its_code_point() {
 
 #[test]
 fn each_blank_character_is_taken_in_a_comment_and_in_string_text() {
-    for c in blank() {
+    let blank = blank();
+    // Of the blank characters, exactly the twelve `Bidi_Control` characters are refused there.
+    assert_eq!(blank.iter().filter(|&&c| is_bidi_control(c)).count(), 12);
+    for c in blank {
+        if is_bidi_control(c) {
+            for text in [format!("a = 1; // {c} x\n"), format!("a = \"x{c}y\";")] {
+                let e = lex(&text).expect_err(&text);
+                assert!(
+                    matches!(e.kind, ErrorKind::TextDirection { c: d, .. } if d == c),
+                    "{text:?}: {e}"
+                );
+            }
+            continue;
+        }
         for text in [
             format!("a = 1; // {c} x\n"),
             format!("/* {c} */ a = 1;"),
@@ -297,12 +311,16 @@ fn the_grammar_engine_rejects_each_blank_character_in_code_and_takes_it_elsewher
         ] {
             assert!(engine(&text).is_err(), "{text:?}");
         }
+        // In a comment and in a string's text the engine takes it unless it is a
+        // `Bidi_Control` character (`TextChar`), as the lexer does.
         for text in [format!("a = 1; // {c} x\n"), format!("a = \"x{c}y\";")] {
-            assert!(
-                engine(&text).is_ok(),
-                "{text:?}: {}",
-                engine(&text).unwrap_err()
-            );
+            let read = engine(&text);
+            assert_eq!(read.is_ok(), lex(&text).is_ok(), "{text:?}");
+            if is_bidi_control(c) {
+                assert!(read.is_err(), "{text:?}");
+            } else if let Err(e) = read {
+                panic!("{text:?}: {e}");
+            }
         }
     }
 }

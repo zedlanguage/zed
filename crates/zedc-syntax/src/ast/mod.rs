@@ -894,15 +894,31 @@ impl fmt::Write for Count {
     }
 }
 
-/// A lexical error as an error of the source, with no derivation.
+/// A lexical error as an error of the source, with no derivation; a `Bidi_Control` character
+/// in a comment or in a string's text with its row, why it is refused and its repair
+/// (DESIGN.md sec:diagnostics).
 impl From<crate::lex::Error> for Error {
     fn from(e: crate::lex::Error) -> Error {
+        let (notes, row) = match &e.kind {
+            crate::lex::ErrorKind::TextDirection { c, repair, .. } => {
+                let mut notes = vec![Note {
+                    span: e.span,
+                    text: crate::lex::text_direction_note(*c),
+                }];
+                notes.extend(repair.iter().map(|r| Note {
+                    span: e.span,
+                    text: format!("repair: `{r}`"),
+                }));
+                (notes, Some(Row::BidiControlInText))
+            }
+            _ => (Vec::new(), None),
+        };
         Error {
             menu: String::new(),
             span: e.span,
             message: e.to_string(),
-            notes: Vec::new(),
-            row: None,
+            notes,
+            row,
         }
     }
 }

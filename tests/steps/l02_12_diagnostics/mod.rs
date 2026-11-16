@@ -71,8 +71,10 @@ fn a_literal_written_with_an_escape_prints_as_written() {
 #[test]
 fn a_nul_a_delete_a_c1_control_and_a_bidi_override_print_escaped() {
     let out =
-        rejected("greet = \"a\u{0}b\u{7F}c\u{9B}d\u{202E}e\" ++ 3;\nmain(m: MainArgs) = 0;\n");
+        rejected("greet = \"a\u{0}b\u{7F}c\u{9B}d\\u{202E}e\" ++ 3;\nmain(m: MainArgs) = 0;\n");
     assert_eq!(raw(&out), None, "{out:?}");
+    // The bidi override is written as its escape: in a string's text it is an error (DESIGN.md
+    // sec:lexical, `TextChar`), but the value holds it.
     // A NUL is `\0` in a printed string, as Zed writes it; the quoted line gives every character
     // in the one form `\u{X}`.
     assert!(

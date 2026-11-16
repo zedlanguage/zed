@@ -39,8 +39,9 @@ fn a_byte_order_mark_after_the_start_is_left_to_the_lexer() {
 #[test]
 fn nul_and_bidi_controls_are_left_to_the_lexer() {
     // The loader rejects only text that is not NFC and a leading byte order mark (DESIGN.md
-    // sec:lexical); where these characters may stand is the lexer's rule, which accepts them in
-    // comments and strings and rejects them elsewhere (l01_02_lexer_names, `invisible`).
+    // sec:lexical); where these characters may stand is the lexer's rule, which takes a NUL in
+    // comments and strings and rejects it elsewhere, and rejects a bidi control everywhere
+    // (l01_02_lexer_names, `invisible`).
     for text in [
         "a = 1;\u{0}",
         "a = \"\u{202e}x\";",

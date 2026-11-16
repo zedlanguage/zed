@@ -17,8 +17,8 @@ pub use name::{ascii_name, is_name_continue, is_name_start, is_word_char};
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 pub use token::{
-    Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, UNICODE_VERSION, is_blank,
-    is_default_ignorable, is_format, may_not_show, unread_literal,
+    Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, UNICODE_VERSION, is_bidi_control,
+    is_blank, is_default_ignorable, is_format, may_not_show, text_direction_note, unread_literal,
 };
 
 /// The tokens of `text`, a loaded source text.

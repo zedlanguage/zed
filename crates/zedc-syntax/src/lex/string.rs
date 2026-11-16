@@ -3,14 +3,21 @@
 //! ```peg
 //! String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char1)* '"'
 //! String1       = '"""' (!'"""' !'\n' Char1)* '"""' | '"' (!'"' !'\n' Char1)* '"'
-//! Char          = Escape | Hole | !('\\' | '${') ANY
-//! Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') ANY
+//! Char          = Escape | Hole | !('\\' | '${') TextChar
+//! Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') TextChar
 //! Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')
 //! Hole          = '${' HoleText '}'
 //! HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*
-//! HoleText1     = (String1 | '//' (!'\n' ANY)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*
-//! BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' ANY)* '*/'
+//! HoleText1     = (String1 | '//' (!'\n' TextChar)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*
+//! BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' TextChar)* '*/'
+//! TextChar      = !BidiControl ANY
 //! ```
+//!
+//! The text of a string holds no `Bidi_Control` character (DESIGN.md sec:lexical): one is an
+//! error at the character, whose repair is the literal with each such character of its text
+//! written as its escape, `"x\u{202E}y"`, which gives the same string. One in the code of a
+//! hole starts no token, and is reported here, as the lexer would report it at the hole's
+//! tokens, so that the errors of a string come in the order of its text.
 //!
 //! A string is its parts: decoded text, and holes, each lexed into the tokens of its
 //! expression. A `"` string has no line break, its holes included: a line break in such a hole,
@@ -29,7 +36,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::comment;
-use super::token::{Error, ErrorKind, Part, Span, Tok, Token, may_not_show};
+use super::token::{Error, ErrorKind, Part, Span, Tok, Token, is_bidi_control, may_not_show};
 
 /// A part before decoding: a range of literal source text, or a hole.
 enum Raw {
@@ -66,11 +73,14 @@ impl Holes {
     }
 }
 
-/// A string being scanned: where it starts, and how far the scan has got.
+/// A string being scanned: where it starts, how far the scan has got, and whether its text
+/// may hold a `Bidi_Control` character, as it may only while its repair is written
+/// ([`escaped`]).
 struct Scan {
     pos: usize,
     triple: bool,
     i: usize,
+    takes_bidi: bool,
 }
 
 impl Scan {
@@ -80,6 +90,7 @@ impl Scan {
             pos,
             triple,
             i: pos + Scan::close(triple).len(),
+            takes_bidi: false,
         }
     }
 
@@ -117,6 +128,19 @@ impl Scan {
                 }
                 Some('\\') => self.i = escape(text, i)?,
                 Some('$') if rest.starts_with("${") => return Ok(Some(i)),
+                Some(c) if is_bidi_control(c) && !self.takes_bidi => {
+                    return Err(Error {
+                        kind: ErrorKind::TextDirection {
+                            c,
+                            in_string: true,
+                            repair: escaped(text, self.pos),
+                        },
+                        span: Span {
+                            start: i,
+                            end: i + c.len_utf8(),
+                        },
+                    });
+                }
                 Some(c) => self.i += c.len_utf8(),
             }
         }
@@ -405,6 +429,15 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                              which may run over several lines.",
                         ));
                     }
+                    Some(c) if is_bidi_control(c) => {
+                        return Err(Error {
+                            kind: ErrorKind::Unexpected(c),
+                            span: Span {
+                                start: i,
+                                end: i + c.len_utf8(),
+                            },
+                        });
+                    }
                     Some(c) => i + c.len_utf8(),
                 };
                 i = next;
@@ -509,6 +542,43 @@ fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> Stri
         });
     }
     out
+}
+
+/// The string literal starting at byte `pos` of `text`, a `"`, as written but for each
+/// `Bidi_Control` character of its text, which is written as its escape `\u{…}`; its holes are
+/// kept as written. None when the literal does not scan to its end with its holes, or when it
+/// cannot be quoted on one line: it holds a line break or a backtick, which would end the
+/// quotation, or a hole holds a `Bidi_Control` character, an error of its own.
+// Complexity tradeoff: this scans the literal once more, O(s) for a literal of s bytes, and
+// finds the line breaks of the whole text once, O(n), for the holes of a `"` string
+// ([`Holes::new`]); it runs only on the error path, once, since lexing stops at the error.
+fn escaped(text: &str, pos: usize) -> Option<String> {
+    let mut scan = Scan::new(text, pos);
+    scan.takes_bidi = true;
+    let mut holes = Holes::new(text);
+    let mut out = text[pos..scan.i].to_string();
+    loop {
+        let from = scan.i;
+        let stop = scan.next_hole(text).ok()?;
+        for c in text[from..stop.unwrap_or(scan.i)].chars() {
+            if is_bidi_control(c) {
+                out.push_str(&format!("\\u{{{:X}}}", c as u32));
+            } else {
+                out.push(c);
+            }
+        }
+        match stop {
+            Some(open) => {
+                let end = hole_end(text, open, !scan.triple, &mut holes).ok()?;
+                out.push_str(&text[open..=end]);
+                scan.i = end + 1;
+            }
+            None => {
+                out.push_str(Scan::close(scan.triple));
+                return Some(out).filter(|r| !r.contains(['\n', '`']));
+            }
+        }
+    }
 }
 
 fn bad(start: usize, end: usize, why: &str) -> Error {

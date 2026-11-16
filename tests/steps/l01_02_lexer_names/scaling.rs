@@ -64,15 +64,59 @@ pub(super) fn offers_the_first_free_suffix(text: &str, n: usize) {
     assert_eq!(offer(text), Some(format!("cafe_{}", n + 1)));
 }
 
+/// A line comment of `n` words with a dash beyond ASCII and `n` ASCII words, then U+202E: the
+/// comment is read once to its end and searched once for the character.
+pub(super) fn comment_ending_in_a_bidi_control(n: usize) -> String {
+    format!(
+        "a = 1; // {}{}\u{202e}\n",
+        "\u{2014}ab ".repeat(n),
+        "cd ".repeat(n)
+    )
+}
+
+pub(super) fn removes_it_from_the_comment(text: &str, n: usize) {
+    match lex(text).unwrap_err().kind {
+        // `// `, then 6 bytes and 3 bytes a word.
+        ErrorKind::TextDirection {
+            repair: Some(r), ..
+        } => assert_eq!(r.len(), 3 + 9 * n),
+        k => panic!("{k:?}"),
+    }
+}
+
+/// A string of `n` holes and `n` words, then U+202E: the string is read again once to write
+/// the repair.
+pub(super) fn string_ending_in_a_bidi_control(n: usize) -> String {
+    format!("a = \"{}\u{202e}\";", "${b} cd ".repeat(n))
+}
+
+pub(super) fn escapes_it_in_the_string(text: &str, n: usize) {
+    match lex(text).unwrap_err().kind {
+        // The quotes, 8 bytes a hole and word, and `\u{202E}`.
+        ErrorKind::TextDirection {
+            repair: Some(r), ..
+        } => {
+            assert_eq!(r.len(), 2 + 8 * n + 8, "{r}");
+            assert!(r.ends_with("\\u{202E}\""), "{r}");
+        }
+        k => panic!("{k:?}"),
+    }
+}
+
 #[test]
 fn each_benchmark_text_lexes_as_its_benchmark_expects_at_small_sizes() {
     type Case = (fn(usize) -> String, fn(&str, usize));
-    let cases: [Case; 5] = [
+    let cases: [Case; 7] = [
         (names_among_text_beyond_ascii, lexes_five_tokens_a_line),
         (long_name, lexes_one_name),
         (long_name_ending_beyond_ascii, offers_the_ascii_spelling),
         (hangul_word, offers_the_transliteration),
         (taken_names, offers_the_first_free_suffix),
+        (
+            comment_ending_in_a_bidi_control,
+            removes_it_from_the_comment,
+        ),
+        (string_ending_in_a_bidi_control, escapes_it_in_the_string),
     ];
     for (make, expect) in cases {
         for n in [1, 2, 9] {

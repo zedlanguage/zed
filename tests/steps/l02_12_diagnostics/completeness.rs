@@ -37,7 +37,14 @@ fn every_kind_of_hidden_character_prints_escaped_in_the_line_and_the_type() {
         ('\u{2069}', "\\u{2069}"),
         ('\u{E0001}', "\\u{E0001}"),
     ] {
-        let out = greet(&format!("a{c}b"));
+        // A bidirectional control is an error in a string's text (DESIGN.md sec:lexical,
+        // `TextChar`), so the source writes it as its escape; the value holds it.
+        let inner = if zedc::lex::is_bidi_control(c) {
+            format!("a{form}b")
+        } else {
+            format!("a{c}b")
+        };
+        let out = greet(&inner);
         assert_eq!(raw(&out), None, "{:X}: {out:?}", c as u32);
         assert!(
             out.contains(&format!("this expression is \"a{form}b\"")),
@@ -109,10 +116,33 @@ fn an_escape_in_a_comment_on_a_quoted_line_prints_escaped() {
 #[test]
 fn hidden_characters_on_two_lines_print_escaped_on_each() {
     let out =
-        rejected("greet = \"\u{1B}x\" ++ 3;\nwave = \"\u{202E}y\" ++ 4;\nmain(m: MainArgs) = 0;\n");
+        rejected("greet = \"\u{1B}x\" ++ 3;\nwave = \"\u{200B}y\" ++ 4;\nmain(m: MainArgs) = 0;\n");
     assert_eq!(raw(&out), None, "{out:?}");
     assert!(out.contains("1 | greet = \"\\u{1B}x\" ++ 3;"), "{out}");
-    assert!(out.contains("2 | wave = \"\\u{202E}y\" ++ 4;"), "{out}");
+    assert!(out.contains("2 | wave = \"\\u{200B}y\" ++ 4;"), "{out}");
+}
+
+/// A bidirectional control written in a comment or a string is a lexical error (DESIGN.md
+/// sec:lexical, `TextChar`); its message names it by its code point, and the quoted line and
+/// the repair print it escaped, so the message shows the line as the compiler reads it.
+#[test]
+fn a_bidi_control_in_a_comment_or_a_string_prints_escaped_in_its_lexical_error() {
+    for (src, line) in [
+        (
+            "greet = \"a\u{202E}b\";\nmain(m: MainArgs) = 0;\n",
+            "1 | greet = \"a\\u{202E}b\";",
+        ),
+        (
+            "greet = 1; // done \u{2067} x\nmain(m: MainArgs) = 0;\n",
+            "1 | greet = 1; // done \\u{2067} x",
+        ),
+    ] {
+        let out = rejected(src);
+        assert_eq!(raw(&out), None, "{out:?}");
+        assert!(out.starts_with("1:"), "{out}");
+        assert!(out.contains("Text-direction character U+"), "{out}");
+        assert!(out.contains(line), "{out}");
+    }
 }
 
 #[test]
