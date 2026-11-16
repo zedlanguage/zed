@@ -106,6 +106,8 @@ thread_local! {
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.
     pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
+    /// Test control: write the model, cell and counted work of each question to stderr.
+    pub static EXACT_TRACE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The units of work used and allowed.
@@ -139,6 +141,12 @@ impl Work {
     fn ask(&mut self, q: &Formula) -> Result<Option<Model>, Refusal> {
         let before = self.used;
         let answer = self.metered(|| super::satisfiable(q));
+        if EXACT_TRACE.get() {
+            eprintln!(
+                "EXACT ask before={before} after={} q={q} answer={answer:?}",
+                self.used
+            );
+        }
         QUESTION_WORK.set(QUESTION_WORK.get().saturating_add(self.used - before));
         answer?
     }
@@ -240,6 +248,13 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     if EXACT_OFF.get() {
         return found;
     }
+    // Use the same writing for choosing implicants as for the initial solver.
+    // Sorting only the initial solver left these model-based choices order dependent.
+    let ordered = super::canonical_parts(f);
+    let f = &ordered;
+    if EXACT_TRACE.get() {
+        eprintln!("EXACT begin syms={syms:?} h={found:?} f={f}");
+    }
     let (each, _) = found;
     let size = constraints(f);
     let factors = factors(f);
@@ -302,6 +317,12 @@ fn cover(
             if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
                 work.read(size)?;
                 let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
+                if EXACT_TRACE.get() {
+                    eprintln!(
+                        "EXACT cell s={s} model={m:?} set={c} holed={holed:?} work={}",
+                        work.used
+                    );
+                }
                 if !holed.is_empty() {
                     // The parts with holes and no end of every cell so far, joined: where the
                     // values found fill a tail up to an end, the values left of it are listed.
@@ -457,8 +478,10 @@ fn cover(
 /// pieces of `h` made whole are those where the values have holes without end, a property
 /// of `f` and of `h`, the solver's answer, which a reordering does not change
 /// (`l01_38_omega_test::omega::reordered_formulas_agree` checks `h` on main); outside them
-/// `found` is exact, so the same. A refusal past the work limit may still depend on the
-/// order, as the work does (row GROUP-order-verdicts).
+/// `found` is exact, so the same. The cover now reads `canonical_parts(f)`, with
+/// equal subtrees interned; permutations therefore also take the same cells and
+/// spend the same work before a refusal. The enumeration test below separately
+/// checks this tail rule, including its finite exceptions.
 // Complexity tradeoff: before, `kept` alone was kept whole, the part of the tail the cells
 // had not filled when its question was asked; that point depends on which cells came first,
 // so on the order of the disjuncts (bench `omega::the_answer_does_not_depend_on_the_order_of_
@@ -1385,6 +1408,93 @@ mod tests {
         assert_eq!(each.0[1], Ok(IntervalSet::empty()), "{f}");
     }
 
+    /// The fast certificate includes disjunctions and holed domains, but excludes
+    /// a cyclic constraint graph and a non-unit stride. Compare every projected
+    /// value with exhaustive points, without using the cover as the oracle.
+    #[test]
+    fn certified_forests_match_enumerated_points_without_questions() {
+        let mut rng = Rng(0x1380);
+        for _ in 0..40 {
+            let edge = |x, y, vs: [i64; 2]| {
+                Formula::or(vs.into_iter().map(|v| eq(&[(x, 1), (y, -1)], -v)).collect())
+            };
+            let f = boxed(Formula::and(vec![
+                edge("x", "y", [rng.int(-3, 3), rng.int(-3, 3)]),
+                edge("y", "z", [rng.int(-3, 3), rng.int(-3, 3)]),
+                Formula::or(vec![ge(&[("x", -1)], -2), ge(&[("x", 1)], 0)]),
+            ]));
+            EXACT_QUESTIONS.set(0);
+            let each = super::super::certified_domains(&f, &[a("x"), a("y"), a("z")])
+                .expect("a forest is certified");
+            for (got, s) in each.0.iter().zip(NAMES) {
+                assert_eq!(got, &Ok(brute(&f, s)), "{s}: {f}");
+            }
+            assert!(each.1.is_empty());
+            assert_eq!(EXACT_QUESTIONS.get(), 0);
+            assert_eq!(project_each(&f, &[a("x"), a("y"), a("z")]).unwrap(), each);
+            assert_eq!(EXACT_QUESTIONS.get(), 0);
+        }
+        assert!(super::super::certified_domains(&evens(4), &[a("x")]).is_none());
+        let edge = |x, y| Formula::or(vec![eq(&[(x, 1), (y, -1)], 0), eq(&[(x, 1), (y, -1)], -2)]);
+        let cycle = boxed(Formula::and(vec![
+            edge("x", "y"),
+            edge("y", "z"),
+            edge("z", "x"),
+        ]));
+        assert!(super::super::certified_domains(&cycle, &[a("x")]).is_none());
+    }
+
+    /// Canonicalization must equalize the work, including the refusal boundary,
+    /// and must intern duplicate raw subtrees regardless of their input sharing.
+    #[test]
+    fn reordered_covers_spend_identical_work() {
+        let f = evens(8);
+        let Formula::And(parts) = &f else {
+            panic!("a conjunction");
+        };
+        let h = IntervalSet::of(0, 16);
+        for limit in [1_000, EXACT_LIMIT] {
+            let mut expected = None;
+            for reverse in [false, true] {
+                let mut kids = parts.to_vec();
+                if reverse {
+                    kids.reverse();
+                }
+                for child_reverse in [false, true] {
+                    let kids = kids
+                        .iter()
+                        .map(|p| match p {
+                            Formula::Or(gs) if child_reverse => Formula::Or(
+                                super::super::Shared::new(gs.iter().rev().cloned().collect()),
+                            ),
+                            _ => p.clone(),
+                        })
+                        .collect();
+                    let g = Formula::And(super::super::Shared::new(kids));
+                    EXACT_WORK.set(0);
+                    EXACT_QUESTIONS.set(0);
+                    EXACT_LIMIT_SET.set(Some(limit));
+                    let got = exact_each(&g, &[a("x")], (vec![Ok(h.clone())], vec![]));
+                    EXACT_LIMIT_SET.set(None);
+                    let got = (got, EXACT_WORK.get(), EXACT_QUESTIONS.get());
+                    if let Some(want) = &expected {
+                        assert_eq!(&got, want);
+                    } else {
+                        expected = Some(got);
+                    }
+                }
+            }
+        }
+        let p = Formula::And(super::super::Shared::new(vec![
+            ge(&[("x", 1)], 0),
+            ge(&[("y", 1)], 0),
+        ]));
+        let q = Formula::And(super::super::Shared::new(p.kids().to_vec()));
+        let f = Formula::Or(super::super::Shared::new(vec![p, q]));
+        let g = super::super::canonical_parts(&f);
+        assert_eq!(Id::any(&g.kids()[0]), Id::any(&g.kids()[1]));
+    }
+
     /// A disjunct with a stride keeps its holes: `x != 1 || x + 2 * y == 0` (the shape of the
     /// zedc_preimage test of FAIL-or-if-projection-not-exact) gives `x` every value but 1, and
     /// `(y >= 1 || y <= -1) && x == 3 * y + 1` the values of `3 * y + 1` in the box.
@@ -1475,6 +1585,91 @@ mod tests {
             Ok(IntervalSet::range(End::NegInf, End::PosInf))
         );
         assert_eq!(causes, vec![Refusal::Repeats]);
+    }
+
+    /// Exhaust the orders of two strided rays and a finite exception, including the
+    /// orders inside each conjunction. The oracle enumerates witnesses in a box large
+    /// enough for every tested x; it does not ask the solver. P246: Repeats may widen
+    /// the infinite component of h, but must keep the finite component exact.
+    #[test]
+    fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
+        let h =
+            IntervalSet::from_pieces(vec![(End::NegInf, End::of(-1)), (End::of(3), End::of(4))]);
+        let orders = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        let mut checked = 0;
+        for step in [3, 4, 5] {
+            for offset in [1, 7] {
+                let mut expected = None;
+                for order in orders {
+                    for mask in 0..8 {
+                        let ray = |name: &str, residue: i64, reverse: bool| {
+                            let mut rows = vec![
+                                eq(&[("x", 1), (name, -step)], -residue),
+                                ge(&[("x", -1)], -offset),
+                            ];
+                            if reverse {
+                                rows.reverse();
+                            }
+                            Formula::And(super::super::Shared::new(rows))
+                        };
+                        let arms = [
+                            ray("y", 0, mask & 1 != 0),
+                            ray("z", 1, mask & 2 != 0),
+                            eq(&[("x", 1)], -3),
+                        ];
+                        let disj = Formula::Or(super::super::Shared::new(
+                            order.iter().map(|i| arms[*i].clone()).collect(),
+                        ));
+                        let mut top = vec![disj, ge(&[("x", -1)], 4)];
+                        if mask & 4 != 0 {
+                            top.reverse();
+                        }
+                        let f = Formula::And(super::super::Shared::new(top));
+                        // Supply the same sound h directly, so the test exercises exact_each
+                        // even if a future solver fast path recognizes this family.
+                        let got = exact_each(&f, &[a("x")], (vec![Ok(h.clone())], vec![]));
+                        let set = got.0[0].as_ref().expect("this small tail must answer");
+                        assert_eq!(got.1, vec![Refusal::Repeats], "{f}");
+                        if let Some(want) = &expected {
+                            assert_eq!(&got, want, "{f}");
+                        } else {
+                            expected = Some(got.clone());
+                        }
+                        for x in -12..=12 {
+                            let has_point = (-20..=20).any(|v| {
+                                let m = [
+                                    (a("x"), Int::from(x)),
+                                    (a("y"), Int::from(v)),
+                                    (a("z"), Int::from(v)),
+                                ]
+                                .into_iter()
+                                .collect();
+                                f.holds(&m)
+                            });
+                            assert!(!has_point || set.contains(x), "lost point {x}: {f}");
+                            if x >= 0 {
+                                assert_eq!(set.contains(x), has_point, "finite component {x}: {f}");
+                            }
+                        }
+                        // ended must erase the arbitrary finite cut of a proved tail.
+                        for cut in [-4, -10, -30] {
+                            let kept = IntervalSet::range(End::NegInf, End::of(cut));
+                            let found = IntervalSet::single(3);
+                            assert_eq!(ended(&h, found, &kept), (set.clone(), true));
+                        }
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 288);
     }
 
     /// The conjunction of a pendants part that ran forever (l01_39 `pendants`, rows 5 to 9):

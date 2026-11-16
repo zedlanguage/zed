@@ -2,6 +2,7 @@
 
 use crate::slack_scale::*;
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable};
 
@@ -265,12 +266,15 @@ fn untied_projection_uses_the_endpoint_report() {
     let large = subset_sum_dp(&weights_distinct(8 * k));
     let y0 = [sym("y0")];
     let red = std::env::var_os("PDCX_RED").is_some();
-    // The solver alone: the join of row sums (module `row_sums`) answers both sizes exactly with
-    // the empty set, since the target is unreachable, and the endpoint report is not reached.
+    // The solver alone, without the exact cover ([`solver_alone`]), which would make its answer
+    // exact. With the method, the join of row sums (module `row_sums`) answers both sizes
+    // exactly with the empty set, since the target is unreachable, and the endpoint report is not
+    // reached.
     scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
-        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        let got = solver_alone(|| project_each(if m == k { &small } else { &large }, &y0))
+            .expect("projection");
         assert!(got.0[0].as_ref().expect("set").contains(9000));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
         ROW_SUMS_OFF.with(|o| o.set(false));
@@ -291,7 +295,8 @@ fn tied_projection_endpoint_reports_scale_past_512() {
     // The solver alone, as in the untied test above.
     scaling::check_order("I22 tied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
-        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        let got = solver_alone(|| project_each(if m == k { &small } else { &large }, &y0))
+            .expect("projection");
         assert_eq!(got.0[0], Ok(pt_set(&[1000])));
         ROW_SUMS_OFF.with(|o| o.set(false));
     });

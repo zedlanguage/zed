@@ -16600,7 +16600,8 @@ enum Leaf {
 }
 
 /// The units of the cover's work limit (`exact::EXACT_LIMIT`) charged for each row that
-/// `live3::decide` reads, fitted to its time (PRES-pugh-work-budget).
+/// `live3::decide` reads, before `exact::charge` multiplies by `SOLVER_UNIT`.
+/// This is an empirical weight, not a bound for arbitrary coefficient sizes.
 const LIVE3_ROW: u64 = 64;
 
 /// The Omega test. Each step solves an equality, turns two opposite rows that meet into one,
@@ -17322,13 +17323,17 @@ impl Omega {
         // A question of the cover is charged `LIVE3_ROW` units a row: `live3` runs about ten
         // linear programs and up to 199 slices over the rows, each O(m). Not proved, measured
         // (PRES-pugh-work-budget): 1,814 calls on six rows took 0.11 to 7.3 ms, median 1.3 ms,
-        // of wall time in a debug build (load not recorded), about 40 times the 31 µs its 384
-        // units give at the 80 ns a unit of `exact::EXACT_LIMIT`. The bound there is measured
+        // of wall time in a debug build (load not recorded). Six rows charge 38,400
+        // units after SOLVER_UNIT, or 3.072 ms at 80 ns/unit, not 384 units/31 µs.
+        // The worst wall measurement is about 2.4 times that prediction; wall and
+        // thread CPU measurements must be separated before refitting. The fit is
         // on whole covers,
         // and holds because the rows read are charged 4 to 15 times their time; raising this
         // charge alone would refuse covers that ran in 80 ms. Fitting each charge on its own
-        // is row PRES-work-charge-fit. A refusal past the limit is read at the next step.
-        let _ = exact::charge(LIVE3_ROW * rows.len() as u64);
+        // is row PRES-work-charge-fit. Stop before entering the indivisible call when
+        // its charge exhausts the budget: metered() turns this apparent lack of a
+        // point into Questions, so it can never prove an empty projection.
+        exact::charge(LIVE3_ROW * rows.len() as u64).ok()?;
         let x = live3::decide(&rows, &vs)?;
         Some((vs, x))
     }
@@ -18084,6 +18089,8 @@ fn memo_off() -> bool {
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    let ordered = canonical_parts(f);
+    let f = &ordered;
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
     // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
@@ -18115,7 +18122,14 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     };
     // The solver's answer holds every value with a point and may hold more; the cover of
     // module `exact` makes it the exact set.
-    let solver = || solver_found().map(|e| exact::exact_each(f, syms, e));
+    let solver = || {
+        if !exact::EXACT_OFF.get()
+            && let Some(each) = certified_domains(f, syms)
+        {
+            return Ok(each);
+        }
+        solver_found().map(|e| exact::exact_each(f, syms, e))
+    };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
             return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
@@ -18138,6 +18152,151 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         }
     }
     solver()
+}
+
+/// A writing independent of the order of every conjunction and disjunction. Unlike
+/// Formula's flattened comparison, the tie breaker compares the actual nesting too.
+/// Equal subtrees are interned: otherwise choosing the first of two equal disjuncts
+/// could choose different sharing and therefore different counted work. This is the
+/// value numbering already used by `twins_merged`, applied to parts instead of atoms.
+///
+/// Proof: by induction on height, children have the same writing and sharing up to ids;
+/// sorting by content gives the same sequence, and interning gives one node for that
+/// sequence. Ids are used only for equality, never for ordering. Thus permutations
+/// yield isomorphic DAGs, including duplicate parts, before any budgeted search.
+/// Complexity tradeoff: an extra pass and O(N) storage over the distinct parts and
+/// edges; sorting costs O(sum d log d) comparisons. A comparison may read a whole
+/// pair of sub-DAGs, but never unfolds shared trees. The naive alternative, ordering
+/// just the points already found, cannot undo different work spent finding them.
+fn canonical_parts(f: &Formula) -> Formula {
+    fn cmp(a: &Formula, b: &Formula) -> Ordering {
+        let mut stack = vec![(a, b)];
+        let mut seen = HashSet::new();
+        while let Some((a, b)) = stack.pop() {
+            let order = a.rank().cmp(&b.rank());
+            if !order.is_eq() {
+                return order;
+            }
+            if let (Formula::Con(a), Formula::Con(b)) = (a, b) {
+                let order = a.cmp(b);
+                if !order.is_eq() {
+                    return order;
+                }
+                continue;
+            }
+            let ids = (Id::any(a), Id::any(b));
+            if ids.0 == ids.1 || !seen.insert(ids) {
+                continue;
+            }
+            let (a, b) = (a.kids(), b.kids());
+            let order = a.len().cmp(&b.len());
+            if !order.is_eq() {
+                return order;
+            }
+            stack.extend(a.iter().zip(b).rev());
+        }
+        Ordering::Equal
+    }
+    #[derive(PartialEq, Eq, Hash)]
+    enum Child {
+        Con(Con),
+        Part(Id),
+    }
+    let mut intern: HashMap<(u8, Vec<Child>), Formula> = HashMap::new();
+    f.fold(
+        (),
+        |_, ()| (),
+        |g, (), mut parts| {
+            if let Formula::Con(_) = g {
+                return g.clone();
+            }
+            if matches!(g, Formula::And(_) | Formula::Or(_)) {
+                parts.sort_by(cmp);
+            }
+            let key = (
+                g.rank(),
+                parts
+                    .iter()
+                    .map(|p| match p {
+                        Formula::Con(c) => Child::Con(c.clone()),
+                        _ => Child::Part(Id::any(p)),
+                    })
+                    .collect(),
+            );
+            intern
+                .entry(key)
+                .or_insert_with(|| match g {
+                    Formula::Not(_) => Formula::Not(Shared::new(parts.pop().expect("one part"))),
+                    Formula::And(_) => Formula::And(Shared::new(parts)),
+                    Formula::Or(_) => Formula::Or(Shared::new(parts)),
+                    Formula::Con(_) => unreachable!("returned above"),
+                })
+                .clone()
+        },
+    )
+}
+
+/// Exact projections without a cover question when every row is a difference row,
+/// and every disjunction is certified by `forest_domains`. Products are excluded.
+/// No disjunction may be omitted, even one on an atom not asked for: its component
+/// might be empty. A failed certificate takes the ordinary solver and cover path.
+///
+/// Pugh (1992), exact projection: eliminating a variable whose bounds have unit
+/// coefficients is exact, and difference rows remain difference rows. Thus the
+/// base's shortest-path hulls have no holes. Freuder (1982), section 4: on a tree,
+/// arc consistency extends any surviving value to a whole assignment. The two
+/// exact revision passes of `forest_domains` give those values, including holes;
+/// its handled components share no atom with any unhandled component. When all
+/// disjunctions are handled, the remaining components are satisfiable base rows.
+/// Their Cartesian product proves both existence and each returned projection.
+///
+/// Complexity tradeoff: reuse the existing O(N log N) difference/forest passes,
+/// plus their interval output, rather than O(S N) whole-formula questions/cells
+/// for S symbols even when the old solver's answer was already exact. A forest
+/// certificate that fails costs one extra base solve and forest pass; arbitrary
+/// integer rows are rejected by a shared-DAG walk before either is attempted.
+fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
+    if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
+        return None;
+    }
+    let difference_only = f.fold(
+        (),
+        |_, ()| (),
+        |g, (), parts: Vec<bool>| match g {
+            Formula::Con(c) => {
+                is_difference(c) && !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)))
+            }
+            _ => parts.into_iter().all(|p| p),
+        },
+    );
+    if !difference_only {
+        return None;
+    }
+    let mut p = Parts::of(nnf(f, true));
+    if !p.cons.iter().all(is_difference) {
+        return None;
+    }
+    let model = match solve(&p.cons, true).ok()? {
+        None => return Some(no_points(syms)),
+        Some(m) => m,
+    };
+    let linked = Linked::of(std::mem::take(&mut p.cons));
+    let rows: Vec<&Con> = linked.cons.iter().collect();
+    let mut doms = difference_hulls(&rows, &model)?;
+    let (forest, handled, empty) = forest_domains(&linked, &p.ors, &model);
+    if empty {
+        return Some(no_points(syms));
+    }
+    if handled.iter().any(|h| !h) {
+        return None;
+    }
+    doms.extend(forest);
+    Some((
+        syms.iter()
+            .map(|s| Ok(doms.get(s).cloned().unwrap_or_else(IntervalSet::top)))
+            .collect(),
+        Vec::new(),
+    ))
 }
 
 /// [`project_each`] of `f` as it is written, with no part taken out of its disjunctions.

@@ -36,6 +36,37 @@ use zedc::store::revision::reduce_congruence;
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
 
+/// PRES-cover-refusals-where-exact: a solver answer with an exact relation must
+/// survive the cover. This compares the public transfer with its solver-only path.
+#[test]
+fn the_cover_answers_where_the_solver_alone_answered_at_moduli_5_and_7() {
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    for m in [5, 7] {
+        for seed in 1..=3 {
+            for shape in REMAINDER_SHAPES {
+                for k in [1, 2, 5, 13] {
+                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+                    let alone = solver_alone(|| preimage(&t, &ds, &d));
+                    let trace = std::env::var_os("ZED_EXACT_TRACE_Q3").is_some()
+                        && m == 5
+                        && seed == 1
+                        && k == 5;
+                    zedc::store::presburger::exact::EXACT_TRACE.set(trace);
+                    if trace {
+                        eprintln!("Q3 m={m} seed={seed} shape={shape} k={k}");
+                    }
+                    let covered = preimage(&t, &ds, &d);
+                    zedc::store::presburger::exact::EXACT_TRACE.set(false);
+                    if alone.refusal.is_none() {
+                        assert_eq!(covered.refusal, None, "m={m} seed={seed} k={k}: {t}");
+                        assert!(covered.domains["x"].is_subset(&alone.domains["x"]), "{t}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The preimage of `t` as the solver alone gives it ([`solver_alone`]), which the tests of the
 /// transfer here pin, and the preimage with the exact cover of PRES-pugh-work-budget checked:
 /// every point within `windows` that meets the demand is in it (and, where it is exact, no
