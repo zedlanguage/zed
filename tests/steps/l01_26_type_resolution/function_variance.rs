@@ -856,9 +856,10 @@ fn a_named_call_through_a_parameter_of_two_differing_functions_is_refused() {
     let src = "one(x: int) = x;\ntwo(x: int, y: int = 1) = x + y;\nrun(g) = g(x: 1);\na = run(g: one) + run(g: two);\n";
     let errors = type_errors(src);
     assert!(
-        errors.iter().any(|e| e
-            .contains("and at an earlier call one of type `(x: int) -> int`")
-            && e.contains("which take different numbers of parameters")),
+        errors.iter().any(
+            |e| e.contains("and at an earlier call one of type `(x: int) -> int`")
+                && e.contains("which take different numbers of parameters")
+        ),
         "{src}: {errors:#?}"
     );
 }
