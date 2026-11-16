@@ -701,6 +701,13 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
         ran("strings_generic_others", &src),
         (0, "2 a-b x-y a+b a,a\n".into())
     );
+    // A type variable the signature writes is checked at each call, as a parameter with no
+    // type is.
+    let src = format!(
+        "g(x: T, y: T) = concat([x, y], sep: \"/\");\n{}",
+        main("${g(x: \"a\", y: \"b\")}")
+    );
+    assert_eq!(ran("strings_generic_type_variable", &src), (0, "a/b\n".into()));
     // A separator that may be `""` at the call gives `#emptySeparator` there, and the atom is
     // in the type of the call.
     let q = format!("{p}q(d: String) = p(\"a,b\", d);\n");
@@ -713,12 +720,18 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     rejected_saying("strings_generic_maybe_empty_type", &src, &["#emptySeparator"]);
     // A call whose separator is always `""` always fails, and one that passes no string is
     // rejected, each in the word's own message, at the call.
+    // Its repairs name no `s`, which is not in scope at the call.
     let src = format!("{p}{}", main("${p(\"ab\", \"\").count}"));
     rejected_saying(
         "strings_generic_empty",
         &src,
-        &["always fails with `#emptySeparator`"],
+        &[
+            "`p(\"ab\", \"\")` always fails with `#emptySeparator`",
+            "repair: pass a separator that is not empty to this call",
+        ],
     );
+    let (_, err) = ran("strings_generic_empty_names", &src);
+    assert!(!err.contains("`s::codepoints`"), "{err}");
     let src = format!("{p}{}", main("${p(1, \",\").count}"));
     rejected_saying(
         "strings_generic_not_string",
@@ -741,7 +754,10 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     rejected_saying(
         "strings_generic_entry",
         &src,
-        &["`concat` joins strings, and an entry of this family is 1"],
+        &[
+            "`concat` joins strings, and an entry of this family is 1",
+            "repair: pass a family of strings to this call",
+        ],
     );
     // A part that is not generic is rejected at the definition, and once, not again at the
     // call; `split("")` on a line of `m.stdin` is rejected as on any string.
