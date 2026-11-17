@@ -7659,26 +7659,54 @@ impl Scope {
         }
     }
 
-    // Complexity tradeoff (PERF-deep-block-ratio): the walk of a block of `d` bindings with a
-    // test in each (`Run::walk_at` over this bind) costs O(d log² d), not O(d log d). Per
-    // binding `j`, counted at 1,000, 4,000 and 32,000 bindings (counters, not committed) and
-    // the same at each: one fresh bind here, two assumes, two reductions of one round, eight
-    // rebases of the caches that find the maps the same (`ptr_eq`, O(1)), one sum of a
-    // two-piece summary into a treap of Θ(j) pieces, 28 map differences of which 7 are of
-    // maps not the same (`ptr_eq`) and 71 keys compared in all. Their costs: an insert or
-    // lookup in a map of `j` names, O(log j); the treap sum, O(log j) expected
-    // (`preimage::prio_of`); and a difference of two maps that share all but O(1) paths
-    // (`imbl::OrdMap::diff`), O(B·h²) with B = 16 and h = log_B j, since
-    // imbl 7.0.2 skips shared subtrees only at the leaves (`Cursor::advance_skipping_shared`):
-    // beside each copied path it walks down to the first leaf of each of up to B shared
-    // siblings at each of h levels, O(h) each (7,164, 9,626, 12,420 and 16,054 instructions
-    // for one changed key in 4,000, 32,000, 256,000 and 2,048,000 keys). Sum over j ≤ d:
-    // O(d log² d), predicted ratio 8 (ln 32,000 / ln 4,000)² = 12.5; measured 9.295. Used:
-    // imbl 7.0.2's difference, as above. Not used: a difference that skips a shared subtree
-    // at its root, O(B·h) a copied path, O(d log d) in all; a 60-line patch of
-    // `advance_skipping_shared` (imbl's own tests pass with it) measured 4,254, 5,470, 6,508
-    // and 7,684 instructions at those sizes and 8.895 on the test (1,795.8M and 15,973.7M
-    // instructions), left to row IMBL-diff-branch-skip since it changes a dependency. Test:
+    // Complexity tradeoff (PERF-deep-block-ratio, IMBL-diff-branch-skip): the walk of a block
+    // of `d` bindings with a test in each (`Run::walk_at` over this bind) costs O(d log d).
+    // Per binding `j` it does a number of operations that does not grow with `d` (proved
+    // below), each O(log j): an insert or lookup in a map of `j` names; the sum of a two-piece
+    // summary into a treap of Θ(j) pieces, O(log j) expected (`preimage::prio_of`); and 28
+    // map differences (`imbl::OrdMap::diff`), 21 of a map with itself (`ptr_eq`, which
+    // returns before any walk, O(1)) and 7 of two maps that differ in one entry, O(B·h) each
+    // with B = 16 and h = log_B j. That bound is the patched `Cursor::advance_skipping_shared`
+    // in vendor/imbl (proved in its comment), which steps over a subtree both maps share at
+    // any level. Naive version, imbl 7.0.2's, skipped shared subtrees only at the leaves:
+    // beside the changed path it walked down to the first leaf of each of up to B shared
+    // siblings at each of h levels, O(B·h²) a difference, O(d log² d) in all (9.295 times the
+    // instructions from 4,000 to 32,000 bindings). One changed key in 4,000, 32,000, 256,000
+    // and 2,048,000 keys: 7,164, 9,626, 12,420 and 16,054 instructions before, 4,254, 5,470,
+    // 6,508 and 7,684 after.
+    //
+    // Why the counts are constant, for the block `t_j = t_(j-1) + if n > j {2} else {1}`
+    // with scope S_(j-1) before binding `j`:
+    // (1) `walk_at` changes the outer scope only at this bind and at the unbind after the
+    // body. The test `n > j` is assumed twice (`walk_if`, `walk_arms`), each time on a clone
+    // of the scope, and the arms are literals, which walk nothing. So S_j is S_(j-1) with
+    // `t_j` added.
+    // (2) Each bind is fresh (`t_j` is bound nowhere else and its product is not empty), so
+    // `seen_fresh` rebases four caches (the reduction's last names, the projection's, the
+    // enumeration's, the order's). Each holds the scope's map of names, by induction: the
+    // last rebase set it to `now.clone()`. So each rebase finds `ptr_eq` and is O(1), and
+    // again at the unbind: 8 rebases, none of which walks a difference.
+    // (3) An assume works on a clone of S_j whose caches are its names. `extend_path` refuses
+    // a test of one name while `names.relation` is `None`, and it stays `None`: only an
+    // admission sets it (`extend_path`, and `extend_pendant`, which takes only an `or`), and
+    // `seen_fresh` marks it again only when it is set. So the test narrows `n` alone and adds
+    // no conjunct (`narrow_linear` keeps only equalities of two atoms or more), and the
+    // relation, its stars and its classes stay the same maps. Of the 11 differences of an
+    // assume, 8 are of a map with itself (`Order::sync`'s stars, classes and conjuncts;
+    // `due`'s two; `reduce_with`'s `before.diff`; `enumerate`'s written names and enumerated
+    // set). The 3 others (`reduce_with`'s `last.diff`, `Order::sync`'s names, `enumerate`'s
+    // names) compare a cache equal to S_j's names with the names after the narrowing, which
+    // differ in `n` alone. No conjunct mentions `n`, so no projection is due, and the
+    // reduction of `n`'s interval changes no domain, so `reduce_with` ends after one round.
+    // (4) In zed-kernel, `Lits::union` makes 5 differences a binding and the zip of two
+    // `Atoms` 1; only one of them is of two maps not the same, and it compares one key at
+    // both sizes counted below (these sets are of the arms' literals, not of the names; that
+    // they stay this small is counted, not proved here).
+    // In all, 6 + 2 × 11 = 28 differences per binding, 1 + 2 × 3 = 7 of maps not the same.
+    // Counted in a copy of imbl with counters (not committed), at 250 and 2,000 bindings:
+    // 28.0 calls and 7.0 not the same per binding, 8.2 and 8.0 keys compared per call that
+    // walks. Measured: 8.895 times the instructions from 4,000 to 32,000 bindings (load 43),
+    // against 10.0 for O(d log d). Test:
     // `l01_39_reduced_product::deep_let::bench::the_arms_of_a_deep_block_scale`, COMPLEXITY.md
     // row PA-bind-cost.
     fn bind_with(
@@ -15449,9 +15477,12 @@ impl<'m> Run<'m> {
         }
     }
 
-    // Complexity: a block of `d` bindings with a test in each costs O(d log² d) under imbl
-    // 7.0.2's map difference, O(d log d) with a difference that skips shared subtrees at
-    // their roots; the proof and measurements are at [`Scope::bind_with`] (PERF-deep-block-ratio).
+    // Complexity: a block of `d` bindings with a test in each costs O(d log d), with the map
+    // difference of vendor/imbl, which skips a shared subtree at its root; a binding changes
+    // this walk's scope only at its bind and unbind, and each of its two assumes works on a
+    // clone, so the maps each binding's walk compares, and their number, do not grow with `d`.
+    // The proof and measurements are at [`Scope::bind_with`] (PERF-deep-block-ratio,
+    // PROOF-deep-block-counts-constant).
     async fn walk_at(&'m self, t: &'m Term) {
         match t {
             Term::Let(x, e, b) => {
