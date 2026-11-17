@@ -340,8 +340,7 @@ rustix.workspace = true
 # What the tests of the other packages ask for in the workspace build, so that
 # `cargo test -p zed-tests --lib` builds every library as that build does: zedc-presburger is a
 # dylib, whose file name does not change with its features, and a build with others would
-# overwrite the one every test binary loads; object as zed-native's tests have it;
-# target-lexicon with `std`, as zed-clif's cranelift-reader has it.
+# overwrite the one every test binary loads; object as zed-native's tests have it.
 [dev-dependencies]
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 object = { workspace = true, features = ["build"] }
