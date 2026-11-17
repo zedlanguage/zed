@@ -9,7 +9,7 @@ m = round(d * 10.0);                    // 3 with inexact()
 same = c == 0.75;                       // true, no warning
 near = abs(d - 0.3) <= 1e-9;            // true, no warning
 // eq = d == 0.3;                       // warning: Exact comparison of a rounded value: d carries inexact()
-// k = int(7r/2r);                      // ✗ No int equals the value: 7r/2r is not whole
+// k = int(7r/2r);                      // ✗ No `int` equals the value: 7r/2r is not whole
 twice(x: f64 with inexact(false)) = x * 2.0;
 t = twice(c);                           // 1.5
 u = twice(d);                        // ✗ Rounded value at a parameter that refuses it: d is rounded at 0.1f64 and at +

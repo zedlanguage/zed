@@ -203,15 +203,12 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
-        // The float facts of sec:facets (spec 7d1cf81). The ✗ comment of the cast writes "No int
-        // equals the value", without the backticks of the row "No `int` equals the value", so
-        // it names no row until DESIGN writes them; then the pin is plan row CAST-round-whole's.
-        (
-            "no-int-equals-the-value",
-            "12: the line is marked ✗ and its comment names no row of the rejection table: \
-             write `// ✗ <row>: …` with the row's name"
-                .into(),
-        ),
+        // The float facts of sec:facets (spec 7d1cf81; the row's backticks, spec ad25f0c). The
+        // ✗ comment names the row "No `int` equals the value", but line 13's facet
+        // `inexact(false)` (plan row FPWARN) is a form zedc does not compile yet, so the unit is
+        // not checked and line 12 has no diagnostic. Alone, zedc rejects the line in the row
+        // "Operation that always fails"; plan row CAST-round-whole gives it its own row.
+        ("no-int-equals-the-value", none(12)),
         // The parameter facet `inexact(false)` is plan row FPWARN's (step L10.3b).
         (
             "rounded-value-at-refusing-parameter",

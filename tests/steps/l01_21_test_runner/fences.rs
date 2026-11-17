@@ -59,7 +59,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     assert_eq!(
         alternatives,
         [
-            "DESIGN.md [sec:ports] 1",
+            "DESIGN.md [sec:ports] 3",
             "DESIGN.md [sec:checking_in_zed] 1"
         ]
     );

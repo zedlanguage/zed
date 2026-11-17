@@ -556,7 +556,7 @@ no-int-equals-the-value
         row: None,
     },
 ]
-  checks: [Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name"), not_run: None }, Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
 
 nullable-column-missing-none
   rejected: [

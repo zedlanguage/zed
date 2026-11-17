@@ -49,7 +49,32 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
 == DESIGN.md [sec:failure] 2 L7
   1 | «type» Signal = #sigabrt | #sigalrm | #sigbus | #sigfpe | #sighup | #sigill | #sigint | #sigkill | #sigpipe | #sigprof | #sigquit | #sigsegv | #sigsys | #sigterm | #sigtrap | #sigusr1 | #sigusr2 | #sigvtalrm | #sigxcpu | #sigxfsz | #otherSignal ( n : int [ 1₍10₎ .. ] , name : Utf8String | #none ) ;
-== DESIGN.md [sec:ports] 1 L1
+== DESIGN.md [sec:ports] 1 L7
+  1 | «type» IoReason = #notFound | #notAFile | #notADirectory | #denied | #exists | #busy | #noSpace | #limit | #tooLarge | #badName | #notExecutable | #refused | #unreachable | #lost | #deviceError | #unsupported | #interrupted | #other ( code : int ) ;
+== DESIGN.md [sec:ports] 2 L7
+  2 | main ( m : MainArgs ) -> int {
+  3 | fs = main :: files ;
+  4 | «match» fs [ str["in.txt"] ] {
+  5 | #notFound -> { m . stderr <- str["in.txt does not exist"] ; 1₍10₎ } ,
+  6 | #ioError ( op : , path : , why : , text : ) -> «match» why {
+  7 | #denied -> { m . stderr <- str["no permission to read " ${path}] ; 1₍10₎ } ,
+  8 | #notAFile -> { m . stderr <- str[${path} " is a directory, not a file"] ; 1₍10₎ } ,
+  9 | _ -> { m . stderr <- str["cannot " ${op} " " ${path} ": " ${text}] ; 1₍10₎ } ,
+ 10 | } ,
+ 11 | s -> {
+ 12 | ack = fs [ str["out.txt"] ] <- s ;
+ 13 | «match» ack {
+ 14 | #ok -> 0₍10₎ ,
+ 15 | #ioError ( op : , path : , why : , text : ) -> «match» why {
+ 16 | #noSpace -> { m . stderr <- str["the disk is full; out.txt was not written"] ; 1₍10₎ } ,
+ 17 | #denied -> { m . stderr <- str["no permission to write " ${path}] ; 1₍10₎ } ,
+ 18 | _ -> { m . stderr <- str["cannot " ${op} " " ${path} ": " ${text}] ; 1₍10₎ } ,
+ 19 | } ,
+ 20 | }
+ 21 | } ,
+ 22 | }
+ 23 | }
+== DESIGN.md [sec:ports] 3 L1
   2 | main ( m : MainArgs ) {
   3 | m . stdout <- str["Hello, world!"] ;
   4 | }
@@ -57,7 +82,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | m . stdout <- str["checked"] ;
   9 | «if» ( m . args [ 0₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
  10 | }
-== DESIGN.md [sec:ports] 2 L12
+== DESIGN.md [sec:ports] 4 L12
   4 | @limits ( memory : 1₍10₎ «with» units ( str["GiB"] ) , cpu : 60₍10₎ «with» units ( str["s"] ) )
   5 | @timeout ( 5₍10₎ «with» units ( str["min"] ) )
   6 | main ( m : MainArgs ) {
@@ -69,16 +94,16 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  14 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
  15 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
  16 | }
-== DESIGN.md [sec:ports] 3 L7
+== DESIGN.md [sec:ports] 5 L7
   3 | main ( m : MainArgs ) -> int «with» handles ( #sigint ) {
   4 | stopped = m . signals [ 0₍10₎ ] == #sigint «else» «false» ;
   5 | m . stdout <- «if» stopped { str["stopping"] } «else» { str[] } ;
   6 | }
-== DESIGN.md [sec:ports] 4 L7
+== DESIGN.md [sec:ports] 6 L7
   2 | main ( m : MainArgs ) -> int {
   3 | r = run ( [ str["git"] , str["status"] , str["--short"] ] ) ;
   4 | «match» r {
-  5 | #ioError ( op : , path : , why : ) -> { m . stderr <- str["git did not start: " ${why}] ; 2₍10₎ } ,
+  5 | #ioError ( op : , path : , why : , text : ) -> { m . stderr <- str["git did not start: " ${text}] ; 2₍10₎ } ,
   6 | done -> «match» done . status {
   7 | #ok -> { m . stdout <- done . stdout ; 0₍10₎ } ,
   8 | #exit ( code : ) -> { m . stderr <- done . stderr ; code } ,
@@ -91,12 +116,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  18 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
  19 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
  20 | }
-== DESIGN.md [sec:ports] 5 L7
+== DESIGN.md [sec:ports] 7 L7
   2 | main ( m : MainArgs ) {
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
-== DESIGN.md [sec:ports] 6 L21
+== DESIGN.md [sec:ports] 8 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» 0r
@@ -879,7 +904,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 == DESIGN.md [sec:ffi] 15 L7
   1 | «struct» Plugin { }
   2 | @foreign ( str["plugin"] , str["plugin_step"] , isolate : «true» ) pluginStep : ( plugin : Plugin «with» notPassed ( ) , x : f64 ) -> f64 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
-  6 | startPlugin ( ) -> Plugin | #ioError ( op : Utf8String , path : Utf8String , why : Utf8String ) «with» release ( plugin -> #ok ) {
+  6 | startPlugin ( ) -> Plugin | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( plugin -> #ok ) {
   7 | «return» Plugin ( ) ;
   8 | }
  10 | main ( m : MainArgs ) {
@@ -890,12 +915,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 == DESIGN.md [sec:ffi] 16 L12
   1 | «struct» Fetcher { }
   2 | @foreign ( str["fetch"] , str["fetch_url"] , isolate : «true» ) fetchUrl : ( f : Fetcher «with» notPassed ( ) , url : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
-  5 | startFetcher ( ) -> Fetcher | #ioError ( op : Utf8String , path : Utf8String , why : Utf8String ) «with» release ( f -> #ok ) «with» restrict ( network : #outbound ) «with» limits ( memory : 256₍10₎ «with» units ( str["MiB"] ) ) {
+  5 | startFetcher ( ) -> Fetcher | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( f -> #ok ) «with» restrict ( network : #outbound ) «with» limits ( memory : 256₍10₎ «with» units ( str["MiB"] ) ) {
   6 | «return» Fetcher ( ) ;
   7 | }
   9 | «struct» Model { }
  10 | @foreign ( str["model"] , str["model_run"] , isolate : «true» ) runModel : ( m : Model «with» notPassed ( ) , x : f64 ) -> f64 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
- 13 | startModel ( ) -> Model | #ioError ( op : Utf8String , path : Utf8String , why : Utf8String ) «with» release ( m -> #ok ) «with» restrict ( read : [ str["/usr/share/model"] ] , write : [ str["/var/cache/model"] ] ) {
+ 13 | startModel ( ) -> Model | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( m -> #ok ) «with» restrict ( read : [ str["/usr/share/model"] ] , write : [ str["/var/cache/model"] ] ) {
  14 | «return» Model ( ) ;
  15 | }
 == DESIGN.md [sec:tour_basics] 1 L2

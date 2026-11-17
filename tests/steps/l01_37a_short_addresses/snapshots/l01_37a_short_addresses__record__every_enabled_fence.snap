@@ -2,7 +2,7 @@
 source: tests/steps/l01_37a_short_addresses/record.rs
 expression: without_addresses(&out)
 ---
-DESIGN.md [sec:ports] 1
+DESIGN.md [sec:ports] 3
   warnings: []
   checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^"), not_run: None }]
 

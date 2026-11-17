@@ -800,6 +800,7 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Duration", 7),
     ("Ptr", 7),
     ("Signal", 7),
+    ("IoReason", 7),
     ("i8", 7),
     ("i16", 7),
     ("i32", 7),
