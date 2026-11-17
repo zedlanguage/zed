@@ -1545,11 +1545,11 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Text(" }"),
         ]),
         NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
-        NeedKind::Map { f, filter, lambda } => parts.extend([
+        NeedKind::Map { f, word, lambda } => parts.extend([
             Dbg::Text("Map { f: "),
             Dbg::Ty(f),
-            Dbg::Text(", filter: "),
-            Dbg::Leaf(filter),
+            Dbg::Text(", word: "),
+            Dbg::Leaf(word),
             Dbg::Text(", lambda: "),
             Dbg::Leaf(lambda),
             Dbg::Text(" }"),
@@ -4033,6 +4033,30 @@ impl LevelWord {
     }
 }
 
+/// A built-in word that applies a function to each entry of a family, recorded by a
+/// [`NeedKind::Map`] when its receiver's type is a type parameter, so that the need met at a
+/// call names the word the program wrote (plan row MSG-flatmap-labeled-map).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MapWord {
+    /// `x.map(f)`.
+    Map,
+    /// `x.where(f)`, which keeps the entries `f` gives `true` for.
+    Where,
+    /// `x.flatMap(f)`, which applies `f` as `map` does before it adjoins the lists.
+    FlatMap,
+}
+
+impl MapWord {
+    /// The word as the program writes it: `map`, `where` or `flatMap`.
+    pub fn name(self) -> &'static str {
+        match self {
+            MapWord::Map => "map",
+            MapWord::Where => "where",
+            MapWord::FlatMap => "flatMap",
+        }
+    }
+}
+
 /// How a program wrote a fold of one level, for the messages of the checker's `fold_level`.
 /// A need [`NeedKind::Reduce`] carries it, so that a fold checked again at each call of a
 /// generic function names the form the program wrote (row FAIL-need-fold-form-message).
@@ -4241,13 +4265,13 @@ pub enum NeedKind {
         /// sec:type_resolution, rule 6). They hold no variable.
         beside: Ty,
     },
-    /// `v.map(f)`, or `v.where(f)` when `filter` is set, with `f` of type `f`: the value is a
-    /// family, and the use gives the family `map` or `where` makes of it (step L3.2).
+    /// `v.map(f)`, `v.where(f)` or `v.flatMap(f)`, by `word`, with `f` of type `f`: the value
+    /// is a family, and the use gives the family `map` or `where` makes of it (step L3.2).
     Map {
         /// The function's type.
         f: Ty,
-        /// Whether the use is `where`.
-        filter: bool,
+        /// The word the program wrote.
+        word: MapWord,
         /// Whether `f` is a lambda written at the use, which nothing else calls: its
         /// parameter's values are then the entries of `v` alone.
         lambda: bool,
@@ -4694,13 +4718,9 @@ impl Need {
                     site: *site,
                 },
                 NeedKind::Index(k) => NeedKind::Index(f(k)),
-                NeedKind::Map {
-                    f: g,
-                    filter,
-                    lambda,
-                } => NeedKind::Map {
+                NeedKind::Map { f: g, word, lambda } => NeedKind::Map {
                     f: f(g),
-                    filter: *filter,
+                    word: *word,
                     lambda: *lambda,
                 },
                 NeedKind::Group { f: g, recv } => NeedKind::Group {

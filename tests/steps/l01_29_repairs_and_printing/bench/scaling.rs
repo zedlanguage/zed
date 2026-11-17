@@ -160,6 +160,21 @@ fn many_division_arguments_scale() {
     );
 }
 
+/// The `rat` of the cast's fix lent to the division beside it among n arguments, one more
+/// check of the call and one pass over the arguments (TEST-params-own-apart-red). Negative
+/// control, run once and not committed: with the type lent to each other argument by a check
+/// of the call of its own, this ran out of time (232 s; 0.84 s with the change).
+#[test]
+fn a_cast_beside_a_division_of_one_variable_among_many_arguments_scales() {
+    let n = 1000;
+    let srcs = scaling::inputs(n, cast_beside_a_division);
+    scaling::check(
+        "offering each carrier for a cast beside a division among n arguments",
+        n,
+        |k| cast_beside_a_division_offered(&srcs[&k], k),
+    );
+}
+
 #[test]
 fn the_merges_between_a_value_and_its_use_scale() {
     let n = 4000;

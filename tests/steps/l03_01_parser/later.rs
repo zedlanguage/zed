@@ -56,20 +56,6 @@ fn each_form_names_the_step_that_compiles_it() {
             "f(r) = r else #ok(v: 0..<10) -> 0;",
             &[concat!(zed_tests::not_yet!("a range pattern"), " [0..<10]")],
         ),
-        (
-            "f(x: [int]) = x;",
-            &[concat!(
-                zed_tests::not_yet!("a family type `[T]`"),
-                " [[int]]"
-            )],
-        ),
-        (
-            "f(x: [int]) = [x];",
-            &[concat!(
-                zed_tests::not_yet!("a family type `[T]`"),
-                " [[int]]"
-            )],
-        ),
     ]);
 }
 

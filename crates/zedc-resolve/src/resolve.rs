@@ -3574,10 +3574,11 @@ impl Resolver<'_> {
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::AtomAny(_) | TypeKind::Every(Every::Struct) if self.printed.is_some() => {}
-            // A printed list `[V]` is the function type `int ->? V` the checker reads it as
-            // (MSG-list-type-printed-by-arrows), so it is the home of the variables in `V` as
-            // that arrow is.
-            TypeKind::Array(of) if self.printed.is_some() => {
+            // A list `[V]`, written or printed, is the function type `int ->? V` the checker
+            // reads it as (MSG-list-type-printed-by-arrows, LIST-type-written), so it is the
+            // home of the variables in `V` as that arrow is. An `is` test against it is
+            // refused where the test's type is read ([`zedc_types::kernel_type`]).
+            TypeKind::Array(of) => {
                 self.arrows.push(t.span);
                 todo.push(Task::ArrowEnd);
                 todo.push(Task::Ty(of));
@@ -3597,7 +3598,6 @@ impl Resolver<'_> {
                 self.later(t.span, "a record type");
                 todo.extend(fields.iter().rev().map(|(_, t)| Task::Ty(t)));
             }
-            TypeKind::Array(_) => self.later(t.span, "a family type `[T]`"),
             // This version checks a range only as the whole type of a parameter
             // ([`Task::ParamTy`]), or as the key of a parameter's partial map or a component
             // of that key ([`Task::KeyTy`]): there the checker reads it apart and checks each

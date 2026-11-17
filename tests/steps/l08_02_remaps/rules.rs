@@ -468,9 +468,10 @@ fn flat_map_s_own_errors() {
         "x",
         "want",
     );
+    // The message names the word written, not `map`, which checks it (MSG-flatmap-labeled-map).
     rejected(
         "n = 3;\nx = n.flatMap(v -> [v]);\n",
-        &["`map` works on each entry of a family"],
+        &["`flatMap` works on each entry of a family"],
     );
 }
 

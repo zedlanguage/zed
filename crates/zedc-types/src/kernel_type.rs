@@ -54,8 +54,29 @@ fn kernel_form(
                  arguments before a type is read"
             )
         }
+        // The kernel has no list type: reading `[V]` as the arrow `int ->? V` the checker
+        // denotes it by would make `f is [int]` hold for a function `f` that is no list, since
+        // the kernel's arrow does not say that a list is data (LIST-type-written). Without a
+        // type for it, the check that a bound's guarantee is within its permission cannot run,
+        // so a list type inside `L .. U -> V` is refused there rather than passed unchecked.
         TypeKind::Array(_) => {
-            unreachable!("name resolution rejects every array type before a type is read")
+            if let Some(bounds) = bounds {
+                bounds.push((
+                    t.span,
+                    "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
+                     language, and this version of zedc does not compile it yet. Write the \
+                     function type without `..`, as `(…) -> …`"
+                        .to_string(),
+                ));
+            }
+            ports.push((
+                t.span,
+                "a test against a list type `[T]` is part of the Zed language, and this \
+                 version of zedc does not compile it yet. Write the program without it, with \
+                 the forms this zedc compiles"
+                    .to_string(),
+            ));
+            return None;
         }
         // The kernel has no type with a range, and reading one as its base would make
         // `x is int[0..=9]` hold for 100; the checker reads a parameter's apart.

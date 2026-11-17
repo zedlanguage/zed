@@ -97,14 +97,15 @@ fn arrays_format_to_themselves() {
 }
 
 #[test]
-fn resolution_names_the_array_forms() {
-    assert_eq!(
-        refused("grid(m: [[int]]) = [m];"),
-        [concat!(
-            zed_tests::not_yet!("a family type `[T]`"),
-            " [[[int]]]"
-        ),]
-    );
-    // The array display is built (plan row MAP-run); the family type is not.
-    assert!(refused("none(x) = [];").is_empty());
+fn resolution_takes_the_array_forms() {
+    // The array display is built (plan row MAP-run), and so is the family type `[T]`
+    // written (plan row LIST-type-written).
+    for text in [
+        "grid(m: [[int]]) = [m];",
+        "f(x: [int]) = x;",
+        "f(x: [int]) = [x];",
+        "none(x) = [];",
+    ] {
+        assert_eq!(refused(text), Vec::<String>::new(), "{text}");
+    }
 }

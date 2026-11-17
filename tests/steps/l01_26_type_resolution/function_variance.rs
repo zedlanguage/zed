@@ -1624,7 +1624,9 @@ fn a_generic_function_called_from_a_map_lambda_misses_outside_the_domain() {
 /// types is not rebuilt entry by entry, as no one test of a domain fits both; a lambda of
 /// `map` on it that passes its entry on to a partial slot stays refused, written there or as
 /// the receiver of a generic body. A lambda that is not written at `map`, passed in as an
-/// argument, is refused or misses outside the domain, never run on 2.5.
+/// argument over a family of one function type, runs: it misses outside the domain, never
+/// run on 2.5, and calls the function inside it (plan row TEST-map-param-lambda-partial-slot,
+/// which found that it runs; this test accepted a refusal too until then).
 #[test]
 fn a_map_lambda_over_entries_of_two_function_types_is_refused_for_a_partial_slot() {
     let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\n\
@@ -1640,10 +1642,15 @@ fn a_map_lambda_over_entries_of_two_function_types_is_refused_for_a_partial_slot
             "{src}: ran without a test of the domain"
         );
     }
-    let src = format!("{head}h(m, k) = m.map(k)[0];\na = h(m: [small], k: g -> pass(x: g));\n");
-    if type_errors(&src).is_empty() {
-        runs_to(&src, "a", "6");
-    }
+    let rest = "h(m, k) = m.map(k)[0];\na = h(m: [small], k: g -> pass(x: g));\n\
+                b = h(m: [small, small], k: g -> pass(x: g));\n";
+    let src = format!("{head}{rest}");
+    assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    runs_to(&src, "a", "6");
+    runs_to(&src, "b", "6");
+    let src = format!("{}{rest}", head.replace("f(x: 2.5)", "f(x: 3)"));
+    runs_to(&src, "a", "4");
+    runs_to(&src, "b", "4");
 }
 
 /// A call through a parameter that names its arguments is built once for every function the

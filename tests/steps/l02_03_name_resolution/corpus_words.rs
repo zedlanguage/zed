@@ -170,6 +170,8 @@ fn no_corpus_file_uses_an_undefined_name() {
             "23-join-zoo.zed",
             "27-parent-chain.zed",
             "27-parent-chain.zed",
+            // `ops: [Utf8String]`, read since a written list type resolves (LIST-type-written).
+            "28-precedence-climbing.zed",
             "31-typechecker/ast.zed",
             "31-typechecker/ast.zed",
         ],

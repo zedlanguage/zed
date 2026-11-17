@@ -484,6 +484,175 @@ fn division_arguments_with_a_default_reading_another_parameter() {
     }
 }
 
+/// Two division arguments of parameters that share one variable, `(T, T) -> bool`
+/// (MSG-shared-bound-var-rat-fix-dropped). Carrying `rat` into one argument alone leaves the
+/// other at the carrier the program gives it as written, `f64`, which `T` does not take beside
+/// `rat`, so the `rat` fix was dropped and only `f64` was offered; the fix's type is lent to the
+/// other arguments that hold only such literals, and each fix whose program checks is offered,
+/// `rat` first, and each runs. Also with three such arguments, and with one argument fixed by
+/// the program, where one division alone is rejected.
+#[test]
+fn division_arguments_of_parameters_of_one_variable_offer_each_carrier() {
+    for (decl, args, want) in [
+        (
+            "f(positional p0, positional p1) = p0 < p1;\n",
+            ["{lit} / 2", "{lit} / 2"].join(", "),
+            "false",
+        ),
+        (
+            "f(positional p0, positional p1, positional p2) = p0 < p1 + p2;\n",
+            ["{lit} / 2", "{lit} / 2", "{lit} / 4"].join(", "),
+            "true",
+        ),
+    ] {
+        let src = format!("{decl}y = f({});\n", args.replace("{lit}", "1"));
+        let errors = type_errors(&src);
+        let [e] = &errors[..] else {
+            panic!("{src}: {errors:?}")
+        };
+        let rat = format!("y = f({});", args.replace("{lit}", "1r"));
+        let f64 = format!("y = f({});", args.replace("{lit}", "1.0f64"));
+        let head = format!("Try `{}` instead.", rat.trim_end_matches(';'));
+        assert!(e.contains(&head), "{src}\n{e}");
+        let (Some(r), Some(d)) = (
+            e.find(&format!("\n    {rat}")),
+            e.find(&format!("\n    {f64}")),
+        ) else {
+            panic!("{src}\n{e}")
+        };
+        assert!(r < d, "{src}\n{e}");
+        for fix in [rat, f64] {
+            let fixed = format!("{decl}{fix}\n");
+            assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+            assert_eq!(value(&fixed, "y"), want, "{fixed}");
+        }
+    }
+    let decl = "f(positional p0, positional p1) = p0 < p1;\n";
+    let src = format!("{decl}y = f(1r / 2, 1 / 2);\n");
+    assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    assert_eq!(value(&src, "y"), "false", "{src}");
+}
+
+/// The defaults of `p2` in `a_cast_argument_beside_a_division_of_one_variable_offers_each_carrier`
+/// and `the_fix_of_an_argument_the_result_does_not_hold_is_kept`: none, and one that reads
+/// `p0` directly, through one call and through two, each with the expression the body reads
+/// in place of `p0`.
+const P0_DEFAULTS: [(&str, &str); 4] = [
+    ("", "p0"),
+    (", p2 = p0", "p2"),
+    (", p2 = id(v: p0)", "p2"),
+    (", p2 = id2(v: p0)", "p2"),
+];
+
+/// A division beside a cast argument of parameters that share one variable,
+/// `f(1 / 2, k * 0.5)` for `(T, T) -> bool` (TEST-params-own-apart-red), also where `p2`'s
+/// default reads `p0`. Carrying `rat(k)` into the second argument alone leaves the first at
+/// `f64`, which `T` does not take beside `rat`, so `rat(k)` was dropped and only `f64(k)` was
+/// offered; the program with `rat(k)` written checks, its `1 / 2` taking `rat` through `T`,
+/// and runs. Both fixes are offered, `rat(k)` first, and each runs to `true`.
+#[test]
+fn a_cast_argument_beside_a_division_of_one_variable_offers_each_carrier() {
+    for (default, p0) in P0_DEFAULTS {
+        let decl = format!(
+            "id(v) = v;\nid2(v) = id(v: v);\nf(positional p0, positional p1{default}) = {p0} < \
+             p1;\nk = 3;\n"
+        );
+        let src = format!("{decl}y = f(1 / 2, k * 0.5);\n");
+        let errors = type_errors(&src);
+        let [_, e] = &errors[..] else {
+            panic!("{src}: {errors:?}")
+        };
+        let rat = "y = f(1 / 2, rat(k) * 0.5);";
+        let f64 = "y = f(1 / 2, f64(k) * 0.5);";
+        let head = format!("Try `{}` instead.", rat.trim_end_matches(';'));
+        assert!(e.contains(&head), "{src}\n{e}");
+        let (Some(r), Some(d)) = (
+            e.find(&format!("\n    {rat}")),
+            e.find(&format!("\n    {f64}")),
+        ) else {
+            panic!("{src}\n{e}")
+        };
+        assert!(r < d, "{src}\n{e}");
+        for fix in [rat, f64] {
+            let fixed = format!("{decl}{fix}\n");
+            assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+            assert_eq!(value(&fixed, "y"), "true", "{fixed}");
+        }
+    }
+}
+
+/// A call of `f(positional p0, …, positional p{n-1}) = p0 < p1` with `1 / 2` first, the cast
+/// argument `k * 0.5` second and `1` at each other parameter, `n >= 3`.
+pub(super) fn cast_beside_a_division(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("positional p{i}")).collect();
+    let args = vec!["1"; n - 2].join(", ");
+    format!(
+        "f({}) = p0 < p1;\nk = 3;\ny = f(1 / 2, k * 0.5, {args});\n",
+        params.join(", ")
+    )
+}
+
+/// The program of [`cast_beside_a_division`] offers `rat(k)` and `f64(k)` for its cast,
+/// `rat(k)` first: the `rat` that `rat(k)` gives `p1` is lent to the division, and the other
+/// `n - 2` arguments are passed over (TEST-params-own-apart-red).
+pub(super) fn cast_beside_a_division_offered(src: &str, n: usize) {
+    let errors = type_errors(src);
+    let [_, e] = &errors[..] else {
+        panic!("{src}: {errors:?}")
+    };
+    let rest = vec!["1"; n - 2].join(", ");
+    let (Some(r), Some(d)) = (
+        e.find(&format!("\n    y = f(1 / 2, rat(k) * 0.5, {rest});")),
+        e.find(&format!("\n    y = f(1 / 2, f64(k) * 0.5, {rest});")),
+    ) else {
+        panic!("{e}")
+    };
+    assert!(r < d, "{e}");
+}
+
+#[test]
+fn a_cast_beside_a_division_of_one_variable_among_many_arguments_offers_each_carrier() {
+    for n in [3, 6] {
+        cast_beside_a_division_offered(&cast_beside_a_division(n), n);
+    }
+}
+
+/// The fixes of an argument that the result does not hold, beside one that it does:
+/// `x = f(k * 0.5, k * 0.25)` for `(T, _) -> T`, also where `p2`'s default reads `p0`,
+/// `(T, _, p2: T) -> T`, with `x < 1r` after. `p0`'s fix decides `x`'s type, so `f64(k)` there
+/// is refused by `x < 1r` and only `rat(k)` is offered; `p1`'s fix changes neither the result
+/// nor what `p0` meets, so both of its fixes are offered, and each runs beside `p0`'s. Checking
+/// the call a parameter at a time, as `params_own_apart` (crates/zedc-check/src/check/walk.rs)
+/// allows only where the result holds no variable, joins a fix of `p1` with one of `p0` into
+/// one type for the call, and drops it with `p0`'s where `x < 1r` refuses that type: forcing
+/// `params_own_apart` to true drops one of `p1`'s fixes here (TEST-params-own-apart-red).
+#[test]
+fn the_fix_of_an_argument_the_result_does_not_hold_is_kept() {
+    for (default, p0) in P0_DEFAULTS {
+        let decl = format!(
+            "id(v) = v;\nid2(v) = id(v: v);\nf(positional p0, positional p1{default}) = {p0};\nk \
+             = 3;\n"
+        );
+        let src = format!("{decl}x = f(k * 0.5, k * 0.25);\ny = x < 1r;\n");
+        let errors = type_errors(&src);
+        let [first, second] = &errors[..] else {
+            panic!("{src}: {errors:?}")
+        };
+        assert!(
+            first.contains("\n    x = f(rat(k) * 0.5, k * 0.25);"),
+            "{src}\n{first}"
+        );
+        assert!(!first.contains("f64(k)"), "{src}\n{first}");
+        for cast in ["rat", "f64"] {
+            let fix = format!("x = f(k * 0.5, {cast}(k) * 0.25);");
+            assert!(second.contains(&format!("\n    {fix}")), "{src}\n{second}");
+            let fixed = format!("{decl}x = f(rat(k) * 0.5, {cast}(k) * 0.25);\ny = x < 1r;\n");
+            assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+            assert_eq!(value(&fixed, "y"), "false", "{fixed}");
+        }
+    }
+}
+
 /// [`super::rare`]'s value that flows into `g` through a chain of `n` defaults, `k(h0 = g,
 /// h1 = h0, ...)`, which passes `x -> "s"` as the last; then `n` more parameters whose
 /// defaults read the two ends of the chain in turn, `m0 = h0, m1 = h{n-1}, m2 = h0, ...`, so

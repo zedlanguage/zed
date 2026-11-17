@@ -86,9 +86,9 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord,
-    Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer, Renamings,
-    SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms,
-    carriers_text, class_id, errs, fresh_name, mask_text,
+    MapWord, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer,
+    Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange,
+    atoms, carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -2957,7 +2957,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         stack.push(result);
                     }
                     // A bound is a union of carrier names, which holds no morphism type.
-                    TypeKind::For { ty, .. } | TypeKind::Range { of: ty, .. } => stack.push(ty),
+                    TypeKind::For { ty, .. }
+                    | TypeKind::Range { of: ty, .. }
+                    | TypeKind::Array(ty) => stack.push(ty),
                     TypeKind::Name(_)
                     | TypeKind::Atom(_)
                     | TypeKind::Every(_)
@@ -2967,9 +2969,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                             "name resolution rejects every record type and every type applied to arguments before the checker reads the program"
                         )
                     }
-                    TypeKind::Array(_) => unreachable!(
-                        "name resolution rejects every array type before the checker reads the program"
-                    ),
                 }
             }
         }

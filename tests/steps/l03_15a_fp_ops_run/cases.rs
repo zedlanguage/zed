@@ -1230,6 +1230,186 @@ fn an_entry_of_a_generic_parameter_is_not_shown_as_every_value() {
     );
 }
 
+/// The note on a lambda parameter that stays generic names what the word gives it (plan rows
+/// MSG-generic-operand-wording, MSG-generic-param-entry-note-every-value and
+/// MSG-generic-lambda-note-unreached). Since ZIP-generic-operands no test above reaches it,
+/// since `zip`, `++` and the level words on such a parameter each make a need, whose refusal
+/// is at the use. A tuple holding the parameter, refused by `+` in the body, still is: one
+/// case per word that gives a lambda its entries (`map`, `flatMap`, `where`, `group`), per
+/// kind of receiver (a port's lines, the result of a word, entries that are families, a
+/// receiver over two lines), and the parameter of a function of no written type, whose
+/// entries' type is not known and is not written.
+#[test]
+fn a_generic_lambda_parameter_in_a_refused_tuple_is_noted_with_its_entries() {
+    let note = |name: &str, word: &str, of: &str| {
+        format!("`{name}` has a generic type here, and `{word}` gives it each entry of {of}")
+    };
+    let stdin = |word: &str| note("l", word, "`m.stdin`, whose type is String");
+    let main = |stmt: &str| format!("main(m: MainArgs) {{\n  {stmt}\n}}\n");
+    let cases = [
+        (
+            main("m.stdout <- m.stdin.map(l -> \"${(l, 1) + 1}\");"),
+            stdin("map"),
+        ),
+        (
+            main("m.stdout <- m.stdin.flatMap(l -> [\"${(l, 1) + 1}\"]);"),
+            stdin("flatMap"),
+        ),
+        // Not `m.stdin.map(…)`, whose entries may be `#ioError`, which `where` does not take
+        // yet (plan row WHERE-loose-atoms).
+        (
+            main(
+                "m.stdout <- [\"a\", \" b\"].map(l -> l.trim).where(l -> \"${(l, 1) + 1}\" == \"\");",
+            ),
+            note(
+                "l",
+                "where",
+                "`[\"a\", \" b\"].map(l -> l.trim)`, whose type is String",
+            ),
+        ),
+        (
+            main("m.stdout <- \"${m.stdin.group(l -> (l, 1) + 1).count}\";"),
+            stdin("group"),
+        ),
+        (
+            main("m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${(p, 1) + 1}\");"),
+            note(
+                "p",
+                "map",
+                "`m.stdin.map(l -> l.split(\",\"))`, whose type is [String]",
+            ),
+        ),
+        (
+            main("m.stdout <- m.stdin.map(l ->\n    l.trim).map(l -> \"${(l, 1) + 1}\");"),
+            note("l", "map", "the family before `.map`, whose type is String"),
+        ),
+        (
+            format!(
+                "f(positional xs) = xs.map(l -> (l, 1) + 1);\n{}",
+                main("m.stdout <- \"${f([1])}\";")
+            ),
+            note("l", "map", "`xs`\n"),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (src, want)) in cases.into_iter().enumerate() {
+        let out = run(&format!("fp_ops/entry_note_tuple_{i}"), &src, "", &[]);
+        if out.status == 0 || !out.stderr.contains(&want) || out.stderr.contains(" is _ here") {
+            wrong.push(format!("{src}\n  want {want}\n  {}", out.stderr.trim_end()));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A list type written in a program, `[T]`, resolves and checks as the type the checker prints
+/// for a list (plan row LIST-type-written): a parameter of type `[String]`, a list of lists,
+/// and a list inside a tuple. The row's test named the function `count`, which `ps.count`
+/// would call, so the body recursed; the function is `size` here.
+#[test]
+fn a_written_list_type_is_checked() {
+    let src = "size(ps: [String]) = ps.count;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${size(ps: \"a,b\".split(\",\"))}\";\n}\n";
+    let out = run("fp_ops/list_type_written", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "2\n"),
+        "{}",
+        out.stderr
+    );
+    let src = "firsts(rows: [[String]]) = rows.map(r -> r[0] else \"\");\n\
+               total(xs: [int]) = xs.count;\n\
+               pairs(p: ([int], String)) = p[0].count;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${firsts(rows: [\"a,b\".split(\",\"), \
+               \"c\".split(\",\")])} ${total(xs: [1, 2, 3])} ${pairs(p: ([4], \"x\"))}\";\n}\n";
+    let out = run("fp_ops/list_type_written_nested", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "{0 -> \"a\", 1 -> \"c\"} 3 1\n"),
+        "{}",
+        out.stderr
+    );
+    // A value that is not such a list is refused, and the refusal prints the type as written.
+    let src = "size(ps: [String]) = ps.count;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${size(ps: [1, 2])}\";\n}\n";
+    let out = run("fp_ops/list_type_written_refused", src, "", &[]);
+    assert!(
+        out.status != 0 && out.stderr.contains("[String]") && !out.stderr.contains("->?"),
+        "{}",
+        out.stderr
+    );
+    // The kernel has no list type, so the check that a bound's guarantee is within its
+    // permission cannot read one: a list type there is refused, never passed unchecked (this
+    // guarantee is not within its permission).
+    let src = "g(f: ([#a | #c] .. [#a | #b] -> int)) = 1;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${g(f: x -> 1)}\";\n}\n";
+    let out = run("fp_ops/list_type_written_in_a_bound", src, "", &[]);
+    assert!(
+        out.status != 0
+            && out.stderr.contains(
+                "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
+                 language, and this version of zedc does not compile it yet"
+            ),
+        "{}",
+        out.stderr
+    );
+}
+
+/// The function given to `flatMap` is named as given to `flatMap`, not `map`, and the repair
+/// for a value that is not a function is a function `flatMap` takes, one that gives a list
+/// (plan row MSG-flatmap-labeled-map).
+#[test]
+fn the_function_given_to_flat_map_is_named_so() {
+    for (i, (expr, want)) in [
+        (
+            "[1, 2].flatMap(x -> [x.trim])",
+            "the function given to `flatMap` does not take",
+        ),
+        (
+            "[1, 2].flatMap(5)",
+            "repair: pass a function of one parameter, as `x -> [x]`",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let src = format!("main(m: MainArgs) {{\n  m.stdout <- \"${{{expr}}}\";\n}}\n");
+        let out = run(&format!("fp_ops/flat_map_label_{i}"), &src, "", &[]);
+        assert!(out.status != 0, "{expr}: {}", out.stderr);
+        assert!(out.stderr.contains(want), "{expr}: {}", out.stderr);
+        assert!(!out.stderr.contains("`map`"), "{expr}: {}", out.stderr);
+    }
+}
+
+/// `flatMap` on a parameter of no written type demands a list of each entry at the call, as it
+/// does on a family written at the use (plan row FLATMAP-generic-demand): before, the need met
+/// at the call checked it as `map`, and `h(x: [1, 2])` ran and printed `{0 -> 2, 1 -> 3}`.
+#[test]
+fn flat_map_on_a_generic_parameter_demands_a_list_of_each_entry() {
+    let src = "h(x) = x.flatMap(e -> e + 1);\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${h(x: [1, 2])}\";\n}\n";
+    let out = run("fp_ops/flat_map_generic_demand", src, "", &[]);
+    assert!(
+        out.status != 0
+            && out.stderr.contains(
+                "`flatMap` adjoins the list its function gives for each entry as a rank level"
+            )
+            && out.stderr.contains("`h` needs this of its argument here"),
+        "{}\n{}",
+        out.stdout,
+        out.stderr
+    );
+    // A function that gives a list is taken, and the lists are the inner level.
+    let src = "h(x) = x.flatMap(e -> [e, e]);\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${h(x: [1, 2])}\";\n}\n";
+    let out = run("fp_ops/flat_map_generic_lists", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "{0 -> {0 -> 1, 1 -> 1}, 1 -> {0 -> 2, 1 -> 2}}\n"),
+        "{}",
+        out.stderr
+    );
+}
+
 /// A family whose entries hold a lambda's generic parameter is printed with that parameter's
 /// type by what it ranges over, never `_`, the type of every value (A92): `l` is a line of
 /// `m.stdin`, a String (plan row MSG-generic-entry-shown-as-every-value).

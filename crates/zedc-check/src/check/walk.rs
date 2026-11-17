@@ -412,10 +412,10 @@ pub(super) enum Frame<'a> {
     Display(Box<DisplayF<'a>>),
     /// A remap, its source or a level being checked (DESIGN.md sec:remap_law).
     Remap(Box<remap::RemapF<'a>>),
-    /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
-    /// the call's span (step L3.2), and the receiver where it is a call of `flatMap`
+    /// `x.map(f)` or `x.where(f)`, by the word, waiting for `f`: the type of `x` and the
+    /// call's span (step L3.2), and the receiver where it is a call of `flatMap`
     /// ([`Ck::flat_map_receiver`]), and the span of `x`.
-    MapFn(Ty, Span, bool, Option<&'a Expr>, Span),
+    MapFn(Ty, Span, MapWord, Option<&'a Expr>, Span),
     /// `x.group(f)` or, with `true`, `x.rekey(f)`, `f` being checked: `x`'s type, the span of
     /// `x`, and the call's span (step L4.1; `group_end`).
     Group(Ty, Span, Span, bool),
@@ -1218,10 +1218,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     remap::RemapNext::Done(t) => m.ty(t),
                 }
             }
-            Frame::MapFn(x, span, filter, kept, of) => {
+            Frame::MapFn(x, span, word, kept, of) => {
                 let f = m.take_arg();
                 let recv = Some((Rc::from([of]), None));
-                let t = self.map_end(&x, f, span, filter, kept, recv);
+                let t = self.map_end(&x, f, span, word, kept, recv);
                 m.ty(t);
             }
             Frame::Group(x, recv, span, rekey) => {
@@ -1232,7 +1232,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::FlatMap(x, span, kept) => {
                 let f = m.take_arg();
                 let at = f.at.unwrap_or(span);
-                let t = self.map_end(&x, f, span, false, kept, None);
+                let t = self.map_end(&x, f, span, MapWord::FlatMap, kept, None);
                 let t = self.flat_map_end(t, at);
                 m.ty(t);
             }
@@ -3987,7 +3987,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Adds to the error at `at` in [`Ck::errors`], a refusal of the function `f` of `fsig`,
-    /// given to `map` or `where` (`filter`) on `entries`, the lists the call of `flatMap` `of`
+    /// given to `map`, `where` or `flatMap` (`word`) on `entries`, the lists the call of
+    /// `flatMap` `of`
     /// keeps, a note that `flatMap` keeps each list its function gives as one entry, so that
     /// `f` is given one list (DESIGN.md sec:grouping, "`flatMap` on `K -> V0` with body
     /// `V0 -> Seq(V)` yields `K -> rank -> V`"; DOCS-TODO 198; plan row
@@ -4004,7 +4005,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         f: &Arg<'a>,
         fsig: &Sig,
         entries: &Ty,
-        filter: bool,
+        word: MapWord,
         at: usize,
         span: Span,
     ) {
@@ -4014,7 +4015,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => None,
             })
             .fold(Ty::empty(), |out, t| out.union(&t));
-        let what = if filter { "`where`" } else { "`map`" };
+        let what = format!("`{}`", word.name());
+        let what = what.as_str();
         let applied = self.applied.take();
         let saved = self.mark();
         self.trying = true;
@@ -4047,7 +4049,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             span: at_f,
             text: format!("`flatMap` keeps each list its function gives as one entry, {given}"),
         }];
-        if let Some((p, body)) = one.filter(|_| !filter)
+        // The repair writes `map`, so it is offered for `map` alone.
+        if let Some((p, body)) = one.filter(|_| word == MapWord::Map)
             && let Some(r) = self.map_each_list(of, p, body)
         {
             notes.push(Note {
@@ -4123,16 +4126,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         x: &Ty,
         f: Arg<'a>,
         span: Span,
-        filter: bool,
+        map_word: MapWord,
         kept: Option<&'a Expr>,
         recv: Recv,
     ) -> Ty {
-        let (name, word) = match filter {
-            true => ("where", "`where`"),
-            false => ("map", "`map`"),
-        };
+        // The messages name the word the program wrote: `flatMap` applies its function as
+        // `map` does, and is named so (plan row MSG-flatmap-labeled-map).
+        let filter = map_word == MapWord::Where;
+        let name = map_word.name();
+        let word = format!("`{name}`");
+        let word = word.as_str();
         let mut out = self.passing(x, word, span, None);
-        let example = if filter { "x -> x > 0" } else { "x -> x + 1" };
+        let example = match map_word {
+            MapWord::Map => "x -> x + 1",
+            MapWord::Where => "x -> x > 0",
+            MapWord::FlatMap => "x -> [x]",
+        };
         // A function not yet known, as a parameter `f` of `h(f, m) = m.map(f)` whose type is
         // not written, is a class: it takes a call of each entry as a need, checked on each
         // function that flows into it, as a call `f(e)` in the body is (FAIL-map-generic-
@@ -4175,10 +4184,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.error(span, zedc_base::rejection::not_yet(&what));
                         return Ty::empty();
                     }
-                    let given = match filter {
-                        true => "the function given to `where`",
-                        false => "the function given to `map`",
-                    };
+                    let given = format!("the function given to {word}");
+                    let given = given.as_str();
                     let bool_ty = Ty::carrier(Carrier::Bool);
                     let w = match (entries.lists_nothing(), &fsig, f_class) {
                         (true, ..) => Ty::empty(),
@@ -4222,7 +4229,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             if let Some((of, entries)) = lists
                                 && self.errors.len() > before
                             {
-                                self.kept_lists(of, &f, fsig, &entries, filter, before, span);
+                                self.kept_lists(of, &f, fsig, &entries, map_word, before, span);
                             }
                             w
                         }
@@ -4299,14 +4306,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self.class_root(&v);
                     let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
                         Some((_, Some(t))) => {
-                            self.map_end(&t, f.clone(), span, filter, kept, recv.clone())
+                            self.map_end(&t, f.clone(), span, map_word, kept, recv.clone())
                         }
                         Some((r, None)) => {
                             let lambda =
                                 (f.expr).is_some_and(|e| matches!(e.kind, ExprKind::Lambda { .. }));
                             let kind = NeedKind::Map {
                                 f: f.ty.clone(),
-                                filter,
+                                word: map_word,
                                 lambda,
                             };
                             self.need(r, kind, true, span)
@@ -8844,11 +8851,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
-                        let word = if name == "map" { "map" } else { "where" };
-                        self.entry_param(word, &x.ty, of, f);
+                        let word = match name {
+                            "map" => MapWord::Map,
+                            _ => MapWord::Where,
+                        };
+                        self.entry_param(word.name(), &x.ty, of, f);
                         self.range_param(of, f);
                         let kept = Self::flat_map_receiver(of);
-                        m.k(Frame::MapFn(x.ty, span, name == "where", kept, of.span));
+                        m.k(Frame::MapFn(x.ty, span, word, kept, of.span));
                         self.word_fn(m, f, first);
                     }
                     _ => {
@@ -12863,7 +12873,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
             NeedKind::Entries => self.word_entries(&on, span),
             NeedKind::SumMethod { site, beside } => self.sum_beside(&on, beside, span, *site),
-            NeedKind::Map { f, filter, .. } => {
+            NeedKind::Map { f, word, .. } => {
                 let f = Arg::of(self.bound(f, binds));
                 // The receiver, a value of the body this need came from, lies where the call
                 // being checked places it, if anywhere.
@@ -12871,7 +12881,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let (i, up) = frame.place(&n.on)?;
                     Some((frame.written(i)?, up))
                 });
-                self.map_end(&on, f, span, *filter, None, recv)
+                let t = self.map_end(&on, f, span, *word, None, recv);
+                // `flatMap` demands a list of each entry, as where it is written on a known
+                // family (FLATMAP-generic-demand).
+                match word {
+                    MapWord::FlatMap => self.flat_map_end(t, span),
+                    MapWord::Map | MapWord::Where => t,
+                }
             }
             NeedKind::Group { f, recv } => {
                 let f = Arg::of(self.bound(f, binds));
@@ -20387,7 +20403,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// whose parameters are checked apart ([`params_own_apart`]) a round is one check of a call
     /// of one parameter per argument and one check of the whole call
     /// ([`Self::carried_together`]), O(the call) for the round; elsewhere one check of the
-    /// construct per type carried ([`Self::carried_alone`]). Fixes that give an argument one
+    /// construct per type carried ([`Self::carried_alone`]), and one more for each that fails
+    /// alone beside an argument of literals that nothing gives a carrier
+    /// ([`Self::carried_lent`]). Fixes that give an argument one
     /// type are checked together, and the groups join smaller into larger, so a fix moves
     /// O(log fixes) times in all. The naive ways: one check of the call per argument
     /// carrying a fix, as before MSG-many-args-repair-loop, is quadratic in a call of n
@@ -20434,6 +20452,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         ats.sort_unstable_by_key(|&(s, _)| (s.start, s.end));
         let carried = self.shared_settled(w, t, (&found, &ats), carried, &mut up);
+        // For each argument whose carried fixes are all of rejections of literals that
+        // nothing gives a carrier, the types they give it ([`Self::carried_lent`]); `None` for
+        // an argument with another fix.
+        let mut lent: Vec<Option<Vec<Ty>>> = vec![Some(Vec::new()); w.args.len()];
+        for (i, c) in &carried {
+            match self.unfixed_only(&c.fixes) {
+                true => lent[*i].iter_mut().for_each(|tys| tys.push(c.ty.clone())),
+                false => lent[*i] = None,
+            }
+        }
         // The `r`th round holds the `r`th type carried into each argument, so that no round
         // gives an argument two types.
         let mut rounds: Vec<Vec<(usize, Carry)>> = Vec::new();
@@ -20459,7 +20487,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => round,
             };
             for (i, c) in left {
-                match self.carried_alone(w, &found, &ats, i, &c) {
+                let ty = (self.carried_alone(w, &found, &ats, i, &c))
+                    .or_else(|| self.carried_lent(w, (&found, &ats), &lent, i, &c));
+                match ty {
                     Some(ty) if ty != *t => carry_joined(&mut up, ty, c.fixes),
                     Some(_) => {}
                     None => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
@@ -20467,6 +20497,62 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         self.carried_up(w.span, up);
+    }
+
+    /// Whether each fix of `fixes` is one of a rejection of literals that nothing gives a
+    /// carrier (row UnfixedDecimal), still found. O(fixes log errors).
+    fn unfixed_only(&self, fixes: &Fixes) -> bool {
+        (fixes.list.iter()).all(|p| {
+            self.found(p.id)
+                .is_some_and(|e| e.row == Some(Row::UnfixedDecimal))
+        })
+    }
+
+    /// The type the construct `w` has with the fixes `c` carried into its argument `i`, which
+    /// failed a check with them alone ([`Self::carried_alone`]), and with their type lent to
+    /// each other argument whose carried fixes are all of rejections of literals that nothing
+    /// gives a carrier and give it that type (`lent`, [`Self::unfixed_only`]), where it then
+    /// adds no error but those its own check `found`, each inside an argument it does not
+    /// change; `None` where there is no such argument or it adds another. Such an argument
+    /// was checked at the type its literals took where nothing gave them a carrier, `f64` for
+    /// `1 / 2`, and a check with `c` alone keeps that type, which a parameter the two
+    /// arguments share rejects: `f(1 / 2, rat(k) * 0.5)` for `f(positional p0, positional
+    /// p1) = p0 < p1` is checked with `p0` at `f64`. In the program with the fix written the
+    /// literals have no carrier of their own and take the fixed one through the shared
+    /// parameter, as `f(1r / 2, 1 / 2)` checks and gives `false` and `f(1 / 2, rat(k) * 0.5)`
+    /// gives `true`; with those arguments at that type the check sees this (rows
+    /// MSG-shared-bound-var-rat-fix-dropped, TEST-params-own-apart-red).
+    ///
+    /// Complexity tradeoff: at most one check of the construct per fix that failed alone,
+    /// besides the one [`Self::carried_alone`] already made, so the round costs at most twice
+    /// what it did, and O(arguments) to list those lent the type. The naive way, checking
+    /// the fix with every subset of the other arguments' fixes, is exponential in the
+    /// arguments.
+    fn carried_lent(
+        &mut self,
+        w: &Written<'a>,
+        (found, ats): (&HashSet<Span>, &[(Span, usize)]),
+        lent: &[Option<Vec<Ty>>],
+        i: usize,
+        c: &Carry,
+    ) -> Option<Ty> {
+        let mut held = vec![false; w.args.len()];
+        let mut tys = vec![(i, &c.ty)];
+        held[i] = true;
+        for (j, tys_j) in lent.iter().enumerate() {
+            if j != i && tys_j.as_ref().is_some_and(|tys_j| tys_j.contains(&c.ty)) {
+                tys.push((j, &c.ty));
+                held[j] = true;
+            }
+        }
+        if tys.len() < 2 {
+            return None;
+        }
+        let (ty, needs) = self.carried_check(w, &tys);
+        let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| !held[j]);
+        needs
+            .is_some_and(|needs| needs.iter().all(apart))
+            .then_some(ty)
     }
 
     /// Keeps the fixes carried into the value at `value` ([`Self::carried`]), which a binding
@@ -26767,6 +26853,13 @@ fn params_apart(sig: &Sig) -> bool {
 ///   names ([`Ck::default_reads`], in the call's frame, which places the variables a need's
 ///   check names); with no needs, neither changes the verdict. Test:
 ///   `l01_29_repairs_and_printing::scaling::division_arguments_with_a_default_reading_another_parameter`.
+///
+/// The refusals matter (TEST-params-own-apart-red): with this forced to true,
+/// `x = f(k * 0.5, k * 0.25); y = x < 1r;` for `f(positional p0, positional p1, p2 = p0) = p2`,
+/// `(T, _, p2: T) -> T`, also with the default read through one call or two and with no
+/// default, loses one of `p1`'s two valid fixes: [`Ck::carried_together`] joins it with a fix
+/// of `p0` into the type of the call, which only `p0` decides, and `x < 1r` refuses that type
+/// for `f64`. Test: `l01_29_repairs_and_printing::scaling::the_fix_of_an_argument_the_result_does_not_hold_is_kept`.
 fn params_own_apart(sig: &Sig) -> bool {
     let [arrow] = sig.arrows.as_slice() else {
         return false;
