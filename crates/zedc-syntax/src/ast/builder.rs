@@ -694,21 +694,65 @@ impl<'a, 's> Builder<'a, 's> {
         }
     }
 
+    /// Whether node `n` is on a path of an expression statement: the statement's expression,
+    /// and from a node on a path, the inside of parentheses, the value an `else` tail falls back
+    /// from, both branches of an `if`, each arm's value of a `match`, and a block's export. A
+    /// block on such a path may export nothing (DESIGN.md sec:tour_methods, "Statement position
+    /// must write something, and drop nothing"): in `if c { m.stdout <- "x"; } else { };`
+    /// neither block gives a value, since the statement drops it. Whether each path writes is
+    /// the checker's (`check::ports::silent_tail`).
+    // Complexity tradeoff: the naive test climbs from each block that exports nothing to the
+    // statement, O(depth) per block, which is O(n²) for n such blocks nested in one another's
+    // exports; one walk from the root on the first such block marks every node in O(n), and
+    // each test after is O(1).
+    fn on_path(&self, n: usize) -> bool {
+        let tree = self.tree;
+        let paths = self.paths.get_or_init(|| {
+            let mut on = vec![false; tree.nodes.len()];
+            let mut stack = vec![tree.root];
+            while let Some(k) = stack.pop() {
+                let kids = &tree.nodes[k].kids[..];
+                let passed: &[usize] = match (tree.name(k), on[k]) {
+                    ("ExprStmt", _) => &kids[..1],
+                    (_, false) => &[],
+                    // `Expr` holds one `Lambda` or `Expr12`; a lambda stops the path.
+                    ("Expr" | "Group", true) => kids,
+                    // `e else d`: the statement drops `e`'s value, and `d` is a value.
+                    ("Expr12", true) => &kids[..1],
+                    ("If" | "Match", true) => &kids[1..],
+                    ("Arm", true) => &kids[kids.len() - 1..],
+                    ("Block", true) => match kids.last() {
+                        Some(&e) if tree.name(e) != "Item" => &kids[kids.len() - 1..],
+                        _ => &[],
+                    },
+                    _ => &[],
+                };
+                for &c in passed {
+                    on[c] = true;
+                }
+                stack.extend(kids);
+            }
+            on
+        });
+        paths[n]
+    }
+
     /// The expression node `n` built to.
     pub(super) fn node(&mut self, n: usize) -> Result<Expr, Error> {
         let e = self.body(n)?;
-        // A block that ends in `break;` gives no value, and one on a path of an expression
-        // statement gives one that is dropped, so either may export nothing ([`super::breaks`]).
+        // A block that ends in `break;` gives no value, so it has any type (DESIGN.md
+        // sec:generations, "`break;`": `if c { break; } else { v }` has the type of `v`), and
+        // one on a path of an expression statement gives one that is dropped, so either may
+        // export nothing (`Builder::on_path`; the placement of `break;` is in `breaks.rs`).
         if let ExprKind::Block(stmts) = &e.kind
             && self.tree.name(n) == "Block"
             && !matches!(
                 stmts.last(),
                 Some(Stmt {
-                    kind: StmtKind::Return(_),
+                    kind: StmtKind::Return(_) | StmtKind::Break,
                     ..
                 })
             )
-            && !super::breaks::ends_in_break(stmts)
             && !self.on_path(n)
         {
             // Only a brace in body position, after `->`, `else`, or an `if` or `for` head, makes

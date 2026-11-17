@@ -1,17 +1,16 @@
-//! Two placement rules of statements that the parser's grammar does not state.
+//! The placement rule of `break;`, which the parser's grammar does not state.
 //!
 //! `break;` (DESIGN.md sec:generations, "`break;`") ends the innermost `loop` or `for` whose
 //! body holds it directly: in a lambda, in a function or method declared in a loop's body, or
 //! with no loop around it, it has no loop to end (row "`break` outside the body of a loop or a
 //! `for`").
 //!
-//! A block on a path of an expression statement may export nothing (DESIGN.md
-//! sec:tour_methods, "Statement position must write something, and drop nothing"): in
-//! `if c { m.stdout <- "x"; } else { };` neither block gives a value, since the statement drops
-//! it. Whether each path writes is the checker's (`check::ports::silent_tail`).
+//! The other placement rule, that a block on a path of an expression statement may export
+//! nothing, is `Builder::on_path` in `builder.rs`: `Builder::node` calls it, and a call from
+//! `builder.rs` into this file would make the two files import each other (step S.1f).
 
 use super::builder::Builder;
-use super::{Error, Note, Stmt, StmtKind};
+use super::{Error, Note};
 use crate::lex::Span;
 use zedc_base::rejection::Row;
 
@@ -46,45 +45,6 @@ impl Builder<'_, '_> {
             stops
         });
         stops.get(n).copied().filter(|&s| s != NONE)
-    }
-
-    /// Whether node `n` is on a path of an expression statement: the statement's expression,
-    /// and from a node on a path, the inside of parentheses, the value an `else` tail falls back
-    /// from, both branches of an `if`, each arm's value of a `match`, and a block's export.
-    // Complexity tradeoff: the naive test climbs from each block that exports nothing to the
-    // statement, O(depth) per block, which is O(n²) for n such blocks nested in one another's
-    // exports; one walk from the root on the first such block marks every node in O(n), and
-    // each test after is O(1).
-    pub(super) fn on_path(&self, n: usize) -> bool {
-        let tree = self.tree;
-        let paths = self.paths.get_or_init(|| {
-            let mut on = vec![false; tree.nodes.len()];
-            let mut stack = vec![tree.root];
-            while let Some(k) = stack.pop() {
-                let kids = &tree.nodes[k].kids[..];
-                let passed: &[usize] = match (tree.name(k), on[k]) {
-                    ("ExprStmt", _) => &kids[..1],
-                    (_, false) => &[],
-                    // `Expr` holds one `Lambda` or `Expr12`; a lambda stops the path.
-                    ("Expr" | "Group", true) => kids,
-                    // `e else d`: the statement drops `e`'s value, and `d` is a value.
-                    ("Expr12", true) => &kids[..1],
-                    ("If" | "Match", true) => &kids[1..],
-                    ("Arm", true) => &kids[kids.len() - 1..],
-                    ("Block", true) => match kids.last() {
-                        Some(&e) if tree.name(e) != "Item" => &kids[kids.len() - 1..],
-                        _ => &[],
-                    },
-                    _ => &[],
-                };
-                for &c in passed {
-                    on[c] = true;
-                }
-                stack.extend(kids);
-            }
-            on
-        });
-        paths[n]
     }
 
     /// The error for the `break;` of node `d` when no `loop` or `for` body holds it directly.
@@ -209,17 +169,4 @@ impl Builder<'_, '_> {
             notes,
         }
     }
-}
-
-/// Whether the statements of a block end in `break;`: such a block gives no value, so it has
-/// any type (DESIGN.md sec:generations, "`break;`": `if c { break; } else { v }` has the type
-/// of `v`), and it may export nothing wherever it stands.
-pub(super) fn ends_in_break(stmts: &[Stmt]) -> bool {
-    matches!(
-        stmts.last(),
-        Some(Stmt {
-            kind: StmtKind::Break,
-            ..
-        })
-    )
 }
