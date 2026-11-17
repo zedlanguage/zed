@@ -6834,8 +6834,8 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 
 /// The type of the cast `w` of a value of the type `t`, where the cast cannot fail or lose
 /// information on any value of `t`, as `rat(n)` of an `int`; none where it may give an atom `t`
-/// does not hold, as `rat(x)` of an `f64` (`#invalid`), or may lose information, as `f64(r)` of
-/// a `rat` or `int(x)` of an `f64` (not proved whole), so that a repair never narrows a type
+/// does not hold, as `rat(x)` of an `f64` (`#NaN` or `#overflow`), or may lose information, as
+/// `f64(r)` of a `rat` or `int(x)` of an `f64` (not proved whole), so that a repair never narrows a type
 /// (DESIGN.md sec:diagnostics, "A repair never narrows a type"). `f64` of an int the checker
 /// proves lies within ±2^53 (`exact`, [`Comparison::exact`]) is exact, as [`Ck::word_end`]
 /// applies it: `f64(n)` of an `int` under `if n >= 0 && n <= 100`, which a repair menu then
@@ -6844,23 +6844,30 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// Since step L1.18 a cast to a float format rounds with no atom and `int` of a float is a
 /// compile error unless proved whole, so the atoms of a cast no longer mark a loss: the casts
 /// that keep every value are named here ([`keeps_values`]), and the atoms are still compared.
+/// A type that lists its values is read by them, each cast and cast back ([`value_kept`]), as
+/// [`Ck::cast_loses`] reads it: `f64(n)` of `n = 9007199254740994`, which `f64` holds, is
+/// offered, and of `n = 9007199254740993` is not (row CAST-rat-nonfinite; before, the carrier
+/// alone was read here and the first was not offered either, while `cast_loses` let it pass).
 ///
 /// Complexity tradeoff (COMPLEXITY.md row MSG-concise-casts): naive version, apply the cast to
 /// each value `t` may hold and check each result exactly, O(the values of `t`), unbounded for
 /// an `int`; this version reads the cast's arrows once per piece of `t` ([`converted`]) and
 /// compares the atoms of the result with those of `t`, O(the size of `t`), the cost of printing
-/// `t` in the message that offers the cast.
+/// `t` in the message that offers the cast. A type that lists its values costs one cast and its
+/// inverse per value (COMPLEXITY.md row C66), as `cast_loses` already spends on the same type.
 fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
+    let listed = t.kernel().and_then(|k| k.values_listed());
+    let kept = listed.map(|vs| vs.iter().all(|v| value_kept(w, v)));
     let mut sig = word_sig(w);
     Arc::make_mut(&mut sig)
         .arrows
-        .retain(|a| keeps_values(w, &a.params[0], exact));
+        .retain(|a| kept.unwrap_or_else(|| keeps_values(w, &a.params[0], exact)));
     converted(&sig, t).filter(|r| r.atoms() == t.atoms())
 }
 
 /// Whether the cast `w` gives back every value of the type `from`, one of its arrows'
 /// parameters, as the same number: `int` of an `int`, `rat` of an `int`, a `rat` or a float
-/// (whose infinities and NaN give `#invalid`, which [`widening`] reads from the atoms), `f64` of
+/// (whose NaN gives `#NaN` and infinities `#overflow`, which [`widening`] reads from the atoms), `f64` of
 /// either float format and `f32` of an `f32`, and `f64` of an int proved within ±2^53
 /// (`exact`). A word that is not a numeric cast keeps its arrows.
 fn keeps_values(w: &str, from: &Ty, exact: bool) -> bool {
@@ -7901,7 +7908,7 @@ fn run(p: Prim, v: &Value) -> Option<Value> {
 /// The value of the cast `p`, `CastF64` or `CastF32`, of the int or `rat` `v`, where the format
 /// holds a number equal to `v`; `None` where the cast rounds. Since step L1.18 a cast to a float
 /// format rounds to nearest with no atom, so the result is cast back to `rat`, which is exact,
-/// and compared with `v`: an infinity gives `#invalid` there and is never equal.
+/// and compared with `v`: an infinity gives `#overflow` there and is never equal.
 // Complexity tradeoff: naive, test the denominator for a power of two and the numerator's width
 // against the format's, then round; this rounds once and casts back, O(the format's width) past
 // the cast, the same order, and the kernel's rounding stays the one rule both use.
@@ -11575,10 +11582,12 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(Rat, Int, &[]),
             arrow(Str, Int, &["invalid"]),
         ],
+        // No `rat` stands for the NaN or an infinity, which give `#NaN` and `#overflow` as at
+        // a rounding word (DESIGN.md sec:corner_cases, "Casts are domain proofs"; author P361).
         "rat" => vec![
             arrow(Int, Rat, &[]),
-            arrow(F64, Rat, &["invalid"]),
-            arrow(F32, Rat, &["invalid"]),
+            arrow(F64, Rat, &["NaN", "overflow"]),
+            arrow(F32, Rat, &["NaN", "overflow"]),
             arrow(Rat, Rat, &[]),
             arrow(Str, Rat, &["invalid"]),
         ],
@@ -13975,6 +13984,152 @@ mod tests {
         sig.data = true;
         sig.arrows[0].result = lookup;
         sig
+    }
+
+    /// Whether the float format of `p` significand bits, least exponent `least` (of the least
+    /// subnormal, `2^least`) and `2^top` the first power of two past its range holds `m·2^e`
+    /// exactly: with `m` odd, `m` has at most `p` bits, `e >= least` and `m·2^e < 2^top`. An
+    /// oracle written apart from the kernel's rounding, which [`float_exact`] runs.
+    fn held_exactly(m: &num_bigint::BigInt, e: i64, (p, least, top): (u64, i64, i64)) -> bool {
+        let Some(tz) = m.trailing_zeros() else {
+            return true;
+        };
+        let (m, e) = (m >> tz, e + tz as i64);
+        let bits = m.magnitude().bits();
+        bits <= p && e >= least && e + bits as i64 <= top
+    }
+
+    /// CAST-rat-nonfinite: the two ways the checker decides that a numeric cast keeps a value
+    /// agree at the edges of the float formats, on both sides of each rounding boundary: the
+    /// values a type lists, cast and cast back to `rat` ([`value_kept`], [`float_exact`]), and a
+    /// type that lists none, read by its carrier ([`keeps_values`]). Each listed value is kept
+    /// exactly where the format holds it ([`held_exactly`]), and a carrier `keeps_values` keeps
+    /// has no listed value that the cast changes. An infinity cast back is `#overflow`, no
+    /// `rat`, so a value past the range is never kept.
+    #[test]
+    fn a_cast_keeps_a_listed_value_exactly_where_its_carrier_rule_says() {
+        use num_bigint::BigInt;
+        const FMT64: (u64, i64, i64) = (53, -1074, 1024);
+        const FMT32: (u64, i64, i64) = (24, -149, 128);
+        let two = |k: i64| (BigInt::from(1), k);
+        let mut cases: Vec<(BigInt, i64)> = Vec::new();
+        for (p, least, top) in [FMT64, FMT32] {
+            // The largest finite value, `(2^p - 1)·2^(top - p)`, and around the boundary to
+            // the infinity at `+ half an ulp`, `2^(top - p - 1)`: it rounds there, ties to even.
+            let max = (BigInt::from(1) << p) - 1;
+            let half_ulp = top - p as i64 - 1;
+            // `max·2^(top-p)` written at the scale of a quarter ulp, so each neighbor is whole.
+            let at = top - p as i64 - 2;
+            let m4 = &max << 2u32;
+            for d in [-3i64, -2, -1, 0, 1, 2, 3] {
+                cases.push((&m4 + BigInt::from(d), at));
+            }
+            cases.push(((&max << 1u32) + 1, half_ulp));
+            cases.push(two(top - 1));
+            cases.push(two(top));
+            cases.push((BigInt::from(3), top - 2));
+            // The integers about `2^p`, the last run of consecutive ones.
+            for d in [-1i64, 0, 1, 2, 3] {
+                cases.push(((BigInt::from(1) << p) + d, 0));
+            }
+            // The least subnormal and the values about it and the least normal.
+            for k in [least - 1, least, least + 1, least + p as i64 - 1] {
+                cases.push(two(k));
+            }
+            cases.push((BigInt::from(3), least - 1));
+            cases.push((BigInt::from(3), least));
+        }
+        let mut checked = 0;
+        for (m, e) in &cases {
+            for m in [m.clone(), -m.clone()] {
+                let r = if *e >= 0 {
+                    Rat::int(&m << *e as u64)
+                } else {
+                    Rat::new(m.clone(), BigInt::from(1) << (-*e) as u64).expect("nonzero")
+                };
+                let mut values = vec![Value::rat(r.clone())];
+                if r.is_integer() {
+                    values.push(Value::integer(r.clone()));
+                }
+                for v in &values {
+                    assert_eq!(
+                        value_kept("f64", v),
+                        held_exactly(&m, *e, FMT64),
+                        "f64({v:?})"
+                    );
+                    assert_eq!(
+                        value_kept("f32", v),
+                        held_exactly(&m, *e, FMT32),
+                        "f32({v:?})"
+                    );
+                    checked += 1;
+                }
+                // An `f64` holding the value: `f32` keeps it where `f32` holds it.
+                if held_exactly(&m, *e, FMT64) {
+                    let x = run(Prim::CastF64, &values[0]).expect("an f64");
+                    assert_eq!(
+                        value_kept("f32", &x),
+                        held_exactly(&m, *e, FMT32),
+                        "f32({x:?})"
+                    );
+                    // Kept by `f64`, as `keeps_values` says of every `f64`.
+                    assert!(value_kept("f64", &x), "f64({x:?})");
+                    let Value::Float(f) = x else { panic!("{x:?}") };
+                    let back = run(Prim::CastRat, &x).expect("a rat");
+                    assert_eq!(as_rat(&back), Some(r.clone()), "rat({})", f.get());
+                }
+            }
+        }
+        assert!(checked > 100, "{checked}");
+        // The carrier rule keeps no carrier a listed value of which the cast changes: `rat`
+        // and an unbounded `int` are kept by no float format, an `f64` by `f64` alone.
+        use Carrier::{F32, F64, Int};
+        for (w, c, keeps) in [
+            ("f64", Int, false),
+            ("f64", Carrier::Rat, false),
+            ("f64", F64, true),
+            ("f64", F32, true),
+            ("f32", Int, false),
+            ("f32", Carrier::Rat, false),
+            ("f32", F64, false),
+            ("f32", F32, true),
+            ("int", Int, true),
+            ("int", Carrier::Rat, false),
+            ("int", F64, false),
+            ("int", F32, false),
+        ] {
+            assert_eq!(
+                keeps_values(w, &Ty::carrier(c), false),
+                keeps,
+                "{w} of {c:?}"
+            );
+        }
+        // An int proved within ±2^53 (`exact`) is kept by `f64`; so is each end, and the
+        // ints just past them are not, where no proof keeps them.
+        assert!(keeps_values("f64", &Ty::carrier(Int), true));
+        let end = BigInt::from(1) << 53u32;
+        for (n, kept) in [
+            (end.clone(), true),
+            (-end.clone(), true),
+            (&end + 1, false),
+            (-&end - 1, false),
+        ] {
+            assert_eq!(value_kept("f64", &Value::int(n.clone())), kept, "f64({n})");
+        }
+        // The infinities and the NaN: `f64` and `f32` keep them, and `rat` of each is the
+        // atom, not a number (DESIGN.md step L1.18).
+        for x in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            assert!(value_kept("f32", &Value::float(x)), "{x}");
+            let atom = if x.is_nan() { "NaN" } else { "overflow" };
+            assert_eq!(
+                run(Prim::CastRat, &Value::float(x)),
+                Some(Value::atom(atom))
+            );
+            assert_eq!(
+                run(Prim::CastRat, &Value::float32(x as f32)),
+                Some(Value::atom(atom))
+            );
+        }
     }
 
     /// PROOF-family-values-builders, negative control: a partial arrow written field by field

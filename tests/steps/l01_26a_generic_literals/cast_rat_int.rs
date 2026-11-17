@@ -46,21 +46,28 @@ fn the_program_of_the_item_needs_no_else() {
 }
 
 #[test]
-fn rat_of_a_string_an_f64_or_a_parameter_keeps_invalid() {
+fn rat_of_a_string_an_f64_or_a_parameter_keeps_its_atoms() {
     for (src, ty) in [
         ("f(s: String) = rat(s);\n", "(s: String) -> rat | #invalid"),
-        ("f(x: f64) = rat(x);\n", "(x: f64) -> rat | #invalid"),
+        (
+            "f(x: f64) = rat(x);\n",
+            "(x: f64) -> rat | #NaN | #overflow",
+        ),
         (
             "f(x: f32) { y = x + 1; return rat(y); }\n",
-            "(x: f32) -> rat | #invalid",
+            "(x: f32) -> rat | #NaN | #overflow",
         ),
     ] {
         assert_eq!(sig_f(src), ty, "{src}");
     }
-    // A parameter with no type may be a float, a NaN among its values, even with a literal
-    // beside it: the class is the parameter's, not one of literals alone.
+    // A parameter with no type may be a float, the NaN and the infinities among its values, even
+    // with a literal beside it: the class is the parameter's, not one of literals alone.
+    // `+` takes no text, so no `#invalid` is among them.
     let t = sig_f("f(x) { y = x + 1; return rat(y); }\n");
-    assert!(t.contains("#invalid"), "{t}");
+    for atom in ["#NaN", "#overflow"] {
+        assert!(t.contains(atom), "{atom}: {t}");
+    }
+    assert!(!t.contains("#invalid"), "{t}");
 }
 
 #[test]

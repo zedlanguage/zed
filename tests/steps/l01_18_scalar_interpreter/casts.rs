@@ -78,7 +78,29 @@ fn a_float_is_an_exact_rational() {
     assert_eq!(x("rat(0.5f64)"), "1r/2r");
     assert_eq!(x("rat(0.1f64)"), "3602879701896397r/36028797018963968r");
     assert_eq!(x("rat(-3)"), "-3r");
-    assert_eq!(x("rat(1.0f64 / 0.0)"), "#invalid");
+    assert_eq!(x("rat(1.0f64 / 0.0)"), "#overflow");
+}
+
+/// No `rat` stands for an infinity or the NaN, so `rat` gives them as a rounding word does:
+/// `#overflow` and `#NaN` (DESIGN.md step L1.18's test, sec:corner_cases "Casts are domain
+/// proofs"; author P361), at either sign and in either float format.
+#[test]
+fn rat_of_an_infinity_is_overflow_and_of_the_nan_is_nan() {
+    assert_eq!(x("rat(f64(\"inf\"))"), "#overflow");
+    assert_eq!(x("rat(f64(\"nan\"))"), "#NaN");
+    assert_eq!(x("rat(f64(\"-inf\"))"), "#overflow");
+    assert_eq!(x("rat(f32(\"inf\"))"), "#overflow");
+    assert_eq!(x("rat(f32(\"-inf\"))"), "#overflow");
+    assert_eq!(x("rat(f32(\"nan\"))"), "#NaN");
+    // The largest finite floats are numbers, and `rat` of each is exact.
+    assert_eq!(
+        x("rat(f64(\"1.7976931348623157e308\")) == rat((2^53 - 1) * 2^971)"),
+        "true"
+    );
+    assert_eq!(
+        x("rat(f32(\"3.4028235e38\")) == rat((2^24 - 1) * 2^104)"),
+        "true"
+    );
 }
 
 #[test]
@@ -171,10 +193,10 @@ fn a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity() {
     assert_eq!(x("f32(real(1.0e39f64))"), "inff32");
     assert_eq!(x("f32(real(-1.0e39f64))"), "-inff32");
     assert_eq!(x(&format!("f32(f64({max32}))")), "3.4028235e38f32");
-    // An infinity is not finite: `f32` keeps it, `rat` of it is `#invalid`, and `int` of a
+    // An infinity is not finite: `f32` keeps it, `rat` of it is `#overflow`, and `int` of a
     // float not proved whole is rejected.
     assert_eq!(x("String(f32(real(1.0e308f64 * 10.0f64)))"), "\"inf\"");
-    assert_eq!(x("rat(real(1.0e308f64 * 10.0f64))"), "#invalid");
+    assert_eq!(x("rat(real(1.0e308f64 * 10.0f64))"), "#overflow");
     // `int` and `rat` have no largest value.
     assert_eq!(x("round(rat(2^2000)) == 2^2000"), "true");
     assert_eq!(x("rat(2^2000) == rat(2^2000)"), "true");

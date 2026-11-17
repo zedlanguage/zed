@@ -113,26 +113,27 @@ fn an_f32_text_reads_what_an_f64_text_reads() {
     }
 }
 
-/// `rat` of an infinity or the NaN is `#invalid`, at `f32` as at `f64`. `int` of one is
+/// `rat` of an infinity is `#overflow` and of the NaN `#NaN`, at `f32` as at `f64`, as a rounding
+/// word gives them (DESIGN.md step L1.18, sec:corner_cases; author P361). `int` of one is
 /// rejected, as of any float the checker does not prove whole (step L1.18); the kernel's
-/// `#invalid` for it is tested in zed-kernel's completeness/words.rs.
+/// atoms for it are tested in zed-kernel's completeness/words.rs.
 #[test]
-fn int_and_rat_of_a_float_that_is_no_number_are_invalid() {
-    for e in [
-        "real(1.0f64 / 0.0)",
-        "real(-1.0f64 / 0.0)",
-        "real(0.0f64 / 0.0)",
+fn int_of_a_float_that_is_no_number_is_rejected_and_rat_of_it_is_its_atom() {
+    for (e, atom) in [
+        ("real(1.0f64 / 0.0)", "#overflow"),
+        ("real(-1.0f64 / 0.0)", "#overflow"),
+        ("real(0.0f64 / 0.0)", "#NaN"),
     ] {
         assert!(
             !errors(&format!("{PASS}x = int({e});\n")).is_empty(),
             "int({e})"
         );
-        assert_eq!(x(&format!("rat({e})")), "#invalid", "rat({e})");
+        assert_eq!(x(&format!("rat({e})")), atom, "rat({e})");
         assert!(
             !errors(&format!("{PASS}x = int(f32({e}));\n")).is_empty(),
             "int(f32({e}))"
         );
-        assert_eq!(x(&format!("rat(f32({e}))")), "#invalid", "rat(f32({e}))");
+        assert_eq!(x(&format!("rat(f32({e}))")), atom, "rat(f32({e}))");
     }
     assert!(!errors("x = int(1.0f64 / 0.0);\n").is_empty());
     assert_eq!(x("rat(real(-0.0f64))"), "0r");
@@ -213,7 +214,7 @@ fn failures_merge_in_every_kind_and_in_sum() {
     );
     assert_eq!(
         x("rat(text(\"a\")) * rat(real(0.0f64 / 0.0)) + 1r / rat(whole(0))"),
-        "#errs({#divByZero, #invalid})"
+        "#errs({#NaN, #divByZero, #invalid})"
     );
     assert_eq!(
         x("f64(text(\"a\")) - f64(rat(whole(1)) / rat(whole(0)))"),

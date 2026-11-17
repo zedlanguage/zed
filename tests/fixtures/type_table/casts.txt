@@ -22,14 +22,14 @@ f64 | #none => error * -- sec:corner_cases "Casts are domain proofs": a cast to 
 template: rat($0)
 int => rat -- sec:corner_cases "Casts are domain proofs"
 rat => rat -- sec:corner_cases "Casts are domain proofs"
-f32 => rat | #invalid -- sec:corner_cases "Casts are domain proofs"
-f64 => rat | #invalid -- sec:corner_cases "Casts are domain proofs"
-f16 => rat | #invalid !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
+f32 => rat | #NaN | #overflow -- sec:corner_cases "Casts are domain proofs"
+f64 => rat | #NaN | #overflow -- sec:corner_cases "Casts are domain proofs"
+f16 => rat | #NaN | #overflow !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
 bool => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 Utf8String => rat | #invalid !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 (int, f64) => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 int | #none => rat | #none -- sec:corner_cases "Casts are domain proofs"
-f64 | #none => rat | #invalid | #none -- sec:corner_cases "Casts are domain proofs"
+f64 | #none => rat | #NaN | #none | #overflow -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
 =2.5 => rat -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below

@@ -225,7 +225,18 @@ fn casts_between_number_kinds() {
                     .expect("nonzero"),
             )),
         ),
-        (Prim::CastRat, Value::float(f64::NAN), Some(atom("invalid"))),
+        (Prim::CastRat, Value::float(f64::NAN), Some(atom("NaN"))),
+        (
+            Prim::CastRat,
+            Value::float(f64::INFINITY),
+            Some(atom("overflow")),
+        ),
+        (
+            Prim::CastRat,
+            Value::float32(f32::NEG_INFINITY),
+            Some(atom("overflow")),
+        ),
+        (Prim::CastRat, Value::float32(f32::NAN), Some(atom("NaN"))),
         (Prim::CastRat, rat(-1, 3), Some(rat(-1, 3))),
         (Prim::CastF64, int(two53), Some(Value::float(two53 as f64))),
         (

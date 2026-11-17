@@ -3,7 +3,7 @@
 //! rejection shows both operands with their carriers and where each carrier comes from, and
 //! its menu is the widening casts the checker accepts, written at the operand: `rat(n)` beside
 //! a `rat` with `n: int`. A cast that narrows is never offered (DESIGN.md sec:diagnostics), so
-//! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#invalid` at NaN and the infinities.
+//! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#NaN` at the NaN and `#overflow` at an infinity.
 
 use zed_tests::step_helpers::l01_19a_command_line::run;
 
@@ -144,6 +144,53 @@ fn an_int_compared_with_an_f64_is_offered_the_widening_cast_where_it_is_exact() 
         "{out}"
     );
     assert!(!out.contains("f64(tempC)"), "{out}");
+}
+
+/// The largest finite `f64`, `(2^53 - 1) * 2^971`, written out.
+const MAX_F64: &str = "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368";
+/// `MAX_F64 + 1`.
+const MAX_F64_NEXT: &str = "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858369";
+/// `MAX_F64 + 2^970`, half an ulp past it: a tie, rounded to even, the infinity.
+const MAX_F64_HALF_ULP: &str = "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792";
+
+/// CAST-rat-nonfinite: `f64(n)` is offered exactly where `f64` holds each value of `n`, on both
+/// sides of 2^53 and of the largest finite `f64`, whether the type lists no values (a range,
+/// read by its carrier and its ends)
+/// or lists them (a name bound to a literal, each value cast and cast back to `rat`): the two
+/// ways agree at the boundary.
+#[test]
+fn the_widening_cast_to_f64_is_offered_where_f64_holds_each_value_of_a_range_or_a_literal() {
+    for (range, kept) in [
+        ("int[-9007199254740992..=9007199254740992]", true),
+        ("int[0..=9007199254740993]", false),
+        ("int[-9007199254740993..=0]", false),
+    ] {
+        let src = program(&format!("warm(n: {range}, x: f64) = n < x;"));
+        let out = rejected(&src);
+        assert_eq!(out.contains("f64(n) < x"), kept, "{range}\n{out}");
+        checks(&edited(&src, "= n < x", "= f64(n) < x"));
+    }
+    for (value, kept) in [
+        ("9007199254740992", true),
+        ("-9007199254740992", true),
+        ("9007199254740993", false),
+        ("9007199254740994", true),
+        ("-9007199254740995", false),
+        ("0.5r", true),
+        ("0.1r", false),
+        // The largest finite `f64`, `(2^53 - 1) * 2^971`, and the ints just past it: the next,
+        // which rounds down to it, and the midpoint to `2^1024`, which rounds to the infinity.
+        (MAX_F64, true),
+        (MAX_F64_NEXT, false),
+        (MAX_F64_HALF_ULP, false),
+    ] {
+        let src = program(&format!("warm(x: f64) {{ n = {value}; return n < x; }}"));
+        let out = rejected(&src);
+        assert_eq!(out.contains("f64(n) < x"), kept, "{value}\n{out}");
+        if kept {
+            checks(&edited(&src, "return n < x", "return f64(n) < x"));
+        }
+    }
 }
 
 #[test]
@@ -394,7 +441,7 @@ fn a_rat_literal_is_offered_its_literal_forms_not_a_cast() {
         ),
         "{out}"
     );
-    // `rat(b)` is `#invalid` at NaN and the infinities, so it is not offered.
+    // `rat(b)` is `#NaN` at the NaN and `#overflow` at an infinity, so it is not offered.
     assert_eq!(fixed(&src), ["scaled(b: f64) = b * 1.0;"]);
     assert!(menu(&src).is_empty());
     checks(&edited(&src, "b * 1r", "b * 1.0"));

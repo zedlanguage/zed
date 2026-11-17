@@ -520,7 +520,7 @@ fn an_ordering_of_an_int_with_a_fraction_text_is_repaired_by_casting_both_sides(
     }
     // No cast that cannot fail meets the two sides, so no repair: `rat` reads only a reduced
     // fraction, so `rat("14/6")` is `#invalid`; it reads no exponent, so `rat("1e999")` is
-    // `#invalid` too; and `rat(x)` of an `f64` is `#invalid` at NaN and the infinities.
+    // `#invalid` too; and `rat(x)` of an `f64` is `#NaN` at the NaN and `#overflow` at an infinity.
     for (decl, expr) in [
         ("n: int", "n < \"14/6\""),
         ("n: int", "\"1e999\" >= n"),

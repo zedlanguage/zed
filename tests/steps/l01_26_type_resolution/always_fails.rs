@@ -177,7 +177,7 @@ fn a_cast_of_a_literal_that_never_converts_is_rejected() {
 fn a_cast_that_may_convert_keeps_its_atom() {
     let cases = [
         ("f(s: String) = int(s);", "(s: String) -> int | #invalid"),
-        ("f(x: f64) = rat(x);", "(x: f64) -> rat | #invalid"),
+        ("f(x: f64) = rat(x);", "(x: f64) -> rat | #NaN | #overflow"),
     ];
     for (src, want) in cases {
         assert!(type_errors(src).is_empty(), "{src}");

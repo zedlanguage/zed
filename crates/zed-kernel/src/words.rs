@@ -93,6 +93,11 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             let r = match x.exact() {
                 Exact::Finite(r) => r,
                 _ if p == Prim::CastF64 => return Ok(x.clone()),
+                // No `rat` stands for the NaN or an infinity, so `rat` gives them as a
+                // rounding function to `int` does (DESIGN sec:corner_cases, "Casts are domain
+                // proofs", and step L1.18; author P361).
+                Exact::NaN if p == Prim::CastRat => return Ok(Value::atom("NaN")),
+                _ if p == Prim::CastRat => return Ok(overflow()),
                 _ => return Ok(invalid()),
             };
             match (p, x) {

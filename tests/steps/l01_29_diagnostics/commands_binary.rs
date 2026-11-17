@@ -663,8 +663,9 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_holding_no_union_as_before(
 /// power is a compile error, as it needs at least 128 EiB and Linux x86_64 addresses 16 EiB,
 /// and `rat` of an `int` no longer gives `#invalid`; the next test pins that rejection. The cast
 /// `rat(f64(b) ^ (2^64))` keeps the program's shape and its rejection at 3:15: a cast to `f64`
-/// rounds and gives no atom (step L1.18), but the power may be an infinity, which `rat` gives
-/// `#invalid` for, and a float power builds no exact number, so the size rule does not apply.
+/// rounds and gives no atom (step L1.18), but the power may be an infinity or the NaN, which `rat`
+/// gives `#overflow` and `#NaN` for, and a float power builds no exact number, so the size rule
+/// does not apply.
 const WIDE: &str =
     "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(f64(b) ^ (2^64)));\n}\n";
 
@@ -676,8 +677,8 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
         format!(
             "{}:{}",
             f.display(),
-            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(f64(b) ^ (2^64))) : String | #invalid`. Try `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";` instead.
-  [1]  3:15: this call of `String` gives String | #invalid
+            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(f64(b) ^ (2^64))) : String | #NaN | #overflow`. Try `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";` instead.
+  [1]  3:15: this call of `String` gives String | #NaN | #overflow
        3 |   m.stdout <- String(rat(f64(b) ^ (2^64)));
          |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 15, 16, 17]
          |                          ^^^^^^ [4]  ^^ [14]
@@ -685,7 +686,7 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
          |                              ^ [5] ^ [13]
          |                                   ^^^^^^ [12]
          |                      ^------------------^ [2]
-  [2]  3:22: this call of `rat` gives rat | #invalid
+  [2]  3:22: this call of `rat` gives rat | #NaN | #overflow
   [3]  3:26: this `^` gives f64
   [4]  3:26: this call of `f64` gives f64
   [5]  3:30: `b` is int here

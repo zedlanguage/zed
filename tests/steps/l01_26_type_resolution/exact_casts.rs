@@ -82,7 +82,10 @@ fn a_cast_to_a_float_format_gives_no_atom_but_invalid_from_a_text() {
             "String -> f32 | #invalid",
         ),
         // `rat` of an infinity or the NaN is `#invalid`.
-        ("f(positional x: f64) = rat(x);", "f64 -> rat | #invalid"),
+        (
+            "f(positional x: f64) = rat(x);",
+            "f64 -> rat | #NaN | #overflow",
+        ),
         // A code point lies in 0 ..= 1114111; its own atom passes the cast.
         (
             "f(s: String) = f64(codePoint(s));",
