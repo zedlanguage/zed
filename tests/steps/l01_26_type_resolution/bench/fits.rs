@@ -120,3 +120,47 @@ fn k_joined_components_cost_at_most_twice_the_rows_written_out() {
         || assert!(fits_sig(&s, &joined)),
     );
 }
+
+/// A row of 6 joined components against the 2^m shapes that differ on its last m components,
+/// m = 1 to 5, costs a bounded factor of the same rows written out
+/// (PERF-types-joined-split-several-differing). The split rows form a binary tree of 2^m
+/// leaves, each held whole, and 2^m - 1 inner rows, each tried in the shapes of its bucket
+/// before it is split. The shapes are variables, which the filing cannot tell apart, so each
+/// row written out is also searched through the bucket: the fits counted per tuple were 2, 5,
+/// 16, 60, 240, 976 and 3968 written out and 5, 17, 60, 225, 874, 3451 and 13724 joined for
+/// m = 1 to 7, a ratio of 2.5 to 3.75 that does not grow with m. The instructions, 1.26, 2.02,
+/// 2.35, 2.68, 2.99, 3.30 and 3.45 times, rise toward that ratio as the fixed cost of a tuple
+/// shrinks against the fits; measured, not proved, beyond m = 7.
+#[test]
+fn k_joined_components_differing_on_m_components_cost_a_bounded_factor() {
+    for m in 1..=5 {
+        let alone: Vec<usize> = (6 - m..6).collect();
+        let [s, written, joined] = k_joined_rows(20, 6, &alone, false);
+        scaling::compare_costs(
+            &format!("6 joined components split across 2^{m} shapes, against the rows written out"),
+            "the split tree's 2^m - 1 inner rows are each tried in the bucket, as each row \
+             written out is searched through it: about 3.5 times the fits for every m; \
+             measured 1.26 to 2.99 times the instructions for m = 1 to 5, 3.45 at m = 7",
+            3.5,
+            || assert!(fits_sig(&s, &written)),
+            || assert!(fits_sig(&s, &joined)),
+        );
+    }
+}
+
+/// [`k_joined_components_differing_on_m_components_cost_a_bounded_factor`] at m = 3, n and 8n
+/// tuples: linear in the tuples.
+#[test]
+fn k_joined_components_split_across_eight_shapes_scales() {
+    let what = "n rows of 6 joined components split across eight shapes each";
+    let n = 10;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, k_joined_rows(n, 6, &[3, 4, 5], false)))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let [s, written, joined] = &sigs[&n];
+        assert!(fits_sig(s, written), "{what} at {n}: written out");
+        assert!(fits_sig(s, joined), "{what} at {n}: joined");
+    });
+}

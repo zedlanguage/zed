@@ -9667,8 +9667,14 @@ impl<'m, 's> Comparing<'m, 's> {
     /// union there too unless the bindings made between them stand in the way, and a shape
     /// tried may differ from the row at a component where the shapes that hold its rows do
     /// not ([`Comparing::split_at`] names the case). Each inner row is tried in every shape of
-    /// its bucket the pins leave it before it is split, which for m shapes that differ on
-    /// log m components is m log m fits. Evidence:
+    /// its bucket the pins leave it before it is split: for N shapes of variables that differ
+    /// on log N components, N - 1 inner rows each tried in up to N shapes, as each of the N
+    /// rows written out is searched through the same bucket, so the joined row costs a bounded
+    /// factor of the rows written out, 2.5 to 3.75 times their fits for N = 2 to 128, measured,
+    /// not proved (PERF-types-joined-split-several-differing,
+    /// `bench::fits::k_joined_components_differing_on_m_components_cost_a_bounded_factor`).
+    /// The bucket search itself is O(N^2) fits for N shapes of variables
+    /// (PERF-types-variable-shapes-one-bucket). Evidence:
     /// `bench::fits::k_joined_components_split_where_the_shapes_differ_scales` (k = 2, 3, 4
     /// joined components, two shapes each, ratios 8.93, 8.94 and 9.00 at 100 and 800),
     /// `k_joined_components_cost_at_most_twice_the_rows_written_out` (1.70 the work of the rows
