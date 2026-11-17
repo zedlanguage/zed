@@ -12405,7 +12405,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     binds.insert(v.clone(), on.clone());
                 }
                 let other = Arg::of(self.bound(other, &mut binds));
-                let on = Arg::of(on);
+                // A clone, as `binds` takes above: `on` is read again after the match.
+                let on = Arg::of(on.clone());
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
                 self.list_concat_end(x, y, span, None, Self::need)
             }
