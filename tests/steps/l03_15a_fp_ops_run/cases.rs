@@ -1148,44 +1148,40 @@ fn a_concat_repair_runs_and_gives_the_list_meant() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// The note on a lambda parameter that stays generic names what the word gives it (plan rows
-/// MSG-generic-operand-wording and TEST-msg-repair-parens-and-entries). One case per word that
-/// records it (`map`, `flatMap`, `where`, `group`: `Ck::entry_param`'s callers) and per kind
-/// of receiver `Ck::noted_entries` reads: a port's lines, the result of a word, entries that
-/// are families, and a receiver over two lines, which has no one-line text. `zip` on the
-/// parameter is the error, since it is not compiled on a generic operand.
+/// `zip` on a lambda parameter that stays generic is checked on the entries the word gives it,
+/// and the error names their type, never `_`, the type of every value (A92; plan rows
+/// MSG-generic-operand-wording, TEST-msg-repair-parens-and-entries, ZIP-generic-operands).
+/// One case per word that gives a lambda its entries (`map`, `flatMap`, `where`, `group`) and
+/// per kind of receiver: a port's lines, the result of a word, entries that are families, and
+/// a receiver over two lines. Before ZIP-generic-operands `zip` was refused on a generic
+/// operand, and this test checked the note on the parameter that refusal carried.
 #[test]
 fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
+    let string = "`zip` reads the entries of a family, and this value is String";
     let cases = [
-        (
-            "m.stdout <- m.stdin.map(l -> \"${l.zip([1])}\");",
-            "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, whose type \
-             is String",
-        ),
+        ("m.stdout <- m.stdin.map(l -> \"${l.zip([1])}\");", string),
         (
             "m.stdout <- m.stdin.flatMap(l -> [\"${l.zip([1])}\"]);",
-            "`l` has a generic type here, and `flatMap` gives it each entry of `m.stdin`, whose \
-             type is String",
+            string,
         ),
+        // Not `m.stdin.map(…)`, whose entries may be `#ioError`, which `where` does not take
+        // yet (plan row WHERE-loose-atoms).
         (
-            "m.stdout <- m.stdin.map(l -> l.trim).where(l -> \"${l.zip([1])}\" == \"\");",
-            "`l` has a generic type here, and `where` gives it each entry of \
-             `m.stdin.map(l -> l.trim)`, whose type is String",
+            "m.stdout <- [\"a\", \" b\"].map(l -> l.trim).where(l -> \"${l.zip([1])}\" == \"\");",
+            string,
         ),
         (
             "m.stdout <- \"${m.stdin.group(l -> l.zip([1])).count}\";",
-            "`l` has a generic type here, and `group` gives it each entry of `m.stdin`, whose \
-             type is String",
+            string,
         ),
+        // A list of strings is a family; `[1]` may lack its keys.
         (
             "m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${p.zip([1])}\");",
-            "`p` has a generic type here, and `map` gives it each entry of \
-             `m.stdin.map(l -> l.split(\",\"))`, whose type is [String]",
+            "nothing shows that each key of the family before `.zip` is in the argument of `zip`",
         ),
         (
             "m.stdout <- m.stdin.map(l ->\n    l.trim).map(l -> \"${l.zip([1])}\");",
-            "`l` has a generic type here, and `map` gives it each entry of the family before \
-             `.map`, whose type is String",
+            string,
         ),
     ];
     let mut wrong = Vec::new();
@@ -1204,22 +1200,22 @@ fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
 
 /// A list's type prints as DESIGN writes it, `[String]`, not as the arrow `int ->? String`,
 /// which says keys may be missing (plan row MSG-list-type-printed-by-arrows). The pieces of
-/// `l.split(",")` are such a list.
+/// `l.split(",")` are such a list; `trim`, a word on strings, is refused on one.
 #[test]
 fn a_list_type_prints_as_a_list() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${p.zip([1])}\");\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> p.trim);\n}\n";
     let out = run("fp_ops/list_type_print", src, "", &[]);
     assert!(
-        out.status != 0 && out.stderr.contains("whose type is [String]"),
+        out.status != 0 && out.stderr.contains("([String])") && !out.stderr.contains("->?"),
         "{}",
         out.stderr
     );
 }
 
-/// Where the type of the entries a word gives a lambda parameter is not known, as those of a
-/// parameter of no written type, the note still says where the parameter comes from, with no
-/// type: `_` is the type of every value (A92), and `l` is an entry of `xs` (plan row
-/// MSG-generic-param-entry-note-every-value).
+/// Where the type of the entries a word gives a lambda parameter is not known in the body, as
+/// those of a parameter of no written type, `zip` on it is checked at each call on what the
+/// call gives, which the error names, never `_`, the type of every value (A92; plan rows
+/// MSG-generic-param-entry-note-every-value, ZIP-generic-operands).
 #[test]
 fn an_entry_of_a_generic_parameter_is_not_shown_as_every_value() {
     let src = "f(positional xs) = xs.map(l -> \"${l.zip([1])}\");\nmain(m: MainArgs) {\n  m.stdout <- f([\"a\"]);\n}\n";
@@ -1228,7 +1224,7 @@ fn an_entry_of_a_generic_parameter_is_not_shown_as_every_value() {
     assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
     assert!(
         out.stderr
-            .contains("`l` has a generic type here, and `map` gives it each entry of `xs`"),
+            .contains("`zip` reads the entries of a family, and this value is \"a\""),
         "{}",
         out.stderr
     );
@@ -1866,6 +1862,125 @@ fn concat_checked_at_a_call_repairs_the_call() {
         src,
         &["repair: put the value in a list, as `wrap([\"s\"])`"],
     );
+    // Plan row MSG-concat-need-repair-literal-op: an argument that is an operation on
+    // literals gets the call with it in a list too, not the template, and the repair runs.
+    let src = "app(positional a) = [1] ++ a;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${app(3 + 4)}\";\n}\n";
+    let (status, said) = ran("concat_need_repair_op", src);
+    assert!(status != 0, "{said}");
+    assert!(
+        said.contains("repair: put the value in a list, as `app([3 + 4])`"),
+        "{said}"
+    );
+    assert!(!said.contains("`xs ++ [x]`"), "{said}");
+    let fixed = "app(positional a) = [1] ++ a;\n\
+                 main(m: MainArgs) {\n  m.stdout <- \"${app([3 + 4])}\";\n}\n";
+    assert_eq!(
+        ran("concat_need_repair_op_fixed", fixed),
+        (0, "{0 -> 1, 1 -> 7}\n".into())
+    );
+    // Two `++` needs of one call, each on the class of its own argument: the repair puts the
+    // argument of the operand refused in a list, never the other one.
+    let two = |args: &str| {
+        format!(
+            "two(positional a, positional b) = ([1] ++ a) ++ ([2] ++ b);\n\
+             main(m: MainArgs) {{\n  m.stdout <- \"${{two({args})}}\";\n}}\n"
+        )
+    };
+    for (i, (args, repair)) in [
+        ("3 + 4, [5]", "two([3 + 4], [5])"),
+        ("[3], 5 + 6", "two([3], [5 + 6])"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let repair = format!("repair: put the value in a list, as `{repair}`");
+        rejected_saying(
+            &format!("concat_need_repair_two_{i}"),
+            &two(args),
+            &[&repair],
+        );
+    }
+    // Both at once, of two types, so each error is told apart by its type.
+    let (status, said) = ran("concat_need_repair_two_ops", &two("3 + 4, 0.5 + 1.0"));
+    assert!(status != 0, "{said}");
+    let errors: Vec<&str> = said.split("prog.zed:").skip(1).collect();
+    for (ty, repair) in [
+        ("int", "`two([3 + 4], 0.5 + 1.0)`"),
+        ("f64", "`two(3 + 4, [0.5 + 1.0])`"),
+    ] {
+        let e = errors
+            .iter()
+            .find(|e| e.contains(&format!("this value is {ty}, beside a list")))
+            .unwrap_or_else(|| panic!("no error for {ty}:\n{said}"));
+        assert!(
+            e.contains(&format!("repair: put the value in a list, as {repair}")),
+            "{ty}: {e}\n{said}"
+        );
+    }
+}
+
+/// Plan row ZIP-generic-operands: a `zip` of two parameters of no written type is checked at
+/// each call, as `++` is: arguments that share their keys pass (two reads of one port, lists
+/// whose keys the text fixes alike), and arguments whose keys may differ are refused at the
+/// call, with the need's `zip` named.
+#[test]
+fn a_zip_of_generic_parameters_is_checked_at_each_call() {
+    let pair_up = "pairUp(positional a, positional b) = a.zip(b);\n";
+    let main =
+        |body: &str| format!("{pair_up}main(m: MainArgs) {{\n  m.stdout <- \"${{{body}}}\";\n}}\n");
+    assert_eq!(
+        ran_on_input("zip_generic_ports", &main("pairUp(m.stdin, m.stdin).count")),
+        (0, "2\n".into())
+    );
+    assert_eq!(
+        ran_on_input("zip_generic_lists", &main("pairUp([1, 2], [3, 4])")),
+        (0, "{0 -> (1, 3), 1 -> (2, 4)}\n".into())
+    );
+    // One value given to both parameters through a lambda, whose application shows no
+    // argument: the need made at `pairUp(l, l)` keeps that its operands are one value.
+    assert_eq!(
+        ran_on_input(
+            "zip_generic_lambda",
+            &main("[[1, 2], [3]].map(l -> pairUp(l, l))")
+        ),
+        (
+            0,
+            "{0 -> {0 -> (1, 1), 1 -> (2, 2)}, 1 -> {0 -> (3, 3)}}\n".into()
+        )
+    );
+    // Through a generic function between, whose parameters the need passes on to.
+    let twice = "twice(positional p, positional q) = pairUp(p, q);\n";
+    let through = |body: &str| main(body).replacen("main(", &format!("{twice}main("), 1);
+    assert_eq!(
+        ran_on_input(
+            "zip_generic_between",
+            &through("twice(m.stdin, m.stdin).count")
+        ),
+        (0, "2\n".into())
+    );
+    let (status, said) = ran_on_input(
+        "zip_generic_between_ports",
+        &through("twice(m.stdin, m.args).count"),
+    );
+    assert!(status != 0, "{said}");
+    assert!(said.contains("twice(m.stdin, m.args)"), "{said}");
+    assert!(
+        said.contains("pairUp(p, q)") && said.contains("a.zip(b)"),
+        "{said}"
+    );
+    let (status, said) = ran_on_input(
+        "zip_generic_two_ports",
+        &main("pairUp(m.stdin, m.args).count"),
+    );
+    assert!(status != 0, "{said}");
+    assert!(!said.contains("generic here"), "{said}");
+    assert!(said.contains("pairUp(m.stdin, m.args)"), "{said}");
+    assert!(said.contains("a.zip(b)"), "{said}");
+    let (status, said) = ran_on_input("zip_generic_lists_differ", &main("pairUp([1, 2], [3])"));
+    assert!(status != 0, "{said}");
+    assert!(!said.contains("generic here"), "{said}");
+    assert!(said.contains("key 1 is in"), "{said}");
 }
 
 /// `program` run by `zedc run` with the lines `a` and `b` on its input and the arguments `x`

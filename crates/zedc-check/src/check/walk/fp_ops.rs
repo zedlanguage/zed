@@ -1240,6 +1240,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         {
                             self.info.list_concats.insert(s);
                         }
+                        // The class is checked when it is resolved, with no frame of this call:
+                        // the argument is kept for the repair there ([`Ck::concat_args`]).
+                        if let Some((arg, first)) = from
+                            && first == (side == 0)
+                            && !self.trying
+                        {
+                            let on: Arc<str> = format!("${}", self.find(r)).into();
+                            self.concat_args.insert((span, first, on), arg);
+                        }
                         let kind = NeedKind::Concat {
                             other: that.ty.clone(),
                             first: side == 0,
@@ -1415,9 +1424,72 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `[1, 2].zip([1])` holds key `1` on one side only, and a zip of two `Lines` inputs is
     /// rejected too, since nothing shows their counts equal. Proved, the four bounds are one
     /// set, so the result's keys are sure. A loose atom of either operand passes through.
+    ///
+    /// Each variable of an operand takes the `zip` as at [`Self::list_concat_end`] (row
+    /// ZIP-generic-operands): a class resolved to a type takes it on that type; one not yet
+    /// resolved records it as a need on its class ([`NeedKind::Zip`]), met at each call of the
+    /// generic function on the type the call gives it, where the arguments' own expressions
+    /// show whether they share their keys ([`Self::zip_shares_keys`]); a variable with no
+    /// class, which a written type parameter is, is not compiled yet. `need` is `Ck::need`,
+    /// passed in as at `list_concat_end`, so this file imports nothing of walk.rs.
     // Complexity tradeoff: the bounds over all the families each operand may be, two
-    // subtype tests and one diff for the message, linear in the arrows (`key_bounds`).
-    pub(super) fn zip_end(&mut self, x: &Arg<'a>, y: &Arg<'a>, span: Span) -> Ty {
+    // subtype tests and one diff for the message, linear in the arrows (`key_bounds`); plus
+    // one need or one recursion per variable of each operand, as at `list_concat_end`, whose
+    // proof that the recursion ends holds here word for word (the rest of an operand and a
+    // resolved class hold no variable, so each recursive call has one operand fewer with a
+    // variable). The naive method, refusing a variable (what this did before the row), costs
+    // nothing but refuses every generic function whose body zips its parameters.
+    pub(super) fn zip_end(
+        &mut self,
+        x: &Arg<'a>,
+        y: &Arg<'a>,
+        span: Span,
+        shared: bool,
+        need: NeedFn<'t, 'a>,
+    ) -> Ty {
+        let classed = |ck: &Self, a: &Arg<'a>| a.ty.vars.iter().all(|v| ck.class_root(v).is_some());
+        for (side, this) in [x, y].into_iter().enumerate() {
+            // A variable of no class falls to `levels_of` below, which refuses it.
+            if this.ty.vars.is_empty() || !classed(self, this) {
+                continue;
+            }
+            let that = [x, y][1 - side];
+            // Whether the operands come from one place is read here, where their expressions
+            // are, and kept in the need: where it is met they may have none, as the
+            // application of a lambda has none ([`NeedKind::Zip`]).
+            let shared = shared || self.zip_one_origin(x, y);
+            // The operand `this` with the type `t` in its place, `zip` checked on it.
+            let with = |ck: &mut Self, t: Ty| {
+                let mut a = this.clone();
+                a.ty = t;
+                let (a, b) = if side == 0 { (&a, that) } else { (that, &a) };
+                ck.zip_end(a, b, span, shared, need)
+            };
+            let mut rest = this.ty.clone();
+            rest.vars = VarSet::new();
+            let mut out = match rest.is_empty() {
+                true => Ty::empty(),
+                false => with(self, rest),
+            };
+            for v in this.ty.vars.iter() {
+                let Some(r) = self.class_root(v) else {
+                    continue;
+                };
+                let t = match self.classes[r].resolved.clone() {
+                    Some(t) => with(self, t),
+                    None => {
+                        let kind = NeedKind::Zip {
+                            other: that.ty.clone(),
+                            first: side == 0,
+                            shared,
+                        };
+                        need(self, r, kind, true, span)
+                    }
+                };
+                out = out.union(&t);
+            }
+            return out;
+        }
         let word = "`zip`";
         let example = "[1, 2].zip([3, 4])";
         let out =
@@ -1462,8 +1534,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // Whether the operands are shown to share their keys by where they come from, which
         // the bounds of their types cannot show (plan row ZIP-count-facts): read only where
-        // the bounds leave a region, so a zip the bounds prove costs nothing more.
-        let mut shared = None;
+        // the bounds leave a region, so a zip the bounds prove costs nothing more. `shared`
+        // says the need this check meets was made where they were shown to.
+        let mut shared_keys = None;
         for from in [0, 1] {
             // The least key of the region `U_from - L_to`, the keys `from` may hold that the
             // other side may lack, and whether `from` surely holds it and the other surely
@@ -1508,7 +1581,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Ok(one) = found else {
                 continue;
             };
-            if *shared.get_or_insert_with(|| self.zip_shares_keys(x, y, span)) {
+            if *shared_keys.get_or_insert_with(|| shared || self.zip_shares_keys(x, y, span)) {
                 break;
             }
             let (a, b) = (&names[from], &names[1 - from]);
@@ -1534,7 +1607,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // in each run, which their types bound only as `L_a ∪ L_b ⊆ K ⊆ U_a ∩ U_b`: the keys
         // are typed `U_a ∩ U_b`, the arrow partial, and a read of a key outside `K` misses.
         // What either side's type knows of its keys' shape holds for `K`, as below.
-        let mut sig = if shared == Some(true) {
+        let mut sig = if shared_keys == Some(true) {
             Sig::one_partial(positional(1), vec![ua.meet(&ub)], pair)
         } else {
             Self::zip_sig(&sets, &a, &b, ua, ub, pair)
@@ -2179,6 +2252,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         let a = self.keyspace(ex, None).0;
         let b = self.keyspace(ey, None).0;
         self.same_keys(&a, &b, span)
+    }
+
+    /// Whether the operands of a `zip` hold the same keys because they come from one place
+    /// ([`Self::keyspace`]), as the two `l` of `pairUp(l, l)`. Unlike
+    /// [`Self::zip_shares_keys`] it records no need on a function's parameters: two
+    /// parameters are not one place, and their calls are checked through the need on their
+    /// classes instead. Complexity tradeoff: two keyspace reads, as at `zip_shares_keys`.
+    fn zip_one_origin(&mut self, x: &Arg<'a>, y: &Arg<'a>) -> bool {
+        let (Some(ex), Some(ey)) = (x.expr, y.expr) else {
+            return false;
+        };
+        let a = self.keyspace(ex, None).0;
+        a != Space::Any && a == self.keyspace(ey, None).0
     }
 
     /// Whether the read `of[key]` finds its key in `of` because `key` is the parameter of a

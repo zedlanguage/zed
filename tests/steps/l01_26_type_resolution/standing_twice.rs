@@ -114,7 +114,7 @@ pub(crate) fn read_sig(text: &str) -> zedc::check::ty::Sig {
 fn the_variables_standing_twice_are_the_ones_printed_by_name() {
     use std::collections::BTreeSet;
     use std::sync::Arc;
-    use zedc::check::ty::{Binds, Narrow, Need, NeedKind, Sig, Ty};
+    use zedc::check::ty::{Binds, CallPath, Narrow, Need, NeedKind, Sig, Ty};
     let span = zedc::lex::Span { start: 0, end: 0 };
     // `joined`: whether an `else` on `T` gives `U`, so that the two print as one variable.
     let check = |s: &Sig, joined: bool, bad: &mut Vec<String>| {
@@ -140,6 +140,7 @@ fn the_variables_standing_twice_are_the_ones_printed_by_name() {
             result: Some(Ty::var("U".into())),
             span,
             alike: Arc::from([]),
+            via: CallPath::default(),
         });
         s
     };

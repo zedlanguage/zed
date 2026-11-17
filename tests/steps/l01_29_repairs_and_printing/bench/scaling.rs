@@ -314,6 +314,17 @@ fn repairing_an_ordering_of_an_int_with_a_long_fraction_text_scales() {
 }
 
 #[test]
+fn naming_each_call_of_a_chain_scales() {
+    let n = 1000;
+    let srcs = scaling::inputs(n, call_chain);
+    scaling::check(
+        "the rejection at a call naming each of a chain of n calls",
+        n,
+        |k| each_call_of_the_chain_named(&srcs[&k], k),
+    );
+}
+
+#[test]
 fn repairing_orderings_of_ints_with_fraction_texts_scales() {
     let n = 200;
     let srcs = scaling::inputs(n, int_orderings_with_fractions);

@@ -1251,7 +1251,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Zip(x, span) => {
                 let y = m.take_arg();
-                let t = self.zip_end(&x, &y, span);
+                let t = self.zip_end(&x, &y, span, false, Self::need);
                 m.ty(t);
             }
             Frame::ReduceFn(x, span, at) => {
@@ -2794,7 +2794,23 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Where `value`, bound outside every function, is a call of a name, `f(1 / 2, 3 / 4)`:
     /// the callee's name and, for each argument that is an operation on literals alone that
     /// wrote errors as it was walked ([`Ck::lit_written`]), its span and the numbers of those
-    /// errors. `None` for any other value. O(a) for a arguments.
+    /// errors. `None` for any other value. O(a + e) for a arguments and the e errors they
+    /// wrote.
+    ///
+    /// The ranges index the errors as they stood when each operation was walked. Proved here
+    /// that they still do, at the end of the binding and before [`Self::drop_met`]: between
+    /// the two the errors only grow at the end, or lose a tail after a mark ([`Ck::undo`],
+    /// the second run of a need in [`Self::meet`]), or the tail a nested statement wrote
+    /// (`drop_met`, [`Self::rejects_unfixed`] of a binding in a block of the value), which
+    /// lies after every range written before it, while a range written inside it is dropped
+    /// with it. Not proved: that no tail cut after a mark holds a range, which needs a mark
+    /// taken outside a trial ([`Ck::trying`] records no range) and before an operation on
+    /// literals at the top level walked under it; the two untried marks, in
+    /// [`Self::components`] and [`Self::narrower_range`], walk no expression (read off the
+    /// code, PROOF-params-own-apart-fresh). So a range is taken only where it still lies
+    /// within the errors and each of its errors lies inside its argument; any other argument
+    /// is left out of the group and keeps its own errors, as before
+    /// MSG-call-division-args-grouping.
     fn call_arg_ops(&self, value: &Expr) -> Option<(String, ArgOps)> {
         let ExprKind::Call {
             callee,
@@ -2811,10 +2827,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ops = (positional.iter().chain(named.iter().map(|(_, a)| a)))
             .filter_map(|a| {
                 let r = self.lit_written.get(&a.span)?;
-                Some((
-                    a.span,
-                    self.errors[r.clone()].iter().map(|e| e.id).collect(),
-                ))
+                let wrote = self.errors.get(r.clone())?;
+                let inside = |e: &Found| a.span.start <= e.span.start && e.span.end <= a.span.end;
+                wrote
+                    .iter()
+                    .all(inside)
+                    .then(|| (a.span, wrote.iter().map(|e| e.id).collect()))
             })
             .collect();
         Some((name.to_string(), ops))
@@ -11950,7 +11968,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return (needs, Binds::new());
         }
         let mut kept: Vec<Need> = Vec::with_capacity(needs.len());
-        let mut members: Vec<Vec<(Span, Span)>> = Vec::with_capacity(needs.len());
+        let mut members: Vec<Vec<(Span, Span, CallPath)>> = Vec::with_capacity(needs.len());
         // What a need's result is, as needs are grouped by it.
         #[derive(PartialEq, Eq, Hash)]
         enum Gives {
@@ -12016,7 +12034,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         NeedKind::Remap { .. } => self.alike_remaps.push((site, first)),
                         _ => {}
                     }
-                    members[i].push((n.span, site));
+                    members[i].push((n.span, site, n.via.clone()));
                     continue;
                 }
                 Some(_) => {}
@@ -12029,7 +12047,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         for (n, m) in kept.iter_mut().zip(members) {
             if !m.is_empty() {
-                n.alike = n.alike.iter().copied().chain(m).collect();
+                n.alike = n.alike.iter().cloned().chain(m).collect();
             }
         }
         // Each linked class to its root, found once all links are made, so that no bind
@@ -12356,6 +12374,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
+    /// The path of a need made now ([`Need::via`]): that of the callee's need being met at a
+    /// call, if one is ([`Ck::passing_on`]). O(1): one shared link is cloned.
+    fn passed_on(&self) -> CallPath {
+        self.passing_on.last().cloned().unwrap_or_default()
+    }
+
     /// Records that the use at `span` needs `kind` of each value of class `k`, and gives what
     /// the use gives: a new class at `k`'s level if `gives`, else nothing. The use is checked
     /// now on each tuple and function that flowed into the class; on the type the class
@@ -12445,6 +12469,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             result: result.clone(),
             span,
             alike: Arc::from([]),
+            via: self.passed_on(),
         };
         // A need met from a signature that makes this one at its own site, on a class of the
         // function around, carries the sites of the uses alike left out for it there, each at
@@ -12459,12 +12484,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         // spans are equal only for one place in the text, so the test picks the first case
         // exactly (FAIL-remap-computed-key-need-site-product, the note "`mid` needs this of
         // its argument here" of a left-out remap placed at the kept remap before).
+        // Each left-out use's path is the one its own need, met at the call, would have given
+        // the need made here ([`Self::passed_on`]): the call's link, at that use's span, before
+        // the use's own path; or its own path where no call passes it on ([`Self::check_on`]).
+        // O(1) per entry, beside the O(m) copy of the list.
         if let Some(&(met, Some(site), ref alike)) = self.meet_alike.last()
             && !alike.is_empty()
             && need.site() == Some(site)
         {
+            let link = self.passing_on.last().and_then(|p| p.0.clone());
             need.alike = (alike.iter())
-                .map(|&(at, s)| (if span == met { at } else { span }, s))
+                .map(|(at, s, via)| {
+                    let via = match &link {
+                        Some(l) => CallPath(Some(Arc::new(Via {
+                            at: *at,
+                            text: l.text.clone(),
+                            next: via.0.clone(),
+                        }))),
+                        None => via.clone(),
+                    };
+                    (if span == met { *at } else { span }, *s, via)
+                })
                 .collect();
         }
         let mut vars = Vars::default();
@@ -12517,6 +12557,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             result: result.clone(),
             span,
             alike: Arc::from([]),
+            via: self.passed_on(),
         };
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
@@ -12545,7 +12586,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let from = self.errors.len();
         let start = self.need_passed.len();
         self.call_frames.push(CallFrame::default());
+        self.passing_on.push(CallPath::default());
         let got = self.meet(n, t, &mut Binds::new(), span);
+        self.passing_on.pop();
         self.call_frames.pop();
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
@@ -12865,12 +12908,53 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
                 // The argument whose whole value the operand is, for the repair at its call
                 // ([`Ck::concat_from`]); none for the check of a value that flowed into a
-                // class, whose frame is of no call, as at `strings_sources`.
+                // class, whose frame is of no call, as at `strings_sources`. A class the check
+                // at the call left the need on, resolved later with no frame of the call, as
+                // that of `3 + 4` in `app(3 + 4)`, takes the argument that check kept
+                // ([`Ck::concat_args`]): the class's values at that use are that argument's.
                 self.concat_from = (self.call_frames.last())
                     .filter(|f| f.call == Some(span))
                     .and_then(|f| f.whole_arg(&n.on))
-                    .map(|(arg, _)| (arg, *first));
+                    .map(|(arg, _)| arg)
+                    .or_else(|| {
+                        let on = n.on.as_var()?.clone();
+                        self.concat_args.get(&(span, *first, on)).copied()
+                    })
+                    .map(|arg| (arg, *first));
                 self.list_concat_end(x, y, span, None, Self::need)
+            }
+            NeedKind::Zip {
+                other,
+                first,
+                shared,
+            } => {
+                // The value's variable stands for `on` in the other operand too, as in
+                // `a.zip(a)`, as at `Concat`.
+                let mut binds = binds.clone();
+                if let Some(v) = n.on.as_var() {
+                    binds.insert(v.clone(), on.clone());
+                }
+                // Each operand keeps the argument written at this call whose whole value it
+                // is, if any ([`CallFrame::whole_arg`]): its expression shows where its keys
+                // come from, as `m.stdin` in `pairUp(m.stdin, m.stdin)` ([`Self::zip_end`]).
+                // A class resolved with no frame of the call has none, and a zip the bounds
+                // of the types leave unproved is then refused, unless the need was made where
+                // the operands were shown to come from one place (`shared`).
+                let frame = (self.call_frames.last()).filter(|f| f.call == Some(span));
+                let [e_other, e_on] =
+                    [other, &n.on].map(|t| frame.and_then(|f| f.whole_arg(t)).map(|(e, _)| e));
+                let arg = |e: Option<Forwarded<'a>>, ty: Ty| {
+                    let mut a = Arg::of(ty);
+                    if let Some(e) = e {
+                        a.at = Some(e.at);
+                        a.expr = e.expr;
+                    }
+                    a
+                };
+                let other = arg(e_other, self.bound(other, &mut binds));
+                let on = arg(e_on, on.clone());
+                let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
+                self.zip_end(x, y, span, *shared, Self::need)
             }
         };
         // An entry read from a family that lies in an argument lies there too, as each entry
@@ -12949,11 +13033,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             // it ([`Self::share_alike`]), so each use keeps its own error and notes: O(m) more
             // checks for a group of m, on the error path only.
             if self.errors.len() > from {
-                for &(at, site) in n.alike.iter() {
+                for (at, site, via) in n.alike.iter() {
+                    let (at, site) = (*at, *site);
                     if let (NeedKind::Component { .. }, Some(kept)) = (&n.kind, n.site()) {
                         self.bracket_meaning_of(site, kept);
                     }
-                    self.replay_one(what, &n.alike_at(at, site), binds, span);
+                    self.replay_one(what, &n.alike_at(at, site, via), binds, span);
                 }
             }
         }
@@ -13006,6 +13091,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let from = self.errors.len();
         let on = self.bound(&n.on, binds);
         let shape = self.bound(&on, &mut Binds::new());
+        // A need this meeting makes, on a class of the function around the call, came through
+        // the callee's need at its line: one link before the callee's own path, O(1).
+        let link = Via {
+            at: n.span,
+            text: format!("{what} needs this of its argument here").into(),
+            next: n.via.0.clone(),
+        };
+        self.passing_on.push(CallPath(Some(Arc::new(link))));
         let got = match self.open.iter_mut().find(|o| o.span == n.span) {
             _ if on.dynamic => {
                 self.any(&format!("{what}, which needs this of its argument,"), span);
@@ -13078,6 +13171,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 got
             }
         };
+        let path = self.passing_on.pop().expect("the link pushed above").0;
         // What the use gives is within its result: a variable there joins it, as for an
         // argument, and one it leaves unbound gives nothing.
         if let Some(r) = &n.result {
@@ -13100,8 +13194,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 binds.or_insert_with(v.clone(), Ty::empty);
             }
         }
-        self.also(from, n.span, |_| {
-            format!("{what} needs this of its argument here")
+        // Each line on the way from the call to the use, outermost first: this callee's need,
+        // then each need that a call in a body passed on to it (L1.29, plan row
+        // DIAG-call-chain-full). Complexity tradeoff: O(d) notes for a path of d calls, on the
+        // error path only; the naive way, each need holding its notes written out, costs O(d)
+        // at each of the d calls, O(d²) for a chain (as for [`Via`], COMPLEXITY.md F123).
+        self.also_notes(from, |_| {
+            let mut notes = Vec::new();
+            let mut link = path.as_deref();
+            while let Some(l) = link {
+                notes.push(Note {
+                    span: l.at,
+                    text: l.text.to_string(),
+                });
+                link = l.next.as_deref();
+            }
+            built(notes.len() as u64);
+            notes
         });
     }
 
@@ -14731,6 +14840,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         result: None,
                         span,
                         alike: Arc::from([]),
+                        via: CallPath::default(),
                     };
                     self.floor_on(id, need);
                 }
@@ -15215,6 +15325,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     result: None,
                     span,
                     alike: Arc::from([]),
+                    via: CallPath::default(),
                 },
             ),
             None => self.no_int_vars(t, &d, e.span),
@@ -15514,6 +15625,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     result: None,
                     span: at,
                     alike: Arc::from([]),
+                    via: CallPath::default(),
                 });
             }
             // A parameter declared with a range takes only the ints in it: each call shows
@@ -15539,6 +15651,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     result: None,
                     span,
                     alike: Arc::from([]),
+                    via: CallPath::default(),
                 });
             }
         }
@@ -15786,6 +15899,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             result: None,
                             span: n.span,
                             alike: Arc::from([]),
+                            via: CallPath::default(),
                         };
                         self.floor_on(id, need);
                     }
@@ -15956,6 +16070,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     result: None,
                     span: use_at.0,
                     alike: Arc::from([]),
+                    via: CallPath::default(),
                 };
                 self.floor_on(id, need);
             }
@@ -17476,6 +17591,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             result: None,
             span,
             alike: Arc::from([]),
+            via: CallPath::default(),
         });
         self.bit_curries.insert(span, (w, p, given.into()));
         Ty::func(Arc::new(rest))
@@ -26560,6 +26676,25 @@ fn params_apart(sig: &Sig) -> bool {
 /// meets nor the result, which holds no variable. A parameter that holds a variable inside
 /// another type, or one that another parameter holds, is not taken: two arguments meet
 /// there. O(the arrow's parameters), one set lookup each.
+///
+/// Proof that each such variable is fresh at a call and met by its own argument alone
+/// (PROOF-params-own-apart-fresh):
+/// - Fresh: [`Sig::own`] holds the variables the function binds itself, not those of the
+///   functions around it, and each application binds them in a map of its own, started
+///   empty ([`Ck::apply_one`]); a call's binding of one never reaches another call.
+/// - Its own argument alone: a parameter left out takes its default, which was checked once,
+///   where the function was, at its parameter's type. A default that reads another
+///   parameter puts what it needs of that parameter's type into the signature: as the
+///   variable of both (`p2 = p0` gives `(T, _, p2: T) -> 1`), as a bound (`p2 = p0 < p1`
+///   gives `(T, T, p2: bool) -> 1 for T in …`), as a variable inside another type or as a
+///   need; each of these is refused here. A default that needs nothing of them holds at any
+///   binding of them: `p2 = p0 == p1` gives `(_, _, p2: bool) -> 1`, and `p2 = [p0]` gives
+///   `(_, _, p2: _) -> 1`, where nothing the body does with `p2` ties it to `p0`. The
+///   call reads a left-out default again only for a need: the ints recorded for a ranged
+///   parameter ([`Ck::default_ints`], in [`Ck::floors_at`]) and the parameter a default
+///   names ([`Ck::default_reads`], in the call's frame, which places the variables a need's
+///   check names); with no needs, neither changes the verdict. Test:
+///   `l01_29_repairs_and_printing::scaling::division_arguments_with_a_default_reading_another_parameter`.
 fn params_own_apart(sig: &Sig) -> bool {
     let [arrow] = sig.arrows.as_slice() else {
         return false;
@@ -26666,6 +26801,7 @@ mod tests {
             result: None,
             span: e.span,
             alike: Arc::from([]),
+            via: CallPath::default(),
         };
         assert!(ck.remap_goes_on(&need, &int_family(int)));
         assert!(!refused_without_end(&ck));

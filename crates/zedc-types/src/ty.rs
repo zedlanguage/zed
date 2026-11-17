@@ -1662,6 +1662,19 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(first),
             Dbg::Text(" }"),
         ]),
+        NeedKind::Zip {
+            other,
+            first,
+            shared,
+        } => parts.extend([
+            Dbg::Text("Zip { other: "),
+            Dbg::Ty(other),
+            Dbg::Text(", first: "),
+            Dbg::Leaf(first),
+            Dbg::Text(", shared: "),
+            Dbg::Leaf(shared),
+            Dbg::Text(" }"),
+        ]),
         k @ (NeedKind::Destructure { .. }
         | NeedKind::Data(..)
         | NeedKind::Payload { .. }
@@ -3900,10 +3913,40 @@ pub struct Need {
     pub result: Option<Ty>,
     /// The use in the body.
     pub span: Span,
-    /// The later uses alike to this one that the signature left out, each with its span and
-    /// site, which the checker replays only where this need fails at a call, so that each
-    /// keeps its own error ([`Need::alike_at`]); empty for most needs.
-    pub alike: Arc<[(Span, Span)]>,
+    /// The later uses alike to this one that the signature left out, each with its span, site
+    /// and path ([`Need::via`]), which the checker replays only where this need fails at a
+    /// call, so that each keeps its own error and notes ([`Need::alike_at`]); empty for most
+    /// needs.
+    pub alike: Arc<[(Span, Span, CallPath)]>,
+    /// Where the need came from when a call passed it on: for the need a call `h0(b, 1)` in
+    /// the body makes from `h0`'s need, `h0`'s need and the calls that passed that one on, so
+    /// a rejection at a call names each line on the way to the use (plan row
+    /// DIAG-call-chain-full); empty for a need the body makes itself.
+    pub via: CallPath,
+}
+
+/// The calls that passed a need on ([`Need::via`]): each link is a function's need, at the use
+/// or call in its body that made it, the innermost last. Only the messages read it, so it is
+/// no part of what a need is: two needs that differ only here are equal and hash alike, and a
+/// signature keeps one of them as before, with the path of the first.
+///
+/// Complexity tradeoff (COMPLEXITY.md F123, as [`Via`]): naive, each need holds its own copy
+/// of the path, O(d) to make at each of the d calls of a chain, O(d²) in all; used, each link
+/// holds the one before it shared, so passing a need on adds one link, O(1), and the notes
+/// are written from the path only for an error, O(d).
+#[derive(Clone, Debug, Default)]
+pub struct CallPath(pub Option<Arc<Via>>);
+
+impl PartialEq for CallPath {
+    fn eq(&self, _: &CallPath) -> bool {
+        true
+    }
+}
+
+impl Eq for CallPath {}
+
+impl std::hash::Hash for CallPath {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// The operator a fold `m >< op` folds by (DESIGN.md sec:reduction): an operator section, as
@@ -4272,6 +4315,21 @@ pub enum NeedKind {
         other: Ty,
         /// Whether the value is the first operand.
         first: bool,
+    },
+    /// `a.zip(b)` with the value as one operand and a value of `other` as the other: the
+    /// value is the receiver `a` if `first` (step L5.2, DESIGN.md sec:joins; row
+    /// ZIP-generic-operands). It is met as the `zip` itself is, with the value's type in its
+    /// place: each operand a family, the keys either may hold that the other may lack proved
+    /// none, by the bounds of the types or by where the arguments come from.
+    Zip {
+        /// The other operand's type.
+        other: Ty,
+        /// Whether the value is the receiver.
+        first: bool,
+        /// Whether the two operands were shown to hold the same keys by where they come from
+        /// where the need was made, as the two `l` of `pairUp(l, l)`: then no bound of their
+        /// types need prove it.
+        shared: bool,
     },
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
@@ -4705,10 +4763,20 @@ impl Need {
                     other: f(other),
                     first: *first,
                 },
+                NeedKind::Zip {
+                    other,
+                    first,
+                    shared,
+                } => NeedKind::Zip {
+                    other: f(other),
+                    first: *first,
+                    shared: *shared,
+                },
             },
             result: self.result.as_ref().map(f),
             span: self.span,
             alike: self.alike.clone(),
+            via: self.via.clone(),
         }
     }
 
@@ -4737,15 +4805,17 @@ impl Need {
         }
     }
 
-    /// The use alike to it at `span`, with site `site`, which the signature left out
-    /// ([`Need::alike`]): it with that span and site, and no uses alike of its own.
-    pub fn alike_at(&self, span: Span, site: Span) -> Need {
+    /// The use alike to it at `span`, with site `site` and path `via`, which the signature
+    /// left out ([`Need::alike`]): it with that span, site and path, and no uses alike of its
+    /// own.
+    pub fn alike_at(&self, span: Span, site: Span, via: &CallPath) -> Need {
         let mut n = self.clone();
         n.span = span;
         if let Some(s) = n.site_mut() {
             *s = site;
         }
         n.alike = Arc::from([]);
+        n.via = via.clone();
         n
     }
 
@@ -4773,6 +4843,7 @@ impl Need {
             NeedKind::Index(k)
             | NeedKind::Order { other: k, .. }
             | NeedKind::Concat { other: k, .. }
+            | NeedKind::Zip { other: k, .. }
             | NeedKind::Map { f: k, .. }
             | NeedKind::Group { f: k, .. }
             | NeedKind::Level { f: k, .. }
@@ -4812,6 +4883,7 @@ impl Need {
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
+            | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 positional, named, ..
@@ -4850,6 +4922,7 @@ impl Need {
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
+            | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 mut positional,
@@ -20931,6 +21004,7 @@ mod tests {
             result: None,
             span: Span { start: 0, end: 1 },
             alike: Arc::from([]),
+            via: CallPath::default(),
         };
         // `n` functions, each returning the one below; the one at depth `at` has needs.
         let nest = |n: usize, at: usize| {

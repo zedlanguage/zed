@@ -84,6 +84,7 @@ fn kind_name(k: &NeedKind) -> &'static str {
         NeedKind::Level { .. } => "Level",
         NeedKind::Strings { .. } => "Strings",
         NeedKind::Concat { .. } => "Concat",
+        NeedKind::Zip { .. } => "Zip",
     }
 }
 
@@ -290,6 +291,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             result: None,
             span,
             alike: std::sync::Arc::from([]),
+            via: zedc_types::ty::CallPath::default(),
         };
         let mut vars = Vars::default();
         need.vars_in(&mut vars);

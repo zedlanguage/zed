@@ -548,10 +548,10 @@ fn brackets_alike_given_two_meanings_each_give_their_error() {
 
 /// A body whose brackets, folds or `.sum`s alike fail at a call gives the errors that body
 /// would give with each use alone. Called directly: one error per use, with its note at that
-/// use. Called through generic functions in between: the errors of a body with one such use,
-/// since each error then notes the call in the function between and not the use (row
-/// PROOF-need-site-read-only: a need made again on the class of a function around carries the
-/// uses left out, each at that need's own span).
+/// use. Called through generic functions in between: one error per use too, each noting the
+/// calls between and then its own use (row DIAG-call-chain-full: each left-out use carries its
+/// own path; before it, each error noted the call in the function between and not the use, so
+/// the errors were those of a body with one such use, PROOF-need-site-read-only).
 #[test]
 fn uses_alike_each_give_their_error_through_a_generic_function_between() {
     // Each error by its message and the places of its span and notes: inside the body, the
@@ -605,7 +605,28 @@ fn uses_alike_each_give_their_error_through_a_generic_function_between() {
         ] {
             let alone = errors(one, between);
             assert_eq!(alone.len(), 1, "{one}{between}: {alone:?}");
-            assert_eq!(errors(body, between), alone, "{body}{between}");
+            // The error alone, with each note inside its body moved by the same offset into
+            // each use of `body`, as written there (with the parentheses `body` may put
+            // around it, which the use's span takes in).
+            let start = "many(t) = ".len();
+            assert!(
+                (alone[0].2.iter()).any(|p| p.parse::<usize>().is_ok()),
+                "{one}{between}: the error notes the use: {alone:?}"
+            );
+            let mut want: Vec<_> = (body.match_indices(use_text))
+                .map(|(u, _)| {
+                    let (at, message, notes) = alone[0].clone();
+                    let notes = (notes.into_iter())
+                        .map(|p| match p.parse::<usize>() {
+                            Ok(q) => (q - start + u).to_string(),
+                            Err(_) => p,
+                        })
+                        .collect();
+                    (at, message, notes)
+                })
+                .collect();
+            want.sort();
+            assert_eq!(errors(body, between), want, "{body}{between}");
         }
     }
 }

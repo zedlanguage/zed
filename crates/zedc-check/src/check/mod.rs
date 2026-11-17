@@ -85,10 +85,10 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord, Names,
-    Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer, Renamings, SParam,
-    Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text,
-    class_id, errs, fresh_name, mask_text,
+    Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord,
+    Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer, Renamings,
+    SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms,
+    carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -1563,7 +1563,7 @@ type WrittenVia = (usize, Option<Rc<[Span]>>);
 
 /// One need being met ([`Ck::meet_alike`]): its span, its site, and the uses alike its
 /// signature left out for it ([`Need::alike`]).
-type MeetAlike = (Span, Option<Span>, Arc<[(Span, Span)]>);
+type MeetAlike = (Span, Option<Span>, Arc<[(Span, Span, CallPath)]>);
 
 /// The keyspace of a value (plan row ZIP-count-facts; DESIGN.md sec:joins, "What proves two
 /// keyspaces equal"): two values of one keyspace hold the same keys in every run. It is the
@@ -1908,6 +1908,11 @@ struct Ck<'t, 'a> {
     /// bodies a check of a fold passes through on its way from the call that meets it
     /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
     need_chain: Vec<Span>,
+    /// For each need of a callee that [`Ck::replay_one`] is meeting at a call, innermost last,
+    /// the path a need that meeting makes takes ([`Need::via`]): that callee's need, at its
+    /// line, before the calls that passed it on; empty for a check of a class's use
+    /// ([`Ck::check_on`]), which no call passes on. Read by [`Ck::passed_on`].
+    passing_on: Vec<CallPath>,
     /// Each fold checked at a call, with each use on the way to it: call, fold, use; the
     /// fold's own span among the uses. [`Ck::finish`] keeps those of split folds in
     /// [`Info::fold_reads`].
@@ -2004,6 +2009,16 @@ struct Ck<'t, 'a> {
     /// MSG-concat-need-repair-template). Set just before the check and taken at its start, as
     /// [`Self::strings_from`] is; `None` otherwise.
     concat_from: Option<(Forwarded<'a>, bool)>,
+    /// For each `++` need that a check at a call left on a class not yet resolved, as that of
+    /// the operation on literals `3 + 4` of `app(3 + 4)`, by the call's span (the need's),
+    /// whether the operand is the first, and the class's variable (the need's `on`, so two
+    /// `++` needs of one call on two classes keep two entries): the [`Self::concat_from`] of
+    /// that check. The class is checked once resolved, with no frame of the call, and the
+    /// repair reads the argument here (plan row MSG-concat-need-repair-literal-op); a key not
+    /// found leaves the template repair, never another argument. Written outside a trial
+    /// only, and only the program's own text at that call, so no undo is needed. O(1)
+    /// expected per need: one hash insert, one lookup.
+    concat_args: HashMap<(Span, bool, Arc<str>), Forwarded<'a>>,
     /// The parameters of no declared type of the functions being checked, by binder: a value
     /// of one whose ints a use takes at least 0 is passed on to the calls (CHK-need-bound).
     open_params: HashSet<usize>,
@@ -2486,6 +2501,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
             need_chain: Vec::new(),
+            passing_on: Vec::new(),
             fold_uses: HashSet::new(),
             same_use: Vec::new(),
             alike_calls: Vec::new(),
@@ -2505,6 +2521,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_from: None,
             strings_from: Vec::new(),
             concat_from: None,
+            concat_args: HashMap::new(),
             open_params: HashSet::new(),
             floors: HashMap::new(),
             ranged_floors: HashMap::new(),

@@ -4138,6 +4138,16 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `num_bigint::BigInt` arithmetic to read an end's integer back (`built_integer`, which takes a `Big`'s coefficient, debug-asserting it keeps no power) and to step a wide span's map | `built_integer`, `Span::map`, `Family::range_wide` | Big-integer library types (gap 4) | `int` arithmetic: an end is an `int`, and stepping is `+ 1` |
 | A binary search over `BigInt` beside a key whose value could not be built, kept only for a memory refusal | `search_beside` | Recovery from a refused allocation; big-integer library types | The integer beside the key's value (`next_integer`) on the language's `int`, with the refusal the allocation gives as an atom |
 
+## Entries from MSG-concat-need-repair-literal-op, ZIP-generic-operands, DIAG-call-chain-full (`zedc-types/src/ty.rs` `CallPath`, `Need::via`; `zedc-check/src/check/mod.rs` `Ck::concat_args`, `Ck::passing_on`; `check/walk/fp_ops.rs` `Ck::zip_end`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `PartialEq` and `Hash` written by hand to ignore the whole value, so a field kept only for messages is no part of a need's equality and hash | `CallPath` | Equality and hashing by hand (gap 5) | The path kept beside the need, in a map from the need to its first path, not inside the need, so the need's derived equality is the one wanted |
+| A shared link `Option<Arc<Via>>` that each need passed on points at, the innermost last | `CallPath`, `Need::via` | Identity (gap 1) | A list held by value: Zed shares an unchanged tail, so adding one link is O(1) as here |
+| A `HashMap` field of the checker written during the walk and read when a class is resolved, keyed by the call's span, the operand side and the class's variable | `Ck::concat_args` | Mutation (gap 11) | A map returned by the check of each call and joined into the result the class's resolution reads |
+| A stack field pushed and popped around each need met at a call, read by the need made inside | `Ck::passing_on` | Mutation (gap 11) | The path passed as a parameter of the meeting, down to the need it makes |
+| `Ck::need` passed to `zip_end` as a `fn` pointer (`NeedFn`), so the file of `zip_end` imports nothing of walk.rs, as for `list_concat_end` | `Ck::zip_end` and its two calls in walk.rs | Import cycles between files of one type's methods | The need recorder in the unit both import, or passed as a function value as here |
+
 ## Entries from CLIF-shim (`crates/zed-clif/src/lib.rs`)
 
 - No new gap. The crate is not ported (see "What stays in Rust"); its constructs, `catch_unwind`,

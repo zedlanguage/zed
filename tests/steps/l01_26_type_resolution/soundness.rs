@@ -799,6 +799,71 @@ fn a_literal_component_is_not_indexed() {
     }
 }
 
+/// `defs` with `h2` … `h{depth}` added, each passing its argument on to the one before:
+/// `h2(positional p) = h1(p);`.
+fn wrapped(defs: &str, depth: usize) -> String {
+    let mut s = defs.to_string();
+    for k in 2..=depth {
+        s.push_str(&format!("\nh{k}(positional p) = h{}(p);", k - 1));
+    }
+    s
+}
+
+/// Asserts that the error `e` writes, in this order, the note "`h{k}` needs this of its
+/// argument here" for each `k` from `depth` down to 0, each followed by the line at `lines[k]`
+/// (from `lines`, the line of `h0` first, then that of `h1`; a wrapper's line is its call
+/// `h{k-1}(p)`), and no other such note.
+fn chain_notes(e: &str, depth: usize, lines: [&str; 2]) {
+    let mut from = 0;
+    for k in (0..=depth).rev() {
+        let note = format!("`h{k}` needs this of its argument here");
+        let at = e[from..]
+            .find(&note)
+            .unwrap_or_else(|| panic!("no note `{note}` after byte {from}:\n{e}"));
+        from += at + note.len();
+        let line = match k {
+            0 | 1 => lines[k].to_string(),
+            _ => format!("h{}(p)", k - 1),
+        };
+        // The note's own lines: up to the next note.
+        let tail = &e[from..];
+        let block = &tail[..tail.find("\n  [").unwrap_or(tail.len())];
+        assert!(
+            block.contains(&line),
+            "the note for `h{k}` shows `{line}`:\n{e}"
+        );
+        assert_eq!(e.matches(&note).count(), 1, "one note `{note}`:\n{e}");
+    }
+    assert!(
+        !e.contains(&format!("`h{}` needs this", depth + 1)),
+        "no note past the call:\n{e}"
+    );
+}
+
+/// Plan row DIAG-call-chain-full (L1.29, error-messages-derivation): a rejection at a call
+/// whose need came through calls names every call on the path from the argument to the line
+/// that needs it, outermost first, one note each: the destructuring, the index and the call of
+/// a component passed on through one, two and three calls.
+#[test]
+fn a_rejection_at_a_call_names_each_call_on_the_path() {
+    let destructured = passed("b");
+    let indexed = "h0(positional p) = p[0][1];\n\
+                   h1(positional p) {\n  a, b = p;\n  return h0((b, 1));\n}";
+    let called = "h0(positional f) = f(1);\n\
+                  h1(positional p) {\n  a, b = p;\n  return h0(b);\n}";
+    for (defs, lines) in [
+        (&*destructured, ["a, b, c = p;", "return h0(b, 1);"]),
+        (indexed, ["p[0][1]", "return h0((b, 1));"]),
+        (called, ["f(1)", "return h0(b);"]),
+    ] {
+        for depth in 1..=3 {
+            let defs = wrapped(defs, depth);
+            let e = rejected(&defs, &kind_of(&format!("h{depth}((1, 3))")));
+            chain_notes(&e, depth, lines);
+        }
+    }
+}
+
 #[test]
 fn a_tuple_default_used_as_a_number_is_rejected() {
     // The default `(x, 1)` flows a tuple into the class of `y`, which then takes no carrier

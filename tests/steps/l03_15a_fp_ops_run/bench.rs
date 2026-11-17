@@ -875,6 +875,68 @@ fn a_chain_of_n_generic_functions_passing_on_concatenation_runs_in_linear_time()
     );
 }
 
+/// `zip` of a generic function's two parameters, checked at each call by one need on each
+/// operand's class (plan row ZIP-generic-operands).
+const ZIP: &str = "pairUp(positional a, positional b) = a.zip(b);\n";
+
+#[test]
+fn n_calls_of_a_generic_function_of_zip_run_in_linear_time() {
+    // The calls alternate two lists and a range beside a map of it (a range's keys are its
+    // values, which `map` keeps), so each call's need is checked on its own types.
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = pairUp([{i}], [1])[0][0];\n"),
+                _ => format!(
+                    "x{i} = pairUp(0 ..< {m}, (0 ..< {m}).map(k -> k + 1))[{i}][1];\n",
+                    m = i + 1
+                ),
+            })
+            .collect::<String>();
+        format!("{ZIP}{calls}")
+    });
+    let run = |n: usize| {
+        let i = n - 1;
+        let want = match i % 2 {
+            0 => i.to_string(),
+            _ => (i + 1).to_string(),
+        };
+        assert_eq!(value(&srcs[&n], &format!("x{i}")), want);
+    };
+    scaling::check(
+        "n calls of a generic function of `zip`, alternately on lists and on a range and its \
+         map, whole path",
+        N_CALLS,
+        run,
+    );
+}
+
+#[test]
+fn a_chain_of_n_generic_functions_passing_on_zip_runs_in_linear_time() {
+    // `pairUp`'s needs wait on `g0`'s parameters, and each `g{i}` passes them on, so they are
+    // checked once at each of the two calls at the chain's top (plan row
+    // ZIP-generic-operands).
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("g{i}(positional a, positional b) = g{}(a, b);\n", i - 1))
+            .collect::<String>();
+        let top = n - 1;
+        format!(
+            "{ZIP}g0(positional a, positional b) = pairUp(a, b);\n{chain}\
+             a = (g{top}([5], [6])[0][1], g{top}(0 ..< 2, (0 ..< 2).map(k -> k + 2))[1][1]);\n"
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "a"), "(6, 3)");
+    };
+    scaling::check(
+        "a chain of n generic functions passing two lists, and a range and its map, to `zip`, \
+         whole path",
+        N_CALLS,
+        run,
+    );
+}
+
 /// Step L5.2 through `zedc run`: a `zip` of two keyed displays of n entries with the same keys.
 #[test]
 fn a_zip_of_keyed_displays_runs_in_n_log_n() {

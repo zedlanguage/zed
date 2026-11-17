@@ -449,6 +449,41 @@ fn one_division_argument_is_rejected_alone() {
     }
 }
 
+/// A default that reads another parameter (PROOF-params-own-apart-fresh). `p2 = p0` puts
+/// `p0`'s variable into `p2`'s type, `(T, _, p2: T) -> 1`, so the call is not checked a
+/// parameter at a time; `p2 = p0 == p1` needs nothing of their types, `(_, _, p2: bool) ->
+/// 1`, so it is. Either way the two divisions are one error whose fixes each check as
+/// written, also with `p2` given: an `f64` for `p2 = p0`, which `T` takes beside the `rat`
+/// of `p0`, since nothing bounds it.
+#[test]
+fn division_arguments_with_a_default_reading_another_parameter() {
+    for (default, sig, given) in [
+        ("p0", "(T, _, p2: T) -> 1", ", p2: 1.5f64"),
+        ("p0 == p1", "(_, _, p2: bool) -> 1", ", p2: true"),
+    ] {
+        for p2 in ["", given] {
+            let decl = format!("f(positional p0, positional p1, p2 = {default}) = 1;\n");
+            let src = format!("{decl}y = f(1 / 2, 1 / 2{p2});\n");
+            let errors = type_errors(&src);
+            let [e] = &errors[..] else {
+                panic!("{src}: {errors:?}")
+            };
+            let head =
+                "2 parts of the arguments of `f` are literals that nothing here gives a carrier";
+            assert!(e.starts_with(head), "{src}\n{e}");
+            let out = rejected(&src);
+            assert!(out.contains(&format!("is `{sig}`")), "{src}\n{out}");
+            for lit in ["1r", "1.0f64"] {
+                let fix = format!("y = f({lit} / 2, {lit} / 2{p2});");
+                assert!(e.contains(&format!("\n    {fix}")), "{src}\n{e}");
+                let fixed = format!("{decl}{fix}\n");
+                assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+                assert_eq!(value(&fixed, "y"), "1", "{fixed}");
+            }
+        }
+    }
+}
+
 /// [`super::rare`]'s value that flows into `g` through a chain of `n` defaults, `k(h0 = g,
 /// h1 = h0, ...)`, which passes `x -> "s"` as the last; then `n` more parameters whose
 /// defaults read the two ends of the chain in turn, `m0 = h0, m1 = h{n-1}, m2 = h0, ...`, so
@@ -890,5 +925,45 @@ pub(super) fn orderings_of_ints_with_fraction_texts_repaired(src: &str, n: usize
 fn repairing_orderings_of_ints_with_fraction_texts() {
     for n in [1, 4, 7] {
         orderings_of_ints_with_fraction_texts_repaired(&int_orderings_with_fractions(n), n);
+    }
+}
+
+/// A chain of `n` calls to a use that fails: `h0` takes its argument apart into 3 names, each
+/// `h{k}` passes its argument to `h{k-1}`, and `main` calls `h{n}` with a pair (plan row
+/// DIAG-call-chain-full, step L1.29).
+pub(super) fn call_chain(n: usize) -> String {
+    let mut src = String::from("h0(positional p) {\n  a, b, c = p;\n  return a;\n}\n");
+    for k in 1..=n {
+        src += &format!("h{k}(positional p) = h{}(p);\n", k - 1);
+    }
+    src + &format!(
+        "main(m: MainArgs) {{\n  m.stdout <- if h{n}((1, 3)) is int {{ \"int\" }} else {{ \"other\" }};\n}}\n"
+    )
+}
+
+/// The rejection at the call names each of the `n + 1` calls on the path once, outermost
+/// first, and the use in `h0` last.
+pub(super) fn each_call_of_the_chain_named(src: &str, n: usize) {
+    let out = rejected(src);
+    let note = |k: usize| format!("`h{k}` needs this of its argument here");
+    assert_eq!(
+        out.matches("needs this of its argument here").count(),
+        n + 1,
+        "{out}"
+    );
+    let mut from = 0;
+    for k in (0..=n).rev() {
+        let at = out[from..]
+            .find(&note(k))
+            .unwrap_or_else(|| panic!("no note for `h{k}` after the one before:\n{out}"));
+        from += at + 1;
+    }
+    assert!(out[from..].contains("a, b, c = p;"), "{out}");
+}
+
+#[test]
+fn naming_each_call_of_a_chain() {
+    for n in [1, 2, 3, 9] {
+        each_call_of_the_chain_named(&call_chain(n), n);
     }
 }
