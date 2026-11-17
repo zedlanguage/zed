@@ -1524,10 +1524,13 @@ fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
     // `is_empty` meets the fork `verdict` refuses and counts the type as inhabited, in time
     // linear in `n`; on a70df51b it followed the fork: 8 ms, 277 ms and 32.5 s at `n` 1, 4 and
     // 6. Measured 2026-11-13: 5,616,473 and 79,088,834 bytes in the first runs, 14.1 times, over
-    // the limit of 13 (until then n log n with a slack of 1.1, 17.6 at `n` = 8).
+    // the limit of 13 (until then n log n with a slack of 1.1, 17.6 at `n` = 8). Sizes 64 and 512
+    // since SUB-fork-place-512 (COMPLEXITY.md K126): a value lower than the least height of a
+    // type is not in it, so a list is not walked against each `G{i}` deeper than it: 501M and
+    // 4.01G instructions, 7.99 times (13.4 times the bytes before, at 64 and 512).
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check("emptiness, a 1 at a place from the end", 8, |n| {
+        scaling::check("emptiness, a 1 at a place from the end", 64, |n| {
             Type::forget_emptiness();
             let tag = format!("_ie{}", tag.fetch_add(1, Relaxed));
             let t = &list_named(Type::int(), &tag) - &by_place_from_the_end(n, None, &tag);
@@ -1543,10 +1546,14 @@ fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
     // type for each set of places a list's 1s leave (the subset construction): on a70df51b this
     // cost 26.6M, 310M and 15.5G instructions at n 1, 4 and 8 and no answer at 16 within 30 s.
     // Now the `G{i}` are taken out of the tail together, two cyclic recursive types in one
-    // component, and the decision refuses there (COMPLEXITY.md K35).
+    // component, and the decision refuses there (COMPLEXITY.md K35). Sizes 64 and 512 since
+    // SUB-fork-place-512 (K126): the value search before the refusal met the lists of lengths
+    // `a` and `b` for each pair, walking `min(a, b)` levels each, 263,783 types at 512; a type
+    // whose bounds on its values' heights are an empty range is now empty at once
+    // (`Search::height_bounds`): 621M and 5.02G instructions, 8.09 times (32.4 times without).
     refusal_scales(
         "Fork, by the place of a 1 from the end",
-        8,
+        64,
         Refusal::Fork,
         |n, tag| &list_named(Type::int(), tag) - &by_place_from_the_end(n, None, tag),
     );

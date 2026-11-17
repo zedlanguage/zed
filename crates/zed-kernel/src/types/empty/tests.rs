@@ -1237,3 +1237,145 @@ fn a_seed_skips_excluded_rows_with_the_same_verdicts() {
         assert_eq!(t.is_empty(), *want == Verdict::Empty, "case {i}");
     }
 }
+
+/// The list of length exactly `k`, `#nil` or `#cons((int, R_{k-1}))`, of height `2k`.
+fn fixed_list(k: usize) -> Type {
+    (0..k).fold(Type::atom("nil"), |r, _| {
+        Type::atom_with("cons", &Type::tuple(vec![Type::int(), r]))
+    })
+}
+
+/// The recursive list type `L = #nil | #cons((int, L))`, and with `cycle` alone the type
+/// `G = #cons((int, G))`, which has no value.
+fn list_group(cycle: bool) -> Type {
+    use super::super::rec::{Def, Expr, Group};
+    let cons = Expr::Atom(
+        "cons".into(),
+        vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+    );
+    let body = if cycle {
+        cons
+    } else {
+        Expr::Union(vec![Expr::Type(Type::atom("nil")), cons])
+    };
+    (Group::new(vec![Def {
+        name: "L".into(),
+        params: vec![],
+        body,
+    }]))
+    .expect("a group")
+    .instance(vec![])
+    .remove(0)
+}
+
+/// `Search::height_bounds` on the shapes its proof names (COMPLEXITY.md K126): a fixed-length
+/// list is bounded exactly; two of different lengths meet in nothing, as do two pairs whose
+/// second components are such lists, and two of one length meet in that length; a recursive
+/// list is bounded from below only, and its meet with a fixed-length list is bounded above; a
+/// cycle that derives nothing, `G = #cons((int, G))`, is `None`; the atoms outside a finite set
+/// and the tuples of every length are unbounded above, and the tuples from the empty one up; a
+/// bare atom beside the same name with a payload spans both; a one-tuple type less another is
+/// bounded through the tuple types refused before it is taken; and each bound agrees with
+/// `is_empty`.
+#[test]
+fn height_bounds_are_exact_on_lists_cycles_and_open_parts() {
+    let int = Type::int;
+    let top = u64::MAX;
+    let r = fixed_list;
+    let one = |t: Type| Type::tuple(vec![t]);
+    let cases = [
+        ("R_0", r(0), Some((0, 0))),
+        ("R_5", r(5), Some((10, 10))),
+        ("R_3 & R_5", &r(3) & &r(5), None),
+        ("R_4 & R_4", &r(4) & &r(4), Some((8, 8))),
+        (
+            "(int, R_2) & (int, R_3)",
+            &Type::tuple(vec![int(), r(2)]) & &Type::tuple(vec![int(), r(3)]),
+            None,
+        ),
+        ("L", list_group(false), Some((0, top))),
+        // The lower end is `least_height`'s, the least over the meet's tuple types one by one,
+        // here `(int, L)`; the upper end is the meet's.
+        ("L & R_4", &list_group(false) & &r(4), Some((2, 8))),
+        ("G", list_group(true), None),
+        ("G & R_4", &list_group(true) & &r(4), None),
+        (
+            "cofinite atoms",
+            Type::with(|p| p.atoms.cofinite = true),
+            Some((0, top)),
+        ),
+        (
+            "all tuples",
+            Type::universe(crate::types::Universe::Tuple),
+            Some((1, top)),
+        ),
+        (
+            "#a | #a((R_1,))",
+            &Type::atom("a") | &Type::atom_with("a", &one(r(1))),
+            Some((0, 4)),
+        ),
+        (
+            "(top,) \\ (int,)",
+            &one(Type::top()) - &one(int()),
+            Some((1, top)),
+        ),
+        ("(R_2,) \\ (R_3,)", &one(r(2)) - &one(r(3)), Some((5, 5))),
+        ("(R_2,) \\ (R_2,)", &one(r(2)) - &one(r(2)), None),
+    ];
+    for (name, t, want) in cases {
+        let got = Search::default().height_bounds(&t);
+        assert_eq!(got, want, "{name}");
+        assert_eq!(t.is_empty(), want.is_none(), "{name}");
+    }
+}
+
+/// `Search::value_height`, `Search::least_height` and `Search::height_bounds` agree on every
+/// value the search finds: for each type of a pool of lists, pairs, atoms and their unions,
+/// meets and differences, the value found, when its height is known, lies within the type's
+/// bounds, and the least height is the bounds' lower end; a type with no bounds has no value.
+#[test]
+fn every_value_found_lies_within_its_types_height_bounds() {
+    let int = Type::int;
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let mut pool: Vec<Type> = vec![
+        list_group(false),
+        list_group(true),
+        Type::atom("a"),
+        int(),
+        lit(1),
+    ];
+    pool.extend((0..4).map(fixed_list));
+    let mut types = pool.clone();
+    for a in &pool {
+        for b in &pool {
+            types.push(Type::tuple(vec![a.clone(), b.clone()]));
+            types.push(Type::atom_with(
+                "a",
+                &Type::tuple(vec![a.clone(), b.clone()]),
+            ));
+            types.push(a | b);
+            types.push(a & b);
+            types.push(a - b);
+        }
+    }
+    let mut checked = 0;
+    for (i, t) in types.iter().enumerate() {
+        let mut s = Search::default();
+        let bounds = s.height_bounds(t);
+        let lo = s.least_height(t);
+        match bounds {
+            None => assert!(t.is_empty(), "type {i} has no bounds but a value"),
+            Some((l, h)) => {
+                assert_eq!(l, lo, "type {i}");
+                assert!(l <= h, "type {i}");
+                if let Some(v) = s.rep(t)
+                    && let Some(x) = s.value_height(v)
+                {
+                    assert!(l <= x && x <= h, "type {i}: height {x} outside {l}..={h}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} values measured");
+}
