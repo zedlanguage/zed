@@ -118,6 +118,11 @@ are built into the compiler. The parts that were listed here as staying are port
   text through the port of step S.1a (see zed/compiler/MLIR.md, decision 9), and its `zedc run`
   and run-time `compile` use the generator of QUESTIONS C7 with a loader in libzed's OS layer
   (plan row JIT-zed, step S.7b).
+- The Cranelift shim `crates/zed-clif` (row CLIF-shim, step S.7b) is that generator: Rust over
+  Cranelift behind `extern "C"` functions, which the compiler written in Zed calls through its
+  foreign-function binding. It is not ported; it stays, outside main's Zed code, until a Zed
+  optimizer and code generator replace Cranelift (DESIGN S.11, the author, P365). Its C calls are
+  foreign calls besides the system calls of the item above.
 - The tools and the test harness, `zed-alloc-count` and the `perf_event_open` counters included,
   are rewritten in Zed (plan row TOOLS-port, step S.7c).
 
@@ -4132,3 +4137,10 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `u128` count saturated at `u128::MAX` for the hash, which reads a family's size as a machine integer | `Span::size`, `Family::size` | Machine integers (gap 4) | The exact count as an `int`, hashed as any integer |
 | `num_bigint::BigInt` arithmetic to read an end's integer back (`built_integer`, which takes a `Big`'s coefficient, debug-asserting it keeps no power) and to step a wide span's map | `built_integer`, `Span::map`, `Family::range_wide` | Big-integer library types (gap 4) | `int` arithmetic: an end is an `int`, and stepping is `+ 1` |
 | A binary search over `BigInt` beside a key whose value could not be built, kept only for a memory refusal | `search_beside` | Recovery from a refused allocation; big-integer library types | The integer beside the key's value (`next_integer`) on the language's `int`, with the refusal the allocation gives as an atom |
+
+## Entries from CLIF-shim (`crates/zed-clif/src/lib.rs`)
+
+- No new gap. The crate is not ported (see "What stays in Rust"); its constructs, `catch_unwind`,
+  `Box::into_raw` handles and `#[no_mangle] extern "C"`, belong to the shim's side of the foreign
+  boundary. The Zed side needs only what a foreign call already needs: pointers with lengths in,
+  an opaque handle out, and a release call for each handle.

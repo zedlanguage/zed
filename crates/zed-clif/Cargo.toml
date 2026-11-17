@@ -1,0 +1,51 @@
+[package]
+name = "zed-clif"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The Cranelift shim of DESIGN step S.7b (row CLIF-shim): CLIF text to machine code and
+# relocations, behind a set of C functions. A static library, which the Zed compiler and the
+# programs that call `compile` at run time link; the rlib is for this package's tests, which call
+# the C functions from Rust.
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+# Every C function called from Rust, through the C interface (step S.7b). Its source lies with
+# the step's other tests; it is a target of this package because it calls `unsafe` functions,
+# which the package of the step tests, zed-tests, forbids.
+[[test]]
+name = "s07b_clif_shim_calls"
+path = "../../tests/steps/s07b_clif_shim/calls.rs"
+
+# The Cranelift version of zed-native, pinned exactly here and by Cargo.lock (row CLIF-shim);
+# the test s07b_clif_shim::versions checks the two agree.
+[dependencies]
+cranelift-codegen = "=0.137.1"
+cranelift-module = "=0.137.1"
+cranelift-native = "=0.137.1"
+cranelift-reader = "=0.137.1"
+# Cranelift's own triple type, at the version cranelift-codegen 0.137.1 uses: the shim parses the
+# target's name itself, since `cranelift_codegen::isa::lookup_by_name` panics on a name that is
+# not a triple.
+target-lexicon = "0.13.5"
+
+# The scaling test, `tests/src/scaling.rs`, compiled into the test target, as zed-graph does.
+[dev-dependencies]
+rustix.workspace = true
+stacker.workspace = true
+zed-alloc-count.workspace = true
+zed-meter-settings.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true
+
+# The workspace forbids `unsafe`; the C functions need it at each pointer they read.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

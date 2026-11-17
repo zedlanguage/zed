@@ -323,6 +323,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cranelift-reader"
+version = "0.137.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8e29bdf107419ae7980792cad76ac5b45a3c7dd3b7b394dd7e301dcf841b647"
+dependencies = [
+ "anyhow",
+ "cranelift-codegen",
+ "smallvec",
+ "target-lexicon",
+]
+
+[[package]]
 name = "cranelift-srcgen"
 version = "0.137.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1018,6 +1030,22 @@ dependencies = [
 [[package]]
 name = "zed-cert"
 version = "0.0.0"
+
+[[package]]
+name = "zed-clif"
+version = "0.0.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-module",
+ "cranelift-native",
+ "cranelift-reader",
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "target-lexicon",
+ "zed-alloc-count",
+ "zed-meter-settings",
+]
 
 [[package]]
 name = "zed-corpus-ref"

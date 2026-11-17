@@ -20,6 +20,7 @@ members = [
     "crates/zed-rt",
     "crates/zed-cert",
     "crates/zed-native",
+    "crates/zed-clif",
     "crates/zed-tools",
     "crates/zed-alloc-count",
     "crates/zed-meter-settings",
