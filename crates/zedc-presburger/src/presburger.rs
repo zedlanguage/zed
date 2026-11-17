@@ -92,7 +92,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::{OrdMap, OrdSet};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
@@ -10568,14 +10568,48 @@ impl Linked {
     }
 }
 
-/// The rows of `rows` in the groups of `atoms` ([`Linked::around_atoms`]), in their order.
+/// The rows of `rows` in the groups of `atoms` ([`Linked::around_atoms`]), in their order: those
+/// reached from `atoms` through rows that share an atom. A row without atoms is in no group.
+// Complexity tradeoff (PERF-dead2-chained-ratio): naive version, a [`Linked`] of the rows and
+// one query, O(t log t) for t terms: its groups merge the smaller into the larger, so a row's
+// place moves up to log t times, and a root is found in up to log t steps. [`by_halves`] calls
+// this twice at each range, so on a chain of k items that factor multiplied its O(k log k)
+// rows. Used: a search from `atoms` over the atoms and rows, each row and each atom visited
+// once, O(t) with a hash lookup per term. The rows kept are the same, so is their order; the
+// order of the search, which follows the hash map, decides nothing.
 fn linked_to<'a>(rows: Vec<Con>, atoms: impl Iterator<Item = &'a Atom>) -> Vec<Con> {
-    let linked = Linked::of(rows);
-    let mut at = linked.around_places(atoms);
-    at.sort_unstable();
-    let mut rows: Vec<Option<Con>> = linked.cons.into_iter().map(Some).collect();
-    at.into_iter()
-        .map(|i| rows[i].take().expect("each place once"))
+    let keep: Vec<bool> = {
+        let mut of: FxHashMap<&Atom, Vec<usize>> = FxHashMap::default();
+        for (i, c) in rows.iter().enumerate() {
+            for a in c.lin.terms.keys() {
+                of.entry(a).or_default().push(i);
+            }
+        }
+        let mut keep = vec![false; rows.len()];
+        let mut seen: FxHashSet<&Atom> = FxHashSet::default();
+        let mut todo: Vec<&Atom> = Vec::new();
+        for a in atoms {
+            if let Some((&a, _)) = of.get_key_value(a)
+                && seen.insert(a)
+            {
+                todo.push(a);
+            }
+        }
+        while let Some(a) = todo.pop() {
+            for &i in &of[a] {
+                if !mem::replace(&mut keep[i], true) {
+                    for b in rows[i].lin.terms.keys() {
+                        if seen.insert(b) {
+                            todo.push(b);
+                        }
+                    }
+                }
+            }
+        }
+        keep
+    };
+    (rows.into_iter().zip(keep))
+        .filter_map(|(c, keep)| keep.then_some(c))
         .collect()
 }
 

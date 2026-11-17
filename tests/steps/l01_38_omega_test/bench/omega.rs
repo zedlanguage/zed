@@ -203,6 +203,19 @@ fn independent_stages_scale() {
 /// choice is tested against the rows projected onto its own stage, not against the whole
 /// chain, which cost `n` solves of `n` rows before (40.6 times the instructions from 16 to
 /// 128 stages).
+///
+/// The ratio is above the goal of 9 by the log factor of the halving, so it is held to the
+/// predicted ratio of standing rule P300, 8·ln(8n)/ln(n) = 10.70 at n = 470 (row
+/// PERF-dead2-chained-ratio). Proof: `settle_as_sets` runs `by_halves` once over the n + 1
+/// stage sets of the chain, and `project_parts` once more over its levels. A range of w items
+/// is projected from its parent's rows, which after the parent's projection lie on the parent's
+/// items and the rows that link them, O(w) rows; the ranges of one depth cover the k items
+/// once, so each depth projects O(k) rows, and there are ⌈log₂ k⌉ depths: O(k log k) rows
+/// projected in all. Each projection is linear in its rows: `linked_to` visits each row and
+/// atom once, and `shadow` eliminates each chain atom once, every row having at most three
+/// terms with coefficients ±1, so each elimination reads and makes O(1) rows (it makes no more
+/// than it takes out) and each hash lookup is O(1) expected. Measured, the rows projected go
+/// from 16,761 to 179,120 (10.69 times) and the instructions 9.6 times (857 M → 8.26 G).
 #[test]
 fn project_each_on_a_chained_pipeline_scales() {
     let (small, large) = (
