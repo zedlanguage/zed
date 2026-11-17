@@ -951,6 +951,91 @@ fn the_first_prime_from_n_read_from_stdin() {
 }
 
 #[test]
+fn a_family_read_by_key_at_keys_from_stdin() {
+    // Cross-review XR-lazy-families round 3 (seat Sol; DESIGN.md sec:arenas, "A family read by
+    // key", and sec:kernel, reference semantics (j)), with `n` known only at run time:
+    // - a `where` over `n ..` then a `.find`, which reads the stream up to the deciding entry
+    //   and so evaluates the selector at no key past it (`nextEven`);
+    // - `sq(n)` and `sq[n]`, one read in two spellings, which agree inside and outside the
+    //   domain `0 ..< 10`, and `sq[n]` misses with `#outOfBounds` outside it (`sameRead`);
+    // - `.count` of a family whose entries are all `#none`, read off its domain (`headOnly`).
+    // The call spelling `sq(n)` misses with `#notFound` today, not the `#outOfBounds` of an
+    // integer-interval level; that half of `sameRead` waits for plan row KERNEL-family-call.
+    // The model is Rust arithmetic on `n`.
+    let body = "${[(n ..).where(x -> x mod 2 == 0).find(x -> x >= n) else -1, \
+                sq(n) else -1, sq[n] else -1, sq[n] is #outOfBounds, q.count]}";
+    let src = dir("l03_02_map_run/family_by_key").join("family_by_key.zed");
+    let text = format!(
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    \
+         sq = (0 ..< 10).map(j -> j * j);\n    q = (0 ..< n).map(k -> #none);\n    \
+         m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = dir("l03_02_map_run/family_by_key").join("family_by_key");
+    built(&src, &exe);
+    for n in [-1i64, 0, 1, 3, 9, 10] {
+        let inside = (0..10).contains(&n);
+        let square = if inside { n * n } else { -1 };
+        let want = expected(&family(vec![
+            (i(0), i(if n % 2 == 0 { n } else { n + 1 })),
+            (i(1), i(square)),
+            (i(2), i(square)),
+            (i(3), Value::Bool(!inside)),
+            (i(4), i(n.max(0))),
+        ]));
+        let stdin = format!("{n}\n");
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {n}"
+        );
+        assert_eq!(ran.stdout, want, "zedc run at {n}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {n}"
+        );
+        assert_eq!(ran.stdout, want, "executable at {n}");
+    }
+}
+
+#[test]
+fn a_family_of_stdin_lines_with_no_proved_bound_still_builds() {
+    // Cross-review XR-lazy-families round 3 (test R3-T3; DESIGN.md step M0.6): a family over
+    // standard input has no proved size, and a normal build still accepts it and runs it, so
+    // the feasibility rule of plan row COST-limit-capacity must not refuse every plan whose
+    // footprint has no proved bound. The model is the number of lines given.
+    let src = dir("l03_02_map_run/stdin_lines_unbounded").join("stdin_lines_unbounded.zed");
+    std::fs::write(
+        &src,
+        "main(m: MainArgs) {\n    m.stdout <- \"${m.stdin.map(l -> l else \"\").count}\";\n}\n",
+    )
+    .unwrap();
+    let exe = dir("l03_02_map_run/stdin_lines_unbounded").join("stdin_lines_unbounded");
+    built(&src, &exe);
+    for lines in [0usize, 1, 3, 50] {
+        let stdin: String = (0..lines).map(|k| format!("line{k}\n")).collect();
+        let want = expected(&lit(lines as i64));
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {lines}"
+        );
+        assert_eq!(ran.stdout, want, "zedc run at {lines}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {lines}"
+        );
+        assert_eq!(ran.stdout, want, "executable at {lines}");
+    }
+}
+
+#[test]
 fn a_wide_range_made_from_ends_read_from_stdin() {
     // Plan row RANGE-lazy-wide: with the low end `n` known only at run time, the kernel prim
     // `Range` itself runs, in the interpreter and in the executable, on a range of 10^24
