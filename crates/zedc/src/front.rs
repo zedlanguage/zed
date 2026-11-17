@@ -91,12 +91,18 @@ impl std::fmt::Display for Diagnostic {
 /// The source lines a listing of diagnostics of one file has shown, so that it shows each line
 /// once: the first diagnostic with a step on a line shows the line, with its marks, as
 /// [`Diagnostic`]'s `Display` does, and each later diagnostic gives its steps on that line by
-/// their ranges, `1:20 to 1:52`, under the note that the line is shown above. A diagnostic
-/// shown first, or alone, prints as `Display` prints it.
+/// their ranges, `1:20 to 1:52`, under the note that the line is shown above. Likewise a step
+/// that gives the type the checker found for a function declared with no types written, which
+/// a later diagnostic gives again at the same place with the same text, is shortened there to
+/// point to the one above ([`crate::check::declared_again`], MSG-call-signature-per-message);
+/// one whose type differs is given in full. A diagnostic shown first, or alone, prints as
+/// `Display` prints it.
 #[derive(Default)]
 pub struct Quoted {
     /// The lines shown, each by its number.
     lines: HashSet<usize>,
+    /// The steps of declarations given in full, each by its line, column and text.
+    declared: HashSet<(usize, usize, String)>,
 }
 
 impl Quoted {
@@ -114,7 +120,25 @@ impl Quoted {
     // lays out no line twice. The cost: a later diagnostic on a shown line is not readable
     // without the earlier one's quote, so its steps carry their ranges; a single diagnostic
     // and the first on each line print as before (COMPLEXITY.md RENDER-line-per-error).
+    //
+    // Complexity tradeoff: the step of a declaration whose type the checker found is O(p) long
+    // for a function of p parameters, and a call of n arguments each with its own error gave
+    // it n times, O(n·p) bytes printed (MSG-call-signature-per-message). Each such step is
+    // hashed, O(s) for the s bytes of them, the order of the work the checker spent writing
+    // them; the listing then prints it in full once per place and text, and each later one in
+    // O(name) bytes, so it prints O(p + n) for the n errors. A diagnostic with a step to
+    // shorten is copied once, O(its size).
     pub fn show(&mut self, d: &Diagnostic) -> String {
+        let mut again = None;
+        for (i, s) in d.steps.iter().enumerate() {
+            let Some(short) = crate::check::declared_again(&s.text) else {
+                continue;
+            };
+            if !self.declared.insert((s.line, s.col, s.text.clone())) {
+                again.get_or_insert_with(|| d.clone()).steps[i].text = short;
+            }
+        }
+        let d = again.as_ref().unwrap_or(d);
         let text = Shown(d, &self.lines).to_string();
         self.lines.extend(d.steps.iter().map(|s| s.line));
         text

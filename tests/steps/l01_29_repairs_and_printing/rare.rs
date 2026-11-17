@@ -248,7 +248,9 @@ fn a_chain_of_defaults_is_shown_link_by_link() {
 fn a_value_with_one_origin_names_no_default() {
     // Two calls of `k`: `x -> 1` makes `h`, and so `g`, give int; then `x -> "s"` is rejected
     // twice. At `g(1)` the value reaches `g` through the default; at `h(2)` it reaches `h`
-    // directly, as an argument, so the derivation names only where it comes from.
+    // directly, as an argument, so the derivation names only where it comes from. The first
+    // error gives the type found for `k`, and the second points to it
+    // (MSG-call-signature-per-message).
     let src = FLOW.replace("b = k(x -> \"s\");", "b = k(x -> 1);\n  c = k(x -> \"s\");");
     let out = shown(&src);
     let second = out
@@ -264,7 +266,7 @@ fn a_value_with_one_origin_names_no_default() {
   [3] 3:25 to 3:28: this use needs it here
   [4] 5:9 to 5:16: `x -> "s"` comes from here and reaches `h(2)`
       line 5 is shown above
-  [5] 3:3 to 3:29: `k` is declared here with no type written for `h` or its result; the type the checker found for `k` is `_ -> _`
+  [5] 3:3 to 3:29: `k` is declared here; the error above gives the type the checker found for `k`
   [6] 3:25 to 3:28: repair: declare the types of the values this use reads, so that it is checked where it is written"#
     );
     assert!(

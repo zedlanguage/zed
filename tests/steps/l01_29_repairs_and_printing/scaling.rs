@@ -304,6 +304,21 @@ pub(super) fn the_carried_fixes_of_the_arguments(src: &str, n: usize) {
         out.matches("Try `rat(k) * 0.5` instead.").count(),
         n,
         "{out}"
+    );
+    // The signature of `f`, n parameters long, is given in the first error only, and each
+    // later one points to it (MSG-call-signature-per-message): it was in every error, n² bytes.
+    assert_eq!(
+        out.matches("the type the checker found for `f` is `")
+            .count(),
+        1,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("the error above gives the type the checker found for `f`")
+            .count(),
+        n - 1,
+        "{out}"
+    );
 }
 
 #[test]
@@ -311,6 +326,20 @@ fn the_carried_fixes_of_many_arguments() {
     for n in [1, 2, 6] {
         the_carried_fixes_of_the_arguments(&carried_fixes(n), n);
     }
+}
+
+/// The listing of the errors of [`carried_fixes`] grows linearly in the arguments: at 8 times
+/// the arguments, less than 9 times the bytes (MSG-call-signature-per-message). Measured: 8.08
+/// times from 16 to 128 arguments (13972 and 112875 bytes); with the type of `f` in every
+/// error, 12.7 times (15547 and 197330 bytes), and growing with n.
+#[test]
+fn the_carried_fixes_of_many_arguments_print_linear_output() {
+    let bytes = |n: usize| rejected(&carried_fixes(n)).len();
+    let (small, large) = (bytes(16), bytes(128));
+    assert!(
+        large * 10 < small * 90,
+        "{small} bytes at 16 arguments, {large} at 128"
+    );
 }
 
 /// A call of `n` decimal literals at parameters with no type, `f(1.5, …)`

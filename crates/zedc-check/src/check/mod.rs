@@ -6636,6 +6636,26 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 }
 
+/// The step `text` as a listing of diagnostics writes it again after an error above it gave
+/// it in full (MSG-call-signature-per-message): a step of `Ck::declared_step`, `` `f` is
+/// declared here with no type written for …; the type the checker found for `f` is … ``,
+/// becomes `` `f` is declared here; the error above gives the type the checker found for
+/// `f` ``. `None` for any other step. The n errors of a call of n carried fixes each give the
+/// step, whose type is O(n) long for a function of n parameters, so the listing grew as n².
+/// The listing, not the checker, shortens it, as it shows each source line once: the errors
+/// themselves do not depend on the order of the items of a unit. O(the step).
+pub fn declared_again(text: &str) -> Option<String> {
+    let name = text.strip_prefix('`')?;
+    let name = &name[..name.find("` is declared here with no type written for ")?];
+    let found = format!("; the type the checker found for `{name}` is `");
+    text.contains(&found).then(|| {
+        format!(
+            "`{name}` is declared here; the error above gives the type the checker found for \
+             `{name}`"
+        )
+    })
+}
+
 /// The written type `a` as the kernel prints it, which parses back as itself: how a message
 /// shows a declared type the checker does not track. `None` for a type that holds a port,
 /// which has no kernel type.

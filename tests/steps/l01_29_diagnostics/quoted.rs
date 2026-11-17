@@ -209,6 +209,56 @@ fn steps_on_a_line_shown_above_are_given_by_their_ranges_and_a_new_line_is_shown
     );
 }
 
+/// The step that gives the type the checker found for `f`, declared on line 1, which is `t`.
+fn declared(t: &str) -> String {
+    format!(
+        "`f` is declared here with no type written for `x` or its result; the type the checker \
+         found for `f` is `{t}`"
+    )
+}
+
+#[test]
+fn a_declaration_step_given_above_is_shortened_unless_its_type_differs() {
+    // MSG-call-signature-per-message: a call of n arguments with an error in each gave the
+    // type of `f`, n parameters long, in each of the n errors.
+    const F: &str = "f(x) = x;";
+    let at = |line, t: &str, other: &str| {
+        diagnostic(
+            line,
+            1,
+            vec![
+                step(1, 1, &declared(t), F, 9),
+                step(line, 1, other, "y = f(1);", 1),
+            ],
+        )
+    };
+    let (a, b) = (at(2, "int -> int", "first"), at(2, "int -> int", "second"));
+    let c = at(2, "f64 -> f64", "third");
+    let mut quoted = Quoted::default();
+    // The first, and any shown alone, gives the type.
+    assert_eq!(quoted.show(&a), a.to_string());
+    let second = quoted.show(&b);
+    assert!(
+        second.contains(
+            "[1] 1:1 to 1:9: `f` is declared here; the error above gives the type the checker \
+             found for `f`\n"
+        ),
+        "{second}"
+    );
+    assert!(!second.contains("int -> int"), "{second}");
+    // Another type at the same place is given in full, and then shortened in turn.
+    let third = quoted.show(&c);
+    assert!(third.contains(&declared("f64 -> f64")), "{third}");
+    assert!(!quoted.show(&c).contains("f64 -> f64"));
+    // Any other step at the place is left as it is.
+    let d = diagnostic(1, 1, vec![step(1, 1, "`f` is declared here", F, 9)]);
+    let other = quoted.show(&d);
+    assert!(
+        other.contains("[1] 1:1 to 1:9: `f` is declared here\n"),
+        "{other}"
+    );
+}
+
 /// `n` diagnostics on one line of `n` components, as the `+` of a `sum` gives them: the k-th
 /// covers the first k + 1 components, and its second step the (k + 1)-th.
 pub(super) fn sums(n: usize) -> Vec<Diagnostic> {
