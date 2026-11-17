@@ -3983,9 +3983,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Records, for a note on it, that `word` on the receiver `of` of type `x` gives the first
-    /// parameter of `f` the entries of `x`, where `f` is a lambda generic in it
-    /// ([`Self::lambda_entries`] gave `None` and the parameter has no written type). The
-    /// entries are found only when the note is written ([`Self::noted_entries`], no need).
+    /// parameter of `f` the entries of `x`, where `f` is a lambda whose first parameter has no
+    /// written type: generic in it, or of the class of the entries of a receiver whose class
+    /// is not yet resolved ([`Self::lambda_entries`]); either way its type is a variable, which
+    /// alone would print `_`, every value (plan row MSG-generic-param-entry-note-every-value).
+    /// The entries are found only when the note is written ([`Self::noted_entries`], no need).
     // Complexity tradeoff: finding the entries here, as `lambda_entries` does where it
     // applies, would cost O(arrows of `x`) at every such call site, though only a site in an
     // error's derivation reads them; recording `x` costs O(1) (its members are shared), and
@@ -8205,10 +8207,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
-                        if first.is_none() {
-                            let word = if name == "map" { "map" } else { "where" };
-                            self.entry_param(word, &x.ty, of, f);
-                        }
+                        let word = if name == "map" { "map" } else { "where" };
+                        self.entry_param(word, &x.ty, of, f);
                         m.k(Frame::MapFn(x.ty, span, name == "where"));
                         self.word_fn(m, f, first);
                     }
@@ -8255,9 +8255,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
-                        if first.is_none() {
-                            self.entry_param("flatMap", &x.ty, of, f);
-                        }
+                        self.entry_param("flatMap", &x.ty, of, f);
                         m.k(Frame::FlatMap(x.ty, span));
                         self.word_fn(m, f, first);
                     }
@@ -8282,7 +8280,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             "group" => self.lambda_entries(&x.ty, f, span),
                             _ => None,
                         };
-                        if name == "group" && first.is_none() {
+                        if name == "group" {
                             self.entry_param("group", &x.ty, of, f);
                         }
                         m.k(Frame::Group(x.ty, of.span, span, name == "rekey"));
@@ -8633,7 +8631,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = match (declared, first.take()) {
                 (Some(t), _) => self.written(t, true),
                 (None, Some(t)) => t,
-                (None, None) => Ty::var(format!("${}", self.class()).into()),
+                (None, None) => {
+                    let k = self.class();
+                    if let Some((_, _, x)) = p.and_then(|p| self.entry_params.get(&p.span)) {
+                        self.entry_classes.insert(k, x.clone());
+                    }
+                    Ty::var(format!("${k}").into())
+                }
             };
             let id = p.map(|p| self.id(p.span, &p.name));
             if let Some(id) = id {

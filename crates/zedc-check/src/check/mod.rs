@@ -1952,6 +1952,11 @@ struct Ck<'t, 'a> {
     /// parameter says what it is given, not `_`, the type of every value (A92; plan row
     /// MSG-generic-operand-wording).
     entry_params: HashMap<Span, (&'static str, Span, Ty)>,
+    /// For each class made as the type of such a parameter with no type given it, the
+    /// receiver's type: a type a note shows that holds the class, as `[l, 1]` holds `l`'s,
+    /// writes it as the entries where they are known ([`Ck::with_entries`]), not as `_` (plan
+    /// row MSG-generic-entry-shown-as-every-value).
+    entry_classes: HashMap<usize, Ty>,
     /// What the text gives at `rat` of each operation at `rat`, or in a class of literals, whose
     /// operands are literals and such operations, by its span ([`Ck::rat_folded`]): its value,
     /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
@@ -2383,6 +2388,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             receivers: HashMap::new(),
             sum_calls: HashSet::new(),
             entry_params: HashMap::new(),
+            entry_classes: HashMap::new(),
             rat_folds: HashMap::new(),
             top_parts: Vec::new(),
             tail_reach: None,
@@ -3121,6 +3127,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut written = HashMap::new();
         let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
         let note = |span: Span, text: String| Work::Show(Note { span, text });
+        // The receiver of each class of a lambda parameter given entries, by the class's root
+        // now ([`Ck::with_entries`]). Complexity tradeoff: O(E) for E such classes, once per
+        // derivation, which only an error writes; finding the roots at each note would be
+        // O(E) per note.
+        let entry_roots: HashMap<usize, &Ty> = (self.entry_classes.iter())
+            .map(|(&k, x)| (self.find(k), x))
+            .collect();
         while let Some(w) = stack.pop() {
             let span = match w {
                 Work::Show(n) => {
@@ -3153,7 +3166,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             // "this `-` gives -2", not the class's carriers. One lookup.
             let ty = match (kept, src, self.int_exponents.get(&span)) {
                 (Some(_), _, Some(Some(v))) => self.near(at, |ck| ck.show(&Ty::lit(v))),
-                (Some(t), _, _) => self.near(at, |ck| ck.show(t)),
+                // A name keeps its variable: its note says what the parameter is given.
+                (Some(t), Src::Name(_), _) => self.near(at, |ck| ck.show(t)),
+                (Some(t), _, _) => {
+                    let t = self.with_entries(t, &entry_roots);
+                    self.near(at, |ck| ck.show(&t))
+                }
                 (None, Src::Other(e), _) => match self.tuple_seen(e) {
                     Some(t) => self.near(at, |ck| ck.show(&t)),
                     None => continue,
@@ -3181,19 +3199,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         _ => None,
                     };
-                    let given = given.and_then(|(word, of, x)| {
-                        let entries = self.noted_entries(&x)?;
-                        let t = self.near(at, |ck| ck.show(&entries));
+                    // Where the entries' type is not known, as those of a parameter of no
+                    // written type, the note says where the parameter comes from without one:
+                    // `_` would be every value (plan row
+                    // MSG-generic-param-entry-note-every-value).
+                    let given = given.map(|(word, of, x)| {
+                        let t = (self.noted_entries(&x))
+                            .map(|entries| self.near(at, |ck| ck.show(&entries)))
+                            .filter(|t| t != "_");
                         let of = match self.operand_text(Some(of)) {
                             Some(c) => format!("`{c}`"),
                             None => format!("the family before `.{word}`"),
                         };
-                        (t != "_").then(|| {
-                            format!(
-                                "`{name}` has a generic type here, and `{word}` gives it each \
-                                 entry of {of}, whose type is {t}"
-                            )
-                        })
+                        let whose = t.map_or(String::new(), |t| format!(", whose type is {t}"));
+                        format!(
+                            "`{name}` has a generic type here, and `{word}` gives it each entry \
+                             of {of}{whose}"
+                        )
                     });
                     next.push(note(
                         span,
@@ -4589,6 +4611,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             out = out.union(&t);
         }
         Some(out)
+    }
+
+    /// `t` with each class not yet resolved that is the type of a lambda parameter given the
+    /// entries of a receiver (`roots`, from [`Ck::entry_classes`] by root) replaced by those
+    /// entries, where they are known and are not every value: `(0 | 1) -> String | 1` for
+    /// `[l, 1]` with `l` a line of `m.stdin`, where the class alone beside `1` prints `_`, the
+    /// type of every value (A92; plan row MSG-generic-entry-shown-as-every-value). The
+    /// parameter takes only those entries, so the type is the one the program gives.
+    // Complexity tradeoff: one pass over the class variables of `t`, each one root lookup,
+    // and `noted_entries` (O(arrows of the receiver)) for each that matches; with no match
+    // `t` is returned as is, borrowed.
+    fn with_entries<'k>(&self, t: &'k Ty, roots: &HashMap<usize, &Ty>) -> Cow<'k, Ty> {
+        if roots.is_empty() {
+            return Cow::Borrowed(t);
+        }
+        let binds: Binds = (t.var_facts().classes.into_iter())
+            .filter_map(|v| {
+                let r = self.class_of(&Piece::Var(v.clone()))?;
+                let entries = self.noted_entries(roots.get(&r)?)?;
+                let open = entries.is_empty() || entries.vars.iter().next().is_some();
+                (!open && self.show(&entries) != "_").then_some((v, entries))
+            })
+            .collect();
+        match binds.is_empty() {
+            true => Cow::Borrowed(t),
+            false => Cow::Owned(t.replace(&binds)),
+        }
     }
 
     /// The class `t` is, if it is one and nothing else.

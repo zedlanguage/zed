@@ -1383,13 +1383,15 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The error for `++` on the operand `a`, whose type is a variable of no class, as a
     /// written type parameter's. As at `levels_of`, the program may write no type parameter,
-    /// so the operand's type is called generic.
+    /// so the operand's type is called generic. The error stands at the operand, where it has
+    /// one, whose derivation says what it is, as a lambda's parameter given each entry of a
+    /// family is (plan row MSG-concat-generic-lambda-param-no-note); else at the `++`, `span`.
     fn generic_operand(&mut self, a: &Arg<'a>, span: Span) {
         let what = match self.operand_text(a.at) {
             Some(c) => format!("`++` on `{c}`, whose type is generic here,"),
             None => "`++` on a value whose type is generic here".to_string(),
         };
-        self.error(span, zedc_base::rejection::not_yet(&what));
+        self.error(a.at.unwrap_or(span), zedc_base::rejection::not_yet(&what));
     }
 
     /// `a.zip(b)` (step L5.2; DESIGN.md sec:joins): the equality join on keys,

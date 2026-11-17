@@ -1202,6 +1202,54 @@ fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Where the type of the entries a word gives a lambda parameter is not known, as those of a
+/// parameter of no written type, the note still says where the parameter comes from, with no
+/// type: `_` is the type of every value (A92), and `l` is an entry of `xs` (plan row
+/// MSG-generic-param-entry-note-every-value).
+#[test]
+fn an_entry_of_a_generic_parameter_is_not_shown_as_every_value() {
+    let src = "f(positional xs) = xs.map(l -> \"${l.zip([1])}\");\nmain(m: MainArgs) {\n  m.stdout <- f([\"a\"]);\n}\n";
+    let out = run("fp_ops/entry_note_generic_param", src, "", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("`l` has a generic type here, and `map` gives it each entry of `xs`"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// A family whose entries hold a lambda's generic parameter is printed with that parameter's
+/// type by what it ranges over, never `_`, the type of every value (A92): `l` is a line of
+/// `m.stdin`, a String (plan row MSG-generic-entry-shown-as-every-value).
+#[test]
+fn a_generic_entry_of_a_family_is_not_shown_as_every_value() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat([l, 1]));\n}\n";
+    let out = run("fp_ops/strings_generic_entry_note", src, "a\n", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("`concat` joins strings"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("-> _"), "{}", out.stderr);
+    let want = "this expression is (0 | 1) -> 1 | String";
+    assert!(out.stderr.contains(want), "{}", out.stderr);
+}
+
+/// `++` on a lambda's generic parameter is refused with the note that says what the parameter
+/// is, as `zip` on it is (plan row MSG-concat-generic-lambda-param-no-note).
+#[test]
+fn concat_on_a_generic_lambda_parameter_notes_what_it_is() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> \"${l ++ [1]}\");\n}\n";
+    let out = run("fp_ops/concat_generic_note", src, "", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    let want = "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, whose \
+                type is String";
+    assert!(out.stderr.contains(want), "{}", out.stderr);
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {

@@ -390,7 +390,10 @@ fn for_vars_used(found: &str) {
         return;
     };
     for bound in bounds.split(", ") {
-        let var = bound.split(" in ").next().expect("a bound names its variable");
+        let var = bound
+            .split(" in ")
+            .next()
+            .expect("a bound names its variable");
         assert!(
             arrow
                 .split(|c: char| !c.is_ascii_alphanumeric())
@@ -405,7 +408,9 @@ fn for_vars_used(found: &str) {
 /// a variable it uses keeps its clause and the pair (plan row MSG-type-vars-printed-unused).
 #[test]
 fn a_bound_of_no_variable_the_text_writes_is_not_printed() {
-    let bounded = parse_type("(T) -> T for T in int | f64").unwrap().fns[0].bounds.clone();
+    let bounded = parse_type("(T) -> T for T in int | f64").unwrap().fns[0]
+        .bounds
+        .clone();
     // `int -> int`, bounding the `T` it does not hold.
     let unused = |s: &str| {
         let mut s = (*parse_type(s).unwrap().fns[0]).clone();
