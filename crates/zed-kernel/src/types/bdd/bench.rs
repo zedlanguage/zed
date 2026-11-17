@@ -750,6 +750,43 @@ fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
         .unwrap();
 }
 
+#[test]
+fn distinct_atoms_of_one_digest_scales() {
+    // `distinct_atoms` of the union of `m` distinct rows of one digest, which a program can
+    // write (PERF-distinct-atoms-tied-digest). Comparing each new row with every earlier row of
+    // its digest cost n(n - 1)/2 comparisons: 7.6 ms at 512 rows, 1.57 s at 4096. Small
+    // instances: `distinct_atoms_keeps_every_atom_of_one_digest`. From 2048, not 512: an ordered
+    // set's n log n ratio is 8 log(8n) / log n, 10.67 from 512 and 10.18 from 2048 (measured
+    // 11.17 and 10.18 by Codex, XR-xor-shape-rounds-4-6 round 5, `r5_ordered_bucket_bench`).
+    // The union is a balanced tree of expressions, built in linear time: joined with `zip`,
+    // the rows would go into one set, whose tied priorities make it a path, quadratic to build
+    // (PERF-set-tied-digest-depth), which is not what this measures.
+    let n = 1 << 11;
+    let unions = scaling::inputs(n, |m| {
+        let rows = super::set::tests::rows_of_one_digest(m);
+        let mut level: Vec<Part<Row>> = rows.into_iter().map(Part::literal).collect();
+        while level.len() > 1 {
+            let mut next = Vec::with_capacity(level.len().div_ceil(2));
+            let mut it = level.into_iter();
+            while let Some(a) = it.next() {
+                next.push(match it.next() {
+                    Some(b) => Part::expr(Form::Or(a, b)),
+                    None => a,
+                });
+            }
+            level = next;
+        }
+        level.pop().expect("one row at least")
+    });
+    scaling::check(
+        "the distinct atoms of rows of one digest, by rows",
+        n,
+        |m| {
+            assert_eq!(unions[&m].distinct_atoms().len(), m);
+        },
+    );
+}
+
 /// The walks on expressions and diagrams nested this deep, on a 2 MiB stack. Of the walks the
 /// test runs, the recursive ones before T2-types-rest part 3 overflowed that stack at 13,085 to
 /// 32,812 levels in a debug build (measured on 8e4fdf932); half as deep again as the deepest.

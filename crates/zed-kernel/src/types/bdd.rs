@@ -2358,37 +2358,44 @@ impl<A: Literal> Part<A> {
 
     /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
     /// and a caller that tests or splits on each atom must meet it once.
-    // Complexity tradeoff: the atoms met are filed by digest, each digest with the first atom
-    // that has it and each atom with the next of its digest, so an atom is compared only with
-    // those of its digest: O(1) expected per atom. Naive version: a sorted set of the atoms,
-    // O(log n) comparisons per atom, each comparing digests, the log factor that took
+    // Complexity tradeoff: the atoms met are filed by digest. A digest met with one atom keeps
+    // that atom alone, so an atom whose digest no other atom has costs O(1) expected; a digest
+    // met with a second distinct atom keeps an ordered set of its atoms, so a class of k atoms
+    // of one digest costs O(log k) comparisons an atom, O(n log n) in all even when a program
+    // writes n distinct atoms of one digest (PERF-distinct-atoms-tied-digest, benchmark
+    // `distinct_atoms_of_one_digest_scales`). Two methods given up: a chain of the atoms of each
+    // digest, compared one by one, which cost n(n - 1)/2 comparisons on n atoms of one digest
+    // (7.6 ms at 512, 1.57 s at 4096); and one sorted set of all the atoms, O(log n)
+    // comparisons per atom, each comparing digests, the log factor that took
     // `the_emptiness_of_a_meet_of_tuple_differences_scales` over 9 (PERF-kernel-payload-shape-
-    // under9). Cost: two words per distinct atom.
+    // under9). Cost: one word a digest met once, a B-tree node share a tied atom; the atoms are
+    // borrowed from the part, never copied for the sets.
     pub(super) fn distinct_atoms(&self) -> Vec<A> {
-        let mut first: DigestMap<u64, usize> = DigestMap::default();
-        let (mut next, mut atoms) = (Vec::<Option<usize>>::new(), Vec::new());
+        enum Bucket<'a, A> {
+            One(&'a A),
+            Many(BTreeSet<&'a A>),
+        }
+        let mut by_digest: DigestMap<u64, Bucket<'_, A>> = DigestMap::default();
+        let mut atoms = Vec::new();
         self.atoms(&mut |a| {
-            let mut at = match first.entry(a.digest()) {
+            let new = match by_digest.entry(a.digest()) {
                 Entry::Vacant(e) => {
-                    e.insert(atoms.len());
-                    next.push(None);
-                    atoms.push(a.clone());
-                    return true;
+                    e.insert(Bucket::One(a));
+                    true
                 }
-                Entry::Occupied(e) => *e.get(),
+                Entry::Occupied(mut e) => match e.get_mut() {
+                    Bucket::One(b) if *b == a => false,
+                    Bucket::One(b) => {
+                        let tied = BTreeSet::from([*b, a]);
+                        *e.get_mut() = Bucket::Many(tied);
+                        true
+                    }
+                    Bucket::Many(tied) => tied.insert(a),
+                },
             };
-            loop {
-                if atoms[at] == *a {
-                    return true;
-                }
-                match next[at] {
-                    Some(n) => at = n,
-                    None => break,
-                }
+            if new {
+                atoms.push(a.clone());
             }
-            next[at] = Some(atoms.len());
-            next.push(None);
-            atoms.push(a.clone());
             true
         });
         atoms

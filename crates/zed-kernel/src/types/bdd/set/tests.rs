@@ -346,7 +346,7 @@ fn int_of_digest(d: u64) -> i64 {
 /// (PERF-set-tied-digest-depth): rows `(a, b)` of two integers, `b` solved from `a` through the
 /// steps of the hash, each of which is a bijection in either argument. Under short addresses a
 /// digest has 8 bits, and the rows `(i)` that share the first one's digest are taken instead.
-fn rows_of_one_digest(n: usize) -> Vec<Row> {
+pub(in crate::types) fn rows_of_one_digest(n: usize) -> Vec<Row> {
     if crate::address::SHORT {
         let target = Row::new(vec![int(0)]).digest();
         let rows = (0..).map(|i| Row::new(vec![int(i)]));
@@ -429,7 +429,8 @@ fn chosen_literals(n: usize, least: usize) {
 }
 
 /// `distinct_atoms` files the atoms it meets by digest and compares an atom only with those of
-/// its digest, so on atoms that all share one digest its chains carry the whole answer. It must
+/// its digest, so on atoms that all share one digest its ordered set of that digest carries the
+/// whole answer. It must
 /// keep every distinct atom once, in the order first met, as a sorted set of the atoms does; a
 /// filing by digest alone (the control) keeps one. From cross-review XR-xor-shape-rounds-4-6,
 /// round 4 (Codex).

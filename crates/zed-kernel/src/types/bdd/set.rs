@@ -791,4 +791,4 @@ pub(super) fn same<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
