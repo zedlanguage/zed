@@ -67,20 +67,28 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    `mlir-opt` and `mlir-translate` to reach LLVM IR, then LLVM's code generator. The text form
    needs no C++ build in Zed's tree, and keeps the code generator testable by comparing text.
    MLIR's C API is adopted if measured compile time shows the process boundary matters.
-9. **The Rust-hosted compiler keeps Cranelift; the Zed compiler emits MLIR text.** Cranelift is a
+9. **The Rust-hosted compiler keeps Cranelift; the Zed compiler emits MLIR text for executables
+   and Cranelift's text form for code it loads while running.** Cranelift is a
    Rust crate with a JIT and an object-file writer on one path, which is what L1.36 needs; it
    compiles fast; it needs no C++ toolchain, so CI builds it from a clean checkout. So `zedc run`,
    the tests, the differential oracle and the JIT stay on it. The compiler written in Zed reaches
    LLVM through the MLIR text port of step S.1a, under the author's order of 2026-11-05 that ZIR →
    MLIR → LLVM IR → x86-64 works before row S (it is part of the bootstrap subset of ZED0.md). What Cranelift lacks, loop optimization and
    vectorization, is what L28 adds, and the two back ends check each other under the differential
-   oracle until step S.8 retires the Rust-hosted compiler. Cranelift is a Rust crate, so it leaves
-   main with the Rust compiler at step S.11 and is kept in the `rust-bootstrap` branch (the answer
-   to QUESTIONS Q52, 2026-11-11: no Rust is left after bootstrapping). A retained Cranelift JIT
-   port is therefore ruled out. `zedc run` and run-time `compile` in the Zed compiler use a
-   generator that is not Rust, loaded through libzed's OS layer (DESIGN step S.7b, plan row
-   JIT-zed); which generator is QUESTIONS C7: this MLIR and LLVM path run at run time, or a code
-   generator written in Zed after step L29.1.
+   oracle until step S.8 retires the Rust-hosted compiler. The author's answer to QUESTIONS C7
+   (2026-11-17) keeps Cranelift until a code generator written in Zed replaces it: "We need Rust
+   and Cranelift until Zed is fully bootstrapped and we have ported Cranelift and/or LLVM and/or
+   gcc lowering code fully to Zed". So `zedc run` and run-time `compile` in the Zed compiler call
+   Cranelift in process (DESIGN step L19.1, "Where this document does not say", and step S.7b,
+   plan rows CLIF-shim and JIT-zed): the Zed compiler writes Cranelift's text form (CLIF) from
+   the same ZIR-loop this path lowers to MLIR, a small Rust crate `zed-clif` with one C entry
+   point parses, verifies and compiles it to a code image, and libzed's OS layer loads the image.
+   That crate is the one Rust crate left on main after step S.11; step L29.1a (rows
+   JIT-native-zed and RUST-remove-clif) replaces it with a generator in Zed on L29.1's passes.
+   This MLIR path is not used at run time, since it would need the outside tools where a program
+   runs and costs an LLVM run per call; no separate ZIR to LLVM IR translator is written, since
+   `mlir-translate` already gives LLVM IR. Whether main builds the shim from source or links a
+   copy from the release is QUESTIONS A135.
 
 ## Operations
 
