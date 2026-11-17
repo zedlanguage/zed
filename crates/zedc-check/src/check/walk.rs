@@ -16271,13 +16271,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// QUESTIONS A43): `#box(f) + #bag(f)`, which the kernel refuses with "`+` given several
     /// failures, one of which holds a function, which `#errs` cannot hold". One failure alone
     /// passes through with its payload as it is, so nothing is checked when no merge can happen.
+    /// The failures the operation passes on are added to `out` (`passed`).
     ///
-    /// An operand that is itself an application at `whole` whose operands merged and were
-    /// checked here ([`Ck::merge_checked`]), as `a(p) + a(p)` in `a(p) + a(p) + a(p)`, is not
-    /// checked again: its failures are its operands' failures, which pass through it, and the
-    /// `#errs` it may make, which is data; each of those operands that may hold a function was
-    /// reported at its own span, and the repair of those removes the function from this operand
-    /// too. So a chain of `n` merges reports each of its `n + 1` operands once.
+    /// An operand that is itself an application whose operands merged and were checked here
+    /// ([`Ck::merge_checked`]), as `a(p) + a(p)` in `a(p) + a(p) + a(p)`, is not checked again
+    /// when its failures are those that merge passed on, exactly: they are its operands'
+    /// failures, which pass through it, and the `#errs` it may make over them, so a function
+    /// one of them may hold is one an operand held, reported at the operand's own span, and
+    /// the repair of that removes it from this operand too; and a class in them is one the
+    /// operand's check gave its data need, which a class keeps. So a chain of `n` merges
+    /// reports each of its `n + 1` operands once. The record is keyed by the failures, not by
+    /// the span alone (PROOF-merge-checked-context): a body walked in two contexts, as a
+    /// lambda checked at each arrow of an intersection, may merge an application in the first
+    /// and not in the second, where one operand alone fails with a payload that holds a
+    /// function, `s(p, true) + q` in `(s(p, true) + q + r) else 0` at `(p: int, q: int | #b,
+    /// r: int) -> int` and then at `(p: int -> int, q: int, r: int | #c) -> int`; skipped by
+    /// span, the second context's merge with `r` was not checked, and the program was accepted
+    /// or refused by the order of the arrows. The failures, which hold the types of the
+    /// payloads, differ in the two, and only equal failures are skipped.
     // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
     // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
     // O(size of its failures' payload types), the walk the memo of checked rows already bounds,
@@ -16286,30 +16297,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     // as before, reported the inner merge again with its whole code in the headline and its
     // derivation through all its operands in the notes: in a chain of `n` merges the `k`th
     // error was `O(k)` long, `O(n^2)` in all (162,800 notes, 10.4 MB, at `n = 400`;
-    // FAIL-merge-chain-held-quadratic). Not proved: an application checked in two contexts
-    // (a body walked again) is skipped in the second by the record of the first, which is
-    // sound for the program, since the first reported the same operands, but the second
-    // context then names no error of its own here. COMPLEXITY.md row CHK-merged-data. Tests:
-    // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`
+    // FAIL-merge-chain-held-quadratic). The skip compares the operand's failures with the
+    // record, O(size of the failures' types), no more than the walk it saves; keyed by span
+    // alone it skipped an application of a body walked again, whose failures there were
+    // others, unchecked (PROOF-merge-checked-context). COMPLEXITY.md row CHK-merged-data.
+    // Tests:
+    // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`,
+    // `l01_26_type_resolution::held_functions::a_merge_in_a_lambda_checked_at_two_arrows_is_checked_at_each`
     // and the benchmark
     // `l01_26_type_resolution::bench::held_functions::many_errors_in_one_expression_have_headlines_of_bounded_length`.
-    fn merged_data(&mut self, atoms: &[Ty], froms: &[Span], whole: Span) {
+    fn merged_data(&mut self, out: &mut Ty, atoms: &[Ty], froms: &[Span], whole: Span) {
         let sets: Vec<KType> = atoms
             .iter()
             .map(Ty::atoms)
             .filter(|a| !a.is_empty())
             .collect();
         if !ty::merges(sets.iter()) {
+            passed(out, atoms.iter());
             return;
         }
         for (t, &at) in atoms.iter().zip(froms) {
-            if !self.trying && self.merge_checked.contains(&at) {
+            if !self.trying && self.merge_checked.get(&at) == Some(t) {
                 continue;
             }
             self.data(t, "`#errs`", DataUse::Merge, at, at, None);
         }
+        let mut merged = Ty::empty();
+        passed(&mut merged, atoms.iter());
+        *out = out.union(&merged);
         if !self.trying {
-            self.merge_checked.insert(whole);
+            self.merge_checked.insert(whole, merged);
         }
     }
 
@@ -21872,8 +21889,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let atoms: Vec<Ty> = given.iter().map(|a| a.ty.loose_ty()).collect();
             let froms: Vec<Span> = given.iter().map(|a| a.at.unwrap_or(span)).collect();
-            self.merged_data(&atoms, &froms, span);
-            passed(&mut out, atoms.iter());
+            self.merged_data(&mut out, &atoms, &froms, span);
             for a in args.iter_mut().flatten() {
                 a.ty = a.ty.without_loose();
             }
@@ -21914,8 +21930,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 froms.push(at);
                 self.pass_at(span, at, &refused);
             }
-            self.merged_data(&atoms, &froms, span);
-            passed(&mut out, atoms.iter());
+            self.merged_data(&mut out, &atoms, &froms, span);
         }
         // `min` and `max` take two tuples, wherever they are called from; they are told apart by
         // the word the signature is, not by its arrows, which `+`, `-` and `*` share.

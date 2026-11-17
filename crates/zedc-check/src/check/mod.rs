@@ -1865,10 +1865,14 @@ struct Ck<'t, 'a> {
     /// while a repair is tried, since a trial undoes the classes' needs.
     data_checked: HashSet<NodeId>,
     /// The applications, by span, whose operands' failures merge and were each checked as
-    /// data outside a trial ([`Self::merged_data`]): an operand that is one of them is not
-    /// checked again by the merge it is an operand of. Filled and read outside a trial only,
-    /// so a trial, whose errors are undone, checks every operand as before.
-    merge_checked: HashSet<Span>,
+    /// data outside a trial ([`Self::merged_data`]), each with the failures the merge passes
+    /// on (`passed` of the operands' failures): an operand that is one of them, of those
+    /// failures exactly, is not checked again by the merge it is an operand of. A body walked
+    /// in two contexts (a lambda at each arrow of an intersection) may give the application
+    /// other failures in the second, which are then checked (PROOF-merge-checked-context).
+    /// Filled and read outside a trial only, so a trial, whose errors are undone, checks every
+    /// operand as before.
+    merge_checked: HashMap<Span, Ty>,
     /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
     /// each with the level it was at and that level's count of ends (`gens`): a class stays a
     /// class until the function of its level ends and names it, and a class's level only goes
@@ -2486,7 +2490,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             wide_builds: BTreeMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
-            merge_checked: HashSet::new(),
+            merge_checked: HashMap::new(),
             clean: HashMap::new(),
             gens: Vec::new(),
             ends: 0,

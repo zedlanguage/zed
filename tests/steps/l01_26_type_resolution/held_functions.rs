@@ -664,6 +664,34 @@ fn failures_holding_functions_that_merge_are_refused() {
     );
 }
 
+/// PROOF-merge-checked-context: one application merged in one context and not in another. A
+/// lambda passed at an intersection is checked at each arrow. At `a1` both `s(p, true)` and
+/// `q` may fail, with data, so `s(p, true) + q` merges and its operands are checked; at `a2`
+/// only `s(p, true)` may fail, with `#bad(int -> int)`, so `s(p, true) + q` passes that on
+/// and the merge with `r`'s `#c` must check it. The record of the merge at `a1`
+/// (`Ck::merge_checked`), kept by span alone, skipped that check when `a1` came first, and the
+/// program was accepted; with `a2` first, or alone, it was refused. Now the record holds the failures the merge passed on, and the operand is
+/// skipped only when its failures are those, so the order of the arrows does not matter.
+#[test]
+fn a_merge_in_a_lambda_checked_at_two_arrows_is_checked_at_each() {
+    let head = "s(positional x, positional k: bool) = if k { 1 } else { #bad(x) };\n";
+    let a1 = "(p: int, q: int | #b, r: int) -> int";
+    let a2 = "(p: int -> int, q: int, r: int | #c) -> int";
+    let lam = "a = both(h: (p, q, r) -> (s(p, true) + q + r) else 0);\n";
+    let held = "Cannot merge a failure that may hold a function into `#errs`: `s(p, true) + q : \
+                #bad(int -> int)`. [s(p, true) + q]";
+    for slot in [
+        a2.to_string(),
+        format!("({a1}) & ({a2})"),
+        format!("({a2}) & ({a1})"),
+    ] {
+        let src = format!("{head}both(h: {slot}) = 1;\n{lam}");
+        assert_eq!(type_errors(&src), [held], "{src}");
+    }
+    let src = format!("{head}both(h: {a1}) = 1;\n{lam}");
+    assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+}
+
 /// `w(positional k) = 2 ^ k` fits `(positional k: f64) -> f64` when it is passed itself: at
 /// `f64` the power has no domain need. Returned by `f`, the same function is compared with the
 /// same signature under `fits_in`'s solved path (crates/zedc-types/src/ty.rs, the
