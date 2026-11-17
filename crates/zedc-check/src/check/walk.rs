@@ -5898,6 +5898,114 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
+    /// Gives each class [`Self::generic_parts`] made outside every function since `from`, of
+    /// the literals of a tuple argument, its type, now that the application has met it. A
+    /// class a use asked for a carrier ([`Class::asked`]), as a bounded variable does,
+    /// stands for one carrier of the bound, as the variable does at a call (DESIGN.md
+    /// L1.26a), and the body's operators make new values of that carrier from the literals,
+    /// so the class is the whole carrier: `int` in `r = h((1, 2))` with `h(positional p) =
+    /// p[0] + p[1]`, whose value is `3`, and `rat` for `2` in `y = f(x: 1r, p: (2, 1))` with
+    /// `f(x, p) = x + p[0]`. The carrier is chosen as for literals alone at a bounded
+    /// variable: `int` for integer literals where the class holds it, the one carrier left
+    /// (`rat` for `1.5` in `r = h((1.5, 2))` with `h(positional p) = p[0] + 1r`, whose value
+    /// is `5r/2r`), and with two or more the first literal is rejected, unless a decimal literal is in
+    /// the class, which is rejected where the arguments are read ([`Self::unfixed_args`]).
+    /// The literals adopt the carrier. A class no use asked, as `p` in `h(p) = p[0]`,
+    /// keeps its literals' own types, `1` for `h((1, 2))`, since only a copy of a literal
+    /// can come out of it. Each class is read once: the cost is the number of its literals.
+    ///
+    /// An operation on literals alone written as a component ([`Part::Op`]) takes the
+    /// carrier as it would as the argument alone ([`Self::lit_takes`]), which drops the
+    /// rejection its `/` wrote as it was walked: `5r/2r` for `h((3 / 2, 2))` with
+    /// `h(positional p) = p[0] + 1r`. Where no use asked its class, it keeps the type it was
+    /// walked at ([`Self::copied_values`]). Complexity tradeoff: the operations are grouped
+    /// by the root of their class in one pass, O(o) for `o` operations, so each class reads
+    /// only its own.
+    ///
+    /// Returns the operations whose class took no carrier and that a use refused at every
+    /// carrier left ([`Class::refused`]), as `3 / 2` in `r = h((3 / 2, 2)) else 9` with
+    /// `h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 }`, which requires an `int`
+    /// of `p[0]`: where the application is rejected, that rejection is the call's one, and
+    /// the operation's own, with its menu, is dropped ([`Ck::lit_unwrite`]), since each fix
+    /// of the literal keeps the use's rejection (DESIGN.md L1.26a, "rejected once, for that
+    /// use, with no menu at the literal").
+    ///
+    /// It is written here, beside [`Self::lit_takes`], and not in `mod.rs` beside the classes,
+    /// since a call from `mod.rs` into this file would close an import cycle between the two
+    /// (step S.1f).
+    fn resolve_top_parts(&mut self, from: usize) -> Vec<&'a Expr> {
+        let mut unmet = Vec::new();
+        let parts = self.top_parts.split_off(from);
+        let mut ops: HashMap<usize, Vec<&'a Expr>> = HashMap::new();
+        for &(k, op) in &parts {
+            if let Some(e) = op {
+                ops.entry(self.find(k)).or_default().push(e);
+            }
+        }
+        for (k, _) in parts {
+            let r = self.find(k);
+            if self.classes[r].resolved.is_some() {
+                continue;
+            }
+            let mask = self.classes[r].mask;
+            let lits: Vec<Lit> = (self.classes[r].lits.iter())
+                .map(|(l, _)| l.clone())
+                .collect();
+            let takes: Vec<Carrier> = Carrier::of_mask(mask)
+                .filter(|&c| c.numeric() && lits.iter().all(|l| l.exponent || fits(l, c)))
+                .collect();
+            let ints = lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
+            let c = match takes[..] {
+                _ if !self.classes[r].asked => None,
+                [] => None,
+                _ if ints && takes.contains(&Carrier::Int) => Some(Carrier::Int),
+                [c] => Some(c),
+                // A decimal literal among them takes `f64` where it is left (DESIGN.md step
+                // L1.26b): `r = h((1.5, 2))` with `h(positional p) = if p[0] < 5 { p[0] } else
+                // { 0 }` is `1.5`.
+                _ if takes.contains(&Carrier::F64) && lits.iter().any(|l| is_decimal(&l.value)) => {
+                    Some(Carrier::F64)
+                }
+                [c, ..] => {
+                    let decimal = lits.iter().any(|l| is_decimal(&l.value));
+                    if !decimal
+                        && !(floats_take_f64(&takes) && self.classes[r].floats)
+                        && let Some(l) = lits.first()
+                    {
+                        let notes = self.derive(&[l.site]);
+                        let m = unfixed(l, &takes);
+                        let sites = lits.iter().map(|l| l.site).collect();
+                        self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
+                    }
+                    Some(c)
+                }
+            };
+            let own = ops.remove(&r).unwrap_or_default();
+            let ty = match c {
+                Some(c) => {
+                    for l in &lits {
+                        self.lit_follows(l, c);
+                    }
+                    // The class keeps only the carriers at which each operation has a
+                    // value ([`Ck::generic_parts`]), so each takes `c`.
+                    for e in own {
+                        self.lit_takes(e, c);
+                    }
+                    Ty::carrier(c)
+                }
+                None => {
+                    if self.classes[r].refused {
+                        unmet.extend(own);
+                    }
+                    self.copied_values(r)
+                }
+            };
+            self.touch(r);
+            self.classes[r].resolved = Some(ty);
+        }
+        unmet
+    }
+
     /// Outside every function, the carrier the operations on bare literals alone `ops`
     /// ([`Ck::lit_ops`]) take as arguments at one bounded type variable of a call, beside the
     /// literals `lits` and the carriers `carriers` of the other arguments there, `m` the
