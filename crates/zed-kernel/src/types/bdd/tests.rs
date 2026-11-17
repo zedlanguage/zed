@@ -2552,3 +2552,124 @@ fn parts_built_on_one_thread_meet_on_another_in_their_one_form() {
             .unwrap()
     });
 }
+
+/// Case I with a list condition that is no literal (CANON-list-absorb).
+#[test]
+fn a_choice_on_a_list_condition_whose_branches_cover_everything_is_the_leaf() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [p, q, r, b, d, s, t] = [0, 1, 2, 3, 4, 5, 6].map(|i| Part::literal(atom(i)));
+    let l = or(&and(&p, &q), &r);
+    assert!(matches!(l, Part::Bdd(_)));
+    let w = xor_by_or(&s, &t);
+    let (x, y) = (or(&l, &b), or(&l.not(), &d));
+    let half = |w: &Part<Row>| or(&and(&l, &and(&x, w)), &and(&l.not(), &and(&y, w)));
+    let merged = or(&half(&w), &half(&w.not()));
+    let holds = |bits: u32| move |row: &Row| (0..7).any(|i| bits >> i & 1 == 1 && *row == atom(i));
+    assert!((0..128).all(|bits| merged.eval(&holds(bits))));
+    assert_eq!(merged.is_leaf(), Some(true), "{merged:?}");
+}
+
+/// The cases of `Bdd::absorbed` (CANON-list-absorb): `f` implies `g`, so `f & g` is `f` and
+/// `f | g` is `g`, in either order of the operands, where neither is a chain. Case A, a literal
+/// added to the first block (first value `true`, and its complement, first value `false`), and
+/// case B, a block put first (both values). Each result is checked on every setting, and the
+/// lists built on another thread, compared there by contents, give the same.
+#[test]
+fn a_list_that_implies_another_as_their_blocks_show_absorbs_it() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [p, q, r, b] = [0, 1, 2, 3].map(|i| Part::literal(atom(i)));
+    let lists = |p: &Part<Row>, q: &Part<Row>, r: &Part<Row>, b: &Part<Row>| {
+        let l = or(&and(p, q), r);
+        let not_l = l.not();
+        // `l` has the first value `true`: `l|b` adds `b` to its first block (case A); `!l`
+        // has `false`: `!l|b` puts `{b}` first (case B), and `l & !b` is its complement.
+        let pairs = [
+            (l.clone(), or(&l, b)),
+            (not_l.clone(), or(&not_l, b)),
+            (and(&l, &b.not()), l.clone()),
+            (and(&not_l, &b.not()), not_l.clone()),
+        ];
+        for (f, g) in &pairs {
+            for part in [f, g] {
+                let Part::Bdd(x) = part else {
+                    panic!("{part:?} is a list")
+                };
+                assert!(!x.is_chain(Op::And) && !x.is_chain(Op::Or), "{x:?}");
+            }
+        }
+        pairs
+    };
+    let pairs = lists(&p, &q, &r, &b);
+    let holds = |bits: u32| move |row: &Row| (0..4).any(|i| bits >> i & 1 == 1 && *row == atom(i));
+    for (f, g) in &pairs {
+        for bits in 0..16 {
+            assert!(
+                !f.eval(&holds(bits)) || g.eval(&holds(bits)),
+                "{f:?} implies {g:?}"
+            );
+        }
+        assert!(and(f, g) == *f && and(g, f) == *f, "{f:?} & {g:?}");
+        assert!(or(f, g) == *g && or(g, f) == *g, "{f:?} | {g:?}");
+    }
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let [p2, q2, r2, b2] = [0, 1, 2, 3].map(|i| Part::literal(atom(i)));
+                for ((f, g), (f2, g2)) in pairs.iter().zip(lists(&p2, &q2, &r2, &b2)) {
+                    assert!(and(f, &g2) == *f && or(&f2, g) == *g, "{f:?}, {g:?}");
+                }
+            })
+            .join()
+            .unwrap()
+    });
+}
+
+/// A list that implies another where the blocks show it in no case of `Bdd::absorbed`: a
+/// literal added to the last block, not the first. The meet and union are kept as made, and
+/// still take the right value at every setting.
+#[test]
+fn a_list_implied_through_a_later_block_is_kept_and_right() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [p, q, r, s] = [0, 1, 2, 3].map(|i| Part::literal(atom(i)));
+    let l = or(&and(&p, &q), &r);
+    let f = or(&and(&and(&p, &q), &s), &r);
+    let holds = |bits: u32| move |row: &Row| (0..4).any(|i| bits >> i & 1 == 1 && *row == atom(i));
+    for (u, v) in [(and(&f, &l), &f), (or(&f, &l), &l)] {
+        assert!(
+            (0..16).all(|bits| u.eval(&holds(bits)) == v.eval(&holds(bits))),
+            "{u:?}"
+        );
+    }
+}
+
+/// A meet of `m` literals and a meet of two of them: the long meet implies the short (case A,
+/// first value `false`), so their union is the short meet and their meet the long.
+#[test]
+fn a_long_meet_and_a_meet_of_two_of_its_literals_absorb() {
+    let long = Part::Bdd(meet(40000, 8));
+    let short = Part::Bdd(meet(40003, 2));
+    assert!(long.zip(&short, Op::Or) == short && short.zip(&long, Op::Or) == short);
+    assert!(long.zip(&short, Op::And) == long && short.zip(&long, Op::And) == long);
+}
+
+/// The same over morphisms: a set equal to all morphisms is `decidable()` (CANON-list-absorb).
+#[test]
+fn a_morphism_choice_on_a_list_condition_covering_everything_is_decidable() {
+    let m = |i: i64| {
+        let l = Type::lit(&Value::Int(i)).unwrap();
+        Type::morphism(l.clone(), l, Type::int())
+    };
+    let (mp, mq, mr, mb, md, ms, mt) = (m(0), m(1), m(2), m(3), m(4), m(5), m(6));
+    let all = Type::universe(crate::types::Universe::Morphism);
+    let not = |t: &Type| &all - t;
+    let ml = &(&mp & &mq) | &mr;
+    let mw = &(&ms & &not(&mt)) | &(&not(&ms) & &mt);
+    let (mx, my) = (&ml | &mb, &not(&ml) | &md);
+    let mhalf = |w: &Type| &(&ml & &(&mx & w)) | &(&not(&ml) & &(&my & w));
+    let merged = &mhalf(&mw) | &mhalf(&not(&mw));
+    assert!(merged.subtype(&all) && all.subtype(&merged));
+    assert!(merged.decidable());
+}

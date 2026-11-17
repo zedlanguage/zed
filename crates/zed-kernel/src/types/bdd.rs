@@ -1016,9 +1016,11 @@ impl<A: Literal> Part<A> {
     /// no call of `Connect`, so that `Connect::choose` can take the union of its meets without
     /// finding its own choice again: a leaf or equal operands; the two halves of an exclusive
     /// or (`xor::xor_of`); complements, as kept ([`Part::opposite_as_kept`]); two lists that
-    /// `Bdd::zip_chain` joins; and `c&x | !c&x`, which is `x`. `None` when none fits.
+    /// `Bdd::zip_chain` joins, or of which one absorbs the other (`Bdd::absorbed`); and
+    /// `c&x | !c&x`, which is `x`. `None` when none fits.
     /// None of the calls made enters `Connect`: `xor::xor_of` reads no exclusive or's halves
-    /// (`xor::pair`) and makes a node of the table (`Part::xor`); `zip_chain` edits lists; the
+    /// (`xor::pair`) and makes a node of the table (`Part::xor`); `zip_chain` and `absorbed`
+    /// read and edit lists; the
     /// order of parts compares two exclusive ors by their sets, not their halves. So the
     /// function ends, after a constant number of calls, each of the cost it has in `zipped`.
     fn union_as_kept(a: &Part<A>, b: &Part<A>) -> Option<Part<A>> {
@@ -1029,7 +1031,7 @@ impl<A: Literal> Part<A> {
             return Some(Part::leaf(true));
         }
         if let (Part::Bdd(x), Part::Bdd(y)) = (a, b)
-            && let Some(z) = x.zip_chain(y, Op::Or)
+            && let Some(z) = x.zip_chain(y, Op::Or).or_else(|| x.absorbed(y, Op::Or))
         {
             return Some(Part::Bdd(z));
         }
@@ -1258,6 +1260,13 @@ impl<'m> Connect<'m> {
         {
             return x;
         }
+        // A list that implies the other, as their blocks show it, absorbs it under `And` and
+        // is absorbed under `Or` (`Bdd::absorbed`, with its proof and costs).
+        if let (Part::Bdd(x), Part::Bdd(y)) = (&a, &b)
+            && let Some(z) = x.absorbed(y, op)
+        {
+            return Part::Bdd(z);
+        }
         // Choices on one condition meet branch by branch.
         let (l, r) = (self.choice(&a).await, self.choice(&b).await);
         if let (Some((c, x, y)), Some((d, u, v))) = (l, r)
@@ -1354,8 +1363,8 @@ impl<'m> Connect<'m> {
         // part compared in full but where the order of parts walks equal digests, as everywhere
         // in this module. Given up: a union whose meets agree only two or more choices deep, or
         // which needs a complement not yet made, is still a second node; and a list absorbed by
-        // another list that is no chain (`l & (l|b)`, Opus R3-C3) is not found (plan row
-        // CANON-list-absorb).
+        // another list that is no chain is found only in the cases `Bdd::absorbed` proves
+        // (`l & (l|b)`, Opus R3-C3, is one; plan row CANON-list-absorb).
         if let Some(z) = Part::union_as_kept(&a, &b) {
             return z;
         }
@@ -3005,7 +3014,7 @@ mod list {
     use std::sync::{Arc, OnceLock, Weak};
 
     use super::set::{self, Key, NEXT, Set, Tree};
-    use super::{Bdd, Digest, Literal, Owned, Part, mix};
+    use super::{Bdd, Digest, Literal, Op, Owned, Part, mix};
     use crate::priority::Priorities;
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
@@ -3400,6 +3409,21 @@ mod list {
         node
     }
 
+    /// Whether two sequences have the same blocks: by id on one thread, where a live cell is
+    /// the one cell of its contents; for cells of two threads, whose ids differ, by digest and
+    /// then by contents, as [`Part::lists_opposite`] compares them.
+    fn same_seq<A: Literal>(x: &Seq<A>, y: &Seq<A>) -> bool {
+        match (x, y) {
+            (None, None) => true,
+            (Some(c), Some(d)) => {
+                c.id == d.id
+                    || (c.digest == d.digest
+                        && Bdd::List(c.clone(), true) == Bdd::List(d.clone(), true))
+            }
+            _ => false,
+        }
+    }
+
     /// The run of `x` then `y`, the last block of `x` and the first of `y` joined when they have
     /// one value.
     fn join<A: Literal>((x, v): Run<A>, (y, w): Run<A>) -> Run<A> {
@@ -3660,6 +3684,125 @@ mod list {
         /// `self & l`, `l` the literal `key`: `!(!self | !l)`.
         pub(super) fn and_literal(&self, (a, taken): Key<A>) -> Bdd<A> {
             self.not().or_literal((a, !taken)).not()
+        }
+
+        /// `self op other` when one of the two lists implies the other as their blocks show it
+        /// ([`Bdd::implies_by_blocks`]): `f & g` is `f`, and `f | g` is `g`, when `f` implies
+        /// `g`. `None` when the blocks do not show it, which says nothing about implication.
+        ///
+        /// The result is one of the two operands, a list in its one form, so the one form is
+        /// kept: the function `f & g` has one list, and it is `f`.
+        pub(super) fn absorbed(&self, other: &Bdd<A>, op: Op) -> Option<Bdd<A>> {
+            let self_implies = self.implies_by_blocks(other)?;
+            Some(match self_implies == (op == Op::And) {
+                true => self.clone(),
+                false => other.clone(),
+            })
+        }
+
+        /// `Some(true)` when `self` implies `other`, `Some(false)` when `other` implies `self`,
+        /// found in one of the two cases below; `None` when neither fits.
+        ///
+        /// Proof. A list `B_1:v_1, …, B_k:v_k, default d` takes, at a setting of the atoms, the
+        /// value of the first block with a literal that holds, or `d` when none holds.
+        ///
+        /// Lemma: let `h` be a list, `S` a set of literals on atoms that `h` does not hold, and
+        /// `S:u ⧺ h` the blocks of `h` with `S` put before them (value `u`), with `h`'s default.
+        /// Then `S:u ⧺ h` is `S | h` when `u` is `true` and `!S & h` when `u` is `false`, writing
+        /// `S` for the union of its literals. At a setting where a literal of `S` holds, its
+        /// first block gives `u`. Where none holds, the first block is passed, and the blocks
+        /// and default after it are `h`'s, read at the same setting, so it gives `h`'s value.
+        /// So `h` implies `S:u ⧺ h` when `u` is `true`, and `S:u ⧺ h` implies `h` when it is
+        /// `false`. The proof reads only the value at each setting, not the one form.
+        ///
+        /// Case B: `g` has one block more than `f`, and the blocks of `g` after its first,
+        /// with their values, are `f`'s blocks and values (`f`'s first value is then the
+        /// complement of `g`'s, and the two defaults are one, since both follow the last block).
+        /// So `g` is `S:u ⧺ f` with `S` and `u` the first block of `g` and its value; no atom is
+        /// in two blocks of `g`, so `f` does not hold the atoms of `S`, and the lemma applies.
+        ///
+        /// Case A: `f` and `g` have the same number of blocks and first value `u`, the same
+        /// blocks after the first, and the first block `F` of `f` is a proper subset of the
+        /// first block `G` of `g`. Let `S = G \ F`. `G` holds each of its atoms once, so the
+        /// atoms of `S` are not in `F`, and no atom is in two blocks of `g`, so they are not in
+        /// the later blocks: `f` does not hold them. At each setting, `g` gives what `S:u ⧺ f`
+        /// gives: where a literal of `S` holds, `u`; where none holds, `G`'s literals that
+        /// hold are `F`'s, so `g` gives `u` exactly when `F` does and otherwise reads the same
+        /// later blocks and default as `f`. So `g` is `S:u ⧺ f` as a function, and the lemma
+        /// applies. ∎
+        ///
+        /// Every other implication between lists is not found here, and the zip of such lists
+        /// is kept as an expression, as before: for example `g` with a literal added to a later
+        /// block of `f`, or two lists that agree only on some later blocks.
+        ///
+        /// Each case is first tested on the digests, in constant time, then decided exactly.
+        /// A sequence's digest is `e_1 R^(k-1) + … + e_k` for the hashes `e_i = mix(16, ·)` of
+        /// its `k` blocks, wrapping, kept to its low bits under the short-addresses build
+        /// ([`folded`]); reducing to the low bits commutes with wrapping sums and products.
+        /// In case A the two digests differ by `(e_F - e_G) R^(k-1)`, and so `R` times their
+        /// difference is `(e_F - e_G) R^k`, `R^k` the cell's `pow`; in case B, `g`'s digest less
+        /// `e_G R^(k-1)` is `f`'s, for `f`'s `k - 1` blocks. So equal later blocks always pass the
+        /// test, and a sequence that fails it differs, and is no case here. One that passes is
+        /// then compared exactly ([`same_seq`]).
+        // Complexity tradeoff (COMPLEXITY.md CANON-list-absorb): the naive method keeps the meet
+        // or union of two lists that are no chains as an expression, `O(1)`, and so leaves a
+        // second node for a list's function (`l & (l|b)` is not `l`). An exact implication test
+        // of two decision lists, over the pairs of a block of one and a block of the other,
+        // costs `O(m)` or more for `m` blocks at every such zip. Used: the two cases above,
+        // `O(1)` when the digests rule them out; when they pass, the blocks after the first
+        // split off in `O(log m)` expected each ([`suffix`]), compared by id on one thread
+        // (by contents, `O(size)`, only for cells of two threads or a collision of digests),
+        // and in case A the smaller first block, of `s` literals, taken from the larger
+        // (`set::difference_if_agree`): `O(s (1 + D))` expected, `D` the bound on a node's
+        // depth there, proved in module `set`, the order of looking up each of the `s` literals
+        // in the larger; but subtrees of the two blocks that are one node are passed at once,
+        // so a block made from the other by adding a literal, on one thread, costs only the
+        // paths that differ (measured, not proved: COMPLEXITY.md CANON-list-absorb). Given up:
+        // the other implications above.
+        fn implies_by_blocks(&self, other: &Bdd<A>) -> Option<bool> {
+            let (Bdd::List(c, v), Bdd::List(d, w)) = (self, other) else {
+                return None;
+            };
+            let short = crate::address::short64;
+            if c.len == d.len {
+                // Case A.
+                let (f, g) = (c.first(), d.first());
+                let lhs = c.digest.wrapping_sub(d.digest).wrapping_mul(R);
+                let rhs = mix(16, f.digest)
+                    .wrapping_sub(mix(16, g.digest))
+                    .wrapping_mul(c.pow);
+                if v != w || short(lhs) != short(rhs) {
+                    return None;
+                }
+                let (small, big, self_small) = match f.len().cmp(&g.len()) {
+                    std::cmp::Ordering::Less => (f, g, true),
+                    std::cmp::Ordering::Greater => (g, f, false),
+                    std::cmp::Ordering::Equal => return None,
+                };
+                let rest = |x: &Arc<Cell<A>>| suffix(&Some(x.clone()), 1);
+                // `small` is in `big` exactly when no literal of it is left out of `big`: no
+                // atom of it missing from `big` (the difference is empty) and none taken the
+                // other way (`None`).
+                let subset = || set::difference_if_agree(small, big).is_some_and(|d| d.is_none());
+                // The smaller first block's list implies the larger's when the first value is
+                // `true`, and is implied by it when `false`.
+                return (same_seq(&rest(c), &rest(d)) && subset()).then_some(self_small == *v);
+            }
+            // Case B, `long` the list of one block more.
+            let (long, lv, sh, sv, self_long) = match c.len.cmp(&d.len) {
+                std::cmp::Ordering::Greater => (c, *v, d, *w, true),
+                _ => (d, *w, c, *v, false),
+            };
+            let e = mix(16, long.first().digest);
+            if long.len != sh.len + 1
+                || lv == sv
+                || short(long.digest.wrapping_sub(e.wrapping_mul(sh.pow))) != sh.digest
+                || !same_seq(&suffix(&Some(long.clone()), 1), &Some(sh.clone()))
+            {
+                return None;
+            }
+            // The shorter list implies the longer when the first block's value is `true`.
+            Some(lv != self_long)
         }
 
         /// The value when no literal holds: the value after the last block's.

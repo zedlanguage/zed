@@ -578,10 +578,14 @@ fn a_long_meet_joined_to_short_meets_scales() {
     let n = 1 << 14;
     let parts = scaling::inputs(n, |m| {
         let long = Part::Bdd(meet(40000, m));
+        // The short meets' own atoms come after the long meet's: from 50000 they ran into the
+        // long meet's atoms at `m` past 10,000, and a meet of two of its literals is implied by
+        // it, so their union is that meet (`Bdd::absorbed`, CANON-list-absorb).
+        let own = 40000 + m as u64;
         let short: Vec<Part<Row>> = (0..m as u64)
             .map(|i| match i % 2 {
-                0 => Part::Bdd(meet(50000 + 2 * i, 2)),
-                _ => Part::Bdd(meet(50000 + 2 * i, 1).and_literal((atom(40000 + i), false))),
+                0 => Part::Bdd(meet(own + 2 * i, 2)),
+                _ => Part::Bdd(meet(own + 2 * i, 1).and_literal((atom(40000 + i), false))),
             })
             .collect();
         (long, short)
@@ -592,6 +596,66 @@ fn a_long_meet_joined_to_short_meets_scales() {
             assert!(matches!(long.zip(s, Op::Or), Part::Expr(_)));
         }
     });
+}
+
+#[test]
+fn zips_of_lists_that_agree_after_their_first_block_scale() {
+    // CANON-list-absorb: the meet and union of two lists, neither a chain, that pass the digest
+    // test of `Bdd::absorbed` (the blocks after the first agree, or one list is the other with a
+    // block put first), each with a first block of `m` literals and `m` later blocks. The first
+    // blocks are taken one from the other (`set::difference_if_agree`), `O(m (1 + D))` expected,
+    // which passes at once the subtrees the two share: a block with one literal added, or one
+    // swapped, shares all but a few paths with the other; a block with a new atom between each
+    // two of the other's (`interleaved`) shares almost none, the worst case. The block put first
+    // costs one suffix, `O(log m)`.
+    let n = 1 << 12;
+    let lists = scaling::inputs(n, |m| {
+        let tail = blocks(8000, m);
+        let Bdd::List(_, v) = &tail else {
+            unreachable!("a list of blocks has a cell")
+        };
+        let keys = |atoms: &[u64]| {
+            let mut keys: Vec<_> = atoms.iter().map(|&a| (atom(a), true)).collect();
+            keys.sort();
+            keys
+        };
+        let own: Vec<u64> = (0..m as u64).map(|i| 20_000_000 + 2 * i).collect();
+        let block = |atoms: &[u64]| set::from_sorted(keys(atoms));
+        let f = Bdd::assemble(vec![(!*v, block(&own))], &tail);
+        let added = Bdd::assemble(
+            vec![(!*v, block(&[&own[..], &[30_000_000]].concat()))],
+            &tail,
+        );
+        // `f`'s first block with the literal last in the order of atoms left out and two new
+        // ones put in: one more literal than `f`'s, all of `f`'s but the last found in it.
+        let swapped = {
+            let last = keys(&own).pop().expect("m literals").0;
+            let kept: Vec<u64> = (own.iter().copied())
+                .filter(|&a| atom(a) != last)
+                .chain([30_000_000, 30_000_001])
+                .collect();
+            Bdd::assemble(vec![(!*v, block(&kept))], &tail)
+        };
+        let interleaved = {
+            let all: Vec<u64> = (0..2 * m as u64).map(|i| 20_000_000 + i).collect();
+            Bdd::assemble(vec![(!*v, block(&all))], &tail)
+        };
+        let put_first = Bdd::assemble(vec![(*v, Some(pair_block(40_000_000)))], &f);
+        [f, added, swapped, interleaved, put_first].map(Part::Bdd)
+    });
+    scaling::check(
+        "zips of lists of m blocks that agree after the first",
+        n,
+        |m| {
+            let [f, added, swapped, interleaved, put_first] = &lists[&m];
+            // The first value is `false`: a larger first block gives a smaller list, and a
+            // block put first of value `true` a larger one.
+            assert!(f.zip(added, Op::Or) == *f && added.zip(f, Op::And) == *added);
+            assert!(interleaved.zip(f, Op::Or) == *f);
+            assert!(matches!(f.zip(swapped, Op::And), Part::Expr(_)));
+            assert!(f.zip(put_first, Op::And) == *f && put_first.zip(f, Op::Or) == *put_first);
+        },
+    );
 }
 
 /// How deep the chains of tied digests go: the order reads them that many levels down. It was
