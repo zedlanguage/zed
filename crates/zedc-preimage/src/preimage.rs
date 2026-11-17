@@ -4377,6 +4377,19 @@ fn arguments_of(key: &[Lin], args: &[Lin]) -> HashMap<Arc<str>, Lin> {
         .collect()
 }
 
+/// How the body of a lambda reads one of its parameters ([`Walk::reads`]), from the least to
+/// the most it may read.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Reads {
+    /// Not at all: no occurrence of the name, no binder of it, and no term outside the
+    /// catalog.
+    Not,
+    /// Only as `p[k]`, `k` an integer literal.
+    ByGet,
+    /// In any other way, or in a way the check cannot see.
+    Other,
+}
+
 /// An entry of a translation memo.
 enum Logged {
     Lin(At),
@@ -4500,10 +4513,10 @@ struct Tx<'t> {
     /// parameters passed as they are shares ([`identity_classes`]); a parameter of no class
     /// has its canonical atom ([`Tx::canonical`]).
     classes: HashMap<(Tid, usize), Arc<str>>,
-    /// Whether the body of a lambda reads the parameter of that name only as `p[k]`, `k` an
-    /// integer literal ([`Walk::read_by_get`]). It depends on the terms alone, and a term's
-    /// number is never reused ([`Terms`]), so it outlives the body being read.
-    read_by_get: HashMap<(Tid, Name), bool>,
+    /// How the body of a lambda reads the parameter of that name ([`Walk::reads`]). It depends
+    /// on the terms alone, and a term's number is never reused ([`Terms`]), so it outlives the
+    /// body being read.
+    reads: HashMap<(Tid, Name), Reads>,
     /// Within [`split_classes`], each set met with an input's domain ([`Tx::meet_domain`]), so
     /// that the classes whose runs meet one set with the domain share the result.
     split_meets: RefCell<Option<DomainMeets>>,
@@ -4602,7 +4615,7 @@ impl<'t> Tx<'t> {
             fresh: None,
             lets: Lets::new(),
             classes: HashMap::new(),
-            read_by_get: HashMap::new(),
+            reads: HashMap::new(),
             split_meets: RefCell::new(None),
             unbuilt: false,
             asking: false,
@@ -9133,7 +9146,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// arguments `args` read in `env`, that has no key of linear terms ([`Walk::call_key`]),
     /// shares one reading of the body with every other such call ([`Walk::formula_by_get`]):
     /// under a [`Scoped`] scope, for a lambda made before the body being read, when the body
-    /// reads each parameter only as `p[k]`, `k` an integer literal ([`Walk::read_by_get`]),
+    /// reads each parameter only as `p[k]`, `k` an integer literal, or not at all
+    /// ([`Walk::reads`]),
     /// and each argument reads an input, reads no remainder ([`Walk::reads_mod`]) and cannot
     /// fail ([`Walk::defined`] is `true`). The key holds, for each parameter, the atom
     /// [`Tx::by_get`] names, which no linear term of an argument holds, so it is no key of
@@ -9162,7 +9176,7 @@ impl<'m, 't> Walk<'m, 't> {
     // terms (`many(t) = 0 + t[0] + ... >= 0` called as `many(t: (y, {i}))` by n functions,
     // 59.1 times the time at 8n, 7.8 now). Whether a body reads a parameter only as `p[k]` is
     // found once per lambda and parameter, O(the body's distinct parts), and remembered
-    // ([`Tx::read_by_get`]). Tradeoff: a call that also passes an argument with a linear term,
+    // ([`Tx::reads`]). Tradeoff: a call that also passes an argument with a linear term,
     // or a body that reads a parameter in another way (`sum(t)`, `t == u`, `f(t)`), is read
     // once per call, as before. Test
     // `l01_38_presburger::bench::checker::the_linear_questions_of_n_callers_of_one_long_test_scale`,
@@ -9175,7 +9189,7 @@ impl<'m, 't> Walk<'m, 't> {
         }
         let mut key = Vec::with_capacity(ps.len());
         for i in 0..ps.len() {
-            if !self.read_by_get(body, self.param(ps, i)) {
+            if self.reads(body, self.param(ps, i)) == Reads::Other {
                 return None;
             }
             key.push(Lin::atom(Atom::Sym(
@@ -9203,57 +9217,76 @@ impl<'m, 't> Walk<'m, 't> {
         Some(((body, lam), key, Vec::new()))
     }
 
-    /// Whether the body `body` reads the parameter `p` only as `p[k]`, `k` an integer literal:
-    /// no other occurrence of `p`, no binder of the name `p` within it, and no term outside the
-    /// catalog ([`Node::Other`]), whose parts the check cannot see. Remembered per body and
-    /// name ([`Tx::read_by_get`]).
+    /// How the body `body` reads the parameter `p`: [`Reads::Not`] where no part of it is the
+    /// name `p` or binds it and no term is outside the catalog ([`Node::Other`]), whose parts
+    /// the check cannot see; [`Reads::ByGet`] where in addition `p` occurs only as `p[k]`, `k`
+    /// an integer literal; else [`Reads::Other`]. Remembered per body and name
+    /// ([`Tx::reads`]).
     // Complexity tradeoff: one visit per distinct part of the body, with an explicit stack and a
     // visited set, since the terms share parts (a visit per path could be exponential); once
     // per lambda and parameter, O(the body), against O(1) for a remembered answer.
-    fn read_by_get(&self, body: Tid, p: Name) -> bool {
+    fn reads(&self, body: Tid, p: Name) -> Reads {
         self.with(|tx| {
-            if let Some(&b) = tx.read_by_get.get(&(body, p)) {
-                return b;
+            if let Some(&r) = tx.reads.get(&(body, p)) {
+                return r;
             }
             let terms = &tx.terms;
             let kid = |args: Span, i: usize| args.get(&terms.kids, i);
             let mut seen = HashSet::new();
             let mut todo = vec![body];
-            let mut only = true;
+            let mut reads = Reads::Not;
             while let Some(u) = todo.pop() {
                 if !seen.insert(u) {
                     continue;
                 }
-                match terms.nodes[u as usize] {
-                    Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => {}
-                    Node::Var(x) => only &= x != p,
+                let at = match terms.nodes[u as usize] {
+                    Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => Reads::Not,
+                    Node::Var(x) if x == p => Reads::Other,
+                    Node::Var(_) => Reads::Not,
                     Node::Prim(Prim::TupleGet, args)
                         if args.len() == 2
                             && matches!(terms.nodes[kid(args, 0) as usize], Node::Var(x) if x == p)
-                            && matches!(terms.nodes[kid(args, 1) as usize], Node::Int(_)) => {}
-                    Node::Prim(_, args) => todo.extend((0..args.len()).map(|i| kid(args, i))),
+                            && matches!(terms.nodes[kid(args, 1) as usize], Node::Int(_)) =>
+                    {
+                        Reads::ByGet
+                    }
+                    Node::Prim(_, args) => {
+                        todo.extend((0..args.len()).map(|i| kid(args, i)));
+                        Reads::Not
+                    }
                     Node::App(f, args) => {
                         todo.push(f);
                         todo.extend((0..args.len()).map(|i| kid(args, i)));
+                        Reads::Not
                     }
                     Node::Let(n, e, b) => {
-                        only &= n != p;
                         todo.extend([e, b]);
+                        if n == p { Reads::Other } else { Reads::Not }
                     }
                     Node::Lam(ps, b) => {
-                        only &= (0..ps.len()).all(|i| ps.get(&terms.params, i) != p);
                         todo.push(b);
+                        match (0..ps.len()).any(|i| ps.get(&terms.params, i) == p) {
+                            true => Reads::Other,
+                            false => Reads::Not,
+                        }
                     }
-                    Node::If(g, a, b) => todo.extend([g, a, b]),
-                    Node::Follow(v, own, _) => todo.extend([v, own]),
-                    Node::Other => only = false,
-                }
-                if !only {
+                    Node::If(g, a, b) => {
+                        todo.extend([g, a, b]);
+                        Reads::Not
+                    }
+                    Node::Follow(v, own, _) => {
+                        todo.extend([v, own]);
+                        Reads::Not
+                    }
+                    Node::Other => Reads::Other,
+                };
+                reads = reads.max(at);
+                if reads == Reads::Other {
                     break;
                 }
             }
-            tx.read_by_get.insert((body, p), only);
-            only
+            tx.reads.insert((body, p), reads);
+            reads
         })
     }
 
@@ -9278,18 +9311,52 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// The canonical key of the call `k` of a lambda of parameters `ps`, when the call may be
     /// claimed (LOAD-chain-affine): the run reads a body under a [`Scoped`] scope, the lambda
-    /// is one of the scope's, an argument is not a constant, and no argument holds a product;
-    /// whether the lambda's claim is free is [`Walk::binding`]'s question. Each constant is
-    /// itself, so constants still fold in the callee, and so is the atom of the parameter's
-    /// class ([`Tx::class`]); each other argument is the canonical atom of its parameter
-    /// ([`Tx::canonical`]). A call with an argument that may fail ([`Walk::shared_call_key`])
-    /// is not claimed: its canonical atoms would stand for values that may be atoms.
+    /// is one of the scope's, an argument is not a constant or is passed to a parameter the
+    /// body does not read ([`Reads::Not`]), and no argument holds a product; whether the
+    /// lambda's claim is free is [`Walk::binding`]'s question. Each constant passed to a
+    /// parameter the body reads is itself, so constants still fold in the callee, and so is
+    /// the atom of the parameter's class ([`Tx::class`]); each other argument is the canonical
+    /// atom of its parameter ([`Tx::canonical`]). A call with an argument that may fail
+    /// ([`Walk::shared_call_key`]) is not claimed: its canonical atoms would stand for values
+    /// that may be atoms.
+    ///
+    /// Proof that a constant passed to a parameter `p` the body does not read may be left out
+    /// of the key, its place taken by `p`'s canonical atom `c`, with every answer unchanged.
+    /// The walk reads a scope only by name: each read of one ([`Tx::lookup`]) is made at a
+    /// term `Node::Var(x)` for that name, and a scope is a map from names ([`Tx::bind`]). The
+    /// body holds no `Node::Var(p)` and binds no `p`, and the parts it reaches are its own
+    /// terms, walked by [`Walk::reads`] in full: a lambda written in it is part of it; a name
+    /// read in it that is bound outside the body is read in the scope it was bound in, which
+    /// [`Walk::canonical_env`] made before binding `p`, so it does not hold `p`; the arms of
+    /// a `Node::Follow` are constants; and a term outside the catalog (`Node::Other`) makes
+    /// the answer [`Reads::Other`]. So the body's formula, term and condition are the same
+    /// with `p` bound to the constant or to `c`, and hold no atom `c`. The binding of the
+    /// claimed call adds `c == k` for the constant `k` ([`Walk::binding`]), and a call that
+    /// holds no claim writes `c` as `k` ([`Tr::instance`], [`at_arguments`]): in both, `c` is a
+    /// variable that nothing else mentions, fixed to one value, so the solutions over every
+    /// other variable are those without it.
+    // Complexity tradeoff: before, a constant was always itself in the key, so n calls passing n
+    // different constants to a parameter the body does not read had n keys and read the body
+    // n times, Θ(n²) for a body of n terms (`many(x, k) = 0 + x + ... >= 0` called as
+    // `many(x: y, k: {i})` by n functions, 58.53 times the time at 8n). Now they share one
+    // key and one reading, O(the body) once and O(the arguments) per call; whether the body
+    // reads each parameter is found once per lambda and parameter, O(the body's distinct
+    // parts), and remembered ([`Tx::reads`]). Tradeoff: a constant passed to a parameter the
+    // body does read is still itself in the key, so n calls passing n constants to such a
+    // parameter still read the body n times; sharing them would make the parameter an atom,
+    // and a product with it (`x * k`) would leave the linear domain where the constant
+    // folded. Test
+    // `l01_38_presburger::bench::checker::the_linear_questions_of_n_callers_passing_constants_scale`,
+    // COMPLEXITY.md row FAIL-linear-question-const-args-per-caller.
     fn claimable(&self, ps: Span, (lam, args, conds): &CallKey) -> Option<Vec<Lin>> {
         use presburger::Atom;
+        let unread: Vec<bool> = (0..args.len())
+            .map(|i| self.reads(lam.0, self.param(ps, i)) == Reads::Not)
+            .collect();
         let free = conds.is_empty()
             && self.with(|tx| {
                 tx.fresh.as_ref().is_some_and(|f| !f.of_body(*lam))
-                    && args.iter().any(|l| !l.terms.is_empty())
+                    && (args.iter().zip(&unread)).any(|(l, &u)| u || !l.terms.is_empty())
                     && !(args.iter().flat_map(|l| l.terms.keys()))
                         .any(|a| matches!(a, Atom::Product(..)))
             });
@@ -9298,7 +9365,7 @@ impl<'m, 't> Walk<'m, 't> {
                 (args.iter().enumerate())
                     .map(|(i, l)| {
                         let class = Lin::atom(Atom::Sym(tx.class(ps, i, *lam)));
-                        match l.terms.is_empty() || *l == class {
+                        match (l.terms.is_empty() && !unread[i]) || *l == class {
                             true => l.clone(),
                             false => Lin::atom(Atom::Sym(tx.canonical(ps, i, *lam))),
                         }

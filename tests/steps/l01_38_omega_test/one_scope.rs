@@ -143,6 +143,13 @@ const UNITS: &[&str] = &[
      ts(t) = sum(t) > 2;\n\
      ca(y: int) = tg(t: (y, 1)) && y > 2;\ncb(y: int) = tg(t: (y + 1, y)) || y < 0;\n\
      cc(y: int, z: int) = tw(u: (z, y, 3)) && ts(t: (y, z)) && z < y;",
+    // A callee that does not read its parameter `k`, called with other constants there, which
+    // share one key (FAIL-linear-question-const-args-per-caller); with a name there; with only
+    // constants; and beside a callee that reads its constant, which stays in the key.
+    "un(x: int, k: int) = x + 1 >= 0 && x < 9;\nur(x: int, k: int) = x + k >= 0;\n\
+     ua(y: int) = un(x: y, k: 3) && y > 0;\nub(y: int) = un(x: y + 1, k: 4) || un(x: y, k: 5);\n\
+     uc(y: int) = un(x: 2, k: y) && ur(x: y, k: 6);\nud(y: int) = un(x: 9, k: 7) || y > 3;\n\
+     ue(y: int) = ur(x: y, k: 2) && ur(x: y + 1, k: 3) && un(x: y, k: y);",
     DIVIDING,
 ];
 
