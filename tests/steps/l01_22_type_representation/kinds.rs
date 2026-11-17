@@ -2653,6 +2653,62 @@ fn function_types_whose_variables_share_names_across_the_two_fit() {
     }
 }
 
+/// `(h: … (h: (y: v) -> int, y: v) -> int …, y: v) -> int for v in int | f64`, `n` levels of
+/// `h` around `(y: v) -> int`: each level holds the outer function's own bounded variable.
+fn nest_holding_outer_variable(n: usize, v: &str) -> String {
+    let t = (1..=n).fold(format!("(y: {v}) -> int"), |t, _| {
+        format!("(h: {t}, y: {v}) -> int")
+    });
+    format!("{t} for {v} in int | f64")
+}
+
+/// FAIL-types-fn-outer-variable-nest: a function type whose parameter is a function type
+/// holding the outer function's own bounded variable, nested n deep, fits the same type with the
+/// variable renamed (DESIGN sec:type_resolution rule 6, `U` bound to `T`). n = 0 is the control,
+/// accepted before the fix.
+#[test]
+fn function_types_nested_whose_inner_levels_hold_the_outer_variable_fit() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for n in 0..=6 {
+        let src = format!(
+            "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
+            nest_holding_outer_variable(n, "T"),
+            nest_holding_outer_variable(n, "U")
+        );
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    }
+}
+
+/// The negative control of `function_types_nested_whose_inner_levels_hold_the_outer_variable_fit`:
+/// where the function `g` takes is not the one each instance of `f` passes, `g` does not fit,
+/// though the variable is read at its binding inside the function. `f`'s caller picks `T`, and
+/// at `T = f64` passes an `h` that takes only `f64`: `g` asks for one that takes `int` (the
+/// innermost domain written `int`, at every depth), or allows `U = int` only. The parameters in
+/// the other order, `y` first, still fit (the order the fix compares them in).
+#[test]
+fn function_types_nested_whose_inner_levels_differ_from_the_outer_variable_do_not_fit() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let refused = |src: &str| {
+        let errors = type_errors(src);
+        errors.len() == 1 && errors[0].starts_with("`p` does not take")
+    };
+    for n in 1..=4 {
+        let f = nest_holding_outer_variable(n, "T");
+        // The innermost function takes `int` whatever `U` is.
+        let inner_int =
+            nest_holding_outer_variable(n, "U").replacen("(y: U) -> int", "(y: int) -> int", 1);
+        let src = format!("p(f: {f}) = 0;\nq(g: {inner_int}) = p(f: g);\n");
+        assert!(refused(&src), "{src}\n{:?}", type_errors(&src));
+        let narrow =
+            nest_holding_outer_variable(n, "U").replace("for U in int | f64", "for U in int");
+        let src = format!("p(f: {f}) = 0;\nq(g: {narrow}) = p(f: g);\n");
+        assert!(refused(&src), "{src}\n{:?}", type_errors(&src));
+    }
+    let src = "p(f: (y: T, h: (y: T) -> int) -> int for T in int | f64) = 0;\n\
+               q(g: (y: U, h: (y: U) -> int) -> int for U in int | f64) = p(f: g);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+}
+
 /// `#a(int, …, int)` with `w` items, and the union of the `k` cuts `#a(c(j), …, c(j))` with
 /// `w` items, for j < k.
 fn wide_payload_cuts(w: usize, k: usize, c: &dyn Fn(usize) -> String) -> (Ty, Ty) {

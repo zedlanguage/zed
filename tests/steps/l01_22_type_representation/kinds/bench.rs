@@ -670,3 +670,29 @@ fn a_wide_payload_within_many_overlapping_cuts_and_their_rest_scales() {
         },
     );
 }
+
+#[test]
+fn function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // FAIL-types-fn-outer-variable-nest: each level of `h` holds the outer function's own `T`
+    // (or `U`), so no level is kept by the pair of signatures (`Comparing::fits_alone`). Each
+    // level's `h` is compared in both directions, by the cover and by the instance check
+    // (`instance_within`), each under new names one level down: with the verdict kept by names
+    // only, 2^n comparisons (1.6 s at n = 16, doubling per level, 2026-11-17). Kept by what the
+    // names stand for (`Cx::fitted_read`), 2n + 1. At n = 512: 1x 66 ms (ns=65962221),
+    // instructions ratio 8.08, at load 49.5 on 2026-11-17.
+    let inputs = scaling::inputs(512, |n| {
+        format!(
+            "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
+            nest_holding_outer_variable(n, "T"),
+            nest_holding_outer_variable(n, "U")
+        )
+    });
+    scaling::check(
+        "function types nested n deep, each level holding the outer variable",
+        512,
+        |n| {
+            assert_eq!(type_errors(&inputs[&n]), Vec::<String>::new());
+        },
+    );
+}
