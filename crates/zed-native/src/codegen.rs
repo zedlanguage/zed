@@ -15,7 +15,7 @@
 //! operand the graph does not prove NaN-free. After each call that returns a word, an error
 //! word leaves the function, returning the error word.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
@@ -90,6 +90,11 @@ struct Gen<'a, M: Module> {
     /// For each number of parameters of [`Tables::arities`], the function that calls a body
     /// of that many on the words of a buffer ([`Gen::trampoline`]).
     trampolines: Vec<(usize, FuncId)>,
+    /// Each lambda's placed entry ([`Gen::placed`]), for those [`Tables::placeable`] keeps.
+    placed: Vec<Option<FuncId>>,
+    /// The numbers of parameters of the lambdas with a placed entry: a call by name with
+    /// another number of arguments never reaches one, and its site asks no `rt_direct`.
+    direct: HashSet<usize>,
     /// Where each function's IR text goes, as emitted and before Cranelift's passes, when
     /// asked for.
     ir: Option<&'a mut String>,
@@ -165,6 +170,18 @@ pub(crate) fn define<'a, M: Module>(
             .map_err(err)?;
         trampolines.push((a, id));
     }
+    let mut placed = Vec::new();
+    let mut direct = HashSet::new();
+    for (i, p) in t.placeable().into_iter().enumerate() {
+        placed.push(if p {
+            direct.insert(t.lambdas[i].params);
+            let s = sig(m, 4, 2);
+            let id = m.declare_function(&format!("zed_placed_{i}"), Linkage::Local, &s);
+            Some(id.map_err(err)?)
+        } else {
+            None
+        });
+    }
     let root = m
         .declare_function("zed_root", Linkage::Export, &sig(m, 0, 2))
         .map_err(err)?;
@@ -176,12 +193,17 @@ pub(crate) fn define<'a, M: Module>(
         bodies,
         entries,
         trampolines,
+        placed,
+        direct,
         ir,
     };
     cg.root(root)?;
     for i in 0..t.lambdas.len() {
         cg.body(i)?;
         cg.entry(i)?;
+        if let Some(Some(id)) = cg.placed.get(i) {
+            cg.placed(i, *id)?;
+        }
     }
     for i in 0..cg.trampolines.len() {
         cg.trampoline(i)?;
@@ -260,6 +282,12 @@ impl<M: Module> Gen<'_, M> {
                     let a = fx.b.ins().func_addr(I64, r);
                     let l = fx.b.ins().iconst(I64, cg.t.body(i) as i64);
                     cg.call(fx, "rt_register", &[l, a]);
+                    if let Some(Some(id)) = cg.placed.get(i) {
+                        let r = cg.fref(fx, *id);
+                        let a = fx.b.ins().func_addr(I64, r);
+                        let l = fx.b.ins().iconst(I64, cg.t.placed(i) as i64);
+                        cg.call(fx, "rt_register", &[l, a]);
+                    }
                 }
             }
             for i in 0..cg.trampolines.len() {
@@ -277,7 +305,6 @@ impl<M: Module> Gen<'_, M> {
 
     fn body(&mut self, i: usize) -> Result<(), String> {
         let l = &self.t.lambdas[i];
-        let node = self.t.nodes[l.node].node();
         let region = &self.t.regions[l.body].region;
         // A body that uses ports takes their states after its parameters, as state words
         // like any other, and returns them after its value; the states order nothing here,
@@ -299,17 +326,63 @@ impl<M: Module> Gen<'_, M> {
                 }
             )));
         }
-        let caps = node.inputs.len();
         self.function(self.bodies[i], 1 + l.params, 1, |cg, fx, ps| {
-            let env = ps[0];
-            let mut args: Vec<Loc> = ps[1..].iter().map(|w| cg.put(fx, *w)).collect();
-            for c in 0..caps {
-                let k = fx.b.ins().iconst(I64, c as i64);
-                let w = cg.call(fx, "rt_cap", &[env.0, env.1, k]);
-                let w = cg.checked(fx, (w[0], w[1]));
-                args.push(cg.put(fx, w));
+            let args: Vec<Loc> = ps[1..].iter().map(|w| cg.put(fx, *w)).collect();
+            cg.lambda_body(fx, i, ps[0], args)
+        })
+    }
+
+    /// The code of lambda `i`'s body on the closure `env` and the parameters `args`: the
+    /// captures read from `env`, then the body's region.
+    fn lambda_body(
+        &mut self,
+        fx: &mut Fx<'_>,
+        i: usize,
+        env: W,
+        mut args: Vec<Loc>,
+    ) -> Result<Vec<W>, String> {
+        let l = &self.t.lambdas[i];
+        let caps = self.t.nodes[l.node].node().inputs.len();
+        for c in 0..caps {
+            let k = fx.b.ins().iconst(I64, c as i64);
+            let w = self.call(fx, "rt_cap", &[env.0, env.1, k]);
+            let w = self.checked(fx, (w[0], w[1]));
+            args.push(self.put(fx, w));
+        }
+        Ok(vec![self.walk(fx, l.body, args)?[0]])
+    }
+
+    /// Lambda `i`'s placed entry: it takes the closure's word and the addresses of the
+    /// arguments of a call by name, as its call site stored them, and of the byte offsets of a
+    /// merge ([`crate::hooks`]' `rt_direct`), reads each parameter at its offset, gives a
+    /// reference to each the body consumes, as a call the runtime places gives it, and runs the
+    /// body inline (row CALL-callee-places-native).
+    // Complexity tradeoff: a call through a function that calls the body on the parameters
+    // read at the offsets passes them twice, the second time as the body's arguments, about 4
+    // instructions each; inline, one load of the offset and two of the word, against two of
+    // the word for a direct call. The cost is a second copy of the body, O(size of the body)
+    // more to compile, for each lambda [`Tables::placeable`] keeps.
+    fn placed(&mut self, i: usize, id: FuncId) -> Result<(), String> {
+        let l = &self.t.lambdas[i];
+        self.function(id, 2, 1, |cg, fx, ps| {
+            let (args, offs) = ps[1];
+            let flags = MemFlagsData::trusted();
+            let mut ws = Vec::with_capacity(l.params);
+            for j in 0..l.params {
+                let off = fx.b.ins().load(I64, flags, offs, 8 * j as i32);
+                let at = fx.b.ins().iadd(args, off);
+                let tag = fx.b.ins().load(I64, flags, at, 0);
+                let bits = fx.b.ins().load(I64, flags, at, 8);
+                ws.push((tag, bits));
             }
-            Ok(vec![cg.walk(fx, l.body, args)?[0]])
+            let mut kept = Vec::with_capacity(l.params);
+            for (w, m) in ws.into_iter().zip(&l.modes) {
+                if *m == Mode::Owned {
+                    cg.inc(fx, w);
+                }
+                kept.push(cg.put(fx, w));
+            }
+            cg.lambda_body(fx, i, ps[0], kept)
         })
     }
 
@@ -639,8 +712,14 @@ impl<M: Module> Gen<'_, M> {
     // native code. The arguments are stored straight into the runtime's buffer (`rt_args`),
     // two stores each, where one `rt_arg` hook call each made the placed call 8.4 times the
     // run cost of a direct call at p = 320; a call the runtime does not place runs in the
-    // kernel on the same buffer (`rt_named` leaves it). Nothing is refused.
+    // kernel on the same buffer (`rt_named` leaves it). Through `rt_named` the arguments
+    // pass three times and the placed call ran 2.6 times the instructions of the direct one;
+    // so first, where some lambda has a placed entry of this many parameters, `rt_direct`
+    // checks in O(1) that the merge kept for the node is for the closure's list, and the call
+    // goes to that entry on the same buffer (`Gen::named_direct`): 1.085 times the direct
+    // call's run at p = 320. Nothing is refused.
     fn named(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> W {
+        let merge = self.merge(fx, 1);
         let n = fx.b.ins().iconst(I64, ins.len() as i64);
         let buf = self.call(fx, "rt_args", &[n])[0];
         let flags = MemFlagsData::trusted();
@@ -649,11 +728,14 @@ impl<M: Module> Gen<'_, M> {
             fx.b.ins().store(flags, w.0, buf, 16 * i as i32);
             fx.b.ins().store(flags, w.1, buf, 16 * i as i32 + 8);
         }
+        let sh = self.t.nodes[id].named.as_deref().expect("a literal shape");
+        if !sh.flagged && self.direct.contains(&(sh.k + sh.names.len())) {
+            self.named_direct(fx, id, ins, buf, merge);
+        }
         let k = fx.b.ins().iconst(I64, id as i64);
         let r = self.call(fx, "rt_named", &[k]);
         let (call, buf) = (r[0], r[1]);
         self.checked(fx, (call, buf));
-        let merge = self.merge(fx, 1);
         let kern = fx.b.create_block();
         let nz = fx.b.ins().icmp_imm_s(IntCC::NotEqual, call, 0);
         self.when(fx, nz, kern);
@@ -670,6 +752,29 @@ impl<M: Module> Gen<'_, M> {
         self.jump(fx, merge, &[w]);
         fx.b.switch_to_block(merge);
         self.params(fx, merge)[0]
+    }
+
+    /// The call by name `id` on `ins`, its shape with no flag, sent to the placed entry of the
+    /// function's lambda when the runtime's merge kept for the node holds for the function's
+    /// list (`rt_direct`), with its result to `merge`; else on to the code after, which
+    /// places the call through `rt_named`. The entry reads the arguments after the function
+    /// where the call site stored `ins` for `rt_named`, at `buf`.
+    fn named_direct(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc], buf: V, merge: Block) {
+        let f = self.get(fx, ins[1]);
+        let k = fx.b.ins().iconst(I64, id as i64);
+        let r = self.call(fx, "rt_direct", &[k, f.0, f.1]);
+        let (call, offs) = (r[0], r[1]);
+        let other = fx.b.create_block();
+        let nz = fx.b.ins().icmp_imm_s(IntCC::NotEqual, call, 0);
+        self.when(fx, nz, other);
+        let args = fx.b.ins().iadd_imm_s(buf, 32);
+        let s = sig(self.m, 4, 2);
+        let sr = fx.b.import_signature(s);
+        let inst = fx.b.ins().call_indirect(sr, call, &[f.0, f.1, args, offs]);
+        let out = fx.b.inst_results(inst).to_vec();
+        let w = self.checked(fx, (out[0], out[1]));
+        self.jump(fx, merge, &[w]);
+        fx.b.switch_to_block(other);
     }
 
     /// The words at `ins`, flat, for a call.

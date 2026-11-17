@@ -202,6 +202,7 @@ fn runs_natively_to(src: &str, name: &str, want: &str) {
     let t = with_prelude(u.get(name).expect("checked by runs_to"));
     let o = native(&t).unwrap_or_else(|e| panic!("{src}: {e}"));
     assert_eq!(o.kernel_calls, 0, "native code called the kernel: {src}");
+    assert_eq!(o.value.to_string(), want, "native code's value: {src}");
 }
 
 /// The calls of [`a_call_through_functions_differing_in_places_or_defaults_runs`] and of the
@@ -246,6 +247,31 @@ fn a_call_its_function_places_runs_in_native_code_alone() {
         &format!("{defaults}{pick}p = h(x: 3, ...);\na = p() * 100 + p(y: 5);\n"),
         "a",
         "615",
+    );
+}
+
+/// A call by name that runs again through the same list goes straight to the placed entry of
+/// the function's lambda, which reads each argument where the call site stored it (row
+/// CALL-callee-places-native): `k0`'s call runs four times, the first merging the names. The
+/// arguments include a function, a cell whose count the entry raises for the body (a list
+/// would run in the kernel), and the closure reads what it captures.
+#[test]
+fn a_repeated_placed_call_runs_in_native_code_through_its_placed_entry() {
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    let ks = "k1(z: int) = k0(z: z) + k0(z: z + 1);\nk2(z: int) = k1(z: z) + k1(z: z + 2);\na = k2(z: 0);\n";
+    runs_natively_to(
+        &format!(
+            "u(x: int) = x + 1;\nf(q, b: int) = q(x: b) - 1;\ng(b: int, q) = q(x: b) * 10;\n{pick}k0(z: int) = h(q: u, b: z);\n{ks}"
+        ),
+        "a",
+        "100",
+    );
+    runs_natively_to(
+        &format!(
+            "pick(c: bool, d: int) = {{\n  f(a: int, b: int) = a - b + d;\n  g(b: int, a: int) = a * 10 + b + d;\n  if c {{ f }} else {{ g }}\n}};\nh = pick(c: false, d: 100);\nk0(z: int) = h(a: z, b: 2);\n{ks}"
+        ),
+        "a",
+        "468",
     );
 }
 

@@ -45,8 +45,9 @@ pub(crate) struct Run {
     /// The number of the node whose hook recorded [`Run::err`], when a hook with a node
     /// recorded it: the executable prints the site of that node (plan row RT-sites).
     pub err_at: Option<usize>,
-    /// The address of each lambda's entry, then of its body ([`Tables::body`]), then of each
-    /// function that calls a body on [`Run::named`] ([`Tables::trampoline`]).
+    /// The address of each lambda's entry, then of its body ([`Tables::body`]), then of its
+    /// placed entry ([`Tables::placed`]), then of each function that calls a body on
+    /// [`Run::named`] ([`Tables::trampoline`]).
     entries: Vec<i64>,
     /// The call [`rt_named`] placed: the body's address, the closure's word and the
     /// arguments' words, flat; kept between calls.
@@ -170,6 +171,7 @@ pub(crate) const HOOKS: &[(&str, usize, usize)] = &[
     ("rt_pow", 2, 1),
     ("rt_named", 1, 2),
     ("rt_args", 1, 1),
+    ("rt_direct", 3, 2),
 ];
 
 /// Each hook's address, in the order of [`HOOKS`].
@@ -191,6 +193,7 @@ pub(crate) fn addresses() -> Vec<*const u8> {
         rt_pow as extern "C" fn(i64, i64) -> i64 as *const u8,
         rt_named as extern "C" fn(i64) -> Named as *const u8,
         rt_args as extern "C" fn(i64) -> i64 as *const u8,
+        rt_direct as extern "C" fn(i64, i64, i64) -> Named as *const u8,
     ]
 }
 
@@ -275,6 +278,62 @@ extern "C" fn rt_named(id: i64) -> Named {
 /// A parameter of [`Merged::from`] that the call leaves out.
 const LEFT: u32 = u32::MAX;
 
+/// Where `callNamed` node `id`, of a shape with no flag, sends its call of function `f`
+/// (`tag`, `bits`) without [`rt_named`]: when the merge kept for the node ([`Run::merged`]) is
+/// for the list of the closure `f` and that list has no fill, the address of the placed entry
+/// of `f`'s lambda ([`Tables::placed`]) and of the merge's byte offsets ([`Merged::offs`]), from
+/// which the entry reads each parameter among the arguments the call site stored with
+/// [`rt_args`], that buffer then emptied; else a call of 0, the buffer kept, and the call goes
+/// through [`rt_named`], which makes the merge. A lambda with no placed entry misses.
+// Complexity tradeoff: through `rt_named` a call passes its p arguments three times, into the
+// runtime's buffer, into the placed order ([`call_placed`]) and into the body, where a call to
+// the function by its name passes them once; the placed call ran 2.6 times the instructions of
+// the direct one at p = 320 (row CALL-callee-places-native). Here O(1): the closure, the kept
+// merge and the lambda's number of parameters are compared, and the entry reads each argument
+// where the call site stored it, one load of its offset more than a direct call. A call through
+// lists that alternate misses here and merges in `rt_named`, as before.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
+extern "C" fn rt_direct(id: i64, tag: i64, bits: i64) -> Named {
+    with(|t, s| {
+        let none = Named { call: 0, buf: 0 };
+        let Some(Merged {
+            placing,
+            from: Some(_),
+            offs,
+        }) = &s.merged[id as usize]
+        else {
+            return none;
+        };
+        let Ok(Some(Obj::Clo {
+            lambda,
+            placed: Some(pi),
+            ..
+        })) = s.heap.obj(Word { tag, bits })
+        else {
+            return none;
+        };
+        let p = &t.placings[*pi as usize];
+        if pi != placing || p.fill || t.lambdas[*lambda].params != p.n {
+            return none;
+        }
+        let call = s.entries[t.placed(*lambda)];
+        if call != 0 {
+            // Emptied as `rt_named` empties it for a placed call, for the next `rt_arg`. The
+            // words stay where they are, `Word` being `Copy` and the capacity kept: the entry
+            // reads them before it calls any hook.
+            s.args.clear();
+        }
+        Named {
+            call,
+            buf: offs.as_ptr() as i64,
+        }
+    })
+}
+
 /// The merge of a call by name with a parameter list, kept for the call's node.
 #[derive(Clone)]
 struct Merged {
@@ -283,6 +342,10 @@ struct Merged {
     /// For each parameter, the index among the call's arguments of the one it gets, or
     /// [`LEFT`]; none when the list does not place the call.
     from: Option<Vec<u32>>,
+    /// For each parameter, the byte offset of its argument among the call's arguments after
+    /// the function, each two `i64`s: what [`rt_direct`] gives a placed entry. Empty unless
+    /// the list places the call and has no fill.
+    offs: Vec<i64>,
 }
 
 /// The address of the function that calls the body [`rt_named`] places node `id`'s call
@@ -311,18 +374,29 @@ fn place_named(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Optio
     };
     let p = &t.placings[pi as usize];
     let (given, flags) = ins[2..].split_at(sh.k + sh.names.len());
-    let from = match s.merged[id].take() {
-        Some(m) if m.placing == pi && !sh.flagged => m.from,
+    let (from, offs) = match s.merged[id].take() {
+        Some(m) if m.placing == pi && !sh.flagged => (m.from, m.offs),
         old => {
-            let mut from = old.and_then(|m| m.from).unwrap_or_default();
-            merge(sh, p, flags, &mut from).then_some(from)
+            let (mut from, mut offs) = old
+                .map(|m| (m.from.unwrap_or_default(), m.offs))
+                .unwrap_or_default();
+            let placed = merge(sh, p, flags, &mut from);
+            offs.clear();
+            if placed && !p.fill {
+                offs.extend(from.iter().map(|&x| 16 * i64::from(x)));
+            }
+            (placed.then_some(from), offs)
         }
     };
     let r = match &from {
         Some(from) => call_placed(t, s, given, from, (ins[1], lambda), p, fill),
         None => Ok(None),
     };
-    s.merged[id] = Some(Merged { placing: pi, from });
+    s.merged[id] = Some(Merged {
+        placing: pi,
+        from,
+        offs,
+    });
     r
 }
 

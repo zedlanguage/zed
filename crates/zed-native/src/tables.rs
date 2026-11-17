@@ -6,7 +6,7 @@
 //! costs a reference count however much lies below it. Where a node is (`r.3/0.1`) is worked
 //! out for a message, from the links up, and is not kept: a path is as long as its depth.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -553,10 +553,46 @@ impl Tables {
         self.lambdas.len() + i
     }
 
+    /// For each lambda, whether a call by name may go to its placed entry
+    /// ([`Tables::placed`]): its number of parameters is the length of a parameter list with
+    /// no fill and the number of arguments of a call by name with no flag, as `hooks::rt_direct`
+    /// asks. Only these get a placed entry, a second copy of the body. None when
+    /// [`Tables::arities`] has none.
+    // Complexity tradeoff: a placed entry is a second copy of the lambda's body, O(size of the
+    // body) more to compile: the program of `a_placed_call_costs_about_a_direct_call_in_native_code`
+    // at one call, with two functions of 320 parameters, took 489M instructions against 433M
+    // with none (row CALL-callee-places-native). A placed entry for every lambda would copy
+    // every body; this test is O(L + P + N) for L lambdas, P lists and N nodes, by two sets.
+    pub fn placeable(&self) -> Vec<bool> {
+        if self.arities().is_empty() {
+            return Vec::new();
+        }
+        let lists: HashSet<usize> = (self.placings.iter())
+            .filter(|p| !p.fill)
+            .map(|p| p.n)
+            .collect();
+        let calls: HashSet<usize> = (self.nodes.iter())
+            .filter_map(|n| n.named.as_deref())
+            .filter(|sh| !sh.flagged)
+            .map(|sh| sh.k + sh.names.len())
+            .collect();
+        (self.lambdas.iter())
+            .map(|l| lists.contains(&l.params) && calls.contains(&l.params))
+            .collect()
+    }
+
+    /// The index among the registered entries of the placed entry of lambda `i`, which reads
+    /// each parameter among the arguments of a call by name at the offsets of a merge
+    /// (`hooks::rt_direct`): after the lambdas' bodies, and registered only when
+    /// [`Tables::arities`] has some.
+    pub fn placed(&self, i: usize) -> usize {
+        2 * self.lambdas.len() + i
+    }
+
     /// The index among the registered entries of the function that calls a body of `arity`
-    /// parameters on a buffer: after the lambdas' bodies.
+    /// parameters on a buffer: after the placed entries.
     pub fn trampoline(&self, arity: usize) -> usize {
-        2 * self.lambdas.len() + arity
+        3 * self.lambdas.len() + arity
     }
 
     /// The number of registered entries: the lambdas', and when [`Tables::arities`] has some,

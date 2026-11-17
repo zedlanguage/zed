@@ -13489,6 +13489,18 @@ fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
     vs.order.iter().all(|v| se.get(v) == qe.get(v))
 }
 
+/// What [`Cx::open`] gives: the mark, the arrows of each signature as read, the bounds, the
+/// unbounded own variables and the bound own variables of the parameter.
+type Opened = (
+    Mark,
+    Vec<Arrow>,
+    Vec<Arrow>,
+    Option<Masks>,
+    SortedNames,
+    Binds,
+    Vec<Vec<Arrow>>,
+);
+
 impl Cx<'_> {
     /// Opens the comparison of [`fits_in`] of `s`, read by `se`, with `q`, read by `qe`: the
     /// mark of the names made and the own variables kept for it ([`Self::forget`]), the arrows
@@ -13496,21 +13508,7 @@ impl Cx<'_> {
     /// bounded variable of `s` is read under a new name ([`Self::own_name`]), and the unbounded
     /// own variables of `s` by the names they are read as, in order ([`Cx::free`]), and the own
     /// variables of `q` a parameter holds, each bound to what it may stand for ([`Cx::wide`]).
-    fn open(
-        &mut self,
-        s: &Sig,
-        se: &Env,
-        q: &Sig,
-        qe: &Env,
-    ) -> (
-        Mark,
-        Vec<Arrow>,
-        Vec<Arrow>,
-        Option<Masks>,
-        SortedNames,
-        Binds,
-        Vec<Vec<Arrow>>,
-    ) {
+    fn open(&mut self, s: &Sig, se: &Env, q: &Sig, qe: &Env) -> Opened {
         let cx = self;
         let mark = Mark {
             made: cx.made.len(),
