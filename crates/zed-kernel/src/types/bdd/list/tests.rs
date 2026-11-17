@@ -16,6 +16,68 @@ fn block(i: u64) -> Arc<Set<Row>> {
     set::single((row, true))
 }
 
+/// The atom of `i`.
+fn atom(i: u64) -> Row {
+    Row::new(vec![
+        crate::types::Type::lit(&Value::Int(i as i64)).expect("a literal"),
+    ])
+}
+
+/// Plan row KERNEL-bdd-rejoin-bytes: lists grown a literal at a time from one literal, by
+/// random joins and meets on 12 atoms, many of them on atoms the list holds (a literal set
+/// false in its block, or a cut), keep an index on every root that meets its invariant
+/// (`cells_are_sound`), find every atom where the old descent by the left children's atoms
+/// finds it, and give the function of the same joins on a truth table.
+#[test]
+fn a_list_grown_a_literal_at_a_time_keeps_a_sound_index() {
+    const ATOMS: u64 = 12;
+    let atoms: Vec<Row> = (0..ATOMS).map(|i| atom(72000 + i)).collect();
+    let at = |a: &Row| atoms.iter().position(|b| b == a).expect("an atom listed");
+    let mut seed = crate::seed::seed("a_list_grown_a_literal_at_a_time_keeps_a_sound_index") | 1;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let (mut lists, mut cut) = (0, 0);
+    for _ in 0..60 {
+        let (a, t) = (next() % ATOMS, next() % 2 == 0);
+        let mut f = Bdd::literal_key((atoms[a as usize].clone(), t));
+        let lit = |s: usize, a: u64, t: bool| (s >> a & 1 == 1) == t;
+        let mut table: Vec<bool> = (0..1usize << ATOMS).map(|s| lit(s, a, t)).collect();
+        for _ in 0..40 {
+            let (a, t, or) = (next() % ATOMS, next() % 2 == 0, next() % 2 == 0);
+            let before = f.cells().count();
+            f = match or {
+                true => f.or_literal((atoms[a as usize].clone(), t)),
+                false => f.and_literal((atoms[a as usize].clone(), t)),
+            };
+            for (s, x) in table.iter_mut().enumerate() {
+                *x = if or {
+                    *x || lit(s, a, t)
+                } else {
+                    *x && lit(s, a, t)
+                };
+            }
+            cut += usize::from(f.cells().count() + 1 < before);
+            assert!(f.cells_are_sound(), "{f:?}");
+            let Bdd::List(c, _) = &f else { break };
+            assert!(c.indexed().is_some(), "an edit lost the index: {f:?}");
+            lists += 1;
+            for b in &atoms {
+                assert_eq!(c.find(b), c.find_by_atoms(b), "atom {}: {f:?}", at(b));
+            }
+        }
+        for (s, x) in table.iter().enumerate() {
+            assert_eq!(f.eval(|b| s >> at(b) & 1 == 1), *x, "{s:b}");
+        }
+    }
+    // Some edits cut the list, so the stale entries of `cut` were read.
+    eprintln!("{lists} lists checked, {cut} edits that dropped two or more blocks");
+    assert!(lists > 0 && cut > 0);
+}
+
 /// One sequence of three blocks built by hand with each block at the root: the digests are the
 /// same for the three shapes (a fold of the blocks in order), and the lengths too.
 #[test]

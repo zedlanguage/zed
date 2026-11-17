@@ -214,6 +214,34 @@ fn list_built_a_literal_at_a_time_scales() {
 }
 
 #[test]
+fn rejoining_one_atom_of_each_block_scales() {
+    // Item CHAIN-deep-atom: a list of `m` blocks, one atom of each joined again, the
+    // deepest block first. The literal set false leaves a block at depth `d`; a list of
+    // cells each before the next rebuilt the `d` cells above it, `O(m²)` in all. The
+    // blocks in a treap by position rebuild `O(log m)` cells for each, and the index on the
+    // root finds each block in `O(log m)` (plan row KERNEL-bdd-rejoin-bytes; before it, the
+    // atoms of the left children took `O(log² m)` time and bytes a literal, 10.7 times the
+    // bytes from 512 to 4096). Small instance: `rejoined_blocks_give_the_function_and_the_one_form`.
+    let n = 1 << 9;
+    let lists = scaling::inputs(n, |m| (joined_blocks(70000, m), m));
+    scaling::check(
+        "one atom of each of m blocks joined again, deepest first",
+        n,
+        |m| {
+            let (f, m) = &lists[&m];
+            let mut f = f.clone();
+            for i in 0..*m as u64 {
+                f = match i % 2 {
+                    0 => f.or_literal((atom(70000 + 2 * i), true)),
+                    _ => f.and_literal((atom(70000 + 2 * i), true)),
+                };
+            }
+            assert!(f.cells().count() > 1);
+        },
+    );
+}
+
+#[test]
 fn joining_chains_to_lists_scales() {
     // Chains built a literal at a time, each new literal last in the order of the atoms (the
     // list of `list_built_a_literal_at_a_time_scales` with one connective), and two chains

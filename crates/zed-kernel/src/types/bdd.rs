@@ -3044,7 +3044,9 @@ mod list {
     //! the order of types compares two sequences of equal digests by their blocks in order. The
     //! cells are shared through a table of the thread by
     //! their children and block: one list is one cell. Each cell keeps, made on first use, the atoms of its blocks, so the
-    //! block of an atom is found from the root in `O(log m)` for `m` blocks. A chain of literals
+    //! block of an atom is found from the root in `O(log m)` for `m` blocks. A list grown a
+    //! literal at a time from one literal also keeps, on its root cell, an index of its blocks
+    //! ([`Index`]), which finds that block by two lookups instead. A chain of literals
     //! joined to a list ([`Bdd::or_literal`]) adds each literal to the first block, or puts a block
     //! of it first; a literal on an atom the list holds is first set false there, which removes it
     //! from its block or cuts the list at its block. Each such change rebuilds the cells on the
@@ -3067,6 +3069,9 @@ mod list {
     use super::set::{self, Key, NEXT, Set, Tree};
     use super::{Bdd, Digest, Literal, Op, Owned, Part, mix};
     use crate::priority::Priorities;
+    use treap::Keyed;
+
+    mod treap;
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
     /// it. A cell that is the root of a list's sequence is the list, with the value of its first
@@ -3089,6 +3094,9 @@ mod list {
         pub(in crate::types) right: Seq<A>,
         /// The atoms of the blocks, made on first use.
         atoms: OnceLock<imbl::OrdSet<A>>,
+        /// The index of the blocks, when the cell is the root of a list grown a literal at a
+        /// time ([`Index`]).
+        index: OnceLock<Index<A>>,
         /// The first node of the list of each first value, as [`Bdd::branch`] shows it: its `hi`
         /// and `lo`, made on first use.
         view: [OnceLock<(Bdd<A>, Bdd<A>)>; 2],
@@ -3278,6 +3286,7 @@ mod list {
                 block,
                 right,
                 atoms: OnceLock::new(),
+                index: OnceLock::new(),
                 view: [OnceLock::new(), OnceLock::new()],
             });
             entry.insert_entry(Arc::downgrade(&c));
@@ -3367,8 +3376,12 @@ mod list {
     }
 
     /// The block at `k` of `t`, which has more than `k` blocks.
-    fn nth<A: Literal>(t: &Seq<A>, mut k: usize) -> &Arc<Set<A>> {
-        let mut at = t.as_ref().expect("a sequence has the block asked for");
+    fn nth<A: Literal>(t: &Seq<A>, k: usize) -> &Arc<Set<A>> {
+        block_at(t.as_ref().expect("a sequence has the block asked for"), k)
+    }
+
+    /// The block at `k` of the sequence of the cell `at`, which has more than `k` blocks.
+    fn block_at<A: Literal>(mut at: &Cell<A>, mut k: usize) -> &Arc<Set<A>> {
         loop {
             let ln = len(&at.left);
             match k.cmp(&ln) {
@@ -3407,6 +3420,193 @@ mod list {
         }
     }
 
+    /// The label of a block in an [`Index`]: labels increase along the list.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct Label(u64);
+
+    /// An atom as a key of an [`Index`].
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+    struct AtomKey<A>(A);
+
+    impl<A> std::borrow::Borrow<A> for AtomKey<A> {
+        fn borrow(&self) -> &A {
+            &self.0
+        }
+    }
+
+    /// The priorities of the labels and of the atoms in the treaps of an [`Index`], drawn once
+    /// per run (module [`crate::priority`]).
+    static INDEX_PRIORITIES: [Priorities; 2] = [Priorities::new(15), Priorities::new(16)];
+
+    /// The label of the one block of a list of one literal ([`Cell::indexed`]). A block put
+    /// first takes the least label less one, so the labels stay below `P` and at distinct points
+    /// of the draw (module [`crate::priority`]) for the first `2^62` blocks put first along one
+    /// list's edits.
+    const FIRST: u64 = 1 << 62;
+
+    impl Keyed for Label {
+        fn priority(&self) -> u64 {
+            INDEX_PRIORITIES[0].of(self.0)
+        }
+    }
+
+    /// Atoms of one digest tie and are ordered by the atoms, as the literals of a set are (module
+    /// `set`, and module [`crate::priority`] on keys at one point).
+    impl<A: Literal> Keyed for AtomKey<A> {
+        fn priority(&self) -> u64 {
+            INDEX_PRIORITIES[1].of(self.0.digest())
+        }
+    }
+
+    /// The index of a sequence's blocks (plan row KERNEL-bdd-rejoin-bytes), kept on the cell at
+    /// its root: a label for each block, increasing along the sequence, and for each atom the
+    /// label of its block, each a treap with sizes (module `treap`). So the place of an atom's
+    /// block is one lookup in `atoms` and one in `labels`, one comparison a level each
+    /// ([`Index::find`]), where the atoms of the left children ([`Cell::atoms`]) take an
+    /// ordered-set lookup at each of `O(log m)` levels.
+    ///
+    /// Invariant: `labels` has one label per block, in the order of the blocks; every atom of a
+    /// block maps to that block's label; and an atom of no block either is absent from `atoms`
+    /// or maps to a label absent from `labels` and greater than every label in it (a stale
+    /// entry, left by a cut, [`cut`]). The index describes the cell's own sequence, whatever
+    /// edits made the cell, so a cell reached by two histories may keep either one's index; it
+    /// is outside the cells' hash-consing and equality, which see only the blocks.
+    ///
+    /// Only a list of one literal is given an index outright, on first use ([`Cell::indexed`]),
+    /// and an edit
+    /// of an indexed list by [`replace`] or [`cut`] passes its index on ([`reindex`]); every
+    /// other list has none and is searched by the atoms of its left children, as before.
+    pub(super) struct Index<A: Literal> {
+        labels: treap::Tree<Label, ()>,
+        atoms: treap::Tree<AtomKey<A>, Label>,
+    }
+
+    // Complexity tradeoff (COMPLEXITY.md K67 (5)): the naive way to find an atom's block reads
+    // the atoms of each left child on the path down, an ordered-set lookup of `O(log m)` at each
+    // of `O(log m)` levels, and every edit carries those atoms over for each left child it
+    // rebuilds, `O(log m)` new set nodes each: `O(log² m)` time and bytes per literal. Used: an
+    // index on the root, two treap lookups to find (`O(log m + log k)` for `k` atoms) and, per
+    // edit, `O(1)` treap updates for each atom it moves (`O(log k)` each). Given up: a list
+    // made other than from one literal by `replace` and `cut` (`Bdd::assemble`, `merge`, a split
+    // or a zip) has no index and is searched as before; carrying an index through those needs a
+    // relabeling of one side, `O(size)`, which made another benchmark quadratic when tried
+    // (plan row KERNEL-bdd-rejoin-bytes, the attempt by bundle-kernel4). A block joined to
+    // another moves the atoms of all but the largest, `O(s log k)` for `s` atoms moved, where
+    // the join of the sets (`set::union`, `set::insert`) already costs `O(s)` or more.
+    impl<A: Literal> Index<A> {
+        /// The index of the one block `block`, all its atoms under [`FIRST`].
+        fn single(block: &Arc<Set<A>>) -> Index<A> {
+            let mut atoms = None;
+            for (a, _) in set::iter(Some(block)) {
+                atoms = treap::insert(&atoms, AtomKey(a.clone()), Label(FIRST));
+            }
+            Index {
+                labels: treap::insert(&None, Label(FIRST), ()),
+                atoms,
+            }
+        }
+
+        /// The place of the block of `atom` in `root`'s sequence, which this indexes, and whether
+        /// the block takes it: the label of its block, then the label's place among the labels,
+        /// then the block at that place. `None` when the atom is in no block: absent, or under a
+        /// label absent from `labels` (the invariant of [`Index`]).
+        fn find(&self, root: &Cell<A>, atom: &A) -> Option<(usize, bool)> {
+            let label = treap::get(&self.atoms, atom)?;
+            let k = treap::place(&self.labels, label)?;
+            let taken = set::get(Some(block_at(root, k)), atom);
+            debug_assert!(taken.is_some(), "an atom's label is its block's");
+            Some((k, taken?))
+        }
+    }
+
+    /// The index of `t` after `replace` puts `count` new blocks in place of its blocks `i..j`,
+    /// whose atoms differ from theirs by `(gone, added)`, from `ix`, the index of `t`: `None` for
+    /// more than one new block, which no caller passes.
+    ///
+    /// Proof that the invariant of [`Index`] holds after. The atoms of `gone` leave `atoms`.
+    /// With no new block, the labels of blocks `i..j` leave `labels`; every caller passes every
+    /// atom of those blocks in `gone` (a block emptied of its last literal, or the last block
+    /// dropped by [`finish`] with its atoms listed), so no atom maps to a removed label. With
+    /// one new block in place of `j - i > 0` blocks, it keeps the label of the largest of them,
+    /// which lies between the labels of the blocks before `i` and after `j`, so the labels still
+    /// increase; the atoms of the other blocks, less `gone`, and the atoms of `added` map to it;
+    /// every caller's new block holds exactly the atoms of blocks `i..j` less `gone` plus
+    /// `added` (a block with a literal removed or added, two blocks joined over an emptied one,
+    /// the last literal moved into the block before, a block flipped). With one new block and
+    /// `i = j`, the block is put first (`i = 0`, the only such caller,
+    /// [`Bdd::or_new_literal`]) and takes the least label less one, below every label. Labels
+    /// are only ever added below the least one, and a removed label's atoms all leave `atoms`, so
+    /// a stale label stays greater than every label present and is never given to a block.
+    ///
+    /// Cost: `O(|gone| + |added| + j - i + 1)` treap operations, `O(log m + log k)` each in
+    /// expectation for `m` blocks and `k` entries, plus one insertion for each atom of the
+    /// blocks joined to the largest. `gone` is searched only for those atoms, and then holds at
+    /// most one atom: it holds more only when no block replaces (the last block dropped).
+    fn reindex<A: Literal>(
+        t: &Seq<A>,
+        ix: &Index<A>,
+        (i, j): (usize, usize),
+        count: usize,
+        (gone, added): Delta<'_, A>,
+    ) -> Option<Index<A>> {
+        let mut atoms = ix.atoms.clone();
+        for a in gone {
+            atoms = treap::remove(&atoms, a);
+        }
+        let olds: Vec<(Label, &Arc<Set<A>>)> = (i..j)
+            .map(|k| (*treap::nth(&ix.labels, k), nth(t, k)))
+            .collect();
+        let mut labels = ix.labels.clone();
+        let kept = match count {
+            0 => None,
+            1 if olds.is_empty() => {
+                debug_assert_eq!(i, 0, "a block is added only in front");
+                let l = Label(treap::nth(&ix.labels, 0).0 - 1);
+                labels = treap::insert(&labels, l, ());
+                Some(l)
+            }
+            1 => olds.iter().max_by_key(|(_, s)| s.len()).map(|&(l, _)| l),
+            _ => return None,
+        };
+        for &(l, s) in &olds {
+            if Some(l) == kept {
+                continue;
+            }
+            labels = treap::remove(&labels, &l);
+            if let Some(k) = kept {
+                for (a, _) in set::iter(Some(s)) {
+                    if !gone.contains(a) {
+                        atoms = treap::insert(&atoms, AtomKey(a.clone()), k);
+                    }
+                }
+            }
+        }
+        if let Some(k) = kept {
+            for a in added {
+                atoms = treap::insert(&atoms, AtomKey(a.clone()), k);
+            }
+        }
+        Some(Index { labels, atoms })
+    }
+
+    /// The first `k` blocks of the list `t`, its index passed on when it has one: the labels of
+    /// the first `k` blocks, and every atom entry kept, those of the blocks cut off now stale
+    /// (the invariant of [`Index`]: their labels were greater than those kept, since labels
+    /// increase along the list), `O(log m)` expected.
+    fn cut<A: Literal>(t: &Seq<A>, k: usize) -> Seq<A> {
+        let made = prefix(t, k);
+        if let (Some(root), Some(c)) = (t, &made)
+            && let Some(ix) = root.indexed()
+            && c.index.get().is_none()
+        {
+            let _ = c.index.set(Index {
+                labels: treap::prefix(&ix.labels, k),
+                atoms: ix.atoms.clone(),
+            });
+        }
+        made
+    }
+
     /// `t` with the blocks from `i` to before `j` replaced by `new`, whose atoms differ from theirs
     /// by `delta`. The cells above the place edited whose priority stays above the new blocks' are
     /// rebuilt along the path; below, the cell where the path stops is the root of the region
@@ -3415,13 +3615,15 @@ mod list {
     /// one placed as a left child takes its atoms from that cell's ([`carry`]). Only
     /// [`Cell::find`] reads a cell's atoms, and only a left child's, so the others (about half
     /// of the path, and always the root) make theirs on first use if they ever become a left
-    /// child, which is what a cell that never had them already does.
+    /// child, which is what a cell that never had them already does. When `t` has an index, the
+    /// new root is given one made from it ([`reindex`]).
     fn replace<A: Literal>(
         t: &Seq<A>,
         (i, j): (usize, usize),
         new: Vec<Arc<Set<A>>>,
         delta: Delta<'_, A>,
     ) -> Seq<A> {
+        let (edit, count) = ((i, j), new.len());
         let prios: Vec<u64> = new.iter().map(|s| priority(s)).collect();
         let top = prios.iter().copied().max();
         let mut path: Vec<(&Arc<Cell<A>>, bool)> = Vec::new();
@@ -3483,6 +3685,13 @@ mod list {
                 carry(n, &made, delta);
             }
             node = Some(made);
+        }
+        if let (Some(root), Some(c)) = (t, &node)
+            && let Some(ix) = root.indexed()
+            && c.index.get().is_none()
+            && let Some(made) = reindex(t, ix, edit, count, delta)
+        {
+            let _ = c.index.set(made);
         }
         node
     }
@@ -3572,9 +3781,31 @@ mod list {
             &at.block
         }
 
-        /// The place of the block that holds `atom`, and whether it takes it: down from the root,
-        /// to the left when the cell on the left holds it, in `O(log m)` steps for `m` blocks.
+        /// The place of the block that holds `atom`, and whether it takes it: by the index when
+        /// the cell has one ([`Index::find`]); otherwise down from the root, to the left when the
+        /// cell on the left holds it, in `O(log m)` steps for `m` blocks.
         fn find(&self, atom: &A) -> Option<(usize, bool)> {
+            match self.indexed() {
+                Some(ix) => ix.find(self, atom),
+                None => self.find_by_atoms(atom),
+            }
+        }
+
+        /// The index of the list at this cell ([`Index`]): the one it was given, or for the list
+        /// of one literal one made now, `O(1)`; `None` for a list made other than from one
+        /// literal by [`replace`] and [`cut`]. A literal's index is made on first use, not by
+        /// [`Bdd::literal_key`], since most literals are joined into another list and never
+        /// edited themselves.
+        fn indexed(&self) -> Option<&Index<A>> {
+            if let Some(ix) = self.index.get() {
+                return Some(ix);
+            }
+            let one = self.left.is_none() && self.right.is_none() && self.block.len() == 1;
+            one.then(|| self.index.get_or_init(|| Index::single(&self.block)))
+        }
+
+        /// [`Cell::find`] by the atoms of the left children on the path down.
+        fn find_by_atoms(&self, atom: &A) -> Option<(usize, bool)> {
             let (mut at, mut off) = (self, 0);
             loop {
                 let ln = len(&at.left);
@@ -3663,7 +3894,8 @@ mod list {
     }
 
     impl<A: Literal> Bdd<A> {
-        /// The list of the one literal `key`.
+        /// The list of the one literal `key`, whose index is made on first use
+        /// ([`Cell::indexed`]).
         pub(super) fn literal_key(key: Key<A>) -> Bdd<A> {
             Bdd::List(cell(None, set::single(key), None), true)
         }
@@ -3742,13 +3974,10 @@ mod list {
                 // the cells on the path cut make their atoms again on first use, each from its
                 // children's, the smaller added to the larger: up to `O(min(p, m - p) log m)` for a
                 // cut after `p` of `m` blocks, where carrying the atoms over would cost the `m - p`
-                // atoms dropped. COMPLEXITY.md K67 (4). Not proved: `O(log m)` per literal in all.
-                // `find` tests an atom summary at each of `O(log m)` levels, and `replace` carries
-                // the summary of each left child it rebuilds, each `O(log m)`: `O(log² m)` per
-                // literal (plan row KERNEL-bdd-rejoin-bytes, whose test
-                // `rejoining_one_atom_of_each_block_scales` is deferred in
-                // wt/scratch/deferred-tests/KERNEL-bdd-rejoin-bytes.rs).
-                finish((prefix(&seq, at), v), w)
+                // atoms dropped. COMPLEXITY.md K67 (4). A list with an index keeps it ([`cut`]):
+                // its labels cut in `O(log m)`, the atoms of the blocks dropped left as stale
+                // entries, so it never reads those atoms (K67 (5)).
+                finish((cut(&seq, at), v), w)
             };
             // `rest` no longer holds the atom: the literal set false left its block, or the cut
             // dropped that block and every block after it.
@@ -4195,11 +4424,42 @@ mod list {
         }
     }
 
+    /// Whether `ix` meets the invariant of [`Index`] for the sequence of `c`: one label per
+    /// block, every atom of a block under its block's label, and every other entry under a label
+    /// absent from the labels and greater than all of them.
+    #[cfg(test)]
+    fn index_is_sound<A: Literal>(c: &Cell<A>, ix: &Index<A>) -> bool {
+        let labels: Vec<Label> = treap::iter(&ix.labels).map(|(l, _)| *l).collect();
+        if labels.len() != c.len {
+            return false;
+        }
+        let mut atoms = 0;
+        for (k, &l) in labels.iter().enumerate() {
+            for (a, _) in set::iter(Some(block_at(c, k))) {
+                atoms += 1;
+                if treap::get(&ix.atoms, a) != Some(&l) {
+                    return false;
+                }
+            }
+        }
+        let last = labels.last().copied();
+        let (mut present, mut stale_above) = (0, true);
+        for (_, l) in treap::iter(&ix.atoms) {
+            if treap::get(&ix.labels, l).is_some() {
+                present += 1;
+            } else {
+                stale_above &= last.is_none_or(|m| *l > m);
+            }
+        }
+        present == atoms && stale_above
+    }
+
     #[cfg(test)]
     impl<A: Literal> Bdd<A> {
         /// Whether every cell of the list that has made its atoms holds the atoms of its blocks,
-        /// its length and shape are those of a treap by position and priority, and its digests
-        /// are the folds of its blocks in order, as a sequence of any shape has them.
+        /// every cell with an index has one that meets its invariant ([`Index`]), its length and
+        /// shape are those of a treap by position and priority, and its digests are the folds of
+        /// its blocks in order, as a sequence of any shape has them.
         pub(super) fn cells_are_sound(&self) -> bool {
             let Bdd::List(c, _) = self else { return true };
             let mut stack = vec![&**c];
@@ -4233,6 +4493,11 @@ mod list {
                     sub.extend(d.right.as_deref());
                 }
                 if c.atoms.get().is_some_and(|s| *s != all) || blocks != c.len {
+                    return false;
+                }
+                if let Some(ix) = c.index.get()
+                    && !index_is_sound(c, ix)
+                {
                     return false;
                 }
                 if c.left.as_ref().is_some_and(|l| l.prio >= c.prio)

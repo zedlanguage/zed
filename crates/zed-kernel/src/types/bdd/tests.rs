@@ -1812,7 +1812,7 @@ fn exclusive_ors_shared_by_threads_are_the_ones_built_on_one() {
 /// The list of `m` blocks of two literals on the atoms from `base`, built by joining one
 /// literal at a time, each new block first: the values alternate from `false` at the
 /// block built first. Built from `or_literal` and `and_literal` alone.
-fn joined_blocks(base: u64, m: usize) -> Bdd<Row> {
+pub(super) fn joined_blocks(base: u64, m: usize) -> Bdd<Row> {
     let mut f = Bdd::Leaf(false);
     for i in 0..m as u64 {
         for a in [base + 2 * i, base + 2 * i + 1] {
@@ -1827,7 +1827,8 @@ fn joined_blocks(base: u64, m: usize) -> Bdd<Row> {
 
 #[test]
 fn rejoined_blocks_give_the_function_and_the_one_form() {
-    // Item CHAIN-deep-atom: the list after the rejoins of the scaling test above, on 6
+    // Item CHAIN-deep-atom: the list after the rejoins of the scaling test
+    // `bench::rejoining_one_atom_of_each_block_scales`, on 6
     // blocks, against the truth table of the same joins.
     let (base, m) = (70500, 6);
     let mut f = joined_blocks(base, m);
