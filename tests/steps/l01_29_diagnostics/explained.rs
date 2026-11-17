@@ -23,8 +23,11 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
         (
             reading("  m.stdout <- String(2^(n - 5));"),
             "3:22: Int power with an exponent that may be negative: `2 : int ^ (n - 5) : int`. Try \
-             `exponent = n - 5; if exponent >= 0 { 2^exponent } else { … }` instead.",
-            vec!["repair: `exponent = n - 5; if exponent >= 0 { 2^exponent } else { … }`"],
+             `2r^(n - 5)` instead.",
+            vec![
+                "repair: `2r^(n - 5)`",
+                "repair: `exponent = n - 5; if exponent >= 0 { 2^exponent } else { … }`",
+            ],
         ),
         (
             reading("  m.stdout <- n;"),

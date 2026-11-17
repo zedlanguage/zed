@@ -81,11 +81,11 @@ fn a_rejection_behind_a_refused_test_names_the_question_in_its_derivation() {
     let expected = format!(
         "\
 {file}:1:{power}: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
-`if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
+`2r ^ x` instead.
 {steps}  [4] 1:{x}: `x` is int here
   [5] 1:3: `x` is declared `int`
-  [6] 1:{power}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
-  [7] 1:{power}: repair: `2r ^ x`
+  [6] 1:{power}: repair: `2r ^ x`
+  [7] 1:{power}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
 "
     );
     assert_eq!(run(&file, &[]), (1, expected));
@@ -103,14 +103,14 @@ fn a_rejection_with_no_refused_question_behind_it_has_no_such_step() {
     let expected = format!(
         "\
 {file}:1:13: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
-`if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
+`2r ^ x` instead.
   [1] 1:17: `x` is int here
       1 | {line}
         |   ^^^^^^ [2]    ^ [1]
         |             ^^^^^ [3, 4]
   [2] 1:3: `x` is declared `int`
-  [3] 1:13: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
-  [4] 1:13: repair: `2r ^ x`
+  [3] 1:13: repair: `2r ^ x`
+  [4] 1:13: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
 "
     );
     assert_eq!(run(&file, &[]), (1, expected));
@@ -245,7 +245,7 @@ fn an_inner_name_that_shadows_one_under_a_refused_question_does_not_take_its_que
     let expected = format!(
         "\
 {file}:1:{inner}: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
-`if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
+`2r ^ x` instead.
   [1] 1:{inner_x}: `x` is int here
       1 | {line}
 {rows}  [2] 1:{defined}: `x` is defined as this expression, int
@@ -253,8 +253,8 @@ fn an_inner_name_that_shadows_one_under_a_refused_question_does_not_take_its_que
   [4] 1:{defined}: `v` is int here
   [5] 1:{declared}: `v` is declared `int`
   [6] 1:{one}: this literal, 1, is 1
-  [7] 1:{inner}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
-  [8] 1:{inner}: repair: `2r ^ x`
+  [7] 1:{inner}: repair: `2r ^ x`
+  [8] 1:{inner}: repair: `if x >= 0 {{ 2 ^ x }} else {{ … }}`
 {file}:1:{outer}: Int power with an exponent that may be negative: `2 : int ^ x : int`. Try \
 `if x >= 0 {{ 2 ^ x }} else {{ … }}` instead.
   [1] {at}: here the conditions `{CONDITIONS}` hold

@@ -218,17 +218,23 @@ fn a_cast_of_a_division_names_the_literal() {
     // DESIGN.md sec:domains: "A cast `f64(9007199254740993r)` is never offered [...] since the
     // integer has no exact `f64`, so the cast gives `#inexact` for its one input and is
     // rejected as an operation that always fails". `1r / 10` has no exact `f64` either, so
-    // DESIGN.md neither offers `f64(1r / 10)` nor accepts it. This zedc offers it first, and
-    // accepts it, with the value `#inexact`; row LIT-cast-inexact-rat-fix. At `rat` each fix
-    // casts exactly.
+    // `f64(1r / 10)` is neither offered nor accepted (row LIT-cast-inexact-rat-fix), at the
+    // top level and in a body alike. At `rat` each fix casts exactly.
     assert_eq!(
         checked("y = f64(1 / 10);\n"),
-        pairs(&[
-            ("y = f64(1r / 10);", "the literal is then exactly 1, a rat"),
-            ("y = f64(1.0f64 / 10);", "the literal is then the f64 1.0"),
-        ])
+        pairs(&[("y = f64(1.0f64 / 10);", "the literal is then the f64 1.0")])
     );
-    assert_eq!(value("y = f64(1r / 10);\n", "y"), "#inexact");
+    assert_eq!(
+        checked("f() = f64(1 / 10);\n"),
+        pairs(&[("f() = f64(1.0f64 / 10);", "the literal is then the f64 1.0")])
+    );
+    for src in ["y = f64(1r / 10);\n", "f() = f64(1r / 10);\n"] {
+        let message = first(src);
+        assert!(
+            message.contains("always fails") && message.contains("#inexact"),
+            "{src}: {message}"
+        );
+    }
     assert_eq!(value("y = f64(1.0f64 / 10);\n", "y"), "0.1");
     assert_eq!(
         checked("y = rat(1 / 10);\n"),

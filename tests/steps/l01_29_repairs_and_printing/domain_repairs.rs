@@ -116,7 +116,16 @@ fn a_tested_repair_holds_the_programs_code_and_is_accepted() {
     for (src, call, want) in cases {
         let out = rejected(src);
         in_the_programs_words(&out);
-        assert_eq!(tried(&out), Some(want), "{src}\n{out}");
+        // An int power's headline ends with its `rat` repair, the test a note after it
+        // (DESIGN.md sec:diagnostics; row POW-rat-first-repair).
+        match call.strip_prefix("2^") {
+            Some(exponent) => {
+                let rat = format!("2r^{exponent}");
+                assert_eq!(tried(&out), Some(rat.as_str()), "{src}\n{out}");
+                assert!(out.contains(&format!("repair: `{want}`")), "{src}\n{out}");
+            }
+            None => assert_eq!(tried(&out), Some(want), "{src}\n{out}"),
+        }
         let fixed = repaired(src, call, want);
         checks(&fixed);
     }

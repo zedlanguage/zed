@@ -1052,6 +1052,11 @@ enum Part<'a> {
     Lit(Lit),
     Branches(Rc<[Branch<'a>]>),
     Tuple(Rc<[Part<'a>]>),
+    /// An operation on bare literals alone, as `3 / 2` ([`lit_op_recorded`]): outside every
+    /// function it is a literal too, and takes the carrier its component meets in a generic
+    /// function's body, as it would as the argument alone ([`Ck::generic_parts`]). Read as
+    /// [`Part::Other`] everywhere else.
+    Op(&'a Expr),
     Other,
 }
 
@@ -1399,7 +1404,8 @@ struct Class {
     // class's own index `k`; and no variable inside any of its parts either. Proof, by the
     // four places that write the field: (1) `Ck::resolve` writes a carrier or `$r` of the
     // class `r` it writes; (2) `Ck::resolve_top_parts` writes a carrier or a union of literal
-    // types; (3) `walk.rs`, at the end of a level, writes `Ty::dynamic()`, which holds no
+    // types and of the types of operations on literals alone outside every function, which
+    // name no class; (3) `walk.rs`, at the end of a level, writes `Ty::dynamic()`, which holds no
     // variable; (4) the undo of a tried repair (`Undo::Class`) puts back a copy of the same
     // class taken earlier, which held the invariant by induction on the writes. `Ck::class`
     // starts the field at `None`, and `merge` does not touch it. So `Ck::class_root`, which
@@ -1502,6 +1508,21 @@ struct Class {
     /// branches are literals each keeps its own value"), and the rejection names its own
     /// literal ([`Ck::lits_take`]). Of a merged class, those of both.
     alone: Vec<Alone>,
+    /// The operations on literals alone written as components of a tuple argument that
+    /// joined it ([`Part::Op`]), each with its span and the type it was walked at: where no
+    /// use asks the class, a value of it is a copy of one of its literals written alone or
+    /// of one of these values ([`Ck::copied_values`]). Of a merged class, those of both.
+    ops: Vec<(Span, Ty)>,
+    /// Whether a use took none of the carriers it may still take ([`Ck::restrict_asking`]),
+    /// so the use rejects each of its values whatever carrier it takes. Of a merged class,
+    /// whether either was.
+    refused: bool,
+    /// The carriers, as a mask of [`Carrier::bit`], at which a prelude word applied to an
+    /// operation on its literals alone always fails, as `f64` does on `1 / 10` at `rat`,
+    /// `1/10` having no exact `f64` ([`Ck::word_unoffered`]): a fix that gives the literals
+    /// such a carrier is not offered (DESIGN.md sec:domains: "A cast `f64(9007199254740993r)`
+    /// is never offered"; row LIT-cast-inexact-rat-fix). Of a merged class, those of both.
+    unoffered: u8,
 }
 
 /// A carrier a fold was checked at, or none (`[]`), with the identity of the fold's operator
@@ -1967,8 +1988,10 @@ struct Ck<'t, 'a> {
     /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
     rat_folds: HashMap<Span, RatFact>,
     /// The classes [`Self::generic_parts`] made outside every function, for [`Self::apply`] to
-    /// give their types once the application has met them ([`Self::resolve_top_parts`]).
-    top_parts: Vec<usize>,
+    /// give their types once the application has met them ([`Self::resolve_top_parts`]); for
+    /// the class of an operation on literals alone ([`Part::Op`]), the operation, which
+    /// takes the carrier a use asks its class for.
+    top_parts: Vec<(usize, Option<&'a Expr>)>,
     /// The declared functions whose bodies can end in a decimal literal with no suffix
     /// ([`Self::tail_reach`]), found when first asked.
     tail_reach: Option<HashSet<usize>>,
@@ -4087,6 +4110,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrows: false,
             decimal: false,
             alone: Vec::new(),
+            ops: Vec::new(),
+            refused: false,
+            unoffered: 0,
         });
         self.pending[self.level].push(id);
         id
@@ -4221,6 +4247,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             return true;
         }
         if m == 0 {
+            if !self.classes[r].refused {
+                self.touch(r);
+                self.classes[r].refused = true;
+            }
             return false;
         }
         self.touch(r);
@@ -4398,6 +4428,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // each, O((a + l) log a).
                     let holds = |o: Span, s: Span| o.start <= s.start && s.end <= o.end;
                     let c = &self.classes[r];
+                    let left: Vec<Carrier> = (left.into_iter())
+                        .filter(|k| c.unoffered & k.bit() == 0)
+                        .collect();
                     let branch = (c.alone.iter()).find(|a| holds(a.at, l.site)).copied();
                     let kept: Vec<Carrier> = match branch {
                         Some(a) => {
@@ -4719,13 +4752,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let narrowed = c.mask != EVERY && c.mask & OTHER == 0;
                     return narrowed.then(|| (v, Ty::of_mask(c.mask)));
                 }
-                let ty = (c.lits.iter())
-                    .filter(|(l, _)| !l.exponent)
-                    .fold(Ty::empty(), |t, (l, _)| t.union(&lit_ty(&l.value, l.neg())));
-                Some((v, ty))
+                Some((v, self.copied_values(r)))
             })
             .collect();
         t.replace(&lits)
+    }
+
+    /// The values of class `r`, which no use asked for a carrier: copies of its literals
+    /// written alone, each of its own type, and of the operations on literals alone that
+    /// joined it ([`Class::ops`]), each of the type it was walked at, `f64` for the `3 / 2` of
+    /// `h((3 / 2, 2))`, not `2 | 3`. An integer exponent of `^` is no value of the class.
+    // Complexity tradeoff: the spans of the class's `o` operations are sorted and each of its
+    // `l` literals is looked up among them, O((l + o) log o); the naive test of each literal
+    // against each operation is O(l o). The operations' spans do not overlap, since each is a
+    // whole component of a tuple argument.
+    fn copied_values(&self, r: usize) -> Ty {
+        let c = &self.classes[r];
+        let mut spans: Vec<Span> = c.ops.iter().map(|(s, _)| *s).collect();
+        spans.sort_by_key(|s| s.start);
+        let in_op = |l: &Lit| {
+            let i = spans.partition_point(|s| s.start <= l.span.start);
+            i > 0 && l.span.end <= spans[i - 1].end
+        };
+        let tys: Vec<Ty> = (c.lits.iter())
+            .filter(|(l, _)| !l.exponent && !in_op(l))
+            .map(|(l, _)| lit_ty(&l.value, l.neg()))
+            .chain(c.ops.iter().map(|(_, t)| t.clone()))
+            .collect();
+        Ty::union_all(&tys)
     }
 
     /// The classes of `t` narrowed to some carriers, each with its carriers: what
@@ -6501,8 +6555,32 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The literals adopt the carrier. A class no use asked, as `p` in `h(p) = p[0]`,
     /// keeps its literals' own types, `1` for `h((1, 2))`, since only a copy of a literal
     /// can come out of it. Each class is read once: the cost is the number of its literals.
-    fn resolve_top_parts(&mut self, from: usize) {
-        for k in self.top_parts.split_off(from) {
+    ///
+    /// An operation on literals alone written as a component ([`Part::Op`]) takes the
+    /// carrier as it would as the argument alone ([`Self::lit_takes`]), which drops the
+    /// rejection its `/` wrote as it was walked: `5r/2r` for `h((3 / 2, 2))` with
+    /// `h(positional p) = p[0] + 1r`. Where no use asked its class, it keeps the type it was
+    /// walked at ([`Self::copied_values`]). Complexity tradeoff: the operations are grouped
+    /// by the root of their class in one pass, O(o) for `o` operations, so each class reads
+    /// only its own.
+    ///
+    /// Returns the operations whose class took no carrier and that a use refused at every
+    /// carrier left ([`Class::refused`]), as `3 / 2` in `r = h((3 / 2, 2)) else 9` with
+    /// `h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 }`, which requires an `int`
+    /// of `p[0]`: where the application is rejected, that rejection is the call's one, and
+    /// the operation's own, with its menu, is dropped ([`Ck::lit_unwrite`]), since each fix
+    /// of the literal keeps the use's rejection (DESIGN.md L1.26a, "rejected once, for that
+    /// use, with no menu at the literal").
+    fn resolve_top_parts(&mut self, from: usize) -> Vec<&'a Expr> {
+        let mut unmet = Vec::new();
+        let parts = self.top_parts.split_off(from);
+        let mut ops: HashMap<usize, Vec<&'a Expr>> = HashMap::new();
+        for &(k, op) in &parts {
+            if let Some(e) = op {
+                ops.entry(self.find(k)).or_default().push(e);
+            }
+        }
+        for (k, _) in parts {
             let r = self.find(k);
             if self.classes[r].resolved.is_some() {
                 continue;
@@ -6540,22 +6618,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(c)
                 }
             };
+            let own = ops.remove(&r).unwrap_or_default();
             let ty = match c {
                 Some(c) => {
                     for l in &lits {
                         self.lit_follows(l, c);
                     }
+                    // The class keeps only the carriers at which each operation has a
+                    // value ([`Ck::generic_parts`]), so each takes `c`.
+                    for e in own {
+                        self.lit_takes(e, c);
+                    }
                     Ty::carrier(c)
                 }
-                None => Ty::union_all(
-                    &(lits.iter())
-                        .map(|l| lit_ty(&l.value, l.neg()))
-                        .collect::<Vec<_>>(),
-                ),
+                None => {
+                    if self.classes[r].refused {
+                        unmet.extend(own);
+                    }
+                    self.copied_values(r)
+                }
             };
             self.touch(r);
             self.classes[r].resolved = Some(ty);
         }
+        unmet
     }
 }
 
@@ -7395,7 +7481,7 @@ fn with_adoptions(t: &Ty, parts: &[Part], adopt: &HashMap<Span, Value>) -> Ty {
                 Some(ics) => stack.push((inner, ics, Vec::new())),
                 None => out.push(c.clone()),
             },
-            Part::Other => out.push(c.clone()),
+            Part::Other | Part::Op(_) => out.push(c.clone()),
         }
     }
 }
@@ -7625,7 +7711,7 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
                     None => out.push(c.clone()),
                 }
             }
-            Part::Other => out.push(c.clone()),
+            Part::Other | Part::Op(_) => out.push(c.clone()),
         }
     }
 }
@@ -7641,8 +7727,8 @@ fn shapes<'a>(ts: impl IntoIterator<Item = &'a Ty>, n: usize) -> Vec<&'a [Ty]> {
 
 /// A tuple [`adopted`] has open: its parts as written, the argument's components, the
 /// expected shapes there, and the component types so far.
-struct OpenTuple<'a> {
-    parts: &'a [Part<'a>],
+struct OpenTuple<'a, 'e> {
+    parts: &'a [Part<'e>],
     comps: &'a [Ty],
     want: Vec<&'a [Ty]>,
     out: Vec<Ty>,
@@ -9023,6 +9109,62 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
     }
 }
 
+/// What the text gives of `e`, an operation on literals alone, with every literal at `rat`
+/// ([`RatFact`]), as [`Ck::rat_folded`] keeps it for an operation walked at `rat`: each
+/// literal's value, a `^` by its `int` exponent ([`int_exponent_value`]), and each step by
+/// [`rat_step`]; `None` for anything else in `e`. One walk on its own stack, since the
+/// operations nest as deep as the text: O(|e|) steps, each at the cost [`rat_step`] names,
+/// which computes no power but of `0`, `1` or `-1`.
+fn text_rat(e: &Expr) -> Option<RatFact> {
+    enum Step<'e> {
+        Visit(&'e Expr),
+        Apply(Prim),
+    }
+    let mut todo = vec![Step::Visit(e)];
+    let mut facts: Vec<Option<RatFact>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Visit(x) => {
+                if let Some(l) = literal(x, None) {
+                    facts.push(Some(RatFact::Value(lit_value(&l, Carrier::Rat)?)));
+                    continue;
+                }
+                match &x.kind {
+                    ExprKind::Rat(_) => facts.push(Some(RatFact::Value(folded(x, Carrier::Rat)?))),
+                    ExprKind::Binary(BinaryOp::Pow, a, b) => {
+                        facts.push(int_exponent_value(b).map(RatFact::Value));
+                        todo.extend([Step::Apply(Prim::Pow), Step::Visit(a)]);
+                    }
+                    ExprKind::Binary(op, a, b) => {
+                        let p = binary_prim(*op)?;
+                        todo.extend([Step::Apply(p), Step::Visit(b), Step::Visit(a)]);
+                    }
+                    ExprKind::Unary(UnaryOp::Neg, a) => {
+                        todo.extend([Step::Apply(Prim::Neg), Step::Visit(a)]);
+                    }
+                    _ => return None,
+                }
+            }
+            // The exponent of a `^` was pushed before its base was walked.
+            Step::Apply(Prim::Pow) => {
+                let x = facts.pop()?;
+                let k = facts.pop()?;
+                facts.push(rat_step(Prim::Pow, x, k));
+            }
+            Step::Apply(Prim::Neg) => {
+                let x = facts.pop()?;
+                facts.push(rat_step(Prim::Neg, x, None));
+            }
+            Step::Apply(p) => {
+                let y = facts.pop()?;
+                let x = facts.pop()?;
+                facts.push(rat_step(p, x, y));
+            }
+        }
+    }
+    facts.pop()?
+}
+
 /// The value of `b`, the exponent of a `^` at `rat`, where it is an `int` literal, perhaps
 /// under `-`: `^` takes (rat, int), so at `rat` the exponent keeps its own carrier, `int`.
 fn rat_exponent(b: &Expr) -> Option<Value> {
@@ -9817,6 +9959,29 @@ fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool)> {
         }
     }
     Some((out, rat))
+}
+
+/// The literals of `e`, an operation on bare literals alone ([`lit_op_recorded`]), in the
+/// order of the text, each one in the exponent of a `^` marked [`Lit::exponent`], since `^`
+/// takes an `int` exponent at `rat` whatever the carrier of its base. It costs the size of
+/// `e`, on its own stack.
+fn op_lits(e: &Expr, src: Option<&str>) -> Vec<Lit> {
+    let mut out = Vec::new();
+    let mut todo = vec![(e, false)];
+    while let Some((x, exponent)) = todo.pop() {
+        if let Some(l) = literal(x, src) {
+            out.push(Lit { exponent, ..l });
+            continue;
+        }
+        match &x.kind {
+            ExprKind::Binary(op, a, b) => {
+                todo.extend([(&**b, exponent || *op == BinaryOp::Pow), (&**a, exponent)])
+            }
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push((a, exponent)),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The rejection of a comparison `a == b` or `a != b` of two tuple displays of one shape whose

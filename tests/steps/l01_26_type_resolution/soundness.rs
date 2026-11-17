@@ -125,7 +125,7 @@ fn an_int_power_rejection_shows_the_negative_exponent() {
     // The first line names the exponent, in the power's code annotated with types.
     assert!(
         out.contains(
-            "Int power with a negative exponent: `2 : int ^ -1 : int`. Try `2.0f64^-1` instead."
+            "Int power with a negative exponent: `2 : int ^ -1 : int`. Try `2r^-1` instead."
         ),
         "{out}"
     );
@@ -136,7 +136,7 @@ fn an_int_power_rejection_shows_the_negative_exponent() {
         assert!(out.contains(&format!("repair: `{fix}`")), "{out}");
         assert_eq!(runs("", &format!(r#""${{{fix}}}""#), ""), "0.5\n");
     }
-    // The exact `rat` power, last (POW-rat).
+    // The exact `rat` power, first (POW-rat, POW-rat-first-repair).
     assert!(out.contains("repair: `2r^-1`"), "{out}");
     assert_eq!(runs("", r#""${2r^-1}""#, ""), "1r/2r\n");
     // Every value of the exponent is below 0, so no test of it is offered.
@@ -224,7 +224,7 @@ fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
     // -2 and the exact `rat` power is a repair too.
     let out = rejected("", r#""${2^(1 - 3)}""#);
     assert!(
-        out.contains("Int power with a negative exponent: `2 : int ^ (1 - 3) : -2`. Try `2.0f64^(1 - 3)` instead."),
+        out.contains("Int power with a negative exponent: `2 : int ^ (1 - 3) : -2`. Try `2r^(1 - 3)` instead."),
         "{out}"
     );
     assert!(out.contains("this `-` gives -2"), "{out}");
@@ -263,7 +263,7 @@ fn an_int_power_whose_exponent_may_be_below_zero_offers_a_test_of_it() {
         &[(&tested, "3", "8\n"), (&tested, "-3", "0\n")],
     );
     assert!(
-        out.contains("Int power with an exponent that may be negative: `2 : int ^ k : int`. Try `if k >= 0 { 2^k } else { … }` instead."),
+        out.contains("Int power with an exponent that may be negative: `2 : int ^ k : int`. Try `2r^k` instead."),
         "{out}"
     );
     assert!(out.contains("`k` is int here"), "{out}");

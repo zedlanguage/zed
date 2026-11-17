@@ -94,7 +94,7 @@ fn lower_data_limit(margin: u64) {
 }
 
 /// The rejection of [`program`] at `2^20`, where `x` is not folded: `x - x` may be negative.
-const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negative: `2 : int ^ (x - x) : int`. Try `exponent = x - x; if exponent >= 0 { 2 ^ exponent } else { … }` instead.
+const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negative: `2 : int ^ (x - x) : int`. Try `2r ^ (x - x)` instead.
   [1]  4:28: this `-` gives int
        4 |     m.stdout <- String(2 ^ (x - x));
          |                        ^^^^^^^^^^^ [16, 17]
@@ -125,8 +125,8 @@ const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negativ
   [13] 3:14: this literal, 2, is 2
   [14] 3:16: this literal, 20, is 20
   [15] 4:33: `x` is int here
-  [16] 4:24: repair: `exponent = x - x; if exponent >= 0 { 2 ^ exponent } else { … }`
-  [17] 4:24: repair: `2r ^ (x - x)`"#;
+  [16] 4:24: repair: `2r ^ (x - x)`
+  [17] 4:24: repair: `exponent = x - x; if exponent >= 0 { 2 ^ exponent } else { … }`"#;
 
 /// The first line of [`NOT_FOLDED`], the same at every exponent.
 const HEADLINE: &str =

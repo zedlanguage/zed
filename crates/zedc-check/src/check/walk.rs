@@ -5786,7 +5786,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// costs the size of `e`, twice where it holds a `/` or a `^`; in a repair's trial
     /// ([`Self::tried`]), which changes nothing that lasts, what it finds is read from
     /// [`Self::lit_fit`] instead.
-    fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
+    pub(super) fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
         if self.trying {
             let (takes, refused) = self.lit_fit(e, c);
             // A literal that is not exactly a `c` is rejected as below, which fails the trial.
@@ -6037,6 +6037,27 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
         );
         true
+    }
+
+    /// Drops the errors that `e`, an operation on bare literals alone, and the operations in
+    /// it wrote as they were walked ([`Ck::lit_written`]), as [`Self::lit_takes`] does, for
+    /// an operation whose rejection another stands for ([`Ck::resolve_top_parts`]). Nothing in
+    /// a repair's trial or a run again of a body, which record none. It costs the size of `e`.
+    fn lit_unwrite(&mut self, e: &Expr) {
+        if self.trying || self.replaying != 0 {
+            return;
+        }
+        let mut todo = vec![e];
+        while let Some(e) = todo.pop() {
+            if let Some(r) = self.lit_written.remove(&e.span) {
+                self.lit_dropped.insert(r.start, r.end);
+            }
+            match &e.kind {
+                ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+                _ => {}
+            }
+        }
     }
 
     /// Outside every function, each operation on literals alone in the parts of `value`
@@ -7179,6 +7200,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.as_written(Construct::Word(w), vec![Some(x)], span)
     }
 
+    /// Marks the carriers at which the prelude word `w` always fails on its operand `x`, an
+    /// operation on literals alone whose class nothing has given a carrier yet, so that a fix
+    /// that gives its literals such a carrier is not offered ([`Class::unoffered`]): in
+    /// `f() = f64(1 / 10);`, `1/10` at `rat` has no exact `f64`, so `f64(1r / 10)`, which is
+    /// rejected as a cast that always fails, is not offered, and `f64(1.0f64 / 10)` is (row
+    /// LIT-cast-inexact-rat-fix). The value at `rat` is read from the text as
+    /// [`Self::rat_folded`] reads it, with no power computed ([`text_rat`]); the one at `f64`,
+    /// whose values have a fixed size, is folded ([`folded`]). O(size of the operand), once
+    /// per application of a word.
+    fn word_unoffered(&mut self, w: &str, x: &Arg<'a>) {
+        let (Some(e), Some(p)) = (x.expr, zedc_base::interp::prim(w)) else {
+            return;
+        };
+        let Some(r) = self.class_beside_atoms(&x.ty) else {
+            return;
+        };
+        let fails =
+            |v: Option<Value>| v.is_some_and(|v| matches!(run(p, &v), Some(Value::Atom(_))));
+        let at_rat = match text_rat(e) {
+            Some(RatFact::Value(v)) => Some(v),
+            _ => None,
+        };
+        let bits = (u8::from(fails(at_rat)) * Carrier::Rat.bit())
+            | (u8::from(fails(folded(e, Carrier::F64))) * Carrier::F64.bit());
+        if bits != 0 {
+            let r = self.find(r);
+            self.touch(r);
+            self.classes[r].unoffered |= bits;
+        }
+    }
+
     /// [`Self::word_end`] checked.
     fn word_applied(&mut self, w: &'a str, mut x: Arg<'a>, span: Span) -> Ty {
         // `sum(x)` is `x.sum` (DESIGN.md sec:lexical, the row of `.`: "`x.f(a)` passes `x` as
@@ -7248,6 +7300,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 x.ty = Ty::carrier(c);
             }
         }
+        self.word_unoffered(w, &x);
         if w == "String" {
             self.data(
                 &x.ty,
@@ -11874,6 +11927,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let lowered = self.classes[a].level != self.classes[b].level;
         let mut lits = std::mem::take(&mut self.classes[child].lits);
         let mut alone = std::mem::take(&mut self.classes[child].alone);
+        let mut ops = std::mem::take(&mut self.classes[child].ops);
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
         let mut known = std::mem::take(&mut self.classes[child].known);
@@ -11887,6 +11941,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let floats = self.classes[child].floats;
         let rat = self.classes[child].rat;
         let decimal = self.classes[child].decimal;
+        let refused = self.classes[child].refused;
+        let unoffered = self.classes[child].unoffered;
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
@@ -11899,6 +11955,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.floats |= floats;
         c.rat |= rat;
         c.decimal |= decimal;
+        c.refused |= refused;
+        c.unoffered |= unoffered;
         // Its values are no longer those of one `min` or `max` use only.
         c.order_of = None;
         c.given &= given;
@@ -11951,6 +12009,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             std::mem::swap(&mut c.alone, &mut alone);
         }
         c.alone.extend(alone);
+        if c.ops.len() < ops.len() {
+            std::mem::swap(&mut c.ops, &mut ops);
+        }
+        c.ops.extend(ops);
         if c.reasons.len() < reasons.len() {
             std::mem::swap(&mut c.reasons, &mut reasons);
         }
@@ -14598,13 +14660,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The repairs of the int power `p`, whose exponent is not shown to be at least 0, each
-    /// the power rewritten in full in the program's code: on floats, which take a negative
-    /// exponent, with an int literal base or exponent written as a float literal, or with a
-    /// base parameter declared a float; where the exponent may be at least 0 and is no class
-    /// of literals, which a test does not narrow, a test of it, of a name bound in the body or
-    /// of a new name that holds it ([`fresh`]); and, last, on a `rat`, exact for an exponent
-    /// of either sign, with an int base written `2r` for the literal `2` and `rat(x)` for
-    /// anything else, a cast that cannot fail. No repair casts an int to a float: `f64(k)` may
+    /// the power rewritten in full in the program's code, in the order DESIGN.md
+    /// sec:diagnostics gives (plan row POW-rat-first-repair): first on a `rat`, exact for an
+    /// exponent of either sign, with an int base written `2r` for the literal `2` and `rat(x)`
+    /// for anything else, a cast that cannot fail; then, where the exponent may be at least 0
+    /// and is no class of literals, which a test does not narrow, a test of it, of a name
+    /// bound in the body or of a new name that holds it ([`fresh`]); and last on floats, which
+    /// take a negative exponent, with an int literal base or exponent written as a float
+    /// literal, or with a base parameter declared a float. No repair casts an int to a float: `f64(k)` may
     /// fail, with `#inexact`. Without the program's text, the test in words. Each repair on a
     /// `rat` or a float comes with the operand it rewrites, the base 0 or the exponent 1, and
     /// the carrier it writes there, which [`Self::power_swapped`] checks.
@@ -14650,30 +14713,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // An exponent that is a literal or holds a type variable takes a float as it is.
         let takes_float = p.exponent_takes_float;
         let mut out = Vec::new();
-        let param = p.param.as_deref();
-        let pass = match &param {
-            Some(b) => format!(", and pass a float as `{b}` at each call"),
-            None => String::new(),
-        };
-        match &param {
-            Some(b) if takes_float => {
-                out.push(((format!("{b}: f64"), pass.clone()), Some((0, Carrier::F64))));
+        // The exact power: a `rat` takes an int exponent of either sign, and an int widens to
+        // a `rat` with no failure, an int literal by its `r` suffix and anything else by `rat`.
+        // A base whose type holds a variable and that is no int literal is left: `rat` of it
+        // may be a float, which `rat` may refuse with `#invalid`.
+        if int_literal(bt) || p.base_int {
+            let base = match int_literal(bt) {
+                true => format!("{bt}r"),
+                false => format!("rat({})", unparen(bt)),
+            };
+            if let Some(p) = rewrite(&[(xs, &base)]) {
+                out.push(((p, String::new()), Some((0, Carrier::Rat))));
             }
-            None if takes_float && int_literal(bt) => {
-                if let Some(p) = rewrite(&[(xs, &format!("{bt}.0f64"))]) {
-                    out.push(((p, String::new()), Some((0, Carrier::F64))));
-                }
-            }
-            _ => {}
-        }
-        // The exponent is written with its carrier, `2^-3.0f64`: an unfixed `-3.0` takes none
-        // in an operation on literals alone, `c = 2^-3.0` at the top level, and `f64` is the
-        // carrier [`Self::power_swapped`] checks.
-        if p.base_takes_float
-            && int_literal(et.strip_prefix('-').unwrap_or(et))
-            && let Some(p) = rewrite(&[(ns, &format!("{et}.0f64"))])
-        {
-            out.push(((p, pass), Some((1, Carrier::F64))));
         }
         if test {
             match &p.tested {
@@ -14700,18 +14751,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        // The exact power: a `rat` takes an int exponent of either sign, and an int widens to
-        // a `rat` with no failure, an int literal by its `r` suffix and anything else by `rat`.
-        // A base whose type holds a variable and that is no int literal is left: `rat` of it
-        // may be a float, which `rat` may refuse with `#invalid`.
-        if int_literal(bt) || p.base_int {
-            let base = match int_literal(bt) {
-                true => format!("{bt}r"),
-                false => format!("rat({})", unparen(bt)),
-            };
-            if let Some(p) = rewrite(&[(xs, &base)]) {
-                out.push(((p, String::new()), Some((0, Carrier::Rat))));
+        let param = p.param.as_deref();
+        let pass = match &param {
+            Some(b) => format!(", and pass a float as `{b}` at each call"),
+            None => String::new(),
+        };
+        match &param {
+            Some(b) if takes_float => {
+                out.push(((format!("{b}: f64"), pass.clone()), Some((0, Carrier::F64))));
             }
+            None if takes_float && int_literal(bt) => {
+                if let Some(p) = rewrite(&[(xs, &format!("{bt}.0f64"))]) {
+                    out.push(((p, String::new()), Some((0, Carrier::F64))));
+                }
+            }
+            _ => {}
+        }
+        // The exponent is written with its carrier, `2^-3.0f64`: an unfixed `-3.0` takes none
+        // in an operation on literals alone, `c = 2^-3.0` at the top level, and `f64` is the
+        // carrier [`Self::power_swapped`] checks.
+        if p.base_takes_float
+            && int_literal(et.strip_prefix('-').unwrap_or(et))
+            && let Some(p) = rewrite(&[(ns, &format!("{et}.0f64"))])
+        {
+            out.push(((p, pass), Some((1, Carrier::F64))));
         }
         out
     }
@@ -16704,7 +16767,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     for i in 0..n {
                         let join = |rows: &[&[Ty]]| Ty::union_all(rows.iter().map(|r| &r[i]));
                         let part = |w: &Option<Rc<[Part<'a>]>>| match w.as_ref().map(|ps| &ps[i]) {
-                            Some(Part::Other) | None => None,
+                            Some(Part::Other | Part::Op(_)) | None => None,
                             Some(p) => Some(p.clone()),
                         };
                         todo.push((join(&s), join(&t), [part(&ws), part(&wt)]));
@@ -19970,6 +20033,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         i: usize,
         c: &Carry,
     ) -> Option<Ty> {
+        // A fix that puts the operand of a word at `rat`, where the text gives the operand's
+        // value there, gives the word that one value: `1r / 10` in `f64(1 / 10)` is `1/10`,
+        // which has no exact `f64`, so the cast always fails with `#inexact` and the fix is
+        // dropped, as `f64(1r / 10)` written is rejected ([`Self::operand_values`]; DESIGN.md
+        // sec:domains: "A cast `f64(9007199254740993r)` is never offered"; row
+        // LIT-cast-inexact-rat-fix). The operand is read from its text ([`text_rat`]), O(its
+        // size), once per fix carried to the word.
+        if let Construct::Word(word) = w.form
+            && c.ty.numeric_carrier() == Some(Carrier::Rat)
+            && let Some(e) = w.args[i].as_ref().and_then(|a| a.expr)
+            && let Some(RatFact::Value(v)) = self.rat_fact(e).or_else(|| text_rat(e))
+            && let Some(p) = zedc_base::interp::prim(word)
+            && matches!(run(p, &v), Some(Value::Atom(_)))
+        {
+            return None;
+        }
         let (ty, needs) = self.carried_check(w, &[(i, &c.ty)]);
         let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| j != i);
         needs
@@ -21184,6 +21263,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let passing = self.need_passed.len();
         let refusals = self.lit_refused.len();
         let made = self.top_parts.len();
+        let found = self.errors.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
             (1, _) => self.apply_one(what.text(), sig, 0, &args, &unneeded, defer, span),
             (_, Some(k)) => self.apply_one(what.text(), sig, k, &args, &unneeded, defer, span),
@@ -21197,7 +21277,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // application gave their classes, and the result names those types.
         let r = match self.top_parts.len() > made {
             true => {
-                self.resolve_top_parts(made);
+                let unmet = self.resolve_top_parts(made);
+                // The application wrote its rejection, or failed: it stands for the rejection
+                // of each operation a use refused at every carrier.
+                if r.is_err() || self.errors.len() > found {
+                    for e in unmet {
+                        self.lit_unwrite(e);
+                    }
+                }
                 r.map(|(t, kept)| (self.solved(&t), kept))
             }
             false => r,
@@ -22258,7 +22345,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             match part {
                 Part::Lit(l) => Src::Lit(l),
                 Part::Tuple(ps) => Src::Parts(ps, e),
-                Part::Branches(_) | Part::Other => Src::Other(e),
+                Part::Branches(_) | Part::Op(_) | Part::Other => Src::Other(e),
             }
         }
         let mut sets = VarSets::default();
@@ -22327,7 +22414,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         match part {
                                             Part::Tuple(qs) => inner.push((qs, item(e, j))),
                                             Part::Other => in_payloads(item(e, j), &mut payloads),
-                                            Part::Lit(_) | Part::Branches(_) => {}
+                                            // An operation on literals alone holds no payload.
+                                            Part::Lit(_) | Part::Branches(_) | Part::Op(_) => {}
                                         }
                                     }
                                 }
@@ -22388,7 +22476,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the `1.5` of `h(1.5)` one.
         let floats = Carrier::F64.bit() | Carrier::F32.bit();
         let decimal = floats | Carrier::Rat.bit();
-        let roots: HashSet<usize> = self.top_parts.iter().map(|&k| self.find(k)).collect();
+        let roots: HashSet<usize> = self.top_parts.iter().map(|&(k, _)| self.find(k)).collect();
         let fixed: HashSet<Span> = (roots.into_iter())
             .map(|r| &self.classes[r])
             .filter(|c| {
@@ -23162,7 +23250,7 @@ fn repair_note((code, tail): &Repair) -> String {
 
 /// The headline of an int `^` whose exponent is not shown to be at least 0: the power's code,
 /// each part annotated with its type, as `2 : int ^ k : -1`, then the first repair, if there
-/// is one, as "Try `2.0f64^-1` instead.". Each part is its code, if the checker has it, and
+/// is one, as "Try `2r^-1` instead.". Each part is its code, if the checker has it, and
 /// its type as shown; a literal whose type shows as the literal itself is annotated `int`.
 /// `negative` says that every value of the exponent is below 0.
 fn power_message(
@@ -24000,6 +24088,17 @@ impl<'a> Ck<'_, 'a> {
             }
             return Some(WordOperand::Values(values, Some(l.written().to_string())));
         }
+        // A `rat` the text gives the value of, as `1r / 10`, is that one value
+        // ([`Self::rat_fact`]), so `f64(1r / 10)` always fails with `#inexact` and is rejected
+        // as `f64(0.1r)` is (DESIGN.md sec:domains; row LIT-cast-inexact-rat-fix). O(1): the
+        // fact was kept when the operation was walked.
+        if let Some(e) = x.expr
+            && x.ty.numeric_carrier() == Some(Carrier::Rat)
+            && let Some(RatFact::Value(v)) = self.rat_fact(e)
+        {
+            let written = self.code(Some(e.span)).map(str::to_string);
+            return Some(WordOperand::Values(vec![v], written));
+        }
         let value = x.ty.without_atoms();
         if value.lists_nothing() {
             return None;
@@ -24434,7 +24533,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// class of its own in the same way, which each branch joins as the branches of an
     /// argument join the class of a parameter ([`Ck::branch_joins`]). `Err` where a branch
     /// cannot join it, which `what` at `span` reports.
-    fn generic_parts(&mut self, a: &Arg, what: &str, span: Span) -> Result<Option<Ty>, ()> {
+    ///
+    /// Outside every function an operation on bare literals alone written as a component
+    /// ([`Part::Op`]), as `3 / 2` in `h((3 / 2, 2))`, is a literal too (DESIGN.md L1.26a: "an
+    /// operation on literals alone ... takes the carrier of what it meets"), so it makes such a
+    /// class as well: its literals join it, an exponent of `^` as a follower, which keeps its
+    /// `int` at `rat` ([`Lit::exponent`]), and the class keeps only the carriers at which the
+    /// operation has a value ([`Self::lit_fit`]), so `3 / 2` loses `int`. With
+    /// `h(positional p) = p[0] + 1r` it then takes `rat` and `h((3 / 2, 2))` is `5r/2r`, as
+    /// `h(3 / 2)` is. Inside a function the walk already gives such an operation a class of
+    /// its own, which its type names. Complexity tradeoff: one walk of the operation for its
+    /// literals and one fold per numeric carrier, kept by operation ([`Self::lit_fit`]),
+    /// O(its size) for the four carriers; the naive form, the component typed as walked, is
+    /// `int` for `1 + 2` and rejected for `3 / 2`, whatever the body does with it.
+    fn generic_parts(&mut self, a: &Arg<'a>, what: &str, span: Span) -> Result<Option<Ty>, ()> {
         let Some(parts) = (a.parts.as_deref()).filter(|_| self.replaying == 0) else {
             return Ok(None);
         };
@@ -24464,11 +24576,43 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Part::Lit(l) if l.bare => {
                     let k = self.generic_class(l);
                     if self.level == 0 {
-                        self.top_parts.push(k);
+                        self.top_parts.push((k, None));
                     }
                     made = true;
                     let open = stack.last_mut().expect("an open tuple");
                     open.out.push(Ty::var(format!("${k}").into()));
+                }
+                &Part::Op(e) if self.level == 0 && self.lit_ops.contains(&e.span) => {
+                    let own = c.clone();
+                    let mask = Carrier::ALL
+                        .into_iter()
+                        .filter(|&c| c.numeric() && self.lit_fit(e, c).0)
+                        .fold(0, |m, c| m | c.bit());
+                    let k = self.class();
+                    self.classes[k].generic = true;
+                    let joined = self.restrict_asking(k, mask, what, span, false)
+                        && op_lits(e, self.t.text)
+                            .iter()
+                            .all(|l| self.join(k, &l.joining(), l.exponent));
+                    let open = stack.last_mut().expect("an open tuple");
+                    match joined {
+                        // No carrier gives the operation a value, as `1 / 0`: it keeps its
+                        // type, and its rejection stands.
+                        false => open.out.push(own),
+                        true => {
+                            open.out.push(Ty::var(format!("${k}").into()));
+                            // An operation its walk rejected, as `2^-1` at `int`, has no value
+                            // of the type it was walked at: its values are those of the
+                            // carriers it may take.
+                            let own = match self.lit_written.contains_key(&e.span) {
+                                true => Ty::of_mask(mask),
+                                false => own,
+                            };
+                            self.classes[k].ops.push((e.span, own));
+                            self.top_parts.push((k, Some(e)));
+                            made = true;
+                        }
+                    }
                 }
                 Part::Branches(bs) => {
                     let k = self.class();
@@ -24479,7 +24623,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     }
                     if self.level == 0 {
-                        self.top_parts.push(k);
+                        self.top_parts.push((k, None));
                     }
                     made = true;
                     let open = stack.last_mut().expect("an open tuple");
@@ -25207,6 +25351,10 @@ fn parts<'e>(
                 *any = true;
             }
             (None, ExprKind::Tuple(inner)) => stack.push((inner, 0, Vec::new(), false)),
+            (None, _) if lit_op_recorded(item, src) => {
+                ps.push(Part::Op(item));
+                *any = true;
+            }
             (None, _) => match branch_lits(item, src, kept) {
                 Some(bs) => {
                     ps.push(Part::Branches(bs));

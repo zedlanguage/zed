@@ -163,30 +163,30 @@ const OFFERED: [(&str, &str, &[&str]); 9] = [
         "q(k: int) = 2^(k - 5);\n",
         "2^(k - 5)",
         &[
-            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
             "2r^(k - 5)",
+            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
         ],
     ),
     (
         "q(k: int) = 1 + 2^(k - 5);\n",
         "2^(k - 5)",
         &[
-            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
             "2r^(k - 5)",
+            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
         ],
     ),
     (
         "q(k: int) {\n  y = 2^(k - 5);\n  return y + 1;\n}\n",
         "2^(k - 5)",
         &[
-            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
             "2r^(k - 5)",
+            "exponent = k - 5; if exponent >= 0 { 2^exponent } else { … }",
         ],
     ),
     (
         "q(k: int) = 2^k;\n",
         "2^k",
-        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
     ),
     // `n + 2r^k` adds a `rat` to an int: not offered.
     (
@@ -205,11 +205,11 @@ const OFFERED: [(&str, &str, &[&str]); 9] = [
         "q(k: int) = if k >= 0 { 2^(2^k - 2) } else { 0 };\n",
         "2^(2^k - 2)",
         &[
-            "exponent = 2^k - 2; if exponent >= 0 { 2^exponent } else { … }",
             "2r^(2^k - 2)",
+            "exponent = 2^k - 2; if exponent >= 0 { 2^exponent } else { … }",
         ],
     ),
-    ("c = 2^-3;\n", "2^-3", &["2.0f64^-3", "2^-3.0f64", "2r^-3"]),
+    ("c = 2^-3;\n", "2^-3", &["2r^-3", "2.0f64^-3", "2^-3.0f64"]),
     // Each repair changes the value to a `rat` or a float, which `+ k` does not take.
     ("q(k: int) = 2^-3 + k;\n", "2^-3", &[]),
 ];
@@ -250,16 +250,16 @@ const BOUND: [(&str, &[&str]); 9] = [
     // A use outside any construct takes every type.
     (
         "q(k: int) {\n  y = 2^k;\n  return y;\n}\n",
-        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
     ),
     // Both arguments are uses of `y`: `2r^k` makes both rat at once.
     (
         "q(k: int) {\n  y = 2^k;\n  return y * y;\n}\n",
-        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
     ),
     (
         "q(k: int) {\n  y = 2^k;\n  return (y + 1) * y;\n}\n",
-        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
     ),
     // Through a second name, and through a construct bound to a name.
     (
@@ -282,7 +282,7 @@ const BOUND: [(&str, &[&str]); 9] = [
     ),
     (
         "q(k: int) {\n  y, w = (2^k, 1);\n  return y + 1;\n}\n",
-        &["if k >= 0 { 2^k } else { … }", "2r^k"],
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
     ),
     // An argument of a call whose parameter is an int.
     (
@@ -310,20 +310,20 @@ fn a_repair_of_a_bound_value_is_checked_at_every_use() {
 const NEGATIVE_BOUND: [(&str, &[&str]); 10] = [
     (
         "g() = { z = 2^-1; z };\n",
-        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+        &["2r^-1", "2.0f64^-1", "2^-1.0f64"],
     ),
     (
         "g() {\n  z = 2^-1;\n  return z;\n}\n",
-        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+        &["2r^-1", "2.0f64^-1", "2^-1.0f64"],
     ),
     // The power's class holds the `1` too, which takes each repair's carrier.
     (
         "g() {\n  z = 2^-1 + 1;\n  return z * z;\n}\n",
-        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+        &["2r^-1", "2.0f64^-1", "2^-1.0f64"],
     ),
     (
         "g() = { z = { w = 2^-1; w }; z };\n",
-        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+        &["2r^-1", "2.0f64^-1", "2^-1.0f64"],
     ),
     // `z + n` takes none: each repair adds a rat or a float to an int.
     ("g(n: int) {\n  z = 2^-1;\n  return z + n;\n}\n", &[]),
@@ -335,7 +335,7 @@ const NEGATIVE_BOUND: [(&str, &[&str]); 10] = [
     // A component of a tuple display bound to a name.
     (
         "g() {\n  z, w = (2^-1, 3);\n  return z;\n}\n",
-        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+        &["2r^-1", "2.0f64^-1", "2^-1.0f64"],
     ),
     (
         "g(n: int) {\n  z, w = (2^-1, n);\n  return z + n;\n}\n",
