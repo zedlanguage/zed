@@ -547,6 +547,34 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
     );
 }
 
+/// A refused comparison of two functions read as the result of a function that is not alone
+/// (it holds the outer `T`) refuses the call; it is not dropped as a misfit
+/// (TYPES-fits-read-refusal). `Comparing::fits_read` compares the inner functions, `g`'s own
+/// `V` meets the refusal of the test above, and the outer comparison reads that pair twice: the
+/// first time compares it and refuses, the second takes the kept answer and refuses again.
+/// Either refusal alone gives this message; with both taken out the checker wrongly says `p`
+/// does not take `g`, with no arrow.
+#[test]
+fn a_refused_comparison_of_result_functions_refuses_the_call() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let a = "((int, int),) | ((int, int, int),)";
+    let b = "((int, bool) | (int, bool, bool),) | ((int, V) | (int, V, V),)";
+    let c = "((int, bool) | (int, bool, bool),)";
+    let src = format!(
+        "p(f: (x: T) -> ((y: ({a} | {c}, bool)) -> T) for T in int | f64) = 0;\n\
+         q(g: (x: T) -> ((y: ({b}, bool)) -> T for V in int | f64) for T in int | f64) = p(f: g);\n"
+    );
+    let errs = type_errors(&src);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    for part in [
+        "The checker could not decide whether `p` takes",
+        "the tuples ((int, int),) and ((int, int, int),) may each be held by one of the shapes",
+    ] {
+        assert!(errs[0].contains(part), "{part}: {errs:?}");
+    }
+    assert!(!errs[0].contains("does not take"), "{errs:?}");
+}
+
 /// An answer found after a refusal is not kept in the memo of rows (`Cx::compared`), where a
 /// later attempt, with nothing refused, would read it. `s` has the arrows
 /// `(x: #m(A) | #m(E) | int, y: #m(E) | int | V) -> int` and `(x: #m(X) | String, y: int) -> int`,

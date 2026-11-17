@@ -5894,8 +5894,8 @@ struct Cx<'s> {
     // comparison would give if run again on the same nodes, binds, bounds and ceilings. It
     // needs node ids that are never reused (a global counter, so true within one run), every
     // input the comparison reads to be part of the `Compared` key, and no refusal behind a
-    // kept answer. `recall` checks only `unchosen`; whether that covers every refusal state is
-    // open in row TYPES-compared-recall-refused. Evidence:
+    // kept answer. `recall` checks `unchosen`, the one refusal state, and compares again
+    // under a refusal (the argument at [`Comparing::recall`]). Evidence:
     // `a_shared_pair_met_again_under_other_bindings_keeps_them`,
     // `rows_compared_after_a_refusal_give_the_refusal`, and
     // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`; benchmarks 8.15x,
@@ -7984,6 +7984,13 @@ impl<'m, 's> Comparing<'m, 's> {
     /// [`fits_in`], which is not one of these. A name is never made again in one state, and
     /// [`Comparing::diff`] sets this memo aside with the names, so a kept verdict is never read
     /// for other functions. The names are keys by identity: each is one function as read.
+    ///
+    /// Both refusals below, of a kept verdict and of a fresh one, are reached by
+    /// `a_refused_comparison_of_result_functions_refuses_the_call` in
+    /// tests/steps/l01_26_type_resolution/deep_ops.rs (TYPES-fits-read-refusal): the outer
+    /// comparison reads one pair twice, so the fresh refusal is given first and the kept one
+    /// second. Either alone gives the right message there; with both taken out the call is
+    /// wrongly said not to fit. Each costs O(1) more than the verdict it gives.
     async fn fits_read(&'m self, v: &Arc<str>, s: &Arc<Sig>, se: &Env, w: &Arc<str>) -> bool {
         let key = (v.clone(), w.clone());
         let (q, qe) = {
@@ -8177,6 +8184,20 @@ impl<'m, 's> Comparing<'m, 's> {
     /// The answer kept for the comparison `key` ([`Cx::compared`]), with the binding it gave;
     /// none once the comparison is refused, as a comparison then answers at once
     /// ([`Comparing::search`]), and the kept answer was found with nothing refused.
+    ///
+    /// Why the check of `unchosen` is right, and covers every refused state
+    /// (TYPES-compared-recall-refused). `unchosen` is the one state a refusal sets
+    /// ([`Self::refuse`]); `Cx::why` only carries the reason the outermost [`fits_in`] prints.
+    /// With the check, a refused state compares the pair again, which is the comparison's own
+    /// answer by definition, so the check can make no answer wrong. It also changes no verdict
+    /// that stands: a refusal kept to the end makes the verdict false ([`Cx::decided`]), and
+    /// an attempt of its own that is refused counts as no fit ([`arrow_fits_alone`],
+    /// [`part_of_alone`], [`Self::fits_read`] and the others that read [`Self::end_alone`]);
+    /// only [`Self::held_as_is`] and [`Self::failing_component`] read the answer of a refused
+    /// attempt. There, without the check, a kept true would stand where the attempt, refused,
+    /// answers at once; that is sound only under the assumption at [`Cx::compared`], so the
+    /// check is kept, at no cost but a test of an `Option`. Reached by no test: with a panic
+    /// put where the check meets a kept answer, the local suite (2586 pieces) passed.
     fn recall(&self, key: &Compared) -> Option<(bool, Binds)> {
         let cx = self.cx.borrow();
         if cx.unchosen.is_some() {
