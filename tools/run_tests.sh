@@ -207,8 +207,10 @@ fi
 # STATUS row: before, a target of its own, build/short, took 1.5 GB per checkout, 227 s cold and
 # 11 s after a one-line change to zedc; a clone deleted at the end of every run took 180 to
 # 237 s on every run.
-# The feature's crates are dylibs with no hash in their file names (debug/deps/libzedc.so and
-# the like), and their fingerprint directories have the same names in both builds, so the
+# The feature's crates are dylibs whose file names are the same in both builds
+# (debug/deps/libzedc.so and the like, or libzedc-<hash>.so in a worktree with build/LIBHASH,
+# where the hash depends on the features and profile only: see zrun), and their fingerprint
+# directories have the same names in both builds, so the
 # clone's copies take the paths of the main build's files, in the upper layer only; a short test binary loads its own copies, the first rpath being $ORIGIN (zrun). Cargo
 # sees a change made since the clone's last build by comparing the times of the sources with
 # those of the clone's own fingerprints, as in any target directory. That fails only when a
@@ -608,7 +610,9 @@ else
     # Cargo gives a package the features that the packages named on its command line ask for,
     # and the compiler crates are dylibs, whose file names do not change with their features: a
     # build of a package's unit tests with other features than the workspace build overwrites
-    # the library every test binary loads, and the next build rebuilds it. The packages ask for
+    # the library every test binary loads, and the next build rebuilds it. (In a worktree with
+    # build/LIBHASH each set of features has its own file, see zrun, so such a build overwrites
+    # nothing but is still a second build of the package.) The packages ask for
     # the workspace's features (dev-dependencies in crates/zed-native, crates/zed-tools and
     # tests); this stops the build when one does not, before anything is overwritten.
     features_of() { cargo tree "$@" -f '{p} [{f}]' --prefix none | sed 's/ (\*)$//' | sort -u; }

@@ -17,8 +17,9 @@
 #     entry, and fails on any cycle not in KNOWN_CYCLES. The binary is not built here: `cargo run
 #     -p zed-tools` (or `cargo build --workspace --bin imports`) gives the compiler crates other
 #     features than the test build, recompiles them and overwrites the dylibs every test binary
-#     loads (measured 2026-11-16: 15 workspace crates Dirty), and a release build is cold in a
-#     new worktree, since the central build has no release profile;
+#     loads (measured 2026-11-16: 15 workspace crates Dirty; in a worktree with build/LIBHASH it
+#     writes a second set of dylibs instead, see zrun, at the same cost), and a release build is
+#     cold in a new worktree, since the central build has no release profile;
 #  2. runs, with tools/run_tests.sh --only, every test group of every workspace package that
 #     depends on a changed package, directly or through others, and of the changed packages
 #     themselves. The packages and their dependencies come from `cargo metadata`; nothing is
