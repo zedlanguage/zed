@@ -5039,6 +5039,21 @@ impl Arrow {
             true => Arrow::partial_of(params, f(&self.value())),
         }
     }
+
+    /// Whether the fields agree as [`Arrow::value`] reads them: only a partial arrow stores
+    /// `#notFound`, and a partial arrow's lookup `result` holds the bare atom `#notFound`, or
+    /// is the unknown, which holds every value. [`Arrow::exact`] and [`Arrow::partial_of`]
+    /// make only such arrows; an arrow written field by field may not. A partial arrow whose
+    /// lookup lacks the atom answers no miss, and one that stores it while exact reads as
+    /// exact, so a reader taking [`Arrow::value`] as the stored values would be wrong.
+    /// What this cannot see: an exact arrow whose result holds `#notFound` stores it, and
+    /// one built to mean a miss is the same value (PROOF-family-values-builders).
+    pub fn miss_fields_agree(&self) -> bool {
+        let lookup_misses = || {
+            self.result.dynamic || (&self.result.set & &KType::atom("notFound")) != KType::empty()
+        };
+        (self.partial || !self.stores_not_found) && (!self.partial || lookup_misses())
+    }
 }
 
 /// A scalar carrier.
@@ -8283,7 +8298,11 @@ impl<'m, 's> Comparing<'m, 's> {
             return None;
         }
         let verdict = match (t.exact_data(), other.exact_data()) {
-            (Some(a), Some(b)) => a.subtype_verdict(&b),
+            (Some(a), Some(b)) => match self.payloads_by_rest(t, other).await {
+                Some(Err(())) => return Some(false),
+                Some(Ok(left)) => left.exact_data()?.subtype_verdict(&b),
+                None => a.subtype_verdict(&b),
+            },
             _ => {
                 let right = Right::of(other)?;
                 self.form_verdict(t, other, &right.fns, &right, named)
@@ -8291,6 +8310,69 @@ impl<'m, 's> Comparing<'m, 's> {
             }
         };
         held(verdict)
+    }
+
+    /// For `t` and `other` whose data have exact kernel types ([`Ty::exact_data`]), the payload
+    /// shapes of each atom both list decided by the rest of each shape less `other`'s shapes
+    /// near it ([`Self::shape_rest`], [`Rest::held`]), as [`Self::diff`] decides them: `Err`
+    /// where a shape holds a value `other` does not; `Ok` with `t` less the atoms whose shapes
+    /// are all held, for the kernel to decide the rest; none where no atom is decided.
+    ///
+    /// Proof. Write `A_n` for the atom `n` with any payload. [`payload_set`] makes the values
+    /// of `n` in a type listing the shapes `ss` of `n` the set's `A_n` met with `#n` of the
+    /// union of their kernel types, and no other. Yes for an atom: each shape `l` of `t` has an
+    /// empty rest less the shapes of `other` near it, so (proof at [`Self::held_together`]) the
+    /// union of `t`'s shapes is within the union of `other`'s, and with `t.set & A_n` within
+    /// `other.set`, proved by [`KType::is_empty`], `t`'s values of `n` are within `other`'s.
+    /// Then `t` within `other` exactly when `t` less `A_n` and its shapes is, as `t` is the union
+    /// of the two. No: a value `v` of `l` outside `other`'s shapes is built and checked
+    /// ([`Rest::held`]); where `A_n` is within `t.set`, proved, `#n(v)` is in `t`, and `other`
+    /// holds no value of `n` outside its shapes. A shape whose rest is refused, or an atom
+    /// whose condition is not proved, is left in `t` for the kernel.
+    ///
+    /// Why (PERF-types-payload-union-kernel-refusal): `#a(int, int, int, int)` within n shapes
+    /// `#a(2j | 2j+1 | 2j+2, …)` and the rest of it less them went to the kernel, whose search
+    /// would split more than one item at once and refused after seconds (`TupleSplit`, 3.09 s at
+    /// n = 64, 824 shapes); [`Self::held_together`] then decided it. Complexity tradeoff:
+    /// naive version, the kernel on the whole forms first, whose search on the union of n
+    /// overlapping shapes grows past n^2 before it refuses; used, the near shapes found once
+    /// for all of an atom's shapes ([`near_pairs`], O((l·G + r·H)·w + p)) and the rest of each
+    /// at the cost [`Self::shape_rest`] states, with the kernel's search only for each part of
+    /// a rest, as [`Self::diff`] pays.
+    async fn payloads_by_rest(&'m self, t: &Ty, other: &Ty) -> Option<Result<Ty, ()>> {
+        let solve = self.cx.borrow().solve;
+        let mut left: Option<Ty> = None;
+        for (n, ls) in &t.payloads {
+            let (Some(ls), Some(Some(rs))) = (ls, other.payloads.get(n)) else {
+                continue;
+            };
+            if ls.is_empty() {
+                continue;
+            }
+            let all = KType::atom_with(n, &KType::top());
+            let mut each = Held::Yes;
+            for (l, near) in ls.iter().zip(near_pairs(ls.iter(), rs.iter())) {
+                let cut: Vec<Shape> = near.into_iter().map(|j| rs[j].clone()).collect();
+                match self.shape_rest(l, &cut, solve).await.held() {
+                    Held::Yes => {}
+                    Held::No => {
+                        each = Held::No;
+                        break;
+                    }
+                    r @ Held::Refused(_) => each = r,
+                }
+            }
+            match each {
+                Held::No if (&all - &t.set).is_empty() => return Some(Err(())),
+                Held::Yes if (&(&t.set & &all) - &other.set).is_empty() => {
+                    let l = left.get_or_insert_with(|| t.clone());
+                    l.payloads.remove(n);
+                    l.set = &l.set - &all;
+                }
+                _ => {}
+            }
+        }
+        left.map(Ok)
     }
 
     /// [`Comparing::by_form`] of `t` and `other` with each variable outside their functions

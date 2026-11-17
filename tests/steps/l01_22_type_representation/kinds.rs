@@ -2758,6 +2758,35 @@ fn a_payload_shape_held_by_many_shapes_together_is_a_subtype_of_their_union() {
     }
 }
 
+/// The payload shapes of an atom both sides list are decided by the rest of each shape less the
+/// other side's shapes near it, and the rest of the type by the kernel
+/// (`Comparing::payloads_by_rest`, PERF-types-payload-union-kernel-refusal): a shape not held
+/// gives no, a bare atom beside the payloads, a payload of another atom, a scalar and a payload
+/// the other side does not list are each still compared, and a shape held by two shapes
+/// together gives yes. A bare atom `#b` is the atom with no payload, so it does not hold `#b(1)`.
+#[test]
+fn payload_shapes_decided_by_their_rest_leave_the_rest_of_the_type_compared() {
+    for (a, b, want) in [
+        ("#a(1) | #a(2)", "#a(1)", false),
+        ("#a(1) | #a(2)", "#a(1 | 2)", true),
+        ("#a(1 | 2, 1 | 2)", "#a(1, 1 | 2) | #a(2, 1 | 2)", true),
+        ("#a(1 | 2, 1 | 2)", "#a(1, 1 | 2) | #a(2, 1)", false),
+        ("#a | #a(1)", "#a(int)", false),
+        ("#a | #a(1)", "#a | #a(int)", true),
+        ("#a(1) | #b(1)", "#a(int) | #b(2)", false),
+        ("#a(1) | #b(1)", "#a(int) | #b(int)", true),
+        ("#a(1) | 5", "#a(int)", false),
+        ("#a(1) | 5", "#a(int) | int", true),
+        ("#a(1) | #b(1)", "#a(int) | #b", false),
+        ("#a(1)", "#a", false),
+        ("#a(String)", "#a(int)", false),
+    ] {
+        let (at, bt) = (ty(a), ty(b));
+        assert_eq!(at.subtype(&bt), want, "{a} within {b}");
+        assert_eq!(at.diff(&bt).is_empty(), want, "control: {a} less {b}");
+    }
+}
+
 /// A random payload item of data, `d` levels deep: literals, `int`, `bool`, an atom, tuples,
 /// payloads, unions and meets.
 fn random_item(r: &mut zed_tests::instances::Rng, d: usize) -> String {

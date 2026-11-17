@@ -648,3 +648,25 @@ fn function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_
         },
     );
 }
+
+#[test]
+fn a_wide_payload_within_many_overlapping_cuts_and_their_rest_scales() {
+    // `#a(int, int, int, int)` within the n shapes `#a(2j | 2j+1 | 2j+2, …)` and the rest of it
+    // less them: no one shape holds it, and the kernel refuses, as it would split more than one
+    // item at once, so the shapes near it hold it together when the rest of it less them is
+    // empty (FAIL-types-shape-union-sub-incomplete). The union is made before the timing.
+    // PERF-types-payload-union-kernel-refusal: timed out at 30 s (n = 64, 512).
+    let inputs = scaling::inputs(64, |n| {
+        let (whole, cuts) = wide_payload_cuts(4, n, &|j| numbers(2 * j..2 * j + 3));
+        let all = whole.diff(&cuts).union(&cuts);
+        (whole, all)
+    });
+    scaling::check(
+        "#a(int, int, int, int) within n overlapping shapes of four items and their rest",
+        64,
+        |n| {
+            let (whole, all) = &inputs[&n];
+            assert!(whole.subtype(all));
+        },
+    );
+}

@@ -11116,26 +11116,66 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
 /// kept it out of what `f` is given, `zip` refused the pair, and `first` gave `#none` for it.
 ///
 /// Proof that the value types are exactly the stored values, a miss being only the
-/// `#notFound` of a partial arrow that does not store it, and no `#outOfBounds` ever a miss:
-/// every family the checker makes is built by one of these, each of which says so.
-/// - A display (`Ck::display_step`, walk.rs) is [`Sig::one`], exact, its result the union of
-///   the stored entries' types.
-/// - A range, a `Lines` input, a written `[V]`, `concat`, `zip`, `group`, the strings of
-///   `split`, the outer level of `chunkBy`, and `#errs` payloads have one arrow made by
-///   [`Arrow::partial_of`] of its value type ([`Sig::one_partial`]); a written `K -> V` and
-///   `K ->? V` are [`Arrow::exact`] and [`Arrow::partial_of`].
-/// - `map`, `where`, `scan` and the runs of `chunkBy` build each arrow from the source's with
-///   [`Arrow::exact`], [`Arrow::partial_of`] or [`Arrow::remade`], their values from these
-///   values; `Domains::meet` (zedc-types) builds through the same two, and the other
-///   copies of a family (substitution, permuted or dropped parameters) keep each arrow's
-///   `partial` and `stores_not_found`.
+/// `#notFound` of a partial arrow that does not store it, and no `#outOfBounds` ever a miss
+/// (PROOF-family-values-builders). The claim has two parts.
+///
+/// (a) The fields agree ([`Arrow::miss_fields_agree`]): `stores_not_found` only on a partial
+/// arrow, and a partial arrow's lookup holds the bare `#notFound` or is the unknown. This is
+/// checked here at run time, in a debug build, on every family read: the fields are public
+/// and most arrows are written field by field, so a check in [`Arrow::exact`] and
+/// [`Arrow::partial_of`] would see none of those; every reader of a family's stored values
+/// comes through here. Test: `mod tests`, `a_family_arrow_whose_fields_disagree_is_caught`.
+///
+/// (b) An exact arrow of a family whose result holds `#notFound` stores it, never meaning a
+/// miss. No check at run time can see this, since such an arrow and one built to mean a miss
+/// are the same value (the bug TYPES-entries-keep-stored-notfound found in `chunkBy`, which
+/// added the atom to exact arrows). It holds of every builder, found by the search
+/// `command grep -rn -E 'Arrow \{|Arrow::exact\(|Arrow::partial_of\(|\.remade\(|\.result = '
+/// crates/zedc-check/src crates/zedc-types/src` (the zedc-syntax `TypeKind::Arrow` and the
+/// unit tests' arrows left out), in these classes:
+/// - [`Arrow::partial_of`], directly or by [`Sig::one_partial`]: a range, a `Lines` input, a
+///   written `[V]` and `K ->? V`, `concat`, `zip`, `group`, the strings of `split`, the outer
+///   level of `chunkBy`, `#errs` payloads, and `key_outside`'s repair (walk.rs). Partial, so
+///   (b) does not apply; (a) holds by construction.
+/// - [`Arrow::exact`], directly or by [`Sig::one`]: a display (`Ck::display_step`, walk.rs),
+///   its result the union of the stored entries' types, and a written `K -> V`; and the
+///   literals with `partial: false` of operators, casts, prelude words and handlers in this
+///   file (`arrows`, `op_sig`, `word_sig`, `int_cast_sig`, `bit_sig`, `handled_sig`), which
+///   are functions, never families (`data` false), so this reader never meets them.
+/// - [`Arrow::remade`] and copies from the source's arrows: `map`, `where`, `scan` and the
+///   runs of `chunkBy` (walk/fp_ops.rs), whose values are made from these values;
+///   `Domains::meet` and `covers` (zedc-types); the literals that copy `result`, `partial`
+///   and `stores_not_found` and change only the parameters (permuted or dropped parameters,
+///   walk.rs; `arrow_permitted`'s instances, ty.rs). A copy keeps (a) and (b) of its source.
+/// - A walk that rebuilds a signature's types (`sig_parts`, ty.rs, and the substitution
+///   `ar.result = ar.result.replace(..)`, walk.rs): each set it makes holds the set it read,
+///   widened by a binding or by [`Ty::carriers`], less only atoms with a payload, so a bare
+///   `#notFound` stays, and a type that absorbs into the unknown is the unknown; it keeps
+///   `partial`, and `sig_parts` stores `#notFound` where the source did or a variable of the
+///   value is bound to a type holding it. An exact result whose `#notFound` came from a
+///   binding is a value the binding gives, so stored.
+/// - The other field writes: `int_cast_sig`'s `a.result = ..` (this file) sets a cast's result
+///   with no `#notFound`, on a function, not a family; `o.result = ..` (walk.rs) is a need's
+///   result, not an arrow's.
+/// - `covers` (ty.rs) also makes copies whose result is a partial arrow's value, which break
+///   (a); they are compared only, never put in a family.
 /// - `#outOfBounds` is put in no arrow: a dense family's arrows answer `#notFound`
 ///   (`Dense`), which a read turns into `#outOfBounds` at the read (`out_of_bounds`,
 ///   walk.rs). So an `#outOfBounds` in a result is one the family stores.
 // Complexity tradeoff: one union of the arrows' values, O(arrows), the cost of the union of
 // results it replaces; a value is borrowed but for a partial arrow that does not store
-// `#notFound`, which is copied once without the atom.
+// `#notFound`, which is copied once without the atom. The check of (a) is O(1) per arrow, in
+// debug builds only.
 fn family_values(sig: &Sig) -> Ty {
+    for (i, a) in sig.arrows.iter().enumerate() {
+        debug_assert!(
+            a.miss_fields_agree(),
+            "arrow {i} of a family has `partial` {} and `stores_not_found` {} with lookup {}",
+            a.partial,
+            a.stores_not_found,
+            a.result
+        );
+    }
     let values: Vec<Cow<'_, Ty>> = sig.arrows.iter().map(Arrow::value).collect();
     Ty::union_all(values.iter().map(|v| &**v))
 }
@@ -13797,6 +13837,45 @@ mod tests {
             start,
             end: start + 1,
         }
+    }
+
+    /// The family `int ->? int`, with its one arrow's lookup made `lookup` field by field.
+    fn family_with_lookup(lookup: Ty) -> Sig {
+        let int = Ty::carrier(Carrier::Int);
+        let mut sig = Sig::one_partial(positional(1), vec![int.clone()], int);
+        sig.data = true;
+        sig.arrows[0].result = lookup;
+        sig
+    }
+
+    /// PROOF-family-values-builders, negative control: a partial arrow written field by field
+    /// whose lookup lacks `#notFound`, as a builder that took the value type for the lookup
+    /// would make, is caught when the family's values are read.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "arrow 0 of a family has `partial` true")]
+    fn a_family_arrow_whose_fields_disagree_is_caught() {
+        family_values(&family_with_lookup(Ty::carrier(Carrier::Int)));
+    }
+
+    /// The two builders make arrows whose fields agree, and each of the two ways to break
+    /// them is seen ([`Arrow::miss_fields_agree`]).
+    #[test]
+    fn the_arrow_builders_keep_the_miss_fields_agreeing() {
+        let int = Ty::carrier(Carrier::Int);
+        let miss = Ty::set(KType::atom("notFound"));
+        for value in [int.clone(), int.union(&miss), Ty::dynamic()] {
+            assert!(Arrow::exact(vec![int.clone()], value.clone()).miss_fields_agree());
+            assert!(Arrow::partial_of(vec![int.clone()], value).miss_fields_agree());
+        }
+        let ok = family_with_lookup(int.union(&miss));
+        assert_eq!(family_values(&ok), int);
+        assert!(!family_with_lookup(int.clone()).arrows[0].miss_fields_agree());
+        let exact_storing = Arrow {
+            stores_not_found: true,
+            ..Arrow::exact(vec![int.clone()], int.union(&miss))
+        };
+        assert!(!exact_storing.miss_fields_agree());
     }
 
     /// Only parentheses that group the whole code are taken off; a tuple's, `()`, a lambda's
