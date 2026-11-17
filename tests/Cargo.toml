@@ -344,6 +344,9 @@ rustix.workspace = true
 [dev-dependencies]
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 object = { workspace = true, features = ["build"] }
+# target-lexicon, under zed-native's cranelift-codegen, with `std`, which cranelift-reader
+# (through zed-clif) gives it in the workspace build (see crates/zed-native/Cargo.toml).
+target-lexicon = { version = "0.13.5", features = ["std"] }
 
 [lints]
 workspace = true

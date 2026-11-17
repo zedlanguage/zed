@@ -54,6 +54,9 @@ zedc-solvers = { workspace = true, features = ["counts"] }
 zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 # object as zed-native's tests have it in the workspace build: zed-native is a dylib too.
 object = { workspace = true, features = ["build"] }
+# target-lexicon with `std`, as cranelift-reader (through zed-clif) gives it in the workspace
+# build (see crates/zed-native/Cargo.toml).
+target-lexicon = { version = "0.13.5", features = ["std"] }
 
 [dev-dependencies]
 # The test that `runs` counts on the C library's heap asks the meter's heap whether it owns a

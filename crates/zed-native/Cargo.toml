@@ -143,3 +143,6 @@ zed-rt = { workspace = true, features = ["counts"] }
 # `two-at-a-time`, which the tests of zedc and its crates give it in the workspace build.
 zed-native = { path = ".", features = ["counts"] }
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+# And target-lexicon, under cranelift-codegen, with `std`, which cranelift-reader (through
+# zed-clif) gives it in the workspace build.
+target-lexicon = { version = "0.13.5", features = ["std"] }
