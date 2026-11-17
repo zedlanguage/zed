@@ -1012,4 +1012,62 @@ fn the_refused_ladder_is_decided_by_the_search() {
     }
 }
 
+/// In each of the six orders of the definitions of [`refused`]: with the repair of
+/// [`a_refused_member_read_through_a_meet_is_left_to_the_search_by_its_repair`] applied, `A` and
+/// `C` are inhabited and `B` and `Both` refused at a fork (GROUP-search-meet-values), the same
+/// in every order; without it, `(int, X)` is refused for the group's sake and points at `X`, for
+/// each member `X`. Plan item GROUP-order-verdicts listed both as open: `Both` refused in some
+/// orders, and `(int, A)` and `(int, C)` refused at a fork while `(int, B)` named the group.
+#[test]
+fn both_and_the_readers_of_refused_members_agree_in_every_order() {
+    use Verdict::{Inhabited, Refused};
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for at in orders {
+        let mut defs = placed(at);
+        defs[at[0]].1 = or(vec![defs[at[0]].1.clone(), atom("end", vec![])]);
+        defs.push((
+            "Both".into(),
+            atom(
+                "both",
+                vec![
+                    r(at[0]),
+                    Expr::And(vec![
+                        r(at[0]),
+                        Expr::Type(Type::tuple(vec![Type::top(), Type::top()])),
+                    ]),
+                ],
+            ),
+        ));
+        Type::forget_emptiness();
+        let types = group(defs);
+        let v: Vec<_> = (0..=SIZE)
+            .map(|k| types[if k < SIZE { at[k] } else { SIZE }].verdict())
+            .collect();
+        let fork = Refused(Refusal::Fork);
+        assert_eq!(v, [Inhabited, fork, Inhabited, fork], "order {at:?}");
+        Type::forget_emptiness();
+        let types = group(placed(at));
+        for (k, name) in ["A", "B", "C"].into_iter().enumerate() {
+            let reader = Type::tuple(vec![Type::int(), types[at[k]].clone()]);
+            assert_eq!(
+                reader.verdict(),
+                Refused(Refusal::Group),
+                "(int, {name}) in {at:?}"
+            );
+            assert_eq!(
+                reader.refusal_site(Refusal::Group).map(|s| s.head),
+                Some(name.into()),
+                "(int, {name}) in {at:?}"
+            );
+        }
+    }
+}
+
 mod bench;

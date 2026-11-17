@@ -7349,6 +7349,14 @@ pub mod rec {
             }
         }
 
+        /// Whether the order of the children does not count: the operands of a union or a meet.
+        /// `A | B` and `B | A` are one type, as are `A & B` and `B & A`, so [`canon`] and
+        /// [`spelled`] read these operands as a set (items GROUP-search-canon-key for the meet,
+        /// FAIL-codex-r3-order-seed for the union).
+        fn unordered(&self) -> bool {
+            matches!(self, Shape::Union(_) | Shape::And(_))
+        }
+
         /// The top of the shape, without its children or type, for [`Canon::order`] and [`canon`]:
         /// the kind, the index of a parameter or definition, and an atom's name.
         fn head(&self) -> (u8, usize, &str) {
@@ -8172,15 +8180,12 @@ pub mod rec {
             color[a] = next;
         }
         next += usize::from(v > 0);
-        // An operand of a meet is at no position: `A & B` and `B & A` are one type, so their
-        // nodes are of one class (item GROUP-search-canon-key). Every color below `next + widest`
-        // then has a place, as `Refine` needs.
+        // An operand of a meet or a union is at no position: `A & B` and `B & A` are one type, so
+        // their nodes are of one class (item GROUP-search-canon-key), and so are `A | B` and
+        // `B | A` (FAIL-codex-r3-order-seed). Every color below `next + widest` then has a place,
+        // as `Refine` needs.
         let position = |&(u, k, _): &(usize, usize, usize)| {
-            if matches!(of[u].e, Shape::And(_)) {
-                0
-            } else {
-                k
-            }
+            if of[u].e.unordered() { 0 } else { k }
         };
         let widest = places.iter().map(|p| position(p) + 1).max().unwrap_or(0);
         for (e, p) in places.iter().enumerate() {
@@ -8204,9 +8209,10 @@ pub mod rec {
             adj[cursor[v + e]] = u;
         }
         // The most arcs a vertex has into one class: a node's places are all of one color when
-        // it is a meet, so a node counts up to its number of children.
+        // it is a meet or a union, so a node counts up to its number of children.
         // Complexity tradeoff: one pass over the arcs, O(V + E), so that `Refine`'s degree bound
-        // holds where a meet's arcs all go into one color; no naive version is cheaper.
+        // holds where a meet's or a union's arcs all go into one color; no naive version is
+        // cheaper.
         let mut into = vec![0; size];
         for &w in &adj {
             into[w] += 1;
@@ -8236,12 +8242,13 @@ pub mod rec {
             let rep = &mut reps[class_of(u) as usize];
             if rep.is_none() {
                 let mut kids: Vec<u32> = n.e.kids().map(|c| class_of(target(c))).collect();
-                if matches!(n.e, Shape::And(_)) {
+                if n.e.unordered() {
                     // The operands' classes in their order, not the node's, so the form does
                     // not depend on which node of the class comes first.
                     // Complexity tradeoff (COMPLEXITY.md K102): the naive form keeps the
-                    // written order, O(k) for a meet of k operands, but then `A & B` and
-                    // `B & A` are two forms; sorting costs O(k log k) per meet, once per form.
+                    // written order, O(k) for a meet or union of k operands, but then `A & B`
+                    // and `B & A` are two forms, as are `A | B` and `B | A`; sorting costs
+                    // O(k log k) per meet or union, once per form.
                     kids.sort_unstable();
                 }
                 *rep = Some(((*n).clone(), kids));
@@ -8269,9 +8276,10 @@ pub mod rec {
         for n in node.iter().flatten() {
             spell[n.at as usize] = match &n.e {
                 Shape::Ref(j, _) => mix(2, names[*j]),
-                // The operands of a meet in the order of their spellings, so that `A & B` and
-                // `B & A` spell alike and are one part (item GROUP-search-canon-key).
-                e @ Shape::And(_) => {
+                // The operands of a meet or a union in the order of their spellings, so that
+                // `A & B` and `B & A` spell alike and are one part (item GROUP-search-canon-key),
+                // and so do `A | B` and `B | A` (FAIL-codex-r3-order-seed).
+                e if e.unordered() => {
                     let mut kids: Vec<u64> = e.kids().map(|c| spell[c.at as usize]).collect();
                     // Complexity tradeoff (COMPLEXITY.md K102): hashing in the written order is
                     // O(k) for k operands but depends on that order; the sort is O(k log k).
@@ -8295,11 +8303,11 @@ pub mod rec {
     /// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
     /// definitions each one's occurrences name: by head, an occurrence by the name it is written
     /// with, then the children in place order, in a loop. The types they hold are not read: two
-    /// nodes of one class hold equal ones. The operands of a meet are paired in the order of their
-    /// spelling hashes (`xh`, `yh`, by node number), as [`canon`] hashes them, so that the order
-    /// they are written in does not count; operands whose hashes tie keep their written order,
-    /// which decides only where two spellings collide in hash. Time linear in the nodes, besides a
-    /// sort of each meet's operands.
+    /// nodes of one class hold equal ones. The operands of a meet or a union are paired in the
+    /// order of their spelling hashes (`xh`, `yh`, by node number), as [`canon`] hashes them, so
+    /// that the order they are written in does not count; operands whose hashes tie keep their
+    /// written order, which decides only where two spellings collide in hash. Time linear in the
+    /// nodes, besides a sort of each meet's or union's operands.
     fn spelled<'a>(
         (x, xs, xh): (&'a Node, &'a [Def], &[u64]),
         (y, ys, yh): (&'a Node, &'a [Def], &[u64]),
@@ -8336,10 +8344,10 @@ pub mod rec {
             if c.is_ne() {
                 return c;
             }
-            if matches!(x.e, Shape::And(_)) {
+            if x.e.unordered() {
                 // Complexity tradeoff (COMPLEXITY.md K102): pairing in place order is O(k), but
-                // depends on the written order; the sort by hash costs O(k log k) per meet
-                // pair, so the walk stays O(N log N) in the nodes, and a hash tie falls back
+                // depends on the written order; the sort by hash costs O(k log k) per meet or
+                // union pair, so the walk stays O(N log N) in the nodes, and a hash tie falls back
                 // to the written order, which then decides only between colliding spellings.
                 let by_hash = |n: &'a Node, h: &[u64]| {
                     let mut kids: Vec<&'a Node> = n.e.kids().map(|c| &**c).collect();

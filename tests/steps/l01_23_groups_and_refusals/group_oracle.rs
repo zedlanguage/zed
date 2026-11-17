@@ -3053,6 +3053,17 @@ fn meets_whose_parts_differ_in_order_agree_across_orders() {
     }
 }
 
+/// A system of the meets-and-differences family whose verdicts depended on the order of the
+/// arms of its unions, in orders with no tuple reversed (FAIL-codex-r3-order-seed): `A | B` and
+/// `B | A` built two groups whose members had different digests, and the search, which meets
+/// the parts of a type in digest order, made its choices in another order. With a union's arms
+/// read as a set, it agrees in every order tried. Of the seeds 0 to 1999 of the five families,
+/// four orders each, it was the one system that differed with no tuple reversed.
+#[test]
+fn cells_whose_union_arms_differ_in_order_agree_across_orders() {
+    verdicts_agree_across_orders("cells", gen_cells, &[1588], (true, true));
+}
+
 /// Groups of four, five and six definitions of the X14 family give the same verdicts in every
 /// order tried, up to the reason of a refusal (GROUP-closure-order).
 #[test]
@@ -3223,7 +3234,9 @@ fn named_graphs_of_one_class_keep_their_own_printed_bodies() {
 
 /// Seed 3228 of the X14 family with meets (GSX-unsolved). The operands of a meet print in the
 /// order of their digests, names-aware first (`digests_cmp` in zed-kernel), so its first
-/// member writes `Part8 & Part6`. The text is the same when copies of the group with the definitions
+/// member writes `Part6 & Part8` (`Part8 & Part6` until FAIL-codex-r3-order-seed read a union's
+/// arms as a set in the group's canonical form, which changed the digests). The text is the
+/// same when copies of the group with the definitions
 /// reversed, other names, or the arms in another order were built and decided first, and when
 /// the members print last first.
 #[test]
@@ -3268,7 +3281,7 @@ fn a_group_prints_the_same_text_whatever_was_built_before_it() {
     let fresh = printed(false, false);
     assert_eq!(
         fresh[0],
-        "type Part1 = (#k, Part1); / type Part2 = Part8 & Part6; / type Part3 = (#k, Part1) & (#k, Part3); / \
+        "type Part1 = (#k, Part1); / type Part2 = Part6 & Part8; / type Part3 = (#k, Part1) & (#k, Part3); / \
          type Part4 = (#k, Part3) & ((Part2, Part5) | (#k, Part2)); / \
          type Part5 = (#k, Part3) & ((Part1, Part7) | (#k, Part4)); / type Part6 = (Part2, Part5) | (#k, Part2); / \
          type Part7 = int -> Part6; / type Part8 = (Part1, Part7) | (#k, Part4); / type Part9 = Part8 | (int -> Part3); / Part9"

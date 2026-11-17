@@ -133,6 +133,9 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // PERF-xor-shape-free draws the sets' priorities too and makes an exclusive or one
     // expression for its set of atoms, its digest a hash of the set's, which changes the digests
     // of four samples (lines 13 to 15 and 30) and so the order of some operands.
+    // FAIL-codex-r3-order-seed reads a union's arms in a group's canonical form as a set, as a
+    // meet's operands are, which changes the digest of the `Tree` sample (line 16) and nothing
+    // else.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());

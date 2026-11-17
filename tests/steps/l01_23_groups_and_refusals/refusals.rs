@@ -2181,8 +2181,10 @@ const PREFIX_CHAIN_SEEDS: std::ops::Range<u64> = 0..1024;
 /// The seeds of [`PREFIX_CHAIN_SEEDS`] whose family the kernel refuses with Fork while the oracle
 /// finds a value in it (row REFUSAL-list-front-chain-fork, found 2026-11-14 when the cases were
 /// first drawn afresh). The test asserts that refusal, so a fix that decides one fails here and
-/// moves the seed out of this list.
-const PREFIX_CHAIN_FORK_SEEDS: &[u64] = &[19, 68, 476, 744];
+/// moves the seed out of this list. Seed 744 left it when FAIL-codex-r3-order-seed read a
+/// union's arms as a set in a group's canonical form: its search now meets the tuple types in
+/// another order and finds a value.
+const PREFIX_CHAIN_FORK_SEEDS: &[u64] = &[19, 68, 476];
 
 /// Random small prefix-chain family `chain`: a list of `int` (with cofinite heads) or of `bool`
 /// less the union of 2 to 4 chains of 1 to 4 conses, each of whose steps may also be `nil`.
@@ -2859,11 +2861,28 @@ fn r3_cofinite_survey() {
 
 #[test]
 fn codex_r3_variants_agree_with_the_oracle() {
+    codex_r3_variants(Rng::fresh("codex R3 variants"), None);
+}
+
+/// The random trials of [`codex_r3_variants_agree_with_the_oracle`] that gave one verdict as
+/// written and another with the definitions and union arms reversed, before
+/// FAIL-codex-r3-order-seed read a union's arms as a set in a group's canonical form: 4 of the
+/// seeds 1 to 2000 (each run with the seed's draws replayed, and only the trial named asked).
+#[test]
+fn codex_r3_trials_that_depended_on_the_order() {
+    for (seed, trial) in [(383, 26), (548, 33), (714, 26), (941, 10)] {
+        codex_r3_variants((Rng::new(seed), seed), Some(trial));
+    }
+}
+
+/// The cases and random trials of [`codex_r3_variants_agree_with_the_oracle`] drawn from
+/// `pick`; with `only`, the draws are made as in a full run, but only random trial `only` is
+/// built and asked.
+fn codex_r3_variants((mut pick, seed): (Rng, u64), only: Option<usize>) {
     // Every case to n = 4, one in two at n = 5 and one in four at n = 6, drawn afresh, and 40
     // random trials from the printed seed (author P169): every case and 120 trials from one
     // fixed seed, in 2 s to 3.4 s, until TEST-bench-move-l0123.
     let keep = |n: usize| [1, 1, 1, 1, 1, 2, 4][n];
-    let (mut pick, seed) = Rng::fresh("codex R3 variants");
     let int_ty = Type::int();
     let one_ty = lit(1);
     let bool_ty = Type::bool();
@@ -2897,7 +2916,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
                 for m in 1..=n + 2 {
                     for split in [false, true] {
                         seq += 1;
-                        if pick.below(keep(n)) != 0 {
+                        if pick.below(keep(n)) != 0 || only.is_some() {
                             continue;
                         }
                         Type::forget_emptiness();
@@ -2932,7 +2951,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
     for n in 2..=6 {
         for m in 1..=n + 1 {
             seq += 1;
-            if pick.below(keep(n)) != 0 {
+            if pick.below(keep(n)) != 0 || only.is_some() {
                 continue;
             }
             Type::forget_emptiness();
@@ -2951,7 +2970,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
         for far in [false, true] {
             for which in ["chain", "groups", "one"] {
                 seq += 1;
-                if pick.below(keep(n)) != 0 {
+                if pick.below(keep(n)) != 0 || only.is_some() {
                     continue;
                 }
                 Type::forget_emptiness();
@@ -2984,7 +3003,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
         for s1 in [None, Some(1), Some(n / 2), Some(n)] {
             for s2 in [None, Some(1), Some(n - 1), Some(n)] {
                 seq += 1;
-                if pick.below(keep(n)) != 0 {
+                if pick.below(keep(n)) != 0 || only.is_some() {
                     continue;
                 }
                 Type::forget_emptiness();
@@ -3076,6 +3095,9 @@ fn codex_r3_variants_agree_with_the_oracle() {
             }
             neg_roots.push(base_idx + d - 1);
         }
+        if only.is_some_and(|o| o != trial) {
+            continue;
+        }
         let reverse_defs = defs.clone();
         let ts = r3_instance(defs);
         let u = neg_roots
@@ -3121,6 +3143,115 @@ fn codex_r3_variants_agree_with_the_oracle() {
             "random query order {trial} of ZED_TEST_SEED={seed}"
         );
     }
+}
+
+/// Trial 26 of `ZED_TEST_SEED=10489595623140704143` in the test above (FAIL-codex-r3-order-seed):
+/// the lists of integers outside four chains, a type that holds `[1, 3]` and `[2, 1]`, was
+/// Refused(Fork) as written and Inhabited with the definitions, the arms of each union and the
+/// union of the chains reversed. The cause: a union's arms were at positions in the group's
+/// canonical form, so the reversed group was another group, its members other types with other
+/// digests, and the search met the tuple types of the list in another order, which its greedy
+/// choice of a piece (`Searching::refine`) follows. Union arms are now a set, as a meet's
+/// operands are: both presentations give equal member types, and so one verdict.
+#[test]
+fn codex_r3_order_seed_10489595623140704143_trial_26() {
+    let ex = |a: &Type, b: &Type| Expr::Type(a - b);
+    let one_two = &lit(1) | &lit(2);
+    let defs = || {
+        let i = Type::int();
+        let mut d = vec![def("L_s26", Expr::Union(vec![nil(), cons(int(), r(0))]))];
+        d.push(def("N0_1_s26", cons(ex(&i, &one_two), r(0))));
+        d.push(def("N0_2_s26", cons(int(), r(1))));
+        d.push(def("N0_3_s26", cons(int(), r(2))));
+        d.push(def(
+            "N1_1_s26",
+            Expr::Union(vec![nil(), cons(ex(&i, &lit(2)), r(0))]),
+        ));
+        for k in 2..=5 {
+            d.push(def(
+                &format!("N1_{k}_s26"),
+                Expr::Union(vec![nil(), cons(Expr::Type(lit(1)), r(k + 2))]),
+            ));
+        }
+        d.push(def("N2_1_s26", Expr::Union(vec![nil(), cons(int(), r(0))])));
+        for k in 2..=3 {
+            d.push(def(
+                &format!("N2_{k}_s26"),
+                Expr::Union(vec![nil(), cons(ex(&i, &lit(1)), r(k + 7))]),
+            ));
+        }
+        d.push(def("N3_1_s26", cons(Expr::Type(one_two.clone()), r(0))));
+        d.push(def(
+            "N3_2_s26",
+            Expr::Union(vec![nil(), cons(ex(&i, &lit(2)), r(12))]),
+        ));
+        d
+    };
+    let roots = [3, 8, 11, 13];
+    let witness = Value::atom_with(
+        "cons",
+        vec![
+            Value::Int(1),
+            Value::atom_with("cons", vec![Value::Int(3), Value::atom("nil")]),
+        ],
+    );
+    let mut seen: Vec<(Vec<Type>, Type, Verdict)> = Vec::new();
+    for reverse in [false, true] {
+        R3_REVERSE.with(|x| x.set(reverse));
+        let ts = r3_instance(defs());
+        let u = roots
+            .iter()
+            .fold(Type::empty(), |u, &i| r3_union(&u, &ts[i]));
+        R3_REVERSE.with(|x| x.set(false));
+        let t = &ts[0] - &u;
+        assert!(t.contains(&witness), "reverse={reverse}");
+        Type::forget_emptiness();
+        let v = t.verdict();
+        // The type holds `[1, 3]`: any answer but Empty is sound. Whether the search finds that
+        // value is not asserted here; that both orders agree is.
+        assert_ne!(v, Verdict::Empty, "reverse={reverse}");
+        assert!(!t.is_empty(), "is_empty reverse={reverse}");
+        seen.push((ts, t, v));
+    }
+    let (written, reversed) = (&seen[0], &seen[1]);
+    for (i, (a, b)) in written.0.iter().zip(&reversed.0).enumerate() {
+        assert_eq!(a, b, "member {i} as written and reversed");
+    }
+    assert_eq!(written.1, reversed.1, "the type as written and reversed");
+    assert_eq!(written.2, reversed.2, "the verdict as written and reversed");
+}
+
+/// A group whose union arms are written in another order is the same group: its members are
+/// equal types, so that every answer about them is the same (FAIL-codex-r3-order-seed). Arms of
+/// a union nested in a tuple and in an atom's payload are reordered too.
+#[test]
+fn reordered_union_arms_give_equal_members() {
+    let one_two = &lit(1) | &lit(2);
+    let build = |rev: bool| {
+        let arms = |mut xs: Vec<Expr>| {
+            if rev {
+                xs.reverse();
+            }
+            Expr::Union(xs)
+        };
+        let defs = vec![
+            def("UA_list", arms(vec![nil(), cons(int(), r(0))])),
+            def(
+                "UA_pair",
+                arms(vec![
+                    Expr::Tuple(vec![
+                        arms(vec![Expr::Type(lit(1)), Expr::Type(lit(2))]),
+                        r(0),
+                    ]),
+                    cons(Expr::Type(one_two.clone()), r(1)),
+                    nil(),
+                ]),
+            ),
+        ];
+        r3_instance(defs)
+    };
+    let (a, b) = (build(false), build(true));
+    assert_eq!(a, b);
 }
 
 fn oracle_inhabited(t: &Type, alphabet: &[Value], max_len: usize) -> bool {
