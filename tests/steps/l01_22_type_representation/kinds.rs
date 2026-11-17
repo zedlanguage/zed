@@ -1167,8 +1167,16 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
     // `V` is bounded in `f`'s type, which the heading does not print: the tuples `g` gives,
     // `W` bound to `V`, the bucket and the repair all name it, and the message says which
     // `for` binds it. The repair is written in `f`'s result, where `V` is bound.
-    let src = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),) \
-               for V in int | f64) = 0;\n\
+    // With `((V, V) | (V, V, V),)` for the second shape, each tuple is a member of its union and
+    // is held there as it is (`member_hit`, FAIL-print-two-variables-one-name): accepted, where
+    // before it was refused with the message below. With `int | V` in each first component, no
+    // tuple is a member of the union, and the search refuses as before.
+    let held = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V) | (V, V, V),) \
+                for V in int | f64) = 0;\n\
+                q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int | f64) = p(f: g);\n";
+    assert_eq!(type_errors(held), Vec::<String>::new());
+    let src = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) \
+               | ((int | V, V) | (int | V, V, V),) for V in int | f64) = 0;\n\
                q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int | f64) = p(f: g);\n";
     assert_eq!(
         type_errors(src),
@@ -1176,7 +1184,8 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
             "The checker could not decide whether `p` takes ((x: W) -> ((W, W),) | ((W, W, W),) \
              for W in int | f64), so it is not proved wrong.\n  because the tuples \
              ((V, V),) and ((V, V, V),) may each be held by one of the shapes ((int, bool) | \
-             (int, bool, bool),) | ((V, V) | (V, V, V),), which have no component that is one \
+             (int, bool, bool),) | ((int | V, V) | (int | V, V, V),), which have no component \
+             that is one \
              value, of one carrier, of one atom name or of one tuple length, and neither is held \
              by the first of those shapes; which shape holds each decides what the type \
              variables are bound to, and the checker looks through those shapes for one of the \
@@ -1188,7 +1197,7 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
         ]
     );
     let repaired = "p(f: (x: V) -> ((int, bool) | (int, bool, bool),) | ((V, V),) \
-                    | ((V, V) | (V, V, V),) for V in int | f64) = 0;\n\
+                    | ((int | V, V) | (int | V, V, V),) for V in int | f64) = 0;\n\
                     q(g: (x: W) -> ((W, W),) | ((W, W, W),) for W in int | f64) = p(f: g);\n";
     assert_eq!(type_errors(repaired), Vec::<String>::new());
 }

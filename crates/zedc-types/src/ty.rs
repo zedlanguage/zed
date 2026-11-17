@@ -6742,6 +6742,44 @@ struct Filed {
     equal: std::sync::OnceLock<HashMap<u64, usize>>,
     /// The same for its payload shapes, by atom name ([`Filed::equal_shapes`]).
     equal_shapes: std::sync::OnceLock<HashMap<Arc<str>, HashMap<u64, usize>>>,
+    /// The first tuple of each length, in written order, with a component whose union holds a
+    /// tuple of each digest, by that component's place ([`Filed::holding`]).
+    holding: std::sync::OnceLock<HashMap<usize, MemberTable>>,
+    /// The same for its payload shapes, by atom name and [`ShapeGroup`]
+    /// ([`Filed::holding_shapes`]).
+    holding_shapes: std::sync::OnceLock<HashMap<Arc<str>, HashMap<ShapeGroup, MemberTable>>>,
+}
+
+/// The first shape, in written order, whose component at each place holds, as a member of its
+/// union, a tuple with each digest: `((V, V) | (V, V, V),)` is filed under `(0, d)` for `d` the
+/// digest of `(V, V)` and for that of `(V, V, V)` ([`Filed::holding`]).
+type MemberTable = HashMap<(usize, u64), usize>;
+
+/// Files the shape `i`, of components `xs`, in `table` under each tuple member of each of its
+/// components, keeping the first shape filed under a key. In the number of those members.
+fn file_members(table: &mut MemberTable, i: usize, xs: &[&Ty]) {
+    for (j, x) in xs.iter().enumerate() {
+        for m in x.tuples.iter() {
+            table.entry((j, m.0.digest)).or_insert(i);
+        }
+    }
+}
+
+/// The shape of `table` filed under the first tuple member, by place then written order, of a
+/// component of the piece `xs`, if one is: a shape whose union at that place holds a member
+/// equal to the piece's (up to the digest), so one that may hold the piece binding nothing
+/// where it is not equal to it ([`Comparing::held_as_is`]). One lookup a member read.
+fn member_hit(table: Option<&MemberTable>, xs: &[&Ty]) -> Option<usize> {
+    #[cfg(test)]
+    if NO_MEMBER_HIT.get() {
+        return None;
+    }
+    let table = table?;
+    xs.iter().enumerate().find_map(|(j, x)| {
+        x.tuples
+            .iter()
+            .find_map(|m| table.get(&(j, m.0.digest)).copied())
+    })
 }
 
 impl Filed {
@@ -6776,7 +6814,48 @@ impl Filed {
             payloads,
             equal: std::sync::OnceLock::new(),
             equal_shapes: std::sync::OnceLock::new(),
+            holding: std::sync::OnceLock::new(),
+            holding_shapes: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The tuples of `t`, the type filed, by length, in a [`MemberTable`]: a tuple piece that
+    /// is not equal to a shape but whose component is a member of a shape's union at that place
+    /// finds that shape in `O(1)` expected a member read ([`member_hit`]). Made at the first
+    /// lookup, in the number of the members of the components of `t`'s tuples.
+    ///
+    /// Complexity tradeoff: the naive way tries every shape of the piece's length for one
+    /// that holds it binding nothing, O(k) comparisons a piece for `k` shapes, O(n·k) in all.
+    /// Used: one shape more a piece at most, found by digest, the table made once in the size
+    /// of `t`'s top-level components. Given up: a shape that holds the piece binding nothing
+    /// only through a member deeper down, or through a member of another place than the first
+    /// one found, is still passed over for the search's shape (COMPLEXITY.md F203).
+    fn holding(&self, t: &Ty) -> &HashMap<usize, MemberTable> {
+        self.holding.get_or_init(|| {
+            let mut tables: HashMap<usize, MemberTable> = HashMap::new();
+            for (i, r) in t.tuples.iter().enumerate() {
+                let xs: Vec<&Ty> = r.iter().collect();
+                file_members(tables.entry(r.len()).or_default(), i, &xs);
+            }
+            tables
+        })
+    }
+
+    /// [`Filed::holding`] for the payload shapes of each atom `t` lists, by the atom's name and
+    /// the shape's [`ShapeGroup`].
+    fn holding_shapes(&self, t: &Ty) -> &HashMap<Arc<str>, HashMap<ShapeGroup, MemberTable>> {
+        self.holding_shapes.get_or_init(|| {
+            let mut all = HashMap::new();
+            for (n, rs) in &t.payloads {
+                let Some(rs) = rs else { continue };
+                let mut tables: HashMap<ShapeGroup, MemberTable> = HashMap::new();
+                for (i, r) in rs.iter().enumerate() {
+                    file_members(tables.entry(shape_group(r)).or_default(), i, &comps(r));
+                }
+                all.insert(n.clone(), tables);
+            }
+            all
+        })
     }
 
     /// The number of the first tuple of `t`, the type filed, with each digest a tuple of it
@@ -7452,6 +7531,12 @@ thread_local! {
     /// of its bound, and `Never` where the bound takes values of no carrier: the brute force
     /// its short list is checked against.
     static EVERY_BINDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`member_hit`] finds nothing, as before it: the red state of its test.
+    static NO_MEMBER_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What the comparison of the pieces of one type with a type `t` of the expected side keeps
@@ -9446,27 +9531,45 @@ impl<'m, 's> Comparing<'m, 's> {
     /// search takes that shape with the same bindings, so the attempt would only repeat the
     /// search's comparison, and is not made.
     ///
+    /// `rs` is that equal shape, then a shape whose union at some place holds as a member a
+    /// tuple equal to one the member holds there ([`member_hit`]): `((V, V),)` is in
+    /// `((V, V) | (V, V, V),)` as it is, though not equal to it; were it left to the search,
+    /// `((V, V),)` and `((V, V, V),)` fall in one bucket with a shape holding other tuples, and
+    /// the search refuses (FAIL-print-two-variables-one-name). Taking a shape that holds the
+    /// member binding nothing, out of written order, is what the attempt above does already:
+    /// the member is in the union whichever shape holds it, and no binding is made that a later
+    /// member or the result could contradict.
+    ///
     /// Complexity tradeoff (COMPLEXITY.md F203): naive version, every shape tried for one that
     /// binds nothing before the first that binds, O(k) comparisons a member for `k` shapes.
     /// Used: the equal shape found by a hash lookup on the digest each row and shape keeps
-    /// ([`Filed::equal`], [`Filed::equal_shapes`]), one comparison more a member at most, the
-    /// table made once for the type in O(k). What is given up: a shape that holds the member
-    /// binding nothing but is not equal to it, such as `(X1 | int,)` for `(X1,)`, is still
-    /// passed over for an earlier shape that binds.
+    /// ([`Filed::equal`], [`Filed::equal_shapes`]), and the shape holding one of its
+    /// components' members by a lookup a member ([`Filed::holding`],
+    /// [`Filed::holding_shapes`]): two comparisons more a member at most, the tables made once
+    /// for the type in its size. What is given up: a shape that holds the member binding
+    /// nothing but is neither of the two, such as `(X1 | int,)` for `(X1,)`, is still passed
+    /// over for an earlier shape that binds.
     async fn held_as_is(
         &'m self,
         choices: &Choices,
-        r: Option<usize>,
+        rs: [Option<usize>; 2],
         binds: &Binds,
         fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
     ) -> bool {
-        let Some(r) = r.filter(|_| !choices.one()) else {
+        if choices.one() {
             return false;
-        };
-        let before = self.begin_alone();
-        let (ok, b) = fit(r, binds.clone()).await;
-        self.end_alone(before);
-        ok && b == *binds
+        }
+        let [equal, holding] = rs;
+        let holding = holding.filter(|h| Some(*h) != equal);
+        for r in [equal, holding].into_iter().flatten() {
+            let before = self.begin_alone();
+            let (ok, b) = fit(r, binds.clone()).await;
+            self.end_alone(before);
+            if ok && b == *binds {
+                return true;
+            }
+        }
+        false
     }
 
     /// Whether the payloads `of` gives the atoms of `s` are in those `t` gives them, where the
@@ -9511,7 +9614,12 @@ impl<'m, 's> Comparing<'m, 's> {
                 let fit = |r: usize, b| self.shape_in(l.clone(), rs[r].clone(), b);
                 let equal =
                     (filed.equal_shapes(t).get(n)).and_then(|e| e.get(&l.0.digest).copied());
-                if self.held_as_is(choices, equal, binds, &fit).await {
+                let holding = filed.holding_shapes(t).get(n).and_then(|h| h.get(&g));
+                let holding = member_hit(holding, &comps(l));
+                if self
+                    .held_as_is(choices, [equal, holding], binds, &fit)
+                    .await
+                {
                     continue;
                 }
                 let xs = comps(l);
@@ -9839,18 +9947,15 @@ impl<'m, 's> Comparing<'m, 's> {
             tried.borrow_mut().push(r);
             self.rows(cs.clone(), t.tuples[r].clone(), b)
         };
+        let xs: Vec<&Ty> = cs.iter().collect();
+        let equal = filed.equal(t).get(&cs.0.digest).copied();
+        let holding = member_hit(filed.holding(t).get(&cs.len()), &xs);
         if self
-            .held_as_is(
-                choices,
-                filed.equal(t).get(&cs.0.digest).copied(),
-                binds,
-                &fit,
-            )
+            .held_as_is(choices, [equal, holding], binds, &fit)
             .await
         {
             return true;
         }
-        let xs: Vec<&Ty> = cs.iter().collect();
         let found = self.search(
             choices,
             &xs,
@@ -18876,6 +18981,47 @@ mod tests {
             let payloads = payload_ty("a", shapes.collect());
             assert!(payloads.subtype(&payloads), "{n} payload shapes");
         }
+    }
+
+    /// `((X, X),) | ((X, X, X),)` is in `((int, bool) | (int, bool, bool),) | ((X, X) | (X, X,
+    /// X),)` as it is: each member is held binding nothing by the second shape, whose union
+    /// holds a member equal to the member's component ([`member_hit`]), though not equal to the
+    /// member; before, the search put both members in one bucket with the first shape, which
+    /// each fails, and refused (FAIL-print-two-variables-one-name). Payload shapes the same.
+    /// Control: with the second shape's union holding `(X, int)` for `(X, X)`, the first
+    /// member is not held binding nothing, and the search still decides as before.
+    #[test]
+    fn a_tuple_held_by_a_member_of_a_shape_union_is_held_as_it_is() {
+        let (x, int, boolt) = (
+            Ty::var("X".into()),
+            Ty::carrier(Carrier::Int),
+            Ty::carrier(Carrier::Bool),
+        );
+        let t = |xs: &[&Ty]| Ty::tuple(xs.iter().map(|x| (*x).clone()).collect());
+        let one = |s: &Ty| Ty::tuple(vec![s.clone()]);
+        let fixed = Ty::union_all(&[t(&[&int, &boolt]), t(&[&int, &boolt, &boolt])]);
+        let (two, three) = (t(&[&x, &x]), t(&[&x, &x, &x]));
+        let joined = Ty::union_all(&[two.clone(), three.clone()]);
+        let held = Ty::union_all(&[one(&two), one(&three)]);
+        let shapes = Ty::union_all(&[one(&fixed), one(&joined)]);
+        assert!(held.subtype(&shapes), "tuples");
+        let shape = |s: &Ty| Shape::new(vec![s.clone()], BTreeMap::new());
+        let held_payloads = payload_ty("a", vec![shape(&two), shape(&three)]);
+        let payload_shapes = payload_ty("a", vec![shape(&fixed), shape(&joined)]);
+        assert!(held_payloads.subtype(&payload_shapes), "payload shapes");
+        // Control: `(X, X)` is no member of `(X, int) | (X, X, X)`; the search then decides,
+        // binding nothing new, and its answer is not changed by the lookup.
+        let other = Ty::union_all(&[t(&[&x, &int]), three.clone()]);
+        let other_shapes = Ty::union_all(&[one(&fixed), one(&other)]);
+        NO_MEMBER_HIT.set(true);
+        let (before, red) = (held.subtype(&other_shapes), held.subtype(&shapes));
+        let red_payloads = held_payloads.subtype(&payload_shapes);
+        NO_MEMBER_HIT.set(false);
+        assert_eq!(before, held.subtype(&other_shapes), "control");
+        assert!(
+            !red && !red_payloads,
+            "without the lookup, both are refused"
+        );
     }
 
     /// The carrier masks: `NUMBER_BITS` holds exactly the numbers, `f32` among them; each

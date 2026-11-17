@@ -696,3 +696,24 @@ fn function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_
         },
     );
 }
+
+#[test]
+fn tuples_held_by_members_of_a_shape_union_are_found_in_linear_time() {
+    // `((X0, X0),) | … | ((X(n-1), X(n-1)),)` in `((int, bool) | (int, bool, bool),) |
+    // ((X0, X0) | … | (X(n-1), X(n-1)),)`: each member finds the second shape by one lookup
+    // on the digest of its component's tuple (`member_hit`, COMPLEXITY.md F203), and that
+    // shape's union holds the component as it is, found by its own digest. Trying every shape
+    // of the length for one that binds nothing would be one more shape a member here, but n
+    // with n shapes. Without the lookup the search refuses at the second member. At n = 4096:
+    // 1x 75 ms (ns=74702940), instructions ratio 8.03, at load 40 on 2026-11-17.
+    let fixed = ty("((int, bool) | (int, bool, bool),)");
+    scaling::check("n tuples held by members of a shape union", 4096, |n| {
+        let pairs: Vec<Ty> = (0..n)
+            .map(|i| Ty::tuple(vec![var(&format!("X{i}")), var(&format!("X{i}"))]))
+            .collect();
+        let held: Vec<Ty> = pairs.iter().map(|p| Ty::tuple(vec![p.clone()])).collect();
+        let held = Ty::union_all(&held);
+        let shapes = Ty::union_all([&fixed, &Ty::tuple(vec![Ty::union_all(&pairs)])]);
+        assert!(held.subtype(&shapes));
+    });
+}
