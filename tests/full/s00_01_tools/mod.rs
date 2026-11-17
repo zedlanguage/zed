@@ -137,15 +137,41 @@ fn rust_builds_for_each_target() {
     }
 }
 
-/// Podman with the battery's own storage.
+/// Podman with the battery's own storage, rootless as the user who runs the battery.
+///
+/// /home/luke/Work/wt/zrun runs every command, these tests included, in a user namespace that
+/// maps the user to uid 0 (`unshare --user --map-root-user`). Podman started there sees uid 0,
+/// takes the paths of a root install (/run/libpod) and fails ("mkdir /run/libpod: permission
+/// denied", measured 2026-11-17), so this test could not pass under zrun. In a user namespace
+/// (a /proc/self/uid_map other than the identity map `0 0 4294967295`), podman is started by the
+/// user's own systemd manager instead (`systemd-run --user --pipe --wait`), which runs it outside
+/// the namespace with stdin, stdout and stderr passed through and its exit status returned.
+/// KillMode=process ends the unit when podman exits: without it `--wait` also waits for the
+/// container's monitor process (conmon), which `podman run -d` leaves in the unit until the
+/// container ends (47 s for `sleep 50`, measured). Outside a user namespace, podman runs directly.
 fn podman(args: &[&str]) -> Output {
-    Command::new("podman")
+    let storage = deps().join("podman/storage.conf");
+    let identity = std::fs::read_to_string("/proc/self/uid_map")
+        .is_ok_and(|m| m.split_whitespace().eq(["0", "0", "4294967295"]));
+    let mut command = if identity {
+        let mut c = Command::new("podman");
+        c.env("CONTAINERS_STORAGE_CONF", &storage);
+        c
+    } else {
+        let mut c = Command::new("systemd-run");
+        c.args(["--user", "--pipe", "--wait", "--quiet", "--collect"])
+            .args(["-p", "KillMode=process"])
+            .arg(format!(
+                "--setenv=CONTAINERS_STORAGE_CONF={}",
+                storage.display()
+            ))
+            .arg("podman");
+        c
+    };
+    command
         .arg("--log-level=error")
         .args(args)
-        .env(
-            "CONTAINERS_STORAGE_CONF",
-            deps().join("podman/storage.conf"),
-        )
+        .stdin(Stdio::null())
         .output()
         .unwrap()
 }
@@ -154,7 +180,12 @@ fn podman(args: &[&str]) -> Output {
 fn containers_reach_each_other_until_one_is_killed() {
     let id = std::process::id();
     let (net, node) = (format!("zed-full-net-{id}"), format!("zed-full-node-{id}"));
-    assert!(podman(&["network", "create", &net]).status.success());
+    let created = podman(&["network", "create", &net]);
+    assert!(
+        created.status.success(),
+        "podman network create failed: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
     let started = podman(&[
         "run",
         "-d",
