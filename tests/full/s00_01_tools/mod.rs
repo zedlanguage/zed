@@ -227,36 +227,58 @@ fn containers_reach_each_other_until_one_is_killed() {
     assert!(!after, "the killed node still answered");
 }
 
-/// Pings a peer namespace over a veth pair, before and after adding a delay to the link.
+/// Pings a peer namespace over a veth pair, before and after adding a delay to the link, then
+/// prints the delay's queue with its counters.
+///
+/// Nothing here waits a fixed time (FLAKY-full-s00-01-tools-load). The peer prints its pid once
+/// it is in its own namespace, where `sleep 0.2` guessed it would be (later, the veth's other end
+/// stayed in this namespace and the pings went over loopback, past the delay), and lives until
+/// this script's end closes its stdin, where `sleep 20` could end first. The first ping waits for
+/// both ends to be up as the kernel reports them (`state UP`), which it sets in the step that
+/// enables a link's queue, so that an ARP request is not dropped by a queue not yet enabled.
 const NETEM_SCRIPT: &str = r#"
-unshare -n sleep 20 &
-peer=$!
-sleep 0.2
-ip link add va type veth peer name vb netns $peer
+coproc peer_proc { exec unshare -n sh -c 'echo $$; exec cat >/dev/null'; }
+read -r peer <&"${peer_proc[0]}"
+ip link add va type veth peer name vb netns "$peer"
 ip addr add 10.77.0.1/24 dev va
 ip link set va up
-nsenter -n -t $peer sh -c 'ip link set lo up; ip addr add 10.77.0.2/24 dev vb; ip link set vb up'
+nsenter -n -t "$peer" sh -c 'ip link set lo up; ip addr add 10.77.0.2/24 dev vb; ip link set vb up'
+until ip -o link show dev va | grep -q 'state UP' &&
+  nsenter -n -t "$peer" ip -o link show dev vb | grep -q 'state UP'; do sleep 0.01; done
 ping -c 1 -W 3 10.77.0.2
 tc qdisc add dev va root netem delay 150ms
 ping -c 1 -W 3 10.77.0.2
 status=$?
-kill $peer
+tc -s qdisc show dev va
+kill "$peer"
 exit $status
 "#;
 
+/// The delayed ping took at least the delay, which load can only lengthen, and its packet went
+/// through the delay's queue. The undelayed ping is not timed: it took 1009 ms once at load 60
+/// (2026-11-17; 1 s is the ARP retry time), where the test asked for under 100 ms; a time's upper bound
+/// fails under enough load. The queue's counters show instead, with no time in them, that the
+/// delay is netem's.
 #[test]
 fn network_namespace_link_delays_packets() {
-    let out = stdout("unshare", &["-Urn", "sh", "-c", NETEM_SCRIPT]);
+    let out = stdout("unshare", &["-Urn", "bash", "-c", NETEM_SCRIPT]);
     let times: Vec<f64> = out
         .split("time=")
         .skip(1)
         .map(|t| t.split(' ').next().unwrap().parse().unwrap())
         .collect();
     assert_eq!(times.len(), 2, "{out}");
-    assert!(
-        times[0] < 100.0,
-        "the link without a delay took {} ms",
-        times[0]
-    );
     assert!(times[1] >= 150.0, "the delayed link took {} ms", times[1]);
+    let netem = out
+        .split("qdisc netem ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no netem queue on the link: {out}"));
+    assert!(netem.contains(" delay 150ms"), "{out}");
+    let sent: u64 = netem
+        .split(" bytes ")
+        .nth(1)
+        .and_then(|s| s.split(" pkt").next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no packet count for the netem queue: {out}"));
+    assert!(sent >= 1, "no packet went through the delay: {out}");
 }
