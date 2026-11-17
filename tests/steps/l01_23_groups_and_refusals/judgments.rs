@@ -2454,6 +2454,55 @@ fn a_meet_of_functions_over_a_function_domain_and_another_domain_is_empty() {
     );
 }
 
+/// The meet of two functions is empty where one side's guarantee holds a value outside the
+/// other's permission, also where both sides take functions at that parameter, or a payload
+/// holding the unknown (DESIGN.md sec:type_language, "two exact arrows over different domains
+/// share no value and their intersection is empty"). FAIL-types-meet-fn-fn-domains: each was
+/// read as the overload of both arrows, since the kernel has no kernel type for a parameter
+/// type holding a function or the unknown, and `Domains::kinds_apart` decides only a function
+/// against data.
+#[test]
+fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
+    use zedc::check::read::parse_type;
+    let mut wrong: Vec<String> = [
+        // The function giving a `rat` at each `int` and nowhere else is not a `String -> bool`.
+        "((int -> rat) -> _) & (((String -> bool) -> int) | ())",
+        "((int -> rat) ->? _) & (((String -> bool) -> int) | ())",
+        "((int -> rat) -> _) & (((String ->? bool) -> int) | ())",
+        // Its domain lacks the `f64` keys an `(int | f64) -> rat` has.
+        "((int -> rat) -> _) & ((((int | f64) -> rat) -> int) | ())",
+        // Its domain, `int | f64`, is not within `int`.
+        "(((int | f64) -> rat) -> _) & (((int -> rat) -> int) | ())",
+        // A function in a payload, against data there.
+        "(#box(int -> rat) -> _) & ((#box(String) -> int) | ())",
+        "(#box(String) -> _) & ((#box(int -> rat) -> int) | ())",
+        "(#box(_) -> int) & ((rat -> int) | ())",
+    ]
+    .into_iter()
+    .map(|text| (text, parse_type(text).unwrap()))
+    .filter(|(_, t)| !t.is_empty())
+    .map(|(text, t)| format!("`{text}` reads as `{t}`, not `Never`"))
+    .collect();
+    // Controls, each with a function of both sides: one function domain, exact on both sides
+    // or partial on one; no exact arrow; a union taking the function.
+    wrong.extend(
+        [
+            "((int -> rat) -> _) & (((int -> rat) -> f64) | ())",
+            "((int -> rat) -> _) & (((int -> rat) ->? f64) | ())",
+            "((int -> rat) ->? _) & (((String -> bool) ->? int) | ())",
+            "((int -> rat) -> _) & ((((int -> rat) | (String -> bool)) ->? int) | ())",
+            "((int -> rat) -> _) & (((_ ->? rat) ->? int) | ())",
+            // The same in a payload, where the permission takes functions.
+            "(#box(int -> rat) -> _) & ((#box(int -> rat) -> f64) | ())",
+            "(#box(int -> rat) -> _) & (((#box(String) | #box(_ ->? rat)) ->? f64) | ())",
+        ]
+        .into_iter()
+        .filter(|text| parse_type(text).unwrap().is_empty())
+        .map(|text| format!("`{text}` reads as `Never`")),
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// FAIL-types-met-bindable-partial-narrow: a function of `((int ->? B) & (int -> int | f64 |
 /// bool)) for B in int | f64` answers each `int` in `int | f64 | bool`, and in `B` at the one
 /// carrier its call fixes, so it is an `int -> int` (at `B = int`) and an `int -> f64` (at `B =

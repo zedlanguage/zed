@@ -145,6 +145,47 @@ fn a_meet_of_overloads_meets_their_domains_in_time_near_linear() {
     });
 }
 
+/// An overload of `n` exact arrows, each over the functions `#ki -> int`, met with an overload
+/// of `n` arrows over the functions `#ji -> int` is empty, and met with one of `n` partial
+/// arrows over the same functions as its own is one function of `n` arrows; an overload of `n`
+/// exact arrows over `#box(#ki -> int)`, met with one over `#box(#ji)`, is empty. Each is made
+/// in time near linear in `n`: the domains of the functions built at the parameter are joined
+/// into one kernel type and compared once with the other side's parameter types joined, and a
+/// function in a payload is read as every function (FAIL-types-meet-fn-fn-domains,
+/// COMPLEXITY.md F234). Small instance:
+/// `a_meet_of_functions_over_function_domains_that_differ_is_empty`.
+#[test]
+fn a_meet_of_overloads_over_function_domains_scales() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let overload = |m: usize, arrow: &dyn Fn(usize) -> String| {
+        let text = (0..m).map(arrow).collect::<Vec<_>>().join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let n = 2048;
+    let sides = scaling::inputs(n, |m| {
+        [
+            overload(m, &|i| format!("((#k{i} -> int) -> int)")),
+            overload(m, &|i| format!("((#j{i} -> int) -> int)")),
+            overload(m, &|i| format!("((#k{i} -> int) ->? int | #a)")),
+            overload(m, &|i| format!("(#box(#k{i} -> int) -> int)")),
+            overload(m, &|i| format!("(#box(#j{i}) -> int)")),
+        ]
+    });
+    scaling::check(
+        "the meets of an overload of n arrows over function domains",
+        n,
+        |m| {
+            let [a, apart, same, boxed, data]: &[Ty; 5] = &sides[&m];
+            assert!(a.meet(apart).fns.is_empty());
+            let met = a.meet(same);
+            assert_eq!(met.fns.len(), 1);
+            assert_eq!(met.fns[0].arrows.len(), m);
+            assert!(boxed.meet(data).fns.is_empty());
+        },
+    );
+}
+
 /// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
 /// another function of the same type at each depth, decided in time linear in `n`: each
 /// function is compared with the one at its depth (FAIL-types-tuple-subtype, COMPLEXITY.md
