@@ -8454,6 +8454,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.x += 1;
             }
             Some(FitWait::Body) => {
+                // The entry pushed for this lambda below, and any an abandoned check inside
+                // its body left above it.
+                if let Some(i) = (self.arrow_lambdas.iter()).rposition(|(l, _)| *l == s.span) {
+                    self.arrow_lambdas.truncate(i);
+                }
                 let r = m.take_ty();
                 let want = s.e.arrows[s.a].result.subst(&s.unheld);
                 if !self.subtype(&r, &want) {
@@ -8528,6 +8533,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let want = Want::of(&arrow.result.subst(&s.unheld));
             let body = s.body;
+            if s.e.arrows.len() > 1 {
+                self.arrow_lambdas.push((s.span, s.e.clone()));
+            }
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
             return m.job(Job::Body(body, want));
@@ -17584,6 +17592,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `f(small)` share one need and one coercion, which joins with itself. The test
         // `the_twice_lambda_rebuilds_each_function_at_its_own_argument` checks the spans.
         let Some(fit) = merged else {
+            // Inside a lambda checked at each arrow of an intersection, the repair below, the
+            // parameter declared at the type wanted, meets the same refusal at `Ck::put`.
+            if self.arrow_lambda_twice(at) {
+                return;
+            }
             let code = self.code(Some(at)).unwrap_or("the value");
             let (t, wt) = (self.text(on), self.text(w));
             // The parameter declared with the type wanted: the call then fits the argument to

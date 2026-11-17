@@ -1758,6 +1758,10 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// Each lambda whose body is being checked at an arrow of an intersection of function
+    /// types ([`Self::fit_step`]), with that intersection, innermost last. A second rebuilding
+    /// at a span inside one is refused with words for the lambda ([`Self::arrow_lambda_twice`]).
+    arrow_lambdas: Vec<(Span, Arc<Sig>)>,
     /// The spans of the needs [`Ck::meet`] is checking, outermost first: the uses in the
     /// bodies a check of a fold passes through on its way from the call that meets it
     /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
@@ -2274,6 +2278,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
+            arrow_lambdas: Vec::new(),
             need_chain: Vec::new(),
             fold_uses: HashSet::new(),
             same_use: Vec::new(),
@@ -6632,6 +6637,9 @@ impl Ck<'_, '_> {
 
     /// Refuses a second fit, of another kind or shape, at `at` ([`Self::put`]).
     fn fit_twice(&mut self, at: Span) {
+        if self.arrow_lambda_twice(at) {
+            return;
+        }
         let code = self.code(Some(at)).unwrap_or("the value");
         self.error_offering(
             at,
@@ -6643,6 +6651,52 @@ impl Ck<'_, '_> {
                  zedc rebuilds it once"
             )],
         );
+    }
+
+    /// Refuses a second, different rebuilding at `at` where `at` lies in the body of a lambda
+    /// being checked at an arrow of an intersection of function types (`arrow_lambdas`), in
+    /// words for that lambda, and gives whether it did. The repair offered is the one the
+    /// checker accepts: the lambda passed once at each arrow, as an argument of that arrow's
+    /// type alone, where its body is checked once and rebuilt once
+    /// (`a_lambda_checked_at_each_arrow_is_rebuilt_once`). The search is innermost first and
+    /// costs the depth of lambdas nested at intersections, once per refusal.
+    fn arrow_lambda_twice(&mut self, at: Span) -> bool {
+        let Some((l, e)) = (self.arrow_lambdas.iter().rev())
+            .find(|(l, _)| l.start <= at.start && at.end <= l.end)
+            .cloned()
+        else {
+            return false;
+        };
+        let code = self.code(Some(at)).unwrap_or("the value");
+        let lam = self.code(Some(l)).unwrap_or("the lambda");
+        let whole = self.sig_text(&e);
+        let each: Vec<String> = (e.arrows.iter())
+            .map(|a| {
+                let mut one = (*e).clone();
+                one.arrows = vec![a.clone()];
+                format!("`{}`", self.sig_text(&one))
+            })
+            .collect();
+        let each = match each.split_last() {
+            Some((last, [])) => last.clone(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            None => String::new(),
+        };
+        self.error_offering(
+            at,
+            format!(
+                "`{lam}` is passed as `{whole}` and rebuilds `{code}` in another way at each \
+                 arrow. Try `{lam}` once at each arrow instead, as arguments of types {each}"
+            ),
+            [format!(
+                "a lambda passed as an intersection of function types is checked once for each \
+                 arrow; `{code}` is rebuilt to fit the type it is passed as, such as a test of \
+                 its domain where it is passed as a partial function, and that rebuilding \
+                 differs at each arrow; this version of zedc builds one body for the lambda, with one \
+                 rebuilding of `{code}`"
+            )],
+        );
+        true
     }
 
     /// Makes the write `w` and gives the write that undoes it.

@@ -1360,30 +1360,58 @@ fn the_twice_lambda_rebuilds_each_function_at_its_own_argument() {
 /// function (`pass`, the rebuilding at `Ck::coerce_at`) and directly (`apply`, the rebuilding
 /// of the argument itself). Before the refusal the first stopped a debug build on the
 /// assertion at `Ck::coerce_at`, and the second kept the test of `f64` alone and called
-/// `small` on 2.5, a fault of zedc at run time. The same lambda with one arrow runs.
+/// `small` on 2.5, a fault of zedc at run time. The same lambda with one arrow runs. Both
+/// refusals, and the one a parameter declared at the partial type meets (`typed`), name the
+/// lambda and the intersection and offer the lambda once at each arrow, which runs to the
+/// value DESIGN gives the refused program (MSG-arrow-lambda-rebuild-repair; making the
+/// refused programs run is row FAIL-arrow-lambda-partial-slot).
 #[test]
 fn a_lambda_checked_at_each_arrow_is_rebuilt_once() {
     let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
     let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
-    let twice = "`g` is checked at two types and needs another rebuilding at each. [g]";
-    for (body, want) in [
-        (
-            "pass(x: g)",
-            "`g : (x: f64) -> int` is passed on as `(x: int | f64) ->? int` and is rebuilt here \
-             already. Try `x: (x: int | f64) ->? int` instead. [g]",
-        ),
-        ("apply(f: g)", twice),
-        // The repair the first message offers, which meets the second refusal.
-        ("typed(x: g)", twice),
-    ] {
+    for body in ["pass(x: g)", "apply(f: g)", "typed(x: g)"] {
         let typed = "typed(x: (x: int | f64) ->? int) = apply(f: x);\n";
         let src = format!("{head}{typed}{both}a = both(h: g -> {body});\n");
+        let want = format!(
+            "`g -> {body}` is passed as `((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) \
+             -> int)` and rebuilds `g` in another way at each arrow. Try `g -> {body}` once at \
+             each arrow instead, as arguments of types `(g: (x: int) -> int) -> int` and `(g: \
+             (x: f64) -> int) -> int`. [g]"
+        );
         assert_eq!(type_errors(&src), [want], "{src}");
+        // The repair offered: a parameter for each arrow, the lambda passed to each.
+        let split = "split(h1: (g: (x: int) -> int) -> int, h2: (g: (x: f64) -> int) -> int) = h1(g: small) + h2(g: small4);\n";
+        let lam = format!("g -> {body}");
+        let fixed = format!("{head}{typed}{split}a = split(h1: {lam}, h2: {lam});\n");
+        runs_to(&fixed, "a", "8");
     }
     let one = "one(h: (g: (x: int) -> int) -> int) = h(g: small);\n";
     for body in ["pass(x: g)", "apply(f: g)"] {
         runs_to(&format!("{head}{one}a = one(h: g -> {body});\n"), "a", "6");
     }
+}
+
+/// Row MSG-arrow-lambda-rebuild-repair (filed by twice-proof while doing
+/// PROOF-twice-lambda-placement): for a lambda passed at an intersection of function types and
+/// checked once per arrow, the refusal at `Ck::coerce_at` offered a parameter declared at the
+/// partial type, which, applied, met the refusal at `Ck::put`, and that refusal offered no
+/// repair as code. Each now offers a repair as code, and none that is refused.
+#[test]
+fn the_arrow_lambda_refusals_offer_a_repair_that_is_accepted() {
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\ntyped(x: (x: int | f64) ->? int) = apply(f: x);\n";
+    let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
+    let errs = type_errors(&format!("{head}{both}a = both(h: g -> pass(x: g));\n"));
+    assert_eq!(errs.len(), 1);
+    // The repair offered before: a parameter declared at the partial type.
+    let repaired = format!("{head}{both}a = both(h: g -> typed(x: g));\n");
+    assert!(
+        !errs[0].contains("Try `x: (x: int | f64) ->? int`") || type_errors(&repaired).is_empty(),
+        "the repair offered is refused: {:?}",
+        type_errors(&repaired)
+    );
+    // The second refusal ends with a repair as code.
+    let errs = type_errors(&format!("{head}{both}a = both(h: g -> apply(f: g));\n"));
+    assert!(errs[0].contains("Try `"), "{errs:?}");
 }
 
 /// Row TEST-partial-slot-port-pe-routes, the port-read case of the proof at
