@@ -585,10 +585,8 @@ fn what_is_no_printed_type_is_an_error() {
             "{x: int}",
             "`{x: int}` holds a record type or a type applied to arguments, which the checker never prints",
         ),
-        (
-            "[int]",
-            "`[int]` holds an array type, which the checker never prints",
-        ),
+        // `[int]` is printed since MSG-list-type-printed-by-arrows; it reads back
+        // (`list_types_print_in_brackets_and_read_back_in_every_position`).
         (
             "(T) -> T for T in widget",
             "`(T) -> T for T in widget`: `widget` in the bound of `T` is not a carrier",

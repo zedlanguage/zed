@@ -13,9 +13,10 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
 }
 ",
     );
-    // A read of `m.stdin` may miss, so its type is partial, and prints `int ->? ...`: plain
-    // `K -> V` is exact (DESIGN.md sec:type_language), so `int -> ... | #notFound` would read
-    // back as another type (FAIL-main-red-exact-domain).
+    // A read of `m.stdin` may miss, so its type is partial: its lines are the ranks `0 ..< n`,
+    // `n` not known, a list, and it prints `[...]` (MSG-list-type-printed-by-arrows), not
+    // `int -> ... | #notFound`, which is exact and would read back as another type
+    // (FAIL-main-red-exact-domain).
     assert_eq!(
         out,
         r#"4:15: `++` does not take ("total: ", int): no arrow of `++` takes these types. Try `"total: " ++ String(total)` instead.
@@ -41,7 +42,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #ioError(op: String, path: String, why: String) | #outOfBounds
   [9]  2:11: this expression gives String | #ioError(op: String, path: String, why: String) | #outOfBounds
-  [10] 2:11: `m.stdin` is int ->? String | #ioError(op: String, path: String, why: String) here
+  [10] 2:11: `m.stdin` is [String | #ioError(op: String, path: String, why: String)] here
   [11] 1:9: `m.stdin` is declared `Lines`
        1 | main(m: MainArgs) {
          |         ^^^^^^^^

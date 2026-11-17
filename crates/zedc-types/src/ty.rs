@@ -17523,7 +17523,8 @@ impl Sig {
 
     /// The entry type `V | #notFound` of a list, if it is one, written `[V]`: a family of the
     /// ranks `0 ..< n`, `n` not known to the type ([`Dense::Ranks`]), so one partial arrow
-    /// `int ->? V` of one unnamed positional parameter with no range (DESIGN.md
+    /// `int ->? V` of one positional parameter with no range, its lookup `V | #notFound` and `V`
+    /// not `Never` (DESIGN.md
     /// sec:type_language: `[T]` is `int[0..<n] -> T`; `choices : [Choice]`). A list whose
     /// keys the type knows, as `[1, 2]`'s `(0 | 1) -> 1 | 2`, keeps its arrow, which says more.
     /// `[V]` reads back as this arrow (zedc-check's `read::parse_type`).
@@ -17532,11 +17533,16 @@ impl Sig {
             return None;
         };
         let ranks = self.data && self.dense == Dense::Ranks;
-        let bare = p.positional && p.name.is_empty() && p.range.is_none();
+        // A positional parameter's name is never printed, so `x0` of a built signature is as
+        // bare as the empty name of a read one.
+        let bare = p.positional && p.range.is_none();
+        let miss = KType::atom("notFound");
         (ranks
             && bare
+            && a.partial
             && a.params[0] == Ty::carrier(Carrier::Int)
-            && matches!(self.morphism(), Some(Morphism::Partial { .. })))
+            && (&miss - &a.result.set).is_empty()
+            && a.result != Ty::set(miss))
         .then_some(&a.result)
     }
 

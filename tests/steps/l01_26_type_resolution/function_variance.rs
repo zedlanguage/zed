@@ -1700,7 +1700,7 @@ fn the_arrow_lambda_refusals_offer_a_repair_that_is_accepted() {
 /// generic body passes on, which misses outside its domain and is called inside it, whichever
 /// line the port gives; a function chosen by a value read from a port is rebuilt the same way.
 /// The `Lines` port itself, passed through a generic body, is of its declared type
-/// `int ->? String | #ioError(…)`, so the slot `(int | f64) ->? String` refuses it by its
+/// `[String | #ioError(…)]`, the list `int ->? String | #ioError(…)`, so the slot `(int | f64) ->? String` refuses it by its
 /// values, as the proof says, before any rebuilding.
 #[test]
 fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
@@ -1741,7 +1741,7 @@ fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
     let o = run("port_lines", lines, "a\n", &[]);
     assert_eq!(o.status, 1, "{}", o.stderr);
     assert!(
-        o.stderr.contains("does not take int ->? String | #ioError(op: String, path: String, why: String), only (int | f64) ->? String."),
+        o.stderr.contains("does not take [String | #ioError(op: String, path: String, why: String)], only (int | f64) ->? String."),
         "{}",
         o.stderr
     );

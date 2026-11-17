@@ -1180,7 +1180,7 @@ fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
         (
             "m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${p.zip([1])}\");",
             "`p` has a generic type here, and `map` gives it each entry of \
-             `m.stdin.map(l -> l.split(\",\"))`, whose type is int ->? String",
+             `m.stdin.map(l -> l.split(\",\"))`, whose type is [String]",
         ),
         (
             "m.stdout <- m.stdin.map(l ->\n    l.trim).map(l -> \"${l.zip([1])}\");",
