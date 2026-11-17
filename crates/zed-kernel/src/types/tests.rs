@@ -836,3 +836,60 @@ fn a_change_of_a_row_of_an_exclusive_or_reaches_few_nodes() {
         assert!(most <= Some(6), "c = {c}: a change reaches {most:?} nodes");
     }
 }
+
+/// `ints_listed` gives exactly the ints a type holds, whatever made the type
+/// (PROOF-ints-listed-complete): for types made by `|`, `&`, `-` and `!` from int literals, a
+/// big int, `int`, a range's worth of literals, and types of other kinds, each int of a window
+/// and the big ints is listed exactly when `contains` holds it; and where nothing is listed,
+/// the type holds all but finitely many ints, so a far int it does not list is held.
+#[test]
+fn ints_listed_are_the_ints_the_type_holds() {
+    let lit = |v: Value| Type::lit(&v).expect("a literal");
+    let big = Value::int(num_bigint::BigInt::from(1u8) << 70usize);
+    let far = Value::int(num_bigint::BigInt::from(1u8) << 90usize);
+    let mut seed = crate::seed::seed("ints_listed_are_the_ints_the_type_holds") | 1;
+    let mut below = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let piece = |below: &mut dyn FnMut(u64) -> u64| match below(9) {
+        0..=2 => lit(Value::Int(below(9) as i64 - 4)),
+        3 => lit(big.clone()),
+        4 => Type::int(),
+        5 => (2..5).fold(Type::empty(), |u, i| &u | &lit(Value::Int(i))),
+        6 => lit(Value::Bool(true)),
+        7 => Type::tuple(vec![lit(Value::Int(1))]),
+        _ => Type::empty(),
+    };
+    let (mut listed, mut cofinite) = (0, 0);
+    for _ in 0..5_000 {
+        let mut t = piece(&mut below);
+        for _ in 0..below(4) {
+            let p = piece(&mut below);
+            t = match below(4) {
+                0 => &t | &p,
+                1 => &t & &p,
+                2 => &t - &p,
+                _ => !&t,
+            };
+        }
+        let window = (-6..7).map(Value::Int).chain([big.clone(), far.clone()]);
+        match t.ints_listed() {
+            Some(ints) => {
+                listed += 1;
+                for v in window {
+                    assert_eq!(ints.contains(&v), t.contains(&v), "{t} at {v:?}");
+                }
+            }
+            None => {
+                cofinite += 1;
+                // A type cofinite in the ints that is made from these pieces names none
+                // beyond 2^70, so it holds 2^90.
+                assert!(t.contains(&far), "{t}");
+            }
+        }
+    }
+    assert!(listed > 1000 && cofinite > 1000, "{listed} {cofinite}");
+}

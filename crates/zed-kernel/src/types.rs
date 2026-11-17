@@ -2164,9 +2164,20 @@ impl Type {
         self.finite_order(false).is_some()
     }
 
-    /// The integers of `self`, when they are a finite set of literals. Its users: the checker's
-    /// test that the exponent of `x ^ n` is at least 0 (`zedc::check`, `exponent`) and the
-    /// type facet of a product cell (`zedc::store::product`).
+    /// The integers of `self`, when they are a finite set of literals; `None` when `self` holds
+    /// all but finitely many integers. Its users read it as the ints the type holds: the
+    /// checker's exact key reads (`exact_key_read`), byte and exponent tests, and the type
+    /// facet of a product cell (`zedc::store::product`).
+    // Proof that the list is complete, for every way the type was made (PROOF-ints-listed-
+    // complete): an int, `Value::Int` or `Value::Big`, is in a type exactly when its parts'
+    // `ints` hold it ([`Type::member`], the one test [`Type::contains`] makes on a scalar), and
+    // a recursive node's parts are those of its unfolding ([`Type::p`]), as here. `ints` is a
+    // `Lits`: the set `values` when not `cofinite`, and its complement in the ints otherwise
+    // (`Lits::contains`). So when not cofinite, the ints the type holds are `values`, each
+    // listed once, and nothing outside them; no other part holds an int. What a caller then
+    // concludes about a run-time value rests on the value lying in the type it reads this
+    // from, the checker's typing of that value, not on this list. Test:
+    // `types::tests::ints_listed_are_the_ints_the_type_holds`.
     pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();
         (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())

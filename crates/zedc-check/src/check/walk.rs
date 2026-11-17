@@ -24765,10 +24765,13 @@ impl<'a> Ck<'_, 'a> {
     /// sec:type_language, the `m[k]` row: `V` if `k : L`, a static error if `k` is disjoint
     /// from `U`). The key's ints are its value where [`Ck::known`] gives one, whose proof says
     /// it is the key's value at every evaluation, and else the ints its type lists, as a
-    /// literal key's type `7` does. Where those give no answer, as for a key of type `int`, the
-    /// key's ints are the interval set [`Ck::ints_here`] reads, which a test around the read or
-    /// a ranged parameter bounds the key to (row RANGE-read-key-intervals): `(2 ..< 5)[k]` is
-    /// exact under `if k >= 2 && k < 5`, and where `k: int[2..=4]`. Proof that this is sound:
+    /// literal key's type `7` does: exactly the ints the type holds, by the proof at
+    /// [`KType::ints_listed`] (PROOF-ints-listed-complete), so each int the key takes at run
+    /// time, which its type holds, is listed. Where those give no answer, as for a key of type
+    /// `int`, the key's ints are the interval set [`Ck::ints_here`] reads, which a test around
+    /// the read or a ranged parameter bounds the key to (row RANGE-read-key-intervals):
+    /// `(2 ..< 5)[k]` is exact under `if k >= 2 && k < 5`, and where `k: int[2..=4]`. Proof
+    /// that this is sound:
     /// [`Ck::ints_here`] gives a superset of the ints `x` may be at this point of the walk (its
     /// own proof); a superset inside the keys puts each int `x` may be inside them, and one
     /// disjoint from them puts each outside. An empty set, a key of no int here, gives `None`.
