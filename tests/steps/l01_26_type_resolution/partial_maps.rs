@@ -471,3 +471,39 @@ fn a_function_passed_where_a_word_reads_the_entries_is_refused() {
         ["`total` takes `m` as a family, which `><` reads: `g` may not be one. [g]"]
     );
 }
+
+/// A read at a key outside a display's keys is refused (DESIGN.md sec:type_language, the
+/// `m[k]` row: a static error where the key's domain is disjoint from the keys), whatever the
+/// display stores; the repair that widens the keys writes the map's type with the values it
+/// stores, a stored `#notFound` among them, as `->?` reads it back (author P350). Before
+/// 3ceb4d7ab the repair took `#notFound` out of the values and wrote `String ->? 1`, a map
+/// that stores no `#notFound` (MSG-key-outside-drops-stored-notfound).
+#[test]
+fn a_read_outside_the_keys_names_the_map_type_with_a_stored_not_found() {
+    for (display, declared) in [
+        (
+            "{\"a\" -> 1, \"b\" -> #notFound}",
+            "String ->? 1 | #notFound",
+        ),
+        ("{\"a\" -> 1, \"b\" -> 2}", "String ->? 1 | 2"),
+    ] {
+        let src = format!("f = {display}[\"c\"];");
+        let resolved = super::Resolved::new(&src);
+        let checked = resolved.check();
+        let errors = &checked.errors;
+        assert_eq!(errors.len(), 1, "{src}");
+        assert!(
+            errors[0]
+                .message
+                .starts_with("this read can never find its key"),
+            "{src}: {}",
+            errors[0].message
+        );
+        let repair = format!(
+            "repair: declare the map with the wider keys `{declared}`, and handle `#notFound` \
+             where the key is missing"
+        );
+        let notes: Vec<&str> = errors[0].notes.iter().map(|n| n.text.as_str()).collect();
+        assert!(notes.contains(&repair.as_str()), "{src}: {notes:#?}");
+    }
+}
