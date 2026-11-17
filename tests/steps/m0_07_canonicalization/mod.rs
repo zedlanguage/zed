@@ -11,6 +11,8 @@ mod misplaced_level;
 mod prim_codes;
 mod rules;
 mod scaling;
+// Reads M0.7's tables from DESIGN.md in place.
+#[cfg(feature = "spec")]
 mod serial_text;
 
 use std::sync::Arc;

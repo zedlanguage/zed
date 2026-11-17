@@ -85,7 +85,9 @@
 # to a counter all threads share, and with tests beside each other the instruction counter read
 # up to 5% high (TEST-cov-scaling-noise). The short-addresses pieces are not built for coverage.
 args=$*
-features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
+# The tests that read the spec's DESIGN.md and EXAMPLES.md in place (feature `spec` of the tests
+# crate, author P371) are always built: a local run never leaves them out.
+features=--features=zed-tests/spec full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -157,7 +159,7 @@ selected() {
     { [[ $2 =~ ^$1-[0-9a-f]+(::.*)?$ ]] && [[ $1${BASH_REMATCH[1]} =~ $only ]]; }
 }
 if [ -n "$full_suite" ]; then
-  features=--features=zed-tests/full
+  features=--features=zed-tests/full,zed-tests/spec
   ZED_TEST_DEPS=${XDG_CACHE_HOME:-$HOME/.cache}/zed-test-deps
   export ZED_TEST_DEPS
   missing=
@@ -659,7 +661,7 @@ if [ -n "$short_build" ]; then
     echo "The short-addresses clone of build/cargo could not be mounted."
     exit 1
   fi
-  if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test -p zed-tests --features short-addresses \
+  if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test -p zed-tests --features short-addresses,spec \
     $(printf -- '--test %s ' $short_steps) --no-run --message-format=short >"$out/build-short.log" 2>&1; then
     tail -40 "$out/build-short.log"
     echo "BUILD FAILED (short-addresses)"

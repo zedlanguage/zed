@@ -164,11 +164,66 @@ pub fn all() -> Vec<Theory> {
     ]
 }
 
-/// The report DESIGN.md sec:theories prints for the theory named `name` ("The report's form",
-/// "Groups on which deciding is hard"), from the copy of the spec's `text` fences in
-/// `zed/fences/messages.md`.
+/// The reports DESIGN.md sec:theories prints ("The report's form", "Groups on which deciding
+/// is hard"), by the theory's name, as the cases of these tests:
+/// [`the_reports_are_those_of_the_spec`] checks each against the spec.
+const DESIGNS_REPORTS: &[(&str, &str)] = &[
+    (
+        "CommRing",
+        "\
+trivial models of CommRing
+  on one value, #a, with every field returning #a: every law holds.
+  on two values, #a | #b:
+    mul, one, add, zero, neg, linked by laws mulAssoc, oneMul, mulOne, addAssoc, addComm, addZero, addNeg, distrib, distribRight, mulComm: no model.
+      mul cannot be ((x, y) -> #a), by law oneMul: mul(one, a) == a
+      mul cannot be ((x, y) -> #b), by law oneMul: mul(one, a) == a
+      mul cannot be ((x, y) -> x), by law oneMul: mul(one, a) == a
+      mul cannot be ((x, y) -> y), by law mulOne: mul(a, one) == a
+      so no choice is left for mul
+  models on two values: 0.
+  So the model on one value is the only trivial model.
+",
+    ),
+    (
+        "Fano",
+        "\
+trivial models of Fano
+  on one value, #a: law line1 (c1 != c2 || c2 != c3) does not hold, since on one value every two values are equal.
+  on two values, #a | #b:
+    c1, c2, c3, c4, c5, c6, c7, linked by laws line1, line2, line3, line4, line5, line6, line7: not decided.
+      The report stopped at a choice that leads to no model, so this list may be incomplete:
+        with c1: #a, c2: #a, c4: #a
+        c3 cannot be #a, by law line1: c1 != c2 || c2 != c3
+        c5 cannot be #a, by law line2: c1 != c4 || c4 != c5
+        c6 cannot be #a, by law line4: c2 != c4 || c4 != c6
+        so law line7: c3 != c5 || c5 != c6 does not hold
+      Whether laws like these have a model can take time exponential in the number of fields to decide, so the report does not search on by itself. To list every trivial model, at the cost of that search, write `@exhaustive` before the interface:
+        @exhaustive interface Fano(positional T) { ... }
+",
+    ),
+];
+
+/// The report DESIGN.md sec:theories prints for the theory named `name`, of
+/// [`DESIGNS_REPORTS`].
 pub fn designs_report(name: &str) -> String {
-    zed_tests::fences::passage(&format!("trivial models of {name}"))
+    let (_, text) = DESIGNS_REPORTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .unwrap_or_else(|| panic!("DESIGNS_REPORTS has no report of {name}"));
+    text.to_string()
+}
+
+/// Each report of [`DESIGNS_REPORTS`] is the one DESIGN.md prints, read in place.
+#[cfg(feature = "spec")]
+#[test]
+fn the_reports_are_those_of_the_spec() {
+    for (name, text) in DESIGNS_REPORTS {
+        assert_eq!(
+            *text,
+            zed_tests::fences::passage(&format!("trivial models of {name}")),
+            "the report of {name}"
+        );
+    }
 }
 
 /// The line of a report for the model on one value where every law holds, as DESIGN.md

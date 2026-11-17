@@ -2,23 +2,22 @@
 //! checked against the row of the diagnostic on its line; one that names no row fails.
 
 use std::collections::HashSet;
+#[cfg(feature = "spec")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "spec")]
 use zedc::query::Db;
 use zedc::rejection::Row;
 
 use super::checks;
 
-const ROWS: &str = include_str!("../../../zed/fences/rejections.txt");
-
-/// The words no message prints, one to a line, as the `sync` tool wrote them from DESIGN.md
-/// (`zed_tools::spec_checks::kernel_rules`).
-const KERNEL_RULES: &str = include_str!("../../../zed/fences/kernel-rules.txt");
-
+/// The rows of zedc's rejection table are those of DESIGN.md's (sec:diagnostics), in its order,
+/// read in place.
+#[cfg(feature = "spec")]
 #[test]
 fn the_rows_are_those_of_the_spec_table() {
     let names: Vec<&str> = Row::ALL.iter().map(|r| r.name()).collect();
-    let spec: Vec<&str> = ROWS.lines().collect();
+    let spec = zed_tools::fence_layers::rejection_rows(zed_tests::spec::design());
     assert_eq!(names, spec);
 }
 
@@ -112,6 +111,7 @@ a = label(city: \"Leeds\");    // ✗ the name is left out
 
 /// Every live ✗ mark of the spec's fences, at any layer, names its row; the whole-line `//`
 /// variants are checked by their own fixtures.
+#[cfg(feature = "spec")]
 #[test]
 fn every_live_mark_of_the_spec_names_a_row() {
     let mut unnamed = Vec::new();
@@ -267,6 +267,7 @@ pub(super) fn said<'w>(text: &str, words: &'w HashSet<String>) -> Vec<&'w str> {
 
 /// The lines of `text` that hold expected output: all but a comment line, which is one whose
 /// text starts with `//` and holds no ✗ mark (a comment of a test, or of a Zed fence).
+#[cfg(feature = "spec")]
 fn expected_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.lines()
         .enumerate()
@@ -275,6 +276,7 @@ fn expected_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 }
 
 /// Every file under `dir`, at any depth, sorted.
+#[cfg(feature = "spec")]
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     let (mut out, mut todo) = (Vec::new(), vec![dir.to_path_buf()]);
     while let Some(d) = todo.pop() {
@@ -294,12 +296,16 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
 /// No message names a kernel rule (DESIGN.md sec:diagnostics). Checked on what the front end
 /// prints for every fence of the spec, every ✗ variant and every unit of a step's `zed/` folder,
 /// derivations and warnings included, and on every expected output the step tests and the
-/// fence copies hold, the spec's ```` ```text ```` fences among them: each line of their files but a
-/// comment line. The words are those the `sync` tool wrote to `zed/fences/kernel-rules.txt`
+/// variant fixtures hold and on the spec's ```` ```text ```` fences: each of their lines but a
+/// comment line. The words are those DESIGN.md gives, read in place
 /// (`zed_tools::spec_checks::kernel_rules`).
+#[cfg(feature = "spec")]
 #[test]
 fn no_message_names_a_kernel_rule() {
-    let words: HashSet<String> = KERNEL_RULES.lines().map(String::from).collect();
+    let words: HashSet<String> = zed_tools::spec_checks::kernel_rules(zed_tests::spec::design())
+        .unwrap_or_else(|e| panic!("{e}"))
+        .into_iter()
+        .collect();
     let mut found = Vec::new();
     let mut runs: Vec<(String, String)> = zed_tests::fences::all()
         .into_iter()
@@ -330,20 +336,26 @@ fn no_message_names_a_kernel_rule() {
             }
         }
     }
-    // The fence copies hold the messages the spec prints in its ```text fences, as the collision
-    // of sec:remap_law (`zed/fences/messages.md`).
+    // The messages the spec prints in its ```text fences, as the collision of sec:remap_law.
     let mut lines = 0;
-    let fences = zed_tests::fences::dir();
-    // This file names the words to test the search for them, the list of the words names each,
-    // and the tests of `sync` and of its prose checks name them to test the list.
+    for (k, line) in expected_lines(&zed_tests::fences::messages()) {
+        lines += 1;
+        let w = said(line, &words);
+        if !w.is_empty() {
+            found.push(format!(
+                "the spec's text fences, line {k}: names {w:?}: {line}"
+            ));
+        }
+    }
+    // This file names the words to test the search for them, and the tests of `sync` and of
+    // its prose checks name them to test the list.
     let this = zed_tests::steps_dir().join("l01_21_test_runner/rows.rs");
     let sync = zed_tests::steps_dir().join("m0_03_grammar_tools/sync.rs");
     let prose = zed_tests::steps_dir().join("m0_03_grammar_tools/prose_checks.rs");
-    let list = fences.join("kernel-rules.txt");
     for p in files_under(&zed_tests::steps_dir())
         .into_iter()
-        .chain(files_under(&fences))
-        .filter(|p| *p != this && *p != sync && *p != prose && *p != list)
+        .chain(files_under(&zed_tests::fences::dir()))
+        .filter(|p| *p != this && *p != sync && *p != prose)
     {
         let text = std::fs::read_to_string(&p).expect("a readable test file");
         for (k, line) in expected_lines(&text) {

@@ -6,6 +6,7 @@ mod bench;
 mod command;
 mod completeness;
 mod cones;
+#[cfg(feature = "spec")]
 mod fences;
 mod marks;
 mod near_miss;

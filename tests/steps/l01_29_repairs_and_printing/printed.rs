@@ -18,6 +18,8 @@ fn programs() -> Vec<(String, String)> {
     for (p, _) in zed_tests::oracle::corpus() {
         out.push((p.display().to_string(), read(&p)));
     }
+    // The spec's fences are read in place, so only a build with the feature `spec` has them.
+    #[cfg(feature = "spec")]
     out.extend(zed_tests::fences::all().into_iter().map(|f| (f.at, f.text)));
     out.extend(
         zed_tests::fences::variants()

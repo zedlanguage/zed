@@ -6,7 +6,7 @@
 use std::fmt::Write;
 
 use zed_kernel::{Evaluator, Term, World};
-use zed_tests::oracle::{self, ENABLED};
+use zed_tests::oracle;
 use zedc::elab::Cones;
 use zedc::interp;
 use zedc::query::Db;
@@ -38,18 +38,20 @@ fn verdict(text: &str) -> String {
     out
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_enabled_fence() {
     let mut out = String::new();
     for f in zed_tests::fences::all()
         .iter()
-        .filter(|f| f.layer <= ENABLED && !f.notation)
+        .filter(|f| f.layer <= oracle::ENABLED && !f.notation)
     {
         writeln!(out, "{}\n{}", f.key, verdict(&f.text)).expect("a String takes any write");
     }
     insta::assert_snapshot!(without_addresses(&out));
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_fence_front_verdict() {
     let mut out = String::new();

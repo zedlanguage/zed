@@ -1,8 +1,8 @@
 //! The rows of the rejection table (DESIGN.md sec:diagnostics, "What a rejection owes"). Each
 //! diagnostic of a rejection the table lists names its row, and every `// ✗ Row: …` comment
 //! names the row it is checked against (step L1.21). The names are the table's first column up to
-//! any parenthesis; the sync tool copies them into `zed/fences/rejections.txt`, and a test
-//! holds this list equal to that copy.
+//! any parenthesis; a test (feature `spec` of `zed-tests`) reads the table in DESIGN.md in place
+//! and holds this list equal to it.
 
 use crate::address::ContentAddress;
 

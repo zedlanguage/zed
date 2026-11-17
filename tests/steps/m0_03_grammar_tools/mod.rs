@@ -1,6 +1,6 @@
 //! Step M0.3: the grammar tools and the hand-run commands of `zed-tools`.
 //!
-//! CI does not read the spec repository, so each test builds a small spec of its own: the
+//! These tests do not read the spec repository: each builds a small spec of its own, the
 //! grammars `sync` copied into `zed/grammar`, a table of defined words, and the fences the test
 //! needs. A spec author runs these tools on the real spec; the tests here run the same `run`
 //! functions the commands call.
@@ -256,7 +256,7 @@ fn audit_names_what_a_program_needs_and_fails_when_the_checklist_lacks_it() {
         "{out}"
     );
 
-    let list = dir.write("ZED0.md", "Nothing here.\n");
+    let list = dir.write("CHECKLIST.md", "Nothing here.\n");
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
 
@@ -301,14 +301,14 @@ fn checklist(alts: &[(u32, String)], words: &[(u32, String)]) -> String {
     for (k, w) in words {
         rows.entry(*k).or_default().1 += &format!(" `{w}`");
     }
-    let mut text = "# Checklist\n\n## Part A: what the program needs\n\n\
+    let mut text = "# Checklist\n\n**Part A: what the program needs.**\n\n\
                     | Layer | Grammar alternatives | Defined words |\n|---|---|---|\n"
         .to_string();
     for (k, (a, w)) in rows {
         let cell = |s: String| if s.is_empty() { " —".into() } else { s };
         text += &format!("| L{k} |{} |{} |\n", cell(a), cell(w));
     }
-    text + "\n## Part B: more\n\n`Port#0` and `String` here are prose, not entries.\n"
+    text + "\n**Part B: more.** `Port#0` and `String` here are prose, not entries.\n"
 }
 
 #[test]
@@ -320,7 +320,7 @@ fn audit_accepts_a_checklist_that_lists_exactly_what_the_program_needs() {
         !alts.is_empty() && words == [(1, "len".to_string())],
         "{words:?}"
     );
-    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let list = dir.write("CHECKLIST.md", &checklist(&alts, &words));
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(true), "{out}");
     let n = alts.len() + words.len();
@@ -347,7 +347,7 @@ fn audit_fails_on_a_listed_entry_the_grammar_or_the_table_no_longer_has() {
     alts.push((2, "Primary#400".into()));
     words.push((1, "String".into()));
     words.push((3, "sorted".into()));
-    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let list = dir.write("CHECKLIST.md", &checklist(&alts, &words));
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     let g = Spec::open(&dir.root()).expect("the spec reads").syntactic;
@@ -357,28 +357,28 @@ fn audit_fails_on_a_listed_entry_the_grammar_or_the_table_no_longer_has() {
         .len();
     for line in [
         " 5 not needed `Port#0` `Primary#400` `Unit#1` `String` `sorted`\n".to_string(),
-        "  `Port#0`, in the row L1 of Part A of ZED0.md, is not needed: the grammar has no rule \
+        "  `Port#0`, in the row L1 of Part A of CHECKLIST.md, is not needed: the grammar has no rule \
          Port."
             .to_string(),
-        "  `Unit#1`, in the row L1 of Part A of ZED0.md, is not needed: rule Unit has one \
+        "  `Unit#1`, in the row L1 of Part A of CHECKLIST.md, is not needed: rule Unit has one \
          alternative, numbered 0."
             .to_string(),
         format!(
-            "  `Primary#400`, in the row L2 of Part A of ZED0.md, is not needed: rule Primary has \
+            "  `Primary#400`, in the row L2 of Part A of CHECKLIST.md, is not needed: rule Primary has \
              {primary} alternatives, numbered 0 to {}.",
             primary - 1
         ),
-        "  `String`, in the row L1 of Part A of ZED0.md, is not needed: the table of defined \
+        "  `String`, in the row L1 of Part A of CHECKLIST.md, is not needed: the table of defined \
          words in DESIGN.md does not list it."
             .to_string(),
-        "  `sorted`, in the row L3 of Part A of ZED0.md, is not needed: the table of defined words \
+        "  `sorted`, in the row L3 of Part A of CHECKLIST.md, is not needed: the table of defined words \
          lists it at L3, but p.zed does not use it."
             .to_string(),
     ] {
         assert!(out.contains(&line), "no line {line:?} in\n{out}");
     }
     assert!(out.contains(", 0 missing\n"), "{out}");
-    assert!(out.contains("To repair ZED0.md"), "{out}");
+    assert!(out.contains("To repair CHECKLIST.md"), "{out}");
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn audit_fails_on_an_alternative_listed_under_its_old_index_and_names_both() {
         })
         .expect("a needed alternative whose rule has one the program does not need");
     alts[at].1 = old.clone();
-    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let list = dir.write("CHECKLIST.md", &checklist(&alts, &words));
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     let (rule, i) = new.split_once('#').unwrap();
@@ -412,12 +412,12 @@ fn audit_fails_on_an_alternative_listed_under_its_old_index_and_names_both() {
     for line in [
         format!(", 1 missing `{new}`\n"),
         format!(
-            "  `{new}` is missing from Part A of ZED0.md: p.zed needs alternative {i} of rule \
+            "  `{new}` is missing from Part A of CHECKLIST.md: p.zed needs alternative {i} of rule \
              {rule}, `"
         ),
         format!(", 1 not needed `{old}`\n"),
         format!(
-            "  `{old}`, in the row L{} of Part A of ZED0.md, is not needed: alternative {j} of \
+            "  `{old}`, in the row L{} of Part A of CHECKLIST.md, is not needed: alternative {j} of \
              rule {rule}, `",
             alts[at].0
         ),
@@ -432,12 +432,15 @@ fn audit_fails_on_a_checklist_with_no_part_a() {
     let dir = spec_dir("audit_no_part_a", &design(""), "");
     let program = dir.write("p.zed", LENGTHS);
     let list = dir.write(
-        "ZED0.md",
+        "CHECKLIST.md",
         "Nothing here, and `Unit#0` outside any Part A.\n",
     );
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
-    assert!(out.contains("ZED0.md has no section `## Part A`"), "{out}");
+    assert!(
+        out.contains("CHECKLIST.md has no line that starts with `**Part A`"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -446,7 +449,7 @@ fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
     let program = dir.write("p.zed", LENGTHS);
     let (alts, words) = audit_needs(&dir.root(), &program);
     let good = checklist(&alts, &words);
-    let (head, tail) = good.split_once("\n## Part B").expect("a Part B");
+    let (head, tail) = good.split_once("\n**Part B").expect("a Part B");
     let first = head.lines().count() + 1;
     let bad = [
         "| L1–L6 | `Unit#0` | — |",
@@ -455,12 +458,12 @@ fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
         "| L4 | — | `len |",
         "L5 | `Unit#0` | — |",
     ];
-    let text = format!("{head}{}\n\n## Part B{tail}", bad.join("\n"));
-    let list = dir.write("ZED0.md", &text);
+    let text = format!("{head}{}\n\n**Part B{tail}", bad.join("\n"));
+    let list = dir.write("CHECKLIST.md", &text);
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
-        out.contains("checklist: 5 lines of Part A of ZED0.md cannot be read"),
+        out.contains("checklist: 5 lines of Part A of CHECKLIST.md cannot be read"),
         "{out}"
     );
     let expect = [
@@ -471,14 +474,17 @@ fn audit_fails_on_a_row_of_part_a_it_cannot_read_and_names_its_line() {
         "it does not start with a bar `|`",
     ];
     for (k, (row, what)) in bad.iter().zip(expect).enumerate() {
-        let line = format!("  line {} of ZED0.md cannot be read: {what}", first + k);
+        let line = format!(
+            "  line {} of CHECKLIST.md cannot be read: {what}",
+            first + k
+        );
         assert!(out.contains(&line), "{line}\n---\n{out}");
         assert!(out.contains(&format!("\n    {row}\n")), "{row}\n---\n{out}");
     }
     assert!(!out.contains("missing"), "{out}");
 
     // A table with no header row: its first row would be taken as the header.
-    let list = dir.write("NOHEAD.md", "## Part A\n\n| L1 | `Unit#0` | — |\n");
+    let list = dir.write("NOHEAD.md", "**Part A**\n\n| L1 | `Unit#0` | — |\n");
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
@@ -494,7 +500,7 @@ fn audit_names_every_reason_a_line_of_part_a_cannot_be_read() {
     let program = dir.write("p.zed", LENGTHS);
     let (alts, words) = audit_needs(&dir.root(), &program);
     let good = checklist(&alts, &words);
-    let (head, tail) = good.split_once("\n## Part B").expect("a Part B");
+    let (head, tail) = good.split_once("\n**Part B").expect("a Part B");
     let first = head.lines().count() + 1;
     let bad = [
         // A layer that is a range, an entry outside backticks and a backtick left open.
@@ -502,24 +508,24 @@ fn audit_names_every_reason_a_line_of_part_a_cannot_be_read() {
         // No bar at either end, an entry with a space in it, and text outside backticks.
         "L7 | `Unit #0` x `Unit#0` | —",
     ];
-    let text = format!("{head}{}\n\n## Part B{tail}", bad.join("\n"));
-    let list = dir.write("ZED0.md", &text);
+    let text = format!("{head}{}\n\n**Part B{tail}", bad.join("\n"));
+    let list = dir.write("CHECKLIST.md", &text);
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
-        out.contains("checklist: 2 lines of Part A of ZED0.md cannot be read"),
+        out.contains("checklist: 2 lines of Part A of CHECKLIST.md cannot be read"),
         "{out}"
     );
     let expect = [
         format!(
-            "  line {first} of ZED0.md cannot be read, for 3 reasons: its first cell is `L1–L6`, \
+            "  line {first} of CHECKLIST.md cannot be read, for 3 reasons: its first cell is `L1–L6`, \
              but a row starts with one layer, written L and a number, such as L3; its column of \
              grammar alternatives has `Unit#0` outside backticks; and its column of defined \
              words has a backtick with no closing backtick. The line is:\n    {}\n",
             bad[0]
         ),
         format!(
-            "  line {} of ZED0.md cannot be read, for 4 reasons: it does not start with a bar \
+            "  line {} of CHECKLIST.md cannot be read, for 4 reasons: it does not start with a bar \
              `|`, as a row of a table does; it does not end with a bar `|`, as a row of a table \
              does; its column of grammar alternatives has `Unit #0` in backticks, but an entry in \
              backticks is one name with no spaces; and its column of grammar alternatives has \
@@ -542,7 +548,7 @@ fn audit_fails_on_an_entry_in_the_row_of_another_layer_and_names_its_line() {
         alts.len() >= 2 && words == [(1, "len".to_string())],
         "{alts:?}"
     );
-    let list = dir.write("ZED0.md", &checklist(&alts, &words));
+    let list = dir.write("CHECKLIST.md", &checklist(&alts, &words));
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(true), "{out}");
     let n = alts.len() + words.len();
@@ -566,7 +572,7 @@ fn audit_fails_on_an_entry_in_the_row_of_another_layer_and_names_its_line() {
             .position(|l| l.starts_with(&format!("| L{k} |")))
             .expect("a row of the layer")
     };
-    let list = dir.write("ZED0.md", &text);
+    let list = dir.write("CHECKLIST.md", &text);
     let (outcome, out) = tool(audit::run, &[&dir.root(), &program, "--checklist", &list]);
     assert_eq!(outcome, Ok(false), "{out}");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
@@ -582,7 +588,7 @@ fn audit_fails_on_an_entry_in_the_row_of_another_layer_and_names_its_line() {
         ", 0 not needed\n".to_string(),
         format!("checklist: {n} needed entries listed, 3 in the row of another layer `"),
         format!(
-            "  `{}`, on line {} of ZED0.md, is in the row L{} of Part A, but p.zed needs \
+            "  `{}`, on line {} of CHECKLIST.md, is in the row L{} of Part A, but p.zed needs \
              alternative {i} of rule {rule}, `",
             moved.1,
             line_of(moved.0 + 7),
@@ -590,12 +596,12 @@ fn audit_fails_on_an_entry_in_the_row_of_another_layer_and_names_its_line() {
         ),
         format!("`, which is at L{}.\n", moved.0),
         format!(
-            "  `len`, on line {} of ZED0.md, is in the row L2 of Part A, but p.zed uses the word \
+            "  `len`, on line {} of CHECKLIST.md, is in the row L2 of Part A, but p.zed uses the word \
              `len`, which is at L1.\n",
             line_of(2)
         ),
         format!(
-            "  `{}`, on line {} of ZED0.md, is in the row L{} of Part A, but p.zed needs \
+            "  `{}`, on line {} of CHECKLIST.md, is in the row L{} of Part A, but p.zed needs \
              alternative {i2} of rule {rule2}, `",
             twice.1,
             line_of(twice.0 + 8),

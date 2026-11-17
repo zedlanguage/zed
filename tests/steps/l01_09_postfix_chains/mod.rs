@@ -4,6 +4,7 @@
 mod bench;
 mod calls;
 mod chains;
+#[cfg(feature = "spec")]
 mod fences;
 mod scaling;
 

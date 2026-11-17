@@ -173,8 +173,9 @@ fn progress_scales_with_the_length_of_the_plan() {
     });
 }
 
-/// `sync` lays out each `zed` fence and copies each `text` fence, so its work grows with the
-/// number of both; each size writes into a `zed/` of its own directory.
+/// `sync` reads all of DESIGN.md (for the kernel's rule names, the desugaring rules and the table
+/// of words), so its work grows with the length of the document, here the number of its `zed`
+/// and `text` fences; each size writes into a `zed/` of its own directory.
 #[test]
 fn sync_scales_with_the_number_of_fences() {
     let dirs = specs("scale_sync", 25, sync_body);

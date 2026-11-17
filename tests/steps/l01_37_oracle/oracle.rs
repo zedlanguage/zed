@@ -3,6 +3,7 @@
 
 use zed_tests::oracle::{self, ENABLED, Report, native, program, unit};
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_enabled_fence_agrees() {
     let mut r = Report::default();

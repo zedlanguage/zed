@@ -1,6 +1,10 @@
-use zed_tests::fences::{self, DocFence};
+#[cfg(feature = "spec")]
+use zed_tests::fences;
+use zed_tests::fences::DocFence;
 use zed_tests::tokens::render_lines;
-use zedc::fence::{label, marks};
+#[cfg(feature = "spec")]
+use zedc::fence::label;
+use zedc::fence::marks;
 use zedc::lex::{lex, lex_fence};
 
 /// The tokens of each of `fences`, under its key: the expected output of the lexer. A fence that
@@ -36,16 +40,19 @@ pub(super) fn marks_by_key(fences: &[DocFence]) -> String {
     out.join("\n")
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_design_fence_lexes() {
-    insta::assert_snapshot!(tokens_by_key(&fences::of("design.md")));
+    insta::assert_snapshot!(tokens_by_key(&fences::design()));
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_examples_fence_lexes() {
-    insta::assert_snapshot!(tokens_by_key(&fences::of("examples.md")));
+    insta::assert_snapshot!(tokens_by_key(&fences::examples()));
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_fence_key_is_its_own() {
     let all = fences::all();
@@ -53,6 +60,7 @@ fn every_fence_key_is_its_own() {
     assert_eq!(keys.len(), all.len());
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_fence_has_a_layer_no_lower_than_its_label() {
     let all = fences::all();
@@ -75,6 +83,7 @@ fn every_fence_has_a_layer_no_lower_than_its_label() {
     assert_eq!(notation.len(), 14, "{notation:?}");
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn expected_marks() {
     insta::assert_snapshot!(marks_by_key(&fences::all()));
@@ -83,6 +92,7 @@ fn expected_marks() {
 /// `char` is not a unit name (UNITS-char16): a fence writes `units("char")` or `units("chars")`
 /// only on a commented ✗ line, and some such line offers both units a reader may mean,
 /// `units("char16")` and `units("codepoint")`.
+#[cfg(feature = "spec")]
 #[test]
 fn char_is_a_unit_only_on_a_rejected_line() {
     let mut offered = 0;
@@ -109,6 +119,7 @@ fn char_is_a_unit_only_on_a_rejected_line() {
     );
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_commented_variant_has_exactly_one_fixture() {
     let wanted: Vec<String> = fences::all()
@@ -147,6 +158,7 @@ fn ellipsis_is_an_elision_only_in_a_fence() {
 /// Each fixture is its fence with the one commented ✗ line made live, and no other difference
 /// but those `fences::CHANGES` names, so that each fixture follows each edit of its fence
 /// (item VARIANT-sync).
+#[cfg(feature = "spec")]
 #[test]
 fn every_variant_agrees_with_its_fence() {
     let wrong = fences::disagreements(&fences::all(), &fences::variants(), fences::CHANGES);

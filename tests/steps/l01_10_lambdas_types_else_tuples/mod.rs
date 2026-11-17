@@ -3,6 +3,7 @@
 
 mod bench;
 mod elses;
+#[cfg(feature = "spec")]
 mod fences;
 mod lambdas;
 mod later_types;

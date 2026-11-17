@@ -84,8 +84,9 @@ fn first(text: &str) -> &str {
     }
 }
 
-/// The messages DESIGN.md writes with a menu of fixes: each `text` fence of `design` (the copy
-/// `zed/fences/messages.md`) holding the menu's heading.
+/// The messages DESIGN.md writes with a menu of fixes: each `text` fence of `design` (the spec's
+/// text fences, read in place by `zed_tests::fences::messages`) holding the menu's heading.
+#[cfg(feature = "spec")]
 fn design_examples(design: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut fence: Option<String> = None;
@@ -112,6 +113,7 @@ fn design_examples(design: &str) -> Vec<String> {
 /// the fixes that declare the type of a top-level binding (`q: rat = ...`): zedc offers them
 /// for `q = (1 + 2) / (3 + 4)` but not yet for `y = half(x: 1)`, where DESIGN offers
 /// `y: rat = half(x: 1)` and `y: f64 = half(x: 1)` too.
+#[cfg(feature = "spec")]
 fn menu(text: &str) -> Vec<(&str, &str)> {
     let Some((_, rest)) = text.split_once("\n  fixes, each checked here:\n") else {
         return Vec::new();
@@ -130,7 +132,8 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
 /// The program of each DESIGN.md example with a menu: a piece of the source line its steps
 /// show, which finds the example; a piece of each line of the program, in order, which finds
 /// the line ([`program_of`]); whether zedc compiles it yet; and whether its menu is compared
-/// ([`menu`]). Each line is read from the copies of the spec's fences in `zed/fences/`.
+/// ([`menu`]). Each line is read from the spec's fences, in place.
+#[cfg(feature = "spec")]
 const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
     (
         "twice(x: int) = x * 2.0;",
@@ -194,9 +197,11 @@ const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
 /// piece that finds it in [`PROGRAMS`] and the plan row that writes DESIGN's message. Each is
 /// checked to differ from DESIGN's first sentence, so that the entry fails, and is to be
 /// removed, once its row lands.
+#[cfg(feature = "spec")]
 const HELD_FOR_ROW: &[(&str, &str)] = &[("k = int(7r/2r);", "CAST-round-whole")];
 
 /// The source lines the steps of `example` show: its lines indented by seven spaces.
+#[cfg(feature = "spec")]
 fn shown(example: &str) -> impl Iterator<Item = &str> {
     example
         .lines()
@@ -207,6 +212,7 @@ fn shown(example: &str) -> impl Iterator<Item = &str> {
 /// The program whose lines `pieces` name, each the first source line that holds its piece:
 /// of the lines `example` shows, else of DESIGN.md's fences. Prose is never searched, so a
 /// piece finds a line of code.
+#[cfg(feature = "spec")]
 fn program_of(example: &str, pieces: &[&str]) -> String {
     let fences = zed_tests::fences::design();
     let mut out = String::new();
@@ -230,6 +236,7 @@ fn program_of(example: &str, pieces: &[&str]) -> String {
     out
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so() {
     let examples = design_examples(&zed_tests::fences::messages());

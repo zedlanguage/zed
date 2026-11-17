@@ -2,16 +2,40 @@ use super::render;
 use zed_tests::tokens::render_lines;
 use zedc::lex::{Doc, lex, lex_with_docs};
 
-/// The `sec:tour_failure` example of EXAMPLES.md, section 12, from the copy
-/// `zed/fences/examples.md`: it lexes, and each form of the lexer it shows gives its tokens.
+/// The `sec:tour_failure` example of EXAMPLES.md, section 12, the case of
+/// [`expected_example_program`]; [`the_example_is_that_of_the_spec`] checks it against the spec.
+const TOUR_FAILURE: &str = "\
+// [d4] sec:tour_failure
+parse : (Utf8String) -> Config | #syntaxError(pos: int)     // an assumed input, shown as a type — no ';' (sec:lexical)
+conf = parse(text) else defaultConfig;
+port = parse(text)?.server?.port else 8080;
+msg  = match parse(text) { #syntaxError(pos:) -> \"bad at ${pos}\", c -> c.name };
+results = files.map(f -> read(f)).map(b -> parse(b));   // File -> Config | #syntaxError(pos: int) | #ioError | #notFound: the atoms ride through
+good = results.where(r -> r is Config);
+bad  = results.where(r -> r is not Config);
+amounts = files.map(f -> int(read(f)));                 // int | #invalid | #ioError | #notFound
+sumKept   = amounts.where(a -> a is int) >< (+);
+sumZeroed = amounts.map(a -> a else 0) >< (+);";
+
+/// [`TOUR_FAILURE`] is the one fence of EXAMPLES.md whose first line is its first line, read in
+/// place (a later fence's first line goes on to name sec:ports too).
+#[cfg(feature = "spec")]
+#[test]
+fn the_example_is_that_of_the_spec() {
+    let found: Vec<String> = zed_tests::fences::examples()
+        .into_iter()
+        .filter(|f| f.text.starts_with("// [d4] sec:tour_failure\n"))
+        .map(|f| f.text)
+        .collect();
+    assert_eq!(found, [TOUR_FAILURE]);
+}
+
+/// The `sec:tour_failure` example ([`TOUR_FAILURE`]) lexes, and each form of the lexer it shows
+/// gives its tokens.
 #[test]
 fn expected_example_program() {
-    let fence = zed_tests::fences::examples()
-        .into_iter()
-        .find(|f| f.text.starts_with("// [d4] sec:tour_failure"))
-        .expect("EXAMPLES.md holds the sec:tour_failure example");
-    let tokens = lex(&fence.text).unwrap_or_else(|e| panic!("{}: {e}", fence.at));
-    let out = render_lines(&fence.text, &tokens);
+    let tokens = lex(TOUR_FAILURE).unwrap_or_else(|e| panic!("{e}"));
+    let out = render_lines(TOUR_FAILURE, &tokens);
     for piece in [
         "#syntaxError ( pos : int )",
         "?. server ?. port «else» 8080₍10₎ ;",

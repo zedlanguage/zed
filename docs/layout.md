@@ -44,8 +44,8 @@ zed/                  Zed source code
                       a folder NN-name/ for the other units of a multi-unit program,
                       ref/, the crate zed-corpus-ref computing each .out, variants/, controls/,
                       LEDGER.md
-  compiler/           the compiler written in Zed (row S); for now ZED0.md and CATALOG.md, the
-                      routines the Rust calls (row PORT-catalog)
+  compiler/           the compiler written in Zed (row S); for now CATALOG.md, the routines
+                      the Rust calls (row PORT-catalog)
   grammar/            the grammars of sec:grammar, the desugaring rules and the table of words,
                       written by the sync tool, and the bracketing and left-recursion cases
                       (step L1.8)
@@ -206,22 +206,23 @@ change; these moved:
 | l01_39_reduced_product | l01_39_scope_relations | deep_condition, disjoint, families, holes, lazy, linked, nests, path_check, seed_edges, two_disjunctions, xst |
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
-EXAMPLES.md is a test. The spec repository is private and this one is public, so this
-repository builds and tests with no access to the spec: what the compiler and the tests need
-of it is copied into `zed/grammar/` and `zed/fences/` by the hand-run command
-`cargo run -p zed-tools --bin sync -- <spec dir>` (or with `$ZED_SPEC_DIR` set). The copies are
-the grammars and the desugaring rules (`zedc-syntax` embeds `syntax.peg` with `include_str!`),
-the backquoted words of the table of words (`words.md`), each fence with a one-line header
-giving its line, layer and section key (`design.md`, `examples.md`), the text fences that
-messages and reports are compared with (`messages.md`), the names of the rejection table's
-rows (`rejections.txt`), the kernel's rule names (`kernel-rules.txt`) and the tables of step
-M0.7's serialization, each node's tag and fields in order and each primitive's code
-(`canon-serial.md`). After a spec change,
-run `sync` and commit what it writes with the tests it moves. `sync --check` writes nothing,
-names each copy that differs from the spec and exits nonzero; it also runs the checks that
-need the spec's prose (the prelude laws, the build-mode table, and that each `sec:` this
-repository cites exists). No build and no test runs `sync`, and only `sync` reads
-`$ZED_SPEC_DIR`.
+EXAMPLES.md is a test. The spec repository is private and this one is public, so no text of
+the spec is kept here: the tests that need it read DESIGN.md and EXAMPLES.md in place, under
+the cargo feature `spec` of `zed-tests` (`tests/src/spec.rs`). `$ZED_SPEC_DIR` names the spec
+directory; without it, the first ancestor directory holding `zed/DESIGN.md` is used, which for
+a checkout beside the spec repository is `../zed`. `tools/run_tests.sh` always enables the
+feature, and a test run with the feature on and no spec fails, naming the paths it tried. A
+build without the feature compiles and runs every test that does not read the spec. The
+fences are laid out by `zed_tests::fences` with the spec's own parsers (`zed_tools::spec`),
+and the variant fixtures of commented ✗ lines stay in `zed/fences/variants/`.
+
+The grammars, the desugaring rules and the backquoted words of the table of words are still
+copied into `zed/grammar/` by the hand-run command `cargo run -p zed-tools --bin sync -- <spec
+dir>` (`zedc-syntax` embeds `syntax.peg` with `include_str!`). After a spec change, run `sync`
+and commit what it writes with the tests it moves. `sync --check` writes nothing, names each
+copy that differs from the spec and exits nonzero; it also runs the checks that need the
+spec's prose (the prelude laws, the build-mode table, and that each `sec:` this repository
+cites exists).
 
 **Tests written in Zed.** Until the `test { }` runner lands (step L1.21), every step test is
 written in Rust, with the Zed source given as strings or fixture files. From then on, tests of

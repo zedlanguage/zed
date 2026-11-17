@@ -1,8 +1,0 @@
-Boom
-T-Discard
-T-Fam
-T-Fix
-T-Fold
-T-Gen
-T-Port
-T-Reindex

@@ -27,6 +27,7 @@ mod scratch_tests;
 pub mod seed;
 #[cfg(test)]
 mod seed_tests;
+pub mod spec;
 pub mod step_helpers;
 pub mod tokens;
 pub mod trees;

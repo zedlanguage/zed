@@ -121,6 +121,41 @@ pub fn fences_in(text: &str, kind: &str, path: &str) -> Result<Vec<Fence>, Strin
     Ok(found.into_iter().zip(keys).map(to_fence).collect())
 }
 
+/// The ```` ```text ```` fences of the documents at `paths`, the messages and reports the spec
+/// prints, as one document: each under a header naming its line and section
+/// (`<!-- DESIGN.md:LINE; section [sec] k -->`), with the indentation of its opening line taken
+/// off each of its lines, so that a report printed inside a list item reads as the program
+/// prints it. O(size of the documents).
+pub fn text_fences(paths: &[String]) -> Result<String, String> {
+    use std::fmt::Write;
+    let mut out = String::new();
+    for path in paths {
+        let name = base_name(path);
+        let text = read_text(path)?;
+        let lines: Vec<&str> = text.split('\n').collect();
+        for f in fences_in(&text, "text", path)? {
+            let open = lines[f.line - 1];
+            let indent = open.len() - open.trim_start_matches(' ').len();
+            let body: Vec<&str> = f
+                .text
+                .split('\n')
+                .map(|l| {
+                    let spaces = l.len() - l.trim_start_matches(' ').len();
+                    &l[spaces.min(indent)..]
+                })
+                .collect();
+            let (line, section, index) = (f.line, f.section, f.index);
+            writeln!(
+                out,
+                "\n<!-- {name}:{line}; section [{section}] {index} -->\n```text\n{}\n```",
+                body.join("\n")
+            )
+            .expect("writing to a String");
+        }
+    }
+    Ok(out)
+}
+
 /// A specification checkout and its grammars.
 #[derive(Clone, Debug)]
 pub struct Spec {

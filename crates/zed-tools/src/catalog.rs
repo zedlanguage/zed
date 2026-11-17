@@ -19,7 +19,7 @@
 //! - `row ID`, or several separated by commas: plan rows of `docs/plan_dag.md` that provide it;
 //! - one or more Zed texts in backticks, separated by commas, each an expression of the grammar
 //!   of `SPEC_DIR/DESIGN.md` whose defined words lie in Zed₀ (layer 24 or below, the bound of
-//!   `zed/compiler/ZED0.md`); a name the words table does not list stands for a value.
+//!   the bootstrap subset in DESIGN.md step M0.8); a name the words table does not list stands for a value.
 //!
 //! With `--write` the tool rewrites the table from the index, keeping each routine's Zed column
 //! and giving a new routine `missing`. Without it the tool checks the catalog: the routines the
@@ -46,7 +46,7 @@ pub const SOURCES: [&str; 3] = [
     "crates/zed-native/src/",
 ];
 
-/// The highest layer of Zed₀ (`zed/compiler/ZED0.md`: the language parts of L19–L24).
+/// The highest layer of Zed₀ (DESIGN.md step M0.8: the language parts of L19–L24).
 pub const ZED0_LAYER: u32 = 24;
 
 /// The header of the catalog's table.

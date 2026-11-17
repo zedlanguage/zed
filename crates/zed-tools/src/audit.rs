@@ -5,9 +5,10 @@
 //! is exact for the parser of DESIGN.md sec:grammar rather than a guess from token shapes. The
 //! defined words come from the layer checker (`layer -v`).
 //!
-//! `audit SPEC_DIR PROGRAM.zed [--checklist ZED0.md]` prints one line per needed alternative,
+//! `audit SPEC_DIR PROGRAM.zed [--checklist DESIGN.md]` prints one line per needed alternative,
 //! `L<layer> <rule>#<index> <grammar text>`, then the words, then the highest layer met. With
-//! `--checklist` it compares the table of the checklist's section `## Part A` with that list:
+//! `--checklist` it compares the table of the checklist's Part A (in DESIGN.md, step M0.8, from
+//! the line `**Part A: …**` to the next line that starts with `**` or `#`) with that list:
 //! each row is a layer, its second column the needed alternatives (as `Rule#i`, in backticks)
 //! and its third the needed words (in backticks). It names every needed entry the table does
 //! not list, and every listed entry the program does not need (a rule or alternative the
@@ -52,7 +53,7 @@ fn changes(g: &Grammar, spec: &Spec, units: &[(Tokens, Tree)]) -> bool {
 
 /// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
-    let usage = "audit SPEC_DIR PROGRAM.zed [--checklist ZED0.md]";
+    let usage = "audit SPEC_DIR PROGRAM.zed [--checklist DESIGN.md]";
     let spec = Spec::open(arg(args, 0, usage)?)?;
     let program = arg(args, 1, usage)?;
     let main = std::path::absolute(program)
@@ -282,17 +283,18 @@ fn read_row<'a>(
     }
 }
 
-/// The table of the section `## Part A` of the checklist `text`, or `None` if it has no such
-/// section. Every line of the section that holds a bar `|` is a line of the table: first a
+/// The table of Part A of the checklist `text` (DESIGN.md step M0.8), or `None` if it has no
+/// Part A. Part A runs from the line that starts with `**Part A` to the next line that starts
+/// with `**` or `#`. Every line of it that holds a bar `|` is a line of the table: first a
 /// header row, then a row of dashes, then the rows `| L<k> | <alternatives> | <words> |`, where
 /// an entry is a span in backticks. A line that is not of this form is not skipped: it gets an
 /// entry in `unread`, with its line number in the file and every reason it cannot be read.
 fn part_a(text: &str) -> Option<Listed<'_>> {
     let mut lines = text.split('\n').enumerate();
-    lines.find(|(_, l)| l.starts_with("## Part A"))?;
+    lines.find(|(_, l)| l.starts_with("**Part A"))?;
     let mut out = Listed::default();
     let mut count = 0;
-    for (n, l) in lines.take_while(|(_, l)| !l.starts_with("## ")) {
+    for (n, l) in lines.take_while(|(_, l)| !l.starts_with("**") && !l.starts_with('#')) {
         let row = strip(l);
         if !row.contains('|') {
             continue;
@@ -432,8 +434,8 @@ pub fn compare(
     let Some(list) = part_a(listed) else {
         say!(
             out,
-            "checklist: {name} has no section `## Part A`, so it lists none of the {} entries {} \
-             needs",
+            "checklist: {name} has no line that starts with `**Part A`, so it lists none of the \
+             {} entries {} needs",
             needs.alts.len() + needs.words.len(),
             needs.program
         );

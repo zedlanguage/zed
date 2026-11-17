@@ -137,7 +137,7 @@ pub(super) fn checklist(m: usize) -> (audit::Needs, String) {
     let words: String = (0..m).map(|i| format!(" `w{i}` `x{i}` `v{i}`")).collect();
     let wrong: String = (0..m).map(|i| format!(" `v{i}`")).collect();
     let list = format!(
-        "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n\
+        "**Part A**\n\n| Layer | Alternatives | Words |\n|---|---|---|\n| L1 |{alts} |{words} |\n\
          | L2 | — |{wrong} |\n"
     );
     (needs, list)
@@ -153,7 +153,7 @@ pub(super) fn compares_checklist(
     m: usize,
 ) {
     let mut out = String::new();
-    let outcome = audit::compare(spec, table, needs, "ZED0.md", list, &mut out);
+    let outcome = audit::compare(spec, table, needs, "CHECKLIST.md", list, &mut out);
     assert_eq!(outcome, Ok(false));
     assert!(out.contains(&format!(", {} not needed `", 2 * m)), "{out}");
     assert!(
@@ -173,7 +173,7 @@ pub(super) fn unreadable(m: usize) -> String {
         .collect();
     let long: String = (0..m).map(|i| format!(" x{i} `R{i}#0`")).collect();
     format!(
-        "## Part A\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
+        "**Part A**\n\n| Layer | Alternatives | Words |\n|---|---|---|\n{bad}| L1 |{long} | — |\n"
     )
 }
 
@@ -187,7 +187,7 @@ pub(super) fn reads_unreadable(
     m: usize,
 ) {
     let mut out = String::new();
-    let outcome = audit::compare(spec, table, needs, "ZED0.md", list, &mut out);
+    let outcome = audit::compare(spec, table, needs, "CHECKLIST.md", list, &mut out);
     assert_eq!(outcome, Ok(false));
     assert!(
         out.contains(&format!("checklist: {} lines of Part A", m + 1)),
@@ -231,11 +231,9 @@ pub(super) fn sync_body(m: usize) -> String {
     format!("{}\n{texts}{KERNEL}", many_fences(m))
 }
 
-/// The directories `sync` copies into under `d`.
+/// The directory `sync` copies into under `d`.
 pub(super) fn sync_targets(d: &Dir) {
-    for sub in ["zed/fences", "zed/grammar"] {
-        std::fs::create_dir_all(d.at(sub)).expect("a copy directory");
-    }
+    std::fs::create_dir_all(d.at("zed/grammar")).expect("a copy directory");
 }
 
 /// A `DESIGN.md` whose table of words has `m` words `w{i}` in row L3, each named again in a note
@@ -264,7 +262,7 @@ pub(super) fn syncs_words_once(d: &Dir, m: usize) {
     assert_eq!(row.matches('`').count(), 2 * (m + 1), "{row}");
 }
 
-/// `sync` lays out and copies the fences of the spec in `d` into its `zed/`.
+/// `sync` writes the grammars, desugaring rules and words of the spec in `d` into its `zed/`.
 pub(super) fn syncs(d: &Dir) {
     let spec = Spec::open(&d.root()).expect("the spec reads");
     let mut out = String::new();

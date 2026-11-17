@@ -1,7 +1,7 @@
 # Gaps between the compiler's Rust and Zed
 
 This file lists what the Rust compiler relies on that Zed lacks or expresses differently, so
-that row S of DESIGN.md (the compiler rewritten in the bootstrap subset, which the file `zed/compiler/ZED0.md` lists and which was called Zed₀ until the answer to QUESTIONS Q34 of 2026-11-11 gave that name to the end of bootstrapping, step S.11) meets no surprises. It was started by
+that row S of DESIGN.md (the compiler rewritten in the bootstrap subset, which DESIGN.md step M0.8 lists and which was called Zed₀ until the answer to QUESTIONS Q34 of 2026-11-11 gave that name to the end of bootstrapping, step S.11) meets no surprises. It was started by
 item T13 of docs/plan_dag.md at commit f425b32 and spec commit cb3d910. Step L6.17 reads it.
 
 **Upkeep.** Each step, once its tests pass, adds an entry here for every Rust construct it
@@ -33,8 +33,8 @@ Two more are in the workaround class and matter because of their cost, not their
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
 step L6.13b) and gap 12 (early exit, which the quantifiers of step L3.15a cover for searches).
 
-**ZED0.md is current** as of the audit of 2026-11-03: its Part B and "Gaps found" take their
-list from this file, and each gap above that the compiler meets before row S is now a step
+**DESIGN.md step M0.8 is current** as of the audit of 2026-11-03: its Part B and the paragraph
+after it take their list from this file, and each gap above that the compiler meets before row S is now a step
 before its first use (DESIGN.md step S.1 lists them). The bit words are in the words table
 and built (gap 4); the content-address row writes `mod 2^32`, as the grammar has no `%`.
 
@@ -92,7 +92,7 @@ each low-count construct was read at every site and each large one sampled.
 
 The classes: **missing**, the bootstrap subset has no form and DESIGN.md needs one. **Workaround**, a form exists
 but with a different shape, or its cost depends on a named step. **Mechanical**, a local rewrite.
-**Retained**, stayed in Rust by DESIGN.md until the answer to QUESTIONS Q52 (2026-11-11); since then nothing stays in Rust, and each Retained entry is ported to libzed (plan row RT-port-libzed, DESIGN step S.7a) or leaves main with the Rust compiler (step S.11). "Zed₀" is the whole core, as step M0.8 and zed/compiler/ZED0.md define it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
+**Retained**, stayed in Rust by DESIGN.md until the answer to QUESTIONS Q52 (2026-11-11); since then nothing stays in Rust, and each Retained entry is ported to libzed (plan row RT-port-libzed, DESIGN step S.7a) or leaves main with the Rust compiler (step S.11). "Zed₀" is the whole core, as step M0.8 defines it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
 
 ## What stays in Rust
 
@@ -302,7 +302,7 @@ is to confirm it for `mix` (`types.rs:77`), where each product is its own expres
 representations as i8…i64, else big-integer, and `int[0..<2^64]` does not fit `i64`, so a hash
 would be stored as a big integer. Fix: state that a domain spanning at most `2^w` integers is
 stored in one word. Both points are inferred; the test is a scaling run of `mix` at S.3. Carrier masks become sets of atoms. BLAKE3 in Zed
-is then ZED0.md's plan; if a stage build shows it too slow, a primitive is allowed by line 1075.
+is then step M0.8's plan; if a stage build shows it too slow, a primitive is allowed by line 1075.
 
 Also float bits, no word: `to_bits`, `from_bits` 13 matches (`Out::value`, `canon/serial.rs:78`;
 `W::value`, `zir/binary.rs:122`; `Exact::float`, `num.rs:151`; `exact_sum`, `exact.rs:94`;
@@ -321,7 +321,7 @@ literals 20; `to_le_bytes` and `from_le_bytes` 17 (`Out::word`, `canon/serial.rs
 `zir/binary.rs:71`); raw reads and writes (`command_inner`, `run.rs:603`, `:654`; `Disk::get`,
 `run.rs:445`).
 
-Fix, three parts. (a) Spans become scalar offsets: mechanical, as ZED0.md says "lex by code
+Fix, three parts. (a) Spans become scalar offsets: mechanical, as step M0.8 says "lex by code
 point", but the columns of diagnostics must agree with Rust at S.2, so the differential test
 decides. (b) An L1 word `utf8 : String -> [u8]`, and `int` to little-endian bytes as a
 library function, which hashing needs. (c) For files, the binary ZIR and wave records

@@ -118,17 +118,16 @@ pub fn tool(run: fn(&[String], &mut String) -> Outcome, args: &[&str]) -> (Outco
     (outcome, out)
 }
 
-/// The kernel grammar of a test spec: seven generators, so `sync` can list the words no message
-/// prints (`zed_tools::spec_checks::kernel_rules`). A spec `sync` copies must have one.
+/// The kernel grammar of a test spec: seven generators, from which
+/// `zed_tools::spec_checks::kernel_rules` lists the words no message prints. `sync` refuses a
+/// spec without one.
 pub const KERNEL: &str = "# (sec:kernel) Kernel\n\n```\nF ::= fam(D, i -> e)\n    | reindex(F, kf, vf)\n    \
                           | discard(F, sel)\n    | fold(F, op, ev)\n    | fix(F0, step, ev)\n    \
                           | gen(init, step, guard)\n    | port(decl)\n```\n";
 
-/// A directory standing for `zed/` with its two subdirectories, for `sync` to write.
+/// A directory standing for `zed/` with its subdirectory `grammar/`, for `sync` to write.
 pub fn zed_dir(name: &str) -> Dir {
     let zed = Dir::new(name);
-    for sub in ["fences", "grammar"] {
-        fs::create_dir(zed.at(sub)).expect("a copy directory");
-    }
+    fs::create_dir(zed.at("grammar")).expect("a copy directory");
     zed
 }

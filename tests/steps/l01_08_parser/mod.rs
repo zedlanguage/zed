@@ -22,5 +22,6 @@ mod plain_names;
 mod push_or_less;
 mod recovery_edges;
 mod reserved;
+#[cfg(feature = "spec")]
 mod rings;
 mod scaling;

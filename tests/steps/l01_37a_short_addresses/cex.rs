@@ -60,6 +60,9 @@ fn every_enabled_source_replays_its_counterexamples() {
             replayed += n;
             r.add(at, rep);
         };
+        // The spec's fences are read in place, so only a build with the feature `spec` has
+        // them.
+        #[cfg(feature = "spec")]
         for f in zed_tests::fences::all()
             .iter()
             .filter(|f| f.layer <= ENABLED && !f.notation)

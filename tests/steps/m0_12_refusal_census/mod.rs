@@ -22,7 +22,6 @@ mod programs;
 use std::fmt::Write;
 use std::path::Path;
 
-use zed_tests::oracle::ENABLED;
 use zedc::front::Diagnostic;
 use zedc::query::Db;
 use zedc::run;
@@ -129,6 +128,7 @@ fn report(out: &str) -> String {
     format!("{}\n{out}", totals(out))
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn enabled_fences() {
     let mut out = String::new();
@@ -136,7 +136,7 @@ fn enabled_fences() {
         .into_iter()
         .chain(zed_tests::fences::readme());
     let mut n = 0;
-    for f in fences.filter(|f| f.layer <= ENABLED && !f.notation) {
+    for f in fences.filter(|f| f.layer <= zed_tests::oracle::ENABLED && !f.notation) {
         refusals(&f.key, &f.text, &mut out);
         n += 1;
     }

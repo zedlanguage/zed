@@ -1,13 +1,14 @@
 //! The `sync` command: the copies of the spec it writes, `--check`, and the checks of the
-//! spec's prose it runs. This file spells the kernel rule names to test the list of them, so
-//! l01_21's `no_message_names_a_kernel_rule` leaves it out, as it leaves out its own file.
+//! spec's prose it runs; and the readers the tests use on DESIGN.md in place. This file spells
+//! the kernel rule names to test the list of them, so l01_21's `no_message_names_a_kernel_rule`
+//! leaves it out, as it leaves out its own file.
 
 use std::fs;
 
 use zed_tools::spec::Spec;
 use zed_tools::{fence_layers, spec_checks, sync};
 
-use super::{DOUBLE, design, fence, grammar, spec_dir};
+use super::{DOUBLE, design, design_of, fence, grammar, spec_dir};
 use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
 
 /// Two tables of step M0.7's serialization, the first ended by a paragraph, the second by a
@@ -20,13 +21,10 @@ const SERIAL: &str = "| Grade | Tag | Fields in order |\n|---|---|---|\n| Axiom 
                       | `a - b` | 1 | — |\n";
 
 /// `sync` writes every copy, `--check` then passes, and a copy edited by hand is out of date.
-/// A ```` ```text ```` fence inside a list item is copied with its indentation taken off.
+/// It copies no fence, message or table: the tests read those from DESIGN.md in place.
 #[test]
 fn sync_writes_the_copies_and_check_finds_a_stale_one() {
-    let body = format!(
-        "{}\n- A report:\n\n  ```text\n  trivial models of T\n    one line\n  ```\n\n{SERIAL}\n{KERNEL}",
-        fence(DOUBLE)
-    );
+    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
     let dir = spec_dir("sync", &design(&body), &fence(DOUBLE));
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let zed = zed_dir("sync_zed");
@@ -45,29 +43,6 @@ fn sync_writes_the_copies_and_check_finds_a_stale_one() {
             "{name}"
         );
     }
-    let copied = fs::read_to_string(zed.at("fences/design.md")).unwrap();
-    assert!(
-        copied.contains("DESIGN.md:") && copied.contains(DOUBLE),
-        "{copied}"
-    );
-    let messages = fs::read_to_string(zed.at("fences/messages.md")).unwrap();
-    assert!(
-        messages.contains("\n```text\ntrivial models of T\n  one line\n```\n"),
-        "{messages}"
-    );
-    assert_eq!(
-        fs::read_to_string(zed.at("fences/kernel-rules.txt")).unwrap(),
-        "Boom\nT-Discard\nT-Fam\nT-Fix\nT-Fold\nT-Gen\nT-Port\nT-Reindex\n"
-    );
-    assert_eq!(
-        fs::read_to_string(zed.at("fences/canon-serial.md")).unwrap(),
-        "| Grade | Tag | Fields in order |\n| Axiom | 0 | — |\n\
-         | Proved | 2 | — |\n| Value | Tag | Fields in order |\n| Boolean | 0 | `value: byte` |\n\
-         | Primitive | Code |\n| `a + b` | 0 |\n",
-        "the tables of M0.7's serialization and its codes of primitives, without the line \
-         under each header, the table of the same shape whose header names no tag, or a table \
-         whose header only starts as the codes' does"
-    );
     let words = fs::read_to_string(zed.at("grammar/words.md")).unwrap();
     assert!(
         words.ends_with(
@@ -75,12 +50,70 @@ fn sync_writes_the_copies_and_check_finds_a_stale_one() {
         ),
         "{words}"
     );
+    let mut written: Vec<String> = fs::read_dir(zed.root())
+        .unwrap()
+        .chain(fs::read_dir(zed.at("grammar")).unwrap())
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "desugar.txt",
+            "grammar",
+            "lexical.peg",
+            "notation.peg",
+            "synced-from",
+            "syntax.peg",
+            "words.md"
+        ]
+    );
     assert_eq!(run(true).0, Ok(true));
 
-    zed.write("fences/design.md", "edited by hand\n");
+    zed.write("grammar/words.md", "edited by hand\n");
     let (outcome, out) = run(true);
     assert_eq!(outcome, Ok(false));
-    assert_eq!(out, "design.md is out of date\n");
+    assert_eq!(out, "words.md is out of date\n");
+}
+
+/// The readers the tests use on DESIGN.md in place: a ```` ```text ```` fence inside a list
+/// item is given with its indentation taken off, the kernel grammar's rule names are listed,
+/// and the tables of M0.7's serialization are kept apart from tables of other shapes.
+#[test]
+fn the_in_place_readers_give_the_messages_rules_and_tables() {
+    let body = format!(
+        "{}\n- A report:\n\n  ```text\n  trivial models of T\n    one line\n  ```\n\n{SERIAL}\n{KERNEL}",
+        fence(DOUBLE)
+    );
+    let text = design(&body);
+    let dir = spec_dir("in_place", &text, "");
+    let messages = zed_tools::spec::text_fences(&[dir.at("DESIGN.md")]).expect("the fences read");
+    assert!(
+        messages.contains("\n```text\ntrivial models of T\n  one line\n```"),
+        "{messages}"
+    );
+    assert_eq!(
+        spec_checks::kernel_rules(&text).unwrap(),
+        [
+            "Boom",
+            "T-Discard",
+            "T-Fam",
+            "T-Fix",
+            "T-Fold",
+            "T-Gen",
+            "T-Port",
+            "T-Reindex"
+        ]
+    );
+    assert_eq!(
+        spec_checks::serial_tables(&text),
+        "| Grade | Tag | Fields in order |\n| Axiom | 0 | — |\n\
+         | Proved | 2 | — |\n| Value | Tag | Fields in order |\n| Boolean | 0 | `value: byte` |\n\
+         | Primitive | Code |\n| `a + b` | 0 |\n",
+        "the tables of M0.7's serialization and its codes of primitives, without the line \
+         under each header, the table of the same shape whose header names no tag, or a table \
+         whose header only starts as the codes' does"
+    );
 }
 
 /// A spec with no kernel grammar stops `sync` before it writes anything: with no words to ban,
@@ -93,7 +126,7 @@ fn sync_refuses_a_spec_with_no_kernel_grammar() {
     let mut out = String::new();
     let why = sync::sync_into(&spec, &zed.root(), false, &mut out).expect_err("no sec:kernel");
     assert!(why.contains("sec:kernel"), "{why}");
-    assert!(fs::read_dir(zed.at("fences")).unwrap().next().is_none());
+    assert!(fs::read_dir(zed.at("grammar")).unwrap().next().is_none());
 }
 
 /// The copy of the table of words gives each fence the layer DESIGN.md's table gives it, though
@@ -118,7 +151,6 @@ fn the_copied_table_of_words_lays_out_the_fences_as_the_spec_does() {
     );
     assert!(text.contains("and prose"), "the table is replaced");
     let dir = spec_dir("sync_words", &text, "");
-    fs::create_dir_all(format!("{}/zed/fences", dir.root())).unwrap();
     fs::create_dir_all(format!("{}/zed/grammar", dir.root())).unwrap();
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let mut out = String::new();
@@ -158,7 +190,6 @@ fn a_word_named_again_in_a_note_is_listed_once() {
     );
     assert!(text.contains("takes strings"), "the table is replaced");
     let dir = spec_dir("sync_words_once", &text, "");
-    fs::create_dir_all(format!("{}/zed/fences", dir.root())).unwrap();
     fs::create_dir_all(format!("{}/zed/grammar", dir.root())).unwrap();
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let mut out = String::new();
@@ -248,8 +279,18 @@ fn sync_writes_the_spec_commit_it_copied_from() {
 /// held copy that is current needs none.
 #[test]
 fn a_held_copy_keeps_its_own_commit_in_the_stamp() {
+    // Each commit changes the syntactic grammar by a comment after its last line's layer.
     let body = format!("{}\n{KERNEL}", fence(DOUBLE));
-    let dir = spec_dir("sync_held", &design(&body), &fence(DOUBLE));
+    let spec_text = |note: &str| {
+        design_of(
+            &grammar("lexical.peg"),
+            &format!("{}{note}\n", grammar("syntax.peg").trim_end()),
+            &grammar("notation.peg"),
+            &grammar("desugar.txt"),
+            &body,
+        )
+    };
+    let dir = spec_dir("sync_held", &spec_text(""), &fence(DOUBLE));
     let zed = zed_dir("sync_held_zed");
     let stamp = || fs::read_to_string(zed.at(sync::STAMP)).unwrap();
     let run = |check, hold: &[&str]| {
@@ -276,50 +317,48 @@ fn a_held_copy_keeps_its_own_commit_in_the_stamp() {
         assert!(out.status.success(), "git {args:?}: {out:?}");
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     };
-    let commit = |text: &str| {
-        fs::write(dir.at("DESIGN.md"), design(text)).unwrap();
+    let commit = |note: &str| {
+        fs::write(dir.at("DESIGN.md"), spec_text(note)).unwrap();
         git(&["add", "DESIGN.md", "EXAMPLES.md"]);
         git(&["commit", "-q", "-m", "spec"]);
         git(&["rev-parse", "HEAD"])
     };
     git(&["init", "-q"]);
-    let first = commit(&body);
+    let first = commit("");
     assert_eq!(run(false, &[]).0, Ok(true));
-    assert_eq!(run(false, &["design.md"]).0, Ok(true));
+    assert_eq!(run(false, &["syntax.peg"]).0, Ok(true));
     assert_eq!(
         stamp(),
         format!("{first}\n"),
         "a current held copy needs no line"
     );
 
-    let body = format!("{}\n{body}", fence("triple(x: int) -> int = x * 3;"));
-    let second = commit(&body);
-    let (outcome, out) = run(false, &["design.md"]);
+    let second = commit("  -- one");
+    let (outcome, out) = run(false, &["syntax.peg"]);
     assert_eq!(outcome, Ok(true), "{out}");
     assert!(
-        out.contains(&format!("design.md is held, copied from zed {first}")),
+        out.contains(&format!("syntax.peg is held, copied from zed {first}")),
         "{out}"
     );
-    assert_eq!(stamp(), format!("{second}\ndesign.md {first}\n"));
+    assert_eq!(stamp(), format!("{second}\nsyntax.peg {first}\n"));
     let (outcome, out) = run(true, &[]);
     assert_eq!(outcome, Ok(false));
     assert_eq!(
         out,
-        format!("design.md is out of date, copied from zed {first}\n")
+        format!("syntax.peg is out of date, copied from zed {first}\n")
     );
 
-    let body = format!("{}\n{body}", fence("half(x: int) -> int = x / 2;"));
-    let third = commit(&body);
-    assert_eq!(run(false, &["design.md"]).0, Ok(true));
+    let third = commit("  -- two");
+    assert_eq!(run(false, &["syntax.peg"]).0, Ok(true));
     assert_eq!(
         stamp(),
-        format!("{third}\ndesign.md {first}\n"),
+        format!("{third}\nsyntax.peg {first}\n"),
         "a later sync that still holds the copy keeps its commit"
     );
 
     let (outcome, out) = run(false, &[]);
     assert_eq!(outcome, Ok(true), "{out}");
-    assert!(out.contains("design.md is written"), "{out}");
+    assert!(out.contains("syntax.peg is written"), "{out}");
     assert_eq!(stamp(), format!("{third}\n"));
     assert_eq!(run(true, &[]).0, Ok(true));
 

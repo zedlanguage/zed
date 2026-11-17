@@ -308,6 +308,10 @@ path = "steps/l01_23_subtyping/deep_search.rs"
 
 [features]
 full = []
+# The tests that read the spec checkout, DESIGN.md and EXAMPLES.md, in place (`zed_tests::spec`):
+# at $ZED_SPEC_DIR, or else `zed/` beside this checkout or one of its parent directories. A
+# public clone builds and tests without them; tools/run_tests.sh always turns them on.
+spec = []
 # The build whose content addresses collide, for the tests of step L1.37a.
 short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
 

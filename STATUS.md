@@ -195,7 +195,8 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   once (`zedc::cost::Plan.schedule`, `Schedule::Timed` and `Schedule::Nested`, prelude
   `footprints`; item FOOTPRINT-overlap).
 - Done: **M0.7**, the canonicalizer (`zedc::canon`); values in DESIGN.md M0.7.
-- Done: **M0.8**, the Zed₀ checklist (`zed/compiler/ZED0.md`). The audit found that L6 completes
+- Done: **M0.8**, the Zed₀ checklist (DESIGN.md step M0.8, Parts A and B; it was
+  `zed/compiler/ZED0.md` until SPEC-copies-out). The audit found that L6 completes
   what the compiler needs; by the author's order of 2026-11-05, Zed₀ is the whole core and row S
   follows it (see "Zed₀ moved after the core" below).
 - Done: **M0.11**, the built-in operator axioms (`zedc::axioms`, prelude unit `axioms`), unit

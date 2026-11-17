@@ -1,15 +1,12 @@
 //! The fences are keyed by their section and their place in it, not by their line, so that an
 //! edit of DESIGN.md in one section changes the expected outputs of no other section.
 
-use std::fs;
-
 use zed_tests::fences::{self, DocFence};
 
 use zed_tools::spec::{Spec, zed_fences_in};
-use zed_tools::sync;
 
 use super::copies::{marks_by_key, tokens_by_key};
-use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, design, fence, spec_dir, zed_dir};
+use zed_tests::step_helpers::m0_03_grammar_tools::{design, fence, spec_dir};
 
 /// The section and place of each fence of the document `text`.
 pub(super) fn keys(text: &str) -> Vec<(String, usize)> {
@@ -71,25 +68,18 @@ fn two_sections(extra: &str) -> String {
     ))
 }
 
-/// The fences of the copy `sync` writes of the spec whose DESIGN.md is `text` with a kernel
-/// grammar after it, which `sync` needs.
-fn synced(name: &str, text: &str) -> Vec<DocFence> {
-    let dir = spec_dir(name, &format!("{text}\n{KERNEL}"), "");
+/// The fences of the spec whose DESIGN.md is `text`, laid out in place as the tests lay out
+/// the real spec's.
+fn laid_out(name: &str, text: &str) -> Vec<DocFence> {
+    let dir = spec_dir(name, text, "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir(&format!("{name}_zed"));
-    let mut out = String::new();
-    assert_eq!(
-        sync::sync_into(&spec, &zed.root(), false, &mut out),
-        Ok(true),
-        "{out}"
-    );
-    fences::parse(&fs::read_to_string(zed.at("fences/design.md")).expect("the copy"))
+    fences::of_document(&dir.at("DESIGN.md"), &spec)
 }
 
 #[test]
 fn a_line_added_above_a_fence_changes_no_expected_output() {
-    let before = synced("keys_before", &two_sections(""));
-    let after = synced(
+    let before = laid_out("keys_before", &two_sections(""));
+    let after = laid_out(
         "keys_after",
         &two_sections("A new paragraph.\n\nAnd another.\n\n"),
     );
@@ -108,8 +98,8 @@ fn a_line_added_above_a_fence_changes_no_expected_output() {
 
 #[test]
 fn a_fence_added_to_one_section_changes_only_its_keys() {
-    let before = synced("keys_one", &two_sections(""));
-    let after = synced("keys_two", &two_sections(&fence("zero = 0;")));
+    let before = laid_out("keys_one", &two_sections(""));
+    let after = laid_out("keys_two", &two_sections(&fence("zero = 0;")));
     let second = |fs: &[DocFence]| {
         fs.iter()
             .filter(|f| f.key.contains("[sec:second]"))

@@ -7,8 +7,8 @@
 //! other free variable by its name. A kernel term's address is BLAKE3-256 over `zed-canon` and
 //! a NUL byte, the 32-bit little-endian rule-set version, then the serialization." The tables
 //! after that step give every node's tag, its fields in order and the kind each is written as,
-//! and every primitive's code; `sync` copies them to `zed/fences/canon-serial.md`, which
-//! [`m07`] reads. The tag, the order of the fields, how each is written and the code of a
+//! and every primitive's code; [`m07`] reads them from DESIGN.md in place
+//! (`zed_tools::spec_checks::serial_tables`, feature `spec`). The tag, the order of the fields, how each is written and the code of a
 //! primitive all come from the tables, so a change to
 //! crates/zedc-zir/src/canon/serial.rs that the tables do not make, or the reverse, fails
 //! [`the_serialization_is_m07s_byte_for_byte`], and a changed code fails
@@ -49,8 +49,13 @@ pub(super) mod m07 {
     use zedc::store::interval::End;
     use zedc::store::lattice::Congruence;
 
-    /// The copy `sync` makes of M0.7's tables.
-    pub const COPY: &str = include_str!("../../../zed/fences/canon-serial.md");
+    /// M0.7's tables, read from DESIGN.md in place: each table's header and rows, the tables one
+    /// after another.
+    pub fn text() -> &'static str {
+        static TEXT: LazyLock<String> =
+            LazyLock::new(|| zed_tools::spec_checks::serial_tables(zed_tests::spec::design()));
+        &TEXT
+    }
 
     /// What a free variable naming another definition resolves to.
     pub type Refs<'a> = &'a dyn Fn(&str) -> Option<ContentAddress>;
@@ -72,7 +77,7 @@ pub(super) mod m07 {
     /// The header of the table of the primitives' codes.
     pub const CODES: &str = "| Primitive | Code |";
 
-    /// The tables of `text`, laid out as `sync` copies them: a header `| Kind | Tag | Fields
+    /// The tables of `text`, laid out as [`text`] gives them: a header `| Kind | Tag | Fields
     /// in order |` starts each table, and each row is `| Name | tag or — | `fields` or — |`,
     /// the fields `name: kind` separated by `, `. The table of codes ([`codes_of`]) is left
     /// out.
@@ -127,13 +132,13 @@ pub(super) mod m07 {
         tables
     }
 
-    /// The tables of the copy.
+    /// The tables of DESIGN.md.
     pub fn tables() -> &'static Tables {
-        static TABLES: LazyLock<Tables> = LazyLock::new(|| parse(COPY));
+        static TABLES: LazyLock<Tables> = LazyLock::new(|| parse(text()));
         &TABLES
     }
 
-    /// The table of the primitives' codes in `text`, laid out as `sync` copies it: the header
+    /// The table of the primitives' codes in `text`, laid out as [`text`] gives it: the header
     /// [`CODES`], then rows `| primitive | code |` up to the next table's header; each
     /// primitive by its cell, with `\|` read as `|`.
     pub fn codes_of(text: &str) -> BTreeMap<String, u64> {
@@ -161,9 +166,9 @@ pub(super) mod m07 {
         codes
     }
 
-    /// The codes of the copy.
+    /// The codes of DESIGN.md.
     pub fn codes() -> &'static BTreeMap<String, u64> {
-        static CODES: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| codes_of(COPY));
+        static CODES: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| codes_of(text()));
         &CODES
     }
 
@@ -256,7 +261,7 @@ pub(super) mod m07 {
         }
     }
 
-    /// The code of `p` in the copy.
+    /// The code of `p` in DESIGN.md's table.
     pub fn code(p: Prim) -> u64 {
         let row = row_of(p);
         *codes()
@@ -892,7 +897,8 @@ fn every_primitive_has_the_code_m07_gives() {
 }
 
 /// The serializer reads the tables: with the tag of Lambda changed, or two fields of
-/// Application swapped, in the copy, its bytes are no longer the implementation's.
+/// Application swapped, in a changed copy of the tables, its bytes are no longer the
+/// implementation's.
 #[test]
 fn a_changed_table_gives_other_bytes() {
     let d = zedc::canon::canonicalize(&def("k", lam(&["x"], var("x"))));
@@ -912,8 +918,8 @@ fn a_changed_table_gives_other_bytes() {
         ),
     ] {
         assert_eq!(&by_tables(d, m07::tables()).0, want, "{from}");
-        assert!(m07::COPY.contains(from), "{from}");
-        let changed = m07::parse(&m07::COPY.replace(from, to));
+        assert!(m07::text().contains(from), "{from}");
+        let changed = m07::parse(&m07::text().replace(from, to));
         assert_ne!(&by_tables(d, &changed).0, want, "{to}");
     }
 }

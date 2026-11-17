@@ -106,6 +106,7 @@ fn every_enabled_corpus_program_agrees() {
     }
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn every_enabled_fence_program_agrees() {
     // A fence with `main` is a program; of the enabled fences at L1, one is: the environment

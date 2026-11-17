@@ -3,12 +3,11 @@
 //! every unit that builds is formatted, and the result builds to the same statements, keeps
 //! its comments, and formats to itself.
 
-use zed_tests::fences;
-
+#[cfg(feature = "spec")]
 #[test]
 fn every_unit_that_builds_formats_to_a_fixed_point() {
     let mut formatted = 0;
-    for f in fences::all().iter().filter(|f| !f.notation) {
+    for f in zed_tests::fences::all().iter().filter(|f| !f.notation) {
         if super::build(&f.text).is_ok() {
             let r = std::panic::catch_unwind(|| super::fmt(&f.text));
             assert!(r.is_ok(), "fence at {}:\n{}", f.at, f.text);

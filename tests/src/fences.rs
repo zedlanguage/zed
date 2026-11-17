@@ -1,9 +1,9 @@
-//! The documentation's fences, each with its layer: those of DESIGN.md and EXAMPLES.md, copied
-//! from the spec into `zed/fences/` by the hand-run `sync` tool (step L1.7), and those of this
-//! repository's README.md, laid out against this repository's grammar `zed/grammar/`
-//! (`zed_tools::fence_layers`); the ```` ```text ```` fences of the spec, which the tests compare
-//! messages and reports with; and the hand-written fixtures of the commented ✗ variants. Every
-//! file is this repository's own: no test reads the spec.
+//! The documentation's fences, each with its layer: those of DESIGN.md and EXAMPLES.md, read
+//! in place from the spec checkout ([`crate::spec`], feature `spec`) and laid out against the
+//! spec's grammar (step L1.7), and those of this repository's README.md, laid out against this
+//! repository's grammar `zed/grammar/` (`zed_tools::fence_layers`); the ```` ```text ```` fences
+//! of the spec, which the tests compare messages and reports with; and the hand-written
+//! fixtures of the commented ✗ variants in `zed/fences/variants/`.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -56,63 +56,46 @@ pub struct Variant {
     pub text: String,
 }
 
-/// The directory `zed/fences/`.
+/// The directory `zed/fences/`, which holds the variant fixtures.
 pub fn dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../zed/fences")
 }
 
-/// The fences of the copy `file` (`design.md` or `examples.md`), in order.
-pub fn of(file: &str) -> Vec<DocFence> {
-    let md = std::fs::read_to_string(dir().join(file)).expect("the fence copy is readable");
-    parse(&md)
-}
-
-/// The fences of `md`, the text of a copy the `sync` tool wrote, in order.
-pub fn parse(md: &str) -> Vec<DocFence> {
-    fence::extract(md)
+/// The fences of the document at `path`, in order, laid out against `spec`.
+pub fn of_document(path: &str, spec: &Spec) -> Vec<DocFence> {
+    fence_layers::of_document(path, spec)
+        .unwrap_or_else(|e| panic!("{e}"))
         .into_iter()
-        .map(|f| {
-            let head = f
-                .before
-                .strip_prefix("<!-- ")
-                .and_then(|h| h.strip_suffix(" -->"))
-                .unwrap_or_else(|| panic!("no header before the fence at line {}", f.line));
-            let (head, section) = head
-                .split_once("; section [")
-                .unwrap_or_else(|| panic!("no section in the header at line {}", f.line));
-            let (section, index) = section.rsplit_once("] ").expect("a section and an index");
-            let (at, rest) = head.split_once(" layer L").expect("a layer");
-            let layer = rest[..rest.find(':').expect("a `:`")]
-                .parse()
-                .expect("a layer number");
-            let ring = head
-                .split_once(": ring L")
-                .and_then(|(_, r)| r[..r.find(',')?].parse().ok())
-                .expect("a ring");
-            let doc = at.split_once(':').expect("a document and a line").0;
-            DocFence {
-                key: format!("{doc} [{section}] {index}"),
-                at: at.into(),
-                layer,
-                ring,
-                notation: head.ends_with(", documentation notation"),
-                text: f.text,
-            }
-        })
+        .map(DocFence::from)
         .collect()
 }
 
-/// The fences of DESIGN.md, in order.
-pub fn design() -> Vec<DocFence> {
-    of("design.md")
+/// The spec checkout's grammars, read once per test binary.
+#[cfg(feature = "spec")]
+fn spec() -> &'static Spec {
+    static SPEC: OnceLock<Spec> = OnceLock::new();
+    SPEC.get_or_init(|| Spec::open(&crate::spec::root()).unwrap_or_else(|e| panic!("{e}")))
 }
 
-/// The fences of EXAMPLES.md, in order.
+/// The fences of the spec's DESIGN.md, in order, laid out against the spec's grammar once per
+/// test binary: laying out a fence parses it at up to every ring.
+#[cfg(feature = "spec")]
+pub fn design() -> Vec<DocFence> {
+    static CELL: OnceLock<Vec<DocFence>> = OnceLock::new();
+    CELL.get_or_init(|| of_document(&crate::spec::design_path(), spec()))
+        .clone()
+}
+
+/// The fences of the spec's EXAMPLES.md, in order, laid out as [`design`]'s are.
+#[cfg(feature = "spec")]
 pub fn examples() -> Vec<DocFence> {
-    of("examples.md")
+    static CELL: OnceLock<Vec<DocFence>> = OnceLock::new();
+    CELL.get_or_init(|| of_document(&crate::spec::examples_path(), spec()))
+        .clone()
 }
 
 /// Every fence: DESIGN.md's, then EXAMPLES.md's.
+#[cfg(feature = "spec")]
 pub fn all() -> Vec<DocFence> {
     let mut out = design();
     out.extend(examples());
@@ -129,6 +112,7 @@ pub const HELD_GRAMMAR_UNPARSED: &[(&str, &str)] = &[];
 
 /// Every fence of [`all`] that this repository's grammar parses: all but those of
 /// [`HELD_GRAMMAR_UNPARSED`].
+#[cfg(feature = "spec")]
 pub fn parsed() -> Vec<DocFence> {
     all()
         .into_iter()
@@ -143,28 +127,30 @@ fn root() -> String {
 
 /// The fences of this repository's README.md (item README-fences), in order, laid out against
 /// this repository's grammar once per test binary: laying out a fence parses it at up to every
-/// ring. They are not among [`all`]: the page states its own results, and its tests compare
+/// ring. They are not among `all` (feature `spec`): the page states its own results, and its tests compare
 /// them with the run.
 pub fn readme() -> Vec<DocFence> {
     static CELL: OnceLock<Vec<DocFence>> = OnceLock::new();
     CELL.get_or_init(|| {
         let root = root();
         let spec = Spec::of_impl(&root).unwrap_or_else(|e| panic!("{e}"));
-        fence_layers::of_document(&format!("{root}/README.md"), &spec)
-            .unwrap_or_else(|e| panic!("{e}"))
-            .into_iter()
-            .map(DocFence::from)
-            .collect()
+        of_document(&format!("{root}/README.md"), &spec)
     })
     .clone()
 }
 
-/// The ```` ```text ```` fences of DESIGN.md and EXAMPLES.md, the messages and reports the spec
-/// prints, as the `sync` tool copied them into `zed/fences/messages.md`: each under its
-/// `<!-- DESIGN.md:LINE; section [sec] k -->` header, at the left margin.
+/// The ```` ```text ```` fences of the spec's DESIGN.md and EXAMPLES.md, the messages and
+/// reports the spec prints, read in place once per test binary
+/// (`zed_tools::spec::text_fences`): each under its `<!-- DESIGN.md:LINE; section [sec] k -->`
+/// header, at the left margin.
+#[cfg(feature = "spec")]
 pub fn messages() -> String {
-    let path = dir().join("messages.md");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    static TEXT: OnceLock<String> = OnceLock::new();
+    TEXT.get_or_init(|| {
+        zed_tools::spec::text_fences(&[crate::spec::design_path(), crate::spec::examples_path()])
+            .unwrap_or_else(|e| panic!("{e}"))
+    })
+    .clone()
 }
 
 /// The passage of the spec's ```` ```text ```` fences ([`messages`]) that starts at the one line
@@ -177,6 +163,7 @@ pub fn messages() -> String {
 /// Complexity tradeoff: one scan of the file's lines, O(D) for D bytes, on each call; a test
 /// reads a few passages, so an index of the lines by their start, O(D) to build once, would
 /// save nothing.
+#[cfg(feature = "spec")]
 pub fn passage(first: &str) -> String {
     let text = messages();
     let lines: Vec<&str> = text.lines().collect();
@@ -185,7 +172,7 @@ pub fn passage(first: &str) -> String {
         .collect();
     let [start] = starts[..] else {
         panic!(
-            "zed/fences/messages.md has {} lines that start with `{first}`, and the test reads \
+            "the spec's text fences have {} lines that start with `{first}`, and the test reads \
              the passage that starts at exactly one",
             starts.len()
         );

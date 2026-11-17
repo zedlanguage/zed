@@ -2,6 +2,7 @@
 //! tables, `main`'s port header, the whole-value push `p <- e`, and `if`/`else`.
 
 mod bench;
+#[cfg(feature = "spec")]
 mod fences;
 mod functions;
 mod given;

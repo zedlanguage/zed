@@ -5,6 +5,7 @@
 mod bench;
 mod blocks;
 mod empty_family;
+#[cfg(feature = "spec")]
 mod fences;
 mod returns;
 mod scaling;

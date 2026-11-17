@@ -40,6 +40,7 @@ fn programs(stmts: &[Stmt]) -> Vec<&[Stmt]> {
 /// annotation, prelude word or prelude type of a later layer; or on an import, which a fragment read alone,
 /// with no package around it, cannot follow. A fence of several programs is resolved one
 /// program at a time ([`programs`]).
+#[cfg(feature = "spec")]
 #[test]
 fn every_building_fence_resolves_but_for_its_free_names() {
     let (mut resolved, mut built) = (0, 0);

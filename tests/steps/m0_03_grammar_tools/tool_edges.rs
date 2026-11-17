@@ -1,13 +1,11 @@
-//! Edge cases of `progress` and `sync`: a step title cut to its length, lines that only look
-//! like steps, a documentation fence's copy, and a spec with no table of defined words (which
-//! the layer table reader refuses first, so `sync`'s own refusal of it cannot be reached).
-
-use std::fs;
+//! Edge cases of `progress`, the fence layout and `sync`: a step title cut to its length, lines
+//! that only look like steps, a documentation fence, and a spec with no table of defined words
+//! (which the layer table reader refuses first, so `sync`'s own refusal of it cannot be reached).
 
 use zed_tools::spec::Spec;
-use zed_tools::{progress, sync};
+use zed_tools::{fence_layers, progress, sync};
 
-use super::{design, fence, spec_dir};
+use super::{DOUBLE, design, fence, spec_dir};
 use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
 
 /// A title over 110 characters is cut to 107 and an ellipsis; one of 110 is kept whole. A line
@@ -42,28 +40,20 @@ fn progress_cuts_a_long_title_and_skips_what_is_no_step() {
     assert!(text.ends_with("A lettered step.\n"), "{text}");
 }
 
-/// A fence in documentation notation is copied with that said in its header.
+/// A fence in documentation notation is laid out as such, and a program fence is not.
 #[test]
-fn sync_marks_the_copy_of_a_documentation_fence() {
-    let body = format!("{}\n{KERNEL}", fence("double: int -> int"));
-    let dir = spec_dir("sync_doc", &design(&body), "");
+fn a_documentation_fence_is_laid_out_as_notation() {
+    let body = format!("{}\n{}", fence("double: int -> int"), fence(DOUBLE));
+    let dir = spec_dir("lay_doc", &design(&body), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir("sync_doc_zed");
-    let mut out = String::new();
+    let laid = fence_layers::of_document(&dir.at("DESIGN.md"), &spec).expect("the fences lay out");
     assert_eq!(
-        sync::sync_into(&spec, &zed.root(), false, &mut out),
-        Ok(true),
-        "{out}"
-    );
-    let copied = fs::read_to_string(zed.at("fences/design.md")).unwrap();
-    assert!(
-        copied.contains(", documentation notation; section ["),
-        "{copied}"
+        laid.iter().map(|f| f.notation).collect::<Vec<_>>(),
+        [true, false]
     );
 }
 
-/// A spec with no table of defined words is refused, naming the file; the layer of each fence
-/// copied reads that table, so the refusal comes from that read, before `words.md` is built.
+/// A spec with no table of defined words is refused when `words.md` is built from it.
 #[test]
 fn sync_refuses_a_spec_with_no_table_of_defined_words() {
     let text = design(KERNEL).replace("| Layer | Annotations |", "| Level | Annotations |");
@@ -71,10 +61,5 @@ fn sync_refuses_a_spec_with_no_table_of_defined_words() {
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let zed = zed_dir("sync_no_words_zed");
     let got = sync::sync_into(&spec, &zed.root(), false, &mut String::new());
-    assert!(
-        got.as_ref()
-            .is_err_and(|e| e.starts_with("no table of defined words in ")
-                && e.ends_with("/sync_no_words/DESIGN.md")),
-        "{got:?}"
-    );
+    assert_eq!(got, Err("DESIGN.md has no table of defined words".into()));
 }

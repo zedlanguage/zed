@@ -154,6 +154,8 @@ fn every_program_ends_alike() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     zed_files(&repo.join("zed"), &mut files);
     zed_files(&repo.join("tests/steps"), &mut files);
+    // The spec's fences are read in place, so only a build with the feature `spec` has them.
+    #[cfg(feature = "spec")]
     for (k, f) in zed_tests::fences::all().into_iter().enumerate() {
         if !f.notation {
             let src = d.join(format!("fence{k}.zed"));

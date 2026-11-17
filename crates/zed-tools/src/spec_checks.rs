@@ -1,11 +1,37 @@
-//! Checks of the spec that read its prose, which this repository does not hold: the `sync`
-//! tool runs them on the spec checkout, and the tests run them on small documents of their own.
-//! [`kernel_rules`] gives the names no message prints, which `sync` writes to
-//! `zed/fences/kernel-rules.txt`; [`prelude_laws`] compares the prelude laws DESIGN.md states
-//! with `docs/mathlib-study.md`; [`build_modes`] checks the "Build modes" bullet and every kind
-//! of build DESIGN.md names (plan row BUILD-modes).
+//! Readers and checks of the spec's prose, which this repository does not hold: the `sync`
+//! tool runs the checks on the spec checkout, the tests built with the feature `spec` run the
+//! readers on DESIGN.md in place, and the tests run both on small documents of their own.
+//! [`kernel_rules`] gives the names no message prints; [`serial_tables`] gives the tables of
+//! step M0.7's serialization; [`prelude_laws`] compares the prelude laws DESIGN.md states with
+//! `docs/mathlib-study.md`; [`build_modes`] checks the "Build modes" bullet and every kind of
+//! build DESIGN.md names (plan row BUILD-modes).
 
 use std::collections::BTreeSet;
+use std::fmt::Write;
+
+/// The header of each table of step M0.7's serialization ends with this text.
+pub const SERIAL_HEADER: &str = " | Tag | Fields in order |";
+
+/// The header of step M0.7's table of the primitives' codes.
+pub const PRIM_HEADER: &str = "| Primitive | Code |";
+
+/// The tables of step M0.7's serialization, each a table of DESIGN.md whose header ends with
+/// [`SERIAL_HEADER`] or is [`PRIM_HEADER`]: its header and rows as written, without the line
+/// under the header, the tables one after another. O(size of `design`).
+pub fn serial_tables(design: &str) -> String {
+    let mut out = String::new();
+    let mut lines = design.lines();
+    while let Some(line) = lines.next() {
+        if !((line.starts_with("| ") && line.ends_with(SERIAL_HEADER)) || line == PRIM_HEADER) {
+            continue;
+        }
+        writeln!(out, "{line}").expect("writing to a String");
+        for row in lines.by_ref().skip(1).take_while(|l| l.starts_with("| ")) {
+            writeln!(out, "{row}").expect("writing to a String");
+        }
+    }
+    out
+}
 
 /// The words no message prints (DESIGN.md sec:diagnostics), sorted: the name of each typing
 /// rule of the kernel calculus, `T-` and the generator for each generator of sec:kernel's

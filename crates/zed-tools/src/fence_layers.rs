@@ -1,6 +1,6 @@
 //! The `zed` fences of a document, each with its layer (step L1.7), and the row names of the
-//! rejection table (step L1.29). The `sync` tool lays out the spec's DESIGN.md and EXAMPLES.md
-//! this way into `zed/fences/`, and the tests lay out this repository's README.md against this
+//! rejection table (step L1.29). The tests lay out the spec's DESIGN.md and EXAMPLES.md this way,
+//! in place (`zed_tests::fences`, feature `spec`), and this repository's README.md against this
 //! repository's own grammar ([`Spec::of_impl`], item README-fences).
 //!
 //! The layer is computed as the M0.4 layer checker computes a corpus program's: the lowest ring
