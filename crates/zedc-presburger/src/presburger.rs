@@ -28650,6 +28650,13 @@ pub(super) mod tests {
     /// Checks that `side` is the side of `a` going `dir` over `f`: a value `f` reaches and
     /// nothing beyond it, or no bound when `f` reaches arbitrarily far ([`unbounded`]).
     fn is_side(f: &Formula, a: &Atom, dir: i64, side: &Option<Int>) {
+        side_checked(f, a, dir, side).unwrap()
+    }
+
+    /// [`is_side`], with the solver's refusal of a question it asks returned instead of
+    /// unwrapped, so that a caller can tell a side that is wrong (a panic) from one the solver
+    /// could not check (`Err`).
+    fn side_checked(f: &Formula, a: &Atom, dir: i64, side: &Option<Int>) -> Result<(), Refusal> {
         let x = Lin::atom(a.clone());
         let beyond = |v: &Int| {
             let c = if dir > 0 {
@@ -28657,21 +28664,19 @@ pub(super) mod tests {
             } else {
                 Con::ge(&Lin::constant(v.clone()), &x)
             };
-            decide_inner(&Formula::and(vec![f.clone(), Formula::Con(c)])).unwrap()
+            decide_inner(&Formula::and(vec![f.clone(), Formula::Con(c)]))
         };
         match side {
             Some(v) => {
-                assert!(beyond(v), "{f} reaches {a} = {v}");
+                assert!(beyond(v)?, "{f} reaches {a} = {v}");
                 assert!(
-                    !beyond(&(v + &Int::from(dir))),
+                    !beyond(&(v + &Int::from(dir)))?,
                     "{f}: {a} past {v} going {dir}"
                 );
             }
-            None => assert!(
-                unbounded(f, a, dir).unwrap(),
-                "{f}: {a} bounded going {dir}"
-            ),
+            None => assert!(unbounded(f, a, dir)?, "{f}: {a} bounded going {dir}"),
         }
+        Ok(())
     }
 
     /// The sides [`hull_side`] finds by elimination alone ([`exact_side`]) are the sides: the
@@ -29014,6 +29019,70 @@ pub(super) mod tests {
         }
     }
 
+    /// The system the seed 13321774086915806854 drew for
+    /// [`hull_sides_on_random_conjunctions_are_the_sides`] (FAIL-hull-sides-small-shadows):
+    /// `3b >= d + 14 && 2a + c + d >= 9 && a + 3b + 3c <= 14 && 2a <= 3d + 16 && 2a + b <= -15
+    /// && 2c + 3d >= 11`. `hull_side` gives 67 as the least `d`; checking that no point has
+    /// `d <= 66` is refused with Shadows: the Omega test's dark shadow of that system is empty,
+    /// and its one splinter (a gap variable `k` in `[0, 1]` on `3b - d - 14 - k == 0`) keeps
+    /// four live variables, as many as the system it came from, so it is not split again (step
+    /// OMEGA-splinter-cap, DESIGN.md: "only when each of its dark eliminations leaves fewer
+    /// live variables than the elimination it came from"). That refusal is the documented one,
+    /// and this test pins it. The answer is still found exactly by cases on `a`, which cover
+    /// every integer (`a >= -20`, `a == -21`, `a <= -22`), each decided by the solver: `a >= -20`
+    /// has no point, and neither `a == -21` nor `a <= -22` has one with `d <= 66`; and
+    /// `a == -21, b == 27, c == -16, d == 67` is a point. So no point has `d <= 66`, one has
+    /// `d == 67`, and 67, the side `hull_side` gives, is the side.
+    #[test]
+    fn a_hull_side_past_a_splinter_is_refused() {
+        let ge = |terms: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(terms, k),
+                rel: Rel::Ge,
+            })
+        };
+        let rows = vec![
+            ge(&[("b", 3), ("d", -1)], -14),
+            ge(&[("a", 2), ("c", 1), ("d", 1)], -9),
+            ge(&[("a", -1), ("b", -3), ("c", -3)], 14),
+            ge(&[("a", -2), ("d", 3)], 16),
+            ge(&[("a", -2), ("b", -1)], -15),
+            ge(&[("c", 2), ("d", 3)], -11),
+        ];
+        let with = |extra: &[Formula]| {
+            let mut v = rows.clone();
+            v.extend_from_slice(extra);
+            decide_inner(&Formula::and(v))
+        };
+        let below = ge(&[("d", -1)], 66);
+        assert_eq!(with(std::slice::from_ref(&below)), Err(Refusal::Shadows));
+        // The exact answer, by cases on `a`, each decided.
+        let a_eq = Formula::Con(Con {
+            lin: lin(&[("a", 1)], 21),
+            rel: Rel::Eq,
+        });
+        assert_eq!(with(&[ge(&[("a", 1)], 20)]), Ok(false));
+        assert_eq!(with(&[below.clone(), ge(&[("a", -1)], -22)]), Ok(false));
+        assert_eq!(with(&[below, a_eq.clone()]), Ok(false));
+        let at = |v: &str, k: i128| {
+            Formula::Con(Con {
+                lin: lin(&[(v, 1)], -k),
+                rel: Rel::Eq,
+            })
+        };
+        assert_eq!(
+            with(&[a_eq, at("b", 27), at("c", -16), at("d", 67)]),
+            Ok(true)
+        );
+        let model = satisfiable_inner(&Formula::and(rows.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hull_side(&Formula::and(rows), &sym("d"), &model, -1),
+            Ok(Some(Int::from(67)))
+        );
+    }
+
     /// `a >= 0 && 5 - a >= 0`.
     fn sides_built() -> Formula {
         let ge = |k: i128, c: i128| {
@@ -29038,7 +29107,18 @@ pub(super) mod tests {
                 let Ok(side) = hull_side(whole, &a, &model, dir) else {
                     continue;
                 };
-                is_side(whole, &a, dir, &side);
+                // Checking the side asks the Omega test whether a point lies at it and none
+                // beyond it. Over four variables the test refuses some of those questions by
+                // design (Growth, Shadows, Tie: DESIGN.md step L1.38's Limits paragraph and
+                // step OMEGA-splinter-cap; the author's XR3 ruling keeps live >= 4 refused), so
+                // a side whose check is refused is left unchecked and uncounted, as a side
+                // `hull_side` refuses is above. Any other refusal is a failure
+                // (FAIL-hull-sides-small-shadows; `a_hull_side_past_a_splinter_is_refused`).
+                match side_checked(whole, &a, dir, &side) {
+                    Ok(()) => {}
+                    Err(Refusal::Growth | Refusal::Shadows | Refusal::Tie(_)) => continue,
+                    Err(why) => panic!("{whole}: the side of {a} going {dir}: {why:?}"),
+                }
                 sides += 1;
                 exact += usize::from(exact_side(whole, &a, dir).is_some());
             }
