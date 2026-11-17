@@ -443,6 +443,93 @@ fn chunk_by_runs_are_ranked_from_zero() {
     );
 }
 
+/// Plan row FAIL-flatmap-entries-typed-as-families: `flatMap` keeps the list each entry's
+/// function gives as a level (DESIGN.md sec:grouping: "`flatMap` on `K -> V0` with body
+/// `V0 -> Seq(V)` yields `K -> rank -> V`"), and a word after it acts at the level it is
+/// written on (sec:reduction: "`.map(f)` acts *at the level it is written on*"), so `map`,
+/// `where` and a second `flatMap` are each given one of the lists, not the entries of the
+/// lists; the checker and the run agree on that. Flattening is a separate remap (DOCS-TODO
+/// 198), so `[[1, 2], [3]].flatMap(p -> p)` is not `[1, 2, 3]`, and a function that takes
+/// one number is rejected after it.
+#[test]
+fn a_word_after_flat_map_is_given_each_list() {
+    prints(
+        "flat_map_then",
+        &[
+            ("[[1, 2], [3]].flatMap(p -> p) == [[1, 2], [3]]", "true"),
+            ("[[1, 2], [3]].flatMap(p -> p) == [1, 2, 3]", "false"),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(w -> w.count) == [2, 1]",
+                "true",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(w -> w.map(v -> v + 1)) == [[2, 3], [4]]",
+                "true",
+            ),
+            (
+                "[\"a,b\", \"c\"].flatMap(l -> l.split(\",\")) == [[\"a\", \"b\"], [\"c\"]]",
+                "true",
+            ),
+            (
+                "[\"a,b\", \"c\"].flatMap(l -> l.split(\",\")).map(ws -> ws.map(w -> w ++ \"!\")) == [[\"a!\", \"b!\"], [\"c!\"]]",
+                "true",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).where(w -> w.count > 1) == {0 -> [1, 2]}",
+                "true",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).where(w -> w.count > 1).count",
+                "1",
+            ),
+            // A second `flatMap` is given each list too, and adjoins its own level.
+            (
+                "[[1, 2], [3]].flatMap(p -> p).flatMap(w -> [w.count, w.sum]) == [[2, 3], [1, 3]]",
+                "true",
+            ),
+            (
+                "[1, 2].flatMap(v -> [v, v * 10]).flatMap(w -> w.map(x -> [x])) == [[[1], [10]], [[2], [20]]]",
+                "true",
+            ),
+        ],
+    );
+    saying(
+        "flat_map_then",
+        &[
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(w -> w + 1)",
+                "the function given to `map` does not take (((0 | 1) -> 1 | 2) | (0 -> 3))",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).where(w -> w > 1).count",
+                "the function given to `where` does not take",
+            ),
+        ],
+    );
+    // A port's lines: each line's pieces are one list, so `map` is given the list.
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.flatMap(l -> l.split(\",\")).map(ws -> \"${ws.count}\");\n}\n";
+    let out = run("fp_ops/flat_map_then_lines", src, "a,b\nc\n", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "2\n1\n"),
+        "{}",
+        out.stderr
+    );
+    // Generic functions: the function and the receiver are parameters, or the lambda's
+    // parameter is generic; each call is checked on the lists it gives.
+    let src = "h(positional f, positional m) = m.flatMap(f).map(w -> w.count);\n\
+               g(positional m) = m.flatMap(v -> [v, v]).map(w -> w.sum);\n\
+               main(m: MainArgs) {\n  m.stdout <- [\"${h(v -> [v, v * 10, 0], [1, 2]) == [3, 3]}\", \
+               \"${g([1, 2]) == [2, 4]}\"];\n}\n";
+    let out = run("fp_ops/flat_map_then_generic", src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "true\ntrue\n"),
+        "{}",
+        out.stderr
+    );
+}
+
 /// The misuses of `scan` and `chunkBy`, each named in the program's own words.
 #[test]
 fn a_misused_scan_or_chunk_by_is_rejected_in_plain_words() {
