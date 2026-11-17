@@ -622,10 +622,8 @@ impl Type {
         // subset construction, exponential in the recursive types (the lists of int against
         // lists with a 1 at each place from the end up to `n`: 8 ms, 277 ms and 32.5 s at `n`
         // 1, 4 and 6 when the search followed it). Trigger: a fork met in the search. Tests:
-        // `l01_23_groups_and_refusals::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`,
-        // deferred to plan row SUB-empty-fork-bytes in
-        // wt/scratch/deferred-tests/SUB-empty-fork-bytes.rs.
-        // COMPLEXITY.md K35. A complete solution needs the subset construction over the forked
+        // `l01_23_groups_and_refusals::refusals::bench::emptiness_counts_a_fork_as_inhabited_in_its_size`.
+        // COMPLEXITY.md K35, K126. A complete solution needs the subset construction over the forked
         // tuple types; deciding whether such a union holds every list is NFA universality,
         // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
         // Used: the search stopped at the fork, polynomial in the types written (module
@@ -4747,9 +4745,7 @@ impl<'m> Searching<'m> {
             // product of the periods). Trigger: two tuple types this pass takes out of one
             // component with different recursive types on a cycle there, in the decision of a
             // verdict or the search of a value after it. Tests:
-            // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
-            // (deferred to plan row SUB-fork-place-bytes in
-            // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
+            // `l01_23_groups_and_refusals::refusals::bench::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
             // and `each_refusal_names_its_cause` (`nfa`). COMPLEXITY.md K35. A complete solution
             // needs the subset construction over the forked tuple types, exponential in them.
             let (refuse, open) = {
@@ -4832,9 +4828,7 @@ impl<'m> Searching<'m> {
                     // construction (the tradeoff in `narrow_tuples`); the decision of a value's
                     // check by its own walk stays exact. Trigger: `open_forks` and a component on
                     // which the open tuple types fork. Tests:
-                    // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
-                    // (deferred to plan row SUB-fork-place-bytes in
-                    // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
+                    // `l01_23_groups_and_refusals::refusals::bench::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                     // and `a_value_found_by_refining_a_forked_part_is_kept`. COMPLEXITY.md K35.
                     // A complete solution needs the subset construction over the forked tuple
                     // types, exponential in them; used: no value sought in that part, so the
@@ -9288,7 +9282,25 @@ impl<'m> Searching<'m> {
                 if let Some(v) = self.fresh_integer_rep(*len, f).await {
                     return Some(v);
                 }
+                // A row the part excludes is skipped: its value is in that tuple type, and every
+                // tuple of the part is in none of the excluded ones (`Part::forced`), so the
+                // value would fail `holds` against the part.
+                // Complexity tradeoff (COMPLEXITY.md K126): the naive seeding builds a value for
+                // each of the r rows and tests it against all r rows, O(r²) membership tests,
+                // each of which walks the value's list against the row's list type: on a list
+                // type less r list types (`emptiness_counts_a_fork_as_inhabited_in_its_size`)
+                // that was 41,539 (value, type) pairs at r about 130. Used: the excluded rows,
+                // found once in O(r log r) (`Part::forced`), are not tried, which leaves the
+                // rows that may hold a tuple of the part; on a difference `a - (b1 | ... | bn)`
+                // that is `a` alone, O(r) tests. Given up: nothing, since a value of an
+                // excluded row is never a value of the part; a formula whose rows are not
+                // forced (a union of differences) is tried row by row as before.
+                let (_, excluded) = f.forced();
+                let excluded: BTreeSet<&Row> = excluded.iter().collect();
                 for row in f.distinct_atoms() {
+                    if excluded.contains(&row) {
+                        continue;
+                    }
                     if let Some(v) = self.row_rep(&row, f).await {
                         return Some(v);
                     }
@@ -9395,9 +9407,7 @@ impl<'m> Searching<'m> {
                 // each place from the end up to `n` (63,634 `cuts` at `n` 64; now 1,578).
                 // Trigger: a narrowing of this part kept a component whole at a fork while
                 // `past_fork`. Tests:
-                // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
-                // (deferred to plan row SUB-fork-place-bytes in
-                // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
+                // `l01_23_groups_and_refusals::refusals::bench::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                 // and `a_value_is_sought_before_a_refusal` (`fork`, found by a candidate past
                 // the first fork). COMPLEXITY.md K35. A complete solution needs the subset
                 // construction over the forked tuple types, exponential in them. Used: one

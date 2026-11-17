@@ -1196,3 +1196,44 @@ pub(super) fn tuple_diff_union_payload_key_pair(n: usize) -> (Type, Type) {
     ));
     (part, paid)
 }
+
+/// The seed of a root skips the rows its payload excludes (`Searching::find_rep`, COMPLEXITY.md
+/// K126), and the verdicts are those of a search that tries every row: a payload whose one
+/// kept row's first value fails is still found inhabited by the search after the seed; one
+/// whose kept rows are all excluded again is empty; a union of differences, where no row is
+/// excluded, is found inhabited through either arm; and a kept row with one value left
+/// outside the excluded row is found inhabited.
+#[test]
+fn a_seed_skips_excluded_rows_with_the_same_verdicts() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let two = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let a = |t: Type| Type::atom_with("a", &t);
+    let int = Type::int;
+    let cases = [
+        // The kept row `(int, int)` gives `(0, 0)`, which the excluded `(0, int)` holds.
+        (
+            a(&two(int(), int()) - &two(lit(0), int())),
+            Verdict::Inhabited,
+        ),
+        // `(0 | 1, int)` less both of its first components.
+        (
+            a(&(&two(&lit(0) | &lit(1), int()) - &two(lit(0), int())) - &two(lit(1), int())),
+            Verdict::Empty,
+        ),
+        // No row is excluded from a union of two differences.
+        (
+            a(&(&two(lit(0), int()) - &two(lit(0), lit(0)))
+                | &(&two(lit(1), int()) - &two(lit(1), lit(1)))),
+            Verdict::Inhabited,
+        ),
+        // Every value of the kept row but `(2, 5)` is excluded.
+        (
+            a(&two(lit(2), int()) - &two(lit(2), &int() - &lit(5))),
+            Verdict::Inhabited,
+        ),
+    ];
+    for (i, (t, want)) in cases.iter().enumerate() {
+        assert_eq!(t.verdict(), *want, "case {i}");
+        assert_eq!(t.is_empty(), *want == Verdict::Empty, "case {i}");
+    }
+}

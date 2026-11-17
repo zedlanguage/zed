@@ -1518,3 +1518,36 @@ fn r7_round6_probe_r6two() {
 fn r7_round6_probe_r6twoun() {
     two_clauses_scale(1, 16, Verdict::Empty);
 }
+
+#[test]
+fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
+    // `is_empty` meets the fork `verdict` refuses and counts the type as inhabited, in time
+    // linear in `n`; on a70df51b it followed the fork: 8 ms, 277 ms and 32.5 s at `n` 1, 4 and
+    // 6. Measured 2026-11-13: 5,616,473 and 79,088,834 bytes in the first runs, 14.1 times, over
+    // the limit of 13 (until then n log n with a slack of 1.1, 17.6 at `n` = 8).
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("emptiness, a 1 at a place from the end", 8, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_ie{}", tag.fetch_add(1, Relaxed));
+            let t = &list_named(Type::int(), &tag) - &by_place_from_the_end(n, None, &tag);
+            assert!(!t.is_empty(), "at {n}");
+        });
+    });
+}
+
+#[test]
+fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
+    // The lists of integers against those with a 1 at each place from the end up to `n`, with
+    // one beyond `n`, or with none: every list. Deciding it follows every `G{i}` at once, one
+    // type for each set of places a list's 1s leave (the subset construction): on a70df51b this
+    // cost 26.6M, 310M and 15.5G instructions at n 1, 4 and 8 and no answer at 16 within 30 s.
+    // Now the `G{i}` are taken out of the tail together, two cyclic recursive types in one
+    // component, and the decision refuses there (COMPLEXITY.md K35).
+    refusal_scales(
+        "Fork, by the place of a 1 from the end",
+        8,
+        Refusal::Fork,
+        |n, tag| &list_named(Type::int(), tag) - &by_place_from_the_end(n, None, tag),
+    );
+}
