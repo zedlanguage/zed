@@ -648,6 +648,20 @@ fn failures_holding_functions_that_merge_are_refused() {
                 };\nbag(positional n: int) = if n > 3 { g(#bag(2)) } else { n };\nboth(positional \
                 n: int) = box(n) + bag(n);\n";
     assert_eq!(type_errors(data), Vec::<String>::new());
+    // A chain of three, the small instance of the benchmark
+    // `bench::held_functions::many_errors_in_one_expression_have_headlines_of_bounded_length`:
+    // each `a(p)` is reported once, and the inner `a(p) + a(p)`, whose failures are theirs,
+    // is not reported again with its whole code (FAIL-merge-chain-held-quadratic).
+    let chain = "g(positional k: int) = k;\na(positional p: bool) = if p { 1 } else { #bad(g) };\n\
+                 x(positional p: bool) = a(p) + a(p) + a(p);\n";
+    assert_eq!(
+        type_errors(chain),
+        [
+            held("a(p)", "#bad(int -> int)"),
+            held("a(p)", "#bad(int -> int)"),
+            held("a(p)", "#bad(int -> int)")
+        ]
+    );
 }
 
 /// `w(positional k) = 2 ^ k` fits `(positional k: f64) -> f64` when it is passed itself: at

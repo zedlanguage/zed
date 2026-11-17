@@ -134,53 +134,102 @@ fn the_readme_examples_give_these_values() {
     assert_eq!(value(orders, "second"), "#errs({#invalid, #notFound})");
 }
 
-/// An `#errs` the program writes itself, with a payload that is not a set of failures (a
-/// number, two numbers, a function with one or two parameters, a prelude function of several
-/// signatures, a generic function, a choice of two functions), has members the checker does
-/// not know, so the merge of it with another failure is `#errs` with any payload, `#errs(..)`
-/// (item TEST-types-unreached-paths). A payload that holds a function cannot go into the
-/// merged `#errs`, which holds data only: the kernel stops such a run with "`+` given several
-/// failures, one of which holds a function, which `#errs` cannot hold", so the checker refuses
-/// the merge at that operand (row FIX-functions-in-tuples); the signature is the same.
+/// The prelude fixes the payload type of `#errs` as `E ->? E`, `E` a union of loose atoms
+/// (DESIGN.md sec:failure, row DOC-user-errs-payload): an `#errs` the program writes with any
+/// other payload (a number, two numbers, a function with one or two parameters, a prelude
+/// function of several signatures, a generic function, a choice of two functions) is rejected
+/// at the atom, naming the payload's type and `E ->? E`. Checking goes on as if the payload
+/// had that type, so the merge of it with another failure is not rejected again.
 #[test]
-fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
-    // Each payload, with the type of the failure that holds it when it holds a function.
-    for (payload, held) in [
-        ("5", None),
-        ("5, 6", None),
-        ("g", Some("int -> int")),
-        ("h", Some("(int, int) -> int")),
+fn an_errs_the_program_wrote_with_a_payload_that_is_no_set_of_failures_is_rejected() {
+    // Each payload, with its type as the message shows it.
+    let cases = [
+        ("5", "5"),
+        ("5, 6", "5, 6"),
+        ("g", "g : int -> int"),
+        ("h", "h : (int, int) -> int"),
         (
             "min",
-            Some(
-                "((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat) & \
-                 ((f32, f32) -> f32)",
-            ),
+            "min : ((int, int) -> int) & ((f64, f64) -> f64) & ((rat, rat) -> rat) & \
+             ((f32, f32) -> f32)",
         ),
         (
             "abs",
-            Some("(int -> int) & (f64 -> f64) & (rat -> rat) & (f32 -> f32)"),
+            "abs : (int -> int) & (f64 -> f64) & (rat -> rat) & (f32 -> f32)",
         ),
-        ("q", Some("T -> T")),
-        ("if p { g } else { q }", Some("T -> T")),
-    ] {
-        let t = format!(
+        ("q", "q : T -> T"),
+        ("if p { g } else { q }", "if p { g } else { q } : T -> T"),
+    ];
+    let program = |payload: &str| {
+        format!(
             "g(positional k: int) = k;\nh(positional k: int, positional j: int) = k;\nq(positional k) = k;\n\
              a(positional p: bool) = if p {{ 1 }} else {{ #errs({payload}) }};\n\
              c(positional p: bool) = if p {{ 2 }} else {{ #bad }};\n\
              x(positional p: bool) = a(p) + c(p);\n"
+        )
+    };
+    let got: Vec<Vec<String>> = cases
+        .iter()
+        .map(|(p, _)| type_errors(&program(p)))
+        .collect();
+    let want: Vec<Vec<String>> = (cases.iter())
+        .map(|(payload, shown)| {
+            vec![format!(
+                "Invalid payload for `#errs`: `#errs({shown})`. Its payload has type `E ->? E`, \
+                 `E` a union of loose atoms. [#errs({payload})]"
+            )]
+        })
+        .collect();
+    assert_eq!(got, want);
+}
+
+/// A payload given as a field is rejected, and so is the right type beside a second item.
+/// (A set of a family's atoms, which are data, is rejected too: `families.rs`.)
+#[test]
+fn an_errs_with_a_field_or_two_items_is_rejected() {
+    let head = "Invalid payload for `#errs`";
+    for (body, shown) in [
+        (
+            "f(positional p: bool) = #errs(s: {#x});\n",
+            "s: {#x} : #x -> #x",
+        ),
+        (
+            "f(positional p: bool) = #errs({#x}, {#y});\n",
+            "{#x} : #x -> #x, {#y} : #y -> #y",
+        ),
+    ] {
+        let errors = type_errors(body);
+        let [e] = &errors[..] else {
+            panic!("{body}: {errors:?}")
+        };
+        assert!(
+            e.starts_with(&format!("{head}: `#errs({shown})`")),
+            "{body}: {e}"
         );
-        let errors = type_errors(&t);
-        let want: Vec<String> = held
-            .map(|f| {
-                format!(
-                    "Cannot merge a failure that may hold a function into `#errs`: `a(p) : \
-                     #errs({f})`. [a(p)]"
-                )
-            })
-            .into_iter()
-            .collect();
-        assert_eq!(errors, want, "{t}");
-        assert_eq!(sig(&t, "x"), "bool -> int | #bad | #errs(..)", "{t}");
     }
+}
+
+/// A parameter of no written type given to `#errs` is narrowed to the values that are no
+/// number, so a call that passes a number is rejected at the call (DESIGN.md sec:failure).
+#[test]
+fn an_errs_of_a_parameter_of_no_written_type_narrows_it() {
+    let t = "f(positional e) = #errs(e);\n";
+    assert_eq!(type_errors(t), Vec::<String>::new(), "{t}");
+    let call = format!("{t}y = f(5);\n");
+    assert!(!type_errors(&call).is_empty(), "{call}");
+}
+
+/// `#errs` with a family of loose failures, the payload the prelude fixes, is accepted, and a
+/// merge with it adds its members (DESIGN.md sec:failure).
+#[test]
+fn an_errs_the_program_wrote_with_a_set_of_failures_is_accepted() {
+    let t = "a(positional p: bool) = if p { 1 } else { #errs({#x, #y}) };\n\
+             c(positional p: bool) = if p { 2 } else { #bad };\n\
+             x(positional p: bool) = a(p) + c(p);\n";
+    assert_eq!(type_errors(t), Vec::<String>::new(), "{t}");
+    assert_eq!(
+        sig(t, "x"),
+        "type Part1 = #bad | #x | #y;\nbool -> int | #bad | #errs(Part1 ->? Part1)",
+        "{t}"
+    );
 }

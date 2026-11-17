@@ -259,3 +259,29 @@ fn the_repair_for_an_atom_with_a_payload_is_the_bare_pattern() {
         left[0]
     );
 }
+
+/// The prelude fixes the payload type of `#errs` as `E ->? E`, `E` a union of *loose* atoms
+/// (DESIGN.md sec:failure): a set of a family's atoms, which are data, is rejected at the atom,
+/// with the two repairs, while the same set of loose atoms is accepted.
+#[test]
+fn an_errs_of_a_family_s_atoms_is_rejected() {
+    let text = "v = 0;\ny = #errs({v});\n";
+    let errors = errors_given(text, &color());
+    let [e] = &errors[..] else {
+        panic!("{errors:?}")
+    };
+    assert!(
+        e.starts_with(
+            "Invalid payload for `#errs`: `#errs({v} : Part1 -> Part1)`. Its payload has type \
+             `E ->? E`, `E` a union of loose atoms."
+        ),
+        "{e}"
+    );
+    assert!(e.contains("\nTry `#errs({#a, #b})` instead."), "{e}");
+    assert!(
+        e.contains("\nTry an atom of the program's own, such as `#failed({v})`, instead."),
+        "{e}"
+    );
+    let loose = atoms(&["red", "green", "blue"]);
+    assert_eq!(errors_given(text, &loose), Vec::<String>::new());
+}

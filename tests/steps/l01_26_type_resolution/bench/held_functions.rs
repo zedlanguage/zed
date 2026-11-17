@@ -101,9 +101,11 @@ fn many_errors_in_one_expression_have_headlines_of_bounded_length() {
             "${scale}".repeat(n)
         )
     }
+    // `#bad(g)`, not `#errs(g)`, which is rejected at the atom: the prelude fixes the payload
+    // type of `#errs` (DESIGN.md sec:failure).
     fn chain(n: usize) -> String {
         format!(
-            "g(positional k: int) = k;\na(positional p: bool) = if p {{ 1 }} else {{ #errs(g) \
+            "g(positional k: int) = k;\na(positional p: bool) = if p {{ 1 }} else {{ #bad(g) \
              }};\nx(positional p: bool) = a(p){};\n",
             " + a(p)".repeat(n)
         )

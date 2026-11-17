@@ -1862,6 +1862,11 @@ struct Ck<'t, 'a> {
     /// of data that meets one again has nothing to add and does not enter it. Kept in the log
     /// while a repair is tried, since a trial undoes the classes' needs.
     data_checked: HashSet<NodeId>,
+    /// The applications, by span, whose operands' failures merge and were each checked as
+    /// data outside a trial ([`Self::merged_data`]): an operand that is one of them is not
+    /// checked again by the merge it is an operand of. Filled and read outside a trial only,
+    /// so a trial, whose errors are undone, checks every operand as before.
+    merge_checked: HashSet<Span>,
     /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
     /// each with the level it was at and that level's count of ends (`gens`): a class stays a
     /// class until the function of its level ends and names it, and a class's level only goes
@@ -2483,6 +2488,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             wide_builds: BTreeMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
+            merge_checked: HashSet::new(),
             clean: HashMap::new(),
             gens: Vec::new(),
             ends: 0,

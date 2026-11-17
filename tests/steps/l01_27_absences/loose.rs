@@ -426,3 +426,33 @@ fn no_is_repair_is_offered_where_no_value_passes_the_test() {
     );
     zedc::run::load(dead.as_bytes()).unwrap_or_else(|e| panic!("{dead}\n{e}"));
 }
+
+/// The prelude fixes the payload type of `#bug` as `Utf8String | #_`, a message or another
+/// atom (DESIGN.md sec:failure, "Totality"): `#bug("index past end")` and `#bug(#notFound)`
+/// are accepted, and `#bug(3)` is rejected at the atom, naming that type.
+#[test]
+fn a_bug_takes_a_message_or_an_atom_only() {
+    for body in [
+        "f(positional x: int) = #bug(\"never reached\");\n",
+        "f(positional x: int) = #bug(#notFound);\n",
+        "f(positional x: int | #none) = if x is int { x } else { #bug(x) };\n",
+        "f(positional s) = #bug(s);\n",
+    ] {
+        assert_eq!(type_errors(body), Vec::<String>::new(), "{body}");
+    }
+    // Each payload, then the atom as the message shows it.
+    for (payload, shown) in [
+        ("3", "#bug(3)"),
+        ("x", "#bug(x : int)"),
+        ("\"a\", \"b\"", "#bug(\"a\", \"b\")"),
+        ("(\"a\", 1)", "#bug((\"a\", 1))"),
+        ("(x, 1)", "#bug((x, 1) : (int, 1))"),
+    ] {
+        let body = format!("f(positional x: int) = #bug({payload});\n");
+        let want = format!(
+            "Invalid payload for `#bug`: `{shown}`. Its payload has type `Utf8String | #_`. \
+             [#bug({payload})]"
+        );
+        assert_eq!(type_errors(&body), [want], "{body}");
+    }
+}

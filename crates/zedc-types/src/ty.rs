@@ -5267,6 +5267,14 @@ pub fn errs() -> KType {
 /// signature is data and prints with `->?`; a lookup in it is a failure of `E` or `#notFound`,
 /// as for any `K ->? V` (sec:type_language), which is how the printed type reads back.
 pub fn errs_of(e: Ty) -> Ty {
+    let mut t = Ty::set(errs());
+    let shape = Shape::new(vec![errs_family(e)], BTreeMap::new());
+    t.payloads.insert("errs".into(), Some(vec![shape]));
+    t
+}
+
+/// The family `E ->? E` that maps each failure of `e` to itself, the payload of `#errs`.
+fn errs_family(e: Ty) -> Ty {
     let param = SParam {
         name: "".into(),
         positional: true,
@@ -5275,10 +5283,40 @@ pub fn errs_of(e: Ty) -> Ty {
     };
     let mut family = Sig::one_partial(vec![param], vec![e.clone()], e);
     family.data = true;
-    let mut t = Ty::set(errs());
-    let shape = Shape::new(vec![Ty::func(Arc::new(family))], BTreeMap::new());
-    t.payloads.insert("errs".into(), Some(vec![shape]));
-    t
+    Ty::func(Arc::new(family))
+}
+
+/// The payload type the prelude fixes for an atom it names (DESIGN.md sec:failure).
+pub struct FixedPayload {
+    /// The type that the one positional item of the atom is within.
+    pub ty: Ty,
+    /// That type as DESIGN.md writes it, for a message.
+    pub written: &'static str,
+    /// A payload of that type, as a repair writes it.
+    pub example: &'static str,
+}
+
+/// The prelude's table of the atoms whose payload type it fixes, with that type
+/// (DESIGN.md sec:failure): `#bug`, of `Utf8String | #_`, a message or another atom ("Totality",
+/// step S.1d), and `#errs`, of `E ->? E` with `E` a union of loose atoms, the family of
+/// failures a merge makes ([`errs_of`]). Any `E` is within `#_ ->? #_`, the family `E` is read
+/// at, and a family of atoms `K ->? V` is within `E ->? E` for `E = K | V`, so the one type
+/// `#_ ->? #_` decides it; that its atoms are loose is checked apart, since the type does not
+/// say it. `None` for any other atom, whose payload is the program's to choose.
+pub fn fixed_payload(name: &str) -> Option<FixedPayload> {
+    match name {
+        "bug" => Some(FixedPayload {
+            ty: Ty::carrier(Carrier::Str).union(&Ty::set(atoms())),
+            written: "`Utf8String | #_`",
+            example: "#bug(\"…\")",
+        }),
+        "errs" => Some(FixedPayload {
+            ty: errs_family(Ty::set(atoms())),
+            written: "`E ->? E`, `E` a union of loose atoms",
+            example: "#errs({#a, #b})",
+        }),
+        _ => None,
+    }
 }
 
 /// Whether `set` may hold an `#errs` with a payload.
@@ -13320,9 +13358,7 @@ impl Cx<'_> {
     /// or compared as itself where nothing binds ([`within_as_is`]), so `(h: (y: U) -> int, y:
     /// U) -> int for U in int | f64` did not fit the same type with `T`.
     fn read_at(&mut self, f: &Arc<str>, b: &Binds) -> Option<Arc<str>> {
-        if b.bounds.is_none() {
-            return None;
-        }
+        b.bounds.as_ref()?;
         let (sig, env) = self.fns.get(f)?.clone();
         let bound: Vec<(Arc<str>, Ty)> = Cx::held_bounded(&sig, &env, b)
             .into_iter()

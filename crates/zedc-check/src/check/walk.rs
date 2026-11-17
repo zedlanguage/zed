@@ -566,6 +566,19 @@ pub(super) struct AtomF<'a> {
     started: usize,
     items: Vec<Ty>,
     fields: BTreeMap<Arc<str>, Ty>,
+    /// The span of the whole atom with its payload.
+    span: Span,
+}
+
+/// Whether the type of `e` is printed as `e` is written, so that a message shows the code
+/// alone: a literal ([`is_literal`]), a string or an atom with no hole, or a tuple of such.
+fn written_as_its_type(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Str(parts) => parts.iter().all(|p| matches!(p, StrPart::Text(_))),
+        ExprKind::Atom(_) => true,
+        ExprKind::Tuple(es) => es.iter().all(written_as_its_type),
+        _ => is_literal(e),
+    }
 }
 
 pub(super) struct BitsF<'a> {
@@ -7326,6 +7339,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 started: 0,
                 items: Vec::new(),
                 fields: BTreeMap::new(),
+                span,
             };
             return self.atom_step(m, Box::new(s));
         }
@@ -7395,11 +7409,106 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let AtomF {
             name,
+            positional,
+            named,
             items,
             fields,
+            span,
             ..
         } = *s;
+        if let Some(fixed) = ty::fixed_payload(name)
+            && !self.fixed_payload_fits(name, &items, &fields, &fixed, span)
+        {
+            // Each item as code with its type, the type left out where it is the code, as
+            // for a literal: `#errs(5, g : int -> int)`.
+            let item = |e: &Expr, t: &Ty| {
+                let code = self.code(Some(e.span)).unwrap_or("_");
+                match written_as_its_type(e) {
+                    true => code.to_string(),
+                    false => format!("{code} : {}", self.show(t)),
+                }
+            };
+            let shown: Vec<String> = (positional.iter().zip(&items))
+                .map(|(e, t)| item(e, t))
+                .chain(
+                    (named.iter()).map(|(k, e)| format!("{k}: {}", item(e, &fields[k.as_str()]))),
+                )
+                .collect();
+            let code = |e: &Expr| self.code(Some(e.span)).unwrap_or("_");
+            let payload = (positional.iter().map(|e| code(e).to_string()))
+                .chain(named.iter().map(|(k, e)| format!("{k}: {}", code(e))))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let message = format!(
+                "Invalid payload for `#{name}`: `#{name}({})`. Its payload has type {}.",
+                shown.join(", "),
+                fixed.written
+            );
+            let menu = [
+                format!("Try `{}` instead.", fixed.example),
+                format!("Try an atom of the program's own, such as `#failed({payload})`, instead."),
+            ];
+            self.error_offering(span, message, menu);
+            // Checking goes on as if the payload had the type the prelude fixes, so that no
+            // use of the atom repeats the error.
+            m.ty(Ty::atom_of(name, vec![fixed.ty], BTreeMap::new()));
+            return;
+        }
         m.ty(Ty::atom_of(name, items, fields));
+    }
+
+    /// Whether the payload `items` and `fields` of the atom `#name` is within the type the
+    /// prelude fixes for it (DESIGN.md sec:failure): one positional item, no field, and each
+    /// piece of the item's type within `fixed.ty`; a function piece only when it is a family
+    /// (the one fixed type with a function piece, `#errs`'s, is one) of loose atoms only. A
+    /// class of literals is narrowed to the carriers the type has, and fits while one is left:
+    /// `#bug(s)` with `s` a parameter of no written type keeps `String` and the other values.
+    ///
+    /// Not proved: a type variable of the function (a generic parameter whose class was made
+    /// one), and the unknown `_`, are taken as fitting, since a caller's argument fixes them;
+    /// a class narrowed to the values that are neither carrier still allows a tuple, which
+    /// only a call that passes one shows.
+    // Complexity tradeoff: one subtype check per piece of the item's type, O(pieces · size of
+    // the fixed type), the fixed types being of two or three pieces; the naive form, one
+    // subtype check of the whole item, gives no place for a class, which `sub` would bind to
+    // the fixed type whole where the class must keep a carrier. COMPLEXITY.md row
+    // DOC-user-errs-payload.
+    fn fixed_payload_fits(
+        &mut self,
+        name: &str,
+        items: &[Ty],
+        fields: &BTreeMap<Arc<str>, Ty>,
+        fixed: &ty::FixedPayload,
+        span: Span,
+    ) -> bool {
+        let ([item], true) = (items, fields.is_empty()) else {
+            return false;
+        };
+        let mask = mask_of(&fixed.ty);
+        let what = format!("the payload of `#{name}`");
+        for p in item.pieces() {
+            let fits = match &p {
+                Piece::Dyn => true,
+                Piece::Var(_) => match self.class_of(&p) {
+                    Some(k) => self.restrict(k, mask, &what, span),
+                    None => true,
+                },
+                // A family, data: `subtype` does not compare `Sig::data`, and reads `T -> T`
+                // as within `#_ ->? #_` at `T = #_`, so a function is told from a family here.
+                Piece::Fn(sig) => {
+                    let loose = |t: &Ty| t.family.is_empty();
+                    sig.data
+                        && self.subtype(&item.of_piece(&p), &fixed.ty)
+                        && (sig.arrows.iter())
+                            .all(|a| a.params.iter().all(loose) && loose(&a.value()))
+                }
+                _ => self.subtype(&item.of_piece(&p), &fixed.ty),
+            };
+            if !fits {
+                return false;
+            }
+        }
+        true
     }
 
     /// A prelude word applied to one argument, the receiver or the only positional one.
@@ -16311,13 +16420,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// QUESTIONS A43): `#box(f) + #bag(f)`, which the kernel refuses with "`+` given several
     /// failures, one of which holds a function, which `#errs` cannot hold". One failure alone
     /// passes through with its payload as it is, so nothing is checked when no merge can happen.
+    ///
+    /// An operand that is itself an application at `whole` whose operands merged and were
+    /// checked here ([`Ck::merge_checked`]), as `a(p) + a(p)` in `a(p) + a(p) + a(p)`, is not
+    /// checked again: its failures are its operands' failures, which pass through it, and the
+    /// `#errs` it may make, which is data; each of those operands that may hold a function was
+    /// reported at its own span, and the repair of those removes the function from this operand
+    /// too. So a chain of `n` merges reports each of its `n + 1` operands once.
     // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
     // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
-    // O(size of its failures' payload types), the walk the memo of checked rows already bounds.
-    // The naive form, no check, accepts a program the kernel stops in, which soundness forbids.
-    // COMPLEXITY.md row CHK-merged-data. Test:
-    // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`.
-    fn merged_data(&mut self, atoms: &[Ty], froms: &[Span]) {
+    // O(size of its failures' payload types), the walk the memo of checked rows already bounds,
+    // and one hash lookup per operand. The naive form, no check, accepts a program the kernel
+    // stops in, which soundness forbids. Checking an operand that is itself a checked merge,
+    // as before, reported the inner merge again with its whole code in the headline and its
+    // derivation through all its operands in the notes: in a chain of `n` merges the `k`th
+    // error was `O(k)` long, `O(n^2)` in all (162,800 notes, 10.4 MB, at `n = 400`;
+    // FAIL-merge-chain-held-quadratic). Not proved: an application checked in two contexts
+    // (a body walked again) is skipped in the second by the record of the first, which is
+    // sound for the program, since the first reported the same operands, but the second
+    // context then names no error of its own here. COMPLEXITY.md row CHK-merged-data. Tests:
+    // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`
+    // and the benchmark
+    // `l01_26_type_resolution::bench::held_functions::many_errors_in_one_expression_have_headlines_of_bounded_length`.
+    fn merged_data(&mut self, atoms: &[Ty], froms: &[Span], whole: Span) {
         let sets: Vec<KType> = atoms
             .iter()
             .map(Ty::atoms)
@@ -16327,7 +16452,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         for (t, &at) in atoms.iter().zip(froms) {
+            if !self.trying && self.merge_checked.contains(&at) {
+                continue;
+            }
             self.data(t, "`#errs`", DataUse::Merge, at, at, None);
+        }
+        if !self.trying {
+            self.merge_checked.insert(whole);
         }
     }
 
@@ -21889,7 +22020,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let atoms: Vec<Ty> = given.iter().map(|a| a.ty.loose_ty()).collect();
             let froms: Vec<Span> = given.iter().map(|a| a.at.unwrap_or(span)).collect();
-            self.merged_data(&atoms, &froms);
+            self.merged_data(&atoms, &froms, span);
             passed(&mut out, atoms.iter());
             for a in args.iter_mut().flatten() {
                 a.ty = a.ty.without_loose();
@@ -21931,7 +22062,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 froms.push(at);
                 self.pass_at(span, at, &refused);
             }
-            self.merged_data(&atoms, &froms);
+            self.merged_data(&atoms, &froms, span);
             passed(&mut out, atoms.iter());
         }
         // `min` and `max` take two tuples, wherever they are called from; they are told apart by
