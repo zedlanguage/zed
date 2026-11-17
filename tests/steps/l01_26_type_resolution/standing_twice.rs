@@ -139,6 +139,7 @@ fn the_variables_standing_twice_are_the_ones_printed_by_name() {
             kind: NeedKind::Narrow(Narrow::Loose),
             result: Some(Ty::var("U".into())),
             span,
+            alike: Arc::from([]),
         });
         s
     };
