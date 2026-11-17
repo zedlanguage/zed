@@ -13646,7 +13646,8 @@ async fn refused_cover<'m>(
                 // Not built value by value ([`meet_within`]): the message says how.
                 None => ", as the checker builds it (a function in one result is left out where \
                           another holds no function, and a variable bounded by carriers where \
-                          each carrier of its bound is missing from some other result; every \
+                          each carrier of its bound is missing from some other result; a result \
+                          that holds the unknown is left out unless every result holds it; every \
                           other piece that holds a function, a variable or the unknown is kept \
                           whole),"
                     .into(),
@@ -13964,7 +13965,8 @@ async fn met<'m>(
     false
 }
 
-/// Whether the intersection of `results` is within `result`. Each result is split into its
+/// Whether the intersection of `results` is within `result`. A result that holds `_` is left
+/// out unless every result holds it (proof at the site). Each result is split into its
 /// kernel part, its scalars and atoms and the tuple shapes that hold no function, variable or
 /// unknown at any depth, and the rest. The kernel parts are intersected exactly. A value in
 /// every result outside that intersection is outside the kernel part of some result `i`, so
@@ -13989,6 +13991,21 @@ async fn meet_within<'m>(results: &[Ty], result: &Ty, c: &'m Comparing<'m, '_>) 
     if results.is_empty() {
         return false;
     }
+    // A result that holds `_` is every value, whatever it holds beside it, as [`Ty::meet`]
+    // reads it (A92). Proof: intersecting with every value removes nothing, so the
+    // intersection of the results is that of those without `_`. Where every result holds
+    // `_`, the intersection is every value, which one of them is. So the first such result is
+    // kept, and its `_` goes to the rest below and is compared whole, as before. One pass,
+    // linear in the results. Before (FAIL-kernel-print-seed-12530893063770583521), each
+    // result's `_` went to the rest, so `#b` met with `_` was read as `_`, which is not
+    // within `#b`: `((int | f64 | #a) ->? #b) & ((int | #a) -> _)` was refused as a
+    // `(int | #a) .. (int | f64 | #a) -> #b`, the kernel's print of it.
+    let known: Vec<&Ty> = results.iter().filter(|r| !r.dynamic).collect();
+    let results: Vec<&Ty> = if known.is_empty() {
+        vec![&results[0]]
+    } else {
+        known
+    };
     let (kernels, rest) = {
         let cx = c.cx.borrow();
         let masks: Vec<u8> = results.iter().map(|r| carriers_of(r, &cx)).collect();
@@ -17454,6 +17471,28 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// The intersection of the results of the arrows that cover an expected arrow leaves out a
+    /// result that holds `_`, which is every value, as the meet of types does (A92); every
+    /// result holding `_` gives every value (FAIL-kernel-print-seed-12530893063770583521).
+    #[test]
+    fn an_intersection_of_results_leaves_out_one_that_holds_the_unknown() {
+        let atom = |n: &str| Ty::set(KType::atom(n));
+        let within = |rs: Vec<Ty>, r: Ty| Meet::new(rs, r, &[]).within();
+        let b_or_unknown = atom("b").union(&Ty::dynamic());
+        assert!(within(vec![atom("b"), Ty::dynamic()], atom("b")));
+        assert!(within(vec![Ty::dynamic(), atom("b")], atom("b")));
+        assert!(within(vec![b_or_unknown.clone(), atom("b")], atom("b")));
+        // Near misses: what is left without `_` must still be within the result, and every
+        // value is within only a result that holds it.
+        assert!(!within(
+            vec![atom("a").union(&atom("b")), Ty::dynamic()],
+            atom("b")
+        ));
+        assert!(!within(vec![Ty::dynamic()], atom("b")));
+        assert!(!within(vec![Ty::dynamic(), b_or_unknown], atom("b")));
+        assert!(within(vec![Ty::dynamic(), Ty::dynamic()], Ty::dynamic()));
+    }
 
     /// A list of members shared by a copy is changed in the copy only; a push keeps the set
     /// of members a union reads, a removal drops it, and equal lists hash alike whatever

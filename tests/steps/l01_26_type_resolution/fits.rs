@@ -434,7 +434,7 @@ fn results_that_hold_a_function_or_a_variable_are_intersected() {
     assert_eq!(
         type_errors(text),
         [
-            "`p` does not take (((x: int) -> String | ((y: int) -> int) | #a) & ((x: int) -> String | ((y: int) -> int))): at `(x: int) -> String`, the arrows `(x: int) -> String | ((y: int) -> int) | #a`, `(x: int) -> String | ((y: int) -> int)` each take all of it, and the intersection of their results, as the checker builds it (a function in one result is left out where another holds no function, and a variable bounded by carriers where each carrier of its bound is missing from some other result; every other piece that holds a function, a variable or the unknown is kept whole), is not within `String`. [p(f: g)]"
+            "`p` does not take (((x: int) -> String | ((y: int) -> int) | #a) & ((x: int) -> String | ((y: int) -> int))): at `(x: int) -> String`, the arrows `(x: int) -> String | ((y: int) -> int) | #a`, `(x: int) -> String | ((y: int) -> int)` each take all of it, and the intersection of their results, as the checker builds it (a function in one result is left out where another holds no function, and a variable bounded by carriers where each carrier of its bound is missing from some other result; a result that holds the unknown is left out unless every result holds it; every other piece that holds a function, a variable or the unknown is kept whole), is not within `String`. [p(f: g)]"
         ]
     );
     let text = "p(f: (x: U) -> U for U in int | f64) = f(x: 1);\n\
@@ -460,6 +460,30 @@ fn results_that_hold_a_function_or_a_variable_are_intersected() {
     let errors = type_errors(text);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].contains("as the checker builds it"), "{errors:?}");
+}
+
+/// Case (3) with a result that holds `_`, which is every value (A92), so it leaves the
+/// intersection of the other results as it is: at `int`, `#s | #a` and `#s | #b` meet in `#s`
+/// beside `_` (FAIL-kernel-print-seed-12530893063770583521). The expected type guarantees
+/// `int` and permits every key the overload takes. A program cannot yet write `_`, so the
+/// types are read as the checker reads type text. A near miss: `#a` is in both other results.
+#[test]
+fn a_result_that_holds_the_unknown_leaves_the_intersection_as_it_is() {
+    use zedc::check::read::parse_type;
+    let want = parse_type("(int -> #s) & ((int | f64 | bool | #c) ->? _)").unwrap();
+    let given =
+        parse_type("((int | f64) -> #s | #a) & ((int | bool) -> #s | #b) & ((int | #c) -> _)")
+            .unwrap();
+    assert!(given.subtype(&want), "{given} | {}", given.refused(&want));
+    let near =
+        parse_type("((int | f64) -> #s | #a) & ((int | bool) -> #s | #a) & ((int | #c) -> _)")
+            .unwrap();
+    assert!(!near.subtype(&want), "{near}");
+    assert!(
+        near.refused(&want).contains("is not within `#s`"),
+        "{}",
+        near.refused(&want)
+    );
 }
 
 /// A message names a variable of the expected function type by its name there, not as `_`,
