@@ -3395,8 +3395,11 @@ mod list {
     /// by `delta`. The cells above the place edited whose priority stays above the new blocks' are
     /// rebuilt along the path; below, the cell where the path stops is the root of the region
     /// rebuilt by `split` and `merge`, `O(log m)` blocks in expectation. Every cell rebuilt on the
-    /// path, and the region's root, covers the blocks of a cell of `t` changed by `delta` alone, and
-    /// takes its atoms from that cell's ([`carry`]).
+    /// path, and the region's root, covers the blocks of a cell of `t` changed by `delta` alone;
+    /// one placed as a left child takes its atoms from that cell's ([`carry`]). Only
+    /// [`Cell::find`] reads a cell's atoms, and only a left child's, so the others (about half
+    /// of the path, and always the root) make theirs on first use if they ever become a left
+    /// child, which is what a cell that never had them already does.
     fn replace<A: Literal>(
         t: &Seq<A>,
         (i, j): (usize, usize),
@@ -3443,15 +3446,21 @@ mod list {
                 merge(merge(before, mid), after)
             }
         };
-        if let (Some(old), Some(made)) = (region, &node) {
+        let placed_left = |k: usize| k > 0 && path[k - 1].1;
+        if let (Some(old), Some(made)) = (region, &node)
+            && placed_left(path.len())
+        {
             carry(old, made, delta);
         }
-        for (n, left) in path.into_iter().rev() {
+        for k in (0..path.len()).rev() {
+            let (n, left) = path[k];
             let made = match left {
                 true => cell(node, n.block.clone(), n.right.clone()),
                 false => cell(n.left.clone(), n.block.clone(), node),
             };
-            carry(n, &made, delta);
+            if placed_left(k) {
+                carry(n, &made, delta);
+            }
             node = Some(made);
         }
         node
@@ -3678,15 +3687,7 @@ mod list {
             };
             let seq = Some(c.clone());
             let Some((at, taken)) = c.find(&key.0) else {
-                let added = [key.0.clone()];
-                let root = match v {
-                    true => {
-                        let first = set::insert(Some(c.first()), key);
-                        replace(&seq, (0, 1), vec![first], (&[], &added))
-                    }
-                    false => replace(&seq, (0, 0), vec![set::single(key)], (&[], &added)),
-                };
-                return Bdd::List(root.expect("a list with a block added has a cell"), true);
+                return self.or_new_literal(key);
             };
             if v && at == 0 && taken == key.1 {
                 return self.clone();
@@ -3720,13 +3721,38 @@ mod list {
                 // the cells on the path cut make their atoms again on first use, each from its
                 // children's, the smaller added to the larger: up to `O(min(p, m - p) log m)` for a
                 // cut after `p` of `m` blocks, where carrying the atoms over would cost the `m - p`
-                // atoms dropped. Measured in `rejoining_one_atom_of_each_block_scales` (deferred to
-                // plan row KERNEL-bdd-rejoin-bytes in
-                // wt/scratch/deferred-tests/KERNEL-bdd-rejoin-bytes.rs); COMPLEXITY.md K67 (4). A
-                // sequence that kept its atoms by count of blocks would carry them in `O(log m)`.
+                // atoms dropped. COMPLEXITY.md K67 (4). Not proved: `O(log m)` per literal in all.
+                // `find` tests an atom summary at each of `O(log m)` levels, and `replace` carries
+                // the summary of each left child it rebuilds, each `O(log m)`: `O(log² m)` per
+                // literal (plan row KERNEL-bdd-rejoin-bytes, whose test
+                // `rejoining_one_atom_of_each_block_scales` is deferred in
+                // wt/scratch/deferred-tests/KERNEL-bdd-rejoin-bytes.rs).
                 finish((prefix(&seq, at), v), w)
             };
-            rest.or_literal(key)
+            // `rest` no longer holds the atom: the literal set false left its block, or the cut
+            // dropped that block and every block after it.
+            rest.or_new_literal(key)
+        }
+
+        /// [`Bdd::or_literal`] of a literal whose atom the list does not hold, without looking
+        /// for it: the literal joins the first block if its value is `true`, or comes first in a
+        /// block of its own.
+        fn or_new_literal(&self, key: Key<A>) -> Bdd<A> {
+            let (c, v) = match self {
+                Bdd::Leaf(true) => return self.clone(),
+                Bdd::Leaf(false) => return Bdd::literal_key(key),
+                Bdd::List(c, v) => (c, *v),
+            };
+            let seq = Some(c.clone());
+            let added = [key.0.clone()];
+            let root = match v {
+                true => {
+                    let first = set::insert(Some(c.first()), key);
+                    replace(&seq, (0, 1), vec![first], (&[], &added))
+                }
+                false => replace(&seq, (0, 0), vec![set::single(key)], (&[], &added)),
+            };
+            Bdd::List(root.expect("a list with a block added has a cell"), true)
         }
 
         /// `self & l`, `l` the literal `key`: `!(!self | !l)`.
