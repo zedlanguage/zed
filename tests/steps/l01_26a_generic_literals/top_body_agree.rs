@@ -699,3 +699,26 @@ fn nested_powers_by_an_inexact_divisor_offer_no_f64_form() {
     assert!(errs[0].contains(fix), "{}", errs[0]);
     assert!(!errs[0].contains("f64"), "{}", errs[0]);
 }
+
+#[test]
+fn a_division_beside_a_decimal_in_a_call_or_min_differs_by_place() {
+    // A line must get the same verdict in every place. With `add(x, y) = x + y`, the `/` of
+    // `add(x: 1 / 2, y: 1.5)` and of `min(1 / 2, 1.5)` shares a class with a decimal that
+    // nothing fixes; zedc rejects it at the top level and reads it at the `f64` the decimal
+    // takes in a body and a block. DESIGN.md does not say which is right (step L1.26a: an
+    // operation on literals alone takes the carrier of what it meets; step L1.26b: a decimal
+    // nothing fixes takes `f64`, and a `/` of integer literals alone stays rejected). Row
+    // LIT-division-meets-default-decimal; the verdicts are pinned here, so its fix changes
+    // them.
+    for e in ["add(x: 1 / 2, y: 1.5)", "min(1 / 2, 1.5)"] {
+        let [top, body, block] =
+            places(&[e]).map(|src| type_errors(&format!("add(x, y) = x + y;\n{src}")));
+        assert_eq!(top.len(), 1, "{e}: {top:#?}");
+        assert!(
+            top[0].starts_with("Nothing gives the literal `1` a carrier."),
+            "{e}: {top:#?}"
+        );
+        assert_eq!(body, Vec::<String>::new(), "{e}");
+        assert_eq!(block, Vec::<String>::new(), "{e}");
+    }
+}

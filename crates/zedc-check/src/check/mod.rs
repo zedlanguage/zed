@@ -1470,6 +1470,13 @@ struct Class {
     /// class, whether either was. Kept as a flag so [`Ck::cast_takes_int`] reads it in O(1), not
     /// by a scan of [`Self::lits`] at each cast.
     decimal: bool,
+    /// The spans of the branches of an `if` of literals that joined it ([`Ck::branches`]),
+    /// each an operation on literals alone with a `/` and no decimal literal: where nothing
+    /// gives the class a carrier, each such branch is rejected as it would be alone, not read
+    /// at the `f64` a decimal of the other branch takes (DESIGN.md step L1.26a, "where both
+    /// branches are literals each keeps its own value"), and the rejection names its own
+    /// literal ([`Ck::lits_take`]). Of a merged class, those of both.
+    alone: Vec<Span>,
 }
 
 /// A carrier a fold was checked at, or none (`[]`), with the identity of the fold's operator
@@ -3997,6 +4004,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrowed_to: Vec::new(),
             narrows: false,
             decimal: false,
+            alone: Vec::new(),
         });
         self.pending[self.level].push(id);
         id
@@ -4369,7 +4377,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: O(1) where the mask holds `int` or one carrier, which is every
     // class a binding has already fixed; otherwise one pass over the class's literals for
     // whether one is decimal, and, only where the class is rejected, one more for the first
-    // in the text, O(l) for l literals. A flag kept on the class would make the first pass
+    // in the text, O(l) for l literals; a class that holds a branch of an `if` rejected alone
+    // ([`Class::alone`]) adds one pass over those spans and one over the literals, O(a + l). A flag kept on the class would make the first pass
     // O(1), but must be merged at every union, and such a class is passed over once: the
     // pass ends in `f64` or a rejection, which leaves one carrier.
     // The test for `rat` alone is O(1): `left` holds at most the numeric carriers.
@@ -4386,18 +4395,36 @@ impl<'t, 'a> Ck<'t, 'a> {
             return LitsTake::Left;
         }
         let decimal = || c.lits.iter().any(|(l, _)| is_decimal(&l.value));
-        if (floats_take_f64(&left) && c.floats) || unfixed_takes_f64(&left, decimal()) {
-            return LitsTake::F64;
-        }
-        let mut joined = c
+        let joined = c
             .lits
             .iter()
             .filter(|(_, follows)| !follows)
             .map(|(l, _)| l);
+        // The first literal of the first branch of an `if` of literals that is rejected as it
+        // would be alone ([`Class::alone`]), so `if c { 1 / 2 } else { 1.5 }` is rejected at
+        // the `1`, and `if c { 1 } else { 5 / 2 }` at the `5`, as `5 / 2` alone is.
+        let alone = || {
+            let s = c.alone.iter().min_by_key(|s| s.start)?;
+            (joined.clone())
+                .filter(|l| s.start <= l.site.start && l.site.end <= s.end)
+                .min_by_key(|l| l.site.start)
+        };
+        if floats_take_f64(&left) && c.floats {
+            return LitsTake::F64;
+        }
+        if unfixed_takes_f64(&left, decimal()) {
+            return match alone() {
+                Some(l) => LitsTake::Rejected(l.clone(), left),
+                None => LitsTake::F64,
+            };
+        }
         // The first in the text: merges join a class's literals in no order the program
         // shows, and in `2^(1 + 1) / 3` the exponent's class is made first.
         let first = joined.clone().min_by_key(|l| l.site.start);
-        match joined.find(|l| is_decimal(&l.value)).or(first) {
+        match (joined.clone().find(|l| is_decimal(&l.value)))
+            .or_else(alone)
+            .or(first)
+        {
             Some(l) => LitsTake::Rejected(l.clone(), left),
             None => LitsTake::Left,
         }

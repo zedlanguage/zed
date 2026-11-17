@@ -27,41 +27,24 @@ pub(super) fn unfixed(lit: &str, rat: &str, f64: &str) -> String {
     )
 }
 
-/// `src`, which defines `g(positional c: bool) = if c { 1 } else { 5 / 2 };` and calls it, as
-/// zedc rejects it. DESIGN.md step L1.26a settles each branch as it would be alone, so the `5 /
-/// 2` is rejected at its `5`, with the fixes `5r / 2` and `5.0f64 / 2`, as at the top level.
-/// This zedc rejects the `1` of the other branch instead, with the fixes `1r` and `1.0f64`, and
-/// each of those fixes is then rejected at the `5`: a menu marked "each checked here" whose
-/// fixes do not check; row LIT-branch-division-names-wrong-literal. The fixes DESIGN.md names
-/// check.
+/// `src`, which defines `g(positional c: bool) = if c { 1 } else { 5 / 2 };` and calls it, is
+/// rejected at the `5`. DESIGN.md step L1.26a settles each branch of an `if` of literals as it
+/// would be alone ("where both branches are literals each keeps its own value"), so the `5 / 2`
+/// is rejected at its `5`, with the fixes `5r / 2` and `5.0f64 / 2`, as at the top level, and
+/// each fix checks. Row LIT-branch-division-names-wrong-literal: zedc rejected the `1` of the
+/// other branch, with the fixes `1r` and `1.0f64`, each rejected in turn at the `5`.
 pub(super) fn branch_division_names_the_one(src: &str) {
     let g = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
     let named = [
-        "g(positional c: bool) = if c { 1r } else { 5 / 2 };",
-        "g(positional c: bool) = if c { 1.0f64 } else { 5 / 2 };",
+        "g(positional c: bool) = if c { 1 } else { 5r / 2 };",
+        "g(positional c: bool) = if c { 1 } else { 5.0f64 / 2 };",
     ];
     assert_eq!(
         type_errors(src),
-        [unfixed("1", named[0], named[1])],
+        [unfixed("5", named[0], named[1])],
         "{src}"
     );
-    for fix in named {
-        let fixed = src.replace(g, fix);
-        let errors = type_errors(&fixed);
-        assert_eq!(errors.len(), 1, "{fixed}{errors:?}");
-        assert!(
-            errors[0].starts_with("Nothing gives the literal `5` a carrier."),
-            "{fixed}{errors:?}"
-        );
-    }
-    fixes_check(
-        src,
-        g,
-        [
-            "g(positional c: bool) = if c { 1 } else { 5r / 2 };",
-            "g(positional c: bool) = if c { 1 } else { 5.0f64 / 2 };",
-        ],
-    );
+    fixes_check(src, g, named);
 }
 
 /// The fixes of the `/` of integer literals `1 / 2` first written in `line`: `1r / 2` and
@@ -301,9 +284,8 @@ fn a_binding_of_a_call_settles_each_literal_of_its_result_as_alone() {
 fn a_division_in_a_branch_of_a_called_function_is_rejected_at_its_own_literal() {
     // `y = g(c)` settles each branch as it would be alone (DESIGN.md L1.26a): the `1` at
     // `int`, and the `5 / 2` is rejected, as `y = 5 / 2` is; its fixes rewrite the `5`. The
-    // top level does so: `y = if c { 1 } else { 5 / 2 }` is rejected at the `5`. A call does
-    // not, in this zedc (`branch_division_names_the_one`; row
-    // LIT-branch-division-names-wrong-literal).
+    // top level does so: `y = if c { 1 } else { 5 / 2 }` is rejected at the `5`, and so is
+    // each call (`branch_division_names_the_one`; row LIT-branch-division-names-wrong-literal).
     let g = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
     let (rat, f64) = (
         "g(positional c: bool) = if c { 1 } else { 5r / 2 };",
@@ -331,7 +313,6 @@ fn a_division_in_a_branch_of_a_called_function_is_rejected_at_its_own_literal() 
         ),
     ] {
         let src = format!("{g}\n{defs}{call}\n");
-        // The `5` in DESIGN.md; the `1`, with fixes that do not check, in this zedc.
         branch_division_names_the_one(&src);
     }
 }

@@ -135,9 +135,8 @@ fn a_cast_reads_a_decimal_a_call_returns_at_f64() {
 #[test]
 fn a_cast_gives_no_carrier_to_a_division_a_call_returns() {
     // `y = g(c)` settles each branch as it would be alone (DESIGN.md L1.26a), so the `5 / 2`
-    // is rejected at its `5`, as `f64(5 / 2)` is, and its fixes rewrite the `5`. This zedc
-    // rejects the `1`, with fixes that do not check (`tuple_rest::branch_division_names_the_one`;
-    // row LIT-branch-division-names-wrong-literal).
+    // is rejected at its `5`, as `f64(5 / 2)` is, and its fixes rewrite the `5`
+    // (`tuple_rest::branch_division_names_the_one`; row LIT-branch-division-names-wrong-literal).
     let div = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
     for word in ["f64", "abs", "String"] {
         branch_division_names_the_one(&format!("{div}\ny = {word}(g(true));\n"));

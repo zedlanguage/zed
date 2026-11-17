@@ -5292,10 +5292,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .is_some_and(|l| self.join(k, &l.joining(), false)),
             };
             if joined {
+                self.note_alone(then, otherwise, k);
                 return other.clone();
             }
         }
         a.union(b)
+    }
+
+    /// Where both branches `then` and `otherwise` of an `if` are literals or operations on
+    /// literals alone ([`open_lits`]) and have joined the class `k`, the branches with a `/`
+    /// and no decimal literal, which are rejected where nothing gives `k` a carrier as they
+    /// would be alone ([`Class::alone`]): L1.26a, "where both branches are literals each keeps
+    /// its own value and is fixed where the result is used". The classes stay joined, so a
+    /// use that fixes a carrier gives it to each branch: `x * (if c { 1 / 2 } else { 1.5 })`
+    /// with `x: rat` is `1r` at `c`.
+    // Complexity tradeoff: one walk of each branch, O(its size), at the one `if` whose
+    // branches they are, so a nest of `if`s costs O(n) in all. The naive form, keeping the
+    // classes apart, would settle each alone but leave a use of the `if` that fixes a carrier
+    // a union of classes, which no operator or call reads.
+    fn note_alone(&mut self, then: &Expr, otherwise: &Expr, k: usize) {
+        let (x, y) = (exported(then), exported(otherwise));
+        let (Some(ox), Some(oy)) = (open_lits(x), open_lits(y)) else {
+            return;
+        };
+        let r = self.find(k);
+        for (o, e) in [(ox, x), (oy, y)] {
+            if o.div && !o.decimal {
+                self.touch(r);
+                self.classes[r].alone.push(e.span);
+            }
+        }
     }
 
     /// The value of the branch `e`, of type `t`, as a literal type, when `e` is an operation on
@@ -11320,6 +11346,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let lowered = self.classes[a].level != self.classes[b].level;
         let mut lits = std::mem::take(&mut self.classes[child].lits);
+        let mut alone = std::mem::take(&mut self.classes[child].alone);
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
         let mut known = std::mem::take(&mut self.classes[child].known);
@@ -11393,6 +11420,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             std::mem::swap(&mut c.lits, &mut lits);
         }
         c.lits.extend(lits);
+        if c.alone.len() < alone.len() {
+            std::mem::swap(&mut c.alone, &mut alone);
+        }
+        c.alone.extend(alone);
         if c.reasons.len() < reasons.len() {
             std::mem::swap(&mut c.reasons, &mut reasons);
         }
