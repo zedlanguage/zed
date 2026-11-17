@@ -648,14 +648,27 @@ struct Bounds {
     hi: f64,
 }
 
-/// A lower bound of the integer whose rounded value is `r`.
+/// `2^53`: every integer of at most this size is an `f64`.
+const TWO_53: f64 = 9_007_199_254_740_992.0;
+
+/// A lower bound of the integer `t` whose rounded value is `r`: `r` itself when `|r| < 2^53`,
+/// since then `r == t` (if `|t| <= 2^53`, `t` is an `f64` and rounds to itself; if `|t| > 2^53`,
+/// `|r| >= 2^53`, as rounding is monotone and `2^53` is an `f64`), else one place below.
 fn lower(r: f64) -> f64 {
-    r.next_down().ceil()
+    if r.abs() < TWO_53 {
+        r
+    } else {
+        r.next_down().ceil()
+    }
 }
 
-/// An upper bound of the integer whose rounded value is `r`.
+/// An upper bound of the integer whose rounded value is `r`; as [`lower`].
 fn upper(r: f64) -> f64 {
-    r.next_up().floor()
+    if r.abs() < TWO_53 {
+        r
+    } else {
+        r.next_up().floor()
+    }
 }
 
 /// `2^63`, the least integer above `i64::MAX`: a lower bound of every larger one.
@@ -667,14 +680,16 @@ impl Bounds {
         hi: f64::INFINITY,
     };
 
-    /// An end as a lower bound (`up` false) or an upper bound; past `i64`, `2^63` or an
-    /// infinity on the side that holds it.
+    /// An end as a lower bound (`up` false) or an upper bound: itself when it is an `f64`,
+    /// else rounded outward; past `i64`, `2^63` or an infinity on the side that holds it.
     fn end(e: &End, up: bool) -> f64 {
         match e {
             End::NegInf => f64::NEG_INFINITY,
             End::PosInf => f64::INFINITY,
             End::Fin(n) => match n.to_i64() {
-                // `as` rounds to nearest.
+                // `as` rounds to nearest; a whole `f64` of size at most 2^63 converts to
+                // `i128` exactly, so equal integers mean the end is that `f64`.
+                Some(v) if (v as f64) as i128 == i128::from(v) => v as f64,
                 Some(v) if up => upper(v as f64),
                 Some(v) => lower(v as f64),
                 None if n.signum() > 0 => {
@@ -828,15 +843,36 @@ impl Bounds {
 }
 
 /// `floor(a / b)` rounded down (`up` false) or up, `a` a whole `f64` or an infinity and `b`
-/// a finite whole `f64` at least 1. When `b` divides `a` the quotient is a whole number no
+/// a finite whole `f64` at least 1. When both are in `i64` (each whole `f64` there converts
+/// exactly) the quotient is the exact `i64` one, `div_euclid` being `floor` for `b > 0`, and
+/// no larger than `|a|`, so it is exact below 2^53 in size and rounded outward by [`lower`]
+/// or [`upper`] above. Past `i64`: when `b` divides `a` the quotient is a whole number no
 /// larger than `|a|` whose odd part divides `a`'s, so it is an `f64` and the division exact
-/// (`%` on `f64`s is exact too); otherwise the rounded quotient is moved one place outward
-/// before `floor`.
+/// (`%` on `f64`s is exact too). Otherwise `t = a / b` is not whole, and its rounding `r`:
+/// - not whole: `floor(t) = floor(r)`, as a whole number strictly between `t` and `r` would
+///   be an `f64` (`|r| < 2^52` here) nearer `t` than `r`;
+/// - whole and below 2^53 in size: `floor(t)` is `r` when `t > r` and `r - 1` when `t < r`,
+///   `t - r` having the sign of `a - b r` (`b > 0`), which `mul_add` rounds once and so
+///   keeps (it is not 0, as `t` is not whole);
+/// - else moved one place outward before `floor`.
+///
+/// (The `f64` path alone was not exact below 2^53: `(2^53 - 1) / (2^52 - 1)` rounds to 2,
+/// which it moved to 1, and `(2^64 - 2^11) / 2^52`, the `f64` `4096 - 2^-41`, it moved to
+/// 4096; found by TONIC-big-ends.)
 fn floor_quotient(a: f64, b: f64, up: bool) -> f64 {
     if a.is_infinite() {
         a
+    } else if (-TWO_63..TWO_63).contains(&a) && b < TWO_63 {
+        // `a >= -2^63` and `b >= 1`, so the quotient cannot overflow `i64`.
+        let q = ((a as i64).div_euclid(b as i64)) as f64;
+        if up { upper(q) } else { lower(q) }
     } else if a % b == 0.0 {
         a / b
+    } else if (a / b).fract() != 0.0 {
+        (a / b).floor()
+    } else if (a / b).abs() < TWO_53 {
+        let r = a / b;
+        if (-b).mul_add(r, a) > 0.0 { r } else { r - 1.0 }
     } else if up {
         (a / b).next_up().floor()
     } else {
@@ -846,20 +882,30 @@ fn floor_quotient(a: f64, b: f64, up: bool) -> f64 {
 
 /// `m ^ n` rounded up (`up`) or down, `m >= 0` a whole `f64` or `inf`, `n >= 1`: 0 and 1 are
 /// their own powers; else square and multiply over `n`'s bits, each product moved one place
-/// outward (multiplication of numbers at least 1 is increasing in each, so bounds of the
+/// outward, or kept when below `2^53`, where the product of two whole `f64`s is exact (as in
+/// [`lower`]) (multiplication of numbers at least 1 is increasing in each, so bounds of the
 /// factors bound the product). An `n` past `i64` with `m >= 2` gives a power past `f64::MAX`.
 fn pow_magnitude(m: f64, n: &Num, up: bool) -> f64 {
     if m <= 1.0 {
         return m;
     }
-    let step = |v: f64| if up { v.next_up() } else { v.next_down() };
+    let step = |v: f64| {
+        if v < TWO_53 {
+            v
+        } else if up {
+            v.next_up()
+        } else {
+            v.next_down()
+        }
+    };
     let Some(mut k) = n.to_i64() else {
         return if up { f64::INFINITY } else { f64::MAX };
     };
     let (mut acc, mut base) = (1.0, m);
     loop {
         if k & 1 == 1 {
-            acc = step(acc * base);
+            // `1 * base` is exact.
+            acc = if acc == 1.0 { base } else { step(acc * base) };
         }
         k >>= 1;
         if k == 0 {
@@ -921,5 +967,311 @@ fn pow_signs(a: Signs, n: &Num) -> Signs {
         a
     } else {
         (a & ZERO) | if a & (NEG | POS) != 0 { POS } else { 0 }
+    }
+}
+
+/// The outward rounding of [`Bounds`] (plan row TONIC-big-ends): each operation's bounds hold
+/// the exact range, computed in [`Num`] at the ends of its operands, for ends near ±2^52,
+/// ±2^53, ±2^63 and past `i64`; and where every end and result is below 2^53 in size the
+/// bounds are that range. The grades these ranges give are checked by running the terms in
+/// `tests/steps/l01_25_preimage_catalog/big_ends.rs`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The integer a whole finite `f64` is; `None` at an infinity.
+    fn num_of(v: f64) -> Option<Num> {
+        if !v.is_finite() {
+            return None;
+        }
+        // Below 2^127 the cast is exact; above, the value is its 53-bit significand times a
+        // power of 2.
+        if v.abs() < 1e38 {
+            return Some(Num::from(v as i128));
+        }
+        let bits = v.to_bits();
+        let e = ((bits >> 52) & 0x7ff) as i64 - 1075;
+        let m = ((bits & ((1 << 52) - 1)) | (1 << 52)) as i128;
+        let m = Num::from(if v < 0.0 { -m } else { m });
+        Some(&m * &Num::pow2(&Num::from(e)))
+    }
+
+    /// Whether `b` holds every integer from `lo` to `hi`.
+    fn holds(b: Bounds, lo: &Num, hi: &Num) -> bool {
+        let below = b.lo == f64::NEG_INFINITY || num_of(b.lo).is_some_and(|l| &l <= lo);
+        let above = b.hi == f64::INFINITY || num_of(b.hi).is_some_and(|h| &h >= hi);
+        below && above
+    }
+
+    /// Whether `b` is exactly `lo..=hi`.
+    fn is(b: Bounds, lo: &Num, hi: &Num) -> bool {
+        num_of(b.lo).as_ref() == Some(lo) && num_of(b.hi).as_ref() == Some(hi)
+    }
+
+    fn small(n: &Num) -> bool {
+        n.abs() < Num::from(1i64 << 53)
+    }
+
+    /// Ends near 0 and near ±2^k for each `k` of 52, 53, 54, 62, 63, 64, 70 and 100.
+    fn ends() -> Vec<Num> {
+        let mut out: Vec<Num> = [0i64, 1, 2, 3, 7, 1000].map(Num::from).to_vec();
+        for k in [52i64, 53, 54, 62, 63, 64, 70, 100] {
+            let p = Num::pow2(&Num::from(k));
+            for d in [-3i64, -1, 0, 1, 3] {
+                out.push(&p + &Num::from(d));
+            }
+        }
+        let negated: Vec<Num> = out.iter().map(|n| -n).collect();
+        out.extend(negated);
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Ranges of one end and of each end to the next three in [`ends`].
+    fn ranges() -> Vec<(Num, Num)> {
+        let e = ends();
+        (0..e.len())
+            .flat_map(|i| (i..(i + 4).min(e.len())).map(move |j| (i, j)))
+            .map(|(i, j)| (e[i].clone(), e[j].clone()))
+            .collect()
+    }
+
+    fn bounds((lo, hi): &(Num, Num)) -> Bounds {
+        Bounds::of(&IntervalSet::range(
+            End::Fin(lo.clone()),
+            End::Fin(hi.clone()),
+        ))
+        .expect("a range of at least one integer")
+    }
+
+    /// The least and greatest of `vs`.
+    fn span(vs: impl IntoIterator<Item = Num>) -> (Num, Num) {
+        let mut vs: Vec<Num> = vs.into_iter().collect();
+        vs.sort();
+        (vs[0].clone(), vs[vs.len() - 1].clone())
+    }
+
+    /// Asserts that `got` holds `want`, and is `want` when every end of the operands and of
+    /// `want` is below 2^53 in size.
+    fn check(what: &str, got: Bounds, want: &(Num, Num), operands: &[&(Num, Num)]) {
+        assert!(
+            holds(got, &want.0, &want.1),
+            "{what}: {got:?} misses {want:?}"
+        );
+        let exact = operands
+            .iter()
+            .flat_map(|(l, h)| [l, h])
+            .chain([&want.0, &want.1])
+            .all(small);
+        assert!(
+            !exact || is(got, &want.0, &want.1),
+            "{what}: {got:?} is not {want:?}"
+        );
+    }
+
+    #[test]
+    fn an_end_holds_its_integer_and_is_it_below_two_to_the_53() {
+        for n in ends() {
+            let b = Bounds::point(&n);
+            check(&format!("{n}"), b, &(n.clone(), n.clone()), &[]);
+        }
+        // An end that is an `f64` is kept, past 2^53 too; one that is not is widened.
+        for v in [1i64 << 53, 1 << 62, -(1 << 62) - 1024, i64::MIN] {
+            let n = Num::from(v);
+            assert!(is(Bounds::point(&n), &n, &n), "{v}");
+        }
+        for v in [(1i64 << 53) + 1, i64::MAX, (1 << 62) + 1] {
+            let b = Bounds::point(&Num::from(v));
+            assert!(b.lo < b.hi, "{v}: {b:?}");
+        }
+        // An end past `i64` is 2^63 or an infinity, toward the side that holds it.
+        let big = Num::pow2(&Num::from(70i64));
+        assert_eq!(
+            Bounds::point(&big),
+            Bounds {
+                lo: TWO_63,
+                hi: f64::INFINITY
+            }
+        );
+        assert_eq!(
+            Bounds::point(&-&big),
+            Bounds {
+                lo: f64::NEG_INFINITY,
+                hi: -TWO_63
+            }
+        );
+    }
+
+    #[test]
+    fn sums_and_differences_hold_the_exact_range() {
+        let rs = ranges();
+        for a in &rs {
+            for b in &rs {
+                let sum = (&a.0 + &b.0, &a.1 + &b.1);
+                check("+", bounds(a).add(bounds(b)), &sum, &[a, b]);
+                let diff = (&a.0 - &b.1, &a.1 - &b.0);
+                check("-", bounds(a).add(bounds(b).neg()), &diff, &[a, b]);
+            }
+        }
+    }
+
+    #[test]
+    fn products_hold_the_exact_range() {
+        let rs = ranges();
+        for a in &rs {
+            for b in &rs {
+                let p = span([&a.0 * &b.0, &a.0 * &b.1, &a.1 * &b.0, &a.1 * &b.1]);
+                check("*", bounds(a).mul(bounds(b)), &p, &[a, b]);
+            }
+        }
+    }
+
+    #[test]
+    fn euclidean_quotients_hold_the_exact_range() {
+        // `floor(a / b)` is monotone in `a` and, on each side of 0, in `b`, so its least and
+        // greatest values are at the corners of each side.
+        let rs = ranges();
+        let one = Num::from(1i64);
+        for a in &rs {
+            for b in &rs {
+                let mut divisors = Vec::new();
+                if b.1 >= one {
+                    divisors.extend([b.0.clone().max(one.clone()), b.1.clone()]);
+                }
+                if b.0 <= -&one {
+                    divisors.extend([b.0.clone(), b.1.clone().min(-&one)]);
+                }
+                let got = bounds(a).div(bounds(b));
+                if divisors.is_empty() {
+                    assert_eq!(got, None, "0 is the only divisor");
+                    continue;
+                }
+                let q = span(
+                    divisors
+                        .iter()
+                        .flat_map(|d| [a.0.div_euclid(d), a.1.div_euclid(d)]),
+                );
+                check("div", got.expect("a divisor other than 0"), &q, &[a, b]);
+                let m = divisors.iter().map(Num::abs).max().expect("a divisor");
+                let r = bounds(a).rem(bounds(b)).expect("a divisor other than 0");
+                assert!(holds(r, &Num::from(0i64), &(&m - &one)), "mod: {r:?}");
+            }
+        }
+    }
+
+    /// Whole `f64`s near 0 and within a few places of ±2^k for each `k` of 52, 53, 54, 62,
+    /// 63, 64, 70 and 100. Unlike [`ends`], each is an `f64`, so the operations below see
+    /// them unwidened and their own rounding is all that the checks measure (a `Bounds` end
+    /// past 2^53 is already a place wide, which can hide a missing step in an operation).
+    fn whole_f64s() -> Vec<f64> {
+        let mut out = vec![0.0, 1.0, 2.0, 3.0, 7.0, 1000.0];
+        for k in [52, 53, 54, 62, 63, 64, 70, 100] {
+            let p = 2f64.powi(k);
+            let (mut up, mut down) = (p, p);
+            out.push(p);
+            for _ in 0..3 {
+                up = up.next_up();
+                down = down.next_down();
+                out.extend([up, down]);
+            }
+        }
+        // Below 2^52 the places are fractions.
+        out.retain(|v| v.fract() == 0.0);
+        let negated: Vec<f64> = out.iter().map(|v| -v).collect();
+        out.extend(negated);
+        out
+    }
+
+    #[test]
+    fn floor_quotients_of_whole_f64s_bound_the_exact_quotient() {
+        let divisors = whole_f64s().into_iter().filter(|b| *b >= 1.0);
+        for b in divisors {
+            for a in whole_f64s() {
+                let exact = num_of(a).unwrap().div_euclid(&num_of(b).unwrap());
+                let (lo, hi) = (floor_quotient(a, b, false), floor_quotient(a, b, true));
+                let what = format!("floor({a} / {b})");
+                assert!(
+                    holds(Bounds { lo, hi }, &exact, &exact),
+                    "{what}: {lo} {hi}"
+                );
+                if small(&exact) {
+                    assert!(is(Bounds { lo, hi }, &exact, &exact), "{what}: {lo} {hi}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn floor_quotients_past_i64_that_round_to_a_whole_number_are_exact() {
+        // `a` past `i64` and `b` near `a / n`, so that `a / b` is within a place of the whole
+        // `n`, on either side, without `b` dividing `a`: the case decided by the sign of
+        // `a - b r`.
+        let mut seen = 0;
+        for k in [63, 64, 70, 100] {
+            let mut a = 2f64.powi(k);
+            for _ in 0..4 {
+                for m in [10, 20, 30, 40, 50] {
+                    for j in [0.0, 1.0, 3.0] {
+                        let n = 2f64.powi(m) + j;
+                        for b in [
+                            (a / n).floor() - 1.0,
+                            (a / n).floor(),
+                            (a / n).ceil(),
+                            (a / n).ceil() + 1.0,
+                        ] {
+                            let r = a / b;
+                            if r.fract() == 0.0 && a % b != 0.0 {
+                                seen += 1;
+                            }
+                            let exact = num_of(a).unwrap().div_euclid(&num_of(b).unwrap());
+                            let q = Bounds {
+                                lo: floor_quotient(a, b, false),
+                                hi: floor_quotient(a, b, true),
+                            };
+                            assert!(is(q, &exact, &exact), "floor({a} / {b}): {q:?}");
+                        }
+                    }
+                }
+                a = a.next_down();
+            }
+        }
+        assert!(seen > 0, "no quotient rounded to a whole number");
+    }
+
+    #[test]
+    fn powers_of_whole_f64s_bound_the_exact_power() {
+        for m in whole_f64s().into_iter().filter(|m| *m >= 0.0) {
+            for n in [1u32, 2, 3, 4, 5, 7, 8, 13, 64] {
+                let exact = num_of(m).unwrap().pow(n);
+                let k = Num::from(i64::from(n));
+                let b = Bounds {
+                    lo: pow_magnitude(m, &k, false),
+                    hi: pow_magnitude(m, &k, true),
+                };
+                assert!(holds(b, &exact, &exact), "{m} ^ {n}: {b:?}");
+                if small(&exact) {
+                    assert!(is(b, &exact, &exact), "{m} ^ {n}: {b:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn powers_hold_the_exact_range() {
+        for a in &ranges() {
+            for n in [1u32, 2, 3, 4, 5, 7, 8, 13, 64] {
+                let (l, h) = (a.0.pow(n), a.1.pow(n));
+                let want = if n % 2 == 1 {
+                    (l, h)
+                } else if a.0.signum() < 0 && a.1.signum() > 0 {
+                    (Num::from(0i64), l.max(h))
+                } else {
+                    span([l, h])
+                };
+                let got = bounds(a).pow(&Num::from(i64::from(n)));
+                check(&format!("^ {n}"), got, &want, &[a]);
+            }
+        }
     }
 }

@@ -439,8 +439,11 @@ pub fn scalarize(plan: &Plan, target: &Target) -> u64 {
 /// The plan's cost vector on a target, the quantities the frontier compares: the work, depth
 /// and footprint on each device, then the number of cut edges and the 64-byte blocks they
 /// carry. The footprint of a plan whose schedule or devices are malformed is `u64::MAX` on
-/// every device. The scalar is monotone in each component, and feasibility is antitone in each,
-/// so the frontier never drops the plan [`pick`] would choose.
+/// every device. The scalar is monotone in each component, and feasibility is antitone in each.
+/// Monotone is not strictly monotone (work 5,079 and 5,080 at depth 1 on 8 cores both cost
+/// 636), so a dominated plan can tie its dominator's scalar; [`frontier`] keeps such a plan
+/// when it comes first in content-address order, so the frontier never drops the plan [`pick`]
+/// would choose.
 pub fn vector(plan: &Plan, target: &Target) -> Vec<u64> {
     let devices = target.devices.len();
     let bytes = footprints(plan, target).unwrap_or_else(|| vec![u64::MAX; devices]);
@@ -463,34 +466,50 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
     a.iter().zip(b).all(|(x, y)| x <= y) && a != b
 }
 
-/// The Pareto frontier of the feasible `plans` on `target`: the feasible plans no other
-/// feasible plan dominates, in content-address order (`order`). Plans with equal cost vectors are all
-/// kept.
+/// The Pareto frontier of the feasible `plans` on `target`, in content-address order
+/// (`order`): a feasible plan `b` is dropped when a feasible plan `a` dominates it and also
+/// comes first in the pick's order, the least scalar, then `order` (`a` "beats" `b`). Plans
+/// with equal cost vectors are all kept.
 ///
-/// A plan's dominators all precede it in the lexicographic order of the vectors, and a
-/// dominated dominator is itself dominated by a plan of the frontier, so each plan is compared
-/// only with the frontier found before it: `O(P log P + P·F·devices)` for `F` plans on the
-/// frontier. No known algorithm finds a Pareto frontier of more than three quantities in
-/// `O(P log P)`, and this vector has `3·devices + 2`.
+/// Why the second condition: the scalar is monotone but not strictly monotone in the vector,
+/// so `a` can dominate `b` at the same scalar. When `b` has the lesser content address, step
+/// M0.6's pick ("the least scalar, then the least content address") is `b`, and dropping `b`
+/// for dominance alone would change the pick (FAIL-m0-06-frontier-tie). With the condition,
+/// the pick over the frontier is the pick over every feasible plan: the plan `m` least in the
+/// pick's order is beaten by no plan, so it is kept. Since the scalar is monotone, a plan kept
+/// though dominated ties its dominators' scalar, so the frontier grows only by such ties.
+///
+/// "Beats" is a strict partial order (both of its parts are transitive and irreflexive). A
+/// plan's dominators, and so the plans that beat it, all precede it in the lexicographic order
+/// of the vectors, and a plan that beats `b` but is itself dropped is beaten by a kept plan
+/// that then beats `b` (transitivity, and the chain ends since the plans are finite). So each
+/// plan is compared only with the frontier found before it: `O(P log P + P·F·devices)` for `F`
+/// plans on the frontier. No known algorithm finds a Pareto frontier of more than three
+/// quantities in `O(P log P)`, and this vector has `3·devices + 2`.
 // Complexity tradeoff (COMPLEXITY.md F20): the naive frontier compares every pair of plans,
 // O(P² · devices); the lexicographic sort lets each plan be compared only with the frontier
 // found before it, O(P log P + P · F · devices). It is still O(P² · devices) when every plan
 // is on the frontier (F = P), the size of the output's pairwise check; no known algorithm does
-// better for more than three quantities. Memory: one cost vector per feasible plan.
+// better for more than three quantities. The scalar is computed once per feasible plan,
+// O(P · (devices + edges)), and the pick's order is compared only for a pair where one
+// dominates. Memory: one cost vector and one scalar per feasible plan.
 pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
-    let mut live: Vec<(&Plan, Vec<u64>)> = plans
+    let mut live: Vec<(&Plan, Vec<u64>, u64)> = plans
         .iter()
         .filter(|p| feasible(p, target))
-        .map(|p| (p, vector(p, target)))
+        .map(|p| (p, vector(p, target), scalarize(p, target)))
         .collect();
     live.sort_by(|a, b| a.1.cmp(&b.1));
-    let mut front: Vec<(&Plan, Vec<u64>)> = Vec::new();
-    for (p, v) in live {
-        if !front.iter().any(|(_, w)| dominates(w, &v)) {
-            front.push((p, v));
+    let mut front: Vec<(&Plan, Vec<u64>, u64)> = Vec::new();
+    for (p, v, s) in live {
+        let beaten = front
+            .iter()
+            .any(|(q, w, t)| dominates(w, &v) && (*t, order(q)) < (s, order(p)));
+        if !beaten {
+            front.push((p, v, s));
         }
     }
-    let mut kept: Vec<Plan> = front.into_iter().map(|(p, _)| p.clone()).collect();
+    let mut kept: Vec<Plan> = front.into_iter().map(|(p, _, _)| p.clone()).collect();
     kept.sort_by(|a, b| order(a).cmp(&order(b)));
     kept
 }
@@ -502,8 +521,9 @@ fn order(p: &Plan) -> (ContentAddress, &[Region], &[u64], &Schedule) {
     (p.address, &p.regions, &p.cut_edges, &p.schedule)
 }
 
-/// The plan the scalarization picks: on the frontier, the least scalar cost, then the least
-/// content address, and of equal addresses the first in `order`. `None` when no plan is
+/// The plan the scalarization picks: of the feasible plans, the least scalar cost, then the
+/// least content address, and of equal addresses the first in `order`; it is found on the
+/// frontier, which keeps that plan (see [`frontier`]). `None` when no plan is
 /// feasible, where the placement solver falls back to its list schedule (sec:runtime).
 pub fn pick(plans: &[Plan], target: &Target) -> Option<Plan> {
     let mut front = frontier(plans, target);

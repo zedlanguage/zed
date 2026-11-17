@@ -177,6 +177,31 @@ fn plans_of_equal_vectors_are_all_kept_in_address_order() {
 }
 
 #[test]
+fn a_dominated_plan_of_the_same_scalar_and_a_lesser_address_is_kept_and_picked() {
+    // FAIL-m0-06-frontier-tie: the scalar is monotone in the vector but not strictly, so a
+    // dominated plan can tie its dominator; the pick, the least scalar then the least address
+    // of the feasible plans (DESIGN.md M0.6), is then the dominated plan when its address is
+    // less, and the frontier must keep it. The plans of the seed that found it: work 5,079 and
+    // 5,080 at depth 1 on 8 cores, ⌈5,078 / 8⌉ + 1 = ⌈5,079 / 8⌉ + 1 = 636.
+    let t = workstation();
+    let dominator = plan(2, vec![region(0, 5079, 1, 525_737)], vec![]);
+    let tied = plan(1, vec![region(0, 5080, 1, 885_766)], vec![]);
+    assert!(dominates(&vector(&dominator, &t), &vector(&tied, &t)));
+    assert_eq!(scalarize(&dominator, &t), 636);
+    assert_eq!(scalarize(&tied, &t), 636);
+    let kept = frontier(&[dominator.clone(), tied.clone()], &t);
+    assert_eq!(kept, [tied.clone(), dominator.clone()]);
+    assert_eq!(pick(&[dominator.clone(), tied.clone()], &t), Some(tied));
+    // With the greater address the tied plan is dropped, as is a dominated plan of a greater
+    // scalar whatever its address.
+    let tied_later = plan(3, vec![region(0, 5080, 1, 885_766)], vec![]);
+    let dearer = plan(0, vec![region(0, 5088, 1, 885_766)], vec![]);
+    assert_eq!(scalarize(&dearer, &t), 637);
+    let kept = frontier(&[tied_later, dearer, dominator.clone()], &t);
+    assert_eq!(kept, [dominator]);
+}
+
+#[test]
 fn a_lower_scalar_wins_over_a_lower_address() {
     let t = workstation();
     // Incomparable vectors (less work, more depth), so both stay on the frontier.

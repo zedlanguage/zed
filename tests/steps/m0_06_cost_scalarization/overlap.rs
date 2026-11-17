@@ -475,13 +475,27 @@ fn footprint_agrees(p: &Plan, before: &[Vec<bool>], t: &Target) -> bool {
 
 #[test]
 fn the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
+    frontier_keeps_the_pick(zed_tests::seed::seed(
+        "the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
+    ));
+}
+
+/// The seed that found FAIL-m0-06-frontier-tie (2026-11-17): of two plans of scalar 636 on the
+/// 8-core device, work 5,079 and 5,080 at depth 1, the first dominates the second, which has
+/// the lesser address (`#…be` before `#…f1`); the frontier dropped it, so `pick` was `#…f1`.
+#[test]
+fn the_frontier_keeps_a_dominated_plan_that_ties_and_comes_first_at_a_found_seed() {
+    frontier_keeps_the_pick(7219330348854595219);
+}
+
+/// The footprint grows with a region's footprint and retained bytes, and the pick from random
+/// plans is the least scalar, then address, of the feasible ones, from the seed `seed`.
+fn frontier_keeps_the_pick(seed: u64) {
     let mut t = two_kinds();
     for d in &mut t.devices {
         d.capacity = 3 << 19;
     }
-    let mut rng = Rng::new(zed_tests::seed::seed(
-        "the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
-    ));
+    let mut rng = Rng::new(seed);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, _) = random_scheduled(&mut rng, 5, &t);
         let i = rng.below(p.regions.len());
