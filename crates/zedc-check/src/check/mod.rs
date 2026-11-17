@@ -212,9 +212,6 @@ pub enum Misfit<'s> {
     /// A saturated call that leaves out this parameter, which has no default; `true` when the
     /// parameter is positional, which `...` cannot leave out.
     Missing(&'s str, bool),
-    /// A call through a value that leaves out this parameter, whose default reads the other
-    /// parameters.
-    OpenDefault(&'s str),
 }
 
 impl Misfit<'_> {
@@ -226,7 +223,7 @@ impl Misfit<'_> {
             }
             Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
             Misfit::CurriedPositional { .. } | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
-            Misfit::Missing(..) | Misfit::OpenDefault(_) => Some(Row::MissingArgument),
+            Misfit::Missing(..) => Some(Row::MissingArgument),
         }
     }
 
@@ -279,11 +276,6 @@ impl Misfit<'_> {
             Misfit::Missing(name, _) => format!(
                 "this call of `{who}` gives no value to its parameter `{name}`, and `{name}` has \
                  no default, so the call cannot be made"
-            ),
-            Misfit::OpenDefault(name) => format!(
-                "this call goes through a function value and leaves out `{name}`, whose default \
-                 reads the function's other parameters; only a call of the declared function \
-                 by its name fills such a default, so here `{name}` has no value"
             ),
         }
     }
@@ -407,12 +399,6 @@ impl Misfit<'_> {
                 ));
                 menu
             }
-            (Misfit::OpenDefault(name), _) => vec![
-                format!("repair: pass a value for `{name}` in this call"),
-                "repair: call the declared function by its name, so that its default fills the \
-                 parameter"
-                    .into(),
-            ],
         }
     }
 }
@@ -538,6 +524,13 @@ pub struct Info {
     pub adopt: HashMap<Span, Value>,
     /// The signature of the function called through a value, by the call's span.
     pub calls: HashMap<Span, Arc<Sig>>,
+    /// The calls through a value, by the call's span, that the function called places
+    /// (DESIGN.md sec:values_morphisms, "The function called places the arguments"): those
+    /// where two functions the value may hold take the arguments in different places or fill
+    /// a parameter left out from different defaults, or one fills it with a default that reads
+    /// its other parameters or its declaration's scope. Every other call through a value is
+    /// placed by its recorded signature (`calls`) when it is compiled.
+    pub placed: HashSet<Span>,
     /// The fit of each function argument that needs one, by its span.
     pub fits: HashMap<Span, Fit>,
     /// Each declared function's signature, by its binder.

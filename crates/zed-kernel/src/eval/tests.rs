@@ -449,6 +449,7 @@ fn a_closure_holds_only_the_values_its_body_reads() {
             at: 0,
             env: None,
             drops: drops.clone(),
+            placed: None,
         })
     };
     let (a, b) = (value(), value());

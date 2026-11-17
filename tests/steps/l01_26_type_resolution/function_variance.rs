@@ -154,46 +154,109 @@ fn a_named_call_of_a_union_with_different_names_is_refused() {
     );
 }
 
-/// Elaboration builds a call through a value once, by one signature, so the functions the
-/// value may be must take the call's arguments in the same places and fill the parameters it
-/// leaves out with the same defaults. When they do not, the checker refuses the call as not
-/// compiled yet, with a repair, instead of letting elaboration refuse it or, for differing
-/// defaults, run the wrong one (row FAIL-elab-named-call-generic-param).
+/// A call through a value passes its arguments as written, and the function the value holds
+/// places them by its own parameter list and fills each parameter left out with its own
+/// default (DESIGN.md sec:values_morphisms, "The function called places the arguments"; row
+/// CALL-callee-places): a union of functions, or a generic body met at two calls with
+/// different functions, whose parameters lie in different places, number differently or have
+/// different defaults, gives the value of the function the call reaches, never another one's
+/// default (row FAIL-call-through-functions-differing-places).
 #[test]
-fn a_call_one_signature_cannot_place_for_every_function_is_refused() {
+fn a_call_through_functions_differing_in_places_or_defaults_runs() {
+    let reordered = "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\n";
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    runs_to(&format!("{reordered}{pick}a = h(a: 5, b: 2);\n"), "a", "52");
+    runs_to(
+        &format!("{reordered}call(k) = k(a: 5, b: 2);\na = call(k: f) * 100 + call(k: g);\n"),
+        "a",
+        "352",
+    );
+    let defaults = "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\n";
+    runs_to(&format!("{defaults}{pick}a = h(x: 3);\n"), "a", "6");
+    runs_to(
+        &format!("{defaults}call(k) = k(x: 3);\na = call(k: f) * 100 + call(k: g);\n"),
+        "a",
+        "406",
+    );
+    runs_to(
+        &format!("f(x: int, y: int = 1) = x + y;\ng(x: int) = x * 7;\n{pick}a = h(x: 3);\n"),
+        "a",
+        "21",
+    );
+    runs_to(
+        &format!(
+            "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 1) = x * y;\n{pick}a = h(x: 3);\n"
+        ),
+        "a",
+        "3",
+    );
+}
+
+/// A call through a value that leaves out a parameter whose default reads an earlier
+/// parameter, or a name the function holds, gets the value the call by the function's name
+/// gives: the function fills the default in the scope of its declaration (row
+/// FAIL-call-through-value-open-default). Named arguments in another order than the
+/// parameters, and a value held in a list, are placed the same way.
+#[test]
+fn a_call_through_a_value_fills_a_default_that_reads_a_parameter_or_a_held_name() {
+    let reads_x = "g(x: int, y: int = x) = x + y;\n";
+    runs_to(&format!("{reads_x}k = g;\na = k(x: 3);\n"), "a", "6");
+    runs_to(
+        &format!(
+            "{reads_x}pick(c: bool) = if c {{ g }} else {{ g }};\nh = pick(c: false);\na = h(x: 3);\n"
+        ),
+        "a",
+        "6",
+    );
+    runs_to(
+        &format!("{reads_x}call(k) = k(x: 3);\na = call(k: g);\n"),
+        "a",
+        "6",
+    );
+    runs_to(
+        "mk(k: int) = {\n  g(x: int, y: int = k) = x + y;\n  return g;\n};\nh = mk(k: 10);\na = h(x: 1);\n",
+        "a",
+        "11",
+    );
+    runs_to(
+        "tax(price, rate = price / 10.0) = price * rate;\nt = tax;\ny = t(price: 10.0);\n",
+        "y",
+        "10.0",
+    );
+    runs_to(&format!("{reads_x}k = g;\na = k(y: 1, x: 3);\n"), "a", "4");
+    runs_to(
+        &format!("{reads_x}k = g;\nm = [k, k];\na = m[0](x: 3) + m[1](x: 4, y: 1);\n"),
+        "a",
+        "11",
+    );
+}
+
+/// A curried call (`...`) through a value is built by one signature still: its lambda's
+/// parameters are those of one function. Where the functions the value may be take the
+/// parameters in different places, the checker refuses it as not compiled yet, with a repair.
+#[test]
+fn a_curried_call_one_signature_cannot_place_for_every_function_is_refused() {
+    let reordered = "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\n";
     let cases = [
         // A union with the parameters in different orders.
         (
-            "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(a: 5, b: 2);\n",
+            format!(
+                "{reordered}pick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\np = h(a: 5, ...);\na = p(b: 2);\n"
+            ),
             "which have the parameter `a` in different places",
             "give the functions passed as this value the same parameters, in the same order",
         ),
         // The same two functions passed at two calls of a generic function.
         (
-            "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, b: 2);\na = call(k: f) * 100 + call(k: g);\n",
+            format!(
+                "{reordered}call(k) = k(a: 5, ...)(b: 2);\na = call(k: f) * 100 + call(k: g);\n"
+            ),
             "and at an earlier call one of type `(a: int, b: int) -> int`",
             "give the functions passed as this value the same parameters, in the same order",
         ),
-        // A union whose defaults for a parameter the call leaves out differ.
-        (
-            "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(x: 3);\n",
-            "may be either of two functions of type `(x: int, y: int) -> int`, whose defaults for `y`",
-            "pass `y` in this call, as `y: …`",
-        ),
-        // The same at two calls of a generic function.
-        (
-            "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\ncall(k) = k(x: 3);\na = call(k: f) * 100 + call(k: g);\n",
-            "other than the one an earlier call passes",
-            "pass `y` in this call, as `y: …`",
-        ),
-        // A union of functions with different numbers of parameters.
-        (
-            "f(x: int, y: int = 1) = x + y;\ng(x: int) = x * 7;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\na = h(x: 3);\n",
-            "which take different numbers of parameters",
-            "give the functions passed as this value the same parameters, in the same order",
-        ),
     ];
-    for (src, reason, repair) in cases {
+    for (src, reason, repair) in &cases {
+        let src = src.as_str();
         let errors = type_errors(src);
         assert_eq!(errors.len(), 1, "{src}: {errors:?}");
         assert!(errors[0].contains(reason), "{src}: {errors:?}");
@@ -239,15 +302,16 @@ fn named_calls_with_arguments_alike_run() {
     );
 }
 
-/// The call of a generic function that passes a function its body's call cannot be built for
-/// is the one later in the text than the first call; the message names the first call's type,
-/// and a note points at that call. The order the checker meets the calls in, which follows
-/// what each definition uses and not the text, does not change which call is refused (row
-/// TEST-call-site-need-key). Each program gives the same answer checked alone, after the
-/// others, and after the others in reverse order.
+/// The call of a generic function that passes a function its body's curried call cannot be
+/// built for is the one later in the text than the first call; the message names the first
+/// call's type, and a note points at that call. The order the checker meets the calls in, which
+/// follows what each definition uses and not the text, does not change which call is refused
+/// (row TEST-call-site-need-key). Each program gives the same answer checked alone, after the
+/// others, and after the others in reverse order. (A call not curried runs for every function:
+/// [`a_call_through_functions_differing_in_places_or_defaults_runs`].)
 #[test]
 fn the_earlier_call_is_the_first_in_the_text() {
-    let head = "f(a: int, b: int) = a - b;\nf2(a: int, b: int) = a + b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, b: 2);\n";
+    let head = "f(a: int, b: int) = a - b;\nf2(a: int, b: int) = a + b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, ...)(b: 2);\n";
     let ab = "(a: int, b: int) -> int";
     let ba = "(b: int, a: int) -> int";
     // The rest of the program; the calls refused; the type and the call the message names.
@@ -1584,18 +1648,11 @@ fn a_map_lambda_over_entries_of_two_function_types_is_refused_for_a_partial_slot
 
 /// A call through a parameter that names its arguments is built once for every function the
 /// parameter takes (`Ck::record_call`); a second function there that takes another number of
-/// parameters, one of them with a default, is refused at the call that passes it.
+/// parameters, one of them with a default, places the arguments itself and fills its default.
 #[test]
-fn a_named_call_through_a_parameter_of_two_differing_functions_is_refused() {
+fn a_named_call_through_a_parameter_of_two_differing_functions_runs() {
     let src = "one(x: int) = x;\ntwo(x: int, y: int = 1) = x + y;\nrun(g) = g(x: 1);\na = run(g: one) + run(g: two);\n";
-    let errors = type_errors(src);
-    assert!(
-        errors.iter().any(
-            |e| e.contains("and at an earlier call one of type `(x: int) -> int`")
-                && e.contains("which take different numbers of parameters")
-        ),
-        "{src}: {errors:#?}"
-    );
+    runs_to(src, "a", "3");
 }
 
 /// Row PROOF-generic-body-values-from-args, the cases of the proof that this zedc does not
@@ -2188,8 +2245,10 @@ fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
 #[test]
 fn a_parameter_with_a_bound_is_printed_with_its_bound() {
     let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    // A curried call, which one signature builds for both functions (a call not curried is
+    // placed by each function, and runs).
     let twice = format!(
-        "{head}pass2(x, y: int = 1) = apply(f: x) + y;\ntwice(g) = g(x: small);\na = twice(g: pass) + twice(g: pass2);\n"
+        "{head}pass1(x, z: int = 0) = apply(f: x) + z;\npass2(x, y: int = 1, z: int = 0) = apply(f: x) + y + z;\ntwice(g) = g(x: small, ...)(z: 0);\na = twice(g: pass1) + twice(g: pass2);\n"
     );
     let errors = type_errors(&twice);
     let built = errors
@@ -2197,8 +2256,8 @@ fn a_parameter_with_a_bound_is_printed_with_its_bound() {
         .find(|e| e.contains("the call through `g` is built once for both functions"))
         .unwrap_or_else(|| panic!("{twice}: {errors:#?}"));
     assert!(!built.contains("(x: _"), "{twice}: {built}");
-    let want = "`g` here is a function of type `(x: (x: int | f64) ->? int, y: int) -> int`, and \
-                at an earlier call one of type `(x: (x: int | f64) ->? int) -> int`";
+    let want = "`g` here is a function of type `(x: (x: int | f64) ->? int, y: int, z: int) -> int`, \
+                and at an earlier call one of type `(x: (x: int | f64) ->? int, z: int) -> int`";
     assert!(built.contains(want), "{twice}: {built}");
 
     let pick = format!(
@@ -2263,5 +2322,44 @@ fn an_arrow_lambda_refused_through_a_call_s_needs_is_named() {
         let fixed =
             format!("{head}{split}outer(f) = split(h1: {lam}, h2: {lam});\na = outer(f: {f});\n");
         runs_to(&fixed, "a", "2");
+    }
+}
+
+/// A call that every function the value may hold places alike is compiled as before, with no
+/// placing (DESIGN.md sec:values_morphisms, "The function called places the arguments": "a
+/// call that agrees is placed when it is compiled, at no cost"); a call that differs is placed
+/// at run time, also in a built executable.
+#[test]
+fn an_agreeing_call_is_compiled_as_before_and_a_differing_one_runs_in_an_executable() {
+    use zed_tests::step_helpers::l01_16_elaboration::elab;
+    use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+    let agree = "f(a: int, b: int) = a - b;\nk = f;\na = k(b: 1, a: 5);\n";
+    let t = elab(agree).unwrap().get("a").unwrap().to_string();
+    assert!(!t.contains("place") && !t.contains("callNamed"), "{t}");
+    runs_to(agree, "a", "4");
+    let ro = "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\n";
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- \"${a}\";\n}\n";
+    let cases = [
+        (format!("{ro}{pick}a = h(a: 5, b: 2);\n{main}"), "52\n"),
+        (
+            format!("{ro}call(k) = k(a: 5, b: 2);\na = call(k: f) * 100 + call(k: g);\n{main}"),
+            "352\n",
+        ),
+        (
+            format!(
+                "tax(price, rate = price / 10.0) = price * rate;\nt = tax;\na = t(price: 10.0);\n{main}"
+            ),
+            "10.0\n",
+        ),
+    ];
+    for (i, (src, want)) in cases.iter().enumerate() {
+        let o = run(&format!("callee_places_{i}"), src, "", &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str()),
+            (0, *want),
+            "{src}{}",
+            o.stderr
+        );
     }
 }

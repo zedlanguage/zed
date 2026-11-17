@@ -34,6 +34,10 @@ fn calls_that_pass_each_parameter_in_its_form_are_accepted_and_run() {
         ("k = add;\ny = k(1, 2);", "3"),
         ("h = greet(\"Al\", ...);\ny = h(punct: \"?\");", "\"Al?\""),
         ("t = tax;\ny = t(price: 10.0f64, rate: 0.5f64);", "5.0"),
+        // The function a value holds fills its own default, which may read its other
+        // parameters (DESIGN.md sec:values_morphisms, "The function called places the
+        // arguments").
+        ("t = tax;\ny = t(price: 10.0);", "10.0"),
         // A lambda with no expected type takes its parameters by position.
         ("inc = x -> x + 1;\ny = inc(3);", "4"),
     ];
@@ -128,15 +132,6 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
             "k = sub;\ny = k(a: 1);",
             vec![
                 "this call of `(a: T, b: T) -> T for T in int | f32 | f64 | rat` gives no value to its parameter `b`, and `b` has no default, so the call cannot be made. [k(a: 1)]"
-                    .into(),
-            ],
-        ),
-        (
-            "t = tax;\ny = t(price: 10.0);",
-            vec![
-                "this call goes through a function value and leaves out `rate`, whose default reads \
-                 the function's other parameters; only a call of the declared function by its name \
-                 fills such a default, so here `rate` has no value. [t(price: 10.0)]"
                     .into(),
             ],
         ),

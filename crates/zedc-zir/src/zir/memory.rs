@@ -54,7 +54,7 @@ use std::fmt::{Display, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::eval::{Made, MadeNode, MadeShape, fun_term, leaf_at_end};
+use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
 use zed_kernel::value::{Fields, HeldEntry, HeldFamily, SharedParts, Value};
@@ -986,6 +986,8 @@ struct Fun<'g> {
     body: Shared,
     names: Vec<Arc<str>>,
     caps: Vec<Mv<'g>>,
+    /// The table the kernel's `place` gave the closure, if any (`MadeFun::placed`).
+    placed: Option<Value>,
 }
 
 /// Drops `parts`; the closures and held values it alone holds are taken apart through a list,
@@ -1928,6 +1930,7 @@ impl<'g> Machine<'g, '_> {
                         body: f.body,
                         names,
                         caps,
+                        placed: f.placed,
                     }))
                 }
                 MadeNode::Held(shape, ids) => {
@@ -2168,11 +2171,12 @@ impl<'g> Machine<'g, '_> {
                             self.alone(c.node, c.id),
                             &HeldPart::terms(terms),
                         )?)?,
-                        Mv::Fun(f) => HeldPart::closure(fun_term(
+                        Mv::Fun(f) => HeldPart::closure(placed_fun_term(
                             &f.params,
                             &f.body,
                             &f.names,
                             HeldPart::terms(terms),
+                            f.placed.as_ref(),
                         ))?,
                         // Bound once, outside the node's term, as native code binds it: a
                         // use, however often the term runs it, reads the one value.
@@ -2739,15 +2743,27 @@ impl HeldPart {
     ///    Evaluating either makes a closure and calls nothing. Any other term may run code when
     ///    it is evaluated, so it is refused: lowering a lambda to another form is a fault of
     ///    zedc, and the refusal stops the run before the held value is made.
+    ///    A closure with a parameter list is `place(table, closure)` or
+    ///    `place(table, closure, fill)` (`placed_fun_term`): a literal, a lambda, and the term
+    ///    of a closure, a lambda or a variable bound to one, so it too calls nothing.
     pub fn closure(t: Term) -> Result<HeldPart, String> {
-        let lambda = match &t {
+        let lambda = |t: &Term| match t {
             Term::Lam(..) => true,
             Term::Let(x, e, b) => {
                 matches!(&**e, Term::Lam(..)) && matches!(&**b, Term::Var(y) if y == x)
             }
             _ => false,
         };
-        if lambda {
+        let placed = |xs: &[Term]| match xs {
+            [Term::Lit(_), f] => lambda(f),
+            [Term::Lit(_), f, fill] => lambda(f) && (lambda(fill) || matches!(fill, Term::Var(_))),
+            _ => false,
+        };
+        let ok = match &t {
+            Term::Prim(Prim::Place, xs) => placed(xs),
+            t => lambda(t),
+        };
+        if ok {
             Ok(HeldPart(t))
         } else {
             Err(format!(

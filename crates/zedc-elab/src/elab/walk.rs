@@ -178,6 +178,9 @@ enum Frame<'a> {
     AtomArgs(&'a str, &'a [(String, Expr)]),
     /// A call through a value of no known signature: the value and the receiver.
     ValueArgs(Term, Option<Term>),
+    /// A call through a value that the function called places ([`Elab::placed_call`]): the
+    /// value, the receiver and the call's shape.
+    PlacedArgs(Term, Option<Term>, Box<Value>),
     Fill(Box<FillF<'a>>),
     ValueDefault(Box<FillF<'a>>),
     DeclDefault(Box<FillF<'a>>),
@@ -462,10 +465,41 @@ impl<'a> Elab<'a> {
                 return Some(Term::Var(self.fkernel(id, at)));
             }
             if let Some(at) = self.inst.value_at.remove(&span) {
-                return Some(Term::Var(self.value_kernel(id, at)));
+                let fv = Term::Var(self.value_kernel(id, at));
+                return self.placed_value(id, fv, span);
             }
+            let fv = self.name(n, span)?;
+            return self.placed_value(id, fv, span);
         }
         self.name(n, span)
+    }
+
+    /// `fv`, the value of the binder `id`, with the parameter list of the function it is
+    /// ([`Elab::place_term`]) where the unit has a call that the function called places, so
+    /// that the call finds the list; `fv` alone elsewhere, so a unit without such a call
+    /// compiles as before. A use before the function's defaults are elaborated (a cycle of
+    /// functions, one used as a value in the other) is refused as not yet built.
+    // Complexity tradeoff: each value use of a declared function costs O(p log p) more here
+    // for p parameters, and the table is one literal shared by every closure made from it
+    // (`Value` is reference-counted), so a closure costs O(1) more.
+    fn placed_value(&mut self, id: usize, fv: Term, span: Span) -> Option<Term> {
+        let Some(&f) = self.t.funcs.get(&id) else {
+            return Some(fv);
+        };
+        if self.info.placed.is_empty() {
+            return Some(fv);
+        }
+        match self.place_term(id, f, fv) {
+            Some(t) => Some(t),
+            None => self.error(
+                span,
+                format!(
+                    "`{}` is used as a value before its defaults are built, which this version \
+                     of zedc does not yet do. Call `{}` by its name here.",
+                    f.name, f.name
+                ),
+            ),
+        }
     }
 
     /// The term of the expression `e` alone: the lambda of a binding `f = x -> …` made at the
@@ -1560,7 +1594,114 @@ impl<'a> Elab<'a> {
             m.seq(call.positional.iter().collect(), false);
             return;
         };
+        if info.placed.contains(&call.span) {
+            return self.placed_call(m, f, receiver, call);
+        }
         self.call_with(m, Callee::Value(f, sig), receiver, call);
+    }
+
+    /// A call through a value that the function the value holds places when the call runs
+    /// (DESIGN.md sec:values_morphisms, "The function called places the arguments";
+    /// `check::Info::placed`): `callNamed(shape, f, args…)`, the arguments as written, the
+    /// positional ones first, then the named ones in the order written, each evaluated in
+    /// that order. `shape` is `(k, names, at)`: the number of positional arguments, the
+    /// receiver counted, the names sorted, and the index among the named arguments of each
+    /// sorted name, as [`Prim::CallNamed`] reads it.
+    // Complexity tradeoff: the names are sorted here, once per call written, O(a log a) for a
+    // named arguments, so that each run of the call merges them with the function's sorted
+    // names in O(p + a), where a search of the parameter list for each name at each run costs
+    // O(p·a).
+    fn placed_call(&mut self, m: &mut M<'a>, f: Term, receiver: Option<Term>, call: Call<'a>) {
+        let k = usize::from(receiver.is_some()) + call.positional.len();
+        let mut names: Vec<(Value, usize)> = (call.named.iter().enumerate())
+            .map(|(i, (n, _))| (Value::str(n), i))
+            .collect();
+        names.sort_unstable();
+        let (names, at): (Vec<Value>, Vec<Value>) = (names.into_iter())
+            .map(|(n, i)| (n, Value::Int(i as i64)))
+            .unzip();
+        let shape = Value::tuple(vec![
+            Value::Int(k as i64),
+            Value::tuple(names),
+            Value::tuple(at),
+        ]);
+        m.k(Frame::PlacedArgs(f, receiver, Box::new(shape)));
+        let args = (call.positional.iter()).chain(call.named.iter().map(|(_, e)| e));
+        m.seq(args.collect(), false);
+    }
+
+    /// The value of the declared function `id` with its parameter list, `place(table, f)` or
+    /// `place(table, f, fill)` ([`Prim::Place`]), where `fv` is the function: in a unit with
+    /// a call that the function called places, each declared function used as a value is
+    /// this (`check::Info::placed`). `table` is `(p, names, places, defaulted)`, the names
+    /// sorted; `fill` takes the parameters, then one flag for each defaulted parameter, true
+    /// where the call leaves it out, and fills each such parameter in declaration order with
+    /// its default as a call of `f` by its name fills it, then calls `fv`. None while a
+    /// default is not yet elaborated: in the default itself.
+    // Complexity tradeoff: O(p log p) for p parameters, once per function, to sort the names;
+    // the fill holds each default's term as a call by name holds it (a literal, a name, or a
+    // call of the default's own definition), so it is O(p) in size.
+    pub(super) fn place_term(&mut self, id: usize, f: &'a Function, fv: Term) -> Option<Term> {
+        let n = f.params.len();
+        let mut names: Vec<(Value, usize)> = (f.params.iter().enumerate())
+            .map(|(j, p)| (Value::str(&p.name), j))
+            .collect();
+        names.sort_unstable();
+        let (names, places): (Vec<Value>, Vec<Value>) = (names.into_iter())
+            .map(|(x, j)| (x, Value::Int(j as i64)))
+            .unzip();
+        let defaulted: Vec<bool> = f.params.iter().map(|p| p.default.is_some()).collect();
+        let table = Value::tuple(vec![
+            Value::Int(n as i64),
+            Value::tuple(names),
+            Value::tuple(places),
+            Value::tuple(defaulted.iter().map(|&d| Value::Bool(d)).collect()),
+        ]);
+        let mut args = vec![Term::Lit(table), fv.clone()];
+        if defaulted.contains(&true) {
+            let mut params: Vec<Arc<str>> = f.params.iter().map(|p| self.kname(p)).collect();
+            // The defaulted parameters, each after the defaulted ones its default reads, as
+            // `declared_defaults` orders those a call by name leaves out: an order of all of
+            // them is one of any subset, since a parameter given keeps its value. The flags
+            // are the lambda's parameters in declaration order; a cycle leaves that order,
+            // and a call that leaves out every parameter of the cycle reads one unfilled.
+            let ds: Vec<usize> = (0..n).filter(|&j| defaulted[j]).collect();
+            let at: HashMap<usize, usize> = (ds.iter().enumerate())
+                .map(|(i, &j)| (self.id(f.params[j].span, &f.params[j].name), i))
+                .collect();
+            let deps: Vec<Vec<usize>> = (ds.iter())
+                .map(|&j| {
+                    let d = f.params[j].default.as_ref().expect("defaulted");
+                    let mut deps: Vec<usize> = (self.t.uses_in(d.span, &[]).into_iter())
+                        .filter_map(|b| at.get(&b).copied())
+                        .collect();
+                    deps.sort_unstable();
+                    deps.dedup();
+                    deps
+                })
+                .collect();
+            let order = topo(&deps).unwrap_or_else(|_| (0..ds.len()).collect());
+            let flags: Vec<Arc<str>> = ds.iter().map(|_| self.temp()).collect();
+            let mut fills = Vec::new();
+            for i in order {
+                let j = ds[i];
+                let d = self.defaults.get(&(id, j))?.clone();
+                fills.push((self.kname(&f.params[j]), flags[i].clone(), d));
+            }
+            params.extend(flags);
+            let call = Term::App(Shared::new(fv), self.param_vars(f));
+            let body = fills.into_iter().rev().fold(call, |body, (x, flag, d)| {
+                let kept = Term::Var(x.clone());
+                let filled = Term::If(
+                    Shared::new(Term::Var(flag)),
+                    Shared::new(d),
+                    Shared::new(kept),
+                );
+                Term::Let(x, Shared::new(filled), Shared::new(body))
+            });
+            args.push(Term::Lam(params, Shared::new(body)));
+        }
+        Some(Term::Prim(Prim::Place, args))
     }
 
     /// A call of `callee`, a value with a signature or a declared function; `receiver` fills
@@ -1741,9 +1882,10 @@ impl<'a> Elab<'a> {
                     m.stack.push(Job::Expr(d));
                     return;
                 }
-                Some((_, _, false)) => {
-                    self.misfit(ff.call.span, Misfit::OpenDefault(&p.name), &sig.who())
-                }
+                Some((_, _, false)) => unreachable!(
+                    "the checker marks a call that leaves out a default reading a name as one \
+                     the function called places (`open_left_out`)"
+                ),
                 None => self.misfit(
                     ff.call.span,
                     Misfit::Missing(&p.name, p.positional),
@@ -2899,6 +3041,15 @@ impl<'a> Elab<'a> {
                     let mut args: Vec<Term> = receiver.into_iter().collect();
                     args.extend(ts);
                     Term::App(Shared::new(f), args)
+                });
+                m.give(t);
+            }
+            Frame::PlacedArgs(f, receiver, shape) => {
+                let t = all(m.got()).map(|ts| {
+                    let mut args = vec![Term::Lit(*shape), f];
+                    args.extend(receiver);
+                    args.extend(ts);
+                    Term::Prim(Prim::CallNamed, args)
                 });
                 m.give(t);
             }

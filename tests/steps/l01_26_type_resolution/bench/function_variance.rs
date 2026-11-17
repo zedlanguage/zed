@@ -431,3 +431,81 @@ fn one_body_indexing_its_parameter_n_times_with_results_resolved_differently_sca
         assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
     });
 }
+
+/// A call through a value that may hold either of two functions of p parameters, one declaring
+/// them in the other's reverse order, run 200 times (DESIGN.md sec:values_morphisms, "The
+/// function called places the arguments"): the function called places the p named arguments
+/// by its own parameter list, a merge of two sorted lists, O(p) a call, so the run is linear
+/// in p. Small instance:
+/// `function_variance::a_call_through_functions_differing_in_places_or_defaults_runs`.
+#[test]
+fn placing_p_named_arguments_in_the_function_called_scales() {
+    use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
+    use zed_tests::step_helpers::l01_36_cranelift::kernel;
+    let what = "200 calls of p named arguments placed by the function called";
+    let make = |p: usize| {
+        let ps: Vec<String> = (0..p).map(|i| format!("x{i}: int")).collect();
+        let rs: Vec<String> = (0..p).rev().map(|i| format!("x{i}: int")).collect();
+        let args: Vec<String> = (0..p).map(|i| format!("x{i}: n")).collect();
+        let xs: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let src = format!(
+            "f({}) = x0 - x1;\ng({}) = x1 - x0 + 1;\npick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\nxs = [{}];\na = xs.map(n -> h({}))[199];\n",
+            ps.join(", "),
+            rs.join(", "),
+            xs.join(", "),
+            args.join(", ")
+        );
+        with_prelude(elab(&src).unwrap().get("a").unwrap())
+    };
+    let n = 40;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        assert_eq!(kernel(&inputs[&m]).map(|v| v.to_string()), Ok("1".into()));
+    });
+}
+
+/// A hot call through a value that agrees with the one function the value holds costs the same
+/// in a unit where another call is placed by the function called: the value is then a closure
+/// that carries its parameter list, which a call that agrees does not read (DESIGN.md
+/// sec:values_morphisms, "The function called places the arguments").
+#[test]
+fn a_hot_agreeing_call_costs_the_same_beside_a_placed_call() {
+    use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
+    use zed_tests::step_helpers::l01_36_cranelift::{kernel, native};
+    let xs: Vec<String> = (0..5000).map(|i| i.to_string()).collect();
+    let hot = format!(
+        "f(a: int, b: int) = a - b;\nk = f;\nxs = [{}];\na = xs.map(i -> k(a: i, b: 1))[4999];\n",
+        xs.join(", ")
+    );
+    let placed = format!(
+        "{hot}g(b: int, a: int) = a * 10 + b;\npick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\nz = h(a: 1, b: 2);\n"
+    );
+    let term = |src: &str| with_prelude(elab(src).unwrap().get("a").unwrap());
+    let (plain, beside) = (term(&hot), term(&placed));
+    let why = "the agreeing call is compiled alike in both units; the value carries one more \
+               pointer, read by no agreeing call";
+    scaling::compare_costs(
+        "5000 agreeing calls through a value, alone and beside a placed call, by the kernel",
+        why,
+        1.05,
+        || assert_eq!(kernel(&plain).map(|v| v.to_string()), Ok("4998".into())),
+        || assert_eq!(kernel(&beside).map(|v| v.to_string()), Ok("4998".into())),
+    );
+    scaling::compare_costs(
+        "5000 agreeing calls through a value, alone and beside a placed call, in native code",
+        why,
+        1.05,
+        || {
+            assert_eq!(
+                native(&plain).map(|o| o.value.to_string()),
+                Ok("4998".into())
+            )
+        },
+        || {
+            assert_eq!(
+                native(&beside).map(|o| o.value.to_string()),
+                Ok("4998".into())
+            )
+        },
+    );
+}

@@ -217,6 +217,8 @@ fn name(p: Prim) -> &'static str {
         Join => "concat",
         RangeFrom => "rangeFrom",
         ListConcat => "listConcat",
+        Place => "place",
+        CallNamed => "callNamed",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
@@ -284,6 +286,8 @@ impl Prim {
             Prim::EntryBefore => {
                 Some("the step that reads the entry before another of a level in key order")
             }
+            Prim::Place => Some("the step that gives a function value its parameter list"),
+            Prim::CallNamed => Some("the call through a function value that it places"),
             _ => None,
         }
     }

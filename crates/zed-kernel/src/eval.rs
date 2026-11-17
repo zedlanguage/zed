@@ -42,7 +42,7 @@ use crate::value::Value;
 
 mod env;
 mod made;
-pub use made::{Made, MadeFun, MadeNode, MadeShape, fun_term};
+pub use made::{FILL_NAME, Made, MadeFun, MadeNode, MadeShape, fun_term, placed_fun_term};
 /// The names in scope (see [`mod@env`]), each bound to a [`Binding`].
 type Env<'t> = env::Env<'t, Binding<'t>>;
 
@@ -177,6 +177,18 @@ struct Closure<'t> {
     at: At,
     env: Env<'t>,
     drops: Rc<Drops<'t>>,
+    /// The parameter list [`Prim::Place`] gave the closure, by which [`Prim::CallNamed`]
+    /// places a call's arguments; none for a closure no `place` made. A positional call
+    /// ignores it.
+    placed: Option<Rc<Placed<'t>>>,
+}
+
+/// The parameter list of a function value ([`Prim::Place`]): the literal table, shared by
+/// every closure of the one function, and the lambda that fills its defaults, made in the
+/// declaration's scope, or none for a function without defaults.
+struct Placed<'t> {
+    table: Value,
+    fill: Option<V<'t>>,
 }
 
 /// What [`Drops`] frees: an environment, or the parts of a [`Held`].
@@ -1266,6 +1278,7 @@ impl<'t> Machine<'_, 't> {
                     at: 0,
                     env: global_env(&g.reads),
                     drops: self.drops.clone(),
+                    placed: None,
                 })),
                 Term::Var(y) => {
                     names.push(i);
@@ -1423,6 +1436,7 @@ impl<'t> Machine<'_, 't> {
                 at: self.ev.child(at, 0),
                 env: self.captures(body, &env),
                 drops: self.drops.clone(),
+                placed: None,
             })))),
             Term::PrimFn(p) => Ok(Step::Give(V::Prim(*p))),
             Term::App(f, args) => {
@@ -1913,6 +1927,161 @@ impl<'t> Machine<'_, 't> {
         }
     }
 
+    /// [`Prim::Place`]: the closure with its parameter list; [`Prim::CallNamed`]: the call
+    /// placed by the list of the function called (DESIGN.md sec:values_morphisms, "The
+    /// function called places the arguments"). The checker has checked the call against every
+    /// function the value may hold, so each error here is one of elaboration.
+    // Complexity tradeoff: the naive placing searches the parameter names for each named
+    // argument, O(p·a) for p parameters and a arguments. Used: the call's names and the
+    // function's are each sorted when the unit is compiled (`shape` and `table` are
+    // literals), and one merge of the two lists places every named argument, O(p + a) name
+    // comparisons, each O(the name's length); no name is built or hashed. The slots take one
+    // vector of p, and the call of `fill` one of p plus the defaulted parameters.
+    fn placing(&mut self, p: Prim, mut args: Vec<V<'t>>) -> R<Step<'t>> {
+        let bad = || {
+            type_err(format!(
+                "{} was given arguments elaboration does not make",
+                p.named(None)
+            ))
+        };
+        if args.len() < 2 {
+            return bad();
+        }
+        let given = args.split_off(2);
+        let f = args.pop().expect("two arguments");
+        let Some(V::Data(Value::Tuple(lit))) = args.pop() else {
+            return bad();
+        };
+        if p == Prim::Place {
+            let V::Closure(c) = f else {
+                return bad();
+            };
+            if given.len() > 1 {
+                return bad();
+            }
+            let fill = given.into_iter().next();
+            return Ok(Step::Give(V::Closure(Rc::new(Closure {
+                params: c.params,
+                body: c.body,
+                at: c.at,
+                env: c.env.clone(),
+                drops: c.drops.clone(),
+                placed: Some(Rc::new(Placed {
+                    table: Value::Tuple(lit),
+                    fill,
+                })),
+            }))));
+        }
+        let int = |v: &Value| match v {
+            Value::Int(i) => usize::try_from(*i).ok(),
+            _ => None,
+        };
+        let [k, Value::Tuple(names), Value::Tuple(at)] = lit.as_slice() else {
+            return bad();
+        };
+        let (Some(k), names, at) = (int(k), names.as_slice(), at.as_slice()) else {
+            return bad();
+        };
+        let placed = match &f {
+            V::Closure(c) => c.placed.clone(),
+            _ => None,
+        };
+        let Some(placed) = placed else {
+            // A function value with no list, a lambda or a primitive, takes its arguments by
+            // position, and a function of one parameter its one argument in either form.
+            if names.is_empty() || given.len() == 1 {
+                return self.apply(&f, given);
+            }
+            return type_err(
+                "a function value without a parameter list was called with named \
+                             arguments",
+            );
+        };
+        let Value::Tuple(table) = &placed.table else {
+            return bad();
+        };
+        let [
+            n,
+            Value::Tuple(pnames),
+            Value::Tuple(places),
+            Value::Tuple(defaulted),
+        ] = table.as_slice()
+        else {
+            return bad();
+        };
+        let (Some(n), pnames, places, defaulted) = (
+            int(n),
+            pnames.as_slice(),
+            places.as_slice(),
+            defaulted.as_slice(),
+        ) else {
+            return bad();
+        };
+        if k > n || given.len() != k + names.len() {
+            return bad();
+        }
+        let mut given: Vec<Option<V<'t>>> = given.into_iter().map(Some).collect();
+        let mut slots: Vec<Option<V<'t>>> = Vec::with_capacity(n);
+        slots.extend(given[..k].iter_mut().map(Option::take));
+        slots.resize(n, None);
+        let (mut i, mut j) = (0, 0);
+        while let Some(name) = names.get(i) {
+            let Some(q) = pnames.get(j) else {
+                return type_err(format!("the function called has no parameter {name}"));
+            };
+            match name.cmp(q) {
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Less => {
+                    return type_err(format!("the function called has no parameter {name}"));
+                }
+                std::cmp::Ordering::Equal => {
+                    let (Some(to), Some(a)) =
+                        (places.get(j).and_then(int), at.get(i).and_then(int))
+                    else {
+                        return bad();
+                    };
+                    match (slots.get_mut(to), given.get_mut(k + a)) {
+                        (Some(s @ None), Some(x)) => *s = x.take(),
+                        _ => return bad(),
+                    }
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        let missing = |j: usize| {
+            let name = (places.iter().position(|q| int(q) == Some(j)))
+                .map_or_else(|| format!("{j}"), |i| pnames[i].to_string());
+            type_err(format!("the call gives no value to the parameter {name}"))
+        };
+        let Some(fill) = &placed.fill else {
+            let mut call = Vec::with_capacity(n);
+            for (j, s) in slots.into_iter().enumerate() {
+                match s {
+                    Some(v) => call.push(v),
+                    None => return missing(j),
+                }
+            }
+            return self.apply(&f, call);
+        };
+        let mut call = Vec::with_capacity(n + defaulted.len());
+        let mut flags = Vec::new();
+        for (j, s) in slots.into_iter().enumerate() {
+            let d = matches!(defaulted.get(j), Some(Value::Bool(true)));
+            if d {
+                flags.push(V::Data(Value::Bool(s.is_none())));
+            }
+            match s {
+                Some(v) => call.push(v),
+                None if d => call.push(V::Data(Value::Bool(false))),
+                None => return missing(j),
+            }
+        }
+        call.extend(flags);
+        let fill = fill.clone();
+        self.apply(&fill, call)
+    }
+
     fn apply(&mut self, f: &V<'t>, args: Vec<V<'t>>) -> R<Step<'t>> {
         self.ev.burn()?;
         let (site, facts) = match &mut self.ev.trace {
@@ -2268,6 +2437,10 @@ impl<'t> Machine<'_, 't> {
     }
 
     fn prim(&mut self, p: Prim, args: Vec<V<'t>>) -> R<Step<'t>> {
+        // They take functions and any argument as it is, an atom included.
+        if matches!(p, Prim::Place | Prim::CallNamed) {
+            return self.placing(p, args);
+        }
         if let Some(n) = p.arity()
             && args.len() != n
         {
@@ -3250,6 +3423,12 @@ impl<'t> Machine<'_, 't> {
                                 caps.push(x.clone());
                                 vals.push(v);
                             }
+                            // A placed closure's `fill` is one more capture, last, which no
+                            // body reads; the back end gives it back to `place`.
+                            if let Some(fill) = c.placed.as_ref().and_then(|p| p.fill.clone()) {
+                                caps.push(FILL_NAME.into());
+                                vals.push(fill);
+                            }
                             tasks.push(Task::Fun(c, caps));
                             tasks.extend(vals.into_iter().rev().map(Task::Visit));
                             continue;
@@ -3264,6 +3443,7 @@ impl<'t> Machine<'_, 't> {
                         params: c.params.to_vec(),
                         body: c.body.clone(),
                         caps: names.into_iter().zip(parts).collect(),
+                        placed: c.placed.as_ref().map(|p| p.table.clone()),
                     }));
                     done.insert(Rc::as_ptr(&c) as *const (), nodes.len() - 1);
                     out.push(nodes.len() - 1);

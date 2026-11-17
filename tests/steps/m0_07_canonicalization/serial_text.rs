@@ -251,6 +251,8 @@ pub(super) mod m07 {
             Join => "`concat`",
             RangeFrom => "`a ..`, the integers from `a` with no upper end",
             ListConcat => "`a ++ b` on two lists",
+            Place => "a function value with the parameter list of the function it holds",
+            CallNamed => "a call through a function value, placed by the function called",
         }
     }
 

@@ -14,9 +14,11 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// to later layers, as the string functions `split`, `lines` and `concat` of layer 3 do, or a
 /// program writes them only inside another form (`a ..`, read by a key, `in` or `.first` until
 /// plan row RANGE-open-walk), or as `++` on two lists, which elaboration tells from `++` on two
-/// strings by the operands' types (plan row PERF-list-concat-shared). A refusal names them by
-/// the form DESIGN.md writes, or else as the kernel's printer writes them.
-const UNNAMED: [Prim; 22] = [
+/// strings by the operands' types (plan row PERF-list-concat-shared), or as a function value
+/// or a call through one that the function called places (DESIGN.md sec:values_morphisms,
+/// "The function called places the arguments"). A refusal names them by the form DESIGN.md
+/// writes, or else as the kernel's printer writes them.
+const UNNAMED: [Prim; 24] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -39,6 +41,8 @@ const UNNAMED: [Prim; 22] = [
     Prim::Join,
     Prim::RangeFrom,
     Prim::ListConcat,
+    Prim::Place,
+    Prim::CallNamed,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.
@@ -72,6 +76,13 @@ fn check_refusal(p: Prim, w: &str, message: &str) {
         Prim::FirstEntry | Prim::LastEntry | Prim::EntryAfter | Prim::EntryBefore => {
             assert_eq!(message, format!("{w} applied to a function"), "{p:?}")
         }
+        // These take functions; given one function alone, they refuse the arguments, which
+        // elaboration never builds so, and are named in words.
+        Prim::Place | Prim::CallNamed => assert_eq!(
+            message,
+            format!("{w} was given arguments elaboration does not make"),
+            "{p:?}"
+        ),
         _ => assert_eq!(message, format!("`{w}` applied to a function"), "{p:?}"),
     }
 }

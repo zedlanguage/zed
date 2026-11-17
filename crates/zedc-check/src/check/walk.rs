@@ -692,6 +692,18 @@ fn unaligned(r: &Sig, t: &Sig, shape: &CallShape) -> Option<Unaligned> {
     })
 }
 
+/// Whether a call of the shape `shape` leaves out a parameter of `s` whose default reads a
+/// name (the flag of `SParam::default` false): a default the caller cannot fill, since the names
+/// it reads are those of the declaration's scope, so the function places the call.
+/// Complexity tradeoff: a set of the call's names, O(p + a) for p parameters and a
+/// arguments, where a search of the names for each parameter is O(p·a).
+fn open_left_out(s: &Sig, shape: &CallShape) -> bool {
+    let named: HashSet<&str> = shape.named.iter().copied().collect();
+    (s.params.iter().enumerate()).any(|(j, p)| {
+        j >= shape.given && !named.contains(&*p.name) && matches!(p.default, Some((_, _, false)))
+    })
+}
+
 pub(super) struct CallSigF<'a> {
     sig: Arc<Sig>,
     receiver: Option<Arg<'a>>,
@@ -7922,17 +7934,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut pieces = f.pieces();
         // A class's calls are recorded with the arguments' types, found once.
         let class = pieces.iter().any(|p| self.class_of(p).is_some());
-        // Elaboration builds the call once, by the one signature recorded for it, so every
-        // function the value may be must take the arguments in that signature's places
-        // ([`unaligned`]); one that does not is refused here, where the types are known.
+        // Elaboration builds the call once, by the one signature recorded for it, where every
+        // function the value may be takes the arguments in that signature's places
+        // ([`unaligned`]) and no default it fills reads a name; otherwise the function the
+        // value holds places them when the call runs (`Info::placed`). A curried call through
+        // such a value is still refused: its lambda's parameters are those of one signature.
         let call = f.fns.first().cloned();
         if let Some(first) = &call {
             let shape = CallShape::of(receiver.is_some(), &args, curry);
             for g in f.fns.iter().skip(1) {
                 if let Some(why) = unaligned(first, g, &shape) {
-                    self.unaligned_call(&what, first, g, why, false, None, span);
+                    match curry {
+                        true => self.unaligned_call(&what, first, g, why, false, None, span),
+                        false => self.place_at(site),
+                    }
                     break;
                 }
+            }
+            if !curry && f.fns.iter().any(|g| open_left_out(g, &shape)) {
+                self.place_at(site);
             }
         }
         pieces.reverse();
@@ -8072,6 +8092,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.each(s.args.exprs());
     }
 
+    /// Marks the call through a value written at `site` as one the function called places
+    /// (`Info::placed`). A trial that is undone leaves the mark: the placed call gives what
+    /// the call placed by one signature gives wherever that one is right, so a mark too many
+    /// costs the placing at run time and changes no result.
+    fn place_at(&mut self, site: Option<Span>) {
+        if let Some(site) = site {
+            self.info.placed.insert(site);
+        }
+    }
+
     /// Records `sig` as the signature by which elaboration builds the call written at `site`
     /// (row FAIL-elab-named-call-generic-param). A need met at a call of a generic function
     /// records it at the generic body's call, which elaboration builds once for every call of
@@ -8103,6 +8133,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if let Some(had) = self.info.calls.get(&site).cloned() {
             let shape = CallShape::of(s.receiver.is_some(), &s.args, s.curry);
+            if !s.curry {
+                if unaligned(&had, &sig, &shape).is_some() || open_left_out(&sig, &shape) {
+                    self.place_at(Some(site));
+                }
+                return;
+            }
             if let Some(why) = unaligned(&had, &sig, &shape) {
                 self.unaligned_call(&s.what, &had, &sig, why, true, None, s.span);
                 (self.errors.last_mut().expect("the error just raised")).unordered = true;
@@ -8286,6 +8322,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 }
                 let shape = CallShape::of(t.receiver, &t.args, t.curry);
+                // A call not curried was placed by the function when recorded (`record_call`).
+                if !t.curry {
+                    continue;
+                }
                 if let Some(why) = unaligned(&r.sig, &t.sig, &shape) {
                     let first = (!r.direct).then_some(r.at);
                     self.unaligned_call(&t.what, &r.sig, &t.sig, why, true, first, t.at);
@@ -24009,9 +24049,10 @@ fn fit<'s>(
         false => (missing.iter())
             .find_map(|&j| {
                 let p = &sig.params[j];
+                // A default that reads a name is filled by the function the value holds
+                // (`Info::placed`), a closed one by the caller.
                 match p.default {
-                    Some((_, _, true)) => None,
-                    Some((_, _, false)) => Some((span, Misfit::OpenDefault(&p.name))),
+                    Some(_) => None,
                     None => Some((span, Misfit::Missing(&p.name, p.positional))),
                 }
             })

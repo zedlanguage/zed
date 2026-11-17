@@ -199,6 +199,7 @@ fn the_parts_of_each_kind_of_cell() {
                 body: Shared::new(zed_kernel::Term::Var("y".into())),
                 names: vec!["a".into(), "b".into()],
                 caps: ws[..2].into(),
+                placed: None,
             })),
             2,
         ),

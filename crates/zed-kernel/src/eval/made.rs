@@ -54,8 +54,39 @@ pub struct MadeFun {
     pub params: Vec<Arc<str>>,
     /// The lambda's body, shared with the term the kernel ran.
     pub body: Shared,
-    /// Each name of the closure's environment the body may read, in name order, and its node.
+    /// Each name of the closure's environment the body may read, in name order, and its node;
+    /// for a closure with a `fill`, that closure last, under [`FILL_NAME`].
     pub caps: Vec<(Arc<str>, usize)>,
+    /// The table [`Prim::Place`] gave the closure, if any.
+    pub placed: Option<Value>,
+}
+
+/// The name a placed closure's `fill` is held under among its captures in a [`MadeFun`]: no
+/// program name holds a NUL.
+pub const FILL_NAME: &str = "\0fill";
+
+/// The closed term of a closure the kernel made ([`fun_term`]), with the table `placed` its
+/// `place` gave it, if any: `place(table, closure)`, or `place(table, closure, fill)` when the
+/// last capture is the `fill` ([`FILL_NAME`]), which the closure's term then leaves
+/// out. Its evaluation is the evaluation of its lambdas, so it is a value as a lambda is.
+pub fn placed_fun_term(
+    params: &[Arc<str>],
+    body: &Shared,
+    names: &[Arc<str>],
+    mut caps: Vec<Term>,
+    placed: Option<&Value>,
+) -> Term {
+    let Some(table) = placed else {
+        return fun_term(params, body, names, caps);
+    };
+    let fill = (names.last().is_some_and(|n| &**n == FILL_NAME)).then(|| caps.pop());
+    let names = &names[..caps.len()];
+    let mut args = vec![
+        Term::Lit(table.clone()),
+        fun_term(params, body, names, caps),
+    ];
+    args.extend(fill.flatten());
+    Term::Prim(Prim::Place, args)
 }
 
 /// The closed term of a closure the kernel made, given its parameters, its body, the names of

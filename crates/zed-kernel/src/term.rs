@@ -218,6 +218,24 @@ pub enum Prim {
     /// moved to `a.count + k`. Both lists are shared in the result, not copied
     /// (`Family::concat`, plan row PERF-list-concat-shared). `++` on strings is `Concat`.
     ListConcat,
+    /// `place(table, f)` or `place(table, f, fill)`: the closure `f` with its parameter list
+    /// (DESIGN.md sec:values_morphisms, "The function called places the arguments"). `table`
+    /// is a literal: the tuple `(p, names, places, defaulted)` of the number of parameters,
+    /// their names sorted, the place of each sorted name, and for each parameter in order
+    /// whether it has a default. `fill` is given when one has: a lambda of the parameters and
+    /// then one flag for each defaulted parameter, true where the call leaves it out, which
+    /// computes each such default in order in the declaration's scope and calls `f`. A
+    /// positional call of the result is a call of `f`; [`Prim::CallNamed`] reads the list.
+    /// Elaboration makes one only in a unit with a call through a value whose functions
+    /// place its arguments differently (plan row CALL-callee-places).
+    Place,
+    /// `callNamed(shape, f, args…)`: the call of the function value `f` with its arguments as
+    /// written, the positional ones first, then the named ones in the order written. `shape`
+    /// is a literal: the tuple `(k, names, at)` of the number of positional arguments, the
+    /// names of the named ones sorted, and for each sorted name the index of its argument
+    /// among the named ones. `f`'s list from [`Prim::Place`] places them, and its `fill`
+    /// fills the parameters left out.
+    CallNamed,
 }
 
 impl Prim {
@@ -232,7 +250,7 @@ impl Prim {
             }
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
-            Path | Tuple | Atom | Entries => None,
+            Path | Tuple | Atom | Entries | Place | CallNamed => None,
             _ => Some(2),
         }
     }
@@ -325,6 +343,8 @@ impl Prim {
             Join => 77,
             RangeFrom => 78,
             ListConcat => 79,
+            Place => 80,
+            CallNamed => 81,
         }
     }
 }

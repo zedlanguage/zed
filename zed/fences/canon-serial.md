@@ -146,6 +146,8 @@
 | `concat` | 77 |
 | `a ..`, the integers from `a` with no upper end | 78 |
 | `a ++ b` on two lists | 79 |
+| a function value with the parameter list of the function it holds | 80 |
+| a call through a function value, placed by the function called | 81 |
 | Witness | Tag | Fields in order |
 | Residue | 0 | — |
 | Catalog | 1 | `name: string` |

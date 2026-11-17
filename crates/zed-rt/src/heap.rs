@@ -204,6 +204,8 @@ pub struct FunObj {
     pub names: Vec<Arc<str>>,
     /// The captures.
     pub caps: Box<[Word]>,
+    /// The table the kernel's `place` gave the closure, if any (`MadeFun::placed`).
+    pub placed: Option<Value>,
 }
 
 /// The contents of an [`Obj::Held`].

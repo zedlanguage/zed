@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::eval::{Made, MadeNode, MadeShape, fun_term, leaf_at_end};
+use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
 use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
@@ -971,6 +971,7 @@ fn alloc_made(t: &Tables, s: &mut Run, m: Made) -> Result<Word, String> {
                     body: f.body,
                     names,
                     caps: caps.into(),
+                    placed: f.placed,
                 })))
             }
             MadeNode::Held(shape, parts) => {
@@ -1057,11 +1058,12 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                     }
                     // A closure the kernel made: its lambda with its captures bound inside,
                     // as a closure the program made is raised (`raise_node`'s `Caps::Given`).
-                    Some(Obj::Fun(f)) => HeldPart::closure(fun_term(
+                    Some(Obj::Fun(f)) => HeldPart::closure(placed_fun_term(
                         &f.params,
                         &f.body,
                         &f.names,
                         HeldPart::terms(std::mem::take(terms)),
+                        f.placed.as_ref(),
                     ))?,
                     _ => {
                         let h = s.heap.held(*clo)?.expect("a held value");
