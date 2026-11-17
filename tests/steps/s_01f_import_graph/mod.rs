@@ -121,8 +121,14 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
     }
     assert!(file_count > 60, "{file_count} files");
     assert!(import_count > file_count, "{import_count} imports");
-    // A crate with no open cycle passes the tool itself.
-    for name in ["zed-native", "zed-kernel"] {
+    // A crate with no open cycle passes the tool itself, whose report names each cycle's files.
+    // tools/merge_check.sh runs this piece as the `imports` tool over every crate: a separate
+    // build of the binary would give the compiler crates other features than the test build and
+    // overwrite the dylibs the test binaries load (MERGE-import-cycle-check).
+    for name in crates
+        .iter()
+        .filter(|c| !KNOWN_CYCLES.iter().any(|k| k.starts_with(&format!("{c}/"))))
+    {
         let dir = format!("{root}/crates/{name}/src");
         let (outcome, out) = tool(imports::run, &[&dir]);
         assert_eq!(outcome, Ok(true), "{out}");
