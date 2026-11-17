@@ -36,13 +36,22 @@ fn else_disposes_of_the_miss() {
     );
 }
 
+/// A value type that holds `#notFound` gives the same lookup, `V | #notFound`, but is another
+/// type: such a map stores the atom as a value (DESIGN.md sec:corner_cases, author P350), so at
+/// a key an exact arrow guarantees it may still answer `#notFound`. Before
+/// (FAIL-types-partial-arrow-value-type), the two read as one type and printed alike.
 #[test]
-fn a_value_type_that_already_holds_not_found_is_the_same_type() {
+fn a_value_type_that_holds_not_found_gives_the_same_lookup_and_is_another_type() {
+    let stored = sig(
+        "price(m: String ->? int | #notFound, k: String) = m[k];",
+        "price",
+    );
     assert_eq!(
-        sig(
-            "price(m: String ->? int | #notFound, k: String) = m[k];",
-            "price"
-        ),
+        stored,
+        "type Part1 = int | #notFound;\n(m: String ->? Part1, k: String) -> Part1"
+    );
+    assert_ne!(
+        stored,
         sig("price(m: String ->? int, k: String) = m[k];", "price")
     );
 }

@@ -655,6 +655,7 @@ fn shapes_of_variables(
             params: vec![Ty::union_all(&members)],
             result: result(&vs),
             partial: false,
+            stores_not_found: false,
         }],
         bounds: BTreeMap::new(),
         data: false,
@@ -810,6 +811,7 @@ fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
                 params,
                 result,
                 partial: false,
+                stores_not_found: false,
             })
             .collect(),
         bounds: BTreeMap::new(),

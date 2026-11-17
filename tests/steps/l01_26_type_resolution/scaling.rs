@@ -426,6 +426,7 @@ pub(super) fn functions_holding_one(
                 params: vec![o.clone()],
                 result: Ty::tuple(vec![o.clone(), h.clone()]),
                 partial: false,
+                stores_not_found: false,
             }],
             own: [name(o)].into(),
             held: [name(h)].into(),

@@ -1153,9 +1153,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 /// bound table's "else empty" (DESIGN.md sec:type_language), sound but not tight: a transpose
 /// of a full rectangle has every key, and that tighter guarantee is not computed.
 fn family(keys: Ty, values: Ty) -> Ty {
-    let values = values.union(&Ty::set(KType::atom("notFound")));
-    let mut sig = Sig::one(super::super::positional(1), vec![keys], values);
-    sig.arrows[0].partial = true;
+    let mut sig = Sig::one_partial(super::super::positional(1), vec![keys], values);
     sig.data = true;
     sig.dense = Dense::No;
     sig.note_held();

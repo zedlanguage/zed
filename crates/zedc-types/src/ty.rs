@@ -1020,6 +1020,7 @@ impl<'a> Same<'a> {
             && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
                 p.params.len() == q.params.len()
                     && p.partial == q.partial
+                    && p.stores_not_found == q.stores_not_found
                     && self.descend(
                         (p.params.iter().zip(&q.params)).chain([(&p.result, &q.result)]),
                     )
@@ -1491,8 +1492,12 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Ty(&a.result),
             Dbg::Text(", partial: "),
             Dbg::Leaf(&a.partial),
-            Dbg::Text(" }"),
         ]);
+        // Written only where set, so that the form of every other arrow is as it was.
+        if a.stores_not_found {
+            p.push(Dbg::Text(", stores_not_found: true"));
+        }
+        p.push(Dbg::Text(" }"));
     });
     parts.extend([
         Dbg::Text(", bounds: "),
@@ -2319,7 +2324,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
             }
             Step::HeldDone(s) => {
                 let from = out.tys.len() - sig_tys(s).count();
-                let (arrows, needs) = sig_parts(s, out.tys.drain(from..));
+                let (arrows, needs) = sig_parts(s, out.tys.drain(from..), &*w);
                 out.sigs.push(w.made_held(s, arrows, needs));
             }
         }
@@ -2507,8 +2512,30 @@ fn vars_of<'a>(tys: impl Iterator<Item = &'a Ty>, out: &mut Vars) {
     }
 }
 
-/// The arrows and needs of `s` with the types [`sig_tys`] gives replaced by `tys`, in order.
-fn sig_parts(s: &Sig, mut tys: impl Iterator<Item = Ty>) -> (Vec<Arrow>, Vec<Need>) {
+/// The arrows and needs of `s` with the types [`sig_tys`] gives replaced by `tys`, in order, as
+/// the walk `w` made them.
+///
+/// The walk remakes a partial arrow's lookup type, in which a stored `#notFound` and that of a
+/// miss are one atom, so whether the value type stores it ([`Arrow::stores_not_found`]) is read
+/// from `w`'s bindings: it stores it after the walk if it did before, or if a variable at the
+/// value type's top level is bound to a type whose set holds the atom. The value type's set at
+/// the top level after the walk is its set before ([`Rebuild::made_set`] adds only scalars of
+/// a carrier, no atom) and those of its top-level variables' bindings; a variable inside a
+/// tuple, a payload or a function puts nothing in it, and no walk takes an atom out of a set.
+/// The value type's variables are the lookup type's, as `#notFound` holds none.
+fn sig_parts(
+    s: &Sig,
+    mut tys: impl Iterator<Item = Ty>,
+    w: &impl Rebuild,
+) -> (Vec<Arrow>, Vec<Need>) {
+    let miss = KType::atom("notFound");
+    let stores = |a: &Arrow| {
+        a.stores_not_found
+            || (a.result.vars.iter()).any(|v| {
+                w.binding(v)
+                    .is_some_and(|b| (&b.set & &miss) != KType::empty())
+            })
+    };
     let mut next = || {
         tys.next()
             .expect("a walk makes one type of each type of a signature")
@@ -2518,6 +2545,7 @@ fn sig_parts(s: &Sig, mut tys: impl Iterator<Item = Ty>) -> (Vec<Arrow>, Vec<Nee
             params: a.params.iter().map(|_| next()).collect(),
             result: next(),
             partial: a.partial,
+            stores_not_found: a.partial && stores(a),
         })
         .collect();
     let needs = s.needs.iter().map(|n| n.map_tys(|_| next())).collect();
@@ -2612,7 +2640,7 @@ impl<'b> Replacer<'b> {
     /// [`Sig::replace_in`]: renamed, its own and held variables take their new names.
     fn sig(&mut self, s: &Sig) -> Sig {
         let tys = rebuild_tys(self, sig_tys(s));
-        let (arrows, needs) = sig_parts(s, tys.into_iter());
+        let (arrows, needs) = sig_parts(s, tys.into_iter(), &*self);
         self.sig_of(s, arrows, needs)
     }
 
@@ -3059,7 +3087,7 @@ impl Absorb {
         let mut w = Absorb::default();
         w.entered.push(0);
         let tys = rebuild_tys(&mut w, sig_tys(s));
-        let (arrows, needs) = sig_parts(s, tys.into_iter());
+        let (arrows, needs) = sig_parts(s, tys.into_iter(), &w);
         w.remade(s, arrows, needs)
     }
 
@@ -4866,6 +4894,14 @@ pub struct SParam {
 /// lookup type, `V | #notFound`, which is what an application of it gives. A partial arrow and
 /// an exact one with the same types are two types: `int ->? 1` is not `int -> 1 | #notFound`,
 /// whose domain is all of `int`.
+///
+/// A partial arrow's value type `V` is kept apart from its lookup type ([`Arrow::value`]): a map
+/// may store `#notFound` as a value (DESIGN.md sec:corner_cases, `m : Utf8String -> int |
+/// #notFound`), so `int ->? #b` and `int ->? #b | #notFound` are two types, with one lookup
+/// type (author, P350, FAIL-types-partial-arrow-value-type). The lookup alone cannot tell
+/// them apart, so [`Arrow::stores_not_found`] says which. Before, only the lookup was kept,
+/// and the two read as one type: a partial arrow's value was compared as its lookup, so the
+/// meet of `int ->? #b` with `int -> _` took the lookup's `#notFound` into its result.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Arrow {
     /// The parameters' types.
@@ -4874,6 +4910,61 @@ pub struct Arrow {
     pub result: Ty,
     /// Whether it is partial: its parameter types permit keys and guarantee none.
     pub partial: bool,
+    /// For a partial arrow, whether its value type holds the atom `#notFound`, which its
+    /// lookup type `result` holds either way. Always false for an exact arrow, so that equal
+    /// exact arrows are equal values. [`Arrow::partial_of`] sets it from the value type.
+    pub stores_not_found: bool,
+}
+
+impl Arrow {
+    /// The exact arrow from `params` to `result`.
+    pub fn exact(params: Vec<Ty>, result: Ty) -> Arrow {
+        Arrow {
+            params,
+            result,
+            partial: false,
+            stores_not_found: false,
+        }
+    }
+
+    /// The partial arrow from `params` whose value type is `value`: its lookup type is
+    /// `value | #notFound`, and it stores `#notFound` where `value` holds that atom.
+    pub fn partial_of(params: Vec<Ty>, value: Ty) -> Arrow {
+        let miss = KType::atom("notFound");
+        let stores_not_found = (&value.set & &miss) != KType::empty();
+        Arrow {
+            params,
+            result: value.union(&Ty::set(miss)),
+            partial: true,
+            stores_not_found,
+        }
+    }
+
+    /// The value type: the result of an exact arrow; for a partial arrow, its lookup type
+    /// without the `#notFound` of a miss, which stays where the value type holds it
+    /// ([`Arrow::stores_not_found`]). Only the bare atom is taken out; a `#notFound(..)` with
+    /// a payload is never a miss. Borrowed where it is `result`: an exact arrow, and a partial
+    /// one that stores `#notFound`, whose lookup `V | #notFound` is `V`.
+    pub fn value(&self) -> std::borrow::Cow<'_, Ty> {
+        if !self.partial || self.stores_not_found {
+            return std::borrow::Cow::Borrowed(&self.result);
+        }
+        std::borrow::Cow::Owned(Ty {
+            set: &self.result.set - &KType::atom("notFound"),
+            ..self.result.clone()
+        })
+    }
+
+    /// This arrow with its parameter types `params` and its result made by `f` from its value
+    /// type: an exact arrow's result is `f(result)`; a partial arrow's value type is
+    /// `f(value)`, so whether it stores `#notFound` is read again from what `f` makes, as a
+    /// variable of the value type replaced by a type that holds the atom stores it.
+    pub fn remade(&self, params: Vec<Ty>, f: impl FnOnce(&Ty) -> Ty) -> Arrow {
+        match self.partial {
+            false => Arrow::exact(params, f(&self.result)),
+            true => Arrow::partial_of(params, f(&self.value())),
+        }
+    }
 }
 
 /// A scalar carrier.
@@ -5052,9 +5143,7 @@ pub fn errs_of(e: Ty) -> Ty {
         default: None,
         range: None,
     };
-    let found = e.union(&Ty::set(KType::atom("notFound")));
-    let mut family = Sig::one(vec![param], vec![e], found);
-    family.arrows[0].partial = true;
+    let mut family = Sig::one_partial(vec![param], vec![e.clone()], e);
     family.data = true;
     let mut t = Ty::set(errs());
     let shape = Shape::new(vec![Ty::func(Arc::new(family))], BTreeMap::new());
@@ -12751,10 +12840,11 @@ impl Cx<'_> {
                 }
             }
         }
-        let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
-            params: a.params.iter().map(|p| cx.read(p, env)).collect(),
-            result: cx.read(&a.result, env),
-            partial: a.partial,
+        // A partial arrow's value type is read, so that a variable read as a type that holds
+        // `#notFound` makes it store the atom ([`Arrow::remade`]).
+        let read = |a: &Arrow, env: &Env, cx: &mut Cx| {
+            let params = a.params.iter().map(|p| cx.read(p, env)).collect();
+            a.remade(params, |r| cx.read(r, env))
         };
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
@@ -12900,9 +12990,10 @@ thread_local! {
 /// - each exact arrow of `q` is covered by exact arrows of `s` ([`cover`]): its keys are in
 ///   the guarantee of `s`, and their answers are within its result;
 /// - each partial arrow of `q` is covered by any arrows of `s`, or, failing that, each arrow
-///   of `s` that may take one of its keys answers within its result ([`answers_within`]): a key
-///   of a partial arrow need not be in the domain of `s`, and where it is, its answer is one
-///   the partial arrow allows, `#notFound` among them;
+///   of `s` that may take one of its keys answers within its value type ([`answers_within`]):
+///   a key of a partial arrow need not be in the domain of `s`, and where it is, its answer is
+///   in the partial arrow's value type ([`Arrow::value`]), which holds `#notFound` only where
+///   the map may store it;
 /// - each arrow of `s` takes only keys some arrow of `q` permits ([`permitted`]).
 ///
 /// The variables of the two sides are read apart. `s` is instantiated at the use (rule 2 of
@@ -12953,7 +13044,7 @@ async fn every_arrow_fits<'m>(
 /// stricter than against all of them, and would name an arrow that is covered.
 async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
     if !sas.iter().chain(qas).any(|a| a.partial) {
-        if !cover(s, sas, qas, c).await {
+        if !cover(s, sas, &[], qas, c).await {
             return false;
         }
     } else {
@@ -12965,17 +13056,39 @@ async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, 
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        if !cover(s, &exact(sas), &exact(qas), c).await {
+        // Each arrow with its value type as its result ([`Arrow::value`]): a partial arrow of
+        // `q` asks of each key that `s` takes that its answer be in `V_q` (`V_s <: V_q`,
+        // sec:type_language), not in the lookup `V_q | #notFound`, as a map may store
+        // `#notFound` as a value (P350, FAIL-types-partial-arrow-value-type). So an exact
+        // arrow that answers `#notFound` takes that key and answers outside a `V_q` without
+        // the atom. Before, the lookups were compared, and `int ->? #b | #notFound` was an
+        // `int ->? #b`. A copy only where a side has a partial arrow.
+        let valued = |xs: &[Arrow]| {
+            (xs.iter())
+                .map(|a| match a.partial {
+                    true => Arrow {
+                        result: a.value().into_owned(),
+                        ..a.clone()
+                    },
+                    false => a.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let (vsas, vqas) = (valued(sas), valued(qas));
+        // The partial arrows of `s`, with their value types, narrow what its exact arrows
+        // answer where they take all of an arrow of `q` ([`met`]).
+        let narrow: Vec<Arrow> = vsas.iter().filter(|a| a.partial).cloned().collect();
+        if !cover(s, &exact(sas), &narrow, &exact(qas), c).await {
             return false;
         }
-        for qa in qas.iter().filter(|a| a.partial) {
+        for qa in vqas.iter().filter(|a| a.partial) {
             let before = c.begin_alone();
-            let ok = cover(s, sas, std::slice::from_ref(qa), c).await;
+            let ok = cover(s, &vsas, &[], std::slice::from_ref(qa), c).await;
             let why = c.end_alone(before);
             if ok && why.is_none() {
                 continue;
             }
-            if !answers_within(s, sas, qa, c).await {
+            if !answers_within(s, &vsas, qa, c).await {
                 uncovered(why, c);
                 return false;
             }
@@ -12988,7 +13101,9 @@ async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, 
 /// within `qa`'s result, binding nothing ([`every_arrow_fits`]). Rule 6 of sec:type_resolution
 /// gives a key the first arrow that takes it, which is one of these, so each key of `qa` that
 /// `s` takes is answered within. An arrow is left out only where, at some parameter, its type
-/// and `qa`'s share no value ([`Ty::meets`] false).
+/// and `qa`'s share no value ([`Ty::meets`] false). [`covers`] passes each partial arrow with
+/// its value type as its result ([`Arrow::value`]), so a value is compared with a value type
+/// and the `#notFound` of a miss in neither lookup counts as an answer (author P350).
 ///
 /// An arrow that holds a variable the comparison binds in a parameter ([`holds_bindable`]) is
 /// taken at every instance at once (FAIL-fn-domain-bindable-variable): where its result holds
@@ -13169,12 +13284,14 @@ async fn within_q<'m>(params: Vec<Ty>, sa: &Arrow, width: usize, c: &'m Comparin
             params: a.params.iter().map(|p| p.subst(&wide)).collect(),
             result: a.result.clone(),
             partial: a.partial,
+            stores_not_found: a.stores_not_found,
         })
         .collect();
     let instance = Arrow {
         params,
         result: sa.result.clone(),
         partial: sa.partial,
+        stores_not_found: sa.stores_not_found,
     };
     let mut index = None;
     let ok = arrow_permitted(&instance, &widened, width, &mut index, c).await;
@@ -13304,6 +13421,7 @@ fn instances(s: &Sig, sa: &Arrow, cx: &Cx) -> Option<Vec<Arrow>> {
         params: sa.params.iter().map(|p| p.subst(b)).collect(),
         result: sa.result.clone(),
         partial: sa.partial,
+        stores_not_found: sa.stores_not_found,
     };
     Some(match several {
         None => vec![at(&b)],
@@ -13485,6 +13603,7 @@ async fn permitted<'m>(
                 params: a.params.iter().map(|p| p.subst(&wide)).collect(),
                 result: a.result.clone(),
                 partial: a.partial,
+                stores_not_found: a.stores_not_found,
             })
             .collect();
         &widened
@@ -13587,11 +13706,19 @@ async fn arrow_permitted<'m, 'q>(
 /// hold `qa`'s, each taking `qa`'s other parameters and returning within its result
 /// ([`covered`]). Rule 6 of sec:type_resolution types an application region by region, so a
 /// call of `qa` at any value of its parameters reaches an arrow of `s` that returns within
-/// `qa`'s result.
-async fn cover<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
+/// `qa`'s result. The partial arrows `narrow` of `s`, each with its value type as its result,
+/// narrow the results of exact arrows of `s` that are intersected ([`met`]); they cover nothing
+/// on their own, as a partial arrow guarantees no key.
+async fn cover<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    narrow: &[Arrow],
+    qas: &[Arrow],
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     #[cfg(test)]
     if REFERENCE.get() != tests::Reference::None {
-        return tests::reference(s, sas, qas, c).await;
+        return tests::reference(s, sas, narrow, qas, c).await;
     }
     // Each arrow of `q` is tried first on an arrow of `s` equal to it, found by hash, so that
     // an overload passed where the same overload is expected costs one comparison per arrow.
@@ -13649,7 +13776,7 @@ async fn cover<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '
             }
         }
         let before = c.begin_alone();
-        let ok = covered(s, sas, index, qa, c).await;
+        let ok = covered(s, sas, narrow, index, qa, c).await;
         let why = c.end_alone(before);
         if !ok || why.is_some() {
             uncovered(refused.or(why), c);
@@ -13951,6 +14078,7 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
 async fn covered<'m>(
     s: &Sig,
     sas: &[Arrow],
+    narrow: &[Arrow],
     index: &ArrowIndex<'_>,
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
@@ -13971,7 +14099,7 @@ async fn covered<'m>(
             return true;
         }
     }
-    if met(s, sas, &index.covering(qa, false), qa, c).await {
+    if met(s, sas, narrow, &index.covering(qa, false), qa, c).await {
         return true;
     }
     uncovered(refused, c);
@@ -14081,9 +14209,28 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// leave. The results are intersected by [`meet_within`]. The cost is one comparison of each
 /// candidate and, for each `j`, one of each arrow that takes a part there with what the others
 /// leave.
+///
+/// The partial arrows `narrow` of `s` whose parameter types hold all of `qa`'s join each such
+/// intersection with their value types, where it already holds the result of an exact arrow
+/// (FAIL-types-cover-partial-arrows-left-out). Proof that this is sound. A function of `s` has
+/// every arrow of `s`. At a key `k` of `qa`'s parameters, an exact arrow of the intersection
+/// takes `k`, so `k` is in the function's domain and its answer is in that arrow's result; a
+/// partial arrow `K ->? V` with `k` in `K` then answers it in `V` (the guarantee `L` and
+/// permission `U` of sec:type_language, "a key in `L` finds its value"). So the answer is in
+/// each value type joined. Without an exact arrow nothing guarantees the key, and the partial
+/// arrow narrows nothing: `(int ->? #b) & (int -> #b | #c)` is within `int -> #b`, and `int
+/// ->? #b` alone is not. A partial arrow is joined only where its parameter types hold `qa`'s
+/// with nothing bound and it holds no variable the comparison binds ([`holds_bindable`]),
+/// in its parameters or its value type: an instance of it would be taken apart from the one
+/// the exact arrows take, which this does not check, so it is left out (the safe path: a
+/// wrong no, never a wrong yes). Before, a partial arrow of `s` took no part in covering an
+/// exact arrow of `q`, so `(int ->? #b) & (int -> _)` was refused as within `int -> #b`.
+/// Cost: one comparison of the parameters per partial arrow of `s`, which a family or a
+/// bounded morphism has one or two of.
 async fn met<'m>(
     s: &Sig,
     sas: &[Arrow],
+    narrow: &[Arrow],
     cands: &[usize],
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
@@ -14092,6 +14239,27 @@ async fn met<'m>(
     // form: the index leaves out arrows of `s` that take part of no parameter of it.
     if qa.params.iter().any(Ty::is_empty) {
         return false;
+    }
+    let mut narrowed: Vec<Ty> = Vec::new();
+    for pa in narrow {
+        let free = {
+            let cx = c.cx.borrow();
+            !holds_bindable(s, pa, &cx)
+                && !types_hold_bindable(s, std::slice::from_ref(&pa.result), &cx)
+        };
+        if !free {
+            continue;
+        }
+        let mut takes = true;
+        for (x, y) in qa.params.iter().zip(&pa.params) {
+            if !within_as_is(x, y, c).await {
+                takes = false;
+                break;
+            }
+        }
+        if takes {
+            narrowed.push(pa.result.clone());
+        }
     }
     // The results of the arrows that take all of `qa`, and, at each parameter, the parameter
     // types of the arrows within and of those outside, with their results.
@@ -14111,8 +14279,12 @@ async fn met<'m>(
             None => {}
         }
     }
-    if !whole.is_empty() && meet_within(&whole, &qa.result, c).await {
-        return true;
+    if !whole.is_empty() {
+        whole.extend(narrowed.iter().cloned());
+        if meet_within(&whole, &qa.result, c).await {
+            return true;
+        }
+        whole.truncate(whole.len() - narrowed.len());
     }
     // At a parameter no arrow outside takes a part of, `H` is the arrows that take all of `qa`.
     for (&j, parts) in &outside {
@@ -14129,8 +14301,11 @@ async fn met<'m>(
                 h.push(r.clone());
             }
         }
-        if !h.is_empty() && meet_within(&h, &qa.result, c).await {
-            return true;
+        if !h.is_empty() {
+            h.extend(narrowed.iter().cloned());
+            if meet_within(&h, &qa.result, c).await {
+                return true;
+            }
         }
     }
     uncovered(refused, c);
@@ -14602,17 +14777,25 @@ impl Domains {
         // through the exact arrow, if any, and the permission through either. The comparison
         // of a signature takes each arrow it is given alone, so `(int ->? int) & (int ->? int |
         // #a)` was not found within `int ->? int`, nor `(#b -> int | f64) & (#b ->? int)`
-        // within `#b -> int`. Cost: one hash lookup for each arrow, and the meets of the
-        // results merged.
+        // within `#b -> int`. The value types are met ([`Arrow::value`]): an exact arrow's
+        // keys are in the domain, where a partial arrow's answers are in its value type, so
+        // `(int ->? #b) & (int -> _)` is `int -> #b`, and a partial arrow stores `#notFound`
+        // where both do. Before (FAIL-types-partial-arrow-value-type), the lookups were met, and
+        // the `#notFound` of a miss went into an exact result: `int -> #b | #notFound`. Cost:
+        // one hash lookup for each arrow, and the meets of the results merged.
         let mut at: HashMap<&[Ty], usize> = HashMap::new();
         let mut merged: Vec<Arrow> = Vec::with_capacity(m.arrows.len());
         for a in &m.arrows {
             match at.entry(&a.params) {
                 std::collections::hash_map::Entry::Occupied(e) => {
                     let kept = &mut merged[*e.get()];
-                    let result = pairs.alone(kept.result.clone(), a.result.clone());
-                    kept.result = result.await;
-                    kept.partial &= a.partial;
+                    let value = pairs.alone(kept.value().into_owned(), a.value().into_owned());
+                    let value = value.await;
+                    let params = std::mem::take(&mut kept.params);
+                    *kept = match kept.partial && a.partial {
+                        true => Arrow::partial_of(params, value),
+                        false => Arrow::exact(params, value),
+                    };
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
                     e.insert(merged.len());
@@ -15586,13 +15769,20 @@ impl Sig {
 
     /// One arrow over `params` and `result`, with no bounded variable.
     pub fn one(params: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Sig {
+        Sig::of_arrow(params, Arrow::exact(tys, result))
+    }
+
+    /// One partial arrow over `params` whose value type is `value` ([`Arrow::partial_of`]),
+    /// with no bounded variable.
+    pub fn one_partial(params: Vec<SParam>, tys: Vec<Ty>, value: Ty) -> Sig {
+        Sig::of_arrow(params, Arrow::partial_of(tys, value))
+    }
+
+    /// The signature of the one arrow `a` over `params`, with no bounded variable.
+    pub fn of_arrow(params: Vec<SParam>, a: Arrow) -> Sig {
         Sig {
             params,
-            arrows: vec![Arrow {
-                params: tys,
-                result,
-                partial: false,
-            }],
+            arrows: vec![a],
             bounds: BTreeMap::new(),
             data: false,
             dense: Dense::No,
@@ -15660,11 +15850,8 @@ impl Sig {
                 .flat_map(|a| {
                     Carrier::of_mask(*m).map(move |c| {
                         let b: Binds = [(v.clone(), Ty::carrier(c))].into();
-                        Arrow {
-                            params: a.params.iter().map(|p| p.replace(&b)).collect(),
-                            result: a.result.replace(&b),
-                            partial: a.partial,
-                        }
+                        let params = a.params.iter().map(|p| p.replace(&b)).collect();
+                        a.remade(params, |r| r.replace(&b))
                     })
                 })
                 .collect();
@@ -16822,12 +17009,12 @@ enum PrintAt {
 enum Morphism<'a> {
     /// `K ->? V`: the key type, the ranges written on the key, printed in its place or its
     /// components' where it has them (`int[5..=9] ->? int`, RANGE-keys;
-    /// `((int[0..=1], int)) ->? int`, RANGE-key-component-print), and the result,
-    /// `V | #notFound`.
+    /// `((int[0..=1], int)) ->? int`, RANGE-key-component-print), and the arrow, whose value
+    /// type is written ([`Sig::value_part`]).
     Partial {
         key: &'a Ty,
         range: Option<&'a ParamRange>,
-        value: &'a Ty,
+        arrow: &'a Arrow,
     },
     /// `L .. U -> V`: the guarantee, the permission and the value type.
     Bounded {
@@ -16842,9 +17029,9 @@ impl<'a> Morphism<'a> {
     /// so that `((int, int)) ->? V` is not read as two parameters.
     fn parts(&self, parts: &mut Vec<Print<'a>>) {
         match *self {
-            Morphism::Partial { key, range, value } => {
+            Morphism::Partial { key, range, arrow } => {
                 ParamRange::parts(range, key, PrintAt::Key, parts);
-                parts.extend([Print::Text(" ->? "), Print::Found(value)]);
+                parts.extend([Print::Text(" ->? "), Sig::value_part(arrow)]);
             }
             Morphism::Bounded {
                 lower,
@@ -17472,8 +17659,8 @@ impl Sig {
         } else if begun {
             parts.push(Print::Begin);
         }
-        if let Some(v) = list {
-            parts.extend([Print::Text("["), Print::Found(v), Print::Text("]")]);
+        if let Some(a) = list {
+            parts.extend([Print::Text("["), Sig::value_part(a), Print::Text("]")]);
         } else if let Some(m) = morphism {
             m.parts(parts);
         } else {
@@ -17490,7 +17677,7 @@ impl Sig {
             // the exact arrow `K -> V | #notFound`, another type (FAIL-main-red-exact-domain).
             let bare = matches!(&self.params[..], [p] if p.positional);
             let result = |a: &'a Arrow| match a.partial {
-                true => [Print::Text(" ->? "), Print::Found(&a.result)],
+                true => [Print::Text(" ->? "), Sig::value_part(a)],
                 false => [Print::Text(" -> "), self.result_part(a)],
             };
             let mut first = true;
@@ -17539,8 +17726,9 @@ impl Sig {
     /// not `Never` (DESIGN.md
     /// sec:type_language: `[T]` is `int[0..<n] -> T`; `choices : [Choice]`). A list whose
     /// keys the type knows, as `[1, 2]`'s `(0 | 1) -> 1 | 2`, keeps its arrow, which says more.
-    /// `[V]` reads back as this arrow (zedc-check's `read::parse_type`).
-    fn list(&self) -> Option<&Ty> {
+    /// `[V]` reads back as this arrow (zedc-check's `read::parse_type`). Its value type `V` is
+    /// written ([`Sig::value_part`]), and holds `#notFound` where the list stores the atom.
+    fn list(&self) -> Option<&Arrow> {
         let ([p], [a]) = (&self.params[..], &self.arrows[..]) else {
             return None;
         };
@@ -17548,14 +17736,33 @@ impl Sig {
         // A positional parameter's name is never printed, so `x0` of a built signature is as
         // bare as the empty name of a read one.
         let bare = p.positional && p.range.is_none();
-        let miss = KType::atom("notFound");
         (ranks
             && bare
             && a.partial
             && a.params[0] == Ty::carrier(Carrier::Int)
-            && (&miss - &a.result.set).is_empty()
-            && a.result != Ty::set(miss))
-        .then_some(&a.result)
+            && Sig::writes_value(a))
+        .then_some(a)
+    }
+
+    /// Whether `->?` can write the partial arrow `a`: its lookup holds the `#notFound` of a miss
+    /// (one built otherwise is not a lookup), and its value type is not `Never`, which no type
+    /// text writes after `->?`; or it stores `#notFound`, its value type that atom or more.
+    fn writes_value(a: &Arrow) -> bool {
+        let miss = KType::atom("notFound");
+        a.stores_not_found || ((&miss - &a.result.set).is_empty() && a.result != Ty::set(miss))
+    }
+
+    /// The part of the value type of the partial arrow `a`, written after `->?`, which adds
+    /// back the `#notFound` of a miss on reading (DESIGN.md sec:type_language): its lookup
+    /// without that atom ([`Print::Found`]), or, where it stores `#notFound`, the whole lookup,
+    /// which is then its value type (author P350, [`Arrow::stores_not_found`]). Before
+    /// (FAIL-types-partial-arrow-value-type), the atom was always left out, and `int ->? #b |
+    /// #notFound` printed as `int ->? #b`, another type.
+    fn value_part(a: &Arrow) -> Print<'_> {
+        match a.stores_not_found {
+            true => Print::Ty(&a.result, PrintAt::Result),
+            false => Print::Found(&a.result),
+        }
     }
 
     /// The part of the result of its arrow `a`: the hull of its ints, as a range each end
@@ -17609,19 +17816,13 @@ impl Sig {
         if !p.positional || !p.name.is_empty() {
             return None;
         }
-        let miss = KType::atom("notFound");
         match &self.arrows[..] {
             // A result of `#notFound` alone is written as it is, `(K) -> #notFound`.
-            [a] if a.partial
-                && (&miss - &a.result.set).is_empty()
-                && a.result != Ty::set(miss.clone()) =>
-            {
-                Some(Morphism::Partial {
-                    key: &a.params[0],
-                    range: p.range.as_ref(),
-                    value: &a.result,
-                })
-            }
+            [a] if a.partial && Sig::writes_value(a) => Some(Morphism::Partial {
+                key: &a.params[0],
+                range: p.range.as_ref(),
+                arrow: a,
+            }),
             [a, b] => {
                 let (lower, upper) = (&a.params[0], &b.params[0]);
                 let set_only = |t: &Ty| {
@@ -17634,12 +17835,18 @@ impl Sig {
                     && *lower != Ty::empty()
                     && lower != upper
                     && lower.union(upper) == *upper
-                    && b.result == a.result.union(&Ty::set(miss)))
-                .then_some(Morphism::Bounded {
-                    lower,
-                    upper,
-                    value: &a.result,
-                })
+                    // `L .. U -> V` reads back as `(L) -> V` and `(U) ->? V`, one value type
+                    // (author P350): the partial arrow's must be the exact arrow's result. Before
+                    // (FAIL-types-partial-arrow-value-type), the lookup was compared with
+                    // `V | #notFound`, which also held a `V` with the atom over a partial arrow
+                    // that stored none.
+                    && Sig::writes_value(b)
+                    && *b.value() == a.result)
+                    .then_some(Morphism::Bounded {
+                        lower,
+                        upper,
+                        value: &a.result,
+                    })
             }
             _ => None,
         }
@@ -17651,7 +17858,7 @@ impl Sig {
     fn is_family(&self) -> bool {
         matches!((&self.params[..], &self.arrows[..]), ([p], [a])
             if self.data && a.partial && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty()
-                && a.result == a.params[0].union(&Ty::set(KType::atom("notFound"))))
+                && Sig::writes_value(a) && *a.value() == a.params[0])
     }
 
     /// Opens its variables in `scope` and pushes the parts of its text as a family, a partial
@@ -17875,6 +18082,7 @@ mod tests {
     pub(super) async fn reference<'m>(
         s: &Sig,
         sas: &[Arrow],
+        narrow: &[Arrow],
         qas: &[Arrow],
         c: &'m Comparing<'m, '_>,
     ) -> bool {
@@ -17899,7 +18107,7 @@ mod tests {
             if wide {
                 let all = (0..sas.len()).collect::<Vec<_>>();
                 let before = c.begin_alone();
-                let ok = together(s, sas, qa, c).await || met(s, sas, &all, qa, c).await;
+                let ok = together(s, sas, qa, c).await || met(s, sas, narrow, &all, qa, c).await;
                 let why = c.end_alone(before);
                 if ok && why.is_none() {
                     continue;
@@ -17999,6 +18207,7 @@ mod tests {
                     params: vec![Ty::set(KType::atom("a0"))],
                     result: Ty::set(KType::atom(&format!("a{}", rng.below(2)))),
                     partial: false,
+                    stores_not_found: false,
                 };
                 Ty::func(Arc::new(sig(vec![a], 1, false)))
             }
@@ -18058,6 +18267,8 @@ mod tests {
             params: sa.params.iter().map(&mut vary).collect(),
             result: vary(&sa.result),
             partial: sa.partial,
+            // The arrows these tests make are exact.
+            stores_not_found: false,
         }
     }
 
@@ -18079,6 +18290,7 @@ mod tests {
             params,
             result: a.result.union(&b.result),
             partial: a.partial,
+            stores_not_found: false,
         }
     }
 
@@ -18091,11 +18303,13 @@ mod tests {
                 params: (0..width).map(|_| wider_union(rng, open)).collect(),
                 result: wider_union(rng, false),
                 partial: false,
+                stores_not_found: false,
             },
             0 => Arrow {
                 params: (0..width).map(|_| union(rng, false)).collect(),
                 result: union(rng, false),
                 partial: false,
+                stores_not_found: false,
             },
             1 | 2 => {
                 let (a, b) = (pick(rng), pick(rng));
@@ -18163,6 +18377,7 @@ mod tests {
             params: vec![p.clone()],
             result: r.clone(),
             partial: false,
+            stores_not_found: false,
         };
         let s = sig(vec![arrow(&a, &a), arrow(&b, &b)], 1, false);
         let ab = a.union(&b);
@@ -18366,6 +18581,7 @@ mod tests {
                     params,
                     result: union(rng, wide),
                     partial: false,
+                    stores_not_found: false,
                 }
             })
             .collect();
@@ -18515,6 +18731,8 @@ mod tests {
             params: sa.params.iter().map(&mut vary).collect(),
             result: vary(&sa.result),
             partial: sa.partial,
+            // The arrows these tests make are exact.
+            stores_not_found: false,
         }
     }
 
@@ -18594,6 +18812,7 @@ mod tests {
                     params,
                     result: wider_union(rng, wide),
                     partial: false,
+                    stores_not_found: false,
                 }
             })
             .collect();
@@ -18652,6 +18871,7 @@ mod tests {
                 params: vec![tup(v("T")).union(&tup(v("U")))],
                 result: tup(v("T")),
                 partial: false,
+                stores_not_found: false,
             }],
             1,
             false,
@@ -18679,6 +18899,7 @@ mod tests {
             params: vec![p],
             result: r,
             partial: false,
+            stores_not_found: false,
         }];
         arrows.extend_from_slice(more);
         let mut s = sig(arrows, 1, bounded);
@@ -18701,11 +18922,13 @@ mod tests {
             params: vec![Ty::carrier(Carrier::Str)],
             result: Ty::carrier(Carrier::Str),
             partial: false,
+            stores_not_found: false,
         };
         let int_to_u = Arrow {
             params: vec![Ty::carrier(Carrier::Int)],
             result: tup(v("U")),
             partial: false,
+            stores_not_found: false,
         };
         for a in [
             one_param(bu.clone(), tup(v("B")), &[], true),
@@ -18763,6 +18986,7 @@ mod tests {
             params: vec![p],
             result: int.clone(),
             partial: false,
+            stores_not_found: false,
         };
         let q = one_param(int.clone(), int.clone(), &[], false);
         let s = one_param(
@@ -18801,6 +19025,7 @@ mod tests {
             params: vec![p],
             result: int.clone(),
             partial: false,
+            stores_not_found: false,
         };
         let q = one_param(int.clone(), int.clone(), &[], false);
         let s = one_param(int.clone(), int.clone(), &[extra(tup(v("B")))], true);
@@ -18877,11 +19102,13 @@ mod tests {
             params: vec![Ty::carrier(Carrier::Str)],
             result: Ty::carrier(Carrier::Str),
             partial: false,
+            stores_not_found: false,
         };
         let b_arrow = Arrow {
             params: vec![bu.clone()],
             result: tup(v("B")),
             partial: false,
+            stores_not_found: false,
         };
         let q = one_param(bu.clone(), tup(v("B")), std::slice::from_ref(&string), true);
         let s = one_param(
@@ -18984,6 +19211,7 @@ mod tests {
             params: vec![string.clone()],
             result: string.clone(),
             partial: false,
+            stores_not_found: false,
         };
         let bu = tup(v("B")).union(&tup(v("U")));
         let bv = tup(v("B")).union(&tup(v("V")));
@@ -18997,6 +19225,7 @@ mod tests {
                 params: vec![p],
                 result: r,
                 partial: false,
+                stores_not_found: false,
             };
             one_param(string.clone(), string.clone(), &[arrow], true)
         };
@@ -19195,6 +19424,7 @@ mod tests {
                     params: vec![p(a), p(b)],
                     result,
                     partial: false,
+                    stores_not_found: false,
                 }],
                 2,
                 false,
@@ -19751,6 +19981,7 @@ mod tests {
                 params: vec![tup(tup(int.clone()))],
                 result: tup(tup(int.clone())),
                 partial: false,
+                stores_not_found: false,
             }],
             1,
             false,
@@ -19806,6 +20037,7 @@ mod tests {
                 params: qas[arrow].params.clone(),
                 result: Ty::empty(),
                 partial: false,
+                stores_not_found: false,
             });
             t.note_held();
             let added = "with an arrow from q's parameters to Never added to s";
@@ -19817,6 +20049,7 @@ mod tests {
                 params: vec![Ty::set(KType::top()); width],
                 result: Ty::empty(),
                 partial: false,
+                stores_not_found: false,
             });
             u.note_held();
             let every = "with `(_) -> Never` added to s";
@@ -20014,6 +20247,7 @@ mod tests {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
                 partial: false,
+                stores_not_found: false,
             })
             .collect();
         let mut s = sig(sas, width, false);
@@ -20024,6 +20258,7 @@ mod tests {
             params: params.iter().map(|&m| of_values(m)).collect(),
             result: of_values(result),
             partial: false,
+            stores_not_found: false,
         };
         let q = sig(vec![qa], width, false);
         let truth = covers_by_values(arrows, params, result);
@@ -20130,6 +20365,7 @@ mod tests {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
                 partial: false,
+                stores_not_found: false,
             })
             .collect();
         let mut s = sig(sas, width, false);
@@ -20140,6 +20376,7 @@ mod tests {
             params: params.iter().map(|&p| u(p)).collect(),
             result: u(result),
             partial: false,
+            stores_not_found: false,
         };
         let mut q = sig(vec![qa], width, false);
         q.own.insert("U".into());
@@ -20189,6 +20426,7 @@ mod tests {
                 params: vec![Ty::carrier(Carrier::Int)],
                 result: Ty::set(KType::atom(&format!("v{i}"))),
                 partial: false,
+                stores_not_found: false,
             };
             Ty::func(Arc::new(sig(vec![a], 1, false)))
         }
@@ -20390,6 +20628,7 @@ mod tests {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
                 partial: false,
+                stores_not_found: false,
             })
             .collect();
         let s = sig(sas, width, false);
@@ -20397,6 +20636,7 @@ mod tests {
             params: params.iter().map(|p| p.ty()).collect(),
             result: result.ty(),
             partial: false,
+            stores_not_found: false,
         };
         let q = sig(vec![qa], width, false);
         let ps: Vec<u16> = params.iter().map(|p| p.values()).collect();

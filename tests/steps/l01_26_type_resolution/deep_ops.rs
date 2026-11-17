@@ -593,6 +593,7 @@ fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
         params: vec![x.clone(), y.clone()],
         result: int.clone(),
         partial: false,
+        stores_not_found: false,
     };
     let sig = |arrows: Vec<ty::Arrow>| {
         let params = ["x", "y"].map(|n| SParam {

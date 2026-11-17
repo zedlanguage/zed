@@ -464,12 +464,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The runs are ranked from 0, every rank present, so the keys are the ranks `0 ..< n`,
         // as a range's from `0` are (`Ck::range_end`).
         let int = Ty::carrier(Carrier::Int);
-        let mut outer = Sig::one(
-            super::super::positional(1),
-            vec![int],
-            runs.union(&not_found),
-        );
-        outer.arrows[0].partial = true;
+        let mut outer = Sig::one_partial(super::super::positional(1), vec![int], runs);
         outer.data = true;
         outer.dense = Dense::Ranks;
         outer.note_held();
@@ -1363,9 +1358,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the text `0 ..< n` of O(log n) digits.
         let sig = match (keyed, Self::ranks_count(&a), Self::ranks_count(&b)) {
             (true, n, m) => {
-                let found = values.union(&Ty::set(KType::atom("notFound")));
-                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
-                sig.arrows[0].partial = true;
+                let int = vec![Ty::carrier(Carrier::Int)];
+                let mut sig = Sig::one_partial(positional(1), int, values);
                 if let (Some(n), Some(m)) = (n, m) {
                     let last = &(&n + &m) - &Num::from(1i64);
                     sig.keys = exact_keys(&IntervalSet::range(Fin(Num::from(0i64)), Fin(last)));
@@ -1379,12 +1373,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .collect();
                     Sig::one(positional(1), vec![Ty::union_all(keys.iter())], values)
                 }
-                _ => {
-                    let found = values.union(&Ty::set(KType::atom("notFound")));
-                    let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
-                    sig.arrows[0].partial = true;
-                    sig
-                }
+                _ => Sig::one_partial(positional(1), vec![Ty::carrier(Carrier::Int)], values),
             },
         };
         let mut sig = sig;
@@ -1536,15 +1525,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
+<<<<<<< HEAD
         // Shown to share their keys by their origins, the operands hold one set of keys `K`
         // in each run, which their types bound only as `L_a ∪ L_b ⊆ K ⊆ U_a ∩ U_b`: the keys
         // are typed `U_a ∩ U_b`, the arrow partial, and a read of a key outside `K` misses.
         // What either side's type knows of its keys' shape holds for `K`, as below.
         let mut sig = if shared == Some(true) {
-            let found = pair.union(&Ty::set(KType::atom("notFound")));
-            let mut sig = Sig::one(positional(1), vec![ua.meet(&ub)], found);
-            sig.arrows[0].partial = true;
-            sig
+            Sig::one_partial(positional(1), vec![ua.meet(&ub)], pair)
         } else {
             Self::zip_sig(&sets, &a, &b, ua, ub, pair)
         };
@@ -1583,9 +1570,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let plain = |side: &[Arc<Sig>]| side.iter().all(|s| s.keys.is_none());
         match (sets, plain(a), plain(b)) {
             (Some(((_, u), _)), false, false) => {
-                let found = pair.union(&Ty::set(KType::atom("notFound")));
-                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
-                sig.arrows[0].partial = true;
+                let int = vec![Ty::carrier(Carrier::Int)];
+                let mut sig = Sig::one_partial(positional(1), int, pair);
                 sig.keys = exact_keys(u);
                 sig
             }

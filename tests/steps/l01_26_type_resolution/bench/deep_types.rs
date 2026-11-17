@@ -130,6 +130,7 @@ fn plain(a: &Ty, b: &Ty) -> bool {
                     all(&p.params, &q.params)
                         && plain(&p.result, &q.result)
                         && p.partial == q.partial
+                        && p.stores_not_found == q.stores_not_found
                 })
                 && *bounds == y.bounds
                 && *data == y.data

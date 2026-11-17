@@ -5580,9 +5580,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // family is `int ->? int`: a read answers `#notFound` (or `#outOfBounds`, below) for a
         // key outside the range, as for a `Lines` input.
         let int = Ty::carrier(Carrier::Int);
-        let found = int.union(&Ty::set(KType::atom("notFound")));
-        let mut sig = Sig::one(super::positional(1), vec![int], found);
-        sig.arrows[0].partial = true;
+        let mut sig = Sig::one_partial(super::positional(1), vec![int.clone()], int);
         sig.data = true;
         // The kernel's `range(a, b)` holds every integer `k` with `a <= k < b` and no other key
         // (`Prim::Range`), so its keys are one integer interval with every key present, empty
@@ -17746,6 +17744,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .collect(),
                 result: sig.arrows[k].result.clone(),
                 partial: sig.arrows[k].partial,
+                stores_not_found: sig.arrows[k].stores_not_found,
             })
             .collect();
         // A parameter left out keeps its need on its ints, at its place in the rest.
@@ -18376,6 +18375,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     params: inv.iter().map(|&i| a.params[i].clone()).collect(),
                     result: a.result.clone(),
                     partial: a.partial,
+                    stores_not_found: a.stores_not_found,
                 })
                 .collect(),
         };
@@ -19241,10 +19241,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             let label = Label::Text(name);
             let result = self.tried(|ck| ck.apply(label, permuted, args, false, span).0)?;
-            arrows.push(Arrow {
-                params: qa.params.clone(),
-                result,
-                partial: qa.partial,
+            // A partial arrow's answers are its values (author P350, [`Arrow::partial_of`]).
+            arrows.push(match qa.partial {
+                true => Arrow::partial_of(qa.params.clone(), result),
+                false => Arrow::exact(qa.params.clone(), result),
             });
         }
         let lambda = Arc::new(Sig {
@@ -24727,9 +24727,8 @@ impl<'a> Ck<'_, 'a> {
                 default: None,
                 range: None,
             };
-            let found = entries.union(&Ty::set(KType::atom("notFound")));
-            let mut family = Sig::one(vec![param], vec![keys.union(&wider)], found);
-            family.arrows[0].partial = true;
+            let mut family =
+                Sig::one_partial(vec![param], vec![keys.union(&wider)], entries.clone());
             family.data = true;
             let declared = self.text(&Ty::func(Arc::new(family)));
             menu.push(format!(
@@ -26435,6 +26434,7 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
             params: vec![arrow.params[j].clone()],
             result: arrow.result.clone(),
             partial: arrow.partial,
+            stores_not_found: arrow.stores_not_found,
         }],
         bounds: BTreeMap::new(),
         data: sig.data,
@@ -26557,12 +26557,11 @@ mod tests {
 
     /// The family `int ->? values`.
     fn int_family(values: Ty) -> Ty {
-        let mut sig = Sig::one(
+        let mut sig = Sig::one_partial(
             crate::check::positional(1),
             vec![Ty::carrier(Carrier::Int)],
             values,
         );
-        sig.arrows[0].partial = true;
         sig.data = true;
         sig.note_held();
         Ty::func(Arc::new(sig))
@@ -26703,6 +26702,7 @@ mod tests {
                 params: vec![row.clone()],
                 result: Ty::empty(),
                 partial: false,
+                stores_not_found: false,
             }],
             bounds: BTreeMap::new(),
             data: false,

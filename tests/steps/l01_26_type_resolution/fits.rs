@@ -486,6 +486,53 @@ fn a_result_that_holds_the_unknown_leaves_the_intersection_as_it_is() {
     );
 }
 
+/// A partial arrow that takes all of an exact arrow's keys bounds its answers there: a
+/// function of `(int ->? #b) & (int -> #b | #c)` answers at each `int` within `#b`, the
+/// partial arrow's value type, and within `#b | #c`, so within `#b`
+/// (FAIL-types-cover-partial-arrows-left-out). Before, the cover took the exact arrows alone
+/// and refused it, its message saying "the intersection of their results, `#b`, is not within
+/// `#b`". A near miss: `#c` is in both results, so the partial arrow narrows nothing.
+#[test]
+fn a_partial_arrow_narrows_the_answers_an_exact_arrow_guarantees() {
+    use zedc::check::read::parse_type;
+    let given = parse_type("(int ->? #b) & (int -> #b | #c)").unwrap();
+    let want = parse_type("int -> #b").unwrap();
+    assert!(given.subtype(&want), "{}", given.refused(&want));
+    assert!(want.subtype(&given), "{}", want.refused(&given));
+    let near = parse_type("(int ->? #b | #c) & (int -> #b | #c)").unwrap();
+    assert!(!near.subtype(&want), "{near}");
+}
+
+/// A partial arrow's value type is kept apart from its lookup type (author P350, way (a)): a
+/// map may store `#notFound` as a value (DESIGN.md sec:corner_cases), so at keys an exact arrow
+/// guarantees, `int ->? #b` answers `#b` and `int ->? #b | #notFound` may answer a stored
+/// `#notFound` (FAIL-types-partial-arrow-value-type). Before, a partial arrow kept only its
+/// lookup `V | #notFound`, and the two read as one type.
+#[test]
+fn a_partial_arrow_keeps_its_value_type_apart_from_its_lookup_type() {
+    use zedc::check::read::parse_type;
+    let same = |a: &str, b: &str| {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        x.subtype(&y) && y.subtype(&x)
+    };
+    assert!(same("(int ->? #b) & (int -> _)", "int -> #b"));
+    assert!(same(
+        "(int ->? #b | #notFound) & (int -> _)",
+        "int -> #b | #notFound"
+    ));
+    assert!(!same("int ->? #b", "int ->? #b | #notFound"));
+    // The narrower value type fits the wider, and not the other way.
+    let (narrow, wide) = (
+        parse_type("int ->? #b").unwrap(),
+        parse_type("int ->? #b | #notFound").unwrap(),
+    );
+    assert!(narrow.subtype(&wide), "{}", narrow.refused(&wide));
+    assert!(!wide.subtype(&narrow));
+    // Each prints as it reads.
+    assert_eq!(wide.to_string(), "int ->? #b | #notFound");
+    assert_eq!(narrow.to_string(), "int ->? #b");
+}
+
 /// A message names a variable of the expected function type by its name there, not as `_`,
 /// the type of every value: in the result it names, and in what a variable is bound to.
 #[test]
@@ -528,6 +575,7 @@ fn sig_of(
             params: vec![param],
             result,
             partial: false,
+            stores_not_found: false,
         }],
         bounds: Default::default(),
         data: false,
@@ -609,6 +657,7 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
                 params: vec![param],
                 result: Ty::carrier(Carrier::Int),
                 partial: false,
+                stores_not_found: false,
             }],
             bounds: own
                 .iter()
@@ -667,6 +716,7 @@ pub(super) fn own_sig(
             params: vec![param],
             result,
             partial: false,
+            stores_not_found: false,
         }],
         bounds: (names.iter())
             .filter_map(|v| bound.map(|m| (v.as_str().into(), m)))

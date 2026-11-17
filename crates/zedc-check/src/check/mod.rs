@@ -2897,11 +2897,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 params: tys,
                 result: plain,
                 partial: false,
+                stores_not_found: false,
             },
             Arrow {
                 params: wide,
                 result,
                 partial: false,
+                stores_not_found: false,
             },
         ];
         sig
@@ -11094,6 +11096,7 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
             params: vec![Ty::carrier(c); n],
             result: result(c),
             partial: false,
+            stores_not_found: false,
         })
         .collect()
 }
@@ -11230,12 +11233,14 @@ fn op_sig(op: Operator) -> Sig {
                         params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
                         result: div0(Rat),
                         partial: false,
+                        stores_not_found: false,
                     },
                     // `f32 ^ int`, the one arrow between two carriers (DESIGN.md L1.18).
                     Arrow {
                         params: vec![Ty::carrier(F32), Ty::carrier(Int)],
                         result: same(F32),
                         partial: false,
+                        stores_not_found: false,
                     },
                 ],
             ]
@@ -11302,12 +11307,14 @@ fn word_sig(w: &str) -> Arc<Sig> {
         params: vec![Ty::carrier(from)],
         result: Ty::carrier(to).union(&a(fails)),
         partial: false,
+        stores_not_found: false,
     };
     let arrows = match w {
         "String" => vec![Arrow {
             params: vec![Ty::dynamic()],
             result: Ty::carrier(Str),
             partial: false,
+            stores_not_found: false,
         }],
         "int" => vec![
             arrow(Int, Int, &[]),
@@ -11355,11 +11362,13 @@ fn word_sig(w: &str) -> Arc<Sig> {
             params: vec![Ty::carrier(Str)],
             result: bytes(),
             partial: false,
+            stores_not_found: false,
         }],
         "fromUtf8" => vec![Arrow {
             params: vec![bytes()],
             result: Ty::carrier(Str).union(&a(&["badUtf8"])),
             partial: false,
+            stores_not_found: false,
         }],
         _ => vec![arrow(Str, Str, &[])],
     };
@@ -11447,9 +11456,8 @@ fn bytes() -> Ty {
 /// and a read outside it misses with `#outOfBounds` ([`Sig::dense`]), as a `Lines` input of
 /// [`port`] does.
 fn strings_rank() -> Ty {
-    let result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));
-    let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], result);
-    sig.arrows[0].partial = true;
+    let value = Ty::carrier(Carrier::Str);
+    let mut sig = Sig::one_partial(positional(1), vec![Ty::carrier(Carrier::Int)], value);
     sig.data = true;
     sig.dense = Dense::Ranks;
     sig.note_held();
@@ -11484,6 +11492,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
             params: vec![Ty::carrier(from); names.len()],
             result: Ty::carrier(Carrier::Int),
             partial: false,
+            stores_not_found: false,
         }],
         bounds: BTreeMap::new(),
         data: false,
@@ -12589,20 +12598,17 @@ fn io_error() -> Ty {
 /// input (L1.19a) is the family of the arguments keyed from 0, each a `String`. `key` is the key's carrier and `io` whether a read can be
 /// `#ioError`; a port keyed by `int` is a family, data, and one keyed by path a lookup.
 fn port(key: Carrier, io: bool) -> Ty {
-    let mut result = Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("notFound")));
+    let mut value = Ty::carrier(Carrier::Str);
     if io {
-        result = result.union(&io_error());
+        value = value.union(&io_error());
     }
     Ty::func(Arc::new(Sig {
         params: positional(1),
         // A port guarantees no key: a family of lines holds the keys from 0 to its length,
         // which the type does not know, and a path may name no file. So its arrow is partial,
-        // `int ->? V` or `Path ->? V` (DESIGN.md sec:ports, `Files = Path ->? ...`).
-        arrows: vec![Arrow {
-            params: vec![Ty::carrier(key)],
-            result,
-            partial: true,
-        }],
+        // `int ->? V` or `Path ->? V` (DESIGN.md sec:ports, `Files = Path ->? ...`), and its
+        // `#notFound` is a miss, which it does not store.
+        arrows: vec![Arrow::partial_of(vec![Ty::carrier(key)], value)],
         bounds: BTreeMap::new(),
         data: key == Carrier::Int,
         dense: match key {
@@ -13480,14 +13486,13 @@ impl<'a> Denote<'a> {
             }
             // A partial map `K ->? V` promises no key, so a lookup is `V | #notFound`
             // (DESIGN.md sec:type_language): that is the result of its arrow, which is marked
-            // partial, permitting the keys of `K` and guaranteeing none.
+            // partial, permitting the keys of `K` and guaranteeing none. Its value type `V` is
+            // kept apart (author P350, [`Arrow::partial_of`]): `int ->? #b | #notFound` stores
+            // the atom, `int ->? #b` does not.
             TypeKind::Arrow {
                 params, partial, ..
             } => {
-                let mut result = vals.pop().expect("a function type's result is denoted");
-                if *partial {
-                    result = result.union(&Ty::set(KType::atom("notFound")));
-                }
+                let result = vals.pop().expect("a function type's result is denoted");
                 let tys = vals.split_off(vals.len() - params.len());
                 let names = params
                     .iter()
@@ -13498,14 +13503,11 @@ impl<'a> Denote<'a> {
                         range: None,
                     })
                     .collect();
-                self.sig_of(
-                    names,
-                    vec![Arrow {
-                        params: tys,
-                        result,
-                        partial: *partial,
-                    }],
-                )
+                let arrow = match *partial {
+                    true => Arrow::partial_of(tys, result),
+                    false => Arrow::exact(tys, result),
+                };
+                self.sig_of(names, vec![arrow])
             }
             // A morphism `L .. U -> V` answers `V` on a key of its guarantee `L`, and only
             // `V | #notFound` on a key of its permission `U` (DESIGN.md sec:type_language, lookup
@@ -13527,33 +13529,17 @@ impl<'a> Denote<'a> {
                     default: None,
                     range: None,
                 }];
-                let missed = result.union(&Ty::set(KType::atom("notFound")));
                 // The arrow of the permission is partial: it permits the keys of `U` and
-                // guarantees none, so the guarantee of the whole is `L` (sec:type_language).
+                // guarantees none, so the guarantee of the whole is `L` (sec:type_language). Both
+                // arrows have the value type `V` (author P350).
                 let arrows = if lower == upper {
-                    vec![Arrow {
-                        params: vec![upper],
-                        result,
-                        partial: false,
-                    }]
+                    vec![Arrow::exact(vec![upper], result)]
                 } else if lower == Ty::empty() {
-                    vec![Arrow {
-                        params: vec![upper],
-                        result: missed,
-                        partial: true,
-                    }]
+                    vec![Arrow::partial_of(vec![upper], result)]
                 } else {
                     vec![
-                        Arrow {
-                            params: vec![lower],
-                            result,
-                            partial: false,
-                        },
-                        Arrow {
-                            params: vec![upper],
-                            result: missed,
-                            partial: true,
-                        },
+                        Arrow::exact(vec![lower], result.clone()),
+                        Arrow::partial_of(vec![upper], result),
                     ]
                 };
                 self.sig_of(names, arrows)
@@ -13562,11 +13548,7 @@ impl<'a> Denote<'a> {
             // `int ->? V`, its lookup `V | #notFound`, as `split` gives ([`strings_rank`]).
             TypeKind::Array(_) => {
                 let value = vals.pop().expect("a list's entry type is denoted");
-                let arrow = Arrow {
-                    params: vec![Ty::carrier(Carrier::Int)],
-                    result: value.union(&Ty::set(KType::atom("notFound"))),
-                    partial: true,
-                };
+                let arrow = Arrow::partial_of(vec![Ty::carrier(Carrier::Int)], value);
                 let mut t = self.sig_of(positional(1), vec![arrow]);
                 let s = t.fns.pop().expect("a function type denotes one signature");
                 let mut s = Sig::unwrap_to_change(s);
@@ -13600,9 +13582,7 @@ impl<'a> Denote<'a> {
         let open = self.open.pop().expect("each function type is opened first");
         let mut arrows = arrows.into_iter();
         let first = arrows.next().expect("a function type has an arrow");
-        let partial = first.partial;
-        let mut sig = Sig::one(names, first.params, first.result);
-        sig.arrows[0].partial = partial;
+        let mut sig = Sig::of_arrow(names, first);
         sig.arrows.extend(arrows);
         sig.own.extend(open.bounds.keys().cloned());
         sig.own.extend(open.free);

@@ -1031,6 +1031,35 @@ fn a_meet_of_partial_arrows_with_disjoint_keys_reads_back_as_printed() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The kernel printer's round trip on two seeds whose type met a partial arrow with an exact
+/// arrow over the same keys (FAIL-kernel-print-seed-12530893063770583521). `#pair(f64, int)`
+/// meets the arrow on the other side in `Never`, so the meet is that of `_ ->? #b` with an
+/// exact arrow whose result holds the unknown: at a key the exact arrow guarantees, a function
+/// of both answers within `#b`, since a partial arrow's answers are its values (author P350).
+/// The checker took the lookup `#b | #notFound` for the values, and read the text as an arrow
+/// that may answer `#notFound` (FAIL-types-partial-arrow-value-type).
+#[test]
+fn a_meet_of_a_partial_arrow_from_the_unknown_with_a_total_arrow_reads_back_as_printed() {
+    // The texts the seeds drew and the kernel printer's prints of the types built with them, as
+    // the random test compares them; each seed reproduces its draw:
+    // ZED_TEST_SEED=12530893063770583521 and 7893849212256693212 on the random test above.
+    let seeds = [
+        (
+            "((#pair((f64), (int))) | ((_) ->? (#b))) & (((int) | (#a)) .. (((int) | (#a)) | (f64)) -> ((#b) | (_)))",
+            "(int | #a) .. (int | f64 | #a) -> #b",
+        ),
+        (
+            "(((f64) -> (_)) | (String)) & ((_) ->? (((bool), (String), (rat))))",
+            "f64 -> (bool, String, rat)",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (text, printed) in seeds {
+        kernel_read_back(text, printed, &mut wrong);
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// Corner cases of the fix above: the unknown on either side of the meet, a key it narrows
 /// rather than empties, and keys the narrowing must leave whole. Each text reads as the type
 /// written beside it (subtyping both ways).
