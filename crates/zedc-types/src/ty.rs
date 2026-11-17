@@ -13042,7 +13042,24 @@ async fn every_arrow_fits<'m>(
 /// Apart from the permission so that the explanation of an unfit signature ([`fits_in`]) can
 /// ask it of each arrow of `q` alone: the permission against one arrow of `q` alone is
 /// stricter than against all of them, and would name an arrow that is covered.
+///
+/// An arrow of `q` one of whose parameter types is proved empty ([`Ty::is_empty`], a proved
+/// yes) is left out: its parameter tuples hold no value, so it guarantees no key and bounds no
+/// answer, and the conditions above ask nothing of it. So `Never -> v` and `Never ->? v`, which
+/// hold the same one function, the one of empty domain (DESIGN.md sec:type_language, "Morphism
+/// types carry two domain bounds"), are each within the other (FAIL-types-exact-never-domain:
+/// before, the exact arrow of `Never -> v` asked for a cover by an exact arrow, which
+/// `Never ->? v` lacks). Cost: one flag test per parameter of `q`'s arrows; the copy without
+/// them only where one is left out.
 async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
+    let keyless = |a: &Arrow| a.params.iter().any(Ty::is_empty);
+    let kept: Vec<Arrow>;
+    let qas = if qas.iter().any(keyless) {
+        kept = qas.iter().filter(|a| !keyless(a)).cloned().collect();
+        &kept[..]
+    } else {
+        qas
+    };
     if !sas.iter().chain(qas).any(|a| a.partial) {
         if !cover(s, sas, &[], qas, c).await {
             return false;

@@ -2271,3 +2271,38 @@ fn functions_at_one_place_whose_tuples_meet_two_each_are_decided() {
         assert_eq!(a.refused(&b), "", "h = {h}");
     }
 }
+
+/// `Never -> v` (guarantee and permission `Never`) and `Never ->? v` (permission `Never`, no
+/// guarantee) hold the same one function, the one of empty domain (DESIGN.md
+/// sec:type_language, "Morphism types carry two domain bounds"), so each is within the other
+/// (FAIL-types-exact-never-domain: the exact form was within the partial one, not back).
+#[test]
+fn an_exact_and_a_partial_arrow_over_never_are_one_type() {
+    use zedc::check::read::parse_type;
+    for v in ["int", "(rat, f64)", "Never"] {
+        let exact = parse_type(&format!("Never -> {v}")).unwrap();
+        let partial = parse_type(&format!("Never ->? {v}")).unwrap();
+        assert!(exact.subtype(&partial), "`Never -> {v}` is not within `Never ->? {v}`");
+        assert!(partial.subtype(&exact), "`Never ->? {v}` is not within `Never -> {v}`");
+    }
+}
+
+/// The meet of two exact functions over domains that share no value is empty (DESIGN.md
+/// sec:type_language, "two exact arrows over different domains share no value and their
+/// intersection is empty"), a function-typed domain among them (FAIL-types-meet-fn-param-
+/// domains: the meet was read as the overload `((_ -> ()) -> _) & (rat -> f64)`).
+#[test]
+fn a_meet_of_functions_over_a_function_domain_and_another_domain_is_empty() {
+    use zedc::check::read::parse_type;
+    for text in [
+        "((_ -> ()) -> _) & ((rat -> f64) | ())",
+        "((_ -> ()) -> _) & ((rat .. (rat | #a) -> f64) | ())",
+    ] {
+        let t = parse_type(text).unwrap();
+        assert!(t.is_empty(), "`{text}` reads as `{t}`, not `Never`");
+    }
+    // The meet of a function with a union holding it is that function.
+    let text = "((_ -> ()) -> _) & (((_ -> ()) -> _) | (rat -> f64))";
+    let (t, want) = (parse_type(text).unwrap(), parse_type("(_ -> ()) -> _").unwrap());
+    assert!(t.subtype(&want) && want.subtype(&t), "`{text}` reads as `{t}`");
+}
