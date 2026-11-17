@@ -127,8 +127,8 @@ fn root() -> String {
 
 /// The fences of this repository's README.md (item README-fences), in order, laid out against
 /// this repository's grammar once per test binary: laying out a fence parses it at up to every
-/// ring. They are not among `all` (feature `spec`): the page states its own results, and its tests compare
-/// them with the run.
+/// ring. They are not among `all` (feature `spec`): the page states its own results, and its
+/// tests compare them with the run.
 pub fn readme() -> Vec<DocFence> {
     static CELL: OnceLock<Vec<DocFence>> = OnceLock::new();
     CELL.get_or_init(|| {
