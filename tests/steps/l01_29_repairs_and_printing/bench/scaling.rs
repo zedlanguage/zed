@@ -145,6 +145,21 @@ fn many_decimal_arguments_past_f64_scale() {
     );
 }
 
+/// The fixes carried into the n arguments, each of a parameter that is a type variable of
+/// its own, checked in rounds (MSG-many-args-generic). Negative control, run once and not
+/// committed: with them checked one by one, each by a trial of the whole call (`params_apart`
+/// in place of `params_own_apart`), this ran out of time (72 s).
+#[test]
+fn many_division_arguments_scale() {
+    let n = 400;
+    let srcs = scaling::inputs(n, division_arguments);
+    scaling::check(
+        "rejecting a call of n divisions of literals at n parameters with no type",
+        n,
+        |k| division_arguments_rejected(&srcs[&k], k),
+    );
+}
+
 #[test]
 fn the_merges_between_a_value_and_its_use_scale() {
     let n = 4000;

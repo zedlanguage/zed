@@ -20191,7 +20191,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// O(1) expected per span a fix needs; the arguments' places sorted once, O(a log a), so
     /// the argument an error lies in is a binary search. The types carried into the
     /// arguments are checked in rounds, each giving an argument at most one type: at a call
-    /// whose parameters are checked apart ([`params_apart`]) a round is one check of a call
+    /// whose parameters are checked apart ([`params_own_apart`]) a round is one check of a call
     /// of one parameter per argument and one check of the whole call
     /// ([`Self::carried_together`]), O(the call) for the round; elsewhere one check of the
     /// construct per type carried ([`Self::carried_alone`]). Fixes that give an argument one
@@ -20204,9 +20204,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// rejections; one check per carried fix is quadratic in a nest of n operations each
     /// with its own rejection, as `((1 + 1) / 1 + 1) / 1 …` before its literals meet a
     /// carrier, where each fix rides up every level; and scanning the construct's errors for
-    /// each span needed is O(errors × spans), quadratic in the arguments of one call. Still
-    /// quadratic: a call whose parameters share a type variable, or has bounds or several
-    /// arrows, is checked once per argument carrying a fix (MSG-many-args-generic).
+    /// each span needed is O(errors × spans), quadratic in the arguments of one call. A call
+    /// whose parameters are each a type variable of its own, as parameters with no type
+    /// written are, is checked in rounds too ([`params_own_apart`], MSG-many-args-generic:
+    /// 1.26 s at 400 arguments `1 / 2`, growing 3.4 times per doubling, before). Still
+    /// quadratic: a call whose parameters share a type variable or hold one inside another
+    /// type, or has bounds, needs or several arrows, is checked once per argument carrying a
+    /// fix.
     fn pending_settled(
         &mut self,
         w: &Written<'a>,
@@ -20253,7 +20257,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // The construct's own check rejected nothing outside its arguments, as a call no arrow
         // takes, so one argument's fix does not settle an error another argument gave.
-        let apart = matches!(&w.form, Construct::Call(_, sig) if params_apart(sig))
+        let apart = !rounds.is_empty()
+            && matches!(&w.form, Construct::Call(_, sig) if params_own_apart(sig))
             && found.iter().all(|&s| arg_holding(&ats, s).is_some());
         for round in rounds {
             let left = match apart {
@@ -20461,7 +20466,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Settles the fixes of `round`, each carried into its own argument of the call `w`
-    /// whose parameters are checked apart ([`params_apart`]) and whose own check gave the
+    /// whose parameters are checked apart ([`params_own_apart`]) and whose own check gave the
     /// type `t` and rejected only `found`, all inside its arguments, as a check of the call
     /// with each alone settles them ([`Self::carried_alone`]): the call is rejected with an
     /// argument's fixes where its parameter does not take the type they give it, the rest of
@@ -26414,10 +26419,16 @@ fn arg_holding(sorted: &[(Span, usize)], s: Span) -> Option<usize> {
 type ArgOps = Vec<(Span, Vec<usize>)>;
 
 /// The signature of a call of `sig` with its parameter `j` alone, for a signature whose
-/// parameters are checked apart ([`params_apart`]): its parameter `j` and the result of its
-/// one arrow. O(the size of those).
+/// parameters are checked apart ([`params_apart`], [`params_own_apart`]): its parameter `j`,
+/// its own variable where the parameter is one, and the result of its one arrow. O(the size
+/// of those).
 fn param_alone(sig: &Sig, j: usize) -> Sig {
     let arrow = &sig.arrows[0];
+    let own = (arrow.params[j].as_var())
+        .filter(|v| sig.own.contains(*v))
+        .into_iter()
+        .cloned()
+        .collect();
     Sig {
         params: vec![sig.params[j].clone()],
         arrows: vec![Arrow {
@@ -26431,7 +26442,7 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         keys: sig.keys.clone(),
         word: None,
         needs: Vec::new(),
-        own: BTreeSet::new(),
+        own,
         held: BTreeSet::new(),
         named: sig.named,
         hull: sig.hull.clone(),
@@ -26505,6 +26516,30 @@ fn params_apart(sig: &Sig) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a call of `sig` checks each argument against its parameter apart from the others
+/// as [`params_apart`] says, or with some parameters each a variable of its own that no
+/// other parameter is, as each parameter of `f(positional p0, positional p1) = 1` with no
+/// type written is (row MSG-many-args-generic): a call binds such a variable anew, and only
+/// its own argument meets it, so an argument's type changes neither what another argument
+/// meets nor the result, which holds no variable. A parameter that holds a variable inside
+/// another type, or one that another parameter holds, is not taken: two arguments meet
+/// there. O(the arrow's parameters), one set lookup each.
+fn params_own_apart(sig: &Sig) -> bool {
+    let [arrow] = sig.arrows.as_slice() else {
+        return false;
+    };
+    let base = sig.bounds.is_empty()
+        && sig.needs.is_empty()
+        && sig.word.is_none()
+        && !sig.data
+        && arrow.result.closed();
+    let mut seen = HashSet::new();
+    base && (arrow.params.iter()).all(|p| match p.as_var() {
+        Some(v) => sig.own.contains(v) && seen.insert(v),
+        None => p.closed(),
+    }) && seen.len() == sig.own.len()
 }
 
 #[cfg(test)]
