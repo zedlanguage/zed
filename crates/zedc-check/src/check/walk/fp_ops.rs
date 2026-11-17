@@ -1525,7 +1525,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
-<<<<<<< HEAD
         // Shown to share their keys by their origins, the operands hold one set of keys `K`
         // in each run, which their types bound only as `L_a ∪ L_b ⊆ K ⊆ U_a ∩ U_b`: the keys
         // are typed `U_a ∩ U_b`, the arrow partial, and a read of a key outside `K` misses.
