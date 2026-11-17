@@ -1349,15 +1349,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
-                        payload,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => {
+                    }) if fields.is_empty() && items.as_deref().is_none_or(<[_]>::is_empty) => {
                         // A bare pattern matches the atom with any payload or none; `#a()`
                         // only the atom whose payload is the empty tuple (DESIGN.md step
                         // L1.40d: `x else #a() -> 2` strips `#a()` alone).
-                        let narrow = match payload {
-                            false => Narrow::Atom(name.as_str().into()),
-                            true => Narrow::Not(super::empty_payload_ty(name)),
+                        let narrow = match items {
+                            None => Narrow::Atom(name.as_str().into()),
+                            Some(_) => Narrow::Not(super::empty_payload_ty(name)),
                         };
                         self.narrowed(&v, &narrow, e.span).union(&d)
                     }
@@ -12873,7 +12872,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             let (slot, sub) = match fields.get(*i) {
                 Some((f, sub)) => (Slot::Field(f.as_str().into()), sub.as_ref()),
-                None => match items.get(*i - fields.len()) {
+                None => match items.as_deref().unwrap_or_default().get(*i - fields.len()) {
                     Some(sub) => (Slot::Item(*i - fields.len()), Some(sub)),
                     None => {
                         stack.pop();

@@ -553,8 +553,15 @@ fn reads_back(t: &Term, text: &str) -> Seen {
                     items,
                     ..
                 },
-            ) if **name == *n && fields.is_empty() && ps.len() == items.len() => {
-                todo.extend(ps.iter().zip(items))
+            ) if **name == *n
+                && fields.is_empty()
+                && match items {
+                    // `#e()` is the literal pattern of the atom with an empty payload.
+                    None => ps.is_empty(),
+                    Some(items) => !items.is_empty() && ps.len() == items.len(),
+                } =>
+            {
+                todo.extend(ps.iter().zip(items.iter().flatten()))
             }
             (
                 Pattern::Fields(name, fs),
@@ -564,7 +571,10 @@ fn reads_back(t: &Term, text: &str) -> Seen {
                     items,
                     ..
                 },
-            ) if **name == *n && items.is_empty() && fs.len() == fields.len() => {
+            ) if **name == *n
+                && items.as_deref().is_some_and(<[_]>::is_empty)
+                && fs.len() == fields.len() =>
+            {
                 for ((k, p), (m, q)) in fs.iter().zip(fields) {
                     assert_eq!(**k, *m, "{src}");
                     todo.push((p, q.as_ref().unwrap_or_else(|| panic!("{src}: `{m}:`"))));

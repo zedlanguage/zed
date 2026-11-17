@@ -275,7 +275,7 @@ impl Drop for Pattern {
 fn pattern_kids(p: &mut Pattern, out: &mut Vec<Pattern>) {
     match p {
         Pattern::Atom { fields, items, .. } => {
-            out.append(items);
+            out.extend(items.take().into_iter().flatten());
             out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
         }
         Pattern::Struct { fields, .. } => {

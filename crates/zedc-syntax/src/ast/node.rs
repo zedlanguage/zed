@@ -1147,12 +1147,12 @@ pub enum Pattern {
         name: String,
         /// Fields matched by name; `g:` (no pattern) binds the field to the name `g`.
         fields: Vec<(String, Option<Pattern>)>,
-        /// Payload components matched by position.
-        items: Vec<Pattern>,
-        /// Whether a payload is written, in parentheses: `#e()` has one, the empty tuple, and
-        /// matches only the atom whose payload is the empty tuple, while `#e` has none
-        /// (DESIGN.md sec:grammar, rule AtomPattern).
-        payload: bool,
+        /// Payload components matched by position, `None` when no parentheses are written:
+        /// `#e()` has `Some` of none, matching only the atom whose payload is the empty tuple,
+        /// while `#e` matches every payload (DESIGN.md sec:grammar, rule AtomPattern).
+        /// An `Option` rather than a flag beside the vector, since its `None` takes the
+        /// vector's spare values and the pattern stays 88 bytes (zed/compiler/MLIR.md, Layout).
+        items: Option<Vec<Pattern>>,
         /// Its text.
         span: Span,
     },

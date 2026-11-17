@@ -923,18 +923,20 @@ impl<'a> Formatter<'a> {
                 name,
                 fields,
                 items,
-                payload,
                 ..
             } => {
                 self.put(format!("#{name}"));
-                if !fields.is_empty() {
-                    self.put("(");
-                    then![stack; Job::FieldPats(fields), put(")")];
-                } else if !items.is_empty() {
-                    self.put("(");
-                    then![stack; Job::Patterns(items), put(")")];
-                } else if *payload {
-                    self.put("()");
+                match items {
+                    _ if !fields.is_empty() => {
+                        self.put("(");
+                        then![stack; Job::FieldPats(fields), put(")")];
+                    }
+                    Some(items) if !items.is_empty() => {
+                        self.put("(");
+                        then![stack; Job::Patterns(items), put(")")];
+                    }
+                    Some(_) => self.put("()"),
+                    None => {}
                 }
             }
             Pattern::Is { name, ty, .. } => {

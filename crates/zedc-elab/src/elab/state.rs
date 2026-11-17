@@ -387,17 +387,17 @@ impl<'a> Elab<'a> {
             name,
             fields,
             items,
-            payload,
             span,
         } = p
         else {
             unreachable!("resolve rejects the forms of layer L2")
         };
+        let (written, items) = (items.is_some(), items.as_deref().unwrap_or_default());
         // `#e()` matches the one value `#e()`, so it is the literal pattern of that value; the
         // kernel's `#e` with no parts matches the bare atom only (DESIGN.md sec:grammar, rule
         // AtomPattern: "`#e()` matches the atom whose payload is the empty tuple, and `#e`
         // the bare atom only").
-        if *payload && fields.is_empty() && items.is_empty() {
+        if written && fields.is_empty() && items.is_empty() {
             return Some(Some(KPattern::Lit(Value::atom_with(name.as_str(), vec![]))));
         }
         if fields.is_empty() {

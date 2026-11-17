@@ -135,7 +135,7 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut impl Extend<&'e str>) {
                 }
             }
             Pattern::Atom { fields, items, .. } => {
-                stack.extend(items);
+                stack.extend(items.iter().flatten());
                 for (f, p) in fields {
                     match p {
                         Some(p) => stack.push(p),

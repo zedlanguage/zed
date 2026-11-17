@@ -3379,12 +3379,9 @@ impl<'a> Elab<'a> {
             Some(Pattern::Atom {
                 name,
                 fields,
-                items,
-                payload: false,
+                items: None,
                 ..
-            }) if fields.is_empty() && items.is_empty() => {
-                Some(Some(KPattern::Is(check::any_payload(name))))
-            }
+            }) if fields.is_empty() => Some(Some(KPattern::Is(check::any_payload(name)))),
             Some(p) => self.pattern(p).map(Some),
             None => Some(None),
         };

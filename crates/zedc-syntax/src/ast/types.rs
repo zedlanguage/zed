@@ -450,8 +450,7 @@ impl Builder<'_, '_> {
         Ok(Pattern::Atom {
             name: name.clone(),
             fields,
-            items,
-            payload: node.end > node.start + 1,
+            items: (node.end > node.start + 1).then_some(items),
             span: self.span(n),
         })
     }

@@ -724,13 +724,12 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
             name,
             fields,
             items,
-            payload,
             ..
         } => {
             out.extend([Text("#"), Text(name)]);
-            if fields.is_empty() && items.is_empty() && !*payload {
+            let Some(items) = items else {
                 return;
-            }
+            };
             (&fields[..], &items[..])
         }
         Pattern::Struct { name, fields, .. } => {

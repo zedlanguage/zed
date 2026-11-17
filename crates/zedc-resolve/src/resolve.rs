@@ -464,12 +464,14 @@ pub const WORDS: &[(&str, u32)] = &[
     ("rekey", 4),
     ("group", 4),
     ("flatMap", 4),
+    ("image", 4),
     ("tag", 4),
     ("sort", 5),
     ("orderedValues", 5),
     ("scan", 5),
     ("zip", 5),
     ("patch", 5),
+    ("splice", 5),
     ("join", 5),
     ("diff", 5),
     ("first", 5),
@@ -3172,10 +3174,9 @@ impl Resolver<'_> {
                     Some(Pattern::Atom {
                         name,
                         fields,
-                        items,
-                        payload: false,
+                        items: None,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => Some(Handle::Any(name.clone())),
+                    }) if fields.is_empty() => Some(Handle::Any(name.clone())),
                     Some(_) => None,
                 };
                 let r = self.else_region(e.span);
@@ -3426,7 +3427,13 @@ impl Resolver<'_> {
                 span,
                 ..
             } => {
-                todo.extend(items.iter().rev().map(|i| Task::Pattern(i, report)));
+                todo.extend(
+                    items
+                        .iter()
+                        .flatten()
+                        .rev()
+                        .map(|i| Task::Pattern(i, report)),
+                );
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
             }
             Pattern::Struct { name, fields, span } => {

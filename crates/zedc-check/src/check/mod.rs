@@ -3621,11 +3621,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
-                        payload,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => {
-                        &u(of.span) - &matched_by(name, *payload)
-                    }
+                    }) => match matched_by(name, fields, items.as_deref()) {
+                        Some(m) => &u(of.span) - &m,
+                        None => u(of.span),
+                    },
                     Some(_) => u(of.span),
                 };
                 (&kept | &d, None)
@@ -3704,11 +3704,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
-                        payload,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => {
-                        &of - &matched_by(name, *payload)
-                    }
+                    }) => match matched_by(name, fields, items.as_deref()) {
+                        Some(m) => &of - &m,
+                        None => of,
+                    },
                     Some(_) => of,
                 };
                 &kept | &o(default.span)
@@ -3966,12 +3966,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 name,
                                 fields,
                                 items,
-                                payload,
                                 ..
                             }),
                         default,
-                    } if fields.is_empty() && items.is_empty() => {
-                        let mut parts = vec![(of.span, &want - &matched_by(name, *payload))];
+                    } if let Some(m) = matched_by(name, fields, items.as_deref()) => {
+                        let mut parts = vec![(of.span, &want - &m)];
                         if !named_default(default) {
                             parts.push((default.span, want.clone()));
                         }
@@ -12127,13 +12126,19 @@ pub fn empty_payload_ty(name: &str) -> Ty {
     t
 }
 
-/// What the atom pattern `#name` (`payload` false) or `#name()` (true) with no parts
-/// matches: [`any_payload`] or [`empty_payload`].
-fn matched_by(name: &str, payload: bool) -> KType {
-    if payload {
-        empty_payload(name)
-    } else {
-        any_payload(name)
+/// What the atom pattern `#name` (`items` `None`) or `#name()` (`Some` of none) matches:
+/// [`any_payload`] or [`empty_payload`]. `None` for a pattern with parts, which the caller
+/// does not take here.
+fn matched_by(
+    name: &str,
+    fields: &[(String, Option<Pattern>)],
+    items: Option<&[Pattern]>,
+) -> Option<KType> {
+    match items {
+        _ if !fields.is_empty() => None,
+        None => Some(any_payload(name)),
+        Some([]) => Some(empty_payload(name)),
+        Some(_) => None,
     }
 }
 
