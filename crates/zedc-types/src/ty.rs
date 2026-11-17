@@ -8742,16 +8742,57 @@ impl<'m, 's> Comparing<'m, 's> {
         if !matches!(verdict, Verdict::Inhabited) || skipped.left.is_empty() {
             return Some(verdict);
         }
-        // Assumption, not proved: the forms made below are the renaming `φ` of [`Merged`]
-        // applied to the plain ones, at every kind of spot: a `_` of the other side, which
-        // holds every mark, holds [`MERGED`] too; functions nested in payloads or tuples inside
-        // tuples are renamed as those at the top; and the memo `cuts`, kept from the first
-        // forms, is still right, since [`MERGED`] is among the marks in both, and so is `levels`,
-        // since [`MERGED`] is among every function's marks in both. Evidence: the
-        // random test `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
-        // (3000 cases a run, seeds 1 to 8, no wrong yes and no wrong definite no; its types hold
-        // functions at the top of a tuple only, with no `_` and no named fields), and the tests
-        // of `l01_22`, `l01_23` and `l01_26`, unchanged.
+        // Proof that the forms made below give false only where `t <: other` is false
+        // (PROOF-form-verdict-merged-mark), at every kind of spot. Below, `A` and `B` are the
+        // forms of `t` and `other` made with `skipped`, `σ` is `σ` of [`Forms::level`] with each
+        // skipped function sent to [`MERGED`], and a skipped mark is the mark `"\0fn i"` of a
+        // skipped function `i`.
+        //
+        // 1. The sets kept from the first forms are still right. `marks` and `fn_marks` are
+        //    numbered once, before both forms, and are not changed here; [`Forms::cut`] and
+        //    [`Forms::level`] read only them and the kernel type, so the memos `cuts` and
+        //    `levels` give what the merged forms would make again. Only `made`, whose rows and
+        //    shapes read `merged` through [`Forms::comp`], is cleared.
+        // 2. Every value `w` of `t` has `σ(w)` in `A`: the induction of [`Forms::level`], which
+        //    reads only that a mark is in a made kernel node exactly where the node holds every
+        //    function, and that `fn_marks` holds `σ` of every function; both hold here, as
+        //    `fn_marks` holds [`MERGED`]. A function nested in a payload or in an inner tuple is
+        //    a component of a row or shape made by [`Forms::form`], so [`Forms::comp`] gives it
+        //    [`MERGED`] as at the top; a kept kernel type holds no function of `t`, only every
+        //    function or none ([`Node::kept`]).
+        // 3. If `t <: other` holds, `σ(w)` is in `B` for each `w` of `t`: the argument at
+        //    [`Merged`]. A component of `other` that is `_` is `top`, or, as the last item of a
+        //    payload with no fields, every value but the marks of field names; either holds
+        //    [`MERGED`]. A component that holds every function is made with `fn_marks`, which
+        //    holds it too.
+        // 4. The values of `A` that are no `σ(w)` are those holding a skipped mark. A skipped
+        //    mark is no `σ` of any value, and on this side it is put only where every function
+        //    is: in the unknown, in `fn_marks` by [`Forms::level`]; [`Forms::comp`] gives a
+        //    function of `t` [`MERGED`] in its place. Let `x` be such a value and `x'` be `x`
+        //    with each skipped mark replaced by a function that is not of either side. At
+        //    every kernel node, of either side, that holds every function or none, the skipped
+        //    mark and that function are held together. On this side every node is of that kind,
+        //    or a mark of a function of `t`, which is never a skipped mark; so `x'` is in `A`.
+        //    The induction of 2 goes both ways (a value is in the node made exactly when its
+        //    `σ`-preimage is in the node), so a value of `A` with no skipped mark is `σ` of a
+        //    value of `t`, the replacing function being `σ` of itself; so by 3 `x'` is in `B`. On the other side the only nodes of neither kind are the marks of `g`, a
+        //    function of `other`, which hold no function; and a node holding a function holds
+        //    the skipped mark. The form of a row or shape is a product of its components, and
+        //    `payload_set` meets or takes away atoms by name only, so a node of neither kind
+        //    is never taken away. So the skipped mark is held at each place where `x'` holds
+        //    its function, and `x` is in `B`.
+        // So `A <: B` holds whenever `t <: other` holds, and a false verdict on these forms is
+        // a definite no. The first forms meet the same steps with [`MERGED`] in place of a
+        // skipped mark: no function of `t` is [`MERGED`] there, and it is put only in the
+        // unknown and in `fn_marks`.
+        //
+        // Tests: the random test `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
+        // in tests/steps/l01_23_groups_and_refusals/judgments.rs, whose components include `_`
+        // on either side, `#box(F)` and `(F, 1)` (seeds 1 to 6, 3000 cases each, no wrong yes
+        // and no wrong definite no). Negative controls, each failing that test with a wrong
+        // definite no: a `_` of `other` without [`MERGED`] in these forms (seeds 1 and 2 of 3);
+        // the forms of payload shapes kept from the first forms, not made again (seeds 1 to 3
+        // of 4). Cost: none added; the forms are made again once, the same size, as before.
         forms.made.clear();
         forms.merged = Some(skipped);
         let a = forms.form(t, true)?;
@@ -10558,9 +10599,11 @@ const UNPAIRED: &str = "two or more functions at one place of a tuple or an atom
 /// is, and each function of the other side at a spot where one was skipped holds that mark.
 ///
 /// Why a false verdict on those forms is a definite no. Let `φ` rename the mark of each skipped
-/// function to [`MERGED`], on values. The forms of the side compared made with `Merged` are `φ`
-/// of the plain ones (a component's form outside its marks holds no mark, as [`Forms::cut`]
-/// takes them from sets of all atoms). If the true forms, with every pair compared, give
+/// function to [`MERGED`], on values. The forms of the side compared made with `Merged` hold `φ`
+/// of the values `σ` gives in the plain ones (a component's form outside its marks holds no
+/// mark, as [`Forms::cut`] takes them from sets of all atoms); they also keep the skipped marks
+/// where every function is, which no value is mapped to, and which the other side's form then
+/// holds too (the proof at [`Comparing::form_verdict`], step 4). If the true forms, with every pair compared, give
 /// `A <: B`, then `φ(A) <: φ(B)`, as `φ` is a function on values. A function `g` of the other
 /// side holds, in `B`, the marks of the functions that fit it; those compared are in the plain
 /// form, and `φ` maps them as the `Merged` form does; those not compared were skipped at a spot

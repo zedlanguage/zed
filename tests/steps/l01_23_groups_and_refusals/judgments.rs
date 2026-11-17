@@ -1155,6 +1155,13 @@ fn equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no() {
 /// hold by the reference, and each false found with no refusal must be false by the reference:
 /// a refusal claims nothing. Before (FAIL-types-equal-functions-subset-no) the checker answered
 /// a definite no where the right side's functions at a place were all among the left side's.
+///
+/// A component is a function, `_`, a function in a payload `#box(F)`, or in an inner tuple
+/// `(F, 1)` (PROOF-form-verdict-merged-mark): `_` on the right holds every component; `_` on the
+/// left is held only by `_`, since no other component holds every value; a payload or an inner
+/// tuple is held by one of its own kind whose function the left one fits. So the forms made
+/// with every skipped pair taken to fit ([`Merged`] in crates/zedc-types/src/ty.rs) meet `_` on
+/// either side, functions nested in payloads and tuples, and sets cut by the memo `cuts`.
 #[test]
 fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
     use zedc::check::read::parse_type;
@@ -1179,50 +1186,85 @@ fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
         .collect();
     assert!(fits[0][2] && !fits[2][0] && !fits[4][0] && !fits[0][4]);
     assert!((0..5).all(|g| !fits[5][g] && !fits[g][5]));
-    // A tuple: its functions, by number in `pool`, and its tag.
-    type Row = (Vec<usize>, usize);
+    // A component: its kind and its function, by number in `pool`.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        Fn,
+        Any,
+        Boxed,
+        Inner,
+    }
+    type Comp = (Kind, usize);
+    // A tuple: its components and its tag.
+    type Row = (Vec<Comp>, usize);
     let (mut rng, seed) = Rng::fresh("unions of tuples with functions");
+    let comp = |rng: &mut Rng| -> Comp {
+        let kind = match rng.below(6) {
+            0..=2 => Kind::Fn,
+            3 => Kind::Any,
+            4 => Kind::Boxed,
+            _ => Kind::Inner,
+        };
+        (kind, rng.below(pool.len()))
+    };
     let draw = |rng: &mut Rng| -> Vec<Row> {
         (0..1 + rng.below(5))
             .map(|_| {
                 let width = 1 + rng.below(2);
-                (
-                    (0..width).map(|_| rng.below(pool.len())).collect(),
-                    rng.below(3),
-                )
+                ((0..width).map(|_| comp(rng)).collect(), rng.below(3))
             })
             .collect()
     };
+    let comp_text = |&(kind, f): &Comp| match kind {
+        Kind::Fn => pool[f].to_string(),
+        Kind::Any => "_".to_string(),
+        Kind::Boxed => format!("#box({})", pool[f]),
+        Kind::Inner => format!("({}, 1)", pool[f]),
+    };
     let text = |rows: &[Row]| {
         (rows.iter())
-            .map(|(fs, tag)| {
-                let fs: Vec<&str> = fs.iter().map(|&i| pool[i]).collect();
-                format!("({}, #{})", fs.join(", "), ["a", "b", "c"][*tag])
+            .map(|(cs, tag)| {
+                let cs: Vec<String> = cs.iter().map(comp_text).collect();
+                format!("({}, #{})", cs.join(", "), ["a", "b", "c"][*tag])
             })
             .collect::<Vec<_>>()
             .join(" | ")
     };
+    // Whether the right component `d` holds the left one `c`.
+    let holds = |&(ck, f): &Comp, &(dk, g): &Comp| match (ck, dk) {
+        (_, Kind::Any) => true,
+        (Kind::Any, _) => false,
+        _ => ck == dk && fits[f][g],
+    };
+    let (mut any_left, mut nested) = (0, 0);
     let (mut yes, mut no, mut refused) = (0, 0, 0);
     for _ in 0..3_000 {
         let (a, mut b) = (draw(&mut rng), draw(&mut rng));
         // About half the left tuples get a right tuple that holds them, each function replaced by
         // one it fits, at a random place, so that many subtypes hold.
-        for (fs, tag) in &a {
+        // A component is held by `_`, or by one of its kind whose function it fits.
+        for (cs, tag) in &a {
             if rng.below(2) == 0 {
-                let up = |f: usize, rng: &mut Rng| {
+                let up = |&(kind, f): &Comp, rng: &mut Rng| -> Comp {
+                    if kind == Kind::Any || rng.below(6) == 0 {
+                        return (Kind::Any, 0);
+                    }
                     let above: Vec<usize> = (0..pool.len()).filter(|&g| fits[f][g]).collect();
-                    above[rng.below(above.len())]
+                    (kind, above[rng.below(above.len())])
                 };
-                let gs = fs.iter().map(|&f| up(f, &mut rng)).collect();
+                let ds = cs.iter().map(|c| up(c, &mut rng)).collect();
                 let at = rng.below(b.len() + 1);
-                b.insert(at, (gs, *tag));
+                b.insert(at, (ds, *tag));
             }
         }
-        let expected = a.iter().all(|(fs, tag)| {
-            b.iter().any(|(gs, t)| {
-                t == tag && gs.len() == fs.len() && fs.iter().zip(gs).all(|(&f, &g)| fits[f][g])
+        let expected = a.iter().all(|(cs, tag)| {
+            b.iter().any(|(ds, t)| {
+                t == tag && ds.len() == cs.len() && cs.iter().zip(ds).all(|(c, d)| holds(c, d))
             })
         });
+        let comps = || a.iter().chain(&b).flat_map(|(cs, _)| cs);
+        any_left += a.iter().flat_map(|(cs, _)| cs).any(|c| c.0 == Kind::Any) as usize;
+        nested += comps().any(|c| matches!(c.0, Kind::Boxed | Kind::Inner)) as usize;
         let (sa, sb) = (text(&a), text(&b));
         let (ta, tb) = (parse_type(&sa).unwrap(), parse_type(&sb).unwrap());
         let label = format!("ZED_TEST_SEED={seed}: {sa} <: {sb}");
@@ -1236,7 +1278,11 @@ fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
             refused += 1;
         }
     }
-    eprintln!("ZED_TEST_SEED={seed}: {yes} yes, {no} no, {refused} refused");
+    eprintln!(
+        "ZED_TEST_SEED={seed}: {yes} yes, {no} no, {refused} refused; {any_left} with `_` on \
+         the left, {nested} with a nested function"
+    );
+    assert!(yes > 0 && no > 0 && any_left > 0 && nested > 0);
 }
 
 /// Where two or more functions of each side meet at one place, each pair of functions whose
