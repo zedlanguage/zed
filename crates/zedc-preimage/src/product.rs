@@ -7659,6 +7659,28 @@ impl Scope {
         }
     }
 
+    // Complexity tradeoff (PERF-deep-block-ratio): the walk of a block of `d` bindings with a
+    // test in each (`Run::walk_at` over this bind) costs O(d log² d), not O(d log d). Per
+    // binding `j`, counted at 1,000, 4,000 and 32,000 bindings (counters, not committed) and
+    // the same at each: one fresh bind here, two assumes, two reductions of one round, eight
+    // rebases of the caches that find the maps the same (`ptr_eq`, O(1)), one sum of a
+    // two-piece summary into a treap of Θ(j) pieces, 28 map differences of which 7 are of
+    // maps not the same (`ptr_eq`) and 71 keys compared in all. Their costs: an insert or
+    // lookup in a map of `j` names, O(log j); the treap sum, O(log j) expected
+    // (`preimage::prio_of`); and a difference of two maps that share all but O(1) paths
+    // (`imbl::OrdMap::diff`), O(B·h²) with B = 16 and h = log_B j, since
+    // imbl 7.0.2 skips shared subtrees only at the leaves (`Cursor::advance_skipping_shared`):
+    // beside each copied path it walks down to the first leaf of each of up to B shared
+    // siblings at each of h levels, O(h) each (7,164, 9,626, 12,420 and 16,054 instructions
+    // for one changed key in 4,000, 32,000, 256,000 and 2,048,000 keys). Sum over j ≤ d:
+    // O(d log² d), predicted ratio 8 (ln 32,000 / ln 4,000)² = 12.5; measured 9.295. Used:
+    // imbl 7.0.2's difference, as above. Not used: a difference that skips a shared subtree
+    // at its root, O(B·h) a copied path, O(d log d) in all; a 60-line patch of
+    // `advance_skipping_shared` (imbl's own tests pass with it) measured 4,254, 5,470, 6,508
+    // and 7,684 instructions at those sizes and 8.895 on the test (1,795.8M and 15,973.7M
+    // instructions), left to row IMBL-diff-branch-skip since it changes a dependency. Test:
+    // `l01_39_reduced_product::deep_let::bench::the_arms_of_a_deep_block_scale`, COMPLEXITY.md
+    // row PA-bind-cost.
     fn bind_with(
         &mut self,
         x: &Arc<str>,
@@ -15427,6 +15449,9 @@ impl<'m> Run<'m> {
         }
     }
 
+    // Complexity: a block of `d` bindings with a test in each costs O(d log² d) under imbl
+    // 7.0.2's map difference, O(d log d) with a difference that skips shared subtrees at
+    // their roots; the proof and measurements are at [`Scope::bind_with`] (PERF-deep-block-ratio).
     async fn walk_at(&'m self, t: &'m Term) {
         match t {
             Term::Let(x, e, b) => {
