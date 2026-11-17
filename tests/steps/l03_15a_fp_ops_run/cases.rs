@@ -1238,16 +1238,22 @@ fn a_generic_entry_of_a_family_is_not_shown_as_every_value() {
     assert!(out.stderr.contains(want), "{}", out.stderr);
 }
 
-/// `++` on a lambda's generic parameter is refused with the note that says what the parameter
-/// is, as `zip` on it is (plan row MSG-concat-generic-lambda-param-no-note).
+/// `++` on a lambda's generic parameter says what the parameter is (plan row
+/// MSG-concat-generic-lambda-param-no-note). Since FP-ops-concat-fold-acc the `++` takes a
+/// need, met where `map` gives the lambda each entry of `m.stdin`: the refusal names the
+/// entry's type, String, and the `++` that needs a list, and never calls the type generic.
 #[test]
 fn concat_on_a_generic_lambda_parameter_notes_what_it_is() {
     let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> \"${l ++ [1]}\");\n}\n";
     let out = run("fp_ops/concat_generic_note", src, "", &[]);
     assert!(out.status != 0, "{}", out.stderr);
-    let want = "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, whose \
-                type is String";
-    assert!(out.stderr.contains(want), "{}", out.stderr);
+    for want in [
+        "this value is String, beside a list",
+        "the function given to `map` needs this of its argument here",
+    ] {
+        assert!(out.stderr.contains(want), "{}", out.stderr);
+    }
+    assert!(!out.stderr.contains("generic here"), "{}", out.stderr);
 }
 
 /// `flatMap` keeps each list its function gives as a level (DESIGN.md sec:grouping, "`flatMap`
