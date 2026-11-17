@@ -8,7 +8,8 @@ use zedc::resolve::resolve;
 use super::super::bounds::{
     bounded_chain, bounded_in_a_payload, bounded_or_free, distinct_bounds_chain,
     free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_lambdas, passed,
-    passed_deep, passed_through_fns, shared_bounded_chain, wide, wide_lambda,
+    passed_deep, passed_through_fns, passed_through_fns_in_tuples, shared_bounded_chain, wide,
+    wide_lambda,
 };
 use super::super::info;
 
@@ -97,6 +98,27 @@ fn passing_a_function_whose_bounded_variables_only_functions_hold_scales() {
          under other names",
         3_200,
         passed_through_fns,
+    );
+}
+
+#[test]
+fn passing_functions_in_tuples_scales() {
+    // A tuple that holds a function on a bounded variable of the signature is compared by
+    // the rule of one shape, not the kernel's form (`Comparing::sub_near`), each function
+    // read through `Cx::through_fn` as above: linear in n for one tuple of n functions and for
+    // n tuples of one. Small instances:
+    // `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names`.
+    check_scales(
+        "one tuple of n functions, each with its own bounded variable, passed under other \
+         names",
+        3_200,
+        |n| passed_through_fns_in_tuples(n, true),
+    );
+    check_scales(
+        "n tuples of one function, each with its own bounded variable, passed under other \
+         names",
+        3_200,
+        |n| passed_through_fns_in_tuples(n, false),
     );
 }
 

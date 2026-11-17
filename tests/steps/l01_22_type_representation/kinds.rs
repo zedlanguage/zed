@@ -3037,3 +3037,94 @@ fn a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused() {
         assert!(pw.diff(&all).subtype(&pw), "field arm {field}");
     }
 }
+
+/// A generic function type whose parameter is a function type holding its variable fits itself
+/// with the variable renamed (DESIGN.md sec:type_resolution rule 6: the two are one type).
+/// FAIL-types-generic-fn-param-renamed-refused: ten of these were refused against themselves
+/// renamed, `q(g: X') = p(f: g)` answering that `p` does not take `g`, since a bounded variable
+/// held only inside a function parameter was never bound. Nine were fixed by 988743bce
+/// (FAIL-types-fn-only-bounded-variable); the function held in a tuple, `((y: int) -> T,)`,
+/// was still refused, as the kernel's form compared the two functions with no binding, and is
+/// now compared by the rule of one shape (`Comparing::sub_near`). The pairs after them are
+/// controls: the same types with a bound, a result or a component that differs, which do not
+/// fit, and the bound written in another order, which does.
+#[test]
+fn a_generic_function_type_holding_a_function_of_its_variable_fits_itself_renamed() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let sigs = [
+        "(h: ((y: int) -> T, int)) -> int for T in int | f64",
+        "(h: (((y: int) -> T,),)) -> int for T in int | f64",
+        "(h: ((y: int) -> T,) | String) -> int for T in int | f64",
+        "(h: ((y: int) -> T,), k: (y: int) -> T) -> int for T in int | f64",
+        "(h: ((y: T) -> int,)) -> T for T in int | f64",
+        "(h: (y: int) -> T) -> int for T in int | f64",
+        "(h: (y: T) -> T) -> int for T in int | f64",
+        "(h: (y: int) -> T, y: int) -> int for T in int | f64",
+        "(h: (y: T) -> int) -> T for T in int | f64",
+        "(h: (y: int) -> T) -> T for T in int | f64",
+        "(h: ((y: int) -> T,)) -> int for T in int | f64",
+        "(h: (y: int) -> T, k: (y: int) -> T) -> int for T in int | f64",
+        "(h: (y: int) ->? T) -> int for T in int | f64",
+        "(h: (y: int) -> T) -> int for T in int | f64 | bool",
+        "(h: (y: int) -> (T,)) -> int for T in int | f64",
+    ];
+    let mut wrong = Vec::new();
+    for s in sigs {
+        let src = format!("p(f: {s}) = 0;\nq(g: {}) = p(f: g);\n", s.replace('T', "U"));
+        let errs = type_errors(&src);
+        if !errs.is_empty() {
+            wrong.push((src, errs));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    let p = "(h: ((y: int) -> T,)) -> int for T in int | f64";
+    let p2 = "(h: ((y: int) -> T, int)) -> int for T in int | f64";
+    for (p, q, fits) in [
+        // At `T = f64`, `p` takes a function giving `f64`, which `q` takes at no `U`.
+        (p, "(h: ((y: int) -> U,)) -> int for U in int | bool", false),
+        (p, "(h: ((y: int) -> U,)) -> int for U in int", false),
+        (p, "(h: ((y: int) -> int,)) -> int", false),
+        (
+            p2,
+            "(h: ((y: int) -> U, bool)) -> int for U in int | f64",
+            false,
+        ),
+        (
+            p2,
+            "(h: ((y: int) -> U, int)) -> String for U in int | f64",
+            false,
+        ),
+        // A domain is exact (DESIGN.md sec:type_language), so `g` must take at each instance of
+        // `p`'s parameter no more than it: a function giving `int | f64` is taken by neither
+        // instance, `T = int` nor `T = f64`, with the tuple or without it, and a wider
+        // component is not taken either.
+        (p, "(h: ((y: int) -> int | f64,)) -> int", false),
+        (
+            "(h: (y: int) -> T) -> int for T in int | f64",
+            "(h: (y: int) -> int | f64) -> int",
+            false,
+        ),
+        (
+            p2,
+            "(h: ((y: int) -> U, int | bool)) -> int for U in int | f64",
+            false,
+        ),
+        // The same bound written in another order is the same type.
+        (p, "(h: ((y: int) -> U,)) -> int for U in f64 | int", true),
+        (
+            p2,
+            "(h: ((y: int) -> U, int)) -> int for U in f64 | int",
+            true,
+        ),
+    ] {
+        let src = format!("p(f: {p}) = 0;\nq(g: {q}) = p(f: g);\n");
+        let errs = type_errors(&src);
+        assert_eq!(errs.is_empty(), fits, "{src}{errs:#?}");
+        if !fits {
+            assert!(
+                errs.iter().any(|e| e.contains("`p` does not take")),
+                "{src}{errs:#?}"
+            );
+        }
+    }
+}

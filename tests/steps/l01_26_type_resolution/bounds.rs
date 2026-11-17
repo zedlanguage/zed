@@ -568,6 +568,40 @@ pub(super) fn passed_through_fns(n: usize) -> String {
     format!("p(g: {}) = 0;\nq(f: {}) = p(g: f);\n", sig("T"), sig("U"))
 }
 
+/// [`passed_through_fns`] with the functions held in tuples: one parameter, a tuple of `n`
+/// functions on their own variables, when `one` is set; else `n` parameters, each a tuple of
+/// one such function (FAIL-types-generic-fn-param-renamed-refused: the kernel's form compared
+/// a function in a tuple with no binding).
+pub(super) fn passed_through_fns_in_tuples(n: usize, one: bool) -> String {
+    let sig = |v: &str| -> String {
+        let fs: Vec<String> = (0..n).map(|i| format!("(x: int) -> {v}{i}")).collect();
+        let ps = match one {
+            true => format!("h: ({},)", fs.join(", ")),
+            false => (fs.iter().enumerate())
+                .map(|(i, f)| format!("h{i}: ({f},)"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let bs: Vec<String> = (0..n).map(|i| format!("{v}{i} in int | f64")).collect();
+        format!("({ps}) -> int for {}", bs.join(", "))
+    };
+    format!("p(g: {}) = 0;\nq(f: {}) = p(g: f);\n", sig("T"), sig("U"))
+}
+
+#[test]
+fn functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names() {
+    // The small instances of the bench `passing_functions_in_tuples_scales`.
+    for n in 1..=4 {
+        for one in [true, false] {
+            let src = passed_through_fns_in_tuples(n, one);
+            assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+            // `p` gives `g`, at `T0 = f64`, a function giving `f64`, which `f` takes at no `U0`.
+            let narrow = src.replacen("U0 in int | f64", "U0 in int", 1);
+            assert_eq!(type_errors(&narrow).len(), 1, "{narrow}");
+        }
+    }
+}
+
 /// `p` calls its argument on an int; `p_wide` on an int and on an f64.
 const P: &str = "p(g: (x: T) -> T for T in int) = g(x: 1);\n\
                  p_wide(g: (x: T) -> T for T in int | f64) = g(x: 1.5);\n";

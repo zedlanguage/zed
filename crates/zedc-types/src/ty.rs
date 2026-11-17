@@ -8609,6 +8609,25 @@ impl<'m, 's> Comparing<'m, 's> {
         // cost every shape times the components; the kernel splits the components once. Where
         // the normal form is not made (a variable, which a shape of `other` may bind) or the
         // kernel refused, each piece is tried by the rule of one shape, which is sound.
+        //
+        // An `other` that holds, in a tuple or a payload, a function that holds a bounded own
+        // variable of the signature whose arrow `binds` binds ([`Cx::reads_bound`]) is not
+        // decided by the kernel either (FAIL-types-generic-fn-param-renamed-refused): the form
+        // compares two functions as they are, with no binding ([`Comparing::fits_named`]),
+        // where [`accepts`] reads such a function at the binding ([`Cx::read_at`]) and binds a
+        // variable only functions hold through it ([`Cx::through_fn`]). By the form, `(h: ((y:
+        // int) -> U,)) -> int for U in int | f64` did not fit the same type with `T`, though
+        // `(h: (y: int) -> U) -> int`, with no tuple, did: the `U` of one function was compared
+        // with the `T` of the other as itself, which nothing binds. Sound: this is the rule of
+        // one shape, the fallback taken above where the form is not made.
+        //
+        // Complexity tradeoff: naive, as before, the kernel for every tuple, which gave this
+        // wrong no. Used: the kernel elsewhere; here each piece of `t` tried against the shapes
+        // of `other` ([`accepts`], filed by [`Comparing::search`] as for a variable), only where
+        // `binds` has bounds and `other` holds such a function; and one walk of `other` outside
+        // functions ([`Cx::reads_bound`]) only where `binds` has bounds, O(|other|), as the form
+        // itself walks `other`.
+        let bound = self.cx.borrow().reads_bound(other, binds);
         let mut form: Option<Option<bool>> = None;
         let mut search = Search::new(Site::Other);
         if let Some((_, _, filed)) = near {
@@ -8621,6 +8640,7 @@ impl<'m, 's> Comparing<'m, 's> {
             let plain = |s: &KType| t.payloads.is_empty() && (s & &wide()).is_empty();
             let decided = match &p {
                 Piece::Set(s) if plain(s) => None,
+                Piece::Set(_) | Piece::Tuple(_) if bound => None,
                 Piece::Set(_) | Piece::Tuple(_) => match form {
                     Some(d) => d,
                     None => {
@@ -13765,13 +13785,6 @@ impl Cx<'_> {
         })
     }
 
-    /// The name of the function read as `f` read with each bounded own variable of the
-    /// signature whose arrow `b` binds, held by it and bound to more than `Never` in `b`, read
-    /// as that binding ([`Read::Bound`]); `None` where `f` is no function or holds no such
-    /// variable (FAIL-types-fn-outer-variable-nest). Read as itself, the variable was bound
-    /// afresh inside the function's comparison and the binding dropped with it ([`accepts`]),
-    /// or compared as itself where nothing binds ([`within_as_is`]), so `(h: (y: U) -> int, y:
-    /// U) -> int for U in int | f64` did not fit the same type with `T`.
     /// The pairs of types to compare to bind, through the function read as `w`, the bounded
     /// own variables of the signature whose arrow `b` binds that `w` holds and `b` does not
     /// bind yet (FAIL-types-fn-only-bounded-variable): each parameter type of `f`, read by
@@ -13829,6 +13842,13 @@ impl Cx<'_> {
         Some(pairs)
     }
 
+    /// The name of the function read as `f` read with each bounded own variable of the
+    /// signature whose arrow `b` binds, held by it and bound to more than `Never` in `b`, read
+    /// as that binding ([`Read::Bound`]); `None` where `f` is no function or holds no such
+    /// variable (FAIL-types-fn-outer-variable-nest). Read as itself, the variable was bound
+    /// afresh inside the function's comparison and the binding dropped with it ([`accepts`]),
+    /// or compared as itself where nothing binds ([`within_as_is`]), so `(h: (y: U) -> int, y:
+    /// U) -> int for U in int | f64` did not fit the same type with `T`.
     fn read_at(&mut self, f: &Arc<str>, b: &Binds) -> Option<Arc<str>> {
         b.bounds.as_ref()?;
         let (sig, env) = self.fns.get(f)?.clone();
