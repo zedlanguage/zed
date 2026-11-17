@@ -4318,7 +4318,13 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
             | Prim::CodePoint
             | Prim::Scalar
             | Prim::Utf8
-            | Prim::FromUtf8,
+            | Prim::FromUtf8
+            | Prim::Round
+            | Prim::RoundTiesAway
+            | Prim::Floor
+            | Prim::Ceil
+            | Prim::Trunc
+            | Prim::AwayFromZero,
             [x],
         ) => crate::words::word(p, x)?,
         (Prim::Split, [Str(s), Str(sep)]) => crate::words::split(s, sep)?,

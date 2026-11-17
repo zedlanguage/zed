@@ -46,6 +46,12 @@ const WORDS: &[(&str, Prim)] = &[
     ("funnelShr", Prim::FunnelShr),
     ("sqrt", Prim::Sqrt),
     ("fma", Prim::Fma),
+    // `round(x, ties: #away)` elaborates to `RoundTiesAway`, which no word names.
+    ("round", Prim::Round),
+    ("floor", Prim::Floor),
+    ("ceil", Prim::Ceil),
+    ("trunc", Prim::Trunc),
+    ("awayFromZero", Prim::AwayFromZero),
 ];
 
 /// Whether `name` is a prelude word.

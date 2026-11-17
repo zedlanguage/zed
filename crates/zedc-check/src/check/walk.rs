@@ -7544,6 +7544,49 @@ impl<'t, 'a> Ck<'t, 'a> {
         let k = word_arity(c.w);
         let n = c.positional.len() + usize::from(c.receiver.is_some());
         let (receiver, of) = c.receiver.unzip();
+        // `round(x, ties: #away)` and `round(x, ties: #even)`: `ties:` takes one of the two
+        // atoms written in place, and anything else is a type error (DESIGN.md sec:facets,
+        // "Rounding to a whole number"). The rule changes no arrow of `round`, so the call is
+        // checked as `round(x)`; elaboration picks the primitive by the atom. Written with the
+        // value before the dot, `x.round(ties: #away)`, the call is reported as any word's named
+        // argument is.
+        if c.w == "round"
+            && !c.curry
+            && of.is_none()
+            && let [_] = c.positional
+            && let [(name, rule)] = c.named
+            && name == "ties"
+        {
+            if matches!(&rule.kind, ExprKind::Atom(a) if a == "even" || a == "away") {
+                return self.word(m, c.w, c.positional, receiver, c.span);
+            }
+            let written = self
+                .code(Some(rule.span))
+                .unwrap_or("this argument")
+                .to_string();
+            let message = format!(
+                "`ties:` takes the constant `#even` or `#away`, and `{written}` is not one of them."
+            );
+            let call = |a: &str| {
+                let x = (c.positional.first())
+                    .and_then(|e| self.code(Some(e.span)))
+                    .unwrap_or("x");
+                format!("round({x}, ties: {a})")
+            };
+            let menu = vec![
+                format!("repair: `{}`, ties to even", call("#even")),
+                format!("repair: `{}`, ties away from zero", call("#away")),
+            ];
+            let mut notes = self.derive(&[rule.span]);
+            notes.extend(menu.into_iter().map(|text| Note {
+                span: rule.span,
+                text,
+            }));
+            self.rejects_with(Row::WrongForm, rule.span, message, notes);
+            m.k(Frame::Fail(None));
+            m.each(Args::of(c.positional, c.named).exprs());
+            return;
+        }
         if c.named.is_empty() && !c.curry && n == k {
             return match k {
                 1 => self.word(m, c.w, c.positional, receiver, c.span),
@@ -7703,6 +7746,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // lists `0.5f64` and `0.5r`. The operand then takes the first carrier left, so the call
         // is typed as with it. Each carrier's value is cast once, as
         // [`Self::word_atoms`] casts it, at the cost it names.
+        // The literal's value at the carrier it takes is kept as the operand's one value, so
+        // the atoms the word cannot give on it are dropped: `round(2.5)` is an `int`, with no
+        // `#NaN` or `#overflow` (DESIGN.md sec:facets, "Rounding to a whole number").
+        let mut adopted = None;
         if self.level == 0
             && let Some(l) = (x.lit.clone()).filter(|l| l.bare && is_decimal(&l.value))
             && let Some(p) = zedc_base::interp::prim(w)
@@ -7732,6 +7779,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
                 }
                 self.adopt_to(&l, c);
+                adopted = lit_value(&l, c).map(|v| (v, l.written().to_string()));
                 x.lit = None;
                 x.ty = Ty::carrier(c);
             }
@@ -7792,7 +7840,31 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let (Some(a), Some(p)) = (x.expr, builds) {
             self.too_large_build(p, &[a], span);
         }
-        let values = self.operand_values(&x);
+        let values = match (
+            adopted,
+            x.lit.as_ref().filter(|l| l.bare && is_decimal(&l.value)),
+        ) {
+            (Some((v, written)), _) => Some(WordOperand::Values(vec![v], Some(written))),
+            // A bare decimal inside a function may still take `f64`, `rat` or `f32` (step
+            // L1.26b), and [`Self::operand_values`] leaves it out. Its values at the three are
+            // listed when the word converts one of them, so `f() = round(2.5);` gives an `int`;
+            // a literal the word fails on at every carrier is left to the rejection of a
+            // literal with no carrier. At most three runs of the word.
+            (None, Some(l)) => {
+                let vs: Vec<Value> = [Carrier::F64, Carrier::Rat, Carrier::F32]
+                    .into_iter()
+                    .filter_map(|c| lit_value(l, c))
+                    .collect();
+                let takes = |v: &Value| sig.arrows.iter().any(|a| a.params[0].contains(v));
+                let converts = zedc_base::interp::prim(w).is_some_and(|p| {
+                    vs.iter().any(|v| {
+                        takes(v) && run(p, v).is_some_and(|r| !matches!(r, Value::Atom(_)))
+                    })
+                });
+                converts.then(|| WordOperand::Values(vs, Some(l.written().to_string())))
+            }
+            (None, None) => self.operand_values(&x),
+        };
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
         let no_zero = w == "rat" && self.ints_without_zero(&x);

@@ -708,6 +708,14 @@ const SIGS: &[Sig] = &[
     sig("fromUtf8", Count::Exactly(1)),
     sig("sqrt", Count::Exactly(1)),
     sig("fma", Count::Exactly(3)),
+    Sig {
+        optional: &["ties"],
+        ..sig("round", Count::Exactly(1))
+    },
+    sig("floor", Count::Exactly(1)),
+    sig("ceil", Count::Exactly(1)),
+    sig("trunc", Count::Exactly(1)),
+    sig("awayFromZero", Count::Exactly(1)),
     sig("count", Count::Exactly(1)),
     sig("map", Count::Exactly(2)),
     sig("where", Count::Exactly(2)),

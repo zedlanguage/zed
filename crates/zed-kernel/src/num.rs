@@ -50,6 +50,41 @@ pub use room::{
     fixed_room, machine_memory, memory_clause, room,
 };
 
+/// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
+/// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
+/// sec:facets, "Rounding to a whole number").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rounding {
+    /// To the nearest, a tie to the even neighbor (IEEE 754 roundTiesToEven).
+    TiesEven,
+    /// To the nearest, a tie away from zero (IEEE 754 roundTiesToAway).
+    TiesAway,
+    /// Toward −∞.
+    Floor,
+    /// Toward +∞.
+    Ceil,
+    /// Toward zero.
+    Trunc,
+    /// Away from zero.
+    AwayFromZero,
+}
+
+impl Rounding {
+    /// The rule of the rounding primitive `p`; `None` for any other primitive.
+    pub fn of_prim(p: crate::term::Prim) -> Option<Rounding> {
+        use crate::term::Prim;
+        Some(match p {
+            Prim::Round => Rounding::TiesEven,
+            Prim::RoundTiesAway => Rounding::TiesAway,
+            Prim::Floor => Rounding::Floor,
+            Prim::Ceil => Rounding::Ceil,
+            Prim::Trunc => Rounding::Trunc,
+            Prim::AwayFromZero => Rounding::AwayFromZero,
+            _ => return None,
+        })
+    }
+}
+
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
 /// none of the `p`. Zero has no powers.
@@ -1268,6 +1303,58 @@ impl Rat {
         };
         let (m, t) = bound::round(&n, &d, f, &is)?;
         Ok(Some((self.is_negative(), m, t)))
+    }
+
+    /// The whole number `rule` rounds it to (DESIGN.md sec:facets, "Rounding to a whole
+    /// number"): an integer is itself, kept as it is, and any other number `N/D`, `D > 1`, is
+    /// `q = N div D` (Euclidean, toward −∞) or `q + 1`, chosen by `rule` from the sign and from
+    /// `2 (N mod D)` against `D`, which is never equal to `D` when `D` is odd. [`TooLarge`] when
+    /// the system refuses the memory for the quotient or the remainder.
+    ///
+    /// Complexity tradeoff: none. The naive way rounds a float through `f64::floor` and the
+    /// like, and a `rat` by building `N` and `D`; here every operand is one rational, so a
+    /// float's exact value and a `rat` take one path. The cost is one Euclidean quotient and
+    /// one remainder of `N` by `D` ([`Rat::div_euclid`], [`Rat::rem_euclid`], O(M(n)) in the
+    /// bits of `N`, a kept power of a prime reduced without being built where they can), a
+    /// doubling, a comparison and an addition of 1, each linear in the remainder's or the
+    /// quotient's size. Scaling test:
+    /// `l01_18_scalar_interpreter::bench::rounding::rounding_wide_rationals_scales`.
+    pub fn round_whole(&self, rule: Rounding) -> Result<Rat, TooLarge> {
+        if self.is_integer() {
+            return Ok(self.clone());
+        }
+        // `N` and `D` as integers kept with their powers: the powers of positive exponent are
+        // `N`'s and those of negative exponent `D`'s, so nothing is built.
+        let (up, down): (Vec<_>, Vec<_>) = self
+            .pows
+            .iter()
+            .cloned()
+            .partition(|(_, e)| e > &BigInt::zero());
+        let down = down.into_iter().map(|(p, e)| (p, -e)).collect();
+        let n = Rat::extract(self.num.clone(), BigInt::one(), up);
+        let d = Rat::extract(self.den.clone(), BigInt::one(), down);
+        let q = n.div_euclid(&d)?;
+        let r = n.rem_euclid(&d)?;
+        let half = r.twice_integer().try_cmp(&d)?;
+        let neg = self.is_negative();
+        let up = match rule {
+            Rounding::Floor => false,
+            Rounding::Ceil => true,
+            Rounding::Trunc => neg,
+            Rounding::AwayFromZero => !neg,
+            Rounding::TiesEven => match half {
+                Ordering::Equal => !q.is_even(),
+                o => o == Ordering::Greater,
+            },
+            Rounding::TiesAway => match half {
+                Ordering::Equal => !neg,
+                o => o == Ordering::Greater,
+            },
+        };
+        match up {
+            true => q.add(&Rat::int(BigInt::one())),
+            false => Ok(q),
+        }
     }
 
     /// The nearest `f64`, ties to even: correctly rounded from the exact value, without

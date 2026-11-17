@@ -216,7 +216,8 @@ enum Frame<'a> {
     /// is `.where` (plan row RANGE-open-walk, `stream_term`).
     Stream(Vec<bool>, Option<Quantifier>),
     /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
-    /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings).
+    /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings); and
+    /// `round(x, ties: …)`, its one operand (plan row CAST-round-whole).
     Strings(Option<Term>, Prim),
     /// `x.zip(y)` once `y` is elaborated: `x`'s term (step L5.2).
     Zip(Term),
@@ -1564,6 +1565,26 @@ impl<'a> Elab<'a> {
         if let Some(id) = self.declared(callee) {
             let f = self.t.funcs[&id];
             self.call_with(m, Callee::Declared(id, f), None, call);
+            return;
+        }
+        // `round(x, ties: #away)` is the primitive `RoundTiesAway` and `round(x, ties: #even)`
+        // is `round(x)` (DESIGN.md sec:facets, "Rounding to a whole number"); the checker
+        // rejected `ties:` given anything but one of the two atoms written in place.
+        if let ExprKind::Name(n) = &callee.kind
+            && n == "round"
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+            && let [x] = call.positional
+            && let [(t, rule)] = call.named
+            && t == "ties"
+            && !call.curry
+            && let ExprKind::Atom(rule) = &rule.kind
+        {
+            let p = match rule.as_str() {
+                "away" => Prim::RoundTiesAway,
+                _ => Prim::Round,
+            };
+            m.k(Frame::Strings(None, p));
+            m.seq(vec![x], false);
             return;
         }
         // `split(s, sep)`, `lines(s)` and `concat(pieces, sep: s)` where the name is the

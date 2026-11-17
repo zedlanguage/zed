@@ -16,8 +16,8 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
 use crate::num::{
-    Exact, FloatFormat, Rat, TooLarge, beyond_float, bits_of_digits, exact_f32, exact_f64,
-    read_decimal, read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
+    Exact, FloatFormat, Rat, Rounding, TooLarge, beyond_float, bits_of_digits, exact_f32,
+    exact_f64, read_decimal, read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
 };
 use crate::term::Prim;
 use crate::text::Text;
@@ -152,6 +152,26 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                         return Err(KernelError::RoundTooLarge { to: "f64", need: e });
                     }
                 },
+            }
+        }
+        // A whole number is its own rounding, shared.
+        (_, Value::Int(_) | Value::Big(_)) if Rounding::of_prim(p).is_some() => x.clone(),
+        (_, Value::Rat(_) | Value::Float(_) | Value::Float32(_))
+            if Rounding::of_prim(p).is_some() =>
+        {
+            let rule = Rounding::of_prim(p).expect("a rounding primitive");
+            match x.exact() {
+                Exact::Finite(r) => {
+                    let w = r
+                        .round_whole(rule)
+                        .map_err(|e| KernelError::NumberTooLarge {
+                            op: p.written(),
+                            need: e,
+                        })?;
+                    Value::integer(w)
+                }
+                Exact::NaN => Value::atom("NaN"),
+                Exact::PosInf | Exact::NegInf => overflow(),
             }
         }
         (Prim::Abs, Value::Int(n)) => match n.checked_abs() {

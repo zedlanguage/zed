@@ -219,6 +219,12 @@ fn name(p: Prim) -> &'static str {
         ListConcat => "listConcat",
         Place => "place",
         CallNamed => "callNamed",
+        Round => "round",
+        RoundTiesAway => "roundTiesAway",
+        Floor => "floor",
+        Ceil => "ceil",
+        Trunc => "trunc",
+        AwayFromZero => "awayFromZero",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
@@ -256,6 +262,7 @@ impl Prim {
             Prim::First => ".first",
             Prim::Last => ".last",
             Prim::Atom => "#_(..)",
+            Prim::RoundTiesAway => "round(x, ties: #away)",
             p => name(p),
         }
     }

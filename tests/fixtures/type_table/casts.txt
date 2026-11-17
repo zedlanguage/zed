@@ -32,7 +32,7 @@ int | #none => rat | #none -- sec:corner_cases "Casts are domain proofs"
 f64 | #none => rat | #invalid | #none -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
-=2.5 => rat !! CAST-fixes-literal: rat | #invalid -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
+=2.5 => rat -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => rat -- sec:corner_cases "Casts are domain proofs"
 =2r => rat -- sec:corner_cases "Casts are domain proofs"
 =k => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
@@ -50,7 +50,7 @@ int | #none => f32 | #inexact | #none | #overflow -- sec:corner_cases "Casts are
 f64 | #none => f32 | #inexact | #none | #overflow -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f32 -- sec:corner_cases "Casts are domain proofs"
-=2.5 => f32 !! CAST-fixes-literal: f32 | #inexact | #overflow -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
+=2.5 => f32 -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f32 -- sec:corner_cases "Casts are domain proofs"
 =2r => f32 -- sec:corner_cases "Casts are domain proofs"
 =k => f32 -- sec:corner_cases "Casts are domain proofs"

@@ -241,6 +241,21 @@ pub enum Prim {
     /// call did not write it. The fill of a curried call's result passes these, so that `f`
     /// fills each parameter the result's own call leaves out (plan row CALL-curried-placed).
     CallNamed,
+    /// `round(x)`: the whole number nearest `x`, a tie to the even one, as an `int`, for an
+    /// `int`, `rat`, `f64` or `f32` `x`; a NaN gives `#NaN` and an infinity `#overflow`
+    /// (DESIGN.md sec:facets, "Rounding to a whole number"; plan row CAST-round-whole). The
+    /// five below are the same but for the rule ([`crate::num::Rounding`]).
+    Round,
+    /// `round(x, ties: #away)`: the whole number nearest `x`, a tie away from zero.
+    RoundTiesAway,
+    /// `floor(x)`: rounded toward −∞.
+    Floor,
+    /// `ceil(x)`: rounded toward +∞.
+    Ceil,
+    /// `trunc(x)`: rounded toward zero.
+    Trunc,
+    /// `awayFromZero(x)`: rounded away from zero.
+    AwayFromZero,
 }
 
 impl Prim {
@@ -250,9 +265,8 @@ impl Prim {
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
-            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines | RangeFrom => {
-                Some(1)
-            }
+            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines | RangeFrom
+            | Round | RoundTiesAway | Floor | Ceil | Trunc | AwayFromZero => Some(1),
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom | Entries | Place | CallNamed => None,
@@ -350,6 +364,12 @@ impl Prim {
             ListConcat => 79,
             Place => 80,
             CallNamed => 81,
+            Round => 82,
+            RoundTiesAway => 83,
+            Floor => 84,
+            Ceil => 85,
+            Trunc => 86,
+            AwayFromZero => 87,
         }
     }
 }

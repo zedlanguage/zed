@@ -11510,6 +11510,16 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(F32, F32, &[]),
         ],
         "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
+        // The rounding words give an `int` (DESIGN.md sec:facets, "Rounding to a whole
+        // number"); no whole number stands for the NaN or an infinity, which give `#NaN` and
+        // `#overflow` (author, P361). `ties:` changes no arrow. The expected-carrier result
+        // (`n: i32 = trunc(x)`) is not built here.
+        "round" | "floor" | "ceil" | "trunc" | "awayFromZero" => vec![
+            arrow(Int, Int, &[]),
+            arrow(Rat, Int, &[]),
+            arrow(F64, Int, &["NaN", "overflow"]),
+            arrow(F32, Int, &["NaN", "overflow"]),
+        ],
         "min" | "max" => arrows(&[Int, F64, Rat, F32], 2, Ty::carrier),
         // The float formats alone: an `int` or `rat` operand is cast first, `sqrt(f64(n))`,
         // so no call rounds where the text does not say so (row FLOAT-sqrt).

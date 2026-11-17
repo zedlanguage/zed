@@ -12,6 +12,7 @@ mod floats;
 mod literals;
 mod prim_names;
 mod rat_text;
+mod rounding;
 mod scaling;
 mod sqrt_fma;
 mod tuple_min_max;
