@@ -29083,6 +29083,128 @@ pub(super) mod tests {
         );
     }
 
+    /// The system the seed 2724104729 drew for [`hull_sides_on_random_conjunctions_are_the_sides`]
+    /// (TEST-hull-skip-growth-tie), one of the two Growth refusals in 24,402 seeds: six rows over `a`,
+    /// `b`, `c`, `d` and the disjunction `left || right` below. `hull_side` gives 0 as the
+    /// greatest `c`; checking that a point has `c >= 0` is refused with Growth, from `right`:
+    /// its system has four live variables and no elimination left that keeps the rows from
+    /// growing, and the box test decides nothing (the refusal `Leaf::Refused(Refusal::Growth)`
+    /// documents at its site, DESIGN.md step L1.38's Limits paragraph). That refusal is the
+    /// documented one, and this test pins it. The answer is still found: `left` has no point
+    /// with `c >= 0`, the whole has none with `c >= 1`, and `a == 2, b == 1, c == 0, d == -1`
+    /// is a point of `right`, so 0, the side `hull_side` gives, is the side.
+    #[test]
+    fn a_hull_side_past_growth_is_refused() {
+        let ge = |terms: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(terms, k),
+                rel: Rel::Ge,
+            })
+        };
+        let rows = vec![
+            ge(&[("a", -4), ("d", 3)], 16),
+            ge(&[("b", 3), ("c", -5)], -3),
+            ge(&[("a", 3), ("b", -3)], -2),
+            ge(&[("a", -1), ("b", 1), ("d", 3)], 10),
+            ge(&[("a", 3), ("c", 1), ("d", -1)], 12),
+            ge(&[("b", -2), ("d", -1)], 10),
+        ];
+        let left = ge(&[("b", -1), ("c", 2)], -3);
+        let right = Formula::and(vec![
+            ge(&[("a", 2), ("c", 2), ("d", -1)], 1),
+            ge(&[("b", 1), ("c", -3), ("d", -1)], -2),
+        ]);
+        let mut all = rows.clone();
+        all.push(Formula::or(vec![left.clone(), right.clone()]));
+        let whole = Formula::and(all);
+        let with = |extra: &[Formula]| {
+            let mut v = rows.clone();
+            v.extend_from_slice(extra);
+            decide_inner(&Formula::and(v))
+        };
+        let (at_0, at_1) = (ge(&[("c", 1)], 0), ge(&[("c", 1)], -1));
+        assert_eq!(with(&[right.clone(), at_0.clone()]), Err(Refusal::Growth));
+        assert_eq!(with(&[left, at_0]), Ok(false));
+        assert_eq!(
+            decide_inner(&Formula::and(vec![whole.clone(), at_1])),
+            Ok(false)
+        );
+        let at = |v: &str, k: i128| {
+            Formula::Con(Con {
+                lin: lin(&[(v, 1)], -k),
+                rel: Rel::Eq,
+            })
+        };
+        assert_eq!(
+            with(&[right, at("a", 2), at("b", 1), at("c", 0), at("d", -1)]),
+            Ok(true)
+        );
+        let model = satisfiable_inner(&whole).unwrap().unwrap();
+        assert_eq!(
+            hull_side(&whole, &sym("c"), &model, 1),
+            Ok(Some(Int::from(0)))
+        );
+    }
+
+    /// The system the seed 1498315485863 drew for
+    /// [`hull_sides_on_random_conjunctions_are_the_sides`] (TEST-hull-skip-growth-tie), the
+    /// one seed of 24,402 with a Tie refusal: `d >= -3 && b >= -20 && a + b == 2d - 18 && 3c + d <= 19
+    /// && a >= 11 && 2c + 5d >= -7`. `hull_side` finds no least `c` and no greatest `d`;
+    /// checking either asks [`unbounded`], whose question over the directions of the rays,
+    /// `a' >= 0, b' >= 0, a' + b' == 2d', ...`, has `a'` and `b'` alike in every row, and the
+    /// two share the rows of `a' + b' == 2d'`: no structure tells them apart, so it is refused
+    /// with Tie (the refusal's doc, `Refusal::Tie`). That refusal is the documented one, and
+    /// this test pins it; a tie like this one, a true symmetry whose answer does not depend on
+    /// the choice, is the case row PRES-tie-symmetry would accept. The answer is still found:
+    /// `a == 11, b == 4t - 19, c == -t, d == 5 + 2t` is a point for every `t >= 0`, so `c` has
+    /// no least value and `d` no greatest, as `hull_side` gives.
+    #[test]
+    fn a_hull_side_past_a_tie_is_refused() {
+        let ge = |terms: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(terms, k),
+                rel: Rel::Ge,
+            })
+        };
+        let rows = vec![
+            ge(&[("d", 1)], 3),
+            ge(&[("b", 1)], 20),
+            Formula::Con(Con {
+                lin: lin(&[("a", 1), ("b", 1), ("d", -2)], 18),
+                rel: Rel::Eq,
+            }),
+            ge(&[("c", -3), ("d", -1)], 19),
+            ge(&[("a", 1)], -11),
+            ge(&[("c", 2), ("d", 5)], 7),
+        ];
+        let whole = Formula::and(rows.clone());
+        for (a, dir) in [("c", -1), ("d", 1)] {
+            assert!(
+                matches!(unbounded(&whole, &sym(a), dir), Err(Refusal::Tie(_))),
+                "{a} going {dir}"
+            );
+        }
+        let model = satisfiable_inner(&whole).unwrap().unwrap();
+        assert_eq!(hull_side(&whole, &sym("c"), &model, -1), Ok(None));
+        assert_eq!(hull_side(&whole, &sym("d"), &model, 1), Ok(None));
+        for t in [0, 1, 1000] {
+            let at = |v: &str, k: i128| {
+                Formula::Con(Con {
+                    lin: lin(&[(v, 1)], -k),
+                    rel: Rel::Eq,
+                })
+            };
+            let mut v = rows.clone();
+            v.extend([
+                at("a", 11),
+                at("b", 4 * t - 19),
+                at("c", -t),
+                at("d", 5 + 2 * t),
+            ]);
+            assert_eq!(decide_inner(&Formula::and(v)), Ok(true), "t = {t}");
+        }
+    }
+
     /// `a >= 0 && 5 - a >= 0`.
     fn sides_built() -> Formula {
         let ge = |k: i128, c: i128| {
@@ -29113,7 +29235,12 @@ pub(super) mod tests {
                 // step OMEGA-splinter-cap; the author's XR3 ruling keeps live >= 4 refused), so
                 // a side whose check is refused is left unchecked and uncounted, as a side
                 // `hull_side` refuses is above. Any other refusal is a failure
-                // (FAIL-hull-sides-small-shadows; `a_hull_side_past_a_splinter_is_refused`).
+                // (FAIL-hull-sides-small-shadows). Each of the three was found and shown to be
+                // the documented refusal (TEST-hull-skip-growth-tie): in 24,402 seeds, 59 sides
+                // skipped for Shadows, 2 for Growth (two seeds) and 2 for Tie (one seed, on two
+                // variables alike in every row)
+                // (`a_hull_side_past_a_splinter_is_refused`, `a_hull_side_past_growth_is_refused`,
+                // `a_hull_side_past_a_tie_is_refused`).
                 match side_checked(whole, &a, dir, &side) {
                     Ok(()) => {}
                     Err(Refusal::Growth | Refusal::Shadows | Refusal::Tie(_)) => continue,
