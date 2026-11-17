@@ -2282,3 +2282,73 @@ fn a_sum_over_a_cycle_of_differences_has_a_point_in_every_naming() {
         assert!(f.holds(&m), "{f}: {m:?}");
     });
 }
+
+/// Two copies of [`a_chain_and_a_choice_with_no_point`], the second over variables `n..2n`,
+/// each with its disjunction, joined by the disjunction
+/// `v[a] - v[n+a] >= k || v[n+a] - v[a] >= k`, which a swap of the copies maps onto itself, so
+/// that each atom shares its color with its copy. At `k <= 0` the joining disjunction always
+/// holds and settling drops it, which leaves two components, each untied, that a coloring
+/// renames alike; at `k > 0` it stays, and the whole is one tied component. Either way the
+/// formula has no point (each copy has none, checked by z3 on the integers and on the reals).
+fn two_chains_or(a: usize, k: i64) -> (usize, Disjunctive) {
+    let (n, (rows, ors)) = a_chain_and_a_choice_with_no_point();
+    let widen = |r: &Row, at: usize| {
+        let mut c = vec![0; 2 * n];
+        c[at..at + n].copy_from_slice(&r.c);
+        Row {
+            c,
+            k: r.k,
+            eq: r.eq,
+        }
+    };
+    let mut base: Vec<Row> = Vec::new();
+    let mut all_ors = Vec::new();
+    for at in [0, n] {
+        base.extend(rows.iter().map(|r| widen(r, at)));
+        all_ors.extend((ors.iter()).map(|ds| {
+            (ds.iter())
+                .map(|d| d.iter().map(|r| widen(r, at)).collect())
+                .collect::<Vec<Vec<Row>>>()
+        }));
+    }
+    let side = |p: usize, q: usize| {
+        let mut c = vec![0; 2 * n];
+        c[p] = 1;
+        c[q] = -1;
+        vec![ge(&c, -k)]
+    };
+    all_ors.push(vec![side(a, n + a), side(n + a, a)]);
+    (2 * n, (base, all_ors))
+}
+
+/// [`two_chains_or`], which has no point, is never decided `true` nor given a point, under
+/// random namings. Before FAIL-stage-kernels-shared-back, at `k == 0` the two copies, each
+/// untied and colored alike, got the same new names in `stage_kernels`, whose one map back to
+/// the old names put atoms of one copy into the other's projection: the projection then had
+/// points the base has not, each disjunct was marked proven, and `decide` answered `true`
+/// under about half the namings (17 to 23 of 40). The answers may still differ by a refusal
+/// at `k > 0`, where the copies form one tied component projected over its names as given
+/// (PROOF-tied-projection-refusal-names), so only a wrong answer is asserted against.
+#[test]
+fn two_copies_of_a_chain_with_no_point_are_never_decided_true() {
+    let (mut rng, seed) = Rng::fresh("two copies of a chain with no point");
+    for a in [0, 4, 5, 8] {
+        for k in [0, 1, 3] {
+            let (n, sys) = two_chains_or(a, k);
+            for _ in 0..10 {
+                let perm = shuffled(&mut rng, n);
+                let f = disjunctive_formula(&sys, &perm);
+                let decided = decide(&f);
+                assert!(
+                    !matches!(decided, Ok(true)),
+                    "seed {seed}, a {a}, k {k}: {f}"
+                );
+                let found = satisfiable(&f);
+                assert!(
+                    !matches!(found, Ok(Some(_))),
+                    "seed {seed}, a {a}, k {k}: {found:?} for {f}"
+                );
+            }
+        }
+    }
+}

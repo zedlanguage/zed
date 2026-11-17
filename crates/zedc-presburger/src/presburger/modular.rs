@@ -632,11 +632,13 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // a last run takes the previous choice by `Atom` order (as Codex did in round 7, R7-CODEX-2):
     // without it the 5,000-formula enumeration test refused 70 formulas instead of 11. Each of
     // the at most three runs is exact; only the last reads names, and only when the others refuse.
-    let mut tied = false;
+    // Not proved, and false where two rows or more tie: then the first two runs try two of the
+    // readings and the names choose which two (see step 3 of `solve_modular_whole`).
+    let mut tied = 0;
     let mut both_bounded = false;
     let found = match solve_modular_whole(f, want_model, false, false, &mut tied, &mut both_bounded)
     {
-        None if tied => {
+        None if tied > 0 => {
             solve_modular_whole(f, want_model, true, false, &mut tied, &mut both_bounded)
         }
         found => found,
@@ -651,13 +653,27 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 
 /// A point of `f` that the runs of [`solve_modular`] that read no names find, or `None`: where
 /// those runs give no answer, find `f` empty, or `f` lies outside their scope. The last run of
-/// [`solve_modular`], which takes a choice by `Atom` order, is not made, so whether a point is
-/// found does not turn on the names.
+/// [`solve_modular`], which takes a choice by `Atom` order, is not made; and where two remainder
+/// rows or more tie, no point is given, since the two runs then try only two of the readings and
+/// which two turns on the names (step 3 of `solve_modular_whole`). With one tied row the two
+/// runs try both of its readings, each exact, so whether a point is found does not turn on the
+/// names there either. How many rows tie is read from the rows' bounds and how many rows hold
+/// each class, which no renaming changes.
+///
+/// Complexity tradeoff: naive, try every reading of the t tied rows, 2^t runs, each exact, so
+/// a point is found whenever one reading has one; used, at most two runs, O(n log n) each for
+/// n terms, as before, and no point when t >= 2. Given up: a point that only a reading the two
+/// runs do not try would find; [`solve`] then answers by the Omega test alone (a refusal where
+/// it refused). Test: `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`.
 pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
-    let (mut tied, mut both_bounded) = (false, false);
-    match solve_modular_whole(f, true, false, false, &mut tied, &mut both_bounded) {
+    let (mut tied, mut both_bounded) = (0, false);
+    let found = solve_modular_whole(f, true, false, false, &mut tied, &mut both_bounded);
+    if tied >= 2 {
+        return None;
+    }
+    match found {
         Some(found) => found,
-        None if tied => {
+        None if tied == 1 => {
             solve_modular_whole(f, true, true, false, &mut tied, &mut both_bounded).flatten()
         }
         None => None,
@@ -669,7 +685,7 @@ fn solve_modular_whole(
     want_model: bool,
     flip_ties: bool,
     by_atom_order: bool,
-    tied: &mut bool,
+    tied: &mut usize,
     both_bounded: &mut bool,
 ) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
@@ -886,6 +902,21 @@ fn solve_modular_whole(
         }
     }
 
+    // The rows of two terms or more that hold each root, which tell the two unit terms of a
+    // remainder row apart below: step 4 needs every such row to come down to one variable
+    // `x_root`, which the rows share, while a remainder's other rows are its own bounds. A count
+    // per class does not depend on which member is the root, so not on the names. One pass over
+    // the rows, as step 4 makes.
+    let mut uses: HashMap<Atom, usize> = HashMap::new();
+    for c in &all_cons {
+        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
+        if lin.terms.len() >= 2 {
+            for a in lin.terms.keys() {
+                *uses.entry(a.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
     // Step 3: Recognize 3-term division remainder equalities:
     // `c_x * x_root + c_q * q_root + c_r * r_root + k == 0` where `|c_x| == 1`, `|c_r| == 1`,
     // `|c_q| = m >= 2`, and `r_root` is bounded to an interval of width `< m`.
@@ -915,14 +946,16 @@ fn solve_modular_whole(
         let (q_root, c_q) = non_unit[0];
         let m = c_q.abs();
         // Check which of `units[0]` or `units[1]` is bounded to width < m (`r_root`): its key is
-        // whether its bounds span exactly one period, then the width of its bounds.
-        let rem_key = |a: &Atom| -> Option<(bool, Int)> {
+        // whether its bounds span exactly one period, then the width of its bounds, then the
+        // fewer rows of two terms or more (`uses`).
+        let rem_key = |a: &Atom| -> Option<(bool, Int, std::cmp::Reverse<usize>)> {
             if let Some((Some(lo), Some(hi))) = root_bounds.get(a)
                 && lo <= hi
                 && (hi - lo) < m
             {
                 let width = hi - lo;
-                Some((&width + &Int::ONE == m, width))
+                let rows = std::cmp::Reverse(uses.get(a).copied().unwrap_or(0));
+                Some((&width + &Int::ONE == m, width, rows))
             } else {
                 None
             }
@@ -932,11 +965,18 @@ fn solve_modular_whole(
             (None, Some(_)) => (units[1], units[0]),
             // Both are bounded to less than a period, and either reading `x = m q + r` is exact.
             // The remainder is chosen by the formula, never by a name (I6.3): the term whose
-            // bounds span exactly one period, else the wider. On a tie the term whose coefficient
-            // has the sign of `c_q` is taken first, the other in the second run of
-            // `solve_modular`; a renaming can change these signs (the root of a class whose
-            // aliases have sign -1), so a tie is name-independent only through the second run.
-            // The last run of `solve_modular` (`by_atom_order`) takes the larger `Atom` as `r`.
+            // bounds span exactly one period, else the wider, else the one in fewer rows. On a
+            // tie the term whose coefficient has the sign of `c_q` is taken first, the other in
+            // the second run of `solve_modular`; a renaming can change these signs (the root of
+            // a class whose aliases have sign -1), and when both have one sign `units` is in
+            // name order, so a tie is name-independent only through the second run, which flips
+            // every tied row at once. Two runs therefore cover both readings of one tied row
+            // but only two of the four readings of two, and which two turns on the names
+            // (PROOF-solve-renaming-invariant: `u + v == m·q1 + k1`, `v + w == m·q2 + k2`, all
+            // three bounded to one period, had a point found unless `v` was named between `u`
+            // and `w`); so `tied` counts the tied rows, and [`point_by_structure`] gives no point
+            // where two or more tie. The last run of `solve_modular` (`by_atom_order`) takes the
+            // larger `Atom` as `r`.
             (Some(k0), Some(k1)) => {
                 *both_bounded = true;
                 let k = if by_atom_order {
@@ -948,7 +988,7 @@ fn solve_modular_whole(
                     std::cmp::Ordering::Greater => (units[0], units[1]),
                     std::cmp::Ordering::Less => (units[1], units[0]),
                     std::cmp::Ordering::Equal => {
-                        *tied = true;
+                        *tied += 1;
                         let first = (units[0].1.is_positive() == c_q.is_positive()) != flip_ties;
                         if first {
                             (units[0], units[1])

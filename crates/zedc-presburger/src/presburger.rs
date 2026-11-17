@@ -124,6 +124,8 @@ mod refusal;
 mod row_domains;
 mod row_sums;
 mod slack;
+#[cfg(test)]
+mod solve_names_tests;
 mod values;
 
 use forced::{Facts, Forced};
@@ -3013,8 +3015,8 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// alike; before, the eliminations followed the names, and a disjunct whose projection the
 /// solver refused under one naming was shown empty under another
 /// (PROOF-settle-marks-naming-free). Not proved where two atoms of the disjunction's component
-/// share a color: that component is projected over its names as given
-/// (PROOF-settle-tied-kernels-naming-free).
+/// share a color: that component is projected over its names as given, which keeps the
+/// base's points but may change a refusal ([`stage_kernels`], PROOF-tied-projection-refusal-names).
 /// On a chain of `n` stages with a disjunction at each, every test read the whole chain
 /// before, `n` solves of `n` rows (COMPLEXITY.md PROJECT-dead2-quadratic).
 ///
@@ -3208,17 +3210,31 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
 /// renamed atom sets of its disjunctions, sorted, are then the same values under both namings.
 /// (5) [`by_halves`] is a function of its rows and atom sets: it reads no names but those, and
 /// iterates no hash map whose order it depends on (its maps are looked up, and its sets are
-/// `BTreeSet`s), so it returns the same projections, which the old names are put back into.
+/// `BTreeSet`s), so it returns the same projections, which the old names of their own
+/// component are put back into. Two untied components may give their atoms the same new
+/// names (two copies of one chain, each untied, have one coloring), so the new names are one
+/// to one only within a component, and each is put back by its component's own map: one map
+/// for all of them put one copy's atoms into the other's projection, by the order of the
+/// names, and the projection then had points the base has not, so that a disjunct was marked
+/// proven and a formula with no point was decided `true` under about half its namings
+/// (FAIL-stage-kernels-shared-back, test
+/// `l01_38_omega_test::names::two_copies_of_a_chain_with_no_point_are_never_decided_true`).
 /// So each disjunction `D` of an untied component gets, under `π`, the image by `π` of its
 /// kernel, or `None` under both; [`solve`] answers a system and its renaming alike (its doc),
 /// so the tests of [`settle_as_sets`] that use a kernel answer alike. Step (5) for
 /// [`shadow`]'s own choices is checked by the test above and by the renamings of
 /// `l01_38_omega_test::names`, not proved line by line.
 ///
-/// Not proved for a tied component: there the atoms of one color keep their own names, which
-/// order the eliminations, so a disjunct whose projection the solver refuses under one naming
-/// and answers under another, and whose linked rows it refuses, is still marked by the names
-/// (plan row PROOF-settle-tied-kernels-naming-free). Renaming such a component canonically
+/// A tied component: there the atoms of one color keep their own names, which order the
+/// eliminations. Proved: its projection still has, on the atoms it keeps, exactly the base's
+/// integer points under every naming, since [`shadow`] eliminates an atom only where that is
+/// exact over the integers, so a test that the solver answers answers alike, and no mark
+/// claims a point the base lacks (a tied component's atoms keep their own names, so no map
+/// back moves them onto another component's atoms). Not proved: that the solver refuses a test of those rows under every naming
+/// or none; a disjunct it refuses under one naming and answers under another, and whose linked
+/// rows it refuses, is still marked by the names (plan row PROOF-tied-projection-refusal-names:
+/// two tied copies of a chain with no point, `false` under most namings and refused with
+/// `Growth` under 2 to 4 of 40, which step refuses not traced). Renaming such a component canonically
 /// needs a canonical labeling, exponential in the worst case; leaving it without a projection
 /// tests each disjunct against the whole group, O(k r) for k disjunctions over r rows, which
 /// made `decide_scales_over_a_sum_of_conditionals_tied_jointly` 19.2 times the instructions at
@@ -3324,10 +3340,18 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
             )
         })
         .collect();
-    let back: HashMap<Atom, Atom> = (atoms.iter())
-        .filter(|a| !tied[roots[place(a)]])
-        .map(|a| (rename(&to, a), a.clone()))
-        .collect();
+    // The old name of each new one, for each component apart: two components that are copies
+    // of one another, each untied, give their atoms the same colors and so the same new names,
+    // and one map for all of them would put one component's atoms into the other's projection
+    // (FAIL-stage-kernels-shared-back).
+    // Complexity tradeoff: naive version, one map of all components, one insert an atom,
+    // O(a) for a atoms, which is wrong where two components share new names. Used: one map
+    // for each component, found by its root, the same one insert an atom and one more lookup
+    // for each component, O(a) in all.
+    let mut back: HashMap<usize, HashMap<Atom, Atom>> = HashMap::new();
+    for a in atoms.iter().filter(|a| !tied[roots[place(a)]]) {
+        (back.entry(roots[place(a)]).or_default()).insert(rename(&to, a), a.clone());
+    }
     let renamed = |c: &Con, to_map: &dyn Fn(&Atom) -> Atom| Con {
         lin: Lin {
             terms: (c.lin.terms.iter())
@@ -3359,7 +3383,8 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
         let set = k.iter().map(|a| rename(&to, a)).collect();
         parts.entry(r).or_default().1.push((j, set));
     }
-    for (mut rows, ors) in parts.into_values() {
+    for (r, (mut rows, ors)) in parts {
+        let back = back.get(&r);
         rows.sort_unstable();
         let mut sets: Vec<&BTreeSet<Atom>> = ors.iter().map(|(_, s)| s).collect();
         sets.sort_unstable();
@@ -3374,7 +3399,8 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
         for (j, set) in &ors {
             let i = sets.binary_search(set).expect("a set of the component");
             kernels[*j] = made[i].as_ref().map(|k| {
-                let old = |a: &Atom| back.get(a).cloned().unwrap_or_else(|| a.clone());
+                let old =
+                    |a: &Atom| (back.and_then(|b| b.get(a))).map_or_else(|| a.clone(), Atom::clone);
                 Linked::of(k.iter().map(|c| renamed(c, &old)).collect())
             });
         }
@@ -20983,6 +21009,24 @@ impl Level {
         // touches: the disjunct with it has the points on those that it has with the base, so
         // each is projected with rows about its own size where the base is a chain or a tree,
         // not with its groups whole. The base has a point.
+        // The projections are made over the names as given, but their points are not chosen by
+        // the names (PROOF-project-parts-tied-kernels-naming-free): [`shadow`] eliminates an
+        // atom only where the elimination is exact over the integers, so each projection has,
+        // on the atoms it keeps, exactly the integer points of the base, under every naming;
+        // since the base has a point, [`by_halves`] gives each disjunct a projection, never
+        // `None`; and [`shift_free`] only moves the constants of atoms that are neither the
+        // disjunct's nor symbols. So a disjunct with its projection has a point, and has the same
+        // points on its atoms and the symbols, exactly where it has them with the base's groups,
+        // whatever the names. What the names can still change is which rows are kept (an atom
+        // whose elimination is not exact, or would add terms, stays, and which ones stay follows
+        // the halving order), and so whether [`solve`] refuses a question about them. Not proved:
+        // that such a refusal is the same under every naming; where it differs, the disjunct
+        // is asked again with the base's groups (`groups` below), which reads the base as it is
+        // and so answers alike under every naming, but whether that answer and the projection's
+        // agree on every hull is not proved either (row PROOF-tied-projection-refusal-names).
+        // Evidence: two copies of a random three-variable system joined by a disjunction that a
+        // swap of the copies maps onto itself, 180 systems under 20 random namings each, gave
+        // one answer each.
         let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
             ors.iter().map(|ds| vec![None; ds.len()]).collect();
         {
