@@ -881,7 +881,10 @@ fn list_types_print_in_brackets_and_read_back_in_every_position() {
         ("(xs: [int], k: int) -> int", "(xs: [int], k: int) -> int"),
         ("[(int) -> int]", "[int -> int]"),
         ("[T] for T in int | f64", "[T] for T in int | f64"),
-        ("([T] for T in int | f64, int)", "([T] for T in int | f64, int)"),
+        (
+            "([T] for T in int | f64, int)",
+            "([T] for T in int | f64, int)",
+        ),
         ("int ->? String", "int ->? String"),
     ] {
         let t = back(text);
