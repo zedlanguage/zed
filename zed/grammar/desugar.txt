@@ -120,13 +120,14 @@ MoreGen       : an inner generator, nested in the previous one
 Generator     : binds the InPattern to the levels of ⟦D⟧: `k in D` its keys, `k -> v in D` its keys with v = get(⟦D⟧, k), deeper levels nested
 Loop          : gen(init, step, guard): init the window of boundary frames `x[-1]` … `x[-k]`, k the maximum distance the body reads back, holding only the keys a read reaches, a slot no read reaches holding no value (sec:generations), step the λ from a window to the window shifted by the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
 Pattern       : the pattern of its alternative
+OrPat         : the alternatives tried left to right, the first that matches binding the names, which every alternative binds; the same match, and the same names, as the arm written out once per alternative (step L2.7b); it is matched where it stands, with no copy of the arm per alternative, since the parts of a tuple or payload match apart, so the first alternative that matches at each or-pattern gives the first written-out arm that matches
 RangePat      : a Bind x with the guard a <= x && x < b
 WildPat       : the kernel wildcard pattern
 IsPat         : a Bind n with the guard n is T
 CtorPat       : a Bind with S's type test and the guards of its field patterns
 TuplePat      : the kernel tuple pattern; `(p,)` matches the one-tuple
 NamePat       : the kernel Bind pattern
-AtomPattern   : the kernel atom pattern, payload patterns by position, or by name in field order; `#e()` matches the atom whose payload is the empty tuple, and `#e` the bare atom only
+AtomPattern   : the kernel atom pattern, payload patterns by position, or by name in field order; `#e()` matches the atom whose payload is the empty tuple, and `#e` the atom with any payload or none, as in `else #bug -> d` (sec:failure); the type `#e` is the bare atom only (`x is #e`)
 FieldPat      : the pattern of a named payload or struct field; `name:` alone is `name: name`
 SignedLit     : a literal pattern
 InPattern     : the binders of a generator's levels, outermost first

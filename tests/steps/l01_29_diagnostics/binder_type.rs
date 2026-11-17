@@ -278,7 +278,7 @@ const SITES: &[(&str, Site)] = &[
     ("Loop", Site::Later("g = loop int { x' = x + 1; };\n")),
     (
         "IsPat",
-        Site::Later("f(positional v) = match v { int is int -> 1, _ -> 0 };\n"),
+        Site::Later("f(positional v) = match v { (int is int) -> 1, _ -> 0 };\n"),
     ),
     (
         "CtorPat",

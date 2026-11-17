@@ -382,7 +382,7 @@ impl Builder<'_, '_> {
     }
 
     /// The pattern of node `n`, of a rule `AtomPattern`, `CtorPat`, `NamePat`, `WildPat`,
-    /// `TuplePat`, `IsPat` or `SignedLit`.
+    /// `TuplePat`, `OrPat`, `RangePat`, `IsPat` or `SignedLit`.
     pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
         let span = self.span(n);
@@ -392,6 +392,10 @@ impl Builder<'_, '_> {
             "TuplePat" => {
                 let items = node.kids.iter().map(|&k| self.pattern(k));
                 return Ok(Pattern::Tuple(items.collect::<Result<_, _>>()?, span));
+            }
+            "OrPat" => {
+                let alts = node.kids.iter().map(|&k| self.pattern(k));
+                return Ok(Pattern::Or(alts.collect::<Result<_, _>>()?, span));
             }
             "IsPat" => {
                 let (&ty, name) = node

@@ -280,7 +280,7 @@ fn pattern_kids(p: &mut Pattern, out: &mut Vec<Pattern>) {
         Pattern::Struct { fields, .. } => {
             out.extend(mem::take(fields).into_iter().filter_map(|(_, p)| p));
         }
-        Pattern::Tuple(items, _) => out.append(items),
+        Pattern::Tuple(items, _) | Pattern::Or(items, _) => out.append(items),
         // A type and an expression drop by their own work lists, and a range pattern holds
         // two literal patterns.
         Pattern::Name(..)

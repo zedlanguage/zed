@@ -153,15 +153,16 @@ fn every_bare_key_of_the_type_is_parenthesized_in_the_repair() {
     );
 }
 
-/// The forms P222 keeps: a union after `->`, a union after `is`, a pattern `is T ->` in a
-/// `match`, and a parenthesized key.
+/// The forms P222 keeps: a union after `->`, a union after `is`, a pattern `(is T) ->` in a
+/// `match` (in parentheses since L2.7b; bare, it is refused as a bare pattern, in
+/// l02_07b_or_patterns), and a parenthesized key.
 #[test]
 fn a_union_where_the_grammar_takes_one_parses() {
     accepted("f(x: int -> int | #a) = 0;\n");
     accepted("f(x: (int | #a) -> int | #b) = 0;\n");
     accepted("f(x: (int | #a) .. (int | #a | #b) -> int) = 0;\n");
     accepted("f(x) = x is int | #a;\n");
-    accepted("f(x) = match x { is int | bool -> 1, _ -> 2 };\n");
+    accepted("f(x) = match x { (is int | bool) -> 1, _ -> 2 };\n");
 }
 
 /// `n` definitions, then a bare key.

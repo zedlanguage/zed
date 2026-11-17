@@ -32,7 +32,7 @@ pub(super) fn pass(p: &Parsed) {
     assert!(resolve(&stmts).is_err());
 }
 
-/// `name(c) = match c { 0 -> "c0", k where k == 1 -> "c1", s is String -> …, … };`, `n` arms,
+/// `name(c) = match c { 0 -> "c0", k where k == 1 -> "c1", (s is String) -> …, … };`, `n` arms,
 /// in turn a literal, a guard and a type pattern. At 1000 against 8000, a scan of the arms left
 /// at each arm passed (20 times the work); at 4000 it fails (37 times).
 pub(super) fn arms(n: usize) -> String {
@@ -40,7 +40,7 @@ pub(super) fn arms(n: usize) -> String {
         .map(|i| match i % 3 {
             0 => format!("{i} -> \"c{i}\""),
             1 => format!("k where k == {i} -> \"c{i}\""),
-            _ => format!("s is String -> s ++ \"{i}\""),
+            _ => format!("(s is String) -> s ++ \"{i}\""),
         })
         .collect();
     format!("name(c) = match c {{ {} }};\n", arms.join(", "))
@@ -69,13 +69,13 @@ pub(super) fn one_import(n: usize) -> String {
     format!("import lib.u.{{{}}};\n", names.join(", "))
 }
 
-/// `f(t) = match t { #node(left: #node(left: … #leaf …, right: n is int), right: _) -> 0 };`,
+/// `f(t) = match t { #node(left: #node(left: … #leaf …, right: (n is int)), right: _) -> 0 };`,
 /// a pattern nested `n` deep.
 pub(super) fn deep(n: usize) -> String {
     format!(
         "f(t) = match t {{ {}#leaf{} -> 0 }};\n",
         "#node(left: ".repeat(n),
-        ", right: n is int)".repeat(n)
+        ", right: (n is int))".repeat(n)
     )
 }
 

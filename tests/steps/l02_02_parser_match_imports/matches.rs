@@ -1,5 +1,5 @@
 //! `match`: arms as display entries, `pattern -> body` with an optional `where` guard, and the
-//! patterns of L2.1 together with type patterns `n is T` and literal patterns.
+//! patterns of L2.1 together with type patterns `(n is T)` and literal patterns.
 
 use super::check;
 
@@ -11,7 +11,7 @@ fn a_tree_sum_matches_on_atoms_and_structs() {
             "(def size (t) = (match t (-> #leaf 0) (-> Node(l:, r:) (+ (+ 1 (call size l)) (call size r)))))",
         ),
         (
-            "describe(v) = match v {\n  n is int -> \"int\",\n  s is String -> s,\n  _ -> \"other\",\n};",
+            "describe(v) = match v {\n  (n is int) -> \"int\",\n  (s is String) -> s,\n  _ -> \"other\",\n};",
             "(def describe (v) = (match v (-> (is n int) (str \"int\")) (-> (is s String) s) (-> _ (str \"other\"))))",
         ),
     ]);
@@ -40,11 +40,11 @@ fn guards_and_literals() {
 fn nested_and_typed_patterns() {
     check(&[
         (
-            "f(r) = match r { #ok(Pair(a: (x, _), b: n is int | f64)) -> x, #err(m:) -> 0 };",
+            "f(r) = match r { #ok(Pair(a: (x, _), b: (n is int | f64))) -> x, #err(m:) -> 0 };",
             "(def f (r) = (match r (-> #ok(Pair(a: (x, _), b: (is n (| int f64)))) x) (-> #err(m:) 0)))",
         ),
         (
-            "g(v) = match v { is Point -> 1, (a, b) -> a + b };",
+            "g(v) = match v { (is Point) -> 1, (a, b) -> a + b };",
             "(def g (v) = (match v (-> (is Point) 1) (-> (a, b) (+ a b))))",
         ),
         (

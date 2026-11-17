@@ -207,7 +207,7 @@ fn forms() -> &'static [Form] {
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
             | "RankArrayType" => Form::Type,
             "AtomPattern" | "CtorPat" | "NamePat" | "WildPat" | "TuplePat" | "IsPat"
-            | "SignedLit" | "RangePat" => Form::Pattern,
+            | "SignedLit" | "RangePat" | "OrPat" => Form::Pattern,
             "Item" => Form::Item,
             _ => Form::Part,
         };

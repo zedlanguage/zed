@@ -243,7 +243,8 @@ Expr ::: { x, y } ::: ({ x , y })
 Expr ::: { x: , y } ::: ERROR
 Expr ::: match t { Node(l:, v: _, r: x) -> x } ::: (match t { ((Node ( (l :) , (v : _) , (r : x) )) -> x) })
 Expr ::: match t { Node(r:) -> r, #leaf -> 0 } ::: (match t { ((Node ( (r :) )) -> r) , (#leaf -> 0) })
-Expr ::: match f { #syntaxError(pos: 0..<10) -> 1, #add(a, b) -> 2 } ::: (match f { ((#syntaxError ( (pos : (0 ..< 10)) )) -> 1) , ((#add ( a , b )) -> 2) })
+Expr ::: match f { #syntaxError(pos: (0..<10)) -> 1, #add(a, b) -> 2 } ::: (match f { ((#syntaxError ( (pos : (( 0 ..< 10 ))) )) -> 1) , ((#add ( a , b )) -> 2) })
+Expr ::: match f { #syntaxError(pos: 0..<10) -> 1, #add(a, b) -> 2 } ::: ERROR
 Expr ::: match t { Node(l, v, r) -> v } ::: ERROR
 Expr ::: match t { #add(a:, b) -> 1 } ::: ERROR
 Item ::: asc = 1; ::: ERROR
@@ -313,13 +314,34 @@ Expr ::: m into ((a && b || c else false) -> v) ::: (m (into ( ((( (((a && b) ||
 Expr ::: m into ((a == b else false) -> v) ::: (m (into ( ((( ((a == b) (else false)) )) -> v) )))
 Expr ::: m into (a && (b || c else false) -> v) ::: (m (into ( ((a && (( ((b || c) (else false)) ))) -> v) )))
 Expr ::: m into ((a == (b else c)) -> v) ::: (m (into ( ((( (a == (( (b (else c)) ))) )) -> v) )))
-Expr ::: match v { p is {name: String} -> p.name, is int[0..<10] -> 1, _ -> 2 } ::: (match v { ((p is ({ name : String })) -> (p (. name))) , ((is (int ([ (0 ..< 10) ]))) -> 1) , (_ -> 2) })
-Expr ::: match v { is #red | #blue -> 1, n is (int, String) -> 2, _ -> 3 } ::: (match v { ((is (#red | #blue)) -> 1) , ((n is (( int , String ))) -> 2) , (_ -> 3) })
-Expr ::: match v { p is {name: _, age: int} where p.age > 0 -> p, _ -> v } ::: (match v { ((p is ({ name : _ , age : int })) where ((p (. age)) > 0) -> p) , (_ -> v) })
-Expr ::: match v { Point(x: n is int, y:) -> n + y, _ -> 0 } ::: (match v { ((Point ( (x : (n is int)) , (y :) )) -> (n + y)) , (_ -> 0) })
-Expr ::: match v { is (int -> int) -> 1, _ -> 2 } ::: (match v { ((is (( (int -> int) ))) -> 1) , (_ -> 2) })
-Expr ::: match v { _ is int -> 1, _ -> 2 } ::: ERROR
-Expr ::: match v { is int -> int -> 1, _ -> 2 } ::: (match v { ((is int) -> (int -> 1)) , (_ -> 2) })
+Expr ::: match v { (p is {name: String}) -> p.name, (is int[0..<10]) -> 1, _ -> 2 } ::: (match v { ((( p is ({ name : String }) )) -> (p (. name))) , ((( is (int ([ (0 ..< 10) ])) )) -> 1) , (_ -> 2) })
+Expr ::: match v { (is #red | #blue) -> 1, (n is (int, String)) -> 2, _ -> 3 } ::: (match v { ((( is (#red | #blue) )) -> 1) , ((( n is (( int , String )) )) -> 2) , (_ -> 3) })
+Expr ::: match v { (p is {name: _, age: int}) where p.age > 0 -> p, _ -> v } ::: (match v { ((( p is ({ name : _ , age : int }) )) where ((p (. age)) > 0) -> p) , (_ -> v) })
+Expr ::: match v { Point(x: (n is int), y:) -> n + y, _ -> 0 } ::: (match v { ((Point ( (x : (( n is int ))) , (y :) )) -> (n + y)) , (_ -> 0) })
+Expr ::: match v { (is (int -> int)) -> 1, _ -> 2 } ::: (match v { ((( is (( (int -> int) )) )) -> 1) , (_ -> 2) })
+Expr ::: match v { (_ is int) -> 1, _ -> 2 } ::: ERROR
+Expr ::: match v { (is int -> int) -> 1, _ -> 2 } ::: ERROR
+# a pattern built with an operator (or-pattern, range, is-pattern) stands in parentheses that hold it alone (author P346, step L2.7b)
+Expr ::: match v { p is {name: String} -> p.name, _ -> 2 } ::: ERROR
+Expr ::: match v { is int -> 1, _ -> 2 } ::: ERROR
+Expr ::: match v { n is int -> n, _ -> 2 } ::: ERROR
+Expr ::: match v { 0..=9 -> #digit, _ -> #other } ::: ERROR
+Expr ::: match v { Point(x: n is int, y:) -> n + y, _ -> 0 } ::: ERROR
+Expr ::: match c { #red | #green -> 1, #blue -> 2 } ::: ERROR
+Expr ::: match c { (#red | #green) -> 1, #blue -> 2 } ::: (match c { ((( #red | #green )) -> 1) , (#blue -> 2) })
+Expr ::: match v { (0..=9) -> #digit, _ -> #other } ::: (match v { ((( 0 ..= 9 )) -> #digit) , (_ -> #other) })
+Expr ::: match v { (n is int) where n > 0 -> n, _ -> 0 } ::: (match v { ((( n is int )) where (n > 0) -> n) , (_ -> 0) })
+Expr ::: match t { ((#a | #b), x) -> x } ::: (match t { ((( (( #a | #b )) , x )) -> x) })
+Expr ::: match t { (#a | #b, x) -> x } ::: ERROR
+Expr ::: match v { #p(0..=9) -> 1, _ -> 0 } ::: (match v { ((#p (( 0 ..= 9 ))) -> 1) , (_ -> 0) })
+Expr ::: match v { #p(0..=9, y) -> 1, _ -> 0 } ::: ERROR
+Expr ::: match v { #p((0..=9), y) -> 1, _ -> 0 } ::: (match v { ((#p ( (( 0 ..= 9 )) , y )) -> 1) , (_ -> 0) })
+Expr ::: match v { Box(v: (#a | #b)) -> 2, _ -> 0 } ::: (match v { ((Box ( (v : (( #a | #b ))) )) -> 2) , (_ -> 0) })
+Expr ::: match v { Box(v: #a | #b) -> 2, _ -> 0 } ::: ERROR
+Expr ::: match v { ((n is int) | (n is f64)) -> n, _ -> 0 } ::: (match v { ((( (( n is int )) | (( n is f64 )) )) -> n) , (_ -> 0) })
+Expr ::: match v { (n is int | #none) -> 0, _ -> 1 } ::: (match v { ((( n is (int | #none) )) -> 0) , (_ -> 1) })
+Expr ::: match v { ((#a | (#b | #c)) | #d) -> 1, _ -> 0 } ::: (match v { ((( (( #a | (( #b | #c )) )) | #d )) -> 1) , (_ -> 0) })
+Expr ::: x else (#a | #b) -> d ::: ERROR
 Expr ::: if v is {name: _} { 1 } else { 2 } ::: (if (v is ({ name : _ })) ({ 1 }) else ({ 2 }))
 Expr ::: if (v is {name: _}) { 1 } else { 2 } ::: (if (( (v is ({ name : _ })) )) ({ 1 }) else ({ 2 }))
 Type ::: int[0..<_] -> T ::: ((int ([ (0 ..< _) ])) -> T)

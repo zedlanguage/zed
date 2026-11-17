@@ -82,9 +82,9 @@ rows! {
     FusedNotMet => "Plan assertion `@fused` not met",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
-    // No diagnostic uses the next three rows yet: plan row OR-PAT emits them.
     BareOperatorPattern => "Pattern built with an operator, written bare",
     OrPatternNamesDiffer => "Or-pattern alternatives bind different names",
+    // No diagnostic uses this row yet: plan row OR-PAT-check emits it.
     GuardedOrPatternOverlap => "Guarded or-pattern with overlapping alternatives",
     FoldWithNone => "`.fold` on a type that has none",
     MapOutsideValues => "`.map` at a parameter outside the value positions",

@@ -225,21 +225,23 @@ MoreGen       = ',' Generator                                                   
 Generator     = InPattern 'in' head(Expr12)                                        L3
 Loop          = 'loop' Name? Block                                                 L6
 
-Pattern       = ~RangePat                                                          L3
+Pattern       = ~OrPat                                                             L2
+              | ~RangePat                                                          L3
+              | ~IsPat                                                             L2
               | ~AtomPattern                                                       L1
               | ~WildPat                                                           L2
-              | ~IsPat                                                             L2
               | ~CtorPat                                                           L2
               | ~TuplePat                                                          L2
               | ~SignedLit                                                         L2
               | ~NamePat                                                           L2
-RangePat      = SignedLit ('..<' SignedLit | '..=' SignedLit | '..')               L3
+OrPat         = '(' Pattern ('|' Pattern)+ ')'                                     L2
+RangePat      = '(' SignedLit ('..<' SignedLit | '..=' SignedLit | '..') ')'       L3
+IsPat         = '(' Name? 'is' TypeUnion ')'                                       L2
 WildPat       = WILD                                                               L2
-IsPat         = Name? 'is' TypeUnion                                               L2
 CtorPat       = Name '(' FieldPat % ',' ','? ')'                                   L2
 TuplePat      = '(' Pattern ((',' Pattern)+ ','? | ',') ')'                        L2
 NamePat       = Name                                                               L2
-AtomPattern   = ATOM ('(' ((FieldPat % ',' | Pattern % ',') ','?)? ')')?           L1
+AtomPattern   = ATOM (OrPat | RangePat | IsPat | '(' ((FieldPat % ',' | Pattern % ',') ','?)? ')')?   L1
 FieldPat      = Name ':' Pattern?                                                  L1
 SignedLit     = '-'? (INT | FLOAT | RAT) | STRING | 'true' | 'false'               L2
 

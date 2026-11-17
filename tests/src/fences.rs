@@ -121,12 +121,11 @@ pub fn all() -> Vec<DocFence> {
 
 /// The fences that this repository's `zed/grammar/syntax.peg` does not parse at any ring, each
 /// with the plan row that builds its form. The `sync` tool writes `syntax.peg` and `desugar.txt`
-/// whole, and the spec's copies (8ee6d35, 676f007) also carry those forms, so both are held back
-/// until the rows build them: the parenthesized range pattern `(0..=9)` (OR-PAT). The rings
-/// test (step L1.8) checks that each still fails to parse, so an entry fails that test once its
-/// form parses, and none outlives it.
-pub const HELD_GRAMMAR_UNPARSED: &[(&str, &str)] =
-    &[("EXAMPLES.md [11. Unions, atoms, match] 5", "OR-PAT")];
+/// whole, so a fence whose form the spec's grammar has and no row has built yet is held here
+/// until its row builds it. None is held now: OR-PAT built the last, the parenthesized range
+/// pattern `(0..=9)`. The rings test (step L1.8) checks that each still fails to parse, so an
+/// entry fails that test once its form parses, and none outlives it.
+pub const HELD_GRAMMAR_UNPARSED: &[(&str, &str)] = &[];
 
 /// Every fence of [`all`] that this repository's grammar parses: all but those of
 /// [`HELD_GRAMMAR_UNPARSED`].

@@ -412,8 +412,9 @@ enum Job<'a> {
     RecordType(&'a [(String, Type)]),
     /// A pattern.
     Pattern(&'a Pattern),
-    /// Patterns, with `, ` between.
-    Patterns(&'a [Pattern]),
+    /// Patterns, with the separator between: `, ` in a tuple or a payload, ` | ` in an
+    /// or-pattern.
+    Patterns(&'a [Pattern], &'static str),
     /// Fields of a pattern, `f: p` or `f:`, with `, ` between.
     FieldPats(&'a [(String, Option<Pattern>)]),
     /// The arms of a `match` whose `match` is at indentation `ind`, each on a line of its own
@@ -820,10 +821,10 @@ impl<'a> Formatter<'a> {
                 }
             }
             Job::Pattern(p) => self.pattern(p, stack),
-            Job::Patterns(ps) => {
+            Job::Patterns(ps, sep) => {
                 if let Some((p, rest)) = ps.split_first() {
                     if !rest.is_empty() {
-                        then![stack; put(", "), Job::Patterns(rest)];
+                        then![stack; put(sep), Job::Patterns(rest, sep)];
                     }
                     self.pattern(p, stack);
                 }
@@ -904,7 +905,10 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// The pattern `p` as written: a type pattern's type is at the level of a union.
+    /// The pattern `p` as written: a type pattern's type is at the level of a union, and a
+    /// pattern built with an operator, `(p | q)`, `(0..=9)` or `(n is T)`, stands in
+    /// parentheses that hold it alone (DESIGN.md step L2.7b), which as the one payload of an
+    /// atom are the payload's own: `#p(0..=9)`, not `#p((0..=9))`.
     fn pattern(&mut self, p: &'a Pattern, stack: &mut Vec<Job<'a>>) {
         match p {
             Pattern::Name(n, _) => self.put(n.as_str()),
@@ -913,7 +917,11 @@ impl<'a> Formatter<'a> {
                 self.put("(");
                 // `(p,)` is the one-tuple pattern; `(p)` is no pattern.
                 let close = if items.len() == 1 { ",)" } else { ")" };
-                then![stack; Job::Patterns(items), put(close)];
+                then![stack; Job::Patterns(items, ", "), put(close)];
+            }
+            Pattern::Or(alts, _) => {
+                self.put("(");
+                then![stack; Job::Patterns(alts, " | "), put(")")];
             }
             Pattern::Struct { name, fields, .. } => {
                 self.put(format!("{name}("));
@@ -931,23 +939,35 @@ impl<'a> Formatter<'a> {
                         self.put("(");
                         then![stack; Job::FieldPats(fields), put(")")];
                     }
+                    // The one payload in parentheses of its own shares them.
+                    Some(items)
+                        if matches!(
+                            items[..],
+                            [Pattern::Or(..) | Pattern::Range { .. } | Pattern::Is { .. }]
+                        ) =>
+                    {
+                        self.pattern(&items[0], stack);
+                    }
                     Some(items) if !items.is_empty() => {
                         self.put("(");
-                        then![stack; Job::Patterns(items), put(")")];
+                        then![stack; Job::Patterns(items, ", "), put(")")];
                     }
                     Some(_) => self.put("()"),
                     None => {}
                 }
             }
             Pattern::Is { name, ty, .. } => {
+                self.put("(");
                 if let Some(n) = name {
                     self.put(format!("{n} "));
                 }
                 self.put("is ");
-                stack.push(Job::Ty { t: ty, min: 2 });
+                then![stack; Job::Ty { t: ty, min: 2 }, put(")")];
             }
             Pattern::Lit(e) => self.raw(e, 0, stack),
             Pattern::Range { from, to, .. } => {
+                self.put("(");
+                stack.push(put(")"));
                 stack.extend(to.bound().map(|b| Job::Pattern(b)));
                 then![stack; Job::Pattern(from), put(to.op())];
             }

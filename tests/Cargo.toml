@@ -187,6 +187,9 @@ path = "steps/l02_03_name_resolution/mod.rs"
 name = "l02_06c_infix_calls"
 path = "steps/l02_06c_infix_calls/mod.rs"
 [[test]]
+name = "l02_07b_or_patterns"
+path = "steps/l02_07b_or_patterns/mod.rs"
+[[test]]
 name = "l02_08_import_pinning"
 path = "steps/l02_08_import_pinning/mod.rs"
 [[test]]

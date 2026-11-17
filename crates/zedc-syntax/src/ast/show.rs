@@ -755,6 +755,13 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
             }
             return out.push(Text(")"));
         }
+        Pattern::Or(alts, _) => {
+            out.push(Text("(|"));
+            for a in alts {
+                out.extend([Text(" "), Show::Pattern(a)]);
+            }
+            return out.push(Text(")"));
+        }
     };
     out.push(Text("("));
     let mut sep = "";

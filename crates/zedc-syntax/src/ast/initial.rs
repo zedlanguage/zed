@@ -146,6 +146,9 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut impl Extend<&'e str>) {
                 }
             }
             Pattern::Tuple(items, _) => stack.extend(items),
+            // Every alternative binds the same names (DESIGN.md step L2.7b), so the first
+            // gives them; a pattern whose alternatives differ is refused by name resolution.
+            Pattern::Or(alts, _) => stack.extend(alts.first()),
             Pattern::Wild(_) | Pattern::Lit(_) | Pattern::Range { .. } => {}
         }
     }

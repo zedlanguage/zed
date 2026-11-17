@@ -22,10 +22,10 @@ fn arms_go_one_to_a_line() {
 #[test]
 fn nested_patterns_blocks_and_matches_are_indented() {
     check(
-        "f(r){d=match r{#ok(Pair(a:(x,_),b:n is int|f64))->{y=x;y*2},is Point->1,\
+        "f(r){d=match r{#ok(Pair(a:(x,_),b:(n is int|f64)))->{y=x;y*2},(is Point)->1,\
          \"s\"->-2.5,-1->(match n{_->0})};d}\n",
-        "f(r) {\n  d = match r {\n    #ok(Pair(a: (x, _), b: n is int | f64)) -> {\n      y = x;\n      y * 2\n    },\n    \
-         is Point -> 1,\n    \"s\" -> -2.5,\n    -1 -> match n {\n      _ -> 0,\n    },\n  };\n  d\n}\n",
+        "f(r) {\n  d = match r {\n    #ok(Pair(a: (x, _), b: (n is int | f64))) -> {\n      y = x;\n      y * 2\n    },\n    \
+         (is Point) -> 1,\n    \"s\" -> -2.5,\n    -1 -> match n {\n      _ -> 0,\n    },\n  };\n  d\n}\n",
     );
 }
 
@@ -33,9 +33,9 @@ fn nested_patterns_blocks_and_matches_are_indented() {
 fn a_match_as_an_operand() {
     check(
         "k=1+match x{_->2}*3;\nn=match(if c{a}else{b}){_->0};\n\
-         g=r else #ok(v:n is int)->n;\nh=x->match x{_->({a:1}),_->({a:1}).a};\n",
+         g=r else #ok(v:(n is int))->n;\nh=x->match x{_->({a:1}),_->({a:1}).a};\n",
         "k = 1 + match x {\n  _ -> 2,\n} * 3;\nn = match if c { a } else { b } {\n  _ -> 0,\n};\n\
-         g = r else #ok(v: n is int) -> n;\nh = x -> match x {\n  _ -> ({ a: 1 }),\n  _ -> ({ a: 1 }.a),\n};\n",
+         g = r else #ok(v: (n is int)) -> n;\nh = x -> match x {\n  _ -> ({ a: 1 }),\n  _ -> ({ a: 1 }.a),\n};\n",
     );
 }
 

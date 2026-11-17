@@ -35,10 +35,10 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(r) = r else #ok(v: n is int) -> 0;",
+            "f(r) = r else #ok(v: (n is int)) -> 0;",
             &[concat!(
-                zed_tests::not_yet!("a type pattern `n is T`"),
-                " [n is int]"
+                zed_tests::not_yet!("a type pattern `(n is T)`"),
+                " [(n is int)]"
             )],
         ),
         (

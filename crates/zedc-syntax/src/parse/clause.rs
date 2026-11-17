@@ -342,6 +342,8 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| reserved(t, far))
         .or_else(|| mutable_decl(t, far))
         .or_else(|| carry_word(t, far))
+        // Before `bare_key`, which would read `#a | #b -> 1` in an arm as a bare key.
+        .or_else(|| bare_pattern(t, far))
         .or_else(|| bare_key(t, far))
         .or_else(|| push_or_less(t, far))
         .or_else(|| push_target(t, far))
@@ -1471,6 +1473,224 @@ fn bare_key(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         span,
         notes,
     })
+}
+
+/// The [`Clause`] for a pattern built with an operator, an or-pattern `p | q`, a range `a..=b`,
+/// `a..<b` or `a..`, or an `is`-pattern `n is T`, written bare in a `match` arm or an `else`
+/// tail (row "Pattern built with an operator, written bare"; DESIGN.md step L2.7b): such a
+/// pattern stands in parentheses that hold it alone, so the parse stops at its operator, or,
+/// where it opens a group, `(#a | #b, x)` or `#p(0..=9, y)`, at the `,` after it. The pattern
+/// runs from the `(`, `,` or `:` before its operator to the `,`, `)`, `->` or `where` after it,
+/// at its depth; the arm, from the `{`, `,` or `else` before it to the `->` after it at the
+/// arm's depth, and on to the `,`, `;` or closing bracket after its value. In an `else` tail
+/// whose payload parses as an expression, `r else #ok(v: n is int) -> 0`, the parse stops at
+/// the `->` instead, and the operator is where a parse of the payload as a pattern stops. The
+/// repair is the arm with the pattern in parentheses, and the clause is given only when the parse
+/// gets past it. Each scan runs over the arm, its `match` head and the arms before it, and the
+/// repair is one or two more parses: linear in the unit, on the error path only.
+fn bare_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let n = t.tokens.len();
+    let op = |i: usize| matches!(t.t(i), "|" | "..=" | "..<" | ".." | "is");
+    // The operator: the token the parse stopped at, or, at a `,`, the first operator before it
+    // in its group, at its depth.
+    let at = if op(far) {
+        far
+    } else if t.t(far) == "," {
+        let (mut i, mut d, mut found) = (far, 0, None);
+        while i > 0 {
+            let p = t.t(i - 1);
+            if d == 0 && matches!(p, "," | ":") || d - depth(p) < 0 {
+                break;
+            }
+            d -= depth(p);
+            i -= 1;
+            if d == 0 && op(i) {
+                found = Some(i);
+            }
+        }
+        found?
+    } else if t.t(far) == "->" {
+        // `r else #ok(v: n is int) -> 0`: the payload parses as an expression, so the parse
+        // stops at the `->` after it. The operator is the first in the payload, which runs
+        // back from the `->` to its `else`, at the `->`'s depth.
+        let (mut i, mut d) = (far, 0);
+        while i > 0 && !(d == 0 && t.t(i - 1) == "else") {
+            let p = t.t(i - 1);
+            if d == 0 && matches!(p, "," | ";" | "=" | "->") || d - depth(p) < 0 {
+                return None;
+            }
+            d -= depth(p);
+            i -= 1;
+        }
+        if i == 0 {
+            return None;
+        }
+        // The payload's parse as a pattern stops at the operator: one more parse of it.
+        let mut p = Parser::new(t.g, t.ring, t.toks);
+        p.rule_node(t.g.rule("Pattern")?, i, false);
+        if p.far >= far || !op(p.far) {
+            return None;
+        }
+        p.far
+    } else {
+        return None;
+    };
+    // The pattern: back from the operator to its first token, on to its last. A range or an
+    // `is`-pattern written bare as an alternative, `(#a | n is int)`, stops at the `|` before
+    // it, and a range at the `|` after it; an `is`-pattern's type takes the `|` after it.
+    let bounds = |at: usize| {
+        let bar = t.t(at) != "|";
+        let (mut first, mut d) = (at, 0);
+        while first > 0 {
+            let p = t.t(first - 1);
+            if d == 0 && (matches!(p, "," | ":" | "->" | "else") || bar && p == "|")
+                || d - depth(p) < 0
+            {
+                break;
+            }
+            d -= depth(p);
+            first -= 1;
+        }
+        let range = bar && t.t(at) != "is";
+        let (mut after, mut d) = (at, 0);
+        while after < n {
+            let x = t.t(after);
+            if d == 0 && (matches!(x, "," | "->" | "where" | ";") || range && x == "|")
+                || d + depth(x) < 0
+            {
+                break;
+            }
+            d += depth(x);
+            after += 1;
+        }
+        (first, after)
+    };
+    let (mut at, (mut first, mut after)) = (at, bounds(at));
+    if t.t(at) == "|" {
+        // `(0..=9 | #a)`: the parse stops at the `|` after a range it read as one; the range
+        // before it, at its depth, is the pattern written bare.
+        let mut d = 0;
+        if let Some(j) = (first..at).find(|&j| {
+            let hit = d == 0 && op(j) && t.t(j) != "|";
+            d += depth(t.t(j));
+            hit
+        }) {
+            at = j;
+            (first, after) = bounds(j);
+        }
+    }
+    let last = after.checked_sub(1)?;
+    if first == at && t.t(at) != "is" || last == at && t.t(at) != ".." {
+        // An operator with no operand before or after it is no pattern: the plain syntax error
+        // says what is missing. The name before `is` and the bound after `..` may be left out.
+        return None;
+    }
+    // The arm's `->`: the first after the pattern at the lowest depth reached, outside every
+    // group the pattern stands in.
+    let (mut arrow, mut d, mut low) = (after, 0, 0);
+    while arrow < n && !(d == low && t.t(arrow) == "->") {
+        let x = t.t(arrow);
+        if d == low && matches!(x, ";" | "=") {
+            return None;
+        }
+        d += depth(x);
+        low = low.min(d);
+        arrow += 1;
+    }
+    if arrow >= n {
+        return None;
+    }
+    // The arm: back from its `->` to its first token, which follows `{`, `,` or `else`.
+    let (mut start, mut d) = (arrow, 0);
+    while start > 0 {
+        let p = t.t(start - 1);
+        if d == 0 && matches!(p, "," | "else" | ";" | "=") || d - depth(p) < 0 {
+            break;
+        }
+        d -= depth(p);
+        start -= 1;
+    }
+    let before = start.checked_sub(1)?;
+    if !arm_head(t, before) {
+        return None;
+    }
+    // On from the `->` to the end of the arm's value.
+    let (mut end, mut d) = (arrow, 0);
+    while end < n {
+        let x = t.t(end);
+        if d == 0 && matches!(x, "," | ";") || d + depth(x) < 0 {
+            break;
+        }
+        d += depth(x);
+        end += 1;
+    }
+    let end = end.checked_sub(1)?;
+    if start > first {
+        // The `->` found is not this pattern's arm's: the pattern stands in no arm.
+        return None;
+    }
+    let text = |a: usize, b: usize| &t.text[a..b];
+    let (ps, pe) = (t.span(first).start, t.span(last).end);
+    let (arm_s, arm_e) = (t.span(start).start, t.span(end).end);
+    let pattern = text(ps, pe);
+    let repair = format!("{}({pattern}){}", text(arm_s, ps), text(pe, arm_e));
+    let what = match t.t(at) {
+        "|" => "an or-pattern",
+        "is" => "an `is`-pattern",
+        _ => "a range pattern",
+    };
+    // Parentheses are the cure only when the arm then parses: not for `r else n is int -> 0`,
+    // whose tail takes an atom pattern alone, nor for `(1..5)`, which is no range pattern. The
+    // plain syntax error then says what the parse expected.
+    if !t.parses(start, end, &repair) {
+        return None;
+    }
+    let span = Span { start: ps, end: pe };
+    Some(Clause {
+        row: Some(Row::BareOperatorPattern),
+        message: format!("`{pattern}` is {what}; write it in parentheses. Try `{repair}` instead."),
+        span,
+        notes: vec![(span, format!("repair: `{repair}`"))],
+    })
+}
+
+/// Whether token `before`, the one before an arm's first token, opens an arm: the `else` of
+/// an `else` tail, or the `{` of a `match`, or the `,` after an arm of one, found back over the
+/// arms before it, at their depth, to the `{` and the `match` before its value.
+fn arm_head(t: &Toks<'_, '_>, before: usize) -> bool {
+    let mut i = before;
+    match t.t(i) {
+        "else" => return true,
+        "{" | "," => {}
+        _ => return false,
+    }
+    // Back over the arms before it to the `{`.
+    let mut d = 0;
+    while t.t(i) != "{" || d != 0 {
+        if i == 0 || d == 0 && t.t(i) == ";" {
+            return false;
+        }
+        d -= depth(t.t(i));
+        if d < 0 {
+            // An unmatched `(` or `[`: no arm.
+            return false;
+        }
+        i -= 1;
+    }
+    // Back over the value matched to `match`.
+    let mut d = 0;
+    while i > 0 {
+        i -= 1;
+        let p = t.t(i);
+        if d == 0 && p == "match" {
+            return true;
+        }
+        if d == 0 && matches!(p, ";" | "=" | "{" | ",") || d - depth(p) < 0 {
+            return false;
+        }
+        d -= depth(p);
+    }
+    false
 }
 
 /// What the tokens from `first` up to the arrow `at` are in their type: the guarantee of `..`,

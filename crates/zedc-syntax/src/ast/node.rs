@@ -1179,6 +1179,10 @@ pub enum Pattern {
         /// Its text.
         span: Span,
     },
+    /// `(p | q | …)`, an or-pattern: its alternatives, two or more, in written order, each
+    /// binding the same names (DESIGN.md step L2.7b). Its text holds its parentheses, which,
+    /// as the one payload of an atom, `#e(#a | #b)`, are the payload's own.
+    Or(Vec<Pattern>, Span),
 }
 
 impl Pattern {
@@ -1190,7 +1194,10 @@ impl Pattern {
             | Pattern::Is { span, .. }
             | Pattern::Range { span, .. } => *span,
             Pattern::Lit(e) => e.span,
-            Pattern::Name(_, span) | Pattern::Wild(span) | Pattern::Tuple(_, span) => *span,
+            Pattern::Name(_, span)
+            | Pattern::Wild(span)
+            | Pattern::Tuple(_, span)
+            | Pattern::Or(_, span) => *span,
         }
     }
 }

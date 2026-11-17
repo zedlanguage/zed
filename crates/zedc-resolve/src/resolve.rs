@@ -39,7 +39,7 @@ use zedc_syntax::ast::{
     PortName, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
 use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
-use zedc_syntax::lex::Span;
+use zedc_syntax::lex::{Span, is_name_continue};
 
 mod pick;
 pub mod tables;
@@ -1016,6 +1016,52 @@ struct Resolver<'u> {
     /// to `type_names` when it was found: a name written again in the same scope is answered in
     /// `O(1)`.
     nearest_memo: HashMap<String, (u64, Option<String>)>,
+    /// The or-patterns being walked, innermost last ([`OrPat`]).
+    ors: Vec<OrPat>,
+    /// The text of the `match` arm whose pattern is being walked, which the repair of an
+    /// or-pattern whose alternatives bind different names writes out.
+    arm: Option<Span>,
+    /// The text of an or-pattern that is the one payload of an atom, `#e(#a | #b)`, whose
+    /// parentheses are the payload's: set by the atom just before the or-pattern is walked.
+    sole_payload: Option<Span>,
+}
+
+/// An or-pattern `(p1 | … | pn)` being walked (DESIGN.md step L2.7b, *Names*): every
+/// alternative binds the same names. The first alternative binds its names in the pattern's
+/// scope, where the guard and the arm see them; each later one binds in a scope of its own,
+/// closed when it ends, after its names are compared with the first's.
+// Complexity tradeoff: comparing each alternative's names with the first's by a scan is
+// O(names²) per alternative; the first's names go in a hash set, so each later name is one O(1)
+// expected lookup and a pattern of b binders costs O(b) in all. An or-pattern nested in an
+// alternative is compared with its own alternatives only, at the level of the alternative
+// holding it, so each binder is compared once however deep the alternatives nest: O(size of the
+// pattern), never O(n²) for n nested or-patterns as comparing every alternative's whole set of
+// names, nested ones included, would be.
+struct OrPat {
+    span: Span,
+    /// The length of the pattern's scope when the or-pattern began: the first alternative's
+    /// names are those after it.
+    start: usize,
+    /// The first alternative's names as a set, when it has ended.
+    names: HashSet<String>,
+    /// The alternatives that have ended, in order.
+    alts: Vec<Alt>,
+    /// Whether some later alternative binds other names than the first.
+    differ: bool,
+    /// Whether the or-pattern is the one payload of an atom, whose parentheses it shares.
+    payload: bool,
+}
+
+/// An alternative of an or-pattern that has ended: what the error of [`OrPat`] quotes.
+struct Alt {
+    /// The names it binds, in order.
+    names: Vec<String>,
+    /// Its text.
+    span: Span,
+    /// Whether it is built with an operator, so its text holds its own parentheses.
+    parens: bool,
+    /// The text of the binder of its one name, when it binds one.
+    binder: Option<Span>,
 }
 
 /// A block, a parameter list or a field list: its binders, and each of its items (a statement,
@@ -1940,6 +1986,7 @@ impl Resolver<'_> {
                     todo.push(Task::Expr(&arm.body));
                     todo.extend(arm.guard.as_ref().map(Task::Expr));
                     let start = self.out.binders.len();
+                    self.arm = Some(arm.span);
                     todo.push(Task::PatternEnd(arm.span, start));
                     // The `match` is reported as a form of a later step, so its patterns are
                     // not reported again.
@@ -1976,8 +2023,35 @@ impl Resolver<'_> {
                     );
                 }
                 Task::PatternEnd(span, start) => {
+                    self.arm = None;
                     let end = self.out.binders.len();
                     self.out.patterns.insert(span, start..end);
+                }
+                Task::FirstAltEnd(p) => {
+                    let start = self.ors.last().expect("an or-pattern").start;
+                    let names = self.scopes.last().expect("a scope")[start..].to_vec();
+                    let alt = self.alt(p, names);
+                    let o = self.ors.last_mut().expect("an or-pattern");
+                    o.names = alt.names.iter().cloned().collect();
+                    o.alts.push(alt);
+                }
+                Task::AltBegin => self.open(),
+                Task::AltEnd(p) => {
+                    let names = self.scopes.last().expect("the alternative's scope").clone();
+                    let alt = self.alt(p, names);
+                    let o = self.ors.last_mut().expect("an or-pattern");
+                    // The names are distinct, as a name bound twice in one scope is refused, so
+                    // the first's count and every name among the first's make the same set.
+                    o.differ |= alt.names.len() != o.names.len()
+                        || alt.names.iter().any(|n| !o.names.contains(n));
+                    o.alts.push(alt);
+                    self.close();
+                }
+                Task::OrEnd => {
+                    let o = self.ors.pop().expect("an or-pattern");
+                    if o.differ {
+                        self.or_names_differ(o);
+                    }
                 }
                 Task::Member(span, name) => {
                     if name.ends_with('\'') {
@@ -2896,6 +2970,145 @@ impl Resolver<'_> {
         });
     }
 
+    /// The alternative `p` of the innermost or-pattern, which has bound `names`, still visible.
+    fn alt(&self, p: &Pattern, names: Vec<String>) -> Alt {
+        let binder = match &names[..] {
+            [n] => (self.visible.get(n))
+                .and_then(|v| v.last())
+                .map(|b| self.out.binders[b.ids[0]].span),
+            _ => None,
+        };
+        Alt {
+            names,
+            span: p.span(),
+            parens: matches!(
+                p,
+                Pattern::Or(..) | Pattern::Range { .. } | Pattern::Is { .. }
+            ),
+            binder,
+        }
+    }
+
+    /// The row "Or-pattern alternatives bind different names" (DESIGN.md step L2.7b, *Names*):
+    /// each name some alternative of `o` binds and another does not, with the alternatives
+    /// that bind it, or those that do not when they are fewer, so the message is as long as
+    /// the alternatives' names; the repairs are the arm written out once for each alternative,
+    /// where the rest of the arm reads no name an alternative leaves unbound, and, where each
+    /// alternative binds one name, the first's name in each.
+    fn or_names_differ(&mut self, o: OrPat) {
+        let n = o.alts.len();
+        // Each name, in the order the alternatives bind it, with the alternatives binding it.
+        let mut order: Vec<&str> = Vec::new();
+        let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, a) in o.alts.iter().enumerate() {
+            for name in &a.names {
+                let v = at.entry(name).or_insert_with(|| {
+                    order.push(name);
+                    Vec::new()
+                });
+                v.push(i);
+            }
+        }
+        let mut parts = Vec::new();
+        for name in order {
+            let binds = &at[name];
+            if binds.len() == n {
+                continue;
+            }
+            let (only, which) = if binds.len() <= n - binds.len() {
+                (true, binds.clone())
+            } else {
+                // The complement, by one pass over the sorted list of those that bind it.
+                let mut missing = Vec::with_capacity(n - binds.len());
+                let mut k = binds.iter().peekable();
+                for i in 0..n {
+                    if k.next_if_eq(&&i).is_none() {
+                        missing.push(i);
+                    }
+                }
+                (false, missing)
+            };
+            let alts = ordinals(&which);
+            let plural = if which.len() == 1 { "" } else { "s" };
+            parts.push(match (only, parts.is_empty()) {
+                (true, true) => format!("`{name}` is bound only in the {alts} alternative{plural}"),
+                (true, false) => format!("`{name}` only in the {alts}"),
+                (false, true) => {
+                    format!("`{name}` is bound in every alternative but the {alts}")
+                }
+                (false, false) => format!("`{name}` in every alternative but the {alts}"),
+            });
+        }
+        let message = format!(
+            "the alternatives of this or-pattern bind different names: {}",
+            and_list(&parts)
+        );
+        let mut notes = Vec::new();
+        if let (Some(text), Some(arm)) = (self.text, self.arm) {
+            let (head, tail) = (&text[arm.start..o.span.start], &text[o.span.end..arm.end]);
+            let used = words(tail);
+            // The arm written out: the or-pattern's text replaced by each alternative's, offered
+            // when the rest of the arm uses no name that some alternative leaves unbound, which
+            // that alternative's arm could not read. One lookup per name bound.
+            let reads_unbound = at
+                .iter()
+                .any(|(&name, b)| b.len() < n && used.contains(name));
+            let arms = o.alts.iter().map(|a| {
+                let alt = &text[a.span.start..a.span.end];
+                if o.payload && !a.parens {
+                    format!("{head}({alt}){tail}")
+                } else {
+                    format!("{head}{alt}{tail}")
+                }
+            });
+            if !reads_unbound {
+                notes.push(Note {
+                    span: arm,
+                    text: format!(
+                        "repair: write the arm out once for each alternative: `{}`",
+                        arms.collect::<Vec<_>>().join(", ")
+                    ),
+                });
+            }
+            // The first alternative's name in each, where each binds one name and the rest of
+            // the arm uses none of the others, which would need renaming there too.
+            let first = o.alts[0].names.first();
+            let one = o.alts.iter().all(|a| {
+                a.names.len() == 1
+                    && a.binder
+                        .is_some_and(|b| text[b.start..b.end] == *a.names[0].as_str())
+            });
+            if let Some(first) = first
+                && one
+                && !(o.alts[1..].iter())
+                    .any(|a| a.names[0] != *first && used.contains(a.names[0].as_str()))
+            {
+                let mut pattern = String::new();
+                let mut from = o.span.start;
+                for a in &o.alts[1..] {
+                    let b = a.binder.expect("checked above");
+                    pattern.push_str(&text[from..b.start]);
+                    pattern.push_str(first);
+                    from = b.end;
+                }
+                pattern.push_str(&text[from..o.span.end]);
+                notes.push(Note {
+                    span: o.span,
+                    text: format!(
+                        "repair: bind the same name in each alternative: `{head}{pattern}{tail}`"
+                    ),
+                });
+            }
+        }
+        self.errors.push(Error {
+            row: Some(Row::OrPatternNamesDiffer),
+            menu: String::new(),
+            span: o.span,
+            message,
+            notes,
+        });
+    }
+
     /// The row "Binder naming a type" (DESIGN.md sec:diagnostics): `binder`, the name `name`
     /// written at `at` in the text `site`, names a type in scope. A unit declares no type before
     /// L2, so the type is the prelude's. Every binder but a type name in a pattern, which is a
@@ -3417,9 +3630,10 @@ impl Resolver<'_> {
     fn pattern<'a>(&mut self, p: &'a Pattern, report: bool, todo: &mut Vec<Task<'a>>) {
         let later = match p {
             Pattern::Atom { .. } => None,
-            Pattern::Is { .. } => Some("a type pattern `n is T`"),
+            Pattern::Is { .. } => Some("a type pattern `(n is T)`"),
             Pattern::Lit(_) => Some("a literal pattern"),
             Pattern::Range { .. } => Some("a range pattern"),
+            Pattern::Or(..) => Some("an or-pattern"),
             Pattern::Struct { .. } | Pattern::Name(..) | Pattern::Wild(_) | Pattern::Tuple(..) => {
                 Some("a struct, name, `_` or tuple pattern")
             }
@@ -3438,6 +3652,12 @@ impl Resolver<'_> {
                 span,
                 ..
             } => {
+                if fields.is_empty()
+                    && let Some([p @ Pattern::Or(..)]) = items.as_deref()
+                {
+                    // Popped next, as nothing is pushed after it.
+                    self.sole_payload = Some(p.span());
+                }
                 todo.extend(
                     items
                         .iter()
@@ -3446,6 +3666,25 @@ impl Resolver<'_> {
                         .map(|i| Task::Pattern(i, report)),
                 );
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
+            }
+            Pattern::Or(alts, span) => {
+                let (first, rest) = alts.split_first().expect("OrPat has two alternatives");
+                self.ors.push(OrPat {
+                    span: *span,
+                    start: self.scopes.last().expect("a scope").len(),
+                    names: HashSet::new(),
+                    alts: Vec::with_capacity(alts.len()),
+                    differ: false,
+                    payload: self.sole_payload.take() == Some(*span),
+                });
+                todo.push(Task::OrEnd);
+                for a in rest.iter().rev() {
+                    todo.push(Task::AltEnd(a));
+                    todo.push(Task::Pattern(a, report));
+                    todo.push(Task::AltBegin);
+                }
+                todo.push(Task::FirstAltEnd(first));
+                todo.push(Task::Pattern(first, report));
             }
             Pattern::Struct { name, fields, span } => {
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
@@ -4166,6 +4405,14 @@ enum Task<'a> {
     /// The end of the pattern of the `else` or the arm at the span: its binders are those from
     /// the index.
     PatternEnd(Span, usize),
+    /// The end of the first alternative of the innermost or-pattern ([`OrPat`]).
+    FirstAltEnd(&'a Pattern),
+    /// A later alternative of the innermost or-pattern: its scope opens.
+    AltBegin,
+    /// The end of a later alternative: its names are compared with the first's.
+    AltEnd(&'a Pattern),
+    /// The end of the innermost or-pattern: its error, if its alternatives bind different names.
+    OrEnd,
     /// A member `of.name` whose `of` is done: what `name` names, if anything.
     Member(Span, &'a str),
     /// The end of the innermost scope.
@@ -4187,6 +4434,48 @@ enum Task<'a> {
     /// where a range over `int` is read as the key's domain (RANGE-keys); whether it is the
     /// whole key, whose tuple components may be ranged too.
     KeyTy(&'a Type, bool),
+}
+
+/// The ordinal words of the alternatives at the indices `at`, counted from 0, as a sentence
+/// lists them: "first", "first and third", "first, second and fourth".
+fn ordinals(at: &[usize]) -> String {
+    const WORDS: [&str; 10] = [
+        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+        "tenth",
+    ];
+    let words = at.iter().map(|&i| match WORDS.get(i) {
+        Some(w) => (*w).to_string(),
+        None => {
+            let n = i + 1;
+            let suffix = match (n % 10, n % 100) {
+                (1, r) if r != 11 => "st",
+                (2, r) if r != 12 => "nd",
+                (3, r) if r != 13 => "rd",
+                _ => "th",
+            };
+            format!("{n}{suffix}")
+        }
+    });
+    and_list(&words.collect::<Vec<_>>())
+}
+
+/// `items` joined as a sentence lists them: `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The words of `text`: each run of name characters, a name and the `'` after it.
+// Complexity tradeoff: searching the text for each of k names is O(k · text); one pass that
+// collects every word is O(text), and each name is then one O(1) expected lookup.
+fn words(text: &str) -> HashSet<&str> {
+    let part = |c: char| is_name_continue(c) || c == '\'';
+    text.split(|c: char| !part(c))
+        .filter(|w| !w.is_empty())
+        .collect()
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
