@@ -16897,7 +16897,7 @@ impl System {
     /// `x[j]`, which [`System::count`] marks, or a row whose variables all lie in a row of
     /// `x[j]`, which [`System::touch`] marks through its variable of fewest rows; so after
     /// each [`System::refresh`] every count is that of the rows held then (checked at every
-    /// step in the tests of this crate, [`System::stale`]). COMPLEXITY.md rows Q1-LOCAL and
+    /// step in the tests of this crate, `System::stale`). COMPLEXITY.md rows Q1-LOCAL and
     /// PERF-shrink-tie-every-step.
     // Complexity tradeoff: naive version (until PERF-shrink-tie-every-step), a bound with
     // another row of t terms was counted as t - 1 unless some held row anywhere had t - 1
