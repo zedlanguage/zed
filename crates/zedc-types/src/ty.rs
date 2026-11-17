@@ -17863,6 +17863,13 @@ struct Shared {
     /// Whether every tuple and function that holds no variable at any depth, and binds none,
     /// is passed over as if written by reference, with an empty one: on a walk that only
     /// counts the places of variables ([`Sig::standing_twice`]), where such a part has none.
+    /// Why the counts are the printer's (TEST-standing-twice-numeric-vars): such a part holds
+    /// no variable at any depth, so it holds no place of one; and a union that holds it is
+    /// still printed `_` or not as the printer decides, since the part, written by
+    /// reference, is still one of its members. Test: `l01_26_type_resolution::standing_twice::
+    /// a_variable_bounded_by_carriers_stands_twice_where_the_text_writes_it_twice`, whose
+    /// signatures hold such parts alone and in unions beside a variable; skipping every tuple
+    /// in place of the closed ones makes it and three other tests fail.
     closed: bool,
 }
 

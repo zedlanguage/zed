@@ -65,6 +65,24 @@ fn what_a_failed_test_leaves_prints_with_the_variable_of_the_value() {
     );
 }
 
+/// A variable bounded by carriers is written by name with its bounds clause wherever it stands
+/// (DESIGN.md sec:diagnostics, "The type of a declaration in a message"): `n`, passed at
+/// `int | f64` and added, stands in two places of `k`'s type, as `n + n` gives it back, and
+/// in one place of `j`'s, and is `U` in both.
+#[test]
+fn a_variable_bounded_by_carriers_prints_by_name_in_one_place_or_two() {
+    let src = format!(
+        "{APPLY}w(positional x: int | f64) = 0;\nk(v, n) = (apply(f: v), w(n), n + n);\nj(v, n) = (apply(f: v), w(n), n + 1 > 0);\na = k(v: 3, n: 1);\nb = j(v: 3, n: 1);\n"
+    );
+    let out = report(&src);
+    for found in [
+        "the type the checker found for `k` is `(v: (x: int | f64) ->? int, n: U) -> (int, 0, U) for U in int | f64`",
+        "the type the checker found for `j` is `(v: (x: int | f64) ->? int, n: U) -> (int, 0, bool) for U in int | f64`",
+    ] {
+        assert!(out.contains(found), "{src}\n{out}");
+    }
+}
+
 /// The parts a generated signature is made of, each over the variables `x` and `y`: a variable,
 /// a tuple, a payload, a held function, unions with a variable and without, and none.
 fn pieces() -> Vec<String> {
@@ -170,6 +188,85 @@ fn the_variables_standing_twice_are_the_ones_printed_by_name() {
             n += 1;
         }
     }
+    assert!(
+        bad.is_empty(),
+        "{} of {n} signatures differ; the first:\n{}",
+        bad.len(),
+        bad[..bad.len().min(30)].join("\n")
+    );
+}
+
+/// The places of `v` in `text`, a signature's Display, but the one its bounds clause names.
+fn places_of(text: &str, v: &str) -> usize {
+    let words = text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+    let all = words.filter(|w| *w == v).count();
+    all - text.matches(&format!("for {v} in ")).count()
+}
+
+/// A variable bounded by carriers, `N` of `int | f64`, is printed by name wherever it stands,
+/// so [`Sig::standing_twice`] gives it exactly where the text writes it in two places or more:
+/// over generated signatures holding it beside the unbounded `T`, in tuples, payloads, held
+/// functions and unions, among them unions printed `_`, which hold no place of it. The
+/// unbounded variables are checked as in
+/// [`the_variables_standing_twice_are_the_ones_printed_by_name`]. The parts with no variable,
+/// `(int, int)` and `(z: int) -> int`, alone and in unions, test the walk's skip of the tuples
+/// and functions that hold no variable (`Shared::closed`, crates/zedc-types/src/ty.rs), which
+/// must leave every count as the printer makes it.
+#[test]
+fn a_variable_bounded_by_carriers_stands_twice_where_the_text_writes_it_twice() {
+    let pieces = [
+        "int",
+        "N",
+        "T",
+        "#a(N)",
+        "N | int",
+        "N | T",
+        "(N, T)",
+        "(N, N)",
+        "((z: N) -> T)",
+        "((z: T) -> N)",
+        "(int, int)",
+        "((z: int) -> int)",
+        "T | (int, int)",
+        "T | ((z: int) -> int)",
+        "N | (int, int)",
+    ];
+    let mut bad = Vec::new();
+    let (mut n, mut named_twice, mut named_once) = (0, 0, 0);
+    for a in pieces {
+        for b in pieces {
+            for c in pieces {
+                let arrows = format!("(a: {a}, b: {b}) -> {c}");
+                let text = match arrows.contains('N') {
+                    true => format!("({arrows} for N in int | f64)"),
+                    false => arrows,
+                };
+                let s = read_sig(&text);
+                let twice = s.standing_twice();
+                let shown = s.to_string();
+                let places = places_of(&shown, "N");
+                match places {
+                    0 => {}
+                    1 => named_once += 1,
+                    _ => named_twice += 1,
+                }
+                let unbounded = |v: &String| v != "N";
+                let names = printed_names(&s).into_iter().filter(unbounded).count();
+                let free = twice.iter().filter(|v| &***v != "N").count();
+                if twice.contains("N") != (places >= 2) || names != free {
+                    bad.push(format!(
+                        "`{text}` prints `{shown}`: standing twice {twice:?}"
+                    ));
+                }
+                n += 1;
+            }
+        }
+    }
+    // The generator reaches both outcomes for `N`, or the test would show nothing.
+    assert!(
+        named_once > 0 && named_twice > 0,
+        "{named_once} {named_twice}"
+    );
     assert!(
         bad.is_empty(),
         "{} of {n} signatures differ; the first:\n{}",
