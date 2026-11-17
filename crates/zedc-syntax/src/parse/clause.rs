@@ -338,6 +338,7 @@ impl Toks<'_, '_> {
 /// or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     with_item(t, far)
+        .or_else(|| direction_word(t, far))
         .or_else(|| reserved(t, far))
         .or_else(|| mutable_decl(t, far))
         .or_else(|| carry_word(t, far))
@@ -975,6 +976,115 @@ pub const RESERVED: [(&str, &str, &str); 37] = [
         "anyOrder",
     ),
 ];
+
+/// The [`Clause`] for a direction word, `asc` or `desc`, written where it is no whole sort key,
+/// with the headlines of DESIGN.md step L5.1 (sec:order: the word alone stands only as a whole
+/// argument, followed by `,` or `)`). The word is the token the parse stopped at or the one
+/// before it. In parentheses, `xs.sort((desc))`, the repair drops them; directly in an argument
+/// list and followed by more, `xs.sort(desc + 1)`, the repair makes the argument the key
+/// `desc x -> x + 1`; each repair is offered when the statement then parses to its end.
+/// Elsewhere, `x = desc;`, the word is no value, when a name in its place lets the statement
+/// parse to its end and the word is not being defined (the statement's first token, or before
+/// its `=` or a `:`), which [`reserved`] explains. One scan of the statement and at most two
+/// parses more, on the error path only: linear in the unit.
+fn direction_word(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let is_word = |i: usize| {
+        t.toks
+            .get(i)
+            .is_some_and(|k| k.0 == Kind::Keyword && matches!(k.1, "asc" | "desc"))
+    };
+    let k = [Some(far), far.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .find(|&i| is_word(i))?;
+    let word = t.t(k);
+    // The whole statement, out of the parentheses and brackets around the word, as the
+    // headline shows it; not out of a block.
+    let mut first = t.stmt_first(k);
+    while first > 0 && matches!(t.t(first - 1), "(" | "[") {
+        first = t.stmt_first(first - 1);
+    }
+    let mut stop = t.stmt_stop(k);
+    while matches!(t.t(stop), ")" | "]") {
+        stop = t.stmt_stop(stop + 1);
+    }
+    let last = stop.checked_sub(1).filter(|&l| l >= first)?;
+    let stmt = t.between(first, last);
+    // The statement with tokens `a` through `b` replaced by `with`.
+    let fixed = |a: usize, b: usize, with: &str| {
+        let s = t.span(first).start;
+        format!(
+            "{}{with}{}",
+            &t.text[s..t.span(a).start],
+            &t.text[t.span(b).end..t.span(last).end]
+        )
+    };
+    // Whether `with` in place of tokens `a` through `b` lets the statement parse to its end.
+    let parses = |a: usize, b: usize, with: &str| t.parses_past(a, b, with, stop - b);
+    let note = |r: &str| (t.span(k), format!("repair: `{r}`"));
+    // In parentheses: `xs.sort((desc))`.
+    if k > 0 && t.t(k - 1) == "(" && t.t(k + 1) == ")" && parses(k - 1, k + 1, word) {
+        let r = fixed(k - 1, k + 1, word);
+        return Some(Clause {
+            row: None,
+            message: format!(
+                "`{word}` in parentheses is not a sort key: `{stmt}`. Try `{r}` instead."
+            ),
+            span: t.span(k),
+            notes: vec![note(&r)],
+        });
+    }
+    // Directly in an argument list, followed by more of the argument: `xs.sort(desc + 1)`.
+    if k > 0 && matches!(t.t(k - 1), "(" | ",") && !matches!(t.t(k + 1), "," | ")") {
+        let mut e = k + 1;
+        let mut d = 0;
+        while e < stop && !(d == 0 && matches!(t.t(e), "," | ")")) && d + depth(t.t(e)) >= 0 {
+            d += depth(t.t(e));
+            e += 1;
+        }
+        // At the end of the text or of the statement there is no more of the argument.
+        if e <= k + 1 || e > t.tokens.len() {
+            return None;
+        }
+        let x = t.unused("x");
+        let key = format!("{word} {x} -> {x} {}", t.between(k + 1, e - 1));
+        if parses(k, e - 1, &key) {
+            let r = fixed(k, e - 1, &key);
+            return Some(Clause {
+                row: None,
+                message: format!(
+                    "`{word}` alone is a whole sort key: `{stmt}`. Try `{r}` instead."
+                ),
+                span: t.span(k),
+                notes: vec![note(&r)],
+            });
+        }
+        return None;
+    }
+    // Elsewhere: `x = desc;`. A word being defined is left to [`reserved`].
+    let mut d = 0;
+    let mut eq_after = false;
+    for i in first..stop {
+        eq_after |= d == 0 && i > k && t.t(i) == "=";
+        d += depth(t.t(i));
+    }
+    let defined = k == first || t.t(k + 1) == ":" || eq_after;
+    if defined || !t.renamed(&[k], "x", stop) {
+        return None;
+    }
+    Some(Clause {
+        row: None,
+        message: format!("`{word}` is not a value: `{stmt}`."),
+        span: t.span(k),
+        notes: vec![(
+            t.span(k),
+            format!(
+                "`{word}` stands before a sort key, as in `xs.sort({word} x -> x)`, in \
+                 `.sort(…)`, `.orderedValues(…)` or an `into` pattern"
+            ),
+        )],
+    })
+}
 
 /// The [`Clause`] for a reserved word written where a name stands: `without = 3;`,
 /// `f(law) = law + 1;`, `x = s.if;`, `struct S { for: int }`. The word is the token the parse

@@ -145,15 +145,59 @@ fn a_direction_word_alone_prints_back_and_needs_a_following_comma_or_paren() {
             Ok(text)
         );
     }
-    // Anywhere but before `,` or `)` in an argument list, the word needs its operand.
-    for text in [
-        "x = desc;\n",
-        "ys = xs.sort(desc + 1);\n",
-        "ys = xs.sort((desc));\n",
+    // Anywhere but before `,` or `)` in an argument list, the word needs its operand. Each
+    // refusal has the headline of DESIGN.md step L5.1, with the statement and, where one
+    // exists, the repair, which parses (plan row SORT-desc-headlines).
+    for (text, want, note) in [
+        (
+            "x = desc;\n",
+            "`desc` is not a value: `x = desc`.",
+            "`desc` stands before a sort key, as in `xs.sort(desc x -> x)`, in `.sort(…)`, \
+             `.orderedValues(…)` or an `into` pattern",
+        ),
+        (
+            "ys = xs.sort(desc + 1);\n",
+            "`desc` alone is a whole sort key: `ys = xs.sort(desc + 1)`. Try \
+             `ys = xs.sort(desc x -> x + 1)` instead.",
+            "repair: `ys = xs.sort(desc x -> x + 1)`",
+        ),
+        (
+            "ys = xs.sort((desc));\n",
+            "`desc` in parentheses is not a sort key: `ys = xs.sort((desc))`. Try \
+             `ys = xs.sort(desc)` instead.",
+            "repair: `ys = xs.sort(desc)`",
+        ),
+        (
+            "ys = xs.sort(asc * 2, desc);\n",
+            "`asc` alone is a whole sort key: `ys = xs.sort(asc * 2, desc)`. Try \
+             `ys = xs.sort(asc x -> x * 2, desc)` instead.",
+            "repair: `ys = xs.sort(asc x -> x * 2, desc)`",
+        ),
+        // In a block the statement is the block's, and `(desc)` as a value is no sort key.
+        (
+            "main(m: MainArgs) {\n  x = (desc);\n}\n",
+            "`desc` is not a value: `x = (desc)`.",
+            "`.orderedValues(…)` or an `into` pattern",
+        ),
     ] {
+        let err = zedc::format::format_source(text.as_bytes()).unwrap_err();
+        assert!(err.contains(want), "{text}\n  want {want}\n  {err}");
+        assert!(err.contains(note), "{text}\n  want {note}\n  {err}");
+        if let Some(fixed) = want.split("Try `").nth(1) {
+            let fixed = format!("{};\n", fixed.trim_end_matches("` instead."));
+            assert_eq!(
+                zedc::format::format_source(fixed.as_bytes()).as_deref(),
+                Ok(fixed.as_str()),
+                "the repair of {text}"
+            );
+        }
+    }
+    // A direction word where a name is defined keeps the reserved-word message.
+    for text in ["desc = 3;\n", "f(desc) = desc + 1;\n"] {
+        let err = zedc::format::format_source(text.as_bytes()).unwrap_err();
         assert!(
-            zedc::format::format_source(text.as_bytes()).is_err(),
-            "{text}"
+            err.contains("Reserved word used as a name"),
+            "{text}\n  {err}"
         );
     }
 }
