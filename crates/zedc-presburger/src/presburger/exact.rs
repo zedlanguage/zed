@@ -2861,12 +2861,23 @@ mod tests {
     /// their box, and each `k` at `(x - r) / m` where that is whole, and one more, so that its
     /// stride holds or fails as a point may choose; `k` read by one leaf alone, every point is
     /// reached.
+    ///
+    /// Only the strides that can hold at `x` (`m` divides `x - r`) are given both values of
+    /// their `k`: at any other `x` the stride `x == m * k + r` fails at `k = (x - r) / m`
+    /// rounded down and at one more alike, and its `k` is read by no other leaf, so the two
+    /// values give `f` the same truth and one of them suffices. Exact, and it takes
+    /// `2^(strides that can hold at x)` points per `(x, y, z)` in place of `2^(strides)`: with
+    /// every stride enumerated, seed 10847150771481521372 took 21 to 38 s, past the 20 s limit
+    /// of a piece (FAIL-cover-every-order-seed-time).
     fn holed_values(f: &Formula, strides: &[(String, i64, i64)]) -> IntervalSet {
         let mut set = IntervalSet::empty();
         for x in -W..=W {
+            let can_hold: Vec<usize> = (0..strides.len())
+                .filter(|&i| (x - strides[i].2).rem_euclid(strides[i].1) == 0)
+                .collect();
             'x: for y in -BY..=BY {
                 for z in -BY..=BY {
-                    for pick in 0..1u32 << strides.len() {
+                    for pick in 0..1u32 << can_hold.len() {
                         let mut m: Model = [
                             (a("x"), Int::from(x)),
                             (a("y"), Int::from(y)),
@@ -2874,9 +2885,13 @@ mod tests {
                         ]
                         .into_iter()
                         .collect();
-                        for (i, (k, step, r)) in strides.iter().enumerate() {
+                        for (k, step, r) in strides {
+                            m.insert(a(k), Int::from((x - r).div_euclid(*step)));
+                        }
+                        for (bit, &i) in can_hold.iter().enumerate() {
+                            let (k, step, r) = &strides[i];
                             let base = (x - r).div_euclid(*step);
-                            m.insert(a(k), Int::from(base + i64::from(pick >> i & 1)));
+                            m.insert(a(k), Int::from(base + i64::from(pick >> bit & 1)));
                         }
                         if f.holds(&m) {
                             set = set.join(&IntervalSet::single(x));
