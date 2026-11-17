@@ -2596,15 +2596,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | BUILD-root-toolchain-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
-| FAIL-linear-question-tuple-callee-per-caller | running | 2026-11-17 03:19 | started in wt/trees/need-site2 at dfad7eff5 |
-| FAIL-remap-computed-key-need-site-product | running | 2026-11-17 03:19 | started in wt/trees/need-site2 at dfad7eff5 |
+| BUILD-shared-root-dylib-race | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| CLIF-shim | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| FAIL-linear-question-tuple-callee-per-caller | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| FAIL-remap-computed-key-need-site-product | running | 2026-11-17 03:19 | overnight spawn (P367) |
 | MERGE-full-by-dependency | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
 | MERGE-spec-lag-by-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
-| SPEC-cast-inexact-taint | running | 2026-11-17 02:28 | author P354, P355, P359, P361: float failures are static facts; #NaN only under @fpstrict; casts round with inexact(); int(x) needs a proved whole number; no QU |
+| PERF-kernel-types-ratio-10-483 | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| PERF-quoting-bench-ratio | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| STUDY-os-error-map | running | 2026-11-17 03:19 | overnight spawn (P367) |
+| SYNC-copies-refresh-2 | running | 2026-11-17 03:21 | overnight spawn (P367) |
 | TONIC-strict | impl attempt 1 | 2026-11-17 03:19 | started; worktree wt/trees/tonic-strict at 6f5080476; load 2.95 7.95 16.21 |
 | XR-map-chain-rounds-7-9 | running | 2026-11-16 22:42 | author P342: micro-proof cross-review rounds 7-9; worktree /home/luke/Work/wt/trees/xr-chain2 |
 | XR-xor-shape-round-7-high | running | 2026-11-17 03:06 | one escalation round at high: Q6 degree-4 independence, tied-input ratio 10.07-11.64 vs 10.5 |
-| ZIP-count-facts | running | 2026-11-17 01:12 | started in wt/trees/zip-count at 6f5080476: keyspace classes by origin (DESIGN sec:joins, zed 2857e44) |
+| ZIP-count-facts | running | 2026-11-17 01:12 | overnight spawn (P367) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
