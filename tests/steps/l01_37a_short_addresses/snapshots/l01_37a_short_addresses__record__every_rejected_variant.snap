@@ -545,6 +545,19 @@ log-unit-product
 ]
   checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
+no-int-equals-the-value
+  rejected: [
+    Diagnostic {
+        line: 13,
+        col: 14,
+        message: "the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name"), not_run: None }, Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+
 nullable-column-missing-none
   rejected: [
     Diagnostic {
@@ -1003,6 +1016,19 @@ removed-fact-not-removable
     },
 ]
   checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 15, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 12, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 21, failure: Some("the mark names the row \"Fact removed from a facet that does not allow it\", and the diagnostic is in no row of the rejection table: the facet removal `without taint(#user)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+
+rounded-value-at-refusing-parameter
+  rejected: [
+    Diagnostic {
+        line: 13,
+        col: 14,
+        message: "the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 15, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 taint-reaches-clean-sink
   rejected: [

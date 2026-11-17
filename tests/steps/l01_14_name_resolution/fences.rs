@@ -43,7 +43,7 @@ fn programs(stmts: &[Stmt]) -> Vec<&[Stmt]> {
 #[test]
 fn every_building_fence_resolves_but_for_its_free_names() {
     let (mut resolved, mut built) = (0, 0);
-    for f in zed_tests::fences::all().iter().filter(|f| !f.notation) {
+    for f in zed_tests::fences::parsed().iter().filter(|f| !f.notation) {
         let tokens = lex_fence(&f.text).unwrap();
         let tree = parse(&f.text, &tokens, "Unit", TOP).unwrap();
         let Ok(stmts) = unit(&f.text, &tokens, &tree) else {

@@ -315,7 +315,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   9 | «type» Temp2 = #c ( f64 ) | #f ( f64 ) ;
 == EXAMPLES.md [11. Unions, atoms, match] 5 L3
   2 | classify ( n ) = «match» n { 0₍10₎ -> #zero , x where x < 0₍10₎ -> #neg , _ -> #pos } ;
-  3 | digit ( n : int ) = «match» n { 0₍10₎ ..= 9₍10₎ -> #ok , _ -> #bad } ;
+  3 | digit ( n : int ) = «match» n { ( 0₍10₎ ..= 9₍10₎ ) -> #ok , _ -> #bad } ;
 == EXAMPLES.md [12. Absence and failure] 1 L3
   2 | parse : ( Utf8String ) -> Config | #syntaxError ( pos : int )
   3 | conf = parse ( text ) «else» defaultConfig ;
@@ -366,9 +366,9 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [13. Loops and state] 4 L6
   2 | found = «loop» {
   3 | «initial» i = 0₍10₎ ;
-  4 | i' = i + 1₍10₎ ;
-  5 | _ = «if» xs [ i ] == target { «break» i } «else» { i } ;
-  6 | «while» i < xs :: len ;
+  4 | «while» i < xs :: len ;
+  5 | «if» xs [ i ] == target { «break» ; } «else» { } ;
+  6 | i' = i + 1₍10₎ ;
   7 | } ;
 == EXAMPLES.md [13. Loops and state] 5 L6
   2 | simplified = «loop» {

@@ -17,7 +17,9 @@
 //! (DESIGN offers `twice(x: f64)`, `twice(x: rat)` and `twice(x)`). The example at a declared
 //! type, `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a
 //! top-level binding with a declared type yet. Nor are the five messages of sec:level_names
-//! (layers L7 and L8): zedc does not compile a `names` facet or a named slice yet.
+//! (layers L7 and L8): zedc does not compile a `names` facet or a named slice yet. The example
+//! `k = int(7r/2r);` of sec:facets is held for plan row CAST-round-whole: zedc rejects it, but
+//! as "`int` here always fails", not as DESIGN's "No `int` equals the value" with its menu.
 
 use super::rejected;
 
@@ -129,7 +131,7 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
 /// show, which finds the example; a piece of each line of the program, in order, which finds
 /// the line ([`program_of`]); whether zedc compiles it yet; and whether its menu is compared
 /// ([`menu`]). Each line is read from the copies of the spec's fences in `zed/fences/`.
-const PROGRAMS: [(&str, &[&str], bool, bool); 9] = [
+const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
     (
         "twice(x: int) = x * 2.0;",
         &["twice(x: int) = x * 2.0;"],
@@ -183,7 +185,16 @@ const PROGRAMS: [(&str, &[&str], bool, bool); 9] = [
         false,
         false,
     ),
+    // The cast of sec:facets that no `int` equals (spec 7d1cf81): zedc compiles it but still
+    // rejects it under its older first sentence, held in [`HELD_FOR_ROW`].
+    ("k = int(7r/2r);", &["k = int(7r/2r);"], true, true),
 ];
+
+/// The examples zedc compiles but still rejects under another first sentence, each by the
+/// piece that finds it in [`PROGRAMS`] and the plan row that writes DESIGN's message. Each is
+/// checked to differ from DESIGN's first sentence, so that the entry fails, and is to be
+/// removed, once its row lands.
+const HELD_FOR_ROW: &[(&str, &str)] = &[("k = int(7r/2r);", "CAST-round-whole")];
 
 /// The source lines the steps of `example` show: its lines indented by seven spaces.
 fn shown(example: &str) -> impl Iterator<Item = &str> {
@@ -237,8 +248,16 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
             .filter(|(piece, ..)| shown(example).any(|l| l.contains(piece)))
             .collect();
         assert_eq!(found.len(), 1, "the program of\n{example}");
-        let (_, pieces, compiled, compare_menu) = found[0];
+        let (piece, pieces, compiled, compare_menu) = found[0];
         let out = rejected(&program(&program_of(example, pieces)));
+        if let Some((_, row)) = HELD_FOR_ROW.iter().find(|(p, _)| p == piece) {
+            assert_ne!(
+                first(&out),
+                first(example),
+                "zedc writes DESIGN's message now: take it out of HELD_FOR_ROW ({row})"
+            );
+            continue;
+        }
         if !compiled {
             // Held back: zedc does not compile the example yet. Once it does, this fails, and
             // the example is to be compared like the others.

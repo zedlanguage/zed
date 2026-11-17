@@ -203,6 +203,23 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
                 zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
+        // The float facts of sec:facets (spec 7d1cf81). The ✗ comment of the cast writes "No int
+        // equals the value", without the backticks of the row "No `int` equals the value", so
+        // it names no row until DESIGN writes them; then the pin is plan row CAST-round-whole's.
+        (
+            "no-int-equals-the-value",
+            "12: the line is marked ✗ and its comment names no row of the rejection table: \
+             write `// ✗ <row>: …` with the row's name"
+                .into(),
+        ),
+        // The parameter facet `inexact(false)` is plan row FPWARN's (step L10.3b).
+        (
+            "rounded-value-at-refusing-parameter",
+            format!(
+                "13: {}",
+                zed_tests::not_yet!("the facet `with inexact(false)`")
+            ),
+        ),
     ];
     assert_eq!(texts.len(), cases.len(), "{:?}", texts.keys());
     let wrong: Vec<String> = cases

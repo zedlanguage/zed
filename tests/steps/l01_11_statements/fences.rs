@@ -10,7 +10,7 @@ use zedc::parse::{TOP, parse};
 #[test]
 fn every_block_in_expression_position_builds_or_names_its_step() {
     let (mut built, mut later, mut wrong) = (0, 0, Vec::new());
-    for f in fences::all() {
+    for f in fences::parsed() {
         let tokens = lex_fence(&f.text).unwrap();
         let start = if f.notation { "DocFence" } else { "Unit" };
         let tree = parse(&f.text, &tokens, start, TOP).unwrap();

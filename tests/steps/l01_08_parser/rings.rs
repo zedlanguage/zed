@@ -9,10 +9,23 @@ use zedc::parse::{TOP, parse};
 #[test]
 fn every_fence_parses_first_at_its_recorded_ring() {
     let all = fences::all();
-    assert_eq!(all.len(), 220);
+    assert_eq!(all.len(), 221);
     let mut wrong = Vec::new();
     for f in &all {
         let tokens = lex_fence(&f.text).unwrap();
+        if let Some((_, row)) = fences::HELD_GRAMMAR_UNPARSED
+            .iter()
+            .find(|(k, _)| *k == f.key)
+        {
+            let start = if f.notation { "DocFence" } else { "Unit" };
+            if parse(&f.text, &tokens, start, TOP).is_ok() {
+                wrong.push(format!(
+                    "{}: parses; take it out of HELD_GRAMMAR_UNPARSED ({row})",
+                    f.at
+                ));
+            }
+            continue;
+        }
         let unit = parse(&f.text, &tokens, "Unit", TOP);
         if unit.is_ok() == f.notation {
             wrong.push(format!("{}: parses as a unit: {}", f.at, unit.is_ok()));

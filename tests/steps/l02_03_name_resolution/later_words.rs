@@ -214,7 +214,7 @@ const PENDING: &[(&str, &str)] = &[
     // Also the L22 form `equivalent` of the boolean formulas (SYM-bool-formulas): when this
     // entry goes, `zedc::resolve::WORDS` gains `("equivalent", 22)`.
     ("equivalent", "COST-required"),
-    ("fpwarn", "FPWARN"),
+    ("fpstrict", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
     ("f16", "L1.18a"),
@@ -444,7 +444,7 @@ fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet()
         "stack",
         "memoizationArena",
         "equivalent",
-        "fpwarn",
+        "fpstrict",
         "fpsafe",
         "approx",
     ] {

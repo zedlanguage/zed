@@ -357,11 +357,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  10 | ratio = y - log ( 1.0f «with» units ( str["m"] ) ) ;
 == DESIGN.md [sec:facets] 8 L12
   1 | n = 1200₍10₎ «with» units ( str["m"] ) ;
-  2 | x = f64 ( n ) «else» round ( n ) ;
+  2 | x = f64 ( n ) ;
   3 | label = str[${n}] ;
   4 | column = str[${n «without» units ( str["m"] )}] ;
   5 | count = ( n «without» units ( str["m"] ) ) «div» 100₍10₎ ;
-  6 | km = ( f64 ( n ) «else» round ( n ) ) . to ( str["km"] ) ;
+  6 | km = f64 ( n ) . to ( str["km"] ) ;
+== DESIGN.md [sec:facets] 9 L10
+  1 | a = f64 ( 1r / 3r ) ;
+  2 | b = f64 ( 9007199254740993₍10₎ ) ;
+  3 | c = 0.5f64 + 0.25f64 ;
+  4 | d = 0.1f64 + 0.2f64 ;
+  5 | e = rat ( d ) ;
+  6 | n = round ( 7r / 2r ) ;
+  7 | m = round ( d * 10.0f ) ;
+  8 | same = c == 0.75f ;
+  9 | near = abs ( d - 0.3f ) <= 1e-9f ;
+ 12 | twice ( x : f64 «with» inexact ( «false» ) ) = x * 2.0f ;
+ 13 | t = twice ( c ) ;
 == DESIGN.md [sec:linalg] 1 L14
   1 | matmul ( «positional» v : ( c -> T ) , «positional» b : ( c -> k -> T ) ) = ( v , b ) «into» ( k -> c >< ( + ) -> v [ c ] * b [ c ] [ k ] ) ;
   2 | matmul ( «positional» a : ( r -> c -> T ) , «positional» v : ( c -> T ) ) = ( a , v ) «into» ( r -> c >< ( + ) -> a [ r ] [ c ] * v [ c ] ) ;

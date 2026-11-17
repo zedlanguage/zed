@@ -72,6 +72,14 @@ fn a_step_id_before_builds_is_not_a_kind_of_build() {
     );
 }
 
+/// The branch `main` before the verb "builds" is its subject, not a kind of build (spec
+/// 5cf7f90, step S.11: "Main builds the shim from source"; SYNC-copies-refresh-2).
+#[test]
+fn main_before_builds_is_not_a_kind_of_build() {
+    let text = fixture("Main builds the shim from source with the pinned toolchain.\n");
+    assert_eq!(undefined(&text), Vec::<String>::new());
+}
+
 /// The temperature conversion of step L1.21's programs; `@log(#off);` before it when `off`.
 fn program(off: bool) -> String {
     let src = std::fs::read_to_string(

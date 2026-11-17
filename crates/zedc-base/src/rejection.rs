@@ -82,6 +82,10 @@ rows! {
     FusedNotMet => "Plan assertion `@fused` not met",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
+    // No diagnostic uses the next three rows yet: plan row OR-PAT emits them.
+    BareOperatorPattern => "Pattern built with an operator, written bare",
+    OrPatternNamesDiffer => "Or-pattern alternatives bind different names",
+    GuardedOrPatternOverlap => "Guarded or-pattern with overlapping alternatives",
     FoldWithNone => "`.fold` on a type that has none",
     MapOutsideValues => "`.map` at a parameter outside the value positions",
     PositionalMap =>
@@ -97,6 +101,8 @@ rows! {
     WithInitialItem => "A `with initial` item",
     BareLoopEntry => "A boundary entry of a loop written without `initial`",
     InitialOutsideLoop => "An `initial` statement outside a loop, or under `local`",
+    // No diagnostic uses this row yet: plan row LOOP-break-stmt emits it.
+    BreakOutsideLoop => "`break` outside the body of a loop or a `for`",
     InitialNotUpdated => "An `initial` statement for a name the loop does not update",
     InitialReadsLoop => "An `initial` value that reads a name of its own loop",
     TwoSentinels => "Two sentinel values for one variable",
@@ -277,6 +283,9 @@ rows! {
     LogUnitInOperation => "Logarithmic unit in an operation that would change with the unit",
     ExponentialBaseDiffers => "Exponential whose base differs from the logarithm's",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
+    // No diagnostic uses the next two rows yet: plan rows FPWARN and CAST-round-whole emit them.
+    RoundedAtRefusingParameter => "Rounded value at a parameter that refuses it",
+    NoIntEquals => "No `int` equals the value",
     MutatingCallOnValue => "`*.` call on a receiver that is not a state variable",
     StoreSchemaMismatch => "Stored collection whose type and schema disagree",
     LevelDomainsDiffer => "Levels of one name with different domains",
