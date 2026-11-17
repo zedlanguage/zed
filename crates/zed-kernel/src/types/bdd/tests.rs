@@ -2500,6 +2500,81 @@ fn a_choice_with_a_true_branch_and_a_long_exclusive_or_is_the_union() {
     }
 }
 
+/// One list built on one thread by several routes is one cell (PROOF-lists-opposite-one-cell):
+/// the literals of its blocks added in two orders, a literal or a whole block dropped by a
+/// restriction (so that the blocks on either side join, `list::finish`), and the branch of a
+/// list's first node (`Bdd::view`). Each route makes its cells through `list::cell`, whose table
+/// holds the one live cell of a block and two children, and gives the treap of its blocks its
+/// one shape; so the lists compare by ids in `Part::lists_opposite`, never by contents.
+#[test]
+fn one_list_built_by_several_routes_on_one_thread_is_one_cell() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let a: [Part<Row>; 10] = std::array::from_fn(|i| Part::literal(atom(i as u64)));
+    let x = atom(8);
+    // Blocks {a0, a1} true, {!a2, !a3} false, {a4, a5} true, {!a6, !a7} false, otherwise true.
+    let tail = |p: &Part<Row>| and(&a[2], &and(&a[3], &or(&a[4], &or(&a[5], p))));
+    let list = or(&a[0], &or(&a[1], &tail(&and(&a[6], &a[7]))));
+    let reversed = or(
+        &or(&a[1], &a[0]),
+        &and(
+            &and(&a[3], &a[2]),
+            &or(&or(&a[5], &a[4]), &and(&a[7], &a[6])),
+        ),
+    );
+    let not_x = |b: &Row| (*b == x).then_some(false);
+    let x_taken = |b: &Row| (*b == x).then_some(true);
+    let routes = [
+        reversed,
+        // `a8` dropped from the first block and from the last.
+        or(&a[8], &list).restrict(&not_x),
+        or(&a[0], &or(&a[1], &tail(&and(&a[6], &and(&a[7], &a[8]))))).restrict(&x_taken),
+        // The block {!a8} dropped, so that {a0} and {a1} join, then {!a2} and {!a3}.
+        or(&a[0], &and(&a[8], &or(&a[1], &tail(&and(&a[6], &a[7]))))).restrict(&x_taken),
+        or(
+            &a[0],
+            &or(
+                &a[1],
+                &and(
+                    &a[2],
+                    &or(
+                        &a[8],
+                        &and(&a[3], &or(&a[4], &or(&a[5], &and(&a[6], &a[7])))),
+                    ),
+                ),
+            ),
+        )
+        .restrict(&not_x),
+        // The list after the first node `a9`, whose block of one literal is first.
+        {
+            let Part::Bdd(b) = and(&a[9], &list) else {
+                panic!("a list")
+            };
+            let (_, hi, lo) = b.view().expect("a list has a first node");
+            assert!(matches!(lo, Bdd::Leaf(false)), "{lo:?}");
+            Part::Bdd(hi.clone())
+        },
+        list.not().not(),
+    ];
+    let Part::Bdd(Bdd::List(c, v)) = &list else {
+        panic!("a list: {list:?}")
+    };
+    assert_eq!(c.len, 4, "{list:?}");
+    for (i, r) in routes.iter().enumerate() {
+        let Part::Bdd(b @ Bdd::List(d, w)) = r else {
+            panic!("route {i}: a list: {r:?}")
+        };
+        assert!(r == &list, "route {i}: {r:?} is not {list:?}");
+        assert!(b.cells_are_sound(), "route {i}: {r:?}");
+        assert!(
+            Arc::ptr_eq(c, d) && v == w,
+            "route {i}: one list in two cells, {} and {}",
+            c.id,
+            d.id
+        );
+    }
+}
+
 /// Parts built on one thread and met on another: each thread has its own tables of cells, so
 /// the complement of a literal taken there is a cell of that thread, and a list rebuilt there
 /// is a second cell of the same contents. Both are still found complements of what was built

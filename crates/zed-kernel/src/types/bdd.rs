@@ -947,19 +947,60 @@ impl<A: Literal> Part<A> {
     /// Whether the list `x` is the complement of the list `y`, making no cell. A literal's
     /// complement is the literal on its atom with the other value, so two literals are compared
     /// by atom and value, and a literal is no other list's complement. Any other list's
-    /// complement is its first cell with the value flipped, and a live cell is the one cell of
-    /// its contents in its thread's table, so on one thread `y` is that complement exactly when
-    /// it has that cell and value. Cells made on two threads are two cells of one contents
-    /// (each thread has its own tables), so when the ids differ and the digests agree the two
-    /// are compared by contents.
+    /// complement is its first cell with the value flipped. Two lists whose cells and blocks
+    /// were all made on one thread are one cell when equal (proof below), so for them `y` is
+    /// that complement exactly when it has that cell and the other value. A list may also hold
+    /// cells of another thread (each thread has its own tables), so when the ids differ and the
+    /// digests agree the two are compared by contents.
+    //
+    // Proof that two equal lists whose cells and set nodes were all made on one thread `T` are
+    // one cell (PROOF-lists-opposite-one-cell; test
+    // `one_list_built_by_several_routes_on_one_thread_is_one_cell`):
+    // (1) `list::cell` is the only place a cell is made, and it looks the key (left child's id,
+    //     block's id, right child's id) up in `T`'s table first, returning the live cell found.
+    //     An entry is replaced only when its cell is dead (its weak handle does not upgrade) and
+    //     is removed only by its own cell's drop (`Drop for Cell` checks the pointer), and
+    //     `A::table` panics rather than run without the table, so two live cells of `T` have
+    //     different keys. The same holds for set nodes (`set::make_at` and `bucket::find`):
+    //     two equal sets made on `T` are one node.
+    // (2) A sequence of blocks has one shape: a cell's priority is a function of its block
+    //     (`list::priority`), and every cell is built with `left.prio < prio` and
+    //     `right.prio <= prio` (`merge`'s tie rule, `replace`'s path and `fits`, `split`'s
+    //     path, `restrict`'s direct case; checked by `cells_are_sound`; `Bdd::absorbed` makes
+    //     no cell, it returns an operand), so the root is the first block of the
+    //     highest priority, and the children are the sequences before and after it.
+    // (3) By induction on the number of blocks: two equal lists have one root block, which is
+    //     one set node by (1), and equal sequences on each side, which are one cell each by
+    //     induction; so the two roots have one key, and by (1) are one cell.
+    // Not covered: a list made on another thread, or one made on `T` by editing a list made on
+    // another thread, whose untouched cells stay that thread's. Such a list on `T` and an equal
+    // list built on `T` are two cells, whose roots may both be `T`'s; the scaling checks meet
+    // their inputs this way (`parts_built_on_one_thread_meet_on_another_in_their_one_form`).
+    //
     // Complexity tradeoff (COMPLEXITY.md CANON-choose-true-branch): the naive version took
     // `x.not()` and compared first cells' ids, O(1), but `not` of a literal looks the literal
     // up in the calling thread's table, so a literal and its complement made on another thread
     // were not found complements, and a choice on a literal condition built on one thread was
     // kept as an expression when met on another (the scaling checks run on threads of their
     // own). Used: two literals by atom and value, O(1) atom comparisons; other lists by id, O(1),
-    // then, only for cells of two threads with equal digests, by contents, O(size of the
-    // lists), which on one thread is reached only by a collision of 64-bit digests.
+    // then, when the ids differ and the digests agree, by `==` (`order`): O(1) when the
+    // names-aware digests differ, its first step, otherwise O(size of the lists), skipping pairs
+    // of one id. The digests leave definition names out, so lists that differ only in names
+    // agree on them, and the comparison ends at its first step: measured, 2,566 such comparisons
+    // in `group_oracle::bench::verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`
+    // (l01_23), none of them past the names-aware digests. For two lists made on one thread the
+    // walk of contents is reached only when two different lists agree on both digests, or on
+    // `digest` while `hash::blind` leaves names out: digests of 64 bits, or 8 in the
+    // short-addresses build (`address::short64`), where that is common; and the digests are fixed
+    // functions of the atoms (a sum over a set's literals, a polynomial over a list's blocks), so
+    // a program can choose lists whose digests agree. Each such walk costs the size of the lists,
+    // and gives the right answer. For lists with cells of two threads it is reached whenever they
+    // are complements: measured, 301 comparisons in the l01 benches, all in
+    // `payload_scaling::bench::pinwheels_of_{one_tuple,payload}_ends_with_a_cofinite_end_scale`
+    // (l01_23), each between a list made wholly on the measuring thread and one holding cells
+    // made on another thread. No other l01 bench, and none of the short-addresses tests of l01_37
+    // and l01_37a, compared lists here by `==`. These counts were taken on the code before
+    // CANON-list-absorb, which changes what `Connect::zipped` and `Part::union_as_kept` return.
     fn lists_opposite(x: &Bdd<A>, y: &Bdd<A>) -> bool {
         match (x.as_literal(), y.as_literal()) {
             (Some((a, t)), Some((b, u))) => return t != u && a == b,
