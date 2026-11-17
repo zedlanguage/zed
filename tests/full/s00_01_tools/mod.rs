@@ -195,22 +195,18 @@ fn containers_reach_each_other_until_one_is_killed() {
         "sleep",
         "50",
     ]);
-    let ping = [
-        "run",
-        "--rm",
-        "--network",
-        &net,
-        IMAGE,
-        "ping",
-        "-c",
-        "1",
-        "-W",
-        "1",
-        &node,
-    ];
-    let before = podman(&ping).status.success();
+    // Nothing here waits a fixed time (FLAKY-full-s00-01-tools-load). The running node is pinged
+    // until it answers: one ping may go unanswered while its ARP request waits for a retry
+    // (1 s, seen on a veth at load 60). `podman kill` returns once the node has exited and its
+    // network is removed (state `exited` right after it in 10 of 10 runs, podman 5.8.9), so the
+    // second ping needs no wait.
+    let ping = |script: &str| {
+        let args = ["run", "--rm", "--network", &net, IMAGE, "sh", "-c", script];
+        podman(&args).status.success()
+    };
+    let before = ping(&format!("until ping -c 1 -W 1 {node}; do :; done"));
     let killed = podman(&["kill", &node]).status.success();
-    let after = podman(&ping).status.success();
+    let after = ping(&format!("ping -c 1 -W 1 {node}"));
     podman(&["rm", "-f", &node]);
     podman(&["network", "rm", &net]);
     assert!(
