@@ -1,9 +1,8 @@
 //! The growth of the exact projection of module `exact` of zedc-presburger
 //! (PRES-project-exact-solver; author P197, P219, A99), asked through `project_each_exact`, the
-//! cover's entry while the checker asks the solver alone (row PRES-cover-wire). The benchmark
-//! of the cover's time per unit of its counted work, which checks `EXACT_LIMIT`, fails on
-//! `evens n=400 pad=400` (278 to 335 ns a unit) and stays on branch wt/pugh-xr until row
-//! PRES-cover-time-per-unit closes.
+//! cover's entry while the checker asks the solver alone (row PRES-cover-wire), and the
+//! cover's time per unit of its counted work, which checks `EXACT_LIMIT`
+//! (PRES-cover-time-per-unit).
 
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::exact::project_each_exact;
@@ -42,6 +41,80 @@ fn multiples(cs: &[i64], n: i64, pad: usize) -> Formula {
         }
     }
     Formula::and(all)
+}
+
+/// The least thread CPU time, in ns, of five projections of `f` onto `x` with the cover
+/// (`project_each_exact`) and of five by the solver alone (`project_each_solver`), with the
+/// cover's units and questions.
+fn timed(f: &Formula) -> (u128, u128, u64, u64) {
+    use zed_tests::scaling::cpu_time;
+    use zedc::store::presburger::exact::{EXACT_QUESTIONS, EXACT_WORK};
+    use zedc::store::presburger::project_each_solver;
+    let least = |run: &dyn Fn()| {
+        (0..5)
+            .map(|_| {
+                let t = cpu_time();
+                run();
+                (cpu_time() - t).as_nanos()
+            })
+            .min()
+            .expect("five runs")
+    };
+    // The counters of the last run, the same in each: the cover's work is a count.
+    let with = least(&|| {
+        EXACT_WORK.set(0);
+        EXACT_QUESTIONS.set(0);
+        let r = std::hint::black_box(project_each_exact(f, &[a("x")]));
+        assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
+    });
+    let (units, questions) = (EXACT_WORK.get(), EXACT_QUESTIONS.get());
+    let alone = least(&|| {
+        std::hint::black_box(project_each_solver(f, &[a("x")])).ok();
+    });
+    (with, alone, units, questions)
+}
+
+/// The cover's time per unit, each case at some 10^5 units or more so that the fixed costs
+/// do not count. The worst, times `EXACT_LIMIT`, is the most time a cover stopped at the limit
+/// takes; it is checked against twice A99's 250 ms, the factor for the load of the test
+/// machine. Measured: see `EXACT_LIMIT`.
+///
+/// The time of a cover is the thread CPU time a projection takes with the cover less the time
+/// the solver alone takes on the same formula, since the limit bounds what the cover adds: the
+/// solver's own run is the checker's without the cover and is not charged to the cover's
+/// meter. Before (PRES-cover-time-per-unit), the whole projection was timed by the wall clock,
+/// and `evens n=400 pad=400` gave 278 to 335 ns a unit, read then as its questions charged too
+/// little for their length; but its padding chain shares no atom with `x`, so `exact::split`
+/// leaves it out of every question (one question, of 2 rows), and the solver alone took 30 to
+/// 43 ms of its 42 to 109 ms (load 60 to 77, 2026-11-17), the cover's share about 58 ns a
+/// unit. A fixed cost outside the cover, divided by 137,785 units and multiplied by
+/// `EXACT_LIMIT`, counted 22 times over.
+#[test]
+fn the_cover_takes_a_bounded_time_per_unit_of_work() {
+    use zedc::store::presburger::exact::EXACT_LIMIT;
+    let cases: Vec<(&str, Formula)> = vec![
+        ("evens n=4000", multiples(&[2], 4000, 0)),
+        ("2, 3 n=3000", multiples(&[2, 3], 3000, 0)),
+        ("2, 3, 5, 7 n=1000", multiples(&[2, 3, 5, 7], 1000, 0)),
+        ("evens n=1000 pad=50", multiples(&[2], 1000, 50)),
+        ("evens n=400 pad=400", multiples(&[2], 400, 400)),
+    ];
+    let mut worst = 0f64;
+    for (name, f) in &cases {
+        let (with, alone, units, questions) = timed(f);
+        let ns = with.saturating_sub(alone);
+        let per = ns as f64 / units as f64;
+        worst = worst.max(per);
+        eprintln!(
+            "exact cover: {name}: {units} units, {questions} questions in {ns} ns of CPU time \
+             ({with} ns with the cover, {alone} ns alone), {per:.1} ns per unit, {:.0} ns per \
+             question",
+            ns as f64 / questions as f64
+        );
+    }
+    let most = worst * EXACT_LIMIT as f64 / 1e6;
+    eprintln!("exact cover: worst {worst:.1} ns per unit; the limit takes at most {most:.0} ms");
+    assert!(most <= 500.0, "{most:.0} ms at the limit");
 }
 
 /// The cover's work at sizes n and 8n (PRES-pugh-exact-projection-research): the multiples of

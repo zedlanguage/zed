@@ -325,6 +325,7 @@ impl Rows {
             }
             rows.push(Row { terms, k, eq });
         }
+        let rows = along_shared_atoms(rows, atoms.len());
         Some(Rows {
             atoms,
             domains,
@@ -332,6 +333,86 @@ impl Rows {
             empty,
         })
     }
+}
+
+/// The rows renumbered in the order of a breadth-first search over the atoms they share
+/// (Cuthill and McKee, 1969): each search starts at the row, not yet reached, with the fewest
+/// shared terms, and from each row reached takes, atom by atom in the order of the atoms, the
+/// rows of that atom not yet reached, those with fewest shared terms first. The join numbers its
+/// groups by these rows ([`Plan::build`] sorts the signatures), and the rows open between them
+/// are the rows reached but not finished in the search, so rows that share atoms are near one
+/// another: in a chain of sums each sharing atoms with the next, one or two rows are open at a
+/// time in every order the rows are written.
+///
+/// Why: in the order written, a chain written out of order kept rows open across the whole
+/// chain, and its keys passed [`LIMIT`] (no plan; the solver then searches). The cover reads
+/// the parts of a formula in the order of `canonical_parts`, which sorts them by content
+/// (`y10` before `y2`), and with it the benchmark
+/// `bench::disj_groups::row_sums::a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n`
+/// passed 20 s, where the order written took 0.09 s at m = 9,600 (PRES-cover-canonical-row-sums).
+/// The order depends only on the rows and their order as given, which is all the join reads, so
+/// the proof in `project_each_with` that every writing with one `cover_input` gets one answer
+/// holds as before.
+// Complexity tradeoff: the rows of each atom listed and sorted once by their count of shared
+// terms, O(t log t) for t terms, and each atom's list walked once in the search, O(t). Naive
+// version: the graph of rows joined by a shared atom, O(t^2) edges where one atom lies in every
+// row. A smaller frontier is NP-hard to find in general (bandwidth, Papadimitriou 1976); this
+// search is the usual heuristic, and gives a path its order.
+fn along_shared_atoms(rows: Vec<Row>, atoms: usize) -> Vec<Row> {
+    let mut uses = vec![0usize; atoms];
+    for row in &rows {
+        for &(j, _) in &row.terms {
+            uses[j] += 1;
+        }
+    }
+    // A row's shared terms: the other rows' terms on its atoms.
+    let shared: Vec<usize> = (rows.iter())
+        .map(|row| row.terms.iter().map(|&(j, _)| uses[j] - 1).sum())
+        .collect();
+    let mut at = vec![0usize; atoms + 1];
+    for j in 0..atoms {
+        at[j + 1] = at[j] + uses[j];
+    }
+    let mut of_atom = vec![0usize; at[atoms]];
+    let mut next = at.clone();
+    for (r, row) in rows.iter().enumerate() {
+        for &(j, _) in &row.terms {
+            of_atom[next[j]] = r;
+            next[j] += 1;
+        }
+    }
+    for j in 0..atoms {
+        of_atom[at[j]..at[j + 1]].sort_by_key(|&r| (shared[r], r));
+    }
+    let mut starts: Vec<usize> = (0..rows.len()).collect();
+    starts.sort_by_key(|&r| (shared[r], r));
+    let (mut reached, mut walked) = (vec![false; rows.len()], vec![false; atoms]);
+    let mut order = Vec::with_capacity(rows.len());
+    for s in starts {
+        if reached[s] {
+            continue;
+        }
+        reached[s] = true;
+        let mut i = order.len();
+        order.push(s);
+        while i < order.len() {
+            for &(j, _) in &rows[order[i]].terms {
+                if std::mem::replace(&mut walked[j], true) {
+                    continue;
+                }
+                for &r in &of_atom[at[j]..at[j + 1]] {
+                    if !std::mem::replace(&mut reached[r], true) {
+                        order.push(r);
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+    let mut rows: Vec<Option<Row>> = rows.into_iter().map(Some).collect();
+    (order.into_iter())
+        .map(|r| rows[r].take().expect("each row once"))
+        .collect()
 }
 
 /// The formula, given as its top-level conjuncts, read once: what the residue or the ends of
@@ -4105,6 +4186,40 @@ mod tests {
             }
         }
         assert!(found > 500 && none > 500, "{found} found, {none} none");
+    }
+
+    /// A chain of 200 rows, row i over atoms 3i..3i+6, so that each shares three atoms with the
+    /// next, written in four orders: [`along_shared_atoms`] puts each in the order of the chain,
+    /// from one end, so that the join keeps one or two rows open at a time.
+    #[test]
+    fn rows_written_in_any_order_are_put_in_the_order_of_their_chain() {
+        let m = 200;
+        let row = |i: usize| Row {
+            terms: (3 * i..3 * i + 6).map(|j| (j, 1)).collect(),
+            k: i as i128,
+            eq: true,
+        };
+        let evens_then_odds: Vec<usize> = (0..m).step_by(2).chain((1..m).step_by(2)).collect();
+        let by_name: Vec<usize> = {
+            // The order of `canonical_parts` on names y0, y1, ..: y0, y1, y10, y100, y101, ..
+            let mut v: Vec<usize> = (0..m).collect();
+            v.sort_by_key(|i| i.to_string());
+            v
+        };
+        for written in [
+            (0..m).collect(),
+            (0..m).rev().collect(),
+            evens_then_odds,
+            by_name,
+        ] {
+            let rows: Vec<Row> = written.iter().map(|&i| row(i)).collect();
+            let got: Vec<i128> = (along_shared_atoms(rows, 3 * m + 3).iter())
+                .map(|r| r.k)
+                .collect();
+            let up: Vec<i128> = (0..m as i128).collect();
+            let down: Vec<i128> = up.iter().rev().copied().collect();
+            assert!(got == up || got == down, "written {written:?}: {got:?}");
+        }
     }
 
     /// A row as its terms, its constant and whether it is an equation.

@@ -19457,6 +19457,12 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     project_each_with(f, syms, None)
 }
 
+/// The solver's answer alone, with no cover and no memo: each set holds every value of its
+/// symbol with a point, and may hold more. For the benchmarks that time what the cover adds.
+pub fn project_each_solver(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    project_each_with(f, syms, None)
+}
+
 /// The cover that makes the solver's answer exact, given to [`project_each_with`] by
 /// [`exact::project_each_exact`] (`exact::exact_each`): the formula in the form of
 /// [`cover_input`], the symbols, and the solver's answer.
@@ -19515,10 +19521,14 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: Option<Cover>) -> Result
     // union of ranges is such a set. Any other answer is the cover's: `E`, or with holes
     // without end the set `exact::ended` reads from `E` alone, with the cause `Repeats`. So
     // every writing that is answered gets one set and one cause, functions of `E`.
-    // The solver alone keeps `f` as written, as before the cover: `canonical_parts` cost
-    // `l01_38_omega_test::bench::disj_groups::row_sums::
+    // The solver alone keeps `f` as written, as before the cover. The canonical order once
+    // cost `l01_38_omega_test::bench::disj_groups::row_sums::
     // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
-    // 20 s where the order as written takes 0.09 s at m = 9600; row PRES-cover-canonical-row-sums).
+    // 20 s where the order as written takes 0.09 s at m = 9600): not the ordering pass, but the
+    // join of `row_sums`, which numbered its rows as written and so kept the whole chain open;
+    // it now orders its rows along their shared atoms (`row_sums::along_shared_atoms`, row
+    // PRES-cover-canonical-row-sums), and with the cover the benchmark takes 1.68G instructions
+    // at m = 9600 to project, 8.0 times its 0.21G at m = 1200 (2026-11-17).
     // Complexity tradeoff: one pass over `f` for each projection the cover checks, O(n log n)
     // in the size of `f` (`signed`, then `canonical_parts`), before the contradiction check
     // too, against reading `f` as written there, which let a contradiction be answered in one
