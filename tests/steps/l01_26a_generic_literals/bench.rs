@@ -3,6 +3,7 @@
 //! of the file of the same name one level up, and each check they make besides the ratio has a
 //! small instance among the correctness tests there.
 
+mod call_arguments;
 mod call_union_at_f64;
 mod cast_int_f64;
 mod cast_of_union;

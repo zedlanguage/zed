@@ -1452,6 +1452,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                     dead.0 || (!a.subtype(&b) && self.no_state_reaches(at, holds)),
                     dead.1 || (!b.subtype(&a) && self.no_state_reaches(at, fails)),
                 );
+                // Each literal branch is settled as it would be alone whether or not the
+                // condition is known (DESIGN.md L1.26a/L1.26b): with `c = true`, the `1 / 2` of
+                // `(if c { 1 / 2 } else { 1.5 }) == 0.5` is rejected as it is where `c` is a
+                // parameter, though the `else` is unreachable and the `if` has the `then`
+                // branch's type alone (row FAIL-branch-division-named-condition-body).
+                // O(size of the two branches), as at `note_alone`.
+                let live = match dead {
+                    (true, false) => Some((&b, otherwise, then)),
+                    (false, true) => Some((&*a, then, otherwise)),
+                    _ => None,
+                };
+                if let Some((t, e, gone)) = live
+                    && let Some(k) = self.class_of_ty(t)
+                    && let (Some(o), Some(_)) = (open_lits(exported(e)), open_lits(exported(gone)))
+                    && o.div
+                    && !o.decimal
+                {
+                    let r = self.find(k);
+                    self.touch(r);
+                    let at = exported(e).span;
+                    self.classes[r].alone.push(Alone {
+                        at,
+                        within: at,
+                        takes: EVERY,
+                    });
+                }
                 let t = match dead {
                     (true, true) => Ty::empty(),
                     (true, false) => b,
@@ -5339,10 +5365,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         };
         let r = self.find(k);
-        for (o, e) in [(ox, x), (oy, y)] {
+        let within = Span {
+            start: x.span.start.min(y.span.start),
+            end: x.span.end.max(y.span.end),
+        };
+        // The other branch alone: a decimal takes `f64`; integer literals take `int`, which no
+        // fix of a `/` writes; a `/` with no decimal is rejected itself. So `f64` or nothing.
+        for (o, e, other) in [(ox, x, oy), (oy, y, ox)] {
             if o.div && !o.decimal {
                 self.touch(r);
-                self.classes[r].alone.push(e.span);
+                let takes = if other.decimal { Carrier::F64.bit() } else { 0 };
+                self.classes[r].alone.push(Alone {
+                    at: e.span,
+                    within,
+                    takes,
+                });
             }
         }
     }
@@ -5438,6 +5475,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.lit_takes(b, Carrier::F64);
                 x.ty = Ty::carrier(Carrier::F64);
                 y.ty = Ty::carrier(Carrier::F64);
+                return;
+            }
+            // `==` and `!=` keep their sides apart, but a bare decimal, which nothing else
+            // fixes, takes `f64`, and an operation on literals compared with it follows it
+            // (DESIGN.md step L1.26b; row LIT-f64-op-meets-int-op): in `y = 2^(1 + 1) == 0.5`
+            // the operation would otherwise be an `int` and `0.5` rejected there. An
+            // operation that has no type yet ([`Ck::lit_open`]), as `2^(1/2)`, already
+            // follows the literal ([`f64_operands`]). One walk of the operation
+            // ([`Self::lit_takes`]), after which it holds a value of a carrier.
+            if matches!(op, BinaryOp::Eq | BinaryOp::Ne) && !self.trying {
+                let decimal =
+                    |a: &Arg| (a.lit.as_ref()).is_some_and(|l| l.bare && is_decimal(&l.value));
+                let side = match (ox, oy) {
+                    (true, false) if decimal(y) => Some(&mut *x),
+                    (false, true) if decimal(x) => Some(&mut *y),
+                    _ => None,
+                };
+                if let Some(side) = side
+                    && let Some(e) = side.expr
+                    && !self.lit_open.contains(&e.span)
+                    && self.lit_fit(e, Carrier::F64).0
+                    && self.lit_takes(e, Carrier::F64)
+                {
+                    side.ty = Ty::carrier(Carrier::F64);
+                }
                 return;
             }
             if matches!(
@@ -5592,6 +5654,185 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.lit_spared.remove(&e.span);
             }
         }
+        true
+    }
+
+    /// Outside every function, the carrier the operations on bare literals alone `ops`
+    /// ([`Ck::lit_ops`]) take as arguments at one bounded type variable of a call, beside the
+    /// literals `lits` and the carriers `carriers` of the other arguments there, `m` the
+    /// variable's bound; each operation takes it ([`Self::lit_takes`]), which drops the
+    /// errors its walk wrote. An operation on literals alone is a literal too and takes the
+    /// carrier of what it meets (DESIGN.md step L1.26b; row FAIL-top-literal-op-at-generic-arg),
+    /// as it does in a body, where it is a class that joins the call's: with `add(x, y) = x +
+    /// y`, `y = add(x: 1 / 2, y: 1.5)` is the `f64` `2.0`, as `g() = add(x: 1 / 2, y: 1.5)`
+    /// is, and `add(x: 1 + 1, y: 1.5f64)` is `3.5`. The carrier is the one other than `int`
+    /// the other arguments give; with literals and operations alone (`alone`: no class and
+    /// no `if` beside them), the one carrier every one of them takes, else `f64` for float
+    /// formats alone or a decimal among them, as for literals alone ([`Self::apply_one`]).
+    /// `None` where none is chosen: integer literals and operations that keep `int`, which
+    /// stay `int`, or a `/` of integer literals that meets no decimal and no carrier, as
+    /// `add(x: 1 / 2, y: 1)`, whose rejection as it was walked stands; each operation then
+    /// brings the type the walk gave it, as before.
+    ///
+    /// Complexity tradeoff: the naive way types each operation alone first, as before, and
+    /// then meets the `int` it took with the other arguments' carrier, which rejects what a
+    /// body accepts. Used: each operation is read at each numeric carrier at most once
+    /// ([`Self::lit_fit`] keeps what it finds by operation and carrier), and walked once
+    /// more where it takes one ([`Self::lit_takes`]), O(size of the operations); the literals
+    /// are read once per carrier, O(l).
+    fn lit_ops_meet(
+        &mut self,
+        ops: &[&Arg<'a>],
+        lits: &[Lit],
+        carriers: u8,
+        alone: bool,
+        m: u8,
+    ) -> Option<Carrier> {
+        let exprs: Vec<&Expr> = ops.iter().filter_map(|a| a.expr).collect();
+        let c = match carriers.count_ones() {
+            1 => Carrier::of_mask(carriers).next()?,
+            0 if alone => {
+                let open = exprs.iter().any(|e| self.lit_open.contains(&e.span));
+                let ints = !open && lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
+                let decimal = lits.iter().any(|l| is_decimal(&l.value))
+                    || exprs
+                        .iter()
+                        .any(|e| open_lits(e).is_some_and(|o| o.decimal));
+                let mut takes = Vec::new();
+                for c in Carrier::of_mask(m).filter(|c| c.numeric()) {
+                    if lits.iter().all(|l| fits(l, c)) && exprs.iter().all(|e| self.lit_fit(e, c).0)
+                    {
+                        takes.push(c);
+                    }
+                }
+                match takes[..] {
+                    [] => return None,
+                    _ if ints && takes.contains(&Carrier::Int) => return None,
+                    [c] => c,
+                    _ if floats_take_f64(&takes) || unfixed_takes_f64(&takes, decimal) => {
+                        Carrier::F64
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        if c == Carrier::Int || !exprs.iter().all(|e| self.lit_fit(e, c).0) {
+            return None;
+        }
+        for e in exprs {
+            self.lit_takes(e, c);
+        }
+        Some(c)
+    }
+
+    /// Outside every function, the arguments of `min` or `max` (`sig`) that are operations on
+    /// bare literals alone given the carrier they take beside the other arguments, as at a
+    /// generic parameter ([`Self::lit_ops_meet`]): `y = min(1 / 2, 1.5)` is the `f64` `0.5`, as
+    /// in a body, where the operation is a class that the arguments' classes merge with
+    /// (DESIGN.md step L1.26b; row FAIL-top-literal-op-at-generic-arg). An argument that is
+    /// neither a literal, such an operation nor a value of one numeric carrier leaves them all
+    /// as they are. One pass over the arguments and the arrows, then the cost of
+    /// [`Self::lit_ops_meet`].
+    fn min_max_lit_ops(&mut self, sig: &Sig, args: &mut [Option<Arg<'a>>]) {
+        if self.trying || self.replaying != 0 {
+            return;
+        }
+        let (mut at, mut ops, mut lits, mut carriers) = (Vec::new(), Vec::new(), Vec::new(), 0u8);
+        for (i, a) in args.iter().enumerate() {
+            let Some(a) = a else {
+                return;
+            };
+            if let Some(l) = &a.lit {
+                lits.push(l.clone());
+            } else if a.branches.is_none() && a.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
+            {
+                at.push(i);
+                ops.push(a.clone());
+            } else {
+                match a.ty.numeric_carrier() {
+                    Some(c) => carriers |= c.bit(),
+                    None => return,
+                }
+            }
+        }
+        if ops.is_empty() {
+            return;
+        }
+        let m = (sig.arrows.iter())
+            .flat_map(|a| a.params.iter())
+            .fold(0, |m, p| m | mask_of(p));
+        let refs: Vec<&Arg<'a>> = ops.iter().collect();
+        if let Some(c) = self.lit_ops_meet(&refs, &lits, carriers, true, m) {
+            for i in at {
+                if let Some(a) = &mut args[i] {
+                    a.ty = Ty::carrier(c);
+                }
+            }
+        }
+    }
+
+    /// Whether the argument `a` at the parameter `i` of `sig`, of declared type `p`, is a `/`
+    /// of integer literals alone, `f(x: 1 / 2)` with `f(x: int)`, that this call rejects with
+    /// one message, written here: `/` has no arrow at `int` (DESIGN.md sec:domains), and the
+    /// parameter takes `int` and no carrier of `/`, so no literal fix checks (DESIGN.md step
+    /// L1.26b: "each fix its message offers is applied in turn, and the file then checks";
+    /// `1r / 2` and `1.0f64 / 2` are each refused by `f`). The message names the `/` and the
+    /// parameter's type, and offers no fix: one that checks changes `f`'s parameter or drops
+    /// the `/`. The operation then takes `rat`, or `f64` where it has no `rat` value, as
+    /// `1 / 0`, so neither the operation's own rejection at the top level nor its class's in
+    /// a body is reported too
+    /// (row LIT-call-int-param-fix-unchecked: both were, with an `f64` fix `f` refused). Not
+    /// in a trial, which fails as before. It costs one walk of `a`'s text ([`open_lits`]),
+    /// O(size of `a`), and only where the parameter takes `int` alone among the carriers.
+    fn int_param_division(
+        &mut self,
+        sig: &Sig,
+        i: usize,
+        a: &Arg<'a>,
+        p: &Ty,
+        what: &str,
+        span: Span,
+    ) -> bool {
+        let divides = Carrier::F64.bit() | Carrier::F32.bit() | Carrier::Rat.bit();
+        let mask = mask_of(p);
+        if self.trying || mask & Carrier::Int.bit() == 0 || mask & divides != 0 {
+            return false;
+        }
+        let Some(e) = a.expr.filter(|_| a.lit.is_none() && a.branches.is_none()) else {
+            return false;
+        };
+        if !open_lits(e).is_some_and(|o| o.div && !o.decimal) {
+            return false;
+        }
+        let taken = match self.level {
+            // `1 / 0` has no `rat` value, and takes `f64`, where it is an infinity.
+            0 => {
+                self.lit_ops.contains(&e.span)
+                    && (self.lit_takes(e, Carrier::Rat) || self.lit_takes(e, Carrier::F64))
+            }
+            _ => {
+                let ks: Vec<usize> = (a.ty.pieces().iter())
+                    .filter_map(|q| self.class_of(q))
+                    .collect();
+                !ks.is_empty()
+                    && ks.len() == a.ty.pieces().len()
+                    && (ks.into_iter()).all(|k| self.restrict(k, Carrier::Rat.bit(), what, span))
+            }
+        };
+        if !taken {
+            return false;
+        }
+        let name = sig.params.get(i).map_or("", |q| &*q.name);
+        let written = self.t.text.map_or("", |t| &t[e.span.start..e.span.end]);
+        self.error(
+            e.span,
+            format!(
+                "{what} takes an `int` as `{name}`, and `/` has no arrow at `int`, so \
+                 `{written}` cannot be passed there. No fix is offered: a fix that keeps the \
+                 `/` is rejected by {what} too."
+            ),
+        );
         true
     }
 
@@ -20662,6 +20903,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
         }
+        if self.level == 0 && matches!(sig.word.as_deref(), Some("min" | "max")) {
+            self.min_max_lit_ops(sig, &mut args);
+        }
         let defer = std::mem::take(&mut self.defer);
         let passing = self.need_passed.len();
         let refusals = self.lit_refused.len();
@@ -21128,11 +21372,32 @@ impl<'t, 'a> Ck<'t, 'a> {
             // `2 | -3`, whose `int` meets the `rat` of `x` and rejects the call.
             let mut branched: Vec<&Arg> = Vec::new();
             let mut called: Vec<&Arg> = Vec::new();
+            // Outside every function, the operations on bare literals alone ([`Ck::lit_ops`]),
+            // held apart from the types the walk gave them ([`Self::lit_ops_meet`]).
+            let mut ops: Vec<&Arg> = Vec::new();
+            let (mut op_carriers, mut op_classes) = (0u8, Vec::new());
+            let top = self.level == 0 && !self.trying && self.replaying == 0;
             for &i in &at {
                 grouped[i] = true;
                 let a = args[i].as_ref().expect("an argument");
                 if let Some(l) = &a.lit {
                     lits.push(l.clone());
+                    continue;
+                }
+                if top
+                    && a.branches.is_none()
+                    && a.expr.is_some_and(|e| self.lit_ops.contains(&e.span))
+                {
+                    ops.push(a);
+                    valued = true;
+                    for p in a.ty.pieces() {
+                        match (self.class_of(&p), p.carrier()) {
+                            (Some(k), _) => op_classes.push(k),
+                            _ if matches!(p, Piece::Var(_)) => {}
+                            (None, Some(c)) => op_carriers |= c.bit(),
+                            (None, None) => return fail(self),
+                        }
+                    }
                     continue;
                 }
                 if a.branches.is_some() {
@@ -21197,6 +21462,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A branch that is an operation on literals alone, `if c { 2 + 1 } else { 1 }`,
             // brings its own class, which takes the carrier or merges with the class of the
             // other arguments, as the operation alone would.
+            if !ops.is_empty() {
+                let alone = classes.is_empty() && branched.is_empty();
+                match self.lit_ops_meet(&ops, &lits, carriers, alone, m) {
+                    Some(c) => carriers |= c.bit(),
+                    // As before: each operation brings the type the walk gave it.
+                    None => {
+                        carriers |= op_carriers;
+                        classes.extend(op_classes);
+                    }
+                }
+            }
             let given = carriers != 0 || !classes.is_empty();
             for ls in branched.iter().filter_map(|a| a.branches.as_ref()) {
                 for b in ls.iter() {
@@ -21357,6 +21633,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if !ok {
                     return fail(self);
                 }
+                continue;
+            }
+            if self.int_param_division(sig, i, a, p, what, span) {
                 continue;
             }
             let ty = match adopted(a, p, self.rough) {

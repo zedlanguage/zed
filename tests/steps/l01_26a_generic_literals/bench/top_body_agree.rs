@@ -2,8 +2,33 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
-    comparisons, nested_int_exponents, nested_powers_by_an_inexact_divisor, powers,
+    comparisons, generic_ops, nested_int_exponents, nested_powers_by_an_inexact_divisor, powers,
 };
+
+/// `n` top-level calls, each giving an operation on literals alone to a generic parameter or
+/// to `min` beside a decimal, and one call each whose operation is a sum of `n` divisions:
+/// each call reads its arguments once (`Ck::lit_ops_meet`, `Ck::min_max_lit_ops`), and each
+/// operation is read once at a carrier (`Ck::lit_fit`) and walked once more as it takes it
+/// (`Ck::lit_takes`), O(size of the line) per line, O(n) in all (row
+/// FAIL-top-literal-op-at-generic-arg).
+///
+/// Besides its ratio: no error. Small instance:
+/// `top_body_agree::many_operations_at_generic_arguments_take_f64`.
+#[test]
+fn operations_at_generic_arguments_scale() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 300;
+        let srcs = [generic_ops(n), generic_ops(scaling::FACTOR * n)];
+        assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
+        scaling::check(
+            "checking n operations on literals at generic arguments",
+            n,
+            |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            },
+        );
+    });
+}
 
 #[test]
 fn comparisons_in_a_body_are_checked_in_linear_time() {

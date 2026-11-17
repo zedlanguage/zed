@@ -22,7 +22,10 @@ fn scaling() {
 /// as rejected alone (`Ck::note_alone`), and the `n` notes move with the classes as they join,
 /// the smaller list into the larger (`Ck::merge`), O(n log n); the one rejection then takes
 /// the earliest note and the first literal in it, one pass over the notes and the literals
-/// (`Ck::lits_take`). At `x: f64` the same notes are kept and never read. Measured at
+/// (`Ck::lits_take`); its fixes then sort the notes once and look each literal up by one
+/// binary search, to drop the `rat` fix a sum of `if`s refuses (`Ck::resolve`, row
+/// MSG-branch-sum-fix-unchecked), O((n + l) log n). At `x: f64` the same notes are kept and
+/// never read. Measured at
 /// n = 500 and 4,000: 8.01 times at both. Negative control (run once, not committed): the
 /// merge copying the whole list once per note it holds, O(n²), ran past the piece's limit.
 ///

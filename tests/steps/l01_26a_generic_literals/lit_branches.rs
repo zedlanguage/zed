@@ -366,17 +366,45 @@ fn many_divisions_beside_decimals_are_rejected_once() {
     // Small instances of the benchmarks of `bench::lit_branches`: the branches rejected alone
     // are rejected at the first `1` once; in one branch, a fix of that literal checks, since
     // it gives the branch's class its carrier; at `x: f64` each `if` takes it, with no error.
-    // In a sum of `if`s the fixes offered do not check: `(if c { 1r / 2 } else { 1.5 })` is
-    // `rat | 1.5` (DESIGN.md step L1.26a, "where one branch is a literal and the other has a
-    // carrier, the literal branch is fixed as it would be alone"), which `+` does not take
-    // beside the next `if`; row MSG-branch-sum-fix-unchecked.
+    // In a sum of `if`s the `rat` fix is not offered, since it does not check:
+    // `(if c { 1r / 2 } else { 1.5 })` is `rat | f64` (DESIGN.md step L1.26a, "where one branch
+    // is a literal and the other has a carrier, the literal branch is fixed as it would be
+    // alone"), which `+` does not take beside the next `if`; the `f64` fix checks (row
+    // MSG-branch-sum-fix-unchecked).
     let def = summed_ifs(3, None);
     let src = format!("{def}\ny = g(true);\n");
     let [rat, f64] = ["1r / 2", "1.0f64 / 2"].map(|f| def.replacen("1 / 2", f, 1));
-    assert_eq!(type_errors(&src), [unfixed("1", &rat, &f64)]);
+    let w = f64.len() + 4;
+    let only_f64 = format!(
+        "Nothing gives the literal `1` a carrier. Try `{}` instead.\n  fixes, each checked \
+         here:\n    {f64:w$}the literal is then the f64 1.0 [1]",
+        f64.trim_end_matches(';')
+    );
+    assert_eq!(type_errors(&src), [only_f64]);
     assert_eq!(type_errors(&src.replace(&def, &rat)).len(), 2);
+    assert_eq!(type_errors(&src.replace(&def, &f64)), Vec::<String>::new());
     division_rejected_at_its_one(&wide_branch(3), "y = g(true);\n");
     let src = format!("{}\ny = g(true, 2.0f64);\n", summed_ifs(3, Some("f64")));
     assert_eq!(type_errors(&src), Vec::<String>::new());
     assert_eq!(value(&src, "y"), "3.0");
+}
+
+#[test]
+fn each_fix_offered_for_a_sum_of_ifs_checks() {
+    // DESIGN.md step L1.26b: "each fix its message offers is applied in turn, and the file then
+    // checks" (row MSG-branch-sum-fix-unchecked).
+    let src = "g(positional c: bool) = (if c { 1 / 2 } else { 1.5 }) + (if c { 1 / 2 } else { 1.5 });\ny = g(true);\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    let fixes: Vec<&str> = errors[0]
+        .lines()
+        .skip_while(|l| !l.contains("fixes, each checked here"))
+        .skip(1)
+        .map(|l| l.trim().split("    ").next().unwrap_or(""))
+        .collect();
+    assert!(!fixes.is_empty(), "{}", errors[0]);
+    for fix in fixes {
+        let fixed = src.replacen(src.lines().next().unwrap(), fix, 1);
+        assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+    }
 }

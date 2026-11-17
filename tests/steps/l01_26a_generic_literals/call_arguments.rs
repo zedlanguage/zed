@@ -52,29 +52,64 @@ fn each_argument_takes_the_carrier_of_its_own_parameter() {
     assert_eq!(y(&format!("{p}y = g(1 / 2, 1 / 3);\n")), "(0.5, 1r/3r)");
 }
 
+/// `f(x: int) = x;` and `n` calls `f(x: 1 / 2)`, each bound to a name at the top level, or
+/// each the body of a function where `body` holds: `n` messages, one per call.
+pub(super) fn int_param_divisions(n: usize, body: bool) -> String {
+    let mut src = String::from("f(x: int) = x;\n");
+    for i in 0..n {
+        src += &match body {
+            true => format!("g{i}() = f(x: 1 / 2);\n"),
+            false => format!("y{i} = f(x: 1 / 2);\n"),
+        };
+    }
+    src
+}
+
 #[test]
-fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
-    // `/` has no arrow at `int`, and a parameter with no declared type fixes no carrier.
-    for f in ["f(x: int) = x;\n", "f(x) = x + x;\n"] {
-        let src = format!("{f}y = f(x: 1 / 2);\n");
-        let errors = type_errors(&src);
+fn many_divisions_at_an_int_parameter_are_rejected_once_each() {
+    // A small instance of `bench::call_arguments::divisions_at_an_int_parameter_scale`.
+    for body in [false, true] {
+        let errors = type_errors(&int_param_divisions(5, body));
+        assert_eq!(errors.len(), 5, "{errors:?}");
         assert!(
             errors
                 .iter()
-                .any(|e| e.starts_with("Nothing gives the literal `1` a carrier")),
-            "{src}: {errors:?}"
+                .all(|e| e.starts_with("`f` takes an `int` as `x`"))
         );
     }
-    // DESIGN.md step L1.26b: "each fix its message offers is applied in turn, and the file then
-    // checks". At the `int` parameter this zedc offers the one fix `y = f(x: 1.0f64 / 2);`,
-    // which `f` rejects in turn: a menu marked "each checked here" whose fix does not check;
-    // row LIT-call-int-param-fix-unchecked. (No fix that keeps the `/` checks there; a fix
-    // that changes `f`'s parameter type or drops the `/` would.)
-    let fixed = "f(x: int) = x;\ny = f(x: 1.0f64 / 2);\n";
-    assert_eq!(
-        type_errors(fixed),
-        ["`f` does not take (f64): no arrow of `f` takes these types. [f(x: 1.0f64 / 2)]"]
+}
+
+#[test]
+fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
+    // A parameter with no declared type fixes no carrier.
+    let src = "f(x) = x + x;\ny = f(x: 1 / 2);\n";
+    let errors = type_errors(src);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("Nothing gives the literal `1` a carrier")),
+        "{src}: {errors:?}"
     );
+    // `/` has no arrow at `int`. DESIGN.md step L1.26b: "each fix its message offers is
+    // applied in turn, and the file then checks", and at an `int` parameter no fix that keeps
+    // the `/` checks (`1r / 2` and `1.0f64 / 2` are each refused by `f`), so the one message
+    // names the `/` and the parameter's type and offers none, the same at the top level and in
+    // a body (row LIT-call-int-param-fix-unchecked: zedc gave a second message, whose one fix,
+    // `y = f(x: 1.0f64 / 2)`, `f` rejected in turn).
+    let int = "`f` takes an `int` as `x`, and `/` has no arrow at `int`, so `1 / 2` cannot be \
+               passed there. No fix is offered: a fix that keeps the `/` is rejected by `f` \
+               too. [1 / 2]";
+    for uses in ["y = f(x: 1 / 2);\n", "g() = f(x: 1 / 2);\n"] {
+        let src = format!("f(x: int) = x;\n{uses}");
+        assert_eq!(type_errors(&src), [int], "{src}");
+        // A division by zero, which has no `rat` value, gets the same one message.
+        let src = src.replace("1 / 2", "1 / 0");
+        assert_eq!(type_errors(&src), [int.replace("1 / 2", "1 / 0")], "{src}");
+    }
+    for fixed in ["y = f(x: 1.0f64 / 2);\n", "y = f(x: 1r / 2);\n"] {
+        let src = format!("f(x: int) = x;\n{fixed}");
+        assert_eq!(type_errors(&src).len(), 1, "{src}");
+    }
 }
 
 /// The checker does not build the rejection of an operation on literals alone whose call
@@ -115,13 +150,12 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
         ),
         ("f(x: f64) = x;\nh() = f(x: 1 / 2);\ny = h();\n", &[]),
         ("f(x: f64) = x;\ny = f(x: f(x: 1 / 2) / 2);\n", &[]),
-        // The fix offered here does not check (row LIT-call-int-param-fix-unchecked;
+        // One message, no fix (row LIT-call-int-param-fix-unchecked;
         // `a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).
         (
             "f(x: int) = x;\ny = f(x: 1 / 2);\n",
             &[
-                "`f` does not take (f64): no arrow of `f` takes these types. [f(x: 1 / 2)]",
-                "Nothing gives the literal `1` a carrier. Try `y = f(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = f(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
+                "`f` takes an `int` as `x`, and `/` has no arrow at `int`, so `1 / 2` cannot be passed there. No fix is offered: a fix that keeps the `/` is rejected by `f` too. [1 / 2]",
             ],
         ),
         ("f(x: f32) = x;\ny = f(x: 1 / 3);\n", &[]),

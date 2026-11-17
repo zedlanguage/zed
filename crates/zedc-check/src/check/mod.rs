@@ -1344,6 +1344,22 @@ struct Inflow {
 /// first operand, and its site.
 type OrderKey = (Arc<str>, bool, Span);
 
+/// A branch of an `if` of literals that is rejected as it would be alone where nothing gives
+/// its class a carrier ([`Class::alone`]): its span `at`; `within`, the span from the first
+/// of the `if`'s two branches to the end of the second; and `takes`, the carriers (a mask)
+/// the other branch takes alone, `f64` for a decimal `1.5`, every one where that branch is
+/// unreachable and adds nothing to the `if`. A fix that writes a literal of the branch with
+/// the carrier `c` makes the `if` the union of `c` and what the other branch takes alone,
+/// `rat | f64` for `if c { 1r / 2 } else { 1.5 }`, so it checks only where `takes` holds `c`
+/// or no literal of the class outside `within` meets that union (row
+/// MSG-branch-sum-fix-unchecked; [`Ck::resolve`]).
+#[derive(Clone, Copy)]
+struct Alone {
+    at: Span,
+    within: Span,
+    takes: u8,
+}
+
 /// A class of values that must share one carrier: a node of the union-find forest of
 /// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
 /// are read.
@@ -1476,7 +1492,7 @@ struct Class {
     /// at the `f64` a decimal of the other branch takes (DESIGN.md step L1.26a, "where both
     /// branches are literals each keeps its own value"), and the rejection names its own
     /// literal ([`Ck::lits_take`]). Of a merged class, those of both.
-    alone: Vec<Span>,
+    alone: Vec<Alone>,
 }
 
 /// A carrier a fold was checked at, or none (`[]`), with the identity of the fold's operator
@@ -4295,13 +4311,62 @@ impl<'t, 'a> Ck<'t, 'a> {
                     !follows && (!l.generic || (l.witness && witness(l).is_none()))
                 })
             });
-        if numeric.is_some()
-            && let LitsTake::Rejected(l, left) = self.lits_take(r)
-        {
-            let notes = self.derive(&[l.site]);
-            let m = unfixed(&l, &left);
-            let sites = lits.iter().map(|(l, _)| l.site).collect();
-            self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
+        let mut numeric = numeric;
+        if numeric.is_some() {
+            match self.lits_take(r) {
+                LitsTake::Rejected(l, left) => {
+                    let notes = self.derive(&[l.site]);
+                    // Each fix offered checks (DESIGN.md step L1.26b): where the literal is in
+                    // a branch rejected as it would be alone ([`Alone`]), a fix at a carrier
+                    // its other branch does not take alone is offered only where no literal
+                    // of the class lies in another such `if`: in `(if c { 1 / 2 } else { 1.5
+                    // }) + (if c { 1 / 2 } else { 1.5 })` the `1r / 2` fix makes the first `if`
+                    // `rat | f64`, which `+` does not take beside the second (row
+                    // MSG-branch-sum-fix-unchecked). A bare literal outside, the `1` of `+ 1`
+                    // or the `2` of `min(…, 2)`, takes the union value by value, and followers,
+                    // as the `0.5` of `== 0.5`, compare with each value, so both fixes check
+                    // there. Complexity tradeoff: naive, each literal tested against each
+                    // recorded `if`, O(l·a); used, the `if`s sorted by start with a running
+                    // maximum of their ends, so a literal lies in one iff the largest end
+                    // among those starting at or before it reaches past it, one binary search
+                    // each, O((a + l) log a).
+                    let holds = |o: Span, s: Span| o.start <= s.start && s.end <= o.end;
+                    let c = &self.classes[r];
+                    let branch = (c.alone.iter()).find(|a| holds(a.at, l.site)).copied();
+                    let kept: Vec<Carrier> = match branch {
+                        Some(a) => {
+                            let mut ifs: Vec<(usize, usize)> = (c.alone.iter())
+                                .filter(|b| b.within != a.within)
+                                .map(|b| (b.within.start, b.within.end))
+                                .collect();
+                            ifs.sort_unstable();
+                            let mut reach = 0;
+                            for e in ifs.iter_mut() {
+                                reach = reach.max(e.1);
+                                e.1 = reach;
+                            }
+                            let in_if = |s: Span| match ifs.partition_point(|e| e.0 <= s.start) {
+                                0 => false,
+                                n => ifs[n - 1].1 >= s.end,
+                            };
+                            let inside = (lits.iter()).all(|(m, follows)| {
+                                *follows || holds(a.within, m.site) || !in_if(m.site)
+                            });
+                            (left.iter().copied())
+                                .filter(|c| inside || a.takes & c.bit() != 0)
+                                .collect()
+                        }
+                        None => left.clone(),
+                    };
+                    let mut m = unfixed(&l, &kept);
+                    m.dropped |= kept.len() < left.len() && m.fixes.is_empty();
+                    let sites = lits.iter().map(|(l, _)| l.site).collect();
+                    self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
+                }
+                // `int` left beside a decimal the class follows ([`Self::lits_take`]).
+                LitsTake::F64 => numeric = Some(Carrier::F64),
+                LitsTake::Int | LitsTake::Left => {}
+            }
         }
         // A bare literal compared with values of the class follows it without narrowing it, so
         // whether the class holds strings or `bool` and no number is known only now, whatever
@@ -4385,7 +4450,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn lits_take(&self, r: usize) -> LitsTake {
         let c = &self.classes[r];
         if c.mask & Carrier::Int.bit() != 0 {
-            return LitsTake::Int;
+            // A bare decimal compared with the class by `==` or `!=` follows it without
+            // removing `int` ([`Ck::follow`]), so a class that still holds `int` and holds a
+            // decimal ([`Class::decimal`]) holds it as a follower: a decimal that joined it
+            // would have removed `int`. That decimal takes `f64`, which nothing else fixes,
+            // and the operation on literals it is compared with follows it (DESIGN.md step
+            // L1.26b; row LIT-f64-op-meets-int-op): `g() = 2^(1 + 1) == 0.5` is `false`, as
+            // `y = 2^(1 + 1) == 0.5` is, and no longer rejects the `0.5` at `int`. A class of
+            // a parameter (`binder`), or one a use fixed at `int`, which has no `f64` left,
+            // keeps `int`. O(1): three flags and the mask.
+            let follows_decimal =
+                c.decimal && c.generic && c.binder.is_none() && c.mask & Carrier::F64.bit() != 0;
+            return match follows_decimal {
+                true => LitsTake::F64,
+                false => LitsTake::Int,
+            };
         }
         let left: Vec<Carrier> = Carrier::of_mask(c.mask).filter(|c| c.numeric()).collect();
         // `rat` alone is taken only where a use asked for it ([`Class::rat`]): literals alone
@@ -4404,7 +4483,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // would be alone ([`Class::alone`]), so `if c { 1 / 2 } else { 1.5 }` is rejected at
         // the `1`, and `if c { 1 } else { 5 / 2 }` at the `5`, as `5 / 2` alone is.
         let alone = || {
-            let s = c.alone.iter().min_by_key(|s| s.start)?;
+            let s = c.alone.iter().map(|a| a.at).min_by_key(|s| s.start)?;
             (joined.clone())
                 .filter(|l| s.start <= l.site.start && l.site.end <= s.end)
                 .min_by_key(|l| l.site.start)
@@ -9523,10 +9602,11 @@ fn f64_operands(e: &Expr) -> Vec<&Expr> {
                     (Some(_), Some(_)) => {}
                     (Some(l), None) if side(y, is_decimal(&l.value)) => out.extend([x, y]),
                     (None, Some(l)) if side(x, is_decimal(&l.value)) => out.extend([x, y]),
-                    // A decimal compared with an operation that keeps `int`, as in
-                    // `2^(1 + 1) == 0.5`, takes `f64` alone (DESIGN.md step L1.26b); it then
-                    // meets the `int` and is rejected with the words a body gives. DESIGN has
-                    // the operation take `f64` too: row LIT-f64-op-meets-int-op.
+                    // A decimal compared with an operation on literals that would keep `int`,
+                    // as in `2^(1 + 1) == 0.5`: the decimal takes `f64` here, and the
+                    // operation took it as `==` was walked ([`Ck::lit_op_meets`]), so the
+                    // comparison is `4.0 == 0.5`, `false`, as in a body (DESIGN.md step
+                    // L1.26b).
                     (Some(l), None) if is_decimal(&l.value) && open_lits(y).is_some() => {
                         out.push(x)
                     }

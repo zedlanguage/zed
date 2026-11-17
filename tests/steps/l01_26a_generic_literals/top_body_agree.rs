@@ -77,6 +77,13 @@ fn a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level() {
         ("0.5 < 1 + 1", "true"),
         ("0.5^(1 + 1)", "0.25"),
         ("2^(1 + 1) < 0.5", "false"),
+        // A decimal that nothing fixes takes `f64`, and an operation on literals that keeps
+        // `int` compared with it follows it (DESIGN.md L1.26b; row LIT-f64-op-meets-int-op,
+        // once rejected with "A decimal literal is never an `int`" in every place).
+        ("2^(1 + 1) == 0.5", "false"),
+        ("0.5 == 2^(1 + 1)", "false"),
+        ("2^(1 + 1) != 0.5", "true"),
+        ("4.0 == 2^(1 + 1)", "true"),
     ];
     let lines: Vec<&str> = cases.iter().map(|(e, _)| *e).collect();
     let want: Vec<&str> = cases.iter().map(|(_, v)| *v).collect();
@@ -159,21 +166,6 @@ fn a_line_rejected_in_a_body_is_rejected_at_the_top_level() {
         for (src, place) in [(body, "body"), (block, "block")] {
             assert!(!type_errors(&src).is_empty(), "{place}: accepted\n{src}");
         }
-    }
-    // A decimal that nothing fixes takes `f64`, and an operation on literals alone takes the
-    // carrier of what it meets (DESIGN.md steps L1.26b and L1.26a), so `2^(1 + 1) == 0.5` is
-    // `false` in every place, as `2^(1 + 1) < 0.5` is. This zedc rejects it in every place
-    // (row LIT-f64-op-meets-int-op), with the same words in each: "A decimal literal is never
-    // an `int`". The top level once gave "Nothing gives the literal `0.5` a carrier" with the
-    // line itself, unchanged, as its one fix.
-    let [top, body, block] = places(&["2^(1 + 1) == 0.5"]);
-    assert!(top.starts_with("y0 = 2^(1 + 1) == 0.5;\n"), "{top}");
-    for src in [top, body, block] {
-        assert_eq!(
-            type_errors(&src),
-            ["A decimal literal is never an `int`: the literal `0.5`. [0.5]"],
-            "{src}"
-        );
     }
 }
 
@@ -700,25 +692,109 @@ fn nested_powers_by_an_inexact_divisor_offer_no_f64_form() {
     assert!(!errs[0].contains("f64"), "{}", errs[0]);
 }
 
-#[test]
-fn a_division_beside_a_decimal_in_a_call_or_min_differs_by_place() {
-    // A line must get the same verdict in every place. With `add(x, y) = x + y`, the `/` of
-    // `add(x: 1 / 2, y: 1.5)` and of `min(1 / 2, 1.5)` shares a class with a decimal that
-    // nothing fixes; zedc rejects it at the top level and reads it at the `f64` the decimal
-    // takes in a body and a block. DESIGN.md does not say which is right (step L1.26a: an
-    // operation on literals alone takes the carrier of what it meets; step L1.26b: a decimal
-    // nothing fixes takes `f64`, and a `/` of integer literals alone stays rejected). Row
-    // LIT-division-meets-default-decimal; the verdicts are pinned here, so its fix changes
-    // them.
-    for e in ["add(x: 1 / 2, y: 1.5)", "min(1 / 2, 1.5)"] {
-        let [top, body, block] =
-            places(&[e]).map(|src| type_errors(&format!("add(x, y) = x + y;\n{src}")));
-        assert_eq!(top.len(), 1, "{e}: {top:#?}");
-        assert!(
-            top[0].starts_with("Nothing gives the literal `1` a carrier."),
-            "{e}: {top:#?}"
-        );
-        assert_eq!(body, Vec::<String>::new(), "{e}");
-        assert_eq!(block, Vec::<String>::new(), "{e}");
+/// `add(x, y) = x + y;` and `n` top-level bindings that each give an operation on literals
+/// alone to a generic call beside a decimal, `add(x: 1 / 2, y: 1.5)` and `min(1 / 2, 1.5)`
+/// by turns, and one whose operation is a sum of `n` divisions: each takes `f64`, with no
+/// error.
+pub(super) fn generic_ops(n: usize) -> String {
+    let mut src = String::from("add(x, y) = x + y;\n");
+    for i in 0..n {
+        src += &match i % 2 {
+            0 => format!("y{i} = add(x: 1 / 2, y: 1.5);\n"),
+            _ => format!("y{i} = min(1 / 2, 1.5);\n"),
+        };
     }
+    let sum = vec!["1 / 2"; n].join(" + ");
+    src + &format!("z = add(x: {sum}, y: 1.5);\nw = min({sum}, 1.5);\n")
+}
+
+#[test]
+fn many_operations_at_generic_arguments_take_f64() {
+    // A small instance of `bench::top_body_agree::operations_at_generic_arguments_scale`.
+    assert_eq!(type_errors(&generic_ops(5)), Vec::<String>::new());
+}
+
+#[test]
+fn an_operation_on_literals_at_a_generic_argument_follows_the_class_in_every_place() {
+    // DESIGN.md step L1.26b: an operation on literals alone given as a call's argument at a
+    // generic parameter, as an operand of `min`/`max`, or as a component of a tuple argument
+    // takes the carrier of the class it joins there, the `f64` of a decimal literal that
+    // nothing else fixes included, the same at the top level as in a body (row
+    // FAIL-top-literal-op-at-generic-arg; the top level once settled the operation alone). An
+    // operation inside a nested call's argument or inside a tuple component is row
+    // FAIL-top-literal-op-nested-or-component.
+    let pre = "add(x, y) = x + y;\n";
+    let cases = [
+        ("add(x: 1 / 2, y: 1.5)", "2.0"),
+        ("add(x: 1.5, y: 1 / 2)", "2.0"),
+        ("min(1 / 2, 1.5)", "0.5"),
+        ("max(1.5, 1 / 2)", "1.5"),
+        ("add(x: 1 / 2, y: 1.5f64)", "2.0"),
+        ("min(1 / 2, 1.5f64)", "0.5"),
+        ("add(x: 1 / 2, y: 0.5r)", "1r"),
+        ("min(1 / 2, 0.5r)", "1r/2r"),
+        ("add(x: 1 + 1, y: 1.5)", "3.5"),
+        ("min(1 + 1, 1.5)", "1.5"),
+        ("add(x: 1 + 1, y: 1.5f64)", "3.5"),
+        ("1 / 2 == 1.5", "false"),
+    ];
+    let mut bad = Vec::new();
+    for (e, want) in cases {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            let src = format!("{pre}{src}");
+            let errs = type_errors(&src);
+            if !errs.is_empty() {
+                bad.push(format!("{e} {place}: rejected"));
+                continue;
+            }
+            let out = run(
+                &format!("l01_26a_top_literal_op_arg_{place}"),
+                &src,
+                "",
+                &[],
+            );
+            if (out.status, out.stdout.as_str()) != (0, format!("{want}\n").as_str()) {
+                bad.push(format!("{e} {place}: {:?}", out.stdout));
+            }
+        }
+    }
+    // A `/` of integer literals that meets no decimal and no carrier is rejected in every
+    // place, at its `1`, once.
+    let pre = "add(x, y) = x + y;\npair(x, y) = (x, y);\n";
+    for e in ["add(x: 1 / 2, y: 1)", "pair(x: 1 / 2, y: 1.5)"] {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            let errs = type_errors(&format!("{pre}{src}"));
+            if errs.len() != 1 || !errs[0].starts_with("Nothing gives the literal `1` a carrier.") {
+                bad.push(format!("{e} {place}: {errs:?}"));
+            }
+        }
+    }
+    assert_eq!(bad, Vec::<String>::new());
+}
+
+#[test]
+fn a_division_branch_beside_a_decimal_compared_is_rejected_whatever_names_the_condition() {
+    // DESIGN.md step L1.26a settles each literal branch of an `if` as it would be alone, so the
+    // `1 / 2` of `(if c { 1 / 2 } else { 1.5 }) == 0.5` meets no carrier and is rejected at its
+    // `1`, whatever names `c`: a parameter, or a name bound at the top level (row
+    // FAIL-branch-division-named-condition-body; a body once read the branch at the `f64` of the
+    // `0.5` where `c` was bound at the top level).
+    let e = "(if c { 1 / 2 } else { 1.5 }) == 0.5";
+    let mut bad = Vec::new();
+    for cdef in ["c = 1 > 0;\n", "c = true;\n"] {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            let errs = type_errors(&format!("{cdef}{src}"));
+            if errs.len() != 1 || !errs[0].starts_with("Nothing gives the literal `1` a carrier.") {
+                bad.push(format!("{cdef:?} {place}: {errs:?}"));
+            }
+        }
+    }
+    let src = format!(
+        "g(positional c: bool) = {e};\ny0 = g(true);\nmain(args: MainArgs) -> int = {{ args.stdout <- \"${{y0}}\"; 0 }};\n"
+    );
+    let errs = type_errors(&src);
+    if errs.len() != 1 || !errs[0].starts_with("Nothing gives the literal `1` a carrier.") {
+        bad.push(format!("parameter: {errs:?}"));
+    }
+    assert_eq!(bad, Vec::<String>::new());
 }

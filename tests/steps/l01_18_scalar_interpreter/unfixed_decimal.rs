@@ -23,19 +23,18 @@ fn a_decimal_that_nothing_fixes_is_an_f64_with_no_warning() {
 }
 
 #[test]
-fn a_decimal_compared_with_an_int_operation_on_literals_gives_one_message_in_each_place() {
-    // DESIGN.md L1.26a and L1.26b make `2^(1 + 1) == 0.5` the `f64` comparison, `false`. This
-    // zedc keeps `int` for `2^(1 + 1)` and rejects the `0.5` beside it (row
-    // LIT-f64-op-meets-int-op). The top level gives the body's message, and no longer a menu
-    // whose one fix is the line itself, unchanged.
-    let never = "A decimal literal is never an `int`: the literal `0.5`. [0.5]";
-    for src in [
-        "y0 = 2^(1 + 1) == 0.5;\n",
-        "y0 = 0.5 == 2^(1 + 1);\n",
-        "y0 = 2^(1 + 1) != 0.5;\n",
-        "g() = 2^(1 + 1) == 0.5;\n",
+fn a_decimal_compared_with_an_int_operation_on_literals_takes_f64_in_each_place() {
+    // DESIGN.md L1.26a and L1.26b make `2^(1 + 1) == 0.5` the `f64` comparison, `false`: the
+    // decimal takes `f64` and the operation follows it (row LIT-f64-op-meets-int-op; this
+    // zedc once rejected it with "A decimal literal is never an `int`").
+    for (src, want) in [
+        ("y = 2^(1 + 1) == 0.5;\n", "false"),
+        ("y = 0.5 == 2^(1 + 1);\n", "false"),
+        ("y = 2^(1 + 1) != 0.5;\n", "true"),
+        ("g() = 2^(1 + 1) == 0.5;\ny = g();\n", "false"),
+        ("g() = 4.0 == 2^(1 + 1);\ny = g();\n", "true"),
     ] {
-        assert_eq!(errors(src), [never], "{src}");
+        assert_eq!(value(src, "y"), want, "{src}");
     }
 }
 
