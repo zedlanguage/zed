@@ -1,6 +1,6 @@
 ---
 source: tests/steps/l01_07_fences/copies.rs
-expression: "tokens_by_key(&fences::of(\"design.md\"))"
+expression: "tokens_by_key(&fences::design())"
 ---
 == DESIGN.md [sec:remap_law] 1 L8
   1 | src «as» ( sourceKeypathPattern ) «into» ( outputKeypathPattern -> leaf )
@@ -923,6 +923,15 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | startModel ( ) -> Model | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( m -> #ok ) «with» restrict ( read : [ str["/usr/share/model"] ] , write : [ str["/var/cache/model"] ] ) {
  14 | «return» Model ( ) ;
  15 | }
+== DESIGN.md [sec:ffi] 17 L7
+  1 | @foreign ( str["m"] , str["fesetround"] ) fesetround : ( mode : i32 ) -> i32 ;
+  3 | tenth ( n : f64 ) -> f64 { 1.0f / n }
+  5 | main ( m : MainArgs ) -> int {
+  6 | before = tenth ( n : 10.0f ) ;
+  7 | rc = fesetround ( mode : 3072₍10₎ ) ;
+  8 | after = tenth ( n : 10.0f ) ;
+  9 | «return» «if» rc == 0₍10₎ && after == before { 0₍10₎ } «else» { 1₍10₎ } ;
+ 10 | }
 == DESIGN.md [sec:tour_basics] 1 L2
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
