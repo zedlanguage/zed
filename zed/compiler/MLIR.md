@@ -81,14 +81,19 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    gcc lowering code fully to Zed". So `zedc run` and run-time `compile` in the Zed compiler call
    Cranelift in process (DESIGN step L19.1, "Where this document does not say", and step S.7b,
    plan rows CLIF-shim and JIT-zed): the Zed compiler writes Cranelift's text form (CLIF) from
-   the same ZIR-loop this path lowers to MLIR, a small Rust crate `zed-clif` with one C entry
-   point parses, verifies and compiles it to a code image, and libzed's OS layer loads the image.
+   the same ZIR-loop this path lowers to MLIR, the project's own small Rust crate `zed-clif`,
+   whose `#[no_mangle] extern "C"` functions select the target and parse, verify and compile the
+   text to a code image, and libzed's OS layer loads the image.
    That crate is the one Rust crate left on main after step S.11; step L29.1a (rows
    JIT-native-zed and RUST-remove-clif) replaces it with a generator in Zed on L29.1's passes.
    This MLIR path is not used at run time, since it would need the outside tools where a program
    runs and costs an LLVM run per call; no separate ZIR to LLVM IR translator is written, since
-   `mlir-translate` already gives LLVM IR. Whether main builds the shim from source or links a
-   copy from the release is QUESTIONS A135.
+   `mlir-translate` already gives LLVM IR. Main builds the shim from source with a pinned Rust
+   toolchain until step L29.1a, and the release ships no compiled copy (the author's answer to
+   QUESTIONS A135, 2026-11-17: the shim "can stay around even with the fully bootstrapped zedc,
+   until Cranelift has been replaced with a pure Zed optimizer and code-generator"). The shim
+   exists because Cranelift has no C API: its crates export no C function, and its interface is
+   Rust generics and traits under the Rust ABI.
 
 ## Operations
 
