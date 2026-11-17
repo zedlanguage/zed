@@ -58,3 +58,28 @@ fn tests_calling_one_deep_callee_scale() {
         _ = check(&srcs[&n]);
     });
 }
+
+/// A callee of `k` nested arms each giving a literal: `0` below 0, `j` at `x = j - 1` for `j`
+/// in `1..k`, and `k` from `k - 1`. Its result type is the union of `k + 1` literals.
+fn literal_body(k: usize) -> String {
+    let mut f = String::from("if x < 0 { 0 }");
+    for j in 1..k {
+        f.push_str(&format!(" else if x < {j} {{ {j} }}"));
+    }
+    f.push_str(&format!(" else {{ {k} }}"));
+    f
+}
+
+/// The union of `k` literals that `k` nested arms give costs `O(k log k)` to type
+/// (CHECK-literal-union-cost).
+#[test]
+fn a_callee_of_k_literal_arms_scales() {
+    let k = 512;
+    let srcs = scaling::inputs(k, |n| {
+        format!("f(positional x: int) = {};\n", literal_body(n))
+    });
+    assert!(check(&srcs[&k]).is_none(), "rejected\n{}", srcs[&k]);
+    scaling::check("a callee of k nested arms each giving a literal", k, |n| {
+        _ = check(&srcs[&n]);
+    });
+}
