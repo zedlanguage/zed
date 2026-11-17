@@ -1656,11 +1656,22 @@ impl Type {
     // In pairs, each level of the pairing made the nodes of the merged treaps again, `O(k log k)`
     // nodes made and looked up in all, each lookup comparing tuple types: 71% of the set nodes
     // made by `functions_equal_at_one_place_are_decided_a_second_time_in_linear_time`, 10.9
-    // times as many from n = 256 to 2048. The joined type is the one the pairs made, since a
-    // list and a treap have one form, and the types left in `rest` are then joined to it in
-    // pairs as before. Where one of those holds tuples as an expression (`Part::Expr`), the
-    // order of joining differs from before; that the expression's form does not depend on the
-    // order is not proved (the tests compare the result with `|` one at a time, both orders).
+    // times as many from n = 256 to 2048. The joined type takes the place of the first of the
+    // tuple types in `rest`, and the empty type the places of the others, and only where no
+    // other type in `rest` holds a tuple; else they stay as they came (PROOF-union-all-expr-parts).
+    // Proof that the result is the one the pairs make on `rest` as it came: `|` (`Type::zip`)
+    // joins each part apart from the others, and a part joined with the part of nothing is the
+    // other part (`Part::zip_at_once`; the scalar and atom parts are sets, so equal as values).
+    // A tuple type has the part of nothing in every part but its tuples, as the empty type and
+    // the joined type do, so every part but the tuples sees the same types at the same places
+    // and the same pairs. In the tuples, every other type has the part of nothing, so the pairs
+    // join the tuple literals, at each length a list or treap of literals, which has one form
+    // for each set (`Bdd`), the form `union_of_literals` builds. Where another type holds tuples,
+    // perhaps as an expression (`Part::Expr`), whose form depends on how it is bracketed, nothing
+    // is moved. Before PROOF-union-all-expr-parts, the joined type went to the end of `rest`,
+    // which changed the bracketing of the other parts. Tests:
+    // `union_all_is_the_union_joined_in_pairs_in_order` and, for the chains of literals,
+    // `a_chain_joined_at_once_is_the_chain_joined_literal_by_literal`.
     pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
         // The literal types are joined as they come, each dropped once joined, so that `k` of
         // them are never all held at once; the smaller set is added to the larger.
@@ -1691,23 +1702,33 @@ impl Type {
                     }
                 }
             } else if t.tuple_literals_only() {
-                tuples.push(t);
+                tuples.push(rest.len());
+                rest.push(t);
             } else if t.atoms_only() && !t.p().atoms.cofinite {
                 atoms.push(t);
             } else {
                 rest.push(t);
             }
         }
-        let joined = match tuples.len() {
-            0 | 1 => None,
-            _ => {
-                let parts: Vec<_> = tuples.iter().map(Type::p).collect();
-                Tuples::union_of_literals(parts.iter().map(|p| &p.tuples))
-            }
+        // The tuples joined at once take the place of the first of them, and the type of
+        // nothing the places of the others, so that the pairs below join every other part in
+        // the order they joined it before; only where no other type holds a tuple, so that the
+        // tuples are those of the joined type alone (proof above).
+        let alone = || {
+            (rest.iter().enumerate())
+                .all(|(i, t)| tuples.binary_search(&i).is_ok() || t.holds_no_tuple())
         };
-        match joined {
-            Some(joined) => rest.push(Type::with(|p| p.tuples = joined)),
-            None => rest.extend(tuples),
+        if tuples.len() > 1 && alone() {
+            let joined = {
+                let parts: Vec<_> = tuples.iter().map(|&i| rest[i].p()).collect();
+                Tuples::union_of_literals(parts.iter().map(|p| &p.tuples))
+            };
+            if let Some(joined) = joined {
+                rest[tuples[0]] = Type::with(|p| p.tuples = joined);
+                for &i in &tuples[1..] {
+                    rest[i] = Type::empty();
+                }
+            }
         }
         match lits {
             Some(joined) => rest.push(Type::new(joined)),
@@ -2935,6 +2956,12 @@ impl Type {
     /// ([`Tuples::literals_only`]); read in O(1). False for a recursive node.
     fn tuple_literals_only(&self) -> bool {
         matches!(&*self.0, Node::Parts(p, _) if p.tuple_literals_only())
+    }
+
+    /// Whether its parts hold no tuple: their tuples are `Tuples::default()`; read in O(1).
+    /// False for a recursive node.
+    fn holds_no_tuple(&self) -> bool {
+        matches!(&*self.0, Node::Parts(p, _) if p.tuples.is_default())
     }
 
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its

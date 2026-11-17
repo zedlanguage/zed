@@ -746,6 +746,74 @@ fn union_all_of_tuple_types_is_the_union_joined_one_at_a_time() {
     assert_eq!(Type::union_all(many.into_iter().rev()), fold);
 }
 
+/// With no type of literals or atoms alone, `union_all` is the union the pairs make on its
+/// types in the order they came, in form, though it joins the tuple types at once
+/// (PROOF-union-all-expr-parts): for every subset, in both orders, of tuple types between
+/// types whose functions, or whose tuples, are expressions (`Part::Expr`), whose form depends
+/// on how they are bracketed. Before, the joined tuples went to the end and the other parts
+/// were bracketed anew.
+#[test]
+fn union_all_is_the_union_joined_in_pairs_in_order() {
+    let one = |t: Type| Type::tuple(vec![t]);
+    let f = |k: Type, v: Type| Type::exact(k, v);
+    let (int, bool, string) = (Type::int, Type::bool, Type::string);
+    // `(a & !b) | (c & !d)` on four literals is no decision list, so an expression.
+    let two_meets = |a: Type, b: Type, c: Type, d: Type| &(&a - &b) | &(&c - &d);
+    let ts = [
+        one(Type::atom("a")),
+        two_meets(
+            f(int(), bool()),
+            f(bool(), int()),
+            f(string(), bool()),
+            f(int(), int()),
+        ),
+        one(Type::atom("b")),
+        !&f(bool(), int()),
+        one(int()),
+        two_meets(
+            f(bool(), bool()),
+            f(string(), int()),
+            f(int(), string()),
+            f(bool(), string()),
+        ),
+        two_meets(
+            one(&Type::atom("c") | &int()),
+            one(&Type::atom("d") | &int()),
+            one(&Type::atom("e") | &bool()),
+            one(&Type::atom("f") | &bool()),
+        ),
+        Type::tuple(vec![Type::atom("a"), Type::atom("b")]),
+        &Type::partial(int(), int()) | &one(bool()),
+    ];
+    let fn_expr = |t: &Type| matches!(t.p().morphisms, Part::Expr(_));
+    let tuple_expr = |t: &Type| (t.p().tuples.lens.values()).any(|b| matches!(b, Part::Expr(_)));
+    assert!(fn_expr(&ts[1]) && fn_expr(&ts[5]) && tuple_expr(&ts[6]));
+    let (mut exprs, mut alone) = (0, 0);
+    for mask in 0..1u32 << ts.len() {
+        let chosen: Vec<Type> = (0..ts.len())
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| ts[i].clone())
+            .collect();
+        for chosen in [chosen.clone(), chosen.into_iter().rev().collect()] {
+            let pairs = Type::pairwise(chosen.clone(), Type::empty(), |a, b| a | b);
+            let all = Type::union_all(chosen.clone());
+            assert_eq!(all, pairs, "mask {mask:#b}");
+            exprs += usize::from(fn_expr(&pairs) || tuple_expr(&pairs));
+            let tuples = chosen.iter().filter(|t| t.tuple_literals_only()).count();
+            alone += usize::from(
+                tuples > 1
+                    && chosen
+                        .iter()
+                        .all(|t| t.tuple_literals_only() || t.holds_no_tuple()),
+            );
+        }
+    }
+    assert!(
+        exprs > 100 && alone > 50,
+        "{exprs} unions with an expression, {alone} with the tuples joined at once"
+    );
+}
+
 /// A union of tuple literals met with the complement of another, or joined to it, is made at
 /// once from the two blocks (`Bdd::zip_chain`, PERF-equal-functions-forms-ratio); it must be
 /// the type that taking the tuples away, or adding the complements, one at a time gives: for

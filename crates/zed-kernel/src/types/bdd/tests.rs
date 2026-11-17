@@ -1046,6 +1046,83 @@ fn a_meet_built_at_once_is_the_meet_built_literal_by_literal() {
     }
 }
 
+/// `Bdd::zip_chain` of two chains, each under either connective, is the list the other's
+/// literals give joined to the first one at a time (`or_literal`, `and_literal`), the path
+/// it replaces (PROOF-union-all-expr-parts): the same node, and the connective's value at
+/// every set of the atoms. Every chain on four atoms is met, each atom absent, taken or
+/// refused, so every case of `zip_chain` is: two chains under `op` (`set::union_if_agree`,
+/// agreeing or with an atom taken by one and refused by the other), a chain under `op` met
+/// with one under the other connective (`set::difference_if_agree`: atoms apart, shared with
+/// one polarity, shared with the other, and the other's block emptied), and a short chain.
+#[test]
+fn a_chain_joined_at_once_is_the_chain_joined_literal_by_literal() {
+    let chains = |op: Op| -> Vec<Bdd<Row>> {
+        (0..81u32)
+            .map(|code| {
+                let (unit, mut code) = (Bdd::Leaf(op == Op::And), code);
+                (0..4).fold(unit, |c, i| {
+                    let digit = code % 3;
+                    code /= 3;
+                    let key = (atom(i), digit == 1);
+                    match (digit, op) {
+                        (0, _) => c,
+                        (_, Op::Or) => c.or_literal(key),
+                        (_, Op::And) => c.and_literal(key),
+                    }
+                })
+            })
+            .collect()
+    };
+    let (ors, ands) = (chains(Op::Or), chains(Op::And));
+    let holds = |set: u32| move |t: &Row| (0..4).any(|i| set >> i & 1 == 1 && *t == atom(i));
+    let (mut long, mut met) = (0, 0);
+    for op in [Op::Or, Op::And] {
+        for x in ors.iter().chain(&ands) {
+            for j in ors.iter().chain(&ands) {
+                let Some(at_once) = x.zip_chain(j, op) else {
+                    continue;
+                };
+                let (base, keys) = match j.chain_keys(op) {
+                    Some(k) => (x, k),
+                    None => (
+                        j,
+                        x.chain_keys(op)
+                            .expect("one of the two is a chain under op"),
+                    ),
+                };
+                let one_by_one = keys.into_iter().fold(base.clone(), |f, k| match op {
+                    Op::Or => f.or_literal(k),
+                    Op::And => f.and_literal(k),
+                });
+                let op_name = if op == Op::Or { "or" } else { "and" };
+                assert_eq!(at_once.id(), one_by_one.id(), "{x:?} {op_name} {j:?}");
+                for set in 0..16 {
+                    let (a, b) = (x.eval(holds(set)), j.eval(holds(set)));
+                    let want = match op {
+                        Op::Or => a || b,
+                        Op::And => a && b,
+                    };
+                    let got = at_once.eval(holds(set));
+                    assert_eq!(got, want, "{x:?} {op_name} {j:?} at {set}");
+                }
+                let other = match op {
+                    Op::Or => Op::And,
+                    Op::And => Op::Or,
+                };
+                long += usize::from(x.is_long_chain(op) && j.is_long_chain(op));
+                met += usize::from(
+                    (x.is_long_chain(other) && j.is_long_chain(op))
+                        || (j.is_long_chain(other) && x.is_long_chain(op)),
+                );
+            }
+        }
+    }
+    // Each case was reached: of the 81 chains under a connective, 72 have two or more
+    // literals; two of them under `op`, for each `op`, are 2 * 72^2 pairs, and one under each
+    // connective, in either order, 2 * 2 * 72^2.
+    assert_eq!((long, met), (2 * 72 * 72, 4 * 72 * 72));
+}
+
 /// The walks on expressions and diagrams nested `depth` deep: union rows, eval, eval3, the
 /// atoms, the forced atoms, restrict and settle, each on the input whose answer is known.
 pub(super) fn the_walks_over_parts_hold(depth: usize) {
