@@ -490,7 +490,7 @@ fn rows_of_one_digest_are_contiguous_and_morphisms_need_not_be() {
     if crate::address::SHORT {
         return;
     }
-    let mut gs = vec![int(10), int(20), int(30)];
+    let mut gs = [int(10), int(20), int(30)];
     gs.sort();
     let m0 = Morphism::new(gs[0].clone(), int(0), int(0));
     let first = mix(mix(6, gs[2].digest()), int(0).digest());
