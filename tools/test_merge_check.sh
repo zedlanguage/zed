@@ -7,10 +7,12 @@
 # file tests/src/seed.rs crate a also compiles by #[path] (as tests/src/seed.rs is compiled into
 # seven crates), with [[test]] targets step_x and step_y in tests/steps/<step>/ and full, which
 # needs a feature. tools/run_tests.sh is a stub that prints its arguments and exits with $STUB_RC.
+# More files of crates b and c name files of other packages by #[path] in a mod.rs file, inside
+# inline modules, and by include! (TEST-merge-check-nested-path).
 check_script=$(pwd)/tools/merge_check.sh
 ws=$(pwd)/build/test-merge-check
-mkdir -p "$ws/crates/a/src" "$ws/crates/b/src" "$ws/crates/c/src" "$ws/tests/src" \
-  "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
+mkdir -p "$ws/crates/a/src" "$ws/crates/b/src/m" "$ws/crates/c/src/m" "$ws/crates/c/data" \
+  "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
 export CARGO_TARGET_DIR=$ws/target
 fails=0
 check() {
@@ -40,6 +42,17 @@ echo '//! b.' >crates/b/src/lib.rs
 echo '//! c.' >crates/c/src/lib.rs
 printf '//! t.\npub mod seed;\n' >tests/src/lib.rs
 echo '//! The seed.' >tests/src/seed.rs
+# The Rust reference, "The path attribute": in a mod.rs, lib.rs or main.rs file, a #[path] is
+# relative to the file's directory, and inside inline modules to that directory followed by the
+# inline modules' names; in any other file, inside inline modules, to the directory followed by the
+# file's stem and the inline modules' names. include! is relative to the file that holds it.
+printf '#[path = "../../../../tests/src/viamod.rs"]\nmod v;\n' >crates/b/src/m/mod.rs
+echo 'include!("../../c/data/table.rs");' >crates/b/src/gen.rs
+printf 'mod inner {\n    #[path = "../../../../../tests/src/inl.rs"]\n    mod x;\n}\n' >crates/c/src/inl.rs
+printf 'mod outer {\n    mod inner {\n        #[path = "../../../../../../tests/src/nest.rs"]\n        mod x;\n    }\n}\n' \
+  >crates/c/src/m/mod.rs
+for f in viamod inl nest; do echo "//! $f." >"tests/src/$f.rs"; done
+echo '// table' >crates/c/data/table.rs
 echo '//! x.' >tests/steps/x/mod.rs
 echo '//! y.' >tests/steps/y/mod.rs
 echo '//! full.' >tests/full/main.rs
@@ -72,6 +85,18 @@ check "a file in a step folder selects that step alone" \
 check "a file another crate includes by #[path] selects that crate and its dependents too" \
   "merge check: groups: $(sorted "$(short a b s_01f_import_graph step_x step_y t)")" \
   "$(groups_after tests/src/seed.rs)"
+check "a file a mod.rs names by #[path] selects the crate of the mod.rs and its dependents" \
+  "merge check: groups: $(sorted "$(short b s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after tests/src/viamod.rs)"
+check "a file a #[path] inside an inline module of a non-mod.rs file names selects its crate" \
+  "merge check: groups: $(sorted "$(short c s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after tests/src/inl.rs)"
+check "a file a #[path] inside two inline modules of a mod.rs file names selects its crate" \
+  "merge check: groups: $(sorted "$(short c s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after tests/src/nest.rs)"
+check "a file in a sibling crate's directory that include! names selects the including crate too" \
+  "merge check: groups: $(sorted "$(short b c s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after crates/c/data/table.rs)"
 check "a docs file selects nothing" \
   "merge check: no package changed; no tests to run" \
   "$(groups_after docs/notes.md)"

@@ -77,7 +77,18 @@ mapfile -t testdirs < <(jq -r --arg r "$wsroot/" '.packages[] | (.manifest_path 
 # The include forms: one grep over the workspace's Rust sources, as `<source> <named path>` with
 # the path resolved against the source's directory and, for #[path] in a file that is not
 # lib.rs, main.rs or mod.rs, against its own module directory too.
-declare -A includers=()
+# A #[path] inside inline modules is relative to that directory followed by the inline modules'
+# names (the Rust reference, "The path attribute"), which a grep cannot see. So for a #[path]
+# whose path is `../` m times and then `rest`, under the base B (the directory, or the directory
+# and the stem): with k inline modules the file is B/<k names>/rest when k >= m, and the j-th
+# parent of B followed by rest, j = m - k, when k < m. The first are the files under B whose path
+# ends in /rest: under_rest[rest] holds their bases B, and a changed file looks up each of its
+# path's suffixes there (as many lookups as it has path components). The second, j = 1..m, are
+# exact entries in includers, as is k = 0. This selects every file the attribute can name with
+# any inline modules, and more only when such a file exists under B, which costs extra tests and
+# never misses one. Testing each changed file against each attribute instead would cost
+# O(changed files x attributes).
+declare -A includers=() under_rest=()
 while IFS= read -r hit; do
   src=${hit%%:*}
   lit=${hit#*\"}
@@ -87,8 +98,45 @@ while IFS= read -r hit; do
     rel=$(realpath -m --relative-to=. "$at")
     includers[$rel]+="$src "
   done
+  [[ $hit == *'#['* && $lit != /* ]] || continue
+  IFS=/ read -ra parts <<<"$lit"
+  m=0 kept=()
+  for c in "${parts[@]}"; do
+    case $c in
+      '' | .) ;;
+      ..) if [ ${#kept[@]} -gt 0 ]; then unset 'kept[-1]'; else m=$((m + 1)); fi ;;
+      *) kept+=("$c") ;;
+    esac
+  done
+  rest=$(IFS=/; echo "${kept[*]}")
+  [ -n "$rest" ] || continue
+  for b in "$dir" "$dir/$(basename "$src" .rs)"; do
+    b=$(realpath -m --relative-to=. "$b")
+    under_rest[$rest]+="$b|$src "
+    up=
+    for ((j = 1; j <= m; j++)); do
+      up+=../
+      includers[$(realpath -m --relative-to=. "$b/$up$rest")]+="$src "
+    done
+  done
 done < <(command grep -a -rnoE --include='*.rs' '(#\[path *= *"[^"]+"|include(_str|_bytes)?!\("[^"]+")' \
   $(printf '%s\n' "${pkgdirs[@]}" | cut -d' ' -f1 | command grep -a . | sort -u) | cut -d: -f1,3-)
+# The sources whose #[path] can name the file $1 through inline modules: for each suffix s of its
+# path after a /, or the whole path, each base B in under_rest[s] that the path starts with,
+# followed by at least the separator (B/<names>/s, no names allowed).
+inline_includers() {
+  local f=$1 s=$1 e b
+  while :; do
+    for e in ${under_rest[$s]}; do
+      b=${e%%|*}
+      if [ "$b" = . ] || { [[ $f == "$b"/* ]] && [ $((${#b} + 1 + ${#s})) -le ${#f} ]; }; then
+        echo "${e#*|}"
+      fi
+    done
+    [[ $s == */* ]] || break
+    s=${s#*/}
+  done
+}
 
 declare -A seen=() pkgs=() direct=()
 crate_srcs=() all=
@@ -120,7 +168,7 @@ while [ ${#queue[@]} -gt 0 ]; do
       break
     fi
   done
-  for s in ${includers[$f]}; do queue+=("$s"); done
+  for s in ${includers[$f]} $(inline_includers "$f"); do queue+=("$s"); done
 done
 
 [ ${#crate_srcs[@]} -gt 0 ] && echo "merge check: changed crate sources ${crate_srcs[*]}: s_01f_import_graph runs the imports tool over every crate"
