@@ -8114,21 +8114,26 @@ impl<'m, 's> Comparing<'m, 's> {
     /// comparison reads one pair twice, so the fresh refusal is given first and the kept one
     /// second. Either alone gives the right message there; with both taken out the call is
     /// wrongly said not to fit. The refusal of a verdict kept by readings (`fitted_read`) is
-    /// reached by `a_refused_comparison_met_again_under_new_names_keeps_its_refusal` there
-    /// (TYPES-fits-read-key-refusal): the pair of `h` parameters is refused one way and fits
-    /// the other, and the reverse comparison of the outer pair reads the two signatures again
-    /// under new names in the refused direction. A pair is met under new names only where its
-    /// types are read again; two arrows of an overload, each with its parameter written out,
-    /// hold separate signatures there, so they do not share a key (a type alias used by both
-    /// was not tried). With that refusal taken out the test, and all 1104 programs of its search,
-    /// give the same answers and messages, for two reasons, each enough there: the reverse
-    /// comparison runs after the comparison around is refused, and [`Self::end_alone`] puts
-    /// that refusal back; and the hit also writes the verdict, refusal and all, into `fitted`,
-    /// whose next meeting of the same names in the attempt refuses it. Kept all the same: a
-    /// verdict without its refusal would be a false decided where the comparison was not, kept
-    /// for the pair around in `fitted` and `fitted_read`, and wrong wherever it is read with
-    /// nothing refused, which no path found yet does. Each costs O(1) more than the verdict it
-    /// gives.
+    /// tested by the unit test `a_verdict_kept_by_readings_is_given_again_with_its_refusal`
+    /// (TYPES-fits-read-key-refusal): a refused pair read again under new names is refused
+    /// again, and with that refusal taken out it is a false decided where the comparison was
+    /// not. No step test reaches a refused verdict there. Before 7591eae5c, 8 of 1104 programs
+    /// did (nests of depth two whose `h` parameters fit one way and were refused the other,
+    /// the reverse comparison of the outer pair reading the two signatures again under new
+    /// names), and with the refusal taken out each gave the same answer and message, for two
+    /// reasons, each enough there: the reverse comparison ran after the comparison around was
+    /// refused, and [`Self::end_alone`] put that refusal back; and the hit also writes the
+    /// verdict, refusal and all, into `fitted`, whose next meeting of the same names in the
+    /// attempt refused it. 7591eae5c decides those comparisons, and the 380 programs tried
+    /// after it (the refusals the step tests still meet, of tuples and shapes with a variable,
+    /// in parameters and results, at depths one and two, both ways round) reach the site with
+    /// fitting verdicts only: a refusal in a parameter is a refusal both ways (a domain is
+    /// exact), so the pair is never met again in a direction not compared, and none of the
+    /// result types tried was refused. A
+    /// pair is met under new names only where its types are read again; two arrows of an
+    /// overload, each with its parameter written out, hold separate signatures, so they do not
+    /// share a key (a type alias used by both was not tried). Each costs O(1) more than the
+    /// verdict it gives.
     async fn fits_read(&'m self, v: &Arc<str>, s: &Arc<Sig>, se: &Env, w: &Arc<str>) -> bool {
         let key = (v.clone(), w.clone());
         let (q, qe) = {
@@ -20919,6 +20924,62 @@ mod tests {
         let want = fits_sig(&s, &q);
         SCAN_ALL.set(false);
         assert!(want, "{q} in {s}: the full search finds no fit");
+    }
+
+    /// TYPES-fits-read-key-refusal: a refused comparison of two functions that are not alone,
+    /// met again under new names, takes the verdict kept by readings ([`Cx::fitted_read`]) and
+    /// gives its refusal again ([`Comparing::fits_read`]). The pair is the one of
+    /// [`a_signature_the_pins_do_not_separate_is_still_refused`], with the outer `Z`, read as
+    /// the rigid `Z'1`, as one more result tuple on both sides, so that neither is alone
+    /// ([`alone_in_any_scope`]). The first reading compares and is refused; the second, under
+    /// the names `s'2` and `q'2`, is answered by the readings (one verdict kept) and must be
+    /// refused too, else it would be a false decided where the comparison was not. Negative
+    /// control: with the refusal at that site taken out, the second answer is not refused.
+    /// The step tests reach the site only where the refusal is also given another way
+    /// (see the site).
+    #[test]
+    fn a_verdict_kept_by_readings_is_given_again_with_its_refusal() {
+        let v = |x: &str| Ty::var(x.into());
+        let (int, bool) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let make = |t: &str, u: &str, w: &str, order: [usize; 5]| {
+            let shapes = [
+                vec![bool.clone(), v(t)],
+                vec![v(t).union(&int)],
+                vec![v(t).union(&int), v(t)],
+                vec![v(u)],
+                vec![v(w)],
+            ];
+            let members: Vec<Vec<Ty>> = order.iter().map(|&i| shapes[i].clone()).collect();
+            let result = [vec![v(t)], vec![v(t), v(t)], vec![v("Z")]];
+            Arc::new(random_shapes_sig(&[t, u, w], &members, &result))
+        };
+        let s = make("T", "U", "V", [0, 1, 2, 3, 4]);
+        let q = make("X", "W", "Y", [1, 2, 3, 0, 4]);
+        assert!(
+            !alone_in_any_scope(&s) && !alone_in_any_scope(&q),
+            "{q} in {s}"
+        );
+        let mut env = Env::new();
+        env.insert("Z".into(), Read::Rigid("Z'1".into()));
+        let mut cx = Cx::default();
+        for name in ["q'1", "q'2"] {
+            cx.fns.insert(name.into(), (q.clone(), env.clone()));
+        }
+        let [first, second] = comparing!(&mut cx, |c| async {
+            let mut answers = [(true, None), (true, None)];
+            for (i, (v, w)) in [("s'1", "q'1"), ("s'2", "q'2")].into_iter().enumerate() {
+                let ok = c.fits_read(&v.into(), &s, &env, &w.into()).await;
+                answers[i] = (ok, c.cx.borrow_mut().unchosen.take());
+            }
+            answers
+        });
+        assert_eq!(
+            cx.fitted_read.len(),
+            1,
+            "{q} in {s}: one verdict kept by readings"
+        );
+        assert!(!first.0 && first.1.is_some(), "{q} in {s}: {first:?}");
+        assert_eq!(second, first, "{q} in {s}: met again under new names");
     }
 
     /// The result of a random signature for [`pinned_shapes_are_those_of_the_rule_of_one_shape`]:

@@ -547,43 +547,6 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
     );
 }
 
-/// A refused comparison of two inner functions met again under new names takes the verdict kept
-/// by readings, with its refusal (`Comparing::fits_read`, `Cx::fitted_read`,
-/// TYPES-fits-read-key-refusal). Each function type holds the outer `T` (or `U`), so neither is
-/// alone, and the result of the innermost holds it too. The comparison of `f`'s type with
-/// `g`'s compares the `h` parameters both ways; one way fits, the other is refused (the tuples
-/// `((int, int),)` and `((int, int, int),)` may each be held by either shape of `g`'s result),
-/// and the comparison is refused.
-/// The reverse comparison then reads the same two signatures with new names, in the direction
-/// refused before, and takes the kept refusal. The program, one of eight found among 1104 made
-/// from six result types, four places for the outer variable and nests of depth one and two,
-/// is refused, and stays refused with the refusal at that site taken out (see the site).
-#[test]
-fn a_refused_comparison_met_again_under_new_names_keeps_its_refusal() {
-    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
-    let a = "((int, int),) | ((int, int, int),)";
-    let p_inner = format!("(y: bool, z: int) -> ({a} | ((int, T) | (int, bool, bool),))");
-    let q_inner = "(y: bool, z: V) -> (((int, U) | (int, bool, bool),) | ((int, V) | (int, V, V),)) \
-                   for V in int";
-    let nest = |inner: &str, v: &str| {
-        format!("(h: (h: {inner}, y: {v}) -> int, y: {v}) -> int for {v} in int | f64")
-    };
-    let src = format!(
-        "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
-        nest(&p_inner, "T"),
-        nest(q_inner, "U")
-    );
-    let errs = type_errors(&src);
-    assert_eq!(errs.len(), 1, "{errs:?}");
-    for part in [
-        "The checker could not decide whether `p` takes",
-        "the tuples ((int, int),) and ((int, int, int),) may each be held by one of the shapes",
-    ] {
-        assert!(errs[0].contains(part), "{part}: {errs:?}");
-    }
-    assert!(!errs[0].contains("does not take"), "{errs:?}");
-}
-
 /// A refused comparison of two functions read as the result of a function that is not alone
 /// (it holds the outer `T`) refuses the call; it is not dropped as a misfit
 /// (TYPES-fits-read-refusal). `Comparing::fits_read` compares the inner functions, `g`'s own
