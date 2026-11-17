@@ -182,9 +182,10 @@ fn an_unrelated_error_does_not_hide_the_range_error() {
 fn a_class_error_hides_the_range_error_of_its_own_literals_only() {
     // Each rejects `1.5` and its class, and leaves `1e400` at `f64`, past its range. A decimal
     // that nothing fixes is an `f64` (DESIGN.md L1.26b), so the rejected class is a decimal
-    // that an `int` use fixes.
+    // that an `int` use fixes. (An operation on literals alone, `2^(1 + 1) == 1.5`, takes the
+    // decimal's `f64` instead, row LIT-f64-op-meets-int-op, so the `int` is a parameter's.)
     for src in [
-        "t() = { y = 2^(1 + 1) == 1.5; (y, 1e400) };\n",
+        "t(positional n: int) = { y = n == 1.5; (y, 1e400) };\n",
         "h(positional z: int) = z;\nt() = (h(1.5), 1e400);\n",
     ] {
         let e = errors(src);
@@ -196,12 +197,12 @@ fn a_class_error_hides_the_range_error_of_its_own_literals_only() {
     // of another class, keeps its range error.
     for src in [
         "h(positional z: int) = z;\nt() = (h(1e400), 1e400);\n",
-        "t() = (2^(1 + 1) == 1e400, 1e400);\n",
+        "t(positional n: int) = (n == 1e400, 1e400);\n",
     ] {
         let e = errors(src);
         assert_eq!(e.len(), 2, "{src}: {e:?}");
         assert!(
-            e[0].starts_with("A decimal literal is never an `int`: the literal `1e400`."),
+            e[0].starts_with("A decimal literal is never an `int`: ") && e[0].contains("1e400"),
             "{src}: {e:?}"
         );
         assert!(e[1].starts_with(INFINITE), "{src}: {e:?}");

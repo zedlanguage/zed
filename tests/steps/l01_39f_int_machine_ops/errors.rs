@@ -226,7 +226,9 @@ fn the_note_for_an_operand_of_another_kind_lies_at_that_operand() {
                 !m.contains(&wrong),
                 "{src}: a `/` note at the other operand in\n{m}"
             );
-            let carrier = format!("\n1:{at}: Nothing gives the literal");
+            // The one message for a `/` of literals at an `int` parameter (row
+            // LIT-call-int-param-fix-unchecked), at that operand.
+            let carrier = format!("1:{at}: `{word}` takes an `int` as");
             assert!(m.contains(&carrier), "{src}: no `{carrier}` in\n{m}");
         }
     }

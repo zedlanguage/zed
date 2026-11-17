@@ -121,7 +121,10 @@ fn an_argument_of_another_kind_is_rejected() {
     ] {
         let out = rejected(src);
         let word = &src[4..src.find('(').unwrap()];
-        let at_word = out.contains(&format!("`{word}` does not take"));
+        // A `/` of literals at an `int` parameter gets one message naming the `/` (row
+        // LIT-call-int-param-fix-unchecked).
+        let at_word = out.contains(&format!("`{word}` does not take"))
+            || out.contains(&format!("`{word}` takes an `int` as"));
         assert!(at_word || out.contains("f64`, never `int`"), "{src}: {out}");
     }
 }
