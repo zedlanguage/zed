@@ -100,11 +100,11 @@ fn a_short_chain_of_and_is_written_with_each_operator() {
         "((v >= 0) && ((v >= 0) && (v >= 0)))"
     );
 }
-/// A type test in a pattern writes `is T`, sec:grammar's `IsPat`, with its type as a program
+/// A type test in a pattern writes `(is T)`, sec:grammar's `IsPat`, with its type as a program
 /// writes it, the empty type as `Never` (DESIGN.md, the L1 row of "Defined words by layer"),
 /// not in the kernel's prefix form, and the term reads back.
-/// Before (item PRINT-is-pattern), each test stood in parentheses, `(is Never)`, which no
-/// pattern of sec:grammar reads: a `TuplePat` has a comma.
+/// Item PRINT-is-pattern wrote it bare, `is Never`, when `IsPat` had no parentheses; since step
+/// L2.7b an `is`-pattern stands in parentheses that hold it alone, and bare it is refused.
 #[test]
 fn a_type_pattern_writes_its_type_in_type_syntax() {
     let small = &Type::int() - &Type::lit(&Value::Int(0)).expect("an int literal");
@@ -119,8 +119,8 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
     let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
-        "match v { is Never -> \"none\", is int \\ 0 -> \"nonzero\", \
-         is int | bool -> \"scalar\" }"
+        "match v { (is Never) -> \"none\", (is int \\ 0) -> \"nonzero\", \
+         (is int | bool) -> \"scalar\" }"
     );
     assert!(!shown.contains("(|") && !shown.contains("(\\"), "{shown}");
     // `int \ 0` holds a literal type, a form of layer L10 that sec:grammar reads and this
@@ -158,7 +158,8 @@ fn a_part_a_type_test_writes_twice_is_declared_before_the_term() {
             (Pattern::Wild, lit("other")),
         ],
     );
-    let want = "type Part1 = int | #x;\nmatch v { is (Part1, Part1) -> \"pair\", _ -> \"other\" }";
+    let want =
+        "type Part1 = int | #x;\nmatch v { (is (Part1, Part1)) -> \"pair\", _ -> \"other\" }";
     assert_eq!(written(&t, before_at, &|_| true), want);
     assert_eq!(t.to_string(), want.replace("match v ", "match v@1 "));
     assert_eq!(reads_back(&t, want).same, 1);
@@ -199,8 +200,8 @@ fn a_type_test_inside_other_patterns_reads_back() {
     let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
-        "match v { is (int -> bool) -> \"function\", (is int | bool, _) -> \"pair\", \
-         (is (int -> bool),) -> \"one\", #ok(is String) -> \"ok\", #err(code: is int) -> \"err\", \
+        "match v { (is (int -> bool)) -> \"function\", ((is int | bool), _) -> \"pair\", \
+         ((is (int -> bool)),) -> \"one\", #ok((is String)) -> \"ok\", #err(code: (is int)) -> \"err\", \
          w -> \"other\" }"
     );
     assert_eq!(
@@ -214,7 +215,7 @@ fn a_type_test_inside_other_patterns_reads_back() {
 }
 
 /// The kernel's pattern for any atom, which `else` and `?.` elaborate to, and its pattern for the
-/// empty tuple are written as the type tests `is #_` and `is ()`, sec:grammar's `IsPat` with the
+/// empty tuple are written as the type tests `(is #_)` and `(is ())`, sec:grammar's `IsPat` with the
 /// `AtomType` `#_` and the `TupleType` `()`, at the top of an arm and inside a tuple, a payload
 /// and a field, and each reads back as a type holding exactly the values the pattern matches.
 /// Before (item PRINT-anyatom-pattern), they were written `#_` and `()`, which no pattern of
@@ -245,8 +246,8 @@ fn any_atom_and_empty_tuple_patterns_read_back() {
     let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
-        "match v { is #_ -> \"failed\", is () -> \"unit\", (is #_, is ()) -> \"pair\", \
-         (is (),) -> \"one\", #ok(is #_) -> \"ok\", #err(code: is ()) -> \"err\", \
+        "match v { (is #_) -> \"failed\", (is ()) -> \"unit\", ((is #_), (is ())) -> \"pair\", \
+         ((is ()),) -> \"one\", #ok((is #_)) -> \"ok\", #err(code: (is ())) -> \"err\", \
          _ -> \"other\" }"
     );
     assert_eq!(
@@ -362,7 +363,7 @@ fn a_payload_held_in_part_by_a_difference_reads_back() {
     let shown = written(&t, before_at, &|_| true);
     assert_eq!(
         shown,
-        "match v { is #a(int | String) \\ #a(int) -> \"arm 0\" }"
+        "match v { (is #a(int | String) \\ #a(int)) -> \"arm 0\" }"
     );
     assert_eq!(
         reads_back(&t, &shown),
@@ -414,7 +415,7 @@ fn random_pattern(rng: &mut zed_tests::instances::Rng, d: usize) -> Pattern {
 
 /// Seeded random terms: a `match` of up to four arms whose patterns nest the any-atom pattern,
 /// the empty tuple, other tuples, atoms with payloads by position and by name, names and `_` up
-/// to three deep. Each printed term reads back, each `is #_` and `is ()` as a type holding the
+/// to three deep. Each printed term reads back, each `(is #_)` and `(is ())` as a type holding the
 /// values its pattern matches. The type tests of random types are left to the test above.
 #[test]
 fn random_terms_with_any_atom_and_empty_tuple_patterns_read_back() {
@@ -626,7 +627,7 @@ fn reads_back(t: &Term, text: &str) -> Seen {
                     .unwrap_or_else(|e| panic!("{src}: `{part}` read as {text}: {e}"));
                 assert_eq!(again.to_string(), text, "{src}: `{part}`");
             }
-            // `is #_` and `is ()`: the kernel's any-atom and empty-tuple patterns, which no
+            // `(is #_)` and `(is ())`: the kernel's any-atom and empty-tuple patterns, which no
             // other pattern of sec:grammar reads (item PRINT-anyatom-pattern).
             (
                 Pattern::AnyAtom | Pattern::Tuple(_),

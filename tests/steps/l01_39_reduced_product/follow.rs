@@ -41,7 +41,7 @@ fn a_retry_counter_compared_with_a_literal_is_narrowed_to_it() {
     // `tries` is inferred: the function takes any number, and `3` follows its carrier.
     let src = "ok(positional tries) = if tries == 3 { 10 } else { 20 };";
     let (_, body, _) = arms_of(src);
-    assert!(body.to_string().contains("is f64 -> 3.0"), "{body}");
+    assert!(body.to_string().contains("(is f64) -> 3.0"), "{body}");
     assert_eq!(
         readings(src, &["tries"]),
         ["true: tries [3..=3]", "false: tries [..=2, 4..]"]
@@ -144,7 +144,7 @@ fn differences(k: usize) -> String {
 fn a_chain_of_following_comparisons_reads_as_the_plain_chain() {
     for d in 1..=12 {
         let (ps, follow) = function(&chain(d, false));
-        assert!(follow.to_string().contains("is f64 -> 1.0"), "d = {d}");
+        assert!(follow.to_string().contains("(is f64) -> 1.0"), "d = {d}");
         let (_, plain) = function(&chain(d, true));
         assert!(!plain.to_string().contains("is f64"), "d = {d}");
         let scope = ints(&ps);

@@ -165,13 +165,13 @@ fn is_accepts_a_type_with_every_function_or_none() {
     };
     // A function type less itself admits no function: the test is one against `Never`.
     let t = term("f(x) = x is ((int) -> int) \\ ((int) -> int);");
-    assert!(t.contains("is Never -> true, _ -> false"), "{t}");
+    assert!(t.contains("(is Never) -> true, _ -> false"), "{t}");
     for (written, shown) in [
-        ("int & rat", "is Never"),
-        ("Never", "is Never"),
-        ("#_", "is #_"),
-        ("(..)", "is (..)"),
-        ("()", "is ()"),
+        ("int & rat", "(is Never)"),
+        ("Never", "(is Never)"),
+        ("#_", "(is #_)"),
+        ("(..)", "(is (..))"),
+        ("()", "(is ())"),
     ] {
         let t = term(&format!("f(x) = x is {written};"));
         assert!(t.contains(shown), "{written}: {t}");

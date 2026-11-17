@@ -7,5 +7,5 @@ Opt => int | #none warn !! L2.5: notyet -- sec:lexical "else default-narrowing: 
 template: $0 is int
 Opt => bool !! L2.5: notyet -- sec:lexical "is type test"
 
-template: match $0 { is int -> 1, #none -> 0 }
+template: match $0 { (is int) -> 1, #none -> 0 }
 Opt => 0 | 1 !! L2.5: notyet -- sec:lexical "match value-pattern dispatch"

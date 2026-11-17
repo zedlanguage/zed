@@ -224,7 +224,7 @@ fn else_matches_any_atom_or_the_atom_its_pattern_names() {
     );
     assert_eq!(
         term("x = #b else #a -> 1 else 2;", "x"),
-        "match match #b { is #a | #a(..) -> 1, $1 -> $1 } { is #_ -> 2, $2 -> $2 }"
+        "match match #b { (is #a | #a(..)) -> 1, $1 -> $1 } { (is #_) -> 2, $2 -> $2 }"
     );
 }
 
@@ -233,7 +233,7 @@ fn a_safe_member_passes_an_atom_and_calls_on_anything_else() {
     values(&[("x = \"abc\"?.len;", "3"), ("x = #a?.len;", "#a")]);
     assert_eq!(
         term("x = \"abc\"?.len;", "x"),
-        "{ $1 = \"abc\"; match $1 { is #_ -> $1, _ -> len($1) } }"
+        "{ $1 = \"abc\"; match $1 { (is #_) -> $1, _ -> len($1) } }"
     );
 }
 

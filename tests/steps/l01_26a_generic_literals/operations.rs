@@ -21,8 +21,8 @@ fn both(params: &[&str], body: &str, arg: &str, ty: &str) -> (String, String) {
 fn an_operation_on_literals_alone_is_one_match_on_the_carrier() {
     assert_eq!(
         term("f(positional x) = x * (2 + 0);\n", "f"),
-        "x -> (x * match x { is f64 -> (2.0 + 0.0), is rat -> (2r + 0r), \
-         is f32 -> (2.0f32 + 0.0f32), _ -> (2 + 0) })"
+        "x -> (x * match x { (is f64) -> (2.0 + 0.0), (is rat) -> (2r + 0r), \
+         (is f32) -> (2.0f32 + 0.0f32), _ -> (2 + 0) })"
     );
 }
 
@@ -141,20 +141,20 @@ fn a_quotient_a_decimal_or_a_power_among_literals_is_one_match() {
     // last arm was `(1 / 2) + 3r`, which no run could reach).
     assert_eq!(
         term("f(positional x) = x + (1 / 2 + 3);\n", "f"),
-        "x -> (x + match x { is rat -> ((1r / 2r) + 3r), is f32 -> ((1.0f32 / 2.0f32) + 3.0f32), \
+        "x -> (x + match x { (is rat) -> ((1r / 2r) + 3r), (is f32) -> ((1.0f32 / 2.0f32) + 3.0f32), \
          _ -> ((1.0 / 2.0) + 3.0) })"
     );
     // `1` lists `f64`, `rat` and `f32`; the decimal's arms are `rat`, `f32` and its own `f64`.
     assert_eq!(
         term("f(positional x) = x * (1.5 + 1);\n", "f"),
-        "x -> (x * match x { is rat -> (3r/2r + 1r), is f32 -> (1.5f32 + 1.0f32), \
+        "x -> (x * match x { (is rat) -> (3r/2r + 1r), (is f32) -> (1.5f32 + 1.0f32), \
          _ -> (1.5 + 1.0) })"
     );
     // The exponent lists `f64` and `f32`, and keeps its own `2` at `rat` and `int`.
     assert_eq!(
         term("f(positional x) = x * ((2 + 1) ^ 2);\n", "f"),
-        "x -> (x * match x { is f64 -> ((2.0 + 1.0)^2.0), is rat -> ((2r + 1r)^2), \
-         is f32 -> ((2.0f32 + 1.0f32)^2.0f32), _ -> ((2 + 1)^2) })"
+        "x -> (x * match x { (is f64) -> ((2.0 + 1.0)^2.0), (is rat) -> ((2r + 1r)^2), \
+         (is f32) -> ((2.0f32 + 1.0f32)^2.0f32), _ -> ((2 + 1)^2) })"
     );
 }
 
@@ -175,8 +175,8 @@ fn a_literal_following_another_takes_its_carrier_in_the_last_arm() {
     // `2`, which would give `/` an `f64` and an `int`.
     assert_eq!(
         term("g(positional x) = x == 1 / 2;\n", "g"),
-        "x -> (x == match x { is f64 -> (1.0 / 2.0), is rat -> (1r / 2r), \
-         is f32 -> (1.0f32 / 2.0f32), _ -> (1.0 / 2.0) })"
+        "x -> (x == match x { (is f64) -> (1.0 / 2.0), (is rat) -> (1r / 2r), \
+         (is f32) -> (1.0f32 / 2.0f32), _ -> (1.0 / 2.0) })"
     );
     let text = "g(positional x) = x == 4 / 2;\nt = (g(2), g(2.0f64), g(2r), g(3));\n";
     assert_eq!(value(text, "t"), "(false, true, true, false)");

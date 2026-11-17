@@ -748,18 +748,20 @@ impl<'a> Pieces<'a> {
             Pattern::Tuple(ps) if ps.len() == 1 => self.text("(").pattern(&ps[0]).text(",)"),
             // sec:grammar's `TuplePat` has a comma, so the empty tuple is the type test of the
             // type `()`, whose one value it is.
-            Pattern::Tuple(ps) if ps.is_empty() => self.text("is ()"),
+            Pattern::Tuple(ps) if ps.is_empty() => self.text("(is ())"),
             Pattern::Tuple(ps) => self
                 .text("(")
                 .patterns(ps.iter().map(|p| (None, p)))
                 .text(")"),
             // No pattern of sec:grammar is `#_`, the type of every atom, so any atom is the type
             // test of that type.
-            Pattern::AnyAtom => self.text("is #_"),
-            // `is T`, sec:grammar's `IsPat` with no name, the type as a program writes it after
-            // `is`: only an arrow is parenthesized. The type ends where a pattern does, before
-            // `,`, `)` or an arm's `->`, which a `TypeUnion` does not take.
-            Pattern::Is(t) => self.text(format!("is {}", t.surface_after_is())),
+            Pattern::AnyAtom => self.text("(is #_)"),
+            // `(is T)`, sec:grammar's `IsPat` with no name, in the parentheses that hold it alone
+            // (DESIGN.md step L2.7b), the type as a program writes it after `is`: only an arrow
+            // is parenthesized. The type ends at the `)`, which a `TypeUnion` does not take. As
+            // an atom's payload it is written in the payload's parentheses too, `#ok((is T))`,
+            // which sec:grammar's `AtomPattern` reads as the payload list of one pattern.
+            Pattern::Is(t) => self.text(format!("(is {})", t.surface_after_is())),
         };
     }
 

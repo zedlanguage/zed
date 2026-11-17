@@ -46,15 +46,18 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(x) = match x { 0..<10 -> 1, _ -> 0 };",
+            "f(x) = match x { (0..<10) -> 1, _ -> 0 };",
             &[concat!(
                 zed_tests::not_yet!("a `match`"),
-                " [match x { 0..<10 -> 1, _ -> 0 }]"
+                " [match x { (0..<10) -> 1, _ -> 0 }]"
             )],
         ),
         (
-            "f(r) = r else #ok(v: 0..<10) -> 0;",
-            &[concat!(zed_tests::not_yet!("a range pattern"), " [0..<10]")],
+            "f(r) = r else #ok(v: (0..<10)) -> 0;",
+            &[concat!(
+                zed_tests::not_yet!("a range pattern"),
+                " [(0..<10)]"
+            )],
         ),
     ]);
 }

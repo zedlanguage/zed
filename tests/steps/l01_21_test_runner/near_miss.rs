@@ -534,6 +534,22 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:18",
         Some("`if x == 3 {`"),
     ),
+    (
+        Row::BareOperatorPattern,
+        "",
+        "f(c) = match c { (#red | #green) -> 1, _ -> 2 };\n",
+        "f(c) = match c { #red | #green -> 1, _ -> 2 };\n",
+        "1:18",
+        Some("`(#red | #green) -> 1`"),
+    ),
+    (
+        Row::OrPatternNamesDiffer,
+        "",
+        "f(r) = match r { (#ok(x) | #err(x)) -> 0, _ -> 1 };\n",
+        "f(r) = match r { (#ok(x) | #err(y)) -> 0, _ -> 1 };\n",
+        "1:18",
+        Some("write the arm out once for each alternative: `#ok(x) -> 0, #err(y) -> 0`"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step
@@ -558,6 +574,9 @@ const LATER: &[Row] = &[
     Row::StructFieldTypeVariable,
     // A push to a view of a port is not compiled yet: the accepted program is rejected as not yet.
     Row::PushTargetNotPushable,
+    // A `match` is not compiled yet (step L2.7): the accepted program is rejected as not yet.
+    Row::BareOperatorPattern,
+    Row::OrPatternNamesDiffer,
 ];
 
 /// The `.rs` files under `dir`, in no order.

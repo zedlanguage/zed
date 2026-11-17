@@ -130,7 +130,10 @@ fn else_replaces_an_atom_and_passes_any_other_value() {
         "#divByZero",
         "a pattern that does not match passes it"
     );
-    assert_eq!(term(src, "b"), "match per(90, 0) { is #_ -> 0, $2 -> $2 }");
+    assert_eq!(
+        term(src, "b"),
+        "match per(90, 0) { (is #_) -> 0, $2 -> $2 }"
+    );
 }
 
 #[test]
@@ -141,7 +144,7 @@ fn safe_member_passes_an_atom_through() {
     assert_eq!(value(src, "b"), "4");
     assert_eq!(
         term(src, "b"),
-        "{ $2 = n; match $2 { is #_ -> $2, _ -> half($2) } }"
+        "{ $2 = n; match $2 { (is #_) -> $2, _ -> half($2) } }"
     );
 }
 

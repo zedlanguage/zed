@@ -42,12 +42,12 @@ pub(super) fn display(n: usize) -> String {
     format!("f(x) = {{ {} }};\n", entries.join(", "))
 }
 
-/// `f(x) = match x { 0..<1 -> 0, -2..=-1 -> 1, … , _ -> n };`, `n` range-pattern arms.
+/// `f(x) = match x { (0..<1) -> 0, (-2..=-1) -> 1, … , _ -> n };`, `n` range-pattern arms.
 pub(super) fn arms(n: usize) -> String {
     let arms: Vec<String> = (0..n)
         .map(|i| match i % 2 {
-            0 => format!("{i}..<{} -> {i}", i + 1),
-            _ => format!("-{}..=-{i} -> {i}", i + 1),
+            0 => format!("({i}..<{}) -> {i}", i + 1),
+            _ => format!("(-{}..=-{i}) -> {i}", i + 1),
         })
         .collect();
     format!("f(x) = match x {{ {}, _ -> {n} }};\n", arms.join(", "))

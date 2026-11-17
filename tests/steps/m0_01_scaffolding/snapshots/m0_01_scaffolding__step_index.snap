@@ -60,6 +60,7 @@ l02_01_parser_structs
 l02_02_parser_match_imports
 l02_03_name_resolution
 l02_06c_infix_calls
+l02_07b_or_patterns
 l02_08_import_pinning
 l02_08d_build_constant
 l02_12_diagnostics

@@ -107,11 +107,11 @@ fn a_for_builds_its_binders_source_guard_and_body() {
 fn range_patterns_and_family_types_build() {
     check(&[
         (
-            "f(x) = match x { 0..<10 -> 1, -5..=-1 -> 2, 10.. -> 3 };",
+            "f(x) = match x { (0..<10) -> 1, (-5..=-1) -> 2, (10..) -> 3 };",
             "(def f (x) = (match x (-> (..< 0 10) 1) (-> (..= (- 5) (- 1)) 2) (-> (.. 10) 3)))",
         ),
         (
-            "f(c) = match c { \"a\"..=\"z\" -> 1, _ -> 0 };",
+            "f(c) = match c { (\"a\"..=\"z\") -> 1, _ -> 0 };",
             "(def f (c) = (match c (-> (..= (str \"a\") (str \"z\")) 1) (-> _ 0)))",
         ),
         ("f(x: [int]) = x;", "(def f ((x: (array int))) = x)"),
