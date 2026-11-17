@@ -155,11 +155,9 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             }
         }
         // A whole number is its own rounding, shared.
-        (_, Value::Int(_) | Value::Big(_)) if Rounding::of_prim(p).is_some() => x.clone(),
-        (_, Value::Rat(_) | Value::Float(_) | Value::Float32(_))
-            if Rounding::of_prim(p).is_some() =>
-        {
-            let rule = Rounding::of_prim(p).expect("a rounding primitive");
+        (_, Value::Int(_) | Value::Big(_)) if rounding_of(p).is_some() => x.clone(),
+        (_, Value::Rat(_) | Value::Float(_) | Value::Float32(_)) if rounding_of(p).is_some() => {
+            let rule = rounding_of(p).expect("a rounding primitive");
             match x.exact() {
                 Exact::Finite(r) => {
                     let w = r
@@ -446,6 +444,20 @@ fn from_utf8(f: &Family) -> Option<Value> {
             Err(_) => Value::atom("badUtf8"),
         },
         false => Value::atom("badUtf8"),
+    })
+}
+
+/// The rule of the rounding primitive `p`; `None` for any other primitive. It lives here, not
+/// on [`Rounding`] in `num`, since `term` imports `num` and `num` imports nothing of `term`.
+fn rounding_of(p: Prim) -> Option<Rounding> {
+    Some(match p {
+        Prim::Round => Rounding::TiesEven,
+        Prim::RoundTiesAway => Rounding::TiesAway,
+        Prim::Floor => Rounding::Floor,
+        Prim::Ceil => Rounding::Ceil,
+        Prim::Trunc => Rounding::Trunc,
+        Prim::AwayFromZero => Rounding::AwayFromZero,
+        _ => return None,
     })
 }
 

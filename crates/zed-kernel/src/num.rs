@@ -69,22 +69,6 @@ pub enum Rounding {
     AwayFromZero,
 }
 
-impl Rounding {
-    /// The rule of the rounding primitive `p`; `None` for any other primitive.
-    pub fn of_prim(p: crate::term::Prim) -> Option<Rounding> {
-        use crate::term::Prim;
-        Some(match p {
-            Prim::Round => Rounding::TiesEven,
-            Prim::RoundTiesAway => Rounding::TiesAway,
-            Prim::Floor => Rounding::Floor,
-            Prim::Ceil => Rounding::Ceil,
-            Prim::Trunc => Rounding::Trunc,
-            Prim::AwayFromZero => Rounding::AwayFromZero,
-            _ => return None,
-        })
-    }
-}
-
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
 /// none of the `p`. Zero has no powers.
