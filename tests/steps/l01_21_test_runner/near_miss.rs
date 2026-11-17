@@ -209,8 +209,8 @@ const NEAR_MISSES: &[NearMiss] = &[
     (
         Row::UnfixedDecimal,
         "",
-        "p = 2.5f64;\n",
-        "p = 2.5;\n",
+        "p = 1r / 2;\n",
+        "p = 1 / 2;\n",
         "1:5",
         None,
     ),

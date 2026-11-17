@@ -7,6 +7,8 @@
 //! (TEST-bench-move-l0125, author P169, P170).
 
 use super::rejected;
+use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// `n` definitions, each reading a name nothing declares.
 pub(super) fn unresolved(n: usize) -> String {
@@ -307,8 +309,9 @@ fn the_carried_fixes_of_many_arguments() {
 }
 
 /// A call of `n` decimal literals at parameters with no type, `f(1.5, …)`
-/// (MSG-many-args-decimal): nothing gives the literals a carrier, and they are one message
-/// that writes the call once per fix, `f(1.5f64, …)` and `f(1.5r, …)`, with a step for each.
+/// (MSG-many-args-decimal): nothing gives the literals a carrier, so each is the `f64` it
+/// writes (DESIGN.md step L1.26b, author decision 2026-11-12) and the call checks. They were
+/// one message that wrote the call once per fix, `f(1.5f64, …)` and `f(1.5r, …)`.
 pub(super) fn unfixed_decimal_arguments(n: usize) -> String {
     let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}")).collect();
     format!(
@@ -318,25 +321,47 @@ pub(super) fn unfixed_decimal_arguments(n: usize) -> String {
     )
 }
 
-pub(super) fn unfixed_decimal_arguments_refused(src: &str, n: usize) {
-    let out = rejected(src);
-    let head = format!("{n} parts of the arguments of `f` are literals that nothing");
-    assert!(out.contains(&head), "{out}");
-    assert_eq!(
-        out.matches("Nothing gives the literal `1.5` a carrier")
-            .count(),
-        n
-    );
-    let fixed = format!("y = f({});", vec!["1.5f64"; n].join(", "));
-    assert_eq!(out.matches(fixed.as_str()).count(), 1, "{out}");
-    let call = format!("y = f({});", vec!["1.5"; n].join(", "));
-    assert_eq!(out.matches(call.as_str()).count(), 1, "{out}");
+/// The program of [`unfixed_decimal_arguments`] checks, and `y` is `1`.
+pub(super) fn unfixed_decimal_arguments_checked(src: &str) {
+    assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    assert_eq!(value(src, "y"), "1", "{src}");
 }
 
 #[test]
 fn many_unfixed_decimal_arguments() {
     for n in [2, 5] {
-        unfixed_decimal_arguments_refused(&unfixed_decimal_arguments(n), n);
+        unfixed_decimal_arguments_checked(&unfixed_decimal_arguments(n));
+    }
+}
+
+/// [`unfixed_decimal_arguments`] with each literal `1e400`, past the range of `f64`, so that
+/// none takes `f64` and the call keeps the one message for all of them, whose fix is `rat`.
+pub(super) fn past_f64_arguments(n: usize) -> String {
+    unfixed_decimal_arguments(n).replace("1.5", "1e400")
+}
+
+/// The program of [`past_f64_arguments`] gives one message naming its `n` literals, whose one
+/// fix writes each as a `rat`.
+pub(super) fn past_f64_arguments_rejected(src: &str, n: usize) {
+    let errors = type_errors(src);
+    let [e] = &errors[..] else {
+        panic!("{src}: {errors:?}")
+    };
+    let head =
+        format!("{n} parts of the arguments of `f` are literals that nothing here gives a carrier");
+    assert!(e.starts_with(&head), "{e}");
+    let fix = format!("y = f({});", vec!["1e400r"; n].join(", "));
+    assert!(
+        e.contains(&format!("Try `{}` instead.", &fix[..fix.len() - 1])),
+        "{e}"
+    );
+    assert!(e.contains(&format!("\n    {fix}")), "{e}");
+}
+
+#[test]
+fn many_decimal_arguments_past_f64() {
+    for n in [2, 5] {
+        past_f64_arguments_rejected(&past_f64_arguments(n), n);
     }
 }
 

@@ -117,7 +117,9 @@ fn an_f32_to_an_int_power_is_an_f32() {
     assert_eq!(x("(-1.0f32) ^ whole(9007199254740993)"), "-1.0f32");
     assert_eq!(x("(-1.0f32) ^ whole(9007199254740994)"), "1.0f32");
     assert_eq!(x("(-1.0f32) ^ whole(-9007199254740993)"), "-1.0f32");
-    // A decimal literal base stays the exact `rat` (L1.17, `0.5 ^ n`).
+    // A decimal literal base does not take `f32` through `f32 ^ int`. DESIGN.md L1.17 makes
+    // `0.5 ^ n` with `n : int` an `f64` alone; zedc has no arrow `f64 ^ int` yet and gives the
+    // exact `rat` (row POW-domains, item 4).
     assert_eq!(x("0.5 ^ whole(-2)"), "4r");
 }
 

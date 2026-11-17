@@ -3,6 +3,7 @@
 //! sec:diagnostics: a message uses the program's words). The lexer drops the `_`, so each
 //! literal here is written with them, and each message is compared whole.
 
+use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// The rendered rejection of `src`, with its notes.
@@ -15,47 +16,66 @@ fn rejected(src: &str) -> String {
 
 const DIVIDES: &str = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
 
+/// A decimal that nothing fixes takes `f64` (DESIGN.md step L1.26b, author decision
+/// 2026-11-12), so a literal is quoted where one is still rejected: past the range of `f64`,
+/// as `1e400`, where `rat` alone holds it exactly.
 #[test]
 fn a_decimal_with_underscores_is_quoted_with_them() {
+    assert_eq!(type_errors("y = 1_000.5;\n"), Vec::<String>::new());
+    assert_eq!(value("y = 1_000.5;\n", "y"), "1000.5");
     assert_eq!(
-        type_errors("y = 1_000.5;\n"),
-        [String::from(
-            "Nothing gives the literal `1_000.5` a carrier. Try `y = 1_000.5f64` instead.\n  \
-             fixes, each checked here:\n    y = 1_000.5f64;    y is 1000.5\n    y = 1_000.5r;      \
-             y is 2001r/2r [1_000.5]"
-        )]
+        type_errors("y = 1_000.5e4_00;\n"),
+        [
+            "`1_000.5e4_00` is larger than the largest f64, 1.7976931348623157e308, so as an f64 \
+             it rounds to infinity. Write `1_000.5e4_00r` for the exact rational, or a number \
+             within the range of f64. [1_000.5e4_00]"
+        ]
     );
 }
 
 #[test]
 fn a_negative_literal_is_quoted_with_its_sign_and_underscores() {
+    assert_eq!(value("y = -1_000.5;\n", "y"), "-1000.5");
     assert_eq!(
-        type_errors("y = -1_000.5;\n"),
-        [String::from(
-            "Nothing gives the literal `-1_000.5` a carrier. Try `y = -1_000.5f64` instead.\n  \
-             fixes, each checked here:\n    y = -1_000.5f64;    y is -1000.5\n    y = \
-             -1_000.5r;      y is -2001r/2r [-1_000.5]"
-        )]
+        type_errors("y = -1_000.5e4_00;\n"),
+        [
+            "`1_000.5e4_00` is larger than the largest f64, 1.7976931348623157e308, so as an f64 \
+             it rounds to infinity. Write `1_000.5e4_00r` for the exact rational, or a number \
+             within the range of f64. [-1_000.5e4_00]"
+        ]
+    );
+    // A literal with a sign that nothing gives a carrier: an integer argument of a function
+    // that divides it.
+    assert_eq!(
+        type_errors("half(x) = x / 2;\ny = half(x: -1_000);\n"),
+        [
+            "Nothing gives the literal `-1_000` a carrier. Try `y = half(x: -1_000r)` instead.\n  \
+             fixes, each checked here:\n    y = half(x: -1_000r);     the literal is then exactly \
+             -1_000, a rat\n    y = half(x: -1_000.0);    the literal is then the f64 -1000.0 \
+             [-1_000]"
+        ]
     );
 }
 
 #[test]
 fn an_exponent_is_quoted_as_written() {
+    assert_eq!(value("y = 2.5e-3;\n", "y"), "0.0025");
+    assert_eq!(value("y = 1_0e1_0;\n", "y"), "100000000000.0");
     assert_eq!(
-        type_errors("y = 2.5e-3;\n"),
-        [String::from(
-            "Nothing gives the literal `2.5e-3` a carrier. Try `y = 2.5e-3f64` instead.\n  \
-             fixes, each checked here:\n    y = 2.5e-3f64;    y is 0.0025\n    y = 2.5e-3r;      y \
-             is 1r/400r [2.5e-3]"
-        )]
+        type_errors("y = 2.5e-4_00;\n"),
+        [
+            "`2.5e-4_00` is not zero, and it lies nearer to zero than to the least positive f64, \
+             5.0e-324, so as an f64 it rounds to zero. Write `2.5e-4_00r` for the exact rational, \
+             or `0.0` if zero is meant. [2.5e-4_00]"
+        ]
     );
     assert_eq!(
-        type_errors("y = 1_0e1_0;\n"),
-        [String::from(
-            "Nothing gives the literal `1_0e1_0` a carrier. Try `y = 1_0e1_0f64` instead.\n  \
-             fixes, each checked here:\n    y = 1_0e1_0f64;    y is 100000000000.0\n    y = \
-             1_0e1_0r;      y is 100000000000r [1_0e1_0]"
-        )]
+        type_errors("y = 1_0e4_00;\n"),
+        [
+            "`1_0e4_00` is larger than the largest f64, 1.7976931348623157e308, so as an f64 it \
+             rounds to infinity. Write `1_0e4_00r` for the exact rational, or a number within the \
+             range of f64. [1_0e4_00]"
+        ]
     );
     assert_eq!(
         type_errors("f(x: int) = x + 1e3;\n"),
@@ -116,9 +136,9 @@ fn a_division_of_integer_literals_quotes_them_as_written() {
     assert_eq!(
         type_errors("half = 1_000 / 2_0;\n"),
         [format!(
-            "{DIVIDES}: `half = 1_000 / 2_0`. Try `half = 1_000.0f64 / 2_0` instead.\n  fixes, each \
-             checked here:\n    half = 1_000.0f64 / 2_0;    half is 50.0\n    half = 1_000r / \
-             2_0;        half is 50r\n    half = f64(1_000) / 2_0;    half is 50.0 [1_000 / 2_0]"
+            "{DIVIDES}: `half = 1_000 / 2_0`. Try `half = 1_000r / 2_0` instead.\n  fixes, each \
+             checked here:\n    half = 1_000r / 2_0;        half is 50r\n    half = 1_000.0 / \
+             2_0;       half is 50.0\n    half = f64(1_000) / 2_0;    half is 50.0 [1_000 / 2_0]"
         )]
     );
 }
@@ -129,16 +149,16 @@ fn a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores() {
     assert_eq!(
         type_errors("half = -0xF_F / 2;\n"),
         [format!(
-            "{DIVIDES}: `half = -0xF_F / 2`. Try `half = -f64(0xF_F) / 2` instead.\n  fixes, each \
-             checked here:\n    half = -f64(0xF_F) / 2;    half is -127.5\n    half = -rat(0xF_F) \
-             / 2;    half is -255r/2r [-0xF_F / 2]"
+            "{DIVIDES}: `half = -0xF_F / 2`. Try `half = -rat(0xF_F) / 2` instead.\n  fixes, each \
+             checked here:\n    half = -rat(0xF_F) / 2;    half is -255r/2r\n    half = \
+             -f64(0xF_F) / 2;    half is -127.5 [-0xF_F / 2]"
         )]
     );
     assert_eq!(
         type_errors("y = 0b1_0 / 2;\n"),
         [format!(
-            "{DIVIDES}: `y = 0b1_0 / 2`. Try `y = f64(0b1_0) / 2` instead.\n  fixes, each checked \
-             here:\n    y = f64(0b1_0) / 2;    y is 1.0\n    y = rat(0b1_0) / 2;    y is 1r [0b1_0 \
+            "{DIVIDES}: `y = 0b1_0 / 2`. Try `y = rat(0b1_0) / 2` instead.\n  fixes, each checked \
+             here:\n    y = rat(0b1_0) / 2;    y is 1r\n    y = f64(0b1_0) / 2;    y is 1.0 [0b1_0 \
              / 2]"
         )]
     );
@@ -174,13 +194,23 @@ fn the_text_fix_of_a_number_compared_with_a_string_is_the_text_string_gives() {
 
 #[test]
 fn a_literal_in_parentheses_is_quoted_without_them() {
+    assert_eq!(value("y = -(1_000.5);\n", "y"), "-1000.5");
     assert_eq!(
-        type_errors("y = -(1_000.5);\n"),
-        [String::from(
-            "Nothing gives the literal `-1_000.5` a carrier. Try `y = -1_000.5f64` instead.\n  \
-             fixes, each checked here:\n    y = -1_000.5f64;    y is -1000.5\n    y = \
-             -1_000.5r;      y is -2001r/2r [-(1_000.5)]"
-        )]
+        type_errors("y = -(1_000.5e4_00);\n"),
+        [
+            "`1_000.5e4_00` is larger than the largest f64, 1.7976931348623157e308, so as an f64 \
+             it rounds to infinity. Write `1_000.5e4_00r` for the exact rational, or a number \
+             within the range of f64. [-(1_000.5e4_00)]"
+        ]
+    );
+    assert_eq!(
+        type_errors("half(x) = x / 2;\ny = half(x: -(1_000));\n"),
+        [
+            "Nothing gives the literal `-1_000` a carrier. Try `y = half(x: -1_000r)` instead.\n  \
+             fixes, each checked here:\n    y = half(x: -1_000r);     the literal is then exactly \
+             -1_000, a rat\n    y = half(x: -1_000.0);    the literal is then the f64 -1000.0 \
+             [-(1_000)]"
+        ]
     );
     assert_eq!(
         type_errors("f(x: String) = x == -(1_000r);\n"),

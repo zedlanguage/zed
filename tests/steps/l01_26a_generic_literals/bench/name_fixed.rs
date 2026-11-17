@@ -1,7 +1,7 @@
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
-use super::super::name_fixed::{chain, decimals};
+use super::super::name_fixed::{chain, divisions};
 
 #[test]
 fn bindings_of_literals_check_in_linear_time() {
@@ -20,7 +20,7 @@ fn rejected_parts_of_a_binding_check_in_linear_time() {
     // fixes write the binding once per carrier.
     scaling::on_a_thread(1 << 28, || {
         let n = 1600;
-        let units = scaling::inputs(n, |m| Resolved::new(&decimals(m)));
+        let units = scaling::inputs(n, |m| Resolved::new(&divisions(m)));
         scaling::check(
             "checking a binding of a tuple of n rejected parts",
             n,

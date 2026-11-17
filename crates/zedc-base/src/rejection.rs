@@ -158,10 +158,10 @@ rows! {
     MisalignedForeignPointer => "Misaligned foreign pointer in a run",
     Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
-    // A numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`), and a decimal
-    // literal, or a `/` of integer literals, that nothing gives a carrier (as `half = 1 / 2`).
+    // A numeric literal at a carrier it cannot take (as `x * 2.0` with `x: int`), and a `/` of
+    // integer literals alone that nothing gives a carrier (as `half = 1 / 2`).
     LiteralCarrier => "Numeric literal at a carrier that cannot take it",
-    UnfixedDecimal => "Decimal literal, or `/` of integer literals, that nothing gives a carrier",
+    UnfixedDecimal => "`/` of integer literals alone that nothing gives a carrier",
     NoCommonCarrier => "Two numeric values with no common carrier",
     // `b == s` with `b: bool` and `s: String`, or `x == 1r` with `x: bool`: the comparison always
     // gives the same answer.

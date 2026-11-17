@@ -128,9 +128,20 @@ fn many_unfixed_decimal_arguments_scale() {
     let n = 3900;
     let srcs = scaling::inputs(n, unfixed_decimal_arguments);
     scaling::check(
-        "the message of a call of n decimal literals at n parameters with no type",
+        "checking a call of n decimal literals at n parameters with no type",
         n,
-        |k| unfixed_decimal_arguments_refused(&srcs[&k], k),
+        |k| unfixed_decimal_arguments_checked(&srcs[&k]),
+    );
+}
+
+#[test]
+fn many_decimal_arguments_past_f64_scale() {
+    let n = 3900;
+    let srcs = scaling::inputs(n, past_f64_arguments);
+    scaling::check(
+        "rejecting a call of n decimal literals past f64 at n parameters with no type",
+        n,
+        |k| past_f64_arguments_rejected(&srcs[&k], k),
     );
 }
 

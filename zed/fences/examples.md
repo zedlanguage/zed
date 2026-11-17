@@ -73,13 +73,13 @@ h   = f64(7) / 2;          // 3.5    a cast is the type applied to the value
 t   = 1r / 3r;             // exact: rat
 big = 2^100;              // int has no width; ^ binds tighter than * and than unary minus, and associates to the right
 m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci: f64 = 1.5e-3;
-half: f64 = 0.5;           // never .5: a float literal starts with a digit; a decimal literal takes the format its use fixes, here the declared f64, and one that nothing fixes is an error; a suffix, as in 0.5f64, forces the format
+half: f64 = 0.5;           // never .5: a float literal starts with a digit; a decimal literal takes the format its use fixes, here the declared f64, and one that nothing fixes is an f64; a suffix, as in 0.5f64, forces the format
 dbl = h * 2;               // 7.0    h is an f64, and the literal 2 takes the carrier of the other operand
-// bad = x * 2.0;          // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or f64(x) * 2.0
+// bad = x * 2.0;          // ✗ Numeric literal at a carrier that cannot take it: x is an int, and a decimal literal is never an int; write x * 2 or rat(x) * 2.0
 y   = x^2 + 2*x + 1;
 b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap
 w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary functions
-z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and 2 stay without one; write f64(7) / 2 or declare z: f64
+z   = 7 / 2;               // ✗ `/` of integer literals alone that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and 2 stay without one; write f64(7) / 2 or declare z: f64
 ```
 
 <!-- EXAMPLES.md:111 layer L3: ring L3, word none, label none, documentation notation; section [3. Numbers] 2 -->
@@ -685,11 +685,11 @@ asInts(positional t: PTree(int)) = t;
 checked(positional t: PTree(Utf8String)) = asInts(t.map(A: s -> int(s)));   // a PTree(int), or #invalid passed out of the A positions (rule 6)
 ```
 
-<!-- EXAMPLES.md:716 layer L6: ring L6, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
+<!-- EXAMPLES.md:716 layer L6: ring L6, word L4 (image), label none; section [15. Trees and graphs] 3 -->
 ```zed
 // [d4*] sec:values_morphisms, sec:generations — reachability is a fixpoint on sets
 edges: Id ->? [Id] = { 1 -> [2, 3], 2 -> [4], 3 -> [4], 4 -> [] };
-succ(positional s) = s.flatMap(n -> edges[n] else []).image;  // [lib] image: the set of values
+succ(positional s) = s.flatMap(n -> edges[n] else []).image;  // image: the set of values (sec:grouping)
 reach = loop {
   initial r = { start };
   r' = r.union(succ(r));                // r' = r ⊔ e: monotone, so the guard below is read as the fixpoint's test
@@ -964,7 +964,7 @@ law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(
 
 <!-- EXAMPLES.md:985 layer L15: ring L15, word L15 (@invariant), label none; section [20. Testing, properties, and proofs] 5 -->
 ```zed
-// [d4] sec:verification, sec:generations — a loop is a state machine: `@invariant` is loop induction, and the reachable set is a fixpoint the compiler evaluates ([lib] image)
+// [d4] sec:verification, sec:generations — a loop is a state machine: `@invariant` is loop induction, and the reachable set is a fixpoint the compiler evaluates
 amt(positional t: int) = withdrawals[t] else 0;                                                 // withdrawals : [int]; past the end nothing is withdrawn
 account = loop t {
   initial balance = 0;

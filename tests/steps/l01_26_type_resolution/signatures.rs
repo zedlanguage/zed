@@ -4,7 +4,7 @@
 
 use zedc::check::ty::{OTHER, Row};
 
-use super::{menu, sig, sig_of, type_errors};
+use super::{sig, sig_of, type_errors};
 
 #[test]
 fn arithmetic_gives_a_variable_bounded_by_the_numeric_carriers() {
@@ -127,19 +127,29 @@ fn a_default_is_checked_at_its_parameters_type() {
         sig("tax(price, rate = price / 10.0) = price * rate;\n", "tax"),
         "(price: T, rate: T) -> T for T in f32 | f64 | rat"
     );
-    // A default that reads no parameter is bound to it as a value is to a name: nothing gives
-    // a decimal literal in it a carrier, as nothing does in `rate = 0.2;` (step L1.26b).
+    // A default that reads no parameter is bound to it as a value is to a name: nothing fixes
+    // a decimal literal in it, so it is the `f64` it writes, as in `rate = 0.2;` (step L1.26b,
+    // author decision 2026-11-12).
     assert_eq!(
         type_errors("tax(price, rate = 0.2) = price * rate;\n"),
-        [format!(
-            "Nothing gives the literal `0.2` a carrier. Try `tax(price, rate = 0.2f64) = price * \
-             rate` instead.{} [0.2]",
-            menu(&[
-                ("tax(price, rate = 0.2f64) = price * rate;", "rate is 0.2"),
-                ("tax(price, rate = 0.2r) = price * rate;", "rate is 1r/5r"),
-            ])
-        )]
+        Vec::<String>::new()
     );
+    assert_eq!(
+        sig("tax(price, rate = 0.2) = price * rate;\n", "tax"),
+        "(price: f64, rate: f64) -> f64"
+    );
+    // A `/` of integer literals there is rejected, the exact fix first.
+    let errors = type_errors("tax(price, rate = 1 / 5) = price * rate;\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].starts_with(
+            "Nothing gives the integer literals a carrier, and `/` has none at `int`: `rate = \
+             1 / 5`. Try `tax(price, rate = 1r / 5) = price * rate` instead."
+        ),
+        "{}",
+        errors[0]
+    );
+    assert!(type_errors("tax(price, rate = 1r / 5) = price * rate;\n").is_empty());
     assert!(type_errors("tax(price, rate = 0.2r) = price * rate;\n").is_empty());
     assert_eq!(sig("f(x = 1) = x;\n", "f"), "(x: int) -> int");
     assert_eq!(sig("f(x: f64 = 1 / 2) = x;\n", "f"), "(x: f64) -> f64");

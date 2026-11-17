@@ -674,7 +674,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  17 | _ -> a == b ,
  18 | } ;
 == DESIGN.md [sec:robustness] 1 L21
-  1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) ;
+  1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) «with» commutes ( #distinctKeys ) ;
   3 | main ( m : MainArgs ) {
   4 | m . stdout <- m . stdin . map ( sku -> str[${prices [ sku ] «else» 0r}] ) ;
   5 | }

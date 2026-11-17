@@ -138,15 +138,16 @@ fn a_literal_default_of_else_takes_the_carrier_of_the_other_side() {
 
 #[test]
 fn a_literal_in_a_string_hole_takes_a_carrier_as_it_would_alone() {
-    // An integer literal alone is an `int`; a decimal alone has no carrier and is rejected
-    // with the menu of L1.26b; a hole of a parameter's operation is generic.
+    // An integer literal alone is an `int`; a decimal alone is an `f64` (L1.26b, author
+    // decision 2026-11-12); a `/` of integer literals alone has no carrier and is rejected with
+    // the menu of L1.26b; a hole of a parameter's operation is generic.
     values(
-        "a = \"${1 + 2}\";\nb = \"${0.5f64}\";\n",
-        &[("a", "\"3\""), ("b", "\"0.5\"")],
+        "a = \"${1 + 2}\";\nb = \"${0.5f64}\";\nc = \"${0.5}\";\n",
+        &[("a", "\"3\""), ("b", "\"0.5\""), ("c", "\"0.5\"")],
     );
     rejected(
-        "a = \"${0.5}\";\n",
-        &["a = \"${0.5f64}\";", "a = \"${0.5r}\";"],
+        "a = \"${1 / 2}\";\n",
+        &["a = \"${1r / 2}\";", "a = \"${1.0f64 / 2}\";"],
     );
     assert_eq!(
         sig("f(positional x) = \"${x + 1}\";\n", "f"),

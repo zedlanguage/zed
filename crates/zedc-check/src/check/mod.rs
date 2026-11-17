@@ -9232,15 +9232,16 @@ fn floats_take_f64(cs: &[Carrier]) -> bool {
 
 /// Whether literals with no suffix that nothing gives a carrier, which leave the carriers `cs`
 /// to it, take `f64`, where `decimal` says a decimal literal is among them: `f64` is left and
-/// either a decimal is among them, whatever else is left, `rat` among it or not, or the float
-/// formats alone are left ([`floats_take_f64`]). DESIGN.md step L1.26b (author decision,
-/// 2026-11-12, which reverses the rejection of 2026-11-09): "Where nothing fixes its carrier a
-/// decimal literal takes `f64`, and so does an operation on literals alone with a decimal
-/// among its operands": `y = 0.5 * 2` is the `f64` `1.0` and `1 == 1.0` is `true`. A `/` of
-/// integer literals alone, with no decimal, still leaves `f64` and `rat` and is rejected,
-/// the exact repair first. O(|cs|), at most the four numeric carriers.
+/// a decimal is among them, whatever else is left, `rat` among it or not. DESIGN.md step
+/// L1.26b (author decision, 2026-11-12, which reverses the rejection of 2026-11-09): "Where
+/// nothing fixes its carrier a decimal literal takes `f64`, and so does an operation on
+/// literals alone with a decimal among its operands": `y = 0.5 * 2` is the `f64` `1.0` and
+/// `1 == 1.0` is `true`. A `/` of integer literals alone, with no decimal, is rejected, the
+/// exact repair first, even where a `^` leaves it the float formats alone, as in
+/// `g() = 2^(1/2)`; float formats left by a use are [`floats_take_f64`]'s. O(|cs|), at most
+/// the four numeric carriers.
 fn unfixed_takes_f64(cs: &[Carrier], decimal: bool) -> bool {
-    cs.contains(&Carrier::F64) && (decimal || floats_take_f64(cs))
+    decimal && cs.contains(&Carrier::F64)
 }
 
 /// The carrier an operation on literals alone takes at the parameter `i` of `sig`
@@ -9395,6 +9396,16 @@ fn f64_operands(e: &Expr) -> Vec<&Expr> {
                     (Some(_), Some(_)) => {}
                     (Some(l), None) if side(y, is_decimal(&l.value)) => out.extend([x, y]),
                     (None, Some(l)) if side(x, is_decimal(&l.value)) => out.extend([x, y]),
+                    // A decimal compared with an operation that keeps `int`, as in
+                    // `2^(1 + 1) == 0.5`, takes `f64` alone (DESIGN.md step L1.26b); it then
+                    // meets the `int` and is rejected with the words a body gives. DESIGN has
+                    // the operation take `f64` too: row LIT-f64-op-meets-int-op.
+                    (Some(l), None) if is_decimal(&l.value) && open_lits(y).is_some() => {
+                        out.push(x)
+                    }
+                    (None, Some(l)) if is_decimal(&l.value) && open_lits(x).is_some() => {
+                        out.push(y)
+                    }
                     (Some(_), None) | (None, Some(_)) => {}
                     (None, None) => out.extend([x, y].into_iter().filter(|z| side(z, false))),
                 }
@@ -9710,9 +9721,8 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// `/`, the first literal of the value (DESIGN.md sec:diagnostics, "A `/` of integer
 /// literals": "the menu writes the carrier at the first literal of the value"):
 /// `half = 1r / 2`, `half = 1.0 / 2` and `half = f64(1) / 2`, the exact fix first, as
-/// DESIGN's menu for `q = (1 + 2) / (3 + 4)` lists them: `y = 1.0 + 7 / 2`; where the value is
-/// the whole of the name `n` bound at `binder`, each carrier's first fix is followed by the
-/// binding declared at it, `half: rat = 1 / 2`. Where a carrier
+/// DESIGN's menu for `q = (1 + 2) / (3 + 4)` lists them, less its declared bindings, which
+/// this zedc does not compile: `y = 1.0 + 7 / 2`. Where a carrier
 /// written there would not reach the other operand of a `^` ([`unreached`]), the fix writes
 /// the first literal of that operand too: `y = 2.0 ^ (1.0 + 1) / 2`. Each fix
 /// names the value `n` then holds ([`folded`]). A comparison of two
@@ -9732,7 +9742,6 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 fn unfixed_binding(
     e: &Expr,
     n: &str,
-    binder: Option<Span>,
     place: &dyn fmt::Display,
     whole: bool,
     src: Option<&str>,
@@ -9881,37 +9890,21 @@ fn unfixed_binding(
     let forms: Vec<Form> = forms.collect();
     let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
-    // Each carrier's first form is followed by the binding declared at that carrier, where the
-    // value is the whole of a name's, as DESIGN's menu for `half = 1 / 2` lists them:
-    // `half = 1r / 2`, `half: rat = 1 / 2`, `half = 1.0 / 2`, `half: f64 = 1 / 2`,
-    // `half = f64(1) / 2` (sec:diagnostics, "A `/` of integer literals"). The declared fix
-    // holds what the carrier's form holds. It costs one more fix of the length of the line.
-    let mut fixes = Vec::with_capacity(forms.len() + 2);
-    let mut declared: Vec<Carrier> = Vec::with_capacity(2);
-    for f in forms {
+    // DESIGN's menu for `half = 1 / 2` also lists the binding declared at each carrier,
+    // `half: rat = 1 / 2` after `half = 1r / 2` and `half: f64 = 1 / 2` after `half = 1.0 / 2`
+    // (sec:diagnostics, "A `/` of integer literals"). This zedc refuses a binding with a
+    // declared type before the check ("does not compile it yet"), so a declared fix would be
+    // a fix the program cannot take; they are left out until it compiles one (plan row
+    // LIT-declared-fix-call-arg).
+    let fixes = forms.into_iter().map(|f| {
         let leaves = if f.carrier() == Carrier::Rat {
             &rat_leaves
         } else {
             &leaves
         };
-        let fix = leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src);
-        let c = f.carrier();
-        let decl = match (&fix, binder, bound) {
-            (Some(r), Some(b), Some(n)) if !declared.contains(&c) => {
-                declared.push(c);
-                let value = fmt::from_fn(|f| match text(e.span) {
-                    Some(v) => write!(f, "{n}: {} = {v}", c.name()),
-                    None => write!(f, "{n}: {}", c.name()),
-                });
-                let colon = format!(": {}", c.name());
-                Rewrite::new(&[(point(b.end), &colon)], &r.holds, &value)
-            }
-            _ => None,
-        };
-        fixes.push(fix);
-        fixes.extend(decl.map(Some));
-    }
-    Some((d.span, Msg::new(m, fixes)))
+        leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src)
+    });
+    Some((d.span, Msg::new(m, fixes.collect())))
 }
 
 /// The type variables of a signature in sets that its needs tie together, each set marked
@@ -10153,7 +10146,6 @@ impl ValueParts<'_> {
 fn unfixed_parts(
     e: &Expr,
     n: &str,
-    binder: Option<Span>,
     whole: bool,
     src: Option<&str>,
     taken: &HashSet<Span>,
@@ -10164,9 +10156,7 @@ fn unfixed_parts(
     for &(x, at) in &parts.leaves {
         let place = parts.place(root, at);
         let whole = whole && at.is_none();
-        if let Some((s, m)) =
-            unfixed_binding(x, n, binder.filter(|_| whole), &place, whole, src, taken)
-        {
+        if let Some((s, m)) = unfixed_binding(x, n, &place, whole, src, taken) {
             out.push((x.span, s, m));
         }
     }

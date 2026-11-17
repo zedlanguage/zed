@@ -42,11 +42,11 @@ fn a_division_of_divisions_of_literals_names_no_type_for_them() {
   [7] 1:20: this literal, 4, is 4
   fixes, each checked here:
     y = (1r / 2) / (3 / 4);        y is 2r/3r
-    y: rat = (1 / 2) / (3 / 4);    y is 2r/3r
     y = (1.0 / 2) / (3 / 4);       y is 0.6666666666666666
-    y: f64 = (1 / 2) / (3 / 4);    y is 0.6666666666666666
     y = (f64(1) / 2) / (3 / 4);    y is 0.6666666666666666"
     );
+    // DESIGN's menu also lists `y: rat = …` and `y: f64 = …`. This zedc does not compile a
+    // binding with a declared type, so it leaves them out: row LIT-declared-fix-call-arg.
     assert_eq!(out, want);
     assert!(!out.contains("gives f64"), "{out}");
 }

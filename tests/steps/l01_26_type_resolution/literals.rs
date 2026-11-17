@@ -124,14 +124,12 @@ fn a_literal_with_a_suffix_at_a_parameter_that_lt_bounds_keeps_its_carrier() {
     }
     let text = "f(positional x) = x < x;\nr = f(0.0f64);\n";
     assert_eq!(value(text, "r"), "false");
-    // A decimal with no suffix is still rejected there: `f64`, `f32` and `rat` all take it.
-    let errors = type_errors(&format!("{min}r = f(0.5, 0.25);\n"));
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(
-        errors[0].contains("Nothing gives the literal `0.5` a carrier"),
-        "{}",
-        errors[0]
-    );
+    // A decimal with no suffix is the `f64` it writes there: `f64`, `f32` and `rat` all take
+    // it, and a use that leaves it more than one carrier fixes nothing (step L1.26b).
+    let text = format!("{min}r = f(0.5, 0.25);\nk = r is f64;\n");
+    assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    assert_eq!(value(&text, "k"), "true", "{text}");
+    assert_eq!(value(&text, "r"), "0.25", "{text}");
 }
 
 #[test]
@@ -258,19 +256,38 @@ fn literals_in_a_tuple_compared_with_a_tuple() {
         value("y = (1, (2, 3)) == (1.0f64, (2r, 3));\n", "y"),
         "true"
     );
-    // A bare decimal meets only a bare integer, so nothing gives it a carrier.
+    // A bare decimal meets only a bare integer, so nothing fixes it and it is the `f64` it
+    // writes (step L1.26b), the bare `1` beside it taking `f64` too.
     assert_eq!(
         type_errors("y = (1, (2, 3)) == (1.0, (2r, 3));\n"),
+        Vec::<String>::new()
+    );
+    assert_eq!(value("y = (1, (2, 3)) == (1.0, (2r, 3));\n", "y"), "true");
+    // A `/` of integer literals there meets only a bare integer, so nothing gives it a carrier.
+    assert_eq!(
+        type_errors("y = (1, (2, 3)) == (1 / 2, (2r, 3));\n"),
         [format!(
-            "Nothing gives the literal `1.0` a carrier. Try `y = (1, (2, 3)) == (1.0f64, (2r, 3))` \
-             instead.{} [1.0]",
+            "Nothing gives the literal `1` a carrier. Try `y = (1, (2, 3)) == (1r / 2, (2r, 3))` \
+             instead.{} [1]",
             menu(&[
-                // The binder's value: DESIGN.md sec:diagnostics, "The value a fix names":
-                // "`y is true` for `y = 1 == 1.0f64`".
-                ("y = (1, (2, 3)) == (1.0f64, (2r, 3));", "y is true"),
-                ("y = (1, (2, 3)) == (1.0r, (2r, 3));", "y is true"),
+                (
+                    "y = (1, (2, 3)) == (1r / 2, (2r, 3));",
+                    "the literal is then exactly 1, a rat"
+                ),
+                (
+                    "y = (1, (2, 3)) == (1.0f64 / 2, (2r, 3));",
+                    "the literal is then the f64 1.0"
+                ),
             ])
         )]
+    );
+    assert_eq!(
+        value("y = (1, (2, 3)) == (1r / 2, (2r, 3));\n", "y"),
+        "false"
+    );
+    assert_eq!(
+        value("y = (1, (2, 3)) == (1.0f64 / 2, (2r, 3));\n", "y"),
+        "false"
     );
     // A literal beside a value in a tuple: `(x, 1) == (y, z)` with `z: f64`.
     assert!(

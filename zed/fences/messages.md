@@ -12,7 +12,7 @@ error: Cannot map many values to one key: `into (region -> day -> r)`. Try `into
       merges each day's values with op, which must be associative
 ```
 
-<!-- DESIGN.md:1115; section [sec:level_names] 1 -->
+<!-- DESIGN.md:1118; section [sec:level_names] 1 -->
 ```text
 error: Too few names for the 4 levels of `Sales`: `names("region", "sku", "quantitySold")`. Try `names("_", "region", "sku", "quantitySold")` instead.
   1. the facet (1:55)
@@ -31,7 +31,7 @@ error: Too few names for the 4 levels of `Sales`: `names("region", "sku", "quant
     with names("region", "sku", "quantitySold", "_")
 ```
 
-<!-- DESIGN.md:1133; section [sec:level_names] 2 -->
+<!-- DESIGN.md:1136; section [sec:level_names] 2 -->
 ```text
 error: Not a Zed name: `"quantity sold"`. Try `names("region", "day", "sku", "quantitySold")` instead.
   1. the name (1:85)
@@ -43,7 +43,7 @@ error: Not a Zed name: `"quantity sold"`. Try `names("region", "day", "sku", "qu
     with names("region", "day", "sku", "quantity_sold")
 ```
 
-<!-- DESIGN.md:1144; section [sec:level_names] 3 -->
+<!-- DESIGN.md:1147; section [sec:level_names] 3 -->
 ```text
 error: Two names for one level: `(region: Utf8String) ->? int with names("area", "count")`. Try `(area: Utf8String) ->? int with names("area", "count")` instead.
   1. the name `area`, given by `names` (1:55)
@@ -59,7 +59,7 @@ error: Two names for one level: `(region: Utf8String) ->? int with names("area",
     type Counts = (region: Utf8String) ->? int with names("_", "count");
 ```
 
-<!-- DESIGN.md:1193; section [sec:level_names] 4 -->
+<!-- DESIGN.md:1196; section [sec:level_names] 4 -->
 ```text
 error: Two levels named `key` in `m : K ->? V` with `V : (key: int) ->? int`: `lookupOr(catalog, "top", { 0 -> 0 })`. Try `lookupOr(catalog as (shelf -> item -> count), "top", { 0 -> 0 })` instead.
   1. the argument (3:14)
@@ -78,7 +78,7 @@ error: Two levels named `key` in `m : K ->? V` with `V : (key: int) ->? int`: `l
     catalog: Utf8String ->? ((item: int) ->? int) with names("shelf", "_", "count") = { "top" -> { 7 -> 2 } };
 ```
 
-<!-- DESIGN.md:1315; section [sec:level_names] 5 -->
+<!-- DESIGN.md:1318; section [sec:level_names] 5 -->
 ```text
 region  day  sku    quantitySold
 "east"  0    "B7"   5
@@ -87,7 +87,7 @@ region  day  sku    quantitySold
 "west"  1    "A12"  2
 ```
 
-<!-- DESIGN.md:1386; section [sec:domains] 1 -->
+<!-- DESIGN.md:1389; section [sec:domains] 1 -->
 ```text
 error: No `f64` equals the literal: `x: f64 = 9007199254740993`. Try `x: int = 9007199254740993` instead.
   1. the literal (1:10)
@@ -108,7 +108,7 @@ error: No `f64` equals the literal: `x: f64 = 9007199254740993`. Try `x: int = 9
     x: f64 = round(9007199254740993r);                              x is the same f64
 ```
 
-<!-- DESIGN.md:2646; section [sec:theories] 1 -->
+<!-- DESIGN.md:2649; section [sec:theories] 1 -->
 ```text
 trivial models of CommRing
   on one value, #a, with every field returning #a: every law holds.
@@ -123,7 +123,7 @@ trivial models of CommRing
   So the model on one value is the only trivial model.
 ```
 
-<!-- DESIGN.md:2666; section [sec:theories] 2 -->
+<!-- DESIGN.md:2669; section [sec:theories] 2 -->
 ```text
 trivial models of Fano
   on one value, #a: law line1 (c1 != c2 || c2 != c3) does not hold, since on one value every two values are equal.
@@ -139,12 +139,12 @@ trivial models of Fano
         @exhaustive interface Fano(positional T) { ... }
 ```
 
-<!-- DESIGN.md:2733; section [sec:diagnostics] 1 -->
+<!-- DESIGN.md:2736; section [sec:diagnostics] 1 -->
 ```text
 error: Cannot compare unequal types: `x[1] : int < y[1] : rat`. Try `rat(x[1]) < y[1]` instead.
 ```
 
-<!-- DESIGN.md:2955; section [sec:diagnostics] 2 -->
+<!-- DESIGN.md:2958; section [sec:diagnostics] 2 -->
 ```text
 error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) = x * 2` instead.
   1. the literal (1:21)
@@ -167,35 +167,35 @@ error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) 
     twice(x) = x * 2.0;              twice is (x: T) -> T for T in bf16 | f16 | f32 | f64 | rat
 ```
 
-<!-- DESIGN.md:2981; section [sec:diagnostics] 3 -->
+<!-- DESIGN.md:2984; section [sec:diagnostics] 3 -->
 ```text
-error: Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` instead.
-  1. the literal (2:12)
-       y = inc(x: 2.5);
-                  ^^^
-     a decimal literal can be a bf16, f16, f32, f64 or rat, never an int, even when its value is an integer
-  2. its use, the argument `x` of `inc` (2:9)
-       y = inc(x: 2.5);
-               ^^^^^^
-     `inc` is declared here with no type written for `x` or its result; the type the checker found for `inc` is `(x: T) -> T for T in int | bf16 | f16 | f32 | f64 | rat` (1:1)
-       inc(x) = x + 1;
-       ^^^^^^^^^^^^^^^
+error: Nothing gives the literal `1` a carrier. Try `y = half(x: 1r)` instead.
+  1. the literal (2:13)
+       y = half(x: 1);
+                   ^
+     an integer literal can be an int, bf16, f16, f32, f64 or rat, where that carrier holds it exactly
+  2. its use, the argument `x` of `half` (2:10)
+       y = half(x: 1);
+                ^^^^
+     `half` is declared here with no type written for `x` or its result; the type the checker found for `half` is `(x: T) -> T for T in bf16 | f16 | f32 | f64 | rat` (1:1)
+       half(x) = x / 2;
+       ^^^^^^^^^^^^^^^^
      `T` is the carrier of both the argument and the result, so the literal takes `T`, and `T` must come from elsewhere: the call has no other argument
   3. the result of the call is bound to `y` (2:1)
-       y = inc(x: 2.5);
+       y = half(x: 1);
        ^
      `y` is declared with no type, and a name fixes its value where it is bound, so no read of `y` gives `T` a carrier
-  4. an integer literal here would be an `int`; a decimal literal is never an `int`, and no float format or `rat` is the obvious carrier, so Zed does not choose one
+  4. an integer literal is an `int` where nothing fixes it, but `T` holds no `int`, since `/` has no arrow at `int`; between the exact `rat` and the float formats Zed does not choose
   fixes, each checked here:
-    y = inc(x: 2.5f64);      the literal is then the f64 2.5
-    y = inc(x: 2.5r);        the literal is then exactly 2.5, a rat
-    y: f64 = inc(x: 2.5);    the literal is then the f64 2.5
-    y: rat = inc(x: 2.5);    the literal is then exactly 2.5, a rat
+    y = half(x: 1r);         the literal is then exactly 1, a rat
+    y: rat = half(x: 1);     the literal is then exactly 1, a rat
+    y = half(x: 1.0);        the literal is then the f64 1.0
+    y: f64 = half(x: 1);     the literal is then the f64 1.0
 ```
 
-<!-- DESIGN.md:3010; section [sec:diagnostics] 4 -->
+<!-- DESIGN.md:3013; section [sec:diagnostics] 4 -->
 ```text
-error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q = (1 + 2) / (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead.
+error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q = (1 + 2) / (3 + 4)`. Try `q = (1r + 2) / (3 + 4)` instead.
   1. the division (1:13)
        q = (1 + 2) / (3 + 4);
                    ^
@@ -212,16 +212,16 @@ error: Nothing gives the integer literals a carrier, and `/` has none at `int`: 
        q = (1 + 2) / (3 + 4);
        ^
      `q` is declared with no type, and a name bound to an operation on literals alone fixes it there, so no read of `q` gives it a carrier
-  5. where nothing gives a carrier, an operation on integer literals is an `int`, and `/` has no arrow at `int`; no float format or `rat` is the obvious carrier, so Zed does not choose one
+  5. where nothing gives a carrier, an operation on integer literals is an `int`, and `/` has no arrow at `int`; between the exact `rat` and the float formats Zed does not choose
   fixes, each checked here:
-    q = (1.0f64 + 2) / (3 + 4);    q is 0.42857142857142855
     q = (1r + 2) / (3 + 4);        q is 3r/7r
-    q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
-    q: f64 = (1 + 2) / (3 + 4);    q is 0.42857142857142855
     q: rat = (1 + 2) / (3 + 4);    q is 3r/7r
+    q = (1.0 + 2) / (3 + 4);       q is 0.42857142857142855
+    q: f64 = (1 + 2) / (3 + 4);    q is 0.42857142857142855
+    q = (f64(1) + 2) / (3 + 4);    q is 0.42857142857142855
 ```
 
-<!-- DESIGN.md:3041; section [sec:diagnostics] 5 -->
+<!-- DESIGN.md:3044; section [sec:diagnostics] 5 -->
 ```text
 c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(Part1, Part1)`: `k(y : (Part1, Part1) | #nf)`.
   Part1 stands for a part written more than once:
@@ -233,7 +233,7 @@ c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(Part1, Part1)`: `k(y : (Par
   [5] 3:47: repair: handle the values that are not (Part1, Part1) with `else` or `match`
 ```
 
-<!-- DESIGN.md:3058; section [sec:diagnostics] 6 -->
+<!-- DESIGN.md:3061; section [sec:diagnostics] 6 -->
 ```text
 error: A list level has no string key: `sales[day: "Monday" : Utf8String]`. Try `sales[day: 0]` instead.
   1. the key (3:16)

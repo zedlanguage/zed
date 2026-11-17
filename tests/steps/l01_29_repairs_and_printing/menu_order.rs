@@ -4,10 +4,9 @@
 //! DESIGN.md with a menu is compiled where zedc can produce it, and its message is compared
 //! with DESIGN's: the first sentence word for word, and the order of the parts.
 //!
-//! The menus of `q = (1 + 2) / (3 + 4)` and `y = inc(x: 2.5)` are compared too, fix by fix,
-//! without DESIGN's fixes that declare a type (`q: f64 = ...`, `y: rat = ...`): a top-level
-//! binding with a declared type is layer L10 (TypedBinding), so zedc offers no such fix at
-//! layer L1 (LIT-menu-match-design, an open case for QUESTIONS.md).
+//! The menus of `q = (1 + 2) / (3 + 4)` and `y = half(x: 1)` are compared too, fix by fix,
+//! without the fixes that declare the binding's type (`q: rat = ...`, `y: f64 = ...`), which
+//! zedc does not yet offer for `y = half(x: 1)` ([`menu`]).
 //!
 //! No example is compared whole yet. Every one differs from DESIGN in the form of its steps:
 //! DESIGN writes `1. the literal (1:21)` with the source line under each step, and zedc writes
@@ -108,8 +107,9 @@ fn design_examples(design: &str) -> Vec<String> {
 }
 
 /// The fixes of the menu of the message `text`, each `(line, what it then holds)`, without
-/// the fixes that declare the type of a top-level binding (`q: f64 = ...`), which zedc does
-/// not offer at layer L1.
+/// the fixes that declare the type of a top-level binding (`q: rat = ...`): zedc offers them
+/// for `q = (1 + 2) / (3 + 4)` but not yet for `y = half(x: 1)`, where DESIGN offers
+/// `y: rat = half(x: 1)` and `y: f64 = half(x: 1)` too.
 fn menu(text: &str) -> Vec<(&str, &str)> {
     let Some((_, rest)) = text.split_once("\n  fixes, each checked here:\n") else {
         return Vec::new();
@@ -137,8 +137,8 @@ const PROGRAMS: [(&str, &[&str], bool, bool); 9] = [
         false,
     ),
     (
-        "y = inc(x: 2.5);",
-        &["inc(x) = x + 1;", "y = inc(x: 2.5);"],
+        "y = half(x: 1);",
+        &["half(x) = x / 2;", "y = half(x: 1);"],
         true,
         true,
     ),

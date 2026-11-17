@@ -65,6 +65,16 @@ fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
             "{src}: {errors:?}"
         );
     }
+    // DESIGN.md step L1.26b: "each fix its message offers is applied in turn, and the file then
+    // checks". At the `int` parameter this zedc offers the one fix `y = f(x: 1.0f64 / 2);`,
+    // which `f` rejects in turn: a menu marked "each checked here" whose fix does not check;
+    // row LIT-call-int-param-fix-unchecked. (No fix that keeps the `/` checks there; a fix
+    // that changes `f`'s parameter type or drops the `/` would.)
+    let fixed = "f(x: int) = x;\ny = f(x: 1.0f64 / 2);\n";
+    assert_eq!(
+        type_errors(fixed),
+        ["`f` does not take (f64): no arrow of `f` takes these types. [f(x: 1.0f64 / 2)]"]
+    );
 }
 
 /// The checker does not build the rejection of an operation on literals alone whose call
@@ -80,7 +90,7 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
         (
             "g(x) = sqrt(x);\ny = g(x: 1 / 2);\n",
             &[
-                "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `y = g(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = g(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
+                "Nothing gives the literal `1` a carrier. Try `y = g(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = g(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
             ],
         ),
         ("f(x: rat) = x;\ny = f(x: (1 / 2) ^ 2);\n", &[]),
@@ -105,11 +115,13 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
         ),
         ("f(x: f64) = x;\nh() = f(x: 1 / 2);\ny = h();\n", &[]),
         ("f(x: f64) = x;\ny = f(x: f(x: 1 / 2) / 2);\n", &[]),
+        // The fix offered here does not check (row LIT-call-int-param-fix-unchecked;
+        // `a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).
         (
             "f(x: int) = x;\ny = f(x: 1 / 2);\n",
             &[
                 "`f` does not take (f64): no arrow of `f` takes these types. [f(x: 1 / 2)]",
-                "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `y = f(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = f(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
+                "Nothing gives the literal `1` a carrier. Try `y = f(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = f(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
             ],
         ),
         ("f(x: f32) = x;\ny = f(x: 1 / 3);\n", &[]),
@@ -117,7 +129,7 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
         (
             "y = 1 / 2;\n",
             &[
-                "Nothing gives the integer literals a carrier, and `/` has none at `int`: `y = 1 / 2`. Try `y = 1.0f64 / 2` instead.\n  fixes, each checked here:\n    y = 1.0f64 / 2;    y is 0.5\n    y = 1r / 2;        y is 1r/2r\n    y = f64(1) / 2;    y is 0.5 [1 / 2]",
+                "Nothing gives the integer literals a carrier, and `/` has none at `int`: `y = 1 / 2`. Try `y = 1r / 2` instead.\n  fixes, each checked here:\n    y = 1r / 2;        y is 1r/2r\n    y = 1.0 / 2;       y is 0.5\n    y = f64(1) / 2;    y is 0.5 [1 / 2]",
             ],
         ),
     ];

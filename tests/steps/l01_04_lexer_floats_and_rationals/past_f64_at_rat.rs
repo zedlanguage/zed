@@ -97,14 +97,18 @@ fn a_decimal_past_f64_where_f64_is_expected_is_rejected_once_with_the_range() {
 
 #[test]
 fn an_unfixed_decimal_past_f64_is_offered_no_f64_fix() {
-    // The fix writes the literal as a `rat`; `1e400f64` would round to infinity.
-    for src in ["y = 1e400;\n", "y = 1e400 + 1e400;\n"] {
+    // The fix writes the literal as a `rat`; `1e400f64` would round to infinity. An unfixed
+    // decimal is an `f64` (DESIGN.md L1.26b, author decision 2026-11-12), so each literal has
+    // its own range error.
+    for (src, n) in [("y = 1e400;\n", 1), ("y = 1e400 + 1e400;\n", 2)] {
         let e = errors(src);
-        assert_eq!(e.len(), 1, "{src}: {e:?}");
-        assert!(
-            e[0].contains("1e400r") && !e[0].contains("1e400f64"),
-            "{src}: {e:?}"
-        );
+        assert_eq!(e.len(), n, "{src}: {e:?}");
+        for m in &e {
+            assert!(
+                m.starts_with(INFINITE) && m.contains("1e400r") && !m.contains("1e400f64"),
+                "{src}: {e:?}"
+            );
+        }
     }
     // Under `^` no `rat` form is offered either, and the range is the reason given.
     let e = errors("y = 1e400 ^ 2;\n");
@@ -138,13 +142,13 @@ fn an_unrelated_error_does_not_hide_the_range_error() {
     let e = errors(&format!("{unrelated}t() = 1e400 + 1r;\n"));
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(!e[0].starts_with(INFINITE), "{e:?}");
-    // An unfixed decimal is reported once, by the checker, with no range error beside it.
-    for src in ["y = 1e400;\n", "y = 1e400 + 1e400;\n"] {
+    // An unfixed decimal is an `f64`, so each literal keeps its range error.
+    for (src, n) in [("y = 1e400;\n", 1), ("y = 1e400 + 1e400;\n", 2)] {
         let e = errors(&format!("{unrelated}{src}"));
-        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert_eq!(e.len(), n + 1, "{src}: {e:?}");
         assert_eq!(
-            e.iter().filter(|m| m.contains("1e400r")).count(),
-            1,
+            e.iter().filter(|m| m.starts_with(INFINITE)).count(),
+            n,
             "{src}: {e:?}"
         );
     }
@@ -152,17 +156,23 @@ fn an_unrelated_error_does_not_hide_the_range_error() {
     let e = errors("t(positional x) = (x + true, 1e400);\n");
     assert_eq!(e.len(), 2, "{e:?}");
     assert!(e[1].starts_with(INFINITE), "{e:?}");
+    // The literal beside an operand in error is an `f64`, past its range.
+    let e = errors("t() = (1 + true) * 1e400;\n");
+    assert_eq!(e.len(), 2, "{e:?}");
+    assert!(e[1].starts_with(INFINITE), "{e:?}");
     // A literal whose class the error leaves with no carrier is reported by the checker alone,
     // as is each literal of a class the checker reports at one of them.
     for (src, n) in [
-        ("t() = (1 + true) * 1e400;\n", 2),
         ("t(positional x) = (x + true, x * 1e400);\n", 1),
-        ("y = (1e400 + 1e400, 1e400);\n", 1),
+        ("h(positional z: int) = z;\ny = h(1e400);\n", 1),
     ] {
         let e = errors(src);
         assert_eq!(e.len(), n, "{src}: {e:?}");
         assert!(!e.iter().any(|m| m.starts_with(INFINITE)), "{src}: {e:?}");
     }
+    let e = errors("y = (1e400 + 1e400, 1e400);\n");
+    assert_eq!(e.len(), 3, "{e:?}");
+    assert!(e.iter().all(|m| m.starts_with(INFINITE)), "{e:?}");
 }
 
 /// MSG-range-error-class-spans: the checker's error at a literal with no carrier stands for the
@@ -170,11 +180,12 @@ fn an_unrelated_error_does_not_hide_the_range_error() {
 /// range error, and one of the rejected class does not.
 #[test]
 fn a_class_error_hides_the_range_error_of_its_own_literals_only() {
-    // Each rejects `1.5` and its class, and leaves `1e400` at `f64`, past its range.
+    // Each rejects `1.5` and its class, and leaves `1e400` at `f64`, past its range. A decimal
+    // that nothing fixes is an `f64` (DESIGN.md L1.26b), so the rejected class is a decimal
+    // that an `int` use fixes.
     for src in [
-        "t() = { y = 1.5 + 2.5; (y, 1e400) };\n",
-        "t() = (String(1.5), 1e400);\n",
-        "t() = (\"${1.5}\", 1e400);\n",
+        "t() = { y = 2^(1 + 1) == 1.5; (y, 1e400) };\n",
+        "h(positional z: int) = z;\nt() = (h(1.5), 1e400);\n",
     ] {
         let e = errors(src);
         assert_eq!(e.len(), 2, "{src}: {e:?}");
@@ -184,16 +195,24 @@ fn a_class_error_hides_the_range_error_of_its_own_literals_only() {
     // The first `1e400` is the rejected literal, reported by the checker alone; the second,
     // of another class, keeps its range error.
     for src in [
+        "h(positional z: int) = z;\nt() = (h(1e400), 1e400);\n",
+        "t() = (2^(1 + 1) == 1e400, 1e400);\n",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert!(
+            e[0].starts_with("A decimal literal is never an `int`: the literal `1e400`."),
+            "{src}: {e:?}"
+        );
+        assert!(e[1].starts_with(INFINITE), "{src}: {e:?}");
+    }
+    // At `String`, a decimal nothing fixes is an `f64`, so both literals are past its range.
+    for src in [
         "t() = (String(1e400), 1e400);\n",
         "t() = (\"${1e400}\", 1e400);\n",
     ] {
         let e = errors(src);
         assert_eq!(e.len(), 2, "{src}: {e:?}");
-        assert!(e[0].contains("1e400r"), "{src}: {e:?}");
-        assert!(e[1].starts_with(INFINITE), "{src}: {e:?}");
+        assert!(e.iter().all(|m| m.starts_with(INFINITE)), "{src}: {e:?}");
     }
-    // The second `1e400`, outside the span of the error at the first, is of its class.
-    let e = errors("y = 1e400 + 1e400;\n");
-    assert_eq!(e.len(), 1, "{e:?}");
-    assert!(!e[0].starts_with(INFINITE), "{e:?}");
 }

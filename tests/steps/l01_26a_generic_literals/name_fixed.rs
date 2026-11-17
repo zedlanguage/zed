@@ -1,10 +1,12 @@
 //! A name in a body bound to an operation on literals alone fixes its carrier where it is bound
 //! (QUESTIONS A63, item LIT-name-int-fixed), as one outside every function does: `b = 2^62` is
-//! an `int`, and `q = 1.5 + 1` is rejected at its binding. Until this item, the class of the
+//! an `int`, and `q = 1 / 2 + 1` is rejected at its binding. Until this item, the class of the
 //! literals resolved only at the function's end, so a later use gave the name its carrier:
 //! `b = 2^2000; c = b + 0.5f64` printed `inf`, `b = 2^62; c = b + 0.5f64` printed
-//! `4611686018427388000.0`, and `q = 1.5 + 1; z = q * 2.0f64` printed `5.0`. A class that holds a
-//! parameter is not fixed: a call gives it its carrier.
+//! `4611686018427388000.0`, and `q = 1.5 + 1; z = q * 2.0f64` printed `5.0` (since author decision
+//! 2026-11-12 the decimal is an `f64` where nothing fixes it, so `5.0` is now its value, and a
+//! `/` of integer literals stands in for it here). A class that holds a parameter is not fixed: a
+//! call gives it its carrier.
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{info, sig, type_errors};
@@ -49,22 +51,32 @@ fn an_int_name_meets_an_f64_and_is_rejected_at_the_use() {
 }
 
 #[test]
-fn a_decimal_operation_is_rejected_at_its_binding() {
-    // The third program of the item: once, at the binding, with the fixes written as the
-    // binding, and not again at the use or at the function's end.
-    let (line, _) = one_error(&["q = 1.5 + 1;", "z = q * 2.0f64;", "m.stdout <- String(z);"]);
+fn a_division_operation_is_rejected_at_its_binding() {
+    // The third program of the item, with a `/` of integer literals for its decimal: once, at
+    // the binding, with the fixes written as the binding, and not again at the use or at the
+    // function's end.
+    let (line, _) = one_error(&[
+        "q = 1 / 2 + 1;",
+        "z = q * 2.0f64;",
+        "m.stdout <- String(z);",
+    ]);
     assert_eq!(line, 2);
     let errors = type_errors(
-        "main(m: MainArgs) {\n    q = 1.5 + 1;\n    z = q * 2.0f64;\n    m.stdout <- String(z);\n}\n",
+        "main(m: MainArgs) {\n    q = 1 / 2 + 1;\n    z = q * 2.0f64;\n    m.stdout <- String(z);\n}\n",
     );
     let m = &errors[0];
     for (fix, v) in [
-        ("q = 1.5f64 + 1;", "q is 2.5"),
-        ("q = 1.5r + 1;", "q is 5r/2r"),
+        ("q = 1r / 2 + 1;", "q is 3r/2r"),
+        ("q = 1.0 / 2 + 1;", "q is 1.5"),
+        ("q = f64(1) / 2 + 1;", "q is 1.5"),
     ] {
         let line = m.lines().find(|l| l.trim_start().starts_with(fix));
         assert!(line.is_some_and(|l| l.contains(v)), "{m}");
     }
+    // The decimal itself is an `f64` (author decision 2026-11-12).
+    let src = "f() { q = 1.5 + 1; z = q * 2.0f64; return z; }\ny = f();\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(value(src, "y"), "5.0");
 }
 
 #[test]
@@ -75,8 +87,8 @@ fn a_body_and_the_top_level_give_the_same_error() {
             "b = 2^62; c = b + 0.5f64; return c;",
         ),
         (
-            "q = 1.5 + 1;\nz = q * 2.0f64;\n",
-            "q = 1.5 + 1; z = q * 2.0f64; return z;",
+            "q = 1 / 2 + 1;\nz = q * 2.0f64;\n",
+            "q = 1 / 2 + 1; z = q * 2.0f64; return z;",
         ),
     ] {
         let top = type_errors(top);
@@ -154,10 +166,10 @@ pub(super) fn chain(n: usize) -> String {
     src + &format!("    return b{};\n}}\n", n - 1)
 }
 
-/// A body binding a tuple of `n` parts `1.5 + 1`, rejected at the binding in one error that
+/// A body binding a tuple of `n` parts `1 / 2 + 1`, rejected at the binding in one error that
 /// names each part, as outside every function.
-pub(super) fn decimals(n: usize) -> String {
-    let parts: Vec<&str> = vec!["1.5 + 1"; n];
+pub(super) fn divisions(n: usize) -> String {
+    let parts: Vec<&str> = vec!["1 / 2 + 1"; n];
     format!(
         "f() {{\n    t = ({});\n    return t;\n}}\n",
         parts.join(", ")
@@ -175,7 +187,7 @@ fn a_chain_of_bindings_of_literals_is_an_int() {
 fn rejected_parts_of_a_binding_are_one_error() {
     // A small instance of the benchmark
     // `bench::name_fixed::rejected_parts_of_a_binding_check_in_linear_time`.
-    let errors = type_errors(&decimals(3));
+    let errors = type_errors(&divisions(3));
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0].starts_with("3 parts of the value of `t`"),

@@ -318,7 +318,7 @@ pub const CHANGES: &[Change] = &[
         fixture: "decimal-literal-at-int",
         line: "half: f64 = 0.5;           // never .5: a float literal starts with a digit; a \
                decimal literal takes the format its use fixes, here the declared f64, and one \
-               that nothing fixes is an error; a suffix, as in 0.5f64, forces the format",
+               that nothing fixes is an f64; a suffix, as in 0.5f64, forces the format",
     },
     Change::Omits {
         fixture: "decimal-literal-at-int",
@@ -341,9 +341,9 @@ pub const CHANGES: &[Change] = &[
     },
     Change::Omits {
         fixture: "decimal-literal-at-int",
-        line: "z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, \
-               that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and \
-               2 stay without one; write f64(7) / 2 or declare z: f64",
+        line: "z   = 7 / 2;               // ✗ `/` of integer literals alone that nothing gives \
+               a carrier: `/` is for the float formats and rat only, so 7 and 2 stay without \
+               one; write f64(7) / 2 or declare z: f64",
     },
     // The sanitized call beside the ✗ call would bind rows twice.
     Change::Omits {

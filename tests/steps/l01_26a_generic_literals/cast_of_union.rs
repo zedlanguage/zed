@@ -2,20 +2,20 @@
 //! `g(positional c: bool) = if c { 1 } else { 2.5f64 }`, `f64(g(c))` takes the `1` at the
 //! `int` arrow of `f64` and the `2.5` at its `f64` arrow, as `f64(if c { 1 } else { 2.5f64 })`
 //! does; it was rejected because the `int` arrow, which reads nothing, was the one arrow kept.
-//! With the `2.5` written with no suffix, nothing gives it a carrier at a cast, whose arrows
-//! take both `f64` and `rat`, so the call is rejected at the `2.5`, as `f64(0.5)` is (DESIGN.md
-//! L1.26b: "Where nothing fixes its carrier a decimal literal is rejected"), and so is an `if`
-//! of literals there. A value with no arrow of the cast, `true`, is still rejected, and named.
-//! Each repair a rejection offers checks as written: a wrap is tried as the checker applies
-//! it where it is written, so `int(g(c))`, which the unfixed `2.5` makes fail, is not offered,
-//! nor is `int(b)` where `b` is the String `"x"`, which always fails. `String`, which takes
-//! every carrier, gives none either: `String(g(c))` is rejected at the `2.5`, as `String(0.5)`
-//! is.
+//! With the `2.5` written with no suffix the call settles it as it would be alone, at `f64`
+//! (DESIGN.md L1.26a, "`y = g(c)` reads the `1` at `int` and the `2.5` at `f64`"; step
+//! L1.26b, author decision 2026-11-12), so the cast reads it there too. What nothing gives a
+//! carrier at a cast, whose arrows take both `f64` and `rat`, is a `/` of integer literals
+//! alone: `f64(if true { 1 } else { 5 / 2 })` is rejected at the `5`, as `f64(5 / 2)` is. A
+//! value with no arrow of the cast, `true`, is still rejected, and named. Each repair a
+//! rejection offers checks as written: a wrap is tried as the checker applies it where it is
+//! written, and one that always fails, as `int(b)` where `b` is the String `"x"`, is not
+//! offered.
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{info, type_errors};
 
-use super::tuple_rest::{fixes_check, unfixed};
+use super::tuple_rest::{branch_division_names_the_one, fixes_check, unfixed};
 
 const FORCED: &str = "g(positional c: bool) = if c { 1 } else { 2.5f64 };";
 const BARE: &str = "g(positional c: bool) = if c { 1 } else { 2.5 };";
@@ -100,24 +100,31 @@ fn a_call_beside_an_operand_of_one_carrier_is_still_read_at_it() {
 }
 
 #[test]
-fn a_cast_gives_no_carrier_to_a_decimal_a_call_returns() {
-    let (f64, rat) = (FORCED, RAT);
-    for word in ["f64", "int", "abs", "String"] {
-        let src = format!("{BARE}\ny = {word}(g(true));\n");
-        assert_eq!(
-            type_errors(&src),
-            [unfixed("2.5", f64, rat, Some("g"))],
-            "{word}"
-        );
-        fixes_check(&src, BARE, [f64, rat]);
+fn a_cast_reads_a_decimal_a_call_returns_at_f64() {
+    for (word, v) in [
+        ("f64", "2.5"),
+        ("int", "#inexact"),
+        ("abs", "2.5"),
+        ("String", "\"2.5\""),
+    ] {
+        let src = format!("{BARE}\ny = {word}(g(false));\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{word}");
+        assert_eq!(value(&src, "y"), v, "{word}");
     }
-    // Beside an integer literal, which fixes nothing either, one message names the decimal.
+    // Inside a function too.
+    let src = format!("{BARE}\nk(positional d: bool) = f64(g(d));\ny = k(false);\n");
+    assert_eq!(value(&src, "y"), "2.5");
+    // Beside an integer literal, which fixes nothing either, the `1` and the `2.5` are each
+    // read as alone, at `int` and at `f64`, and no carrier holds both (DESIGN.md L1.26a).
     let src = format!("{BARE}\ny = 1 + g(true);\n");
-    assert_eq!(type_errors(&src), [unfixed("2.5", f64, rat, Some("g"))]);
-    // Inside a function too: its result fixes nothing for the `2.5` in `g`.
-    let src = format!("{BARE}\nk(positional d: bool) = f64(g(d));\n");
-    assert_eq!(type_errors(&src), [unfixed("2.5", f64, rat, Some("g"))]);
-    fixes_check(&src, BARE, [f64, rat]);
+    assert_eq!(
+        type_errors(&src),
+        [
+            "`+` does not take (1, 2.5): no arrow of `+` takes these types. Try `1 + rat(g(true))` \
+          instead. [1 + g(true)]"
+        ]
+    );
+    assert_eq!(repairs_check(&src), 2, "{src}");
     // A decimal that joins a parameter's class takes the carrier the call gives it there.
     let src = "g(positional c: bool, positional x) = if c { x } else { 0.5 };\n\
                k(positional d: bool) = f64(g(d, 1.0f64));\ny = k(false);\n";
@@ -126,19 +133,31 @@ fn a_cast_gives_no_carrier_to_a_decimal_a_call_returns() {
 }
 
 #[test]
-fn a_cast_gives_no_carrier_to_a_decimal_branch() {
+fn a_cast_gives_no_carrier_to_a_division_a_call_returns() {
+    // `y = g(c)` settles each branch as it would be alone (DESIGN.md L1.26a), so the `5 / 2`
+    // is rejected at its `5`, as `f64(5 / 2)` is, and its fixes rewrite the `5`. This zedc
+    // rejects the `1`, with fixes that do not check (`tuple_rest::branch_division_names_the_one`;
+    // row LIT-branch-division-names-wrong-literal).
+    let div = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
     for word in ["f64", "abs", "String"] {
-        let old = format!("y = {word}(if true {{ 1 }} else {{ 2.5 }});");
-        let f64 = format!("y = {word}(if true {{ 1 }} else {{ 2.5f64 }});");
-        let rat = format!("y = {word}(if true {{ 1 }} else {{ 2.5r }});");
-        let src = format!("{old}\n");
-        assert_eq!(
-            type_errors(&src),
-            [unfixed("2.5", &f64, &rat, None)],
-            "{word}"
-        );
-        fixes_check(&src, &old, [&f64, &rat]);
+        branch_division_names_the_one(&format!("{div}\ny = {word}(g(true));\n"));
     }
+}
+
+#[test]
+fn a_cast_gives_no_carrier_to_a_division_branch() {
+    for word in ["f64", "abs", "String"] {
+        let old = format!("y = {word}(if true {{ 1 }} else {{ 5 / 2 }});");
+        let rat = format!("y = {word}(if true {{ 1 }} else {{ 5r / 2 }});");
+        let f64 = format!("y = {word}(if true {{ 1 }} else {{ 5.0f64 / 2 }});");
+        let src = format!("{old}\n");
+        assert_eq!(type_errors(&src), [unfixed("5", &rat, &f64)], "{word}");
+        fixes_check(&src, &old, [&rat, &f64]);
+        // A decimal branch is read at `f64`.
+        let src = format!("y = {word}(if false {{ 1 }} else {{ 2.5 }});\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{word}");
+    }
+    assert_eq!(value("y = f64(if false { 1 } else { 2.5 });\n", "y"), "2.5");
     // An integer literal is an `int` there, as alone.
     assert_eq!(y_type("y = f64(if true { 1 } else { 2 });\n"), "f64");
 }
@@ -162,24 +181,24 @@ fn a_value_no_arrow_of_the_cast_takes_is_rejected_and_named() {
 
 #[test]
 fn every_repair_offered_checks_as_written() {
-    // `scalar` takes an `int`. `int(g(true))` is rejected at the `2.5`, so it is not offered;
-    // the type alone, whose values `1` and `2.5` each have an arrow of `int`, said it checks.
-    let src = format!("{BARE}\ny = scalar(g(true));\n");
-    let (i, _) = info(&src);
-    assert!(!i.errors.is_empty(), "{src}");
-    assert_eq!(repairs_check(&src), 0, "{src}");
-    // With the suffix `int(g(true))` checks. Whether it is offered is not pinned: it can give
+    // `scalar` takes an `int`. With the suffix, or a bare decimal, which the call reads at
+    // `f64`, `int(g(true))` checks. Whether it is offered is not pinned: it can give
     // `#inexact`, and a cast that can fail is not to be offered (author, 2026-11-12; follow-up
-    // MSG-concise-style). Whatever is offered checks.
-    let src = format!("{FORCED}\ny = scalar(g(true));\n");
-    repairs_check(&src);
-    assert!(type_errors(&format!("{FORCED}\ny = scalar(int(g(true)));\n")).is_empty());
-    // `String` takes every carrier, so it gives the `2.5` none: `String(g(true))` is rejected
-    // as `String(0.5)` is, and the wrap in `String` is offered only with the suffix.
-    let src = format!("{BARE}\nh(positional z: String) = z;\ny = h(g(true));\n");
-    assert_eq!(repairs_check(&src), 0, "{src}");
-    let src = format!("{FORCED}\nh(positional z: String) = z;\ny = h(g(true));\n");
-    assert_eq!(repairs_check(&src), 1, "{src}");
+    // MSG-concise-style). Whatever is offered checks. (A bare decimal was rejected where the
+    // call is used, so no wrap there checked; since it takes `f64` (author decision
+    // 2026-11-12) what stays rejected in `g` is a division of integer literals, which is
+    // rejected in `g`'s body whatever wraps its uses.)
+    for g in [FORCED, BARE] {
+        let src = format!("{g}\ny = scalar(g(true));\n");
+        assert!(!type_errors(&src).is_empty(), "{src}");
+        repairs_check(&src);
+        assert!(type_errors(&format!("{g}\ny = scalar(int(g(true)));\n")).is_empty());
+    }
+    // `String` takes every carrier; the wrap in `String` is offered, and checks.
+    for g in [FORCED, BARE] {
+        let src = format!("{g}\nh(positional z: String) = z;\ny = h(g(true));\n");
+        assert_eq!(repairs_check(&src), 1, "{src}");
+    }
     // A call of type `1 | f64` beside an `f64` is read there, each value as it would be
     // alone (LIT-call-union-at-f64); with 2^53 + 1 in place of the `1` it is not, and
     // whatever is offered checks (the count is not pinned, as above).
@@ -203,7 +222,7 @@ fn every_repair_offered_checks_as_written() {
 }
 
 /// A function `g` of `values` branches, each giving an integer, and one more giving `2.5`
-/// written `last`, and `casts` bindings each casting a call of it with `word`.
+/// or another value, written `last`, and `casts` bindings each casting a call of it with `word`.
 pub(super) fn many(values: usize, casts: usize, last: &str, word: &str) -> String {
     let mut src = String::from("g(positional k: int) = if k == 0 { 0 }");
     for i in 1..values {
@@ -220,8 +239,10 @@ pub(super) fn many(values: usize, casts: usize, last: &str, word: &str) -> Strin
 fn casts_of_a_call_of_many_values_take_each_value_at_its_arrow() {
     // Small instances of the benchmarks `bench::cast_of_union`.
     assert!(type_errors(&many(3, 3, "2.5f64", "f64")).is_empty());
+    // A bare decimal is read at `f64`; a division of integer literals is rejected once.
+    assert!(type_errors(&many(3, 3, "2.5", "f64")).is_empty());
     assert_eq!(
-        type_errors(&many(3, 3, "2.5", "f64")).len(),
+        type_errors(&many(3, 3, "5 / 2", "f64")).len(),
         1,
         "one literal, one error"
     );

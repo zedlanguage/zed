@@ -157,12 +157,19 @@ fn integer_literals_at_a_use_without_int_are_rejected() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
         errors[0].starts_with(
-            "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `r = h((1.0f64, 2))` \
-             instead."
+            "Nothing gives the literal `1` a carrier. Try `r = h((1r, 2))` instead.\n  \
+             fixes, each checked here:\n    \
+             r = h((1r, 2));        the literal is then exactly 1, a rat\n    \
+             r = h((1.0f64, 2));    the literal is then the f64 1.0"
         ),
         "{errors:?}"
     );
-    // The repair it offers checks, and its type holds its value.
+    // The repairs it offers check, and their types hold their values.
+    let (t, v, holds) = typed_value("h(positional p) = p[0] / p[1];\nr = h((1r, 2));\n");
+    assert_eq!(
+        (t.as_str(), v.as_str(), holds),
+        ("rat | #divByZero", "1r/2r", true)
+    );
     let (t, v, holds) = typed_value("h(positional p) = p[0] / p[1];\nr = h((1.0f64, 2));\n");
     assert_eq!(
         (t.as_str(), v.as_str(), holds),
@@ -170,16 +177,22 @@ fn integer_literals_at_a_use_without_int_are_rejected() {
     );
 }
 
-/// A decimal literal that nothing gives a carrier is rejected once, where the arguments are
-/// read, and not again by the type of the call.
+/// A `/` of integer literals that nothing gives a carrier is rejected once, where the arguments
+/// are read, and not again by the type of the call. Written with the decimal `1.5` before a
+/// decimal that nothing fixes took `f64` (author decision 2026-11-12); `r = h((1.5, 2))` is
+/// now the `f64` `3.5`.
 #[test]
-fn a_decimal_component_is_rejected_once() {
-    let errors = type_errors("h(positional p) = p[0] + p[1];\nr = h((1.5, 2));\n");
+fn a_division_component_is_rejected_once() {
+    let errors = type_errors("h(positional p) = p[0] + p[1];\nr = h((1 / 2, 2));\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].starts_with("Nothing gives the literal `1.5` a carrier."),
+        errors[0].starts_with(
+            "Nothing gives the literal `1` a carrier. Try `r = h((1r / 2, 2))` instead."
+        ),
         "{errors:?}"
     );
+    let (t, v, holds) = typed_value("h(positional p) = p[0] + p[1];\nr = h((1.5, 2));\n");
+    assert_eq!((t.as_str(), v.as_str(), holds), ("f64", "3.5", true));
 }
 
 /// The case of the item, by `zedc run`: the program prints `3`, and the checker's type of `r`

@@ -273,6 +273,9 @@ fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
             "`min` does not order #red in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min`. [g((#red, 9))]"
         ]
     );
+    // DESIGN.md sec:reduction, item 5, makes this `(0.5, 1.0)`: the literals of `(1, 2)` in the
+    // body follow the carriers of the components a call gives. zedc reads them at `int` once,
+    // so the call is refused; row MINMAX-param-literal-follow.
     assert_eq!(
         e("g((0.5, 1.0))"),
         [

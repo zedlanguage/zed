@@ -74,21 +74,24 @@ pub(super) fn pairs(fixes: &[(&str, &str)]) -> Vec<(String, String)> {
 
 #[test]
 fn a_division_of_integer_literals_lists_three_lines() {
-    // The suffixes come first and the cast last, as in DESIGN.md's menu for
-    // `q = (1 + 2) / (3 + 4)` (sec:diagnostics, "A `/` of integer literals").
+    // The exact carrier first, then `f64` written on a literal, and the cast last, as in
+    // DESIGN.md's menu for `q = (1 + 2) / (3 + 4)` (sec:diagnostics, "A `/` of integer
+    // literals"). DESIGN.md also lists each carrier declared on the binder, `q: rat = …` and
+    // `q: f64 = …`; this zedc does not compile a binding with a declared type yet, so it
+    // leaves those out.
     assert_eq!(
         checked("half = 1 / 2;\n"),
         pairs(&[
-            ("half = 1.0f64 / 2;", "half is 0.5"),
             ("half = 1r / 2;", "half is 1r/2r"),
+            ("half = 1.0 / 2;", "half is 0.5"),
             ("half = f64(1) / 2;", "half is 0.5"),
         ])
     );
     assert_eq!(
         checked("r = -1 / 3;\n"),
         pairs(&[
-            ("r = -1.0f64 / 3;", "r is -0.3333333333333333"),
             ("r = -1r / 3;", "r is -1r/3r"),
+            ("r = -1.0 / 3;", "r is -0.3333333333333333"),
             ("r = -f64(1) / 3;", "r is -0.3333333333333333"),
         ])
     );
@@ -96,8 +99,8 @@ fn a_division_of_integer_literals_lists_three_lines() {
     assert_eq!(
         checked("q = (1 + 2) / (3 + 4);\n"),
         pairs(&[
-            ("q = (1.0f64 + 2) / (3 + 4);", "q is 0.42857142857142855"),
             ("q = (1r + 2) / (3 + 4);", "q is 3r/7r"),
+            ("q = (1.0 + 2) / (3 + 4);", "q is 0.42857142857142855"),
             ("q = (f64(1) + 2) / (3 + 4);", "q is 0.42857142857142855"),
         ])
     );
@@ -132,16 +135,16 @@ fn a_power_lists_rat_only_with_an_int_exponent() {
     assert_eq!(
         checked("y = (2 ^ 3) / 4;\n"),
         pairs(&[
-            ("y = (2.0f64 ^ 3) / 4;", "y is 2.0"),
             ("y = (2r ^ 3) / 4;", "y is (2r ^ 3) / 4"),
+            ("y = (2.0 ^ 3) / 4;", "y is 2.0"),
             ("y = (f64(2) ^ 3) / 4;", "y is 2.0"),
         ])
     );
     assert_eq!(
         checked("y = (2 ^ (1 + 2)) / 4;\n"),
         pairs(&[
-            ("y = (2.0f64 ^ (1.0f64 + 2)) / 4;", "y is 2.0"),
             ("y = (2r ^ (1 + 2)) / 4;", "y is (2r ^ (1 + 2)) / 4"),
+            ("y = (2.0 ^ (1.0 + 2)) / 4;", "y is 2.0"),
             ("y = (f64(2) ^ (f64(1) + 2)) / 4;", "y is 2.0"),
         ])
     );
@@ -268,38 +271,45 @@ fn a_fix_leaves_out_a_comment_after_the_line() {
     assert_eq!(
         checked("half = 1 / 2; // the rejected line\n"),
         pairs(&[
-            ("half = 1.0f64 / 2;", "half is 0.5"),
             ("half = 1r / 2;", "half is 1r/2r"),
+            ("half = 1.0 / 2;", "half is 0.5"),
             ("half = f64(1) / 2;", "half is 0.5"),
         ])
     );
     assert_eq!(
-        checked("y = 0.5;    /* a note */\n"),
-        pairs(&[("y = 0.5f64;", "y is 0.5"), ("y = 0.5r;", "y is 1r/2r")])
+        checked("y = 1 / 2;    /* a note */\n"),
+        pairs(&[
+            ("y = 1r / 2;", "y is 1r/2r"),
+            ("y = 1.0 / 2;", "y is 0.5"),
+            ("y = f64(1) / 2;", "y is 0.5"),
+        ])
     );
     // A comment between the tokens of the line stays.
     assert_eq!(
-        checked("y = 0.5 /* half */ * 1; // done\n"),
+        checked("y = 1 /* half */ / 2; // done\n"),
         pairs(&[
-            ("y = 0.5f64 /* half */ * 1;", "y is 0.5"),
-            ("y = 0.5r /* half */ * 1;", "y is 1r/2r")
+            ("y = 1r /* half */ / 2;", "y is 1r/2r"),
+            ("y = 1.0 /* half */ / 2;", "y is 0.5"),
+            ("y = f64(1) /* half */ / 2;", "y is 0.5"),
         ])
     );
     // A `//` in a string is not a comment.
     assert_eq!(
-        checked("y = 0.5; s = \"a // b\"; // c\n"),
+        checked("y = 1 / 2; s = \"a // b\"; // c\n"),
         pairs(&[
-            ("y = 0.5f64; s = \"a // b\";", "y is 0.5"),
-            ("y = 0.5r; s = \"a // b\";", "y is 1r/2r")
+            ("y = 1r / 2; s = \"a // b\";", "y is 1r/2r"),
+            ("y = 1.0 / 2; s = \"a // b\";", "y is 0.5"),
+            ("y = f64(1) / 2; s = \"a // b\";", "y is 0.5"),
         ])
     );
     // A block comment that the line opens and a later line closes is kept whole: the text
     // after the edit does not lex on its own.
     assert_eq!(
-        fixes("y = 0.5; /* a note\n   that goes on */\n"),
+        fixes("y = 1 / 2; /* a note\n   that goes on */\n"),
         pairs(&[
-            ("y = 0.5f64; /* a note", "y is 0.5"),
-            ("y = 0.5r; /* a note", "y is 1r/2r")
+            ("y = 1r / 2; /* a note", "y is 1r/2r"),
+            ("y = 1.0 / 2; /* a note", "y is 0.5"),
+            ("y = f64(1) / 2; /* a note", "y is 0.5"),
         ])
     );
 }
@@ -308,17 +318,17 @@ fn a_fix_leaves_out_a_comment_after_the_line() {
 /// holds by the operation as the fix writes it, and does not compute it: `3r^200000` has
 /// 95,425 digits, and the note is as long as the text (DESIGN.md sec:diagnostics, "The value a
 /// fix names"; MSG-fixnote-huge-value). At `f64` the value, of fixed size, is named, and so is
-/// a value at `rat` with no `^`. The same holds at `int`, as in a pair of a comparison of tuples.
+/// a value at `rat` with no `^`. The same holds for a pair of a tuple.
 #[test]
 fn a_value_at_rat_reached_through_a_power_is_named_by_the_operation() {
     assert_eq!(
         type_errors("x = 3^200000 / 2;\n"),
         [concat!(
             "Nothing gives the integer literals a carrier, and `/` has none at `int`: ",
-            "`x = 3^200000 / 2`. Try `x = 3.0f64^200000 / 2` instead.\n",
+            "`x = 3^200000 / 2`. Try `x = 3r^200000 / 2` instead.\n",
             "  fixes, each checked here:\n",
-            "    x = 3.0f64^200000 / 2;    x is inf\n",
             "    x = 3r^200000 / 2;        x is 3r^200000 / 2\n",
+            "    x = 3.0^200000 / 2;       x is inf\n",
             "    x = f64(3)^200000 / 2;    x is inf [3^200000 / 2]",
         )]
     );
@@ -326,51 +336,76 @@ fn a_value_at_rat_reached_through_a_power_is_named_by_the_operation() {
     assert_eq!(
         checked("x = (3 + 1) / 2;\n"),
         pairs(&[
-            ("x = (3.0f64 + 1) / 2;", "x is 2.0"),
             ("x = (3r + 1) / 2;", "x is 2r"),
+            ("x = (3.0 + 1) / 2;", "x is 2.0"),
             ("x = (f64(3) + 1) / 2;", "x is 2.0"),
         ])
     );
     assert_eq!(
         checked("x = (3^2 + 1) / 2;\n"),
         pairs(&[
-            ("x = (3.0f64^2 + 1) / 2;", "x is 5.0"),
             ("x = (3r^2 + 1) / 2;", "x is (3r^2 + 1) / 2"),
+            ("x = (3.0^2 + 1) / 2;", "x is 5.0"),
             ("x = (f64(3)^2 + 1) / 2;", "x is 5.0"),
         ])
     );
-    // A comparison of tuples is named as the fix writes it where a pair at `rat` holds a `^`.
+    // A pair of a tuple is named as the fix writes it where it holds a `^` at `rat`.
     assert_eq!(
-        checked("y = (3^20 + 0.5, 1) == (1, 2);\n"),
+        fixes("y = (3^20 / 2, 1);\n"),
         pairs(&[
-            ("y = (3^20 + 0.5f64, 1) == (1, 2);", "y is false"),
-            (
-                "y = (3^20 + 0.5r, 1) == (1, 2);",
-                "y is (3^20 + 0.5r, 1) == (1, 2)"
-            ),
+            ("y = (3r^20 / 2, 1);", "y[0] is 3r^20 / 2"),
+            ("y = (3.0^20 / 2, 1);", "y[0] is 1743392200.5"),
+            ("y = (f64(3)^20 / 2, 1);", "y[0] is 1743392200.5"),
         ])
     );
-    // So it is where the pair is at `int`, whose values have no fixed size either; the pair at
-    // `f64` is named by its value.
+    for fix in ["y = (3r^20 / 2, 1);\n", "y = (3.0^20 / 2, 1);\n"] {
+        assert_eq!(type_errors(fix), Vec::<String>::new(), "{fix}");
+    }
+    assert_eq!(value("y = (3r^20 / 2, 1);\n", "y"), "(3486784401r/2r, 1)");
+    // DESIGN.md says `y = (3^20 / 2, 1) == (1, 2);` has the fix `y = (3r^20 / 2, 1) == (1,
+    // 2);    y is (3r^20 / 2, 1) == (1, 2)`. This zedc gives the line no menu, only "`/` does
+    // not take (int, 2)" and the repair `rat(3^20) / 2`, which checks; row
+    // LIT-tuple-compare-power-menu.
     assert_eq!(
-        checked("y = (3^2 + 1, 0.5) == (10, 0.5);\n"),
-        pairs(&[
-            (
-                "y = (3^2 + 1, 0.5f64) == (10, 0.5);",
-                "y is (3^2 + 1, 0.5f64) == (10, 0.5)"
-            ),
-            (
-                "y = (3^2 + 1, 0.5r) == (10, 0.5);",
-                "y is (3^2 + 1, 0.5r) == (10, 0.5)"
-            ),
-        ])
+        type_errors("y = (3^20 / 2, 1) == (1, 2);\n"),
+        [
+            "`/` does not take (int, 2): no arrow of `/` takes these types. Try `rat(3^20) / 2` \
+             instead. [3^20 / 2]"
+        ]
     );
+    assert_eq!(value("y = (rat(3^20) / 2, 1) == (1, 2);\n", "y"), "false");
+    // DESIGN.md says a pair at `int` is named the same way, in `y = (3^2 + 1, 1 / 2) == (10, 1 /
+    // 2);`: the two `1 / 2` meet at `==`, so one rejection, whose fixes name `y`. This zedc
+    // rejects each `1` on its own, each with a menu that names the literal; row
+    // LIT-tuple-compare-names-literal. Either fix of either menu alone makes the line check,
+    // `y` then `true`.
+    let src = "y = (3^2 + 1, 1 / 2) == (10, 1 / 2);\n";
+    let menu = |fix: [&str; 2]| {
+        format!(
+            "Nothing gives the literal `1` a carrier. Try `{}` instead.\n  fixes, each checked \
+             here:\n    {};        the literal is then exactly 1, a rat\n    {};    the literal \
+             is then the f64 1.0 [1]",
+            fix[0], fix[0], fix[1]
+        )
+    };
+    let first = [
+        "y = (3^2 + 1, 1r / 2) == (10, 1 / 2)",
+        "y = (3^2 + 1, 1.0f64 / 2) == (10, 1 / 2)",
+    ];
+    let second = [
+        "y = (3^2 + 1, 1 / 2) == (10, 1r / 2)",
+        "y = (3^2 + 1, 1 / 2) == (10, 1.0f64 / 2)",
+    ];
+    assert_eq!(type_errors(src), [menu(first), menu(second)]);
+    for fix in first.iter().chain(&second) {
+        assert_eq!(value(&format!("{fix};\n"), "y"), "true", "{fix}");
+    }
     // The note is on one line: a line break or a comment between two tokens is one space.
     assert_eq!(
         fixes("x = (3^20 // three\n    + 1) / 2;\n"),
         pairs(&[
-            ("x = (3.0f64^20", "x is 1743392201.0"),
             ("x = (3r^20", "x is (3r^20 + 1) / 2"),
+            ("x = (3.0^20", "x is 1743392201.0"),
             ("x = (f64(3)^20", "x is 1743392201.0"),
         ])
     );

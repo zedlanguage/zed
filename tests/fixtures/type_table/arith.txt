@@ -177,7 +177,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =#none, f64 | #none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=#none, =2.5 => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=#none, =2.5 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =#none, =2.5f64 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2r => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =k => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
@@ -193,7 +193,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =2 => int -- sec:domains "three() = 1 + 2 is () -> int"
-=2, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =k => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
@@ -207,9 +207,9 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2.5, (int, f64) => error * -- sec:lexical "+ - * arithmetic on numbers"; sec:linalg "Arithmetic on morphisms" (of one exact domain)
 =2.5, int | #none => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)
 =2.5, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=2.5, =#none => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2.5, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =k => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)
@@ -435,7 +435,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =#none, f64 | #none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=#none, =2.5 => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=#none, =2.5 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =#none, =2.5f64 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2r => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =k => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
@@ -451,7 +451,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =2 => int -- sec:domains "three() = 1 + 2 is () -> int"
-=2, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =k => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
@@ -465,9 +465,9 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2.5, (int, f64) => error * -- sec:lexical "+ - * arithmetic on numbers"; sec:linalg "Arithmetic on morphisms" (of one exact domain)
 =2.5, int | #none => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)
 =2.5, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=2.5, =#none => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2.5, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =k => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)
@@ -693,7 +693,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =#none, f64 | #none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=#none, =2.5 => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=#none, =2.5 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =#none, =2.5f64 => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =2r => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =#none, =k => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
@@ -709,7 +709,7 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2, =2 => int -- sec:domains "three() = 1 + 2 is () -> int"
-=2, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2, =k => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
@@ -723,9 +723,9 @@ f64 | #none, =k => error Two numeric values with no common carrier -- sec:diagno
 =2.5, (int, f64) => error * -- sec:lexical "+ - * arithmetic on numbers"; sec:linalg "Arithmetic on morphisms" (of one exact domain)
 =2.5, int | #none => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)
 =2.5, f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"; sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
-=2.5, =#none => #none !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
-=2.5, =2.5 => f64 !! POW-domains: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"; POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
+=2.5, =2.5 => f64 -- POW-domains (author 2026-11-12) "A decimal literal that no use fixes takes f64"; "(F, int) -> F at every float format"; "a non-integer exponent needs one carrier"; "float x / 0.0 ... give #divByZero"
 =2.5, =2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "Zed converts no value implicitly"
 =2.5, =k => error Numeric literal at a carrier that cannot take it -- sec:diagnostics "Numeric literal at a carrier that cannot take it" (x * 2.0 with x: int; x == 1 with x: bool)

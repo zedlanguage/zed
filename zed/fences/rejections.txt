@@ -93,7 +93,7 @@ Misaligned foreign pointer in a run
 Rebinding in the same scope
 Binder naming a type
 Numeric literal at a carrier that cannot take it
-Decimal literal, or `/` of integer literals, that nothing gives a carrier
+`/` of integer literals alone that nothing gives a carrier
 Two numeric values with no common carrier
 Two values compared by `==` or `!=` whose types share no value
 Match binder unused in its guard and arm

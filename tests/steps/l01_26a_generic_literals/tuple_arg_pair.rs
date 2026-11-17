@@ -338,63 +338,69 @@ fn a_decimal_component_takes_f32_or_the_float_formats_f64() {
     }
 }
 
-/// A decimal component that no use gives one carrier is rejected as before: one the body does
-/// not read, one beside a component a use does fix, which alone is rejected, and one that `*`
-/// with a literal leaves `f64` or `rat`. One returned beside a literal is rejected with the
-/// menu, as `h(1.5)` of the same body is (item LIT-tuple-branch-carrier); it was rejected for
-/// an `int` use, with a second message whose fixes were rejected too.
+/// A decimal component that no use gives one carrier takes `f64` (author decision 2026-11-12;
+/// it was rejected before): one the body does not read, one beside a component a use does
+/// fix, one that `*` with a literal leaves `f64` or `rat`, and one returned beside a literal,
+/// as `h(1.5)` of the same body is (item LIT-tuple-branch-carrier). A component that `+ 1r`
+/// reads takes `rat`. A `/` of integer literals that no use fixes is still rejected, with a
+/// menu whose every fix runs.
 #[test]
-fn a_decimal_component_no_use_fixes_is_rejected() {
-    let name = "l01_26a_tuple_arg_pair_decimal_rejected";
-    assert_eq!(
-        outcome(name, "h(positional p) = p[0];", "h((1.5, 2))"),
-        "2:8: Nothing gives the literal `1.5` a carrier. Try `r = h((1.5f64, 2))` instead.\n\
-         \x20 [1] 2:8: this expression is 1.5\n\
-         \x20     2 | r = h((1.5, 2));\n\
-         \x20       |        ^^^\n\
-         \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `_ -> _`\n\
-         \x20     1 | h(positional p) = p[0];\n\
-         \x20       | ^^^^^^^^^^^^^^^^^^^^^^^\n\
-         \x20 fixes, each checked here:\n\
-         \x20   r = h((1.5f64, 2));    the literal is then the f64 1.5\n\
-         \x20   r = h((1.5r, 2));      the literal is then exactly 1.5, a rat\n"
-    );
-    assert_eq!(
-        outcome(name, ADD_R, "h((1.5, 2.5))"),
-        "2:13: Nothing gives the literal `2.5` a carrier. Try `r = h((1.5, 2.5f64))` instead.\n\
-         \x20 [1] 2:13: this expression is 2.5\n\
-         \x20     2 | r = h((1.5, 2.5));\n\
-         \x20       |             ^^^\n\
-         \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `_ -> rat`\n\
-         \x20     1 | h(positional p) = p[0] + 1r;\n\
-         \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\
-         \x20 fixes, each checked here:\n\
-         \x20   r = h((1.5, 2.5f64));    the literal is then the f64 2.5\n\
-         \x20   r = h((1.5, 2.5r));      the literal is then exactly 2.5, a rat\n"
-    );
-    for (def, call, head) in [
-        (
-            "h(positional p) = p[1] + 1r;",
-            "h((1.5, 2))",
-            "2:8: Nothing gives the literal `1.5` a carrier.",
-        ),
-        (
-            "h(positional p) = p[0] * 2;",
-            "h((1.5, 2))",
-            "2:8: Nothing gives the literal `1.5` a carrier.",
-        ),
-        (
-            PICK,
-            "h((1.5, 2))",
-            "2:8: Nothing gives the literal `1.5` a carrier. Try `r = h((1.5f64, 2))` instead.",
-        ),
+fn a_decimal_component_no_use_fixes_takes_f64() {
+    let name = "l01_26a_tuple_arg_pair_decimal_f64";
+    for (def, call, out) in [
+        ("h(positional p) = p[0];", "h((1.5, 2))", "1.5\n"),
+        (ADD_R, "h((1.5, 2.5))", "5r/2r\n"),
+        ("h(positional p) = p[1] + 1r;", "h((1.5, 2))", "3r\n"),
+        ("h(positional p) = p[0] * 2;", "h((1.5, 2))", "3.0\n"),
+        (PICK, "h((1.5, 2))", "1.5\n"),
     ] {
-        let got = outcome(name, def, call);
-        assert!(got.starts_with(head), "{def} {call}\n{got}");
-        assert_eq!(got.matches("prog.zed:").count(), 0, "one message: {got}");
+        assert_eq!(outcome(name, def, call), out, "{def} {call}");
     }
+    let def = "h(positional p) = p[0];";
+    let got = outcome(name, def, "h((1 / 2, 2))");
+    assert!(
+        got.starts_with("2:8: Nothing gives the literal `1` a carrier.")
+            && got.contains(
+                "\n    r = h((1r / 2, 2));        the literal is then exactly 1, a rat\n"
+            )
+            && got.contains("\n    r = h((1.0f64 / 2, 2));    the literal is then the f64 1.0\n"),
+        "{got}"
+    );
+    assert_eq!(outcome(name, def, "h((1r / 2, 2))"), "1r/2r\n");
+    assert_eq!(outcome(name, def, "h((1.0f64 / 2, 2))"), "0.5\n");
+}
+
+/// A `/` of integer literals that a use reads at `rat` takes `rat`, as the argument `3 / 2` of
+/// `h(positional p) = p + 1r;` does (DESIGN.md step L1.26a: an operation on literals alone
+/// takes the carrier of what it meets), and as the decimal component `1.5` of `h((1.5, 2))`
+/// does at `p[0] + 1r`. This zedc reads the component `3 / 2` at `f64` there: it rejects the
+/// call, "`h` gives f64 here, which is not rat", and the `3`, "Nothing gives the literal `3` a
+/// carrier", with the fixes `3r / 2` and `3.0f64 / 2`; the second of them is rejected in turn,
+/// a menu marked "each checked here" whose fix does not check; row
+/// LIT-tuple-component-division-at-rat.
+#[test]
+fn a_division_component_read_at_rat() {
+    let name = "l01_26a_tuple_arg_pair_division_at_rat";
+    assert_eq!(
+        outcome(name, "h(positional p) = p + 1r;", "h(3 / 2)"),
+        "5r/2r\n"
+    );
+    let got = outcome(name, ADD_R, "h((3 / 2, 2))");
+    assert!(
+        got.starts_with(
+            "2:5: `h` gives f64 here, which is not rat: the use requires a value of rat.\n"
+        ) && got.contains("2:8: Nothing gives the literal `3` a carrier.")
+            && got.contains(
+                "\n    r = h((3r / 2, 2));        the literal is then exactly 3, a rat\n"
+            )
+            && got.contains("\n    r = h((3.0f64 / 2, 2));    the literal is then the f64 3.0\n"),
+        "{got}"
+    );
+    assert_eq!(outcome(name, ADD_R, "h((3r / 2, 2))"), "5r/2r\n");
+    assert!(
+        outcome(name, ADD_R, "h((3.0f64 / 2, 2))")
+            .starts_with("2:5: `h` gives f64 here, which is not rat"),
+    );
 }
 
 /// The literal branch beside a component takes the component's carrier, so the call has the
@@ -485,25 +491,22 @@ fn printed_fixes(got: &str) -> Vec<String> {
     out
 }
 
-/// Each fix printed under "fixes, each checked here" for a decimal component, put in place
-/// of the call, runs (item LIT-tuple-branch-carrier): `r = h((1.5f64, 2))` was printed for
-/// `if (p[0] else 0) < 5 { p[0] } else { 0 }` and rejected.
+/// Each fix printed under "fixes, each checked here" for a component that no use gives a
+/// carrier, put in place of the call, runs (item LIT-tuple-branch-carrier): `r = h((1.5f64,
+/// 2))` was printed for `if (p[0] else 0) < 5 { p[0] } else { 0 }` and rejected. A decimal
+/// component now takes `f64` and prints no fix, so each component here is a `/` of integer
+/// literals, which is still rejected (author decision 2026-11-12).
 #[test]
 fn every_printed_fix_of_a_decimal_component_runs() {
     let name = "l01_26a_tuple_arg_pair_fixes_run";
     let one = PICK.replace("p[0]", "p");
     for (def, call, fixes) in [
-        (PICK, "h((1.5, 2))", 2),
-        (one.as_str(), "h(1.5)", 2),
-        ("h(positional p) = p[0];", "h((1.5, 2))", 2),
-        (ADD_R, "h((1.5, 2.5))", 2),
-        ("h(positional p) = p[1] + 1r;", "h((1.5, 2))", 2),
-        ("h(positional p) = p[0] * 2;", "h((1.5, 2))", 2),
-        (
-            "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };",
-            "h((1.5, 2)) else 9",
-            0,
-        ),
+        (PICK, "h((3 / 2, 2))", 2),
+        (one.as_str(), "h(3 / 2)", 2),
+        ("h(positional p) = p[0];", "h((3 / 2, 2))", 2),
+        (ADD_R, "h((1.5, 5 / 2))", 2),
+        ("h(positional p) = p[1] + 1r;", "h((3 / 2, 2))", 2),
+        ("h(positional p) = p[0] * 2;", "h((3 / 2, 2))", 2),
     ] {
         let got = outcome(name, def, call);
         let printed = printed_fixes(&got);
@@ -519,6 +522,36 @@ fn every_printed_fix_of_a_decimal_component_runs() {
             );
         }
     }
+    // The case of item LIT-tuple-branch-carrier. This zedc types `h` here `_ -> int | #_`, so
+    // a first component that is not an `int` is rejected, "`h` gives 1.5 here, which is not
+    // int", with no fix printed, the decimal `1.5` as before, and `1.5f64` and `1.5r` alike. At
+    // a `/` it prints two fixes, `3r / 2` and `3.0f64 / 2`, and rejects each of them in turn
+    // the same way: a menu marked "each checked here" whose fixes do not check; row
+    // LIT-tuple-branch-carrier-division-fixes.
+    let def = "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };";
+    for (call, shown) in [
+        ("h((1.5, 2)) else 9", "1.5"),
+        ("h((1.5f64, 2)) else 9", "1.5f64"),
+        ("h((1.5r, 2)) else 9", "1.5r"),
+        ("h((3r / 2, 2)) else 9", "rat"),
+        ("h((3.0f64 / 2, 2)) else 9", "f64"),
+    ] {
+        let got = outcome(name, def, call);
+        assert!(
+            got.starts_with(&format!("2:5: `h` gives {shown} here, which is not int")),
+            "{call}\n{got}"
+        );
+        assert_eq!(printed_fixes(&got), Vec::<String>::new(), "{call}\n{got}");
+    }
+    let got = outcome(name, def, "h((3 / 2, 2)) else 9");
+    assert_eq!(
+        printed_fixes(&got),
+        [
+            "r = h((3r / 2, 2)) else 9;",
+            "r = h((3.0f64 / 2, 2)) else 9;"
+        ],
+        "{got}"
+    );
 }
 
 /// `n` decimal components and a call with `n` decimal literals: a tuple of the components each

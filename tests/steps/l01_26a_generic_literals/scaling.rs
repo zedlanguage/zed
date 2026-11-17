@@ -73,7 +73,7 @@ fn generic_literal_arguments_take_the_carrier_of_the_callers_parameter() {
 }
 
 /// A value bound outside a function, `y = (1 + 0) /* … */ * (1 + 0) /* … */ * … * d`, of `n`
-/// parenthesized sums of integer literals and the decimal `d`. Each sum is an operation on
+/// parenthesized sums of integer literals and the operand `d`. Each sum is an operation on
 /// literals alone, and so is their product, which takes the carrier of what it meets
 /// (DESIGN.md sec:diagnostics, "A `/` of integer literals"). The comments make the line long
 /// beside the checker's work on each sum.
@@ -84,25 +84,32 @@ pub(super) fn product(n: usize, d: &str) -> String {
     )
 }
 
-/// With `d = 0.5` nothing gives the literals a carrier, and each fix writes the decimal with
-/// one, on one line of length of order n, and names the value of `y`, folded over the `2n`
-/// operations (MSG-literal-fixes).
+/// With `d = (1 / 2)` nothing gives the literals a carrier, and each fix writes the first literal
+/// of the value with one, on one line of length of order n, and names the value of `y`, folded
+/// over the `2n` operations (MSG-literal-fixes). (Written with `d = 0.5` before a decimal that
+/// nothing fixes took `f64`, author decision 2026-11-12; that product is now accepted, at
+/// `f64`.)
 #[test]
 fn a_menu_of_a_long_line_writes_each_fix_on_the_whole_line() {
     let c = "/* a comment the fixes keep, which makes the line long */";
     let one = format!(
-        "  fixes, each checked here:\n    y = (1 + 0) {c} * 0.5f64;    y is 0.5\n    \
-         y = (1 + 0) {c} * 0.5r;      y is 1r/2r"
+        "  fixes, each checked here:\n    y = (1r + 0) {c} * (1 / 2);        y is 1r/2r\n    \
+         y = (1.0 + 0) {c} * (1 / 2);       y is 0.5\n    \
+         y = (f64(1) + 0) {c} * (1 / 2);    y is 0.5"
     );
-    let [m] = &type_errors(&product(1, "0.5"))[..] else {
+    let [m] = &type_errors(&product(1, "(1 / 2)"))[..] else {
         panic!("one rejection")
     };
-    assert!(m.ends_with(&format!("{one} [0.5]")), "{m}");
-    let [e] = &Resolved::new(&product(3, "0.5")).type_errors()[..] else {
+    assert!(m.ends_with(&format!("{one} [(1 / 2)]")), "{m}");
+    let [e] = &Resolved::new(&product(3, "(1 / 2)")).type_errors()[..] else {
         panic!("one rejection")
     };
-    assert_eq!(e.matches("(1 + 0)").count(), 3 * 3, "{e}");
-    assert!(e.contains("* 0.5f64;    y is 0.5\n"), "{e}");
+    // Each fix writes the whole line: the line quoted, the headline's repair and three fixes,
+    // each of which writes the first sum with its carrier.
+    assert_eq!(e.matches("(1 + 0)").count(), 5 * 3 - 4, "{e}");
+    assert!(e.contains("* (1 / 2);       y is 0.5\n"), "{e}");
+    // The decimal the test once used is an `f64`.
+    assert_eq!(value(&product(3, "0.5"), "y"), "0.5");
 }
 
 /// With `d = 0.5f64` the product of the `n` sums meets an `f64`, and each of its `2n`
@@ -127,8 +134,8 @@ fn a_menu_writes_one_literal_for_many_divisions() {
     };
     // The first fix is also the headline's repair.
     for (fix, k) in [
-        ("y = (1.0f64 / 1) * (1 / 1)", 2),
-        ("y = (1r / 1) * (1 / 1)", 1),
+        ("y = (1r / 1) * (1 / 1)", 2),
+        ("y = (1.0 / 1) * (1 / 1)", 1),
     ] {
         assert_eq!(e.matches(fix).count(), k, "{e}");
     }
@@ -147,7 +154,8 @@ fn a_menu_of_nested_divisions_writes_the_first_literal() {
         panic!("one rejection")
     };
     assert!(e.contains("    y = 1r / 1 / 1 / 1;"), "{e}");
-    assert_eq!(e.matches("1.0f64").count(), 2, "{e}");
+    assert_eq!(e.matches("y = 1r / 1 / 1 / 1").count(), 2, "{e}");
+    assert_eq!(e.matches("y = 1.0 / 1 / 1 / 1;").count(), 1, "{e}");
 }
 
 /// `y = (1 / 2 + 1 / 2 + … + 1 / 2) + 1.0f64`, a sum of `n` divisions of integer literals, each
@@ -325,14 +333,23 @@ pub(super) fn half_of_a_power(n: usize) -> String {
     format!("x = 3^{} / 2;\n", 200 * n)
 }
 
-/// `y = (3^(200 n) + 0.5, 1) == (1, 2)`, rejected.
-pub(super) fn pair_of_a_power(n: usize) -> String {
-    format!("y = (3^{} + 0.5, 1) == (1, 2);\n", 200 * n)
+/// `y = (3^(200 n) / 2, 1)`, rejected, its fixes naming the pair `y[0]`.
+pub(super) fn tuple_of_a_power(n: usize) -> String {
+    format!("y = (3^{} / 2, 1);\n", 200 * n)
 }
 
-/// `y = (3^(200 n) + 1, 0.5) == (2, 2)`, rejected, the power at `int`.
+/// `y = (3^(200 n) / 2, 1) == (1, 2)`, rejected (DESIGN.md sec:diagnostics, "The value a fix
+/// names", at the exponent 20). Written with `+ 0.5` before a decimal that nothing fixes took
+/// `f64` (author decision 2026-11-12).
+pub(super) fn pair_of_a_power(n: usize) -> String {
+    format!("y = (3^{} / 2, 1) == (1, 2);\n", 200 * n)
+}
+
+/// `y = (3^(200 n) + 1, 1 / 2) == (2, 1 / 2)`, rejected, the power at `int` (DESIGN.md
+/// sec:diagnostics, "The value a fix names", `y = (3^2 + 1, 1 / 2) == (10, 1 / 2);`). Written with
+/// `0.5` before a decimal that nothing fixes took `f64` (author decision 2026-11-12).
 pub(super) fn int_pair_of_a_power(n: usize) -> String {
-    format!("y = (3^{} + 1, 0.5) == (2, 2);\n", 200 * n)
+    format!("y = (3^{} + 1, 1 / 2) == (2, 1 / 2);\n", 200 * n)
 }
 
 /// The fixes of a rejected binding name the value a power of literals gives at `rat` by the
@@ -340,8 +357,57 @@ pub(super) fn int_pair_of_a_power(n: usize) -> String {
 /// sec:diagnostics, "The value a fix names").
 #[test]
 fn a_fix_names_a_power_of_literals() {
-    for make in [half_of_a_power, pair_of_a_power, int_pair_of_a_power] {
-        assert_eq!(type_errors(&make(1)).len(), 1, "{}", make(1));
+    // One rejection, each of whose fixes names the binder or its pair, the `rat` power by the
+    // operation as written.
+    for (make, rat_fix, named) in [
+        (
+            half_of_a_power as fn(usize) -> String,
+            ("x = 3r^200 / 2;", "x is 3r^200 / 2"),
+            "x is ",
+        ),
+        (
+            tuple_of_a_power,
+            ("y = (3r^200 / 2, 1);", "y[0] is 3r^200 / 2"),
+            "y[0] is ",
+        ),
+    ] {
+        let src = make(1);
+        let fixes = super::fixes::fixes(&src);
+        assert!(
+            fixes.iter().all(|(_, holds)| holds.starts_with(named)),
+            "{src}{fixes:?}"
+        );
+        assert!(
+            fixes
+                .iter()
+                .any(|(line, holds)| (line.as_str(), holds.as_str()) == rat_fix),
+            "{src}{fixes:?}"
+        );
+    }
+    // DESIGN.md names the comparison too, `y is (3r^20 / 2, 1) == (1, 2)`, and the comparison
+    // whose pair at `int` holds the power, in one rejection each. This zedc gives the first no
+    // menu (row LIT-tuple-compare-power-menu), and rejects each `1` of the second on its own
+    // with a menu that names the literal (row LIT-tuple-compare-names-literal).
+    assert_eq!(
+        type_errors(&pair_of_a_power(1)),
+        [
+            "`/` does not take (int, 2): no arrow of `/` takes these types. Try `rat(3^200) / 2` \
+             instead. [3^200 / 2]"
+        ]
+    );
+    let errors = type_errors(&int_pair_of_a_power(1));
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    for (e, fix) in errors.iter().zip([
+        "y = (3^200 + 1, 1r / 2) == (2, 1 / 2);",
+        "y = (3^200 + 1, 1 / 2) == (2, 1r / 2);",
+    ]) {
+        assert!(
+            e.starts_with("Nothing gives the literal `1` a carrier.")
+                && e.contains(&format!(
+                    "\n    {fix}        the literal is then exactly 1, a rat\n"
+                )),
+            "{e}"
+        );
     }
 }
 

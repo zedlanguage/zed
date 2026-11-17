@@ -1,8 +1,9 @@
 //! Steps L1.26a and L1.26b: a literal is notation for a number, and it takes the carrier of
 //! its use. An integer literal is that integer in whichever numeric carrier its use needs and
 //! holds it exactly, and is `int` where nothing fixes its carrier; a decimal literal takes a
-//! float format or `rat`, never `int`, and is rejected where nothing fixes its carrier, as is
-//! a `/` of integer literals alone (DESIGN.md L1.26a, L1.26b, sec:domains).
+//! float format or `rat`, never `int`, and is `f64` where nothing fixes its carrier (author
+//! decision 2026-11-12); a `/` of integer literals alone, which has no carrier at `int`, is
+//! rejected there (DESIGN.md L1.26a, L1.26b, sec:domains).
 //!
 //! The carriers here are `int`, `f32`, `f64` and `rat` (FLOAT-f32): `bf16` and `f16` join the
 //! bounds of these signatures with step L1.18a.
@@ -84,14 +85,16 @@ fn a_generic_function_runs_at_each_carrier() {
     assert_eq!(value(&src, "b"), "3.5");
     // At `rat` the sum is exact: eleven tenths.
     assert_eq!(value(&src, "c"), "11r/10r");
-    // A decimal argument that nothing gives a carrier is rejected at the decimal.
+    // A decimal argument that nothing gives a carrier is an `f64`.
+    assert_eq!(value(&format!("{INC}y = inc(x: 2.5);\n"), "y"), "3.5");
+    // A division of integer literals there has no carrier, and is rejected at its first literal.
     assert_eq!(
-        type_errors(&format!("{INC}y = inc(x: 2.5);\n")),
-        [
-            "Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` instead.\n  \
-             fixes, each checked here:\n    y = inc(x: 2.5f64);    the literal is then the f64 \
-             2.5\n    y = inc(x: 2.5r);      the literal is then exactly 2.5, a rat [2.5]"
-        ]
+        type_errors(&format!("{INC}y = inc(x: 1 / 2);\n")),
+        [tuple_rest::unfixed(
+            "1",
+            "y = inc(x: 1r / 2);",
+            "y = inc(x: 1.0f64 / 2);"
+        )]
     );
 }
 
@@ -212,38 +215,29 @@ fn an_operation_on_literals_alone_takes_the_carrier_it_meets() {
 }
 
 #[test]
-fn literals_that_nothing_fixes_and_that_no_int_holds_are_rejected_with_a_menu() {
+fn a_division_of_integer_literals_that_nothing_fixes_is_rejected_with_a_menu() {
     assert_eq!(
         type_errors("half = 1 / 2;\n"),
         [
             "Nothing gives the integer literals a carrier, and `/` has none at `int`: `half = 1 / \
-             2`. Try `half = 1.0f64 / 2` instead.\n  fixes, each checked here:\n    half = 1.0f64 / 2;    half is \
-             0.5\n    half = 1r / 2;        half is 1r/2r\n    half = f64(1) / 2;    half is 0.5 \
-             [1 / 2]"
+             2`. Try `half = 1r / 2` instead.\n  fixes, each checked here:\n    half = 1r / 2;        \
+             half is 1r/2r\n    half = 1.0 / 2;       half is 0.5\n    half = f64(1) / 2;    \
+             half is 0.5 [1 / 2]"
         ]
     );
-    assert_eq!(
-        type_errors("y = 0.1;\n"),
-        [
-            "Nothing gives the literal `0.1` a carrier. Try `y = 0.1f64` instead.\n  fixes, each \
-             checked here:\n    y = 0.1f64;    y is 0.1\n    y = 0.1r;      y is 1r/10r [0.1]"
-        ]
-    );
-    assert_eq!(
-        type_errors("y = 1 == 1.0;\n"),
-        [
-            "Nothing gives the literal `1.0` a carrier. Try `y = 1 == 1.0f64` instead.\n  fixes, \
-             each checked here:\n    y = 1 == 1.0f64;    y is true\n    y = 1 == 1.0r;      y is \
-             true [1.0]"
-        ]
-    );
-    // The fixes the menus name each check.
+    // A decimal that nothing fixes, alone or beside an integer literal, is an `f64` (author
+    // decision 2026-11-12).
+    assert_eq!(value("y = 0.1;\n", "y"), "0.1");
+    assert_eq!(type_errors("y = 1 == 1.0;\n"), Vec::<String>::new());
+    assert_eq!(value("y = 1 == 1.0;\n", "y"), "true");
+    // Each fix the menu names checks. (DESIGN.md also lists `half: rat = 1 / 2` and
+    // `half: f64 = 1 / 2`; this zedc does not compile a binding with a declared type yet, so
+    // its menu leaves them out.)
+    assert_eq!(value("half = 1r / 2;\n", "half"), "1r/2r");
+    assert_eq!(value("half = 1.0 / 2;\n", "half"), "0.5");
     assert_eq!(value("half = f64(1) / 2;\n", "half"), "0.5");
-    assert_eq!(value("half = 1.0f64 / 2;\n", "half"), "0.5");
     assert_eq!(value("y = 0.1f64;\n", "y"), "0.1");
     assert_eq!(value("y = 0.1r;\n", "y"), "1r/10r");
-    assert_eq!(value("y = 1 == 1.0f64;\n", "y"), "true");
-    assert_eq!(value("y = 1 == 1.0r;\n", "y"), "true");
 }
 
 #[test]
@@ -460,7 +454,7 @@ fn units() -> Vec<String> {
         format!(
             "{SCALE}{RELU_NEXT}main(m: MainArgs) {{ m.stdout <- String(double(x: relu(x: -1.5f64))); }}\n"
         ),
-        "main = 0.1;\n".into(),
+        "main = 1 / 2;\n".into(),
     ]
 }
 
@@ -491,7 +485,9 @@ fn batch_and_single_file_checking_agree() {
     assert_eq!(alone[2], None);
     assert_eq!(alone[3], None);
     assert!(
-        first(4).is_some_and(|l| l.starts_with("1:8: Nothing gives the literal `0.1` a carrier")),
+        first(4).is_some_and(|l| l.starts_with(
+            "1:8: Nothing gives the integer literals a carrier, and `/` has none at `int`"
+        )),
         "{:?}",
         alone[4]
     );

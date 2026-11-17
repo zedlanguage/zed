@@ -984,7 +984,7 @@ fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
 }
 
 /// A `/` of integer literals under a `^` is refused at `/`, which has no arrow at `int`, and
-/// not taken as `f64`: the menu offers the exact `rat` power, which runs as printed
+/// not taken as `f64`: the menu offers the exact `rat` power first, which runs as printed
 /// (POW-rat-literal-ops).
 #[test]
 fn a_power_of_a_division_of_integer_literals_is_refused_with_the_exact_fix() {
@@ -995,11 +995,11 @@ fn a_power_of_a_division_of_integer_literals_is_refused_with_the_exact_fix() {
     );
     assert_eq!(
         out.trim_end(),
-        "3:19: Nothing gives the literal `3` a carrier of `f32 | f64 | rat`. Try \
-         `m.stdout <- \"${(3.0f64/2)^-2}\"` instead.\n  \
+        "3:19: Nothing gives the literal `3` a carrier. Try \
+         `m.stdout <- \"${(3r/2)^-2}\"` instead.\n  \
          fixes, each checked here:\n    \
-         m.stdout <- \"${(3.0f64/2)^-2}\";    the literal is then the f64 3.0\n    \
-         m.stdout <- \"${(3r/2)^-2}\";        the literal is then exactly 3, a rat"
+         m.stdout <- \"${(3r/2)^-2}\";        the literal is then exactly 3, a rat\n    \
+         m.stdout <- \"${(3.0f64/2)^-2}\";    the literal is then the f64 3.0"
     );
     assert_eq!(
         runs("", r#""${(3.0f64/2)^-2}""#, ""),

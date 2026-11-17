@@ -12,7 +12,7 @@ f64 | #none, =1.5, f64 => f64 | #none -- sec:failure "passes through"; L1.26b "a
 =1, =2, f32 => f32 -- L1.26b "a literal takes that carrier"
 =2, =2.5, int => error Numeric literal at a carrier that cannot take it !! LIT-op-carrier-headline: error Two numeric values with no common carrier -- L1.26b "a literal takes that carrier, exactly or not at all"
 =2, =3, =4 => int -- sec:domains "three() = 1 + 2 is () -> int"
-=2.5, =2, =3 => error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:domains "A decimal literal that nothing fixes is rejected"
+=2.5, =2, =3 => f64 -- L1.26b "so does an operation on literals alone with a decimal among its operands"
 
 template: (if c { 1 } else { 2.5 }) + $0
 f64 => f64 -- sec:type_resolution "each listed value of each operand, and a literal beside them, as it would be alone there"

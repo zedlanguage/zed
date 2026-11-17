@@ -64,12 +64,16 @@ fn rat_of_a_string_an_f64_or_a_parameter_keeps_invalid() {
 }
 
 #[test]
-fn a_decimal_literal_is_still_given_no_carrier_by_rat() {
-    // `rat` takes every carrier, so it fixes none for a decimal literal, as `rat(1.5)`.
+fn a_division_of_integer_literals_is_still_given_no_carrier_by_rat() {
+    // `rat` takes every carrier, so it fixes none for a `/` of integer literals, as
+    // `rat(1 / 2)`. A decimal literal there takes `f64` (author decision 2026-11-12), whose
+    // `rat` is exact: `rat(1.5)` is 3/2.
+    assert_eq!(value("y = rat(1.5);\n", "y"), "3r/2r");
+    assert_eq!(value("y = rat(1.5 + 1);\n", "y"), "5r/2r");
     for body in [
-        "return rat(1.5);",
-        "return rat(1.5 + 1);",
-        "b = 1.5 + 1; return rat(b);",
+        "return rat(1 / 2);",
+        "return rat(1 / 2 + 1);",
+        "b = 1 / 2 + 1; return rat(b);",
     ] {
         let src = format!("f() {{ {body} }}\n");
         let errors = type_errors(&src);

@@ -116,14 +116,12 @@ fn a_division_in_an_if_is_still_not_kept() {
     assert_eq!(
         type_errors(src),
         vec![
-            "Nothing gives the literal `1` a carrier of `f32 | f64 \
-             | rat`. Try `g(positional c: bool) = if c { 1.0f64 \
-             / 2 } else { 1 }` instead.\n  \
-             fixes, each checked here:\n    \
-             g(positional c: bool) = if c { 1.0f64 / 2 } else { 1 };    the literal is then the \
-             f64 1.0\n    \
+            "Nothing gives the literal `1` a carrier. Try `g(positional c: bool) = if c { 1r / 2 } \
+             else { 1 }` instead.\n  fixes, each checked here:\n    \
              g(positional c: bool) = if c { 1r / 2 } else { 1 };        the literal is then \
-             exactly 1, a rat [1]"
+             exactly 1, a rat\n    \
+             g(positional c: bool) = if c { 1.0f64 / 2 } else { 1 };    the literal is then the \
+             f64 1.0 [1]"
                 .to_string()
         ]
     );
@@ -350,8 +348,8 @@ fn a_call_of_an_integer_with_no_exact_f64_is_rejected() {
 #[test]
 fn a_call_of_a_decimal_is_not_read_at_rat() {
     // Negative control: a decimal that nothing fixes where it is written is an `f64` there,
-    // and the call gives that `f64`, so it is not read at `rat`. The fix the message offers,
-    // the suffix `r`, checks.
+    // and the call gives that `f64`, so it is not read at `rat`. Both fixes the message offers,
+    // the suffix `r` and the cast `rat`, check.
     let src = "g(positional c: bool) = if c { 1 } else { 2.5 };\nh(positional z: rat) = z;\n\
                f(positional c: bool) = h(g(c));\n";
     assert_eq!(
@@ -359,13 +357,16 @@ fn a_call_of_a_decimal_is_not_read_at_rat() {
         vec![
             "`h` does not take (1 | 2.5): `g(c)` may give the decimal 2.5, an `f64` where it is \
              written, and no `f64` is read as a `rat`. Write 2.5r where it is written, or give \
-             this parameter of `h` the type `f64`. [h(g(c))]"
+             this parameter of `h` the type `f64`. Try `h(rat(g(c)))` instead. [h(g(c))]"
                 .to_string()
         ]
     );
     let fixed = src.replace("2.5 }", "2.5r }") + "a = f(false);\n";
     assert_eq!(type_errors(&fixed), Vec::<String>::new());
     assert_eq!(value(&fixed, "a"), "5r/2r");
+    let cast = src.replace("h(g(c))", "h(rat(g(c)))") + "a = f(false);\n";
+    assert_eq!(type_errors(&cast), Vec::<String>::new());
+    assert_eq!(value(&cast, "a"), "5r/2r");
 }
 
 #[test]
@@ -508,14 +509,17 @@ fn a_call_of_a_value_the_other_operand_cannot_hold_is_rejected() {
         vec![
             "`*` does not take (rat, 1 | 2.5): `g(c)` may give the decimal 2.5, an `f64` where \
              it is written, and no `f64` is read as a `rat`. Write 2.5r where it is written, or \
-             give the other arguments of `*` the type `f64`. [x * g(c)]"
+             give the other arguments of `*` the type `f64`. Try `x * rat(g(c))` instead. [x * g(c)]"
                 .to_string()
         ]
     );
-    // The fix the message offers checks.
+    // Both fixes the message offers check.
     let fixed = decimal.replace("2.5 }", "2.5r }") + "a = f(true, x: 2r);\n";
     assert_eq!(type_errors(&fixed), Vec::<String>::new());
     assert_eq!(value(&fixed, "a"), "5r");
+    let cast = decimal.replace("x * g(c)", "x * rat(g(c))") + "a = f(true, x: 2r);\n";
+    assert_eq!(type_errors(&cast), Vec::<String>::new());
+    assert_eq!(value(&cast, "a"), "5r");
 }
 
 #[test]

@@ -1,36 +1,77 @@
-//! A decimal literal with no suffix is rejected wherever nothing gives it a carrier (DESIGN.md
-//! L1.26b, "Where nothing fixes its carrier a decimal literal is rejected"), in the places item
-//! LIT-tuple-rest adds to those of item MSG-literal-tuple: a tuple passed to `min` or `max`, the
-//! payload of an atom in a call's argument, a part of a tuple display that reaches a variable
-//! the display's other parts fix nothing for, the branches of an `if`, the value of a block,
-//! the body of a called function (DESIGN.md L1.26a, "`y = g(c)` is rejected at the `2.5`,
-//! which nothing fixes"), an indexed tuple display, and a string hole that holds any of these.
-//! Several decimals of one value are rejected in one message, which prints their line once:
-//! the bytes printed grow with the line, not with its square. A literal that a carrier reaches
-//! stays accepted: `x: 1r` gives the `2` of `p: (2, 1)` its carrier in `f(x, p) = x + p[0]`.
+//! A literal that nothing gives a carrier is rejected where its carrier matters, in the places
+//! item LIT-tuple-rest adds to those of item MSG-literal-tuple: a tuple passed to `min` or
+//! `max`, the payload of an atom in a call's argument, a part of a tuple display that reaches a
+//! variable the display's other parts fix nothing for, the branches of an `if`, the value of a
+//! block, the body of a called function, an indexed tuple display, and a string hole that holds
+//! any of these. Since the author decision of 2026-11-12 a decimal that nothing fixes takes
+//! `f64` (DESIGN.md step L1.26b), in all these places, so the rejection these tests reach is
+//! that of a `/` of integer literals alone, which has no carrier at `int`; each test also
+//! checks that the decimal written there is accepted, at `f64`. A literal that a carrier
+//! reaches stays accepted: `x: 1r` gives the `2` of `p: (2, 1)` its carrier in
+//! `f(x, p) = x + p[0]`. A called function's result settles each literal as it would be alone
+//! (DESIGN.md L1.26a: "`y = g(c)` reads the `1` at `int` and the `2.5` at `f64`").
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 
-/// The rejection of the one decimal literal `lit` that nothing gives a carrier, whose fixes
-/// write it as an `f64`, the line `f64`, and as a `rat`, the line `rat`, each naming the value
-/// the literal then is; `call` names the function whose body holds the literal, where the
-/// value holds it through a call.
-pub(super) fn unfixed(lit: &str, f64: &str, rat: &str, call: Option<&str>) -> String {
-    let through = call.map_or(String::new(), |c| {
-        format!("; the value holds it through a call of `{c}`")
-    });
+/// The rejection of the integer literal `lit` that nothing gives a carrier, the dividend of a
+/// `/` of integer literals, whose fixes write it as a `rat`, the line `rat`, and as an `f64`,
+/// the line `f64`, each naming the value the literal then is.
+pub(super) fn unfixed(lit: &str, rat: &str, f64: &str) -> String {
     let w = f64.len().max(rat.len()) + 4;
     format!(
-        "Nothing gives the literal `{lit}` a carrier{through}. Try `{}` instead.\n  fixes, each checked here:\n    \
-         {f64:w$}the literal is then the f64 {lit}\n    {rat:w$}the literal is then exactly {lit}, \
-         a rat [{lit}]",
-        f64.trim_end_matches(';')
+        "Nothing gives the literal `{lit}` a carrier. Try `{}` instead.\n  fixes, each checked \
+         here:\n    {rat:w$}the literal is then exactly {lit}, a rat\n    {f64:w$}the literal \
+         is then the f64 {lit}.0 [{lit}]",
+        rat.trim_end_matches(';')
     )
 }
 
-/// Each fix of the one rejection of `src`, written as `f64` and as `rat`, gives a program with
-/// no error: `src` with its line `old` replaced by the fix.
+/// `src`, which defines `g(positional c: bool) = if c { 1 } else { 5 / 2 };` and calls it, as
+/// zedc rejects it. DESIGN.md step L1.26a settles each branch as it would be alone, so the `5 /
+/// 2` is rejected at its `5`, with the fixes `5r / 2` and `5.0f64 / 2`, as at the top level.
+/// This zedc rejects the `1` of the other branch instead, with the fixes `1r` and `1.0f64`, and
+/// each of those fixes is then rejected at the `5`: a menu marked "each checked here" whose
+/// fixes do not check; row LIT-branch-division-names-wrong-literal. The fixes DESIGN.md names
+/// check.
+pub(super) fn branch_division_names_the_one(src: &str) {
+    let g = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
+    let named = [
+        "g(positional c: bool) = if c { 1r } else { 5 / 2 };",
+        "g(positional c: bool) = if c { 1.0f64 } else { 5 / 2 };",
+    ];
+    assert_eq!(
+        type_errors(src),
+        [unfixed("1", named[0], named[1])],
+        "{src}"
+    );
+    for fix in named {
+        let fixed = src.replace(g, fix);
+        let errors = type_errors(&fixed);
+        assert_eq!(errors.len(), 1, "{fixed}{errors:?}");
+        assert!(
+            errors[0].starts_with("Nothing gives the literal `5` a carrier."),
+            "{fixed}{errors:?}"
+        );
+    }
+    fixes_check(
+        src,
+        g,
+        [
+            "g(positional c: bool) = if c { 1 } else { 5r / 2 };",
+            "g(positional c: bool) = if c { 1 } else { 5.0f64 / 2 };",
+        ],
+    );
+}
+
+/// The fixes of the `/` of integer literals `1 / 2` first written in `line`: `1r / 2` and
+/// `1.0f64 / 2`.
+fn half_fixes(line: &str) -> [String; 2] {
+    ["1r / 2", "1.0f64 / 2"].map(|f| line.replacen("1 / 2", f, 1))
+}
+
+/// Each fix of the one rejection of `src`, the line `old` rewritten, gives a program with no
+/// error: `src` with its line `old` replaced by the fix.
 pub(super) fn fixes_check(src: &str, old: &str, fixes: [&str; 2]) {
     for fix in fixes {
         let fixed = src.replace(old, fix);
@@ -39,60 +80,64 @@ pub(super) fn fixes_check(src: &str, old: &str, fixes: [&str; 2]) {
     }
 }
 
-#[test]
-fn a_decimal_in_a_tuple_passed_to_min_or_max_is_rejected() {
-    // As `min(0.5, 1)` is: the other tuple's `1` gives the `0.5` no carrier.
-    for (word, old, f64, rat) in [
-        (
-            "min",
-            "x = min((0.5, 1), (1, 2));",
-            "x = min((0.5f64, 1), (1, 2));",
-            "x = min((0.5r, 1), (1, 2));",
-        ),
-        (
-            "max",
-            "x = max((1, 2), (0.5, 1));",
-            "x = max((1, 2), (0.5f64, 1));",
-            "x = max((1, 2), (0.5r, 1));",
-        ),
-    ] {
-        let src = format!("{old}\n");
-        assert_eq!(
-            type_errors(&src),
-            [unfixed("0.5", f64, rat, None)],
-            "{word}"
-        );
-        fixes_check(&src, old, [f64, rat]);
-    }
-    assert_eq!(value("x = min((0.5f64, 1), (1, 2));\n", "x"), "(0.5, 1)");
-    // The `1` compared with `0.5r` takes its carrier; the `2` meets only `1` and stays `int`.
-    assert_eq!(value("x = max((1, 2), (0.5r, 1));\n", "x"), "(1r, 2)");
+/// `src`, whose one rejected line is `old`, holding `1 / 2`, is rejected at the `1` with the
+/// fixes `1r / 2` and `1.0f64 / 2`, and each fix checks.
+fn half_rejected(src: &str, old: &str) {
+    let [rat, f64] = half_fixes(old);
+    assert_eq!(type_errors(src), [unfixed("1", &rat, &f64)], "{src}");
+    fixes_check(src, old, [&rat, &f64]);
 }
 
 #[test]
-fn a_decimal_in_a_payload_of_an_argument_is_rejected() {
-    let src = "id(x) = x;\ny = id(x: #bad(0.5));\n";
-    let (f64, rat) = ("y = id(x: #bad(0.5f64));", "y = id(x: #bad(0.5r));");
-    assert_eq!(type_errors(src), [unfixed("0.5", f64, rat, None)]);
-    fixes_check(src, "y = id(x: #bad(0.5));", [f64, rat]);
+fn a_division_in_a_tuple_passed_to_min_or_max_is_rejected() {
+    // As `min(1 / 2, 1)` is: the other tuple's `1` gives the `1 / 2` no carrier.
+    for old in [
+        "x = min((1 / 2, 1), (1, 2));",
+        "x = max((1, 2), (1 / 2, 1));",
+    ] {
+        half_rejected(&format!("{old}\n"), old);
+    }
     assert_eq!(
-        value("id(x) = x;\ny = id(x: #bad(0.5r));\n", "y"),
+        value("x = min((1.0f64 / 2, 1), (1, 2));\n", "x"),
+        "(0.5, 1)"
+    );
+    // The `1` compared with `1r / 2` takes its carrier; the `2` meets only `1` and stays `int`.
+    assert_eq!(value("x = max((1, 2), (1r / 2, 1));\n", "x"), "(1r, 2)");
+    // A decimal there takes `f64`.
+    assert_eq!(value("x = min((0.5, 1), (1, 2));\n", "x"), "(0.5, 1)");
+    assert_eq!(value("x = max((1, 2), (0.5, 1));\n", "x"), "(1.0, 2)");
+}
+
+#[test]
+fn a_division_in_a_payload_of_an_argument_is_rejected() {
+    let old = "y = id(x: #bad(1 / 2));";
+    half_rejected(&format!("id(x) = x;\n{old}\n"), old);
+    assert_eq!(
+        value("id(x) = x;\ny = id(x: #bad(1r / 2));\n", "y"),
         "#bad(1r/2r)"
+    );
+    assert_eq!(
+        value("id(x) = x;\ny = id(x: #bad(0.5));\n", "y"),
+        "#bad(0.5)"
     );
 }
 
 #[test]
 fn the_parts_of_a_tuple_that_reach_one_variable_fix_nothing_for_each_other() {
     // The display reaches `x` whole, and its components are apart: the `0.5f64` gives the
-    // second `0.5` no carrier.
-    let src = "id(x) = x;\ny = id(x: (0.5f64, 0.5));\n";
-    let (f64, rat) = ("y = id(x: (0.5f64, 0.5f64));", "y = id(x: (0.5f64, 0.5r));");
-    assert_eq!(type_errors(src), [unfixed("0.5", f64, rat, None)]);
-    assert_eq!(rejected_at(src), [src.rfind("0.5)").unwrap()]);
-    fixes_check(src, "y = id(x: (0.5f64, 0.5));", [f64, rat]);
+    // `1 / 2` no carrier.
+    let old = "y = id(x: (0.5f64, 1 / 2));";
+    let src = format!("id(x) = x;\n{old}\n");
+    half_rejected(&src, old);
+    assert_eq!(rejected_at(&src), [src.rfind("1 / 2)").unwrap()]);
     assert_eq!(
-        value("id(x) = x;\ny = id(x: (0.5f64, 0.5r));\n", "y"),
+        value("id(x) = x;\ny = id(x: (0.5f64, 1r / 2));\n", "y"),
         "(0.5, 1r/2r)"
+    );
+    // A decimal beside it takes `f64` of its own.
+    assert_eq!(
+        value("id(x) = x;\ny = id(x: (0.5f64, 0.5));\n", "y"),
+        "(0.5, 0.5)"
     );
 }
 
@@ -118,184 +163,177 @@ fn an_argument_of_a_carrier_fixes_the_literals_of_a_tuple_part() {
 }
 
 #[test]
-fn a_decimal_bound_to_several_names_through_a_call_or_an_if_is_rejected() {
+fn a_division_bound_to_several_names_through_a_call_or_an_if_is_rejected() {
+    let old = "a, b = id(x: (1 / 2, 1));";
+    half_rejected(&format!("id(x) = x;\n{old}\n"), old);
+    let old = "a, b = if c { (1 / 2, 1) } else { (1, 2) };";
+    half_rejected(&format!("c = true;\n{old}\n"), old);
+    // A decimal there takes `f64`.
     let src = "id(x) = x;\na, b = id(x: (0.5, 1));\n";
-    let (f64, rat) = ("a, b = id(x: (0.5f64, 1));", "a, b = id(x: (0.5r, 1));");
-    assert_eq!(type_errors(src), [unfixed("0.5", f64, rat, None)]);
-    fixes_check(src, "a, b = id(x: (0.5, 1));", [f64, rat]);
-    let src = "c = true;\na, b = if c { (0.5, 1) } else { (1, 2) };\n";
-    let (f64, rat) = (
-        "a, b = if c { (0.5f64, 1) } else { (1, 2) };",
-        "a, b = if c { (0.5r, 1) } else { (1, 2) };",
+    assert_eq!(
+        (value(src, "a"), value(src, "b")),
+        ("0.5".into(), "1".into())
     );
-    assert_eq!(type_errors(src), [unfixed("0.5", f64, rat, None)]);
-    fixes_check(src, "a, b = if c { (0.5, 1) } else { (1, 2) };", [f64, rat]);
+    let src = "c = true;\na, b = if c { (0.5, 1) } else { (1, 2) };\n";
+    assert_eq!(value(src, "a"), "0.5");
 }
 
 #[test]
-fn a_decimal_a_branch_or_a_block_ends_in_is_rejected() {
+fn a_division_a_branch_or_a_block_ends_in_is_rejected() {
     let cases = [
-        (
-            "y = if c { 0.5 } else { 1 };",
-            "y = if c { 0.5f64 } else { 1 };",
-            "y = if c { 0.5r } else { 1 };",
-        ),
-        (
-            "y = if c { (0.5, 1) } else { (1, 1) };",
-            "y = if c { (0.5f64, 1) } else { (1, 1) };",
-            "y = if c { (0.5r, 1) } else { (1, 1) };",
-        ),
-        (
-            "y = if c { #bad(0.5) } else { 1 };",
-            "y = if c { #bad(0.5f64) } else { 1 };",
-            "y = if c { #bad(0.5r) } else { 1 };",
-        ),
-        (
-            "y = (if c { 0.5 } else { 1 }, 2);",
-            "y = (if c { 0.5f64 } else { 1 }, 2);",
-            "y = (if c { 0.5r } else { 1 }, 2);",
-        ),
-        (
-            "y = { q = 1; (q, 0.5) };",
-            "y = { q = 1; (q, 0.5f64) };",
-            "y = { q = 1; (q, 0.5r) };",
-        ),
+        "y = if c { 1 / 2 } else { 1 };",
+        "y = if c { (1 / 2, 1) } else { (1, 1) };",
+        "y = if c { #bad(1 / 2) } else { 1 };",
+        "y = (if c { 1 / 2 } else { 1 }, 2);",
+        "y = { q = 1; (q, 1 / 2) };",
         // A component that the index does not select is rejected all the same: nothing
         // gives it a carrier, wherever it stands.
-        (
-            "y = (0.5, 1)[1];",
-            "y = (0.5f64, 1)[1];",
-            "y = (0.5r, 1)[1];",
-        ),
+        "y = (1 / 2, 1)[1];",
     ];
-    for (old, f64, rat) in cases {
-        let src = format!("c = true;\n{old}\n");
-        assert_eq!(type_errors(&src), [unfixed("0.5", f64, rat, None)], "{old}");
-        fixes_check(&src, old, [f64, rat]);
+    for old in cases {
+        half_rejected(&format!("c = true;\n{old}\n"), old);
+        // The same place with a decimal takes `f64`.
+        let src = format!("c = true;\n{}\n", old.replacen("1 / 2", "0.5", 1));
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
     }
     assert_eq!(
-        value("c = true;\ny = if c { 0.5r } else { 1 };\n", "y"),
+        value("c = true;\ny = if c { 1r / 2 } else { 1 };\n", "y"),
         "1r/2r"
     );
+    assert_eq!(
+        value("c = true;\ny = if c { 0.5 } else { 1 };\n", "y"),
+        "0.5"
+    );
+    assert_eq!(
+        value("c = true;\ny = { q = 1; (q, 0.5) };\n", "y"),
+        "(1, 0.5)"
+    );
 }
 
 #[test]
-fn a_decimal_a_string_hole_ends_in_is_rejected() {
-    let cases = [
-        (
-            "y = \"a${(0.5, 1)[0]}\";",
-            "y = \"a${(0.5f64, 1)[0]}\";",
-            "y = \"a${(0.5r, 1)[0]}\";",
-        ),
-        (
-            "y = \"${if c { 0.5 } else { 1 }}\";",
-            "y = \"${if c { 0.5f64 } else { 1 }}\";",
-            "y = \"${if c { 0.5r } else { 1 }}\";",
-        ),
-    ];
-    for (old, f64, rat) in cases {
-        let src = format!("c = true;\n{old}\n");
-        assert_eq!(type_errors(&src), [unfixed("0.5", f64, rat, None)], "{old}");
-        fixes_check(&src, old, [f64, rat]);
+fn a_division_a_string_hole_ends_in_is_rejected() {
+    for old in [
+        "y = \"a${(1 / 2, 1)[0]}\";",
+        "y = \"${if c { 1 / 2 } else { 1 }}\";",
+    ] {
+        half_rejected(&format!("c = true;\n{old}\n"), old);
     }
     assert_eq!(
-        value("c = true;\ny = \"a${(0.5r, 1)[0]}\";\n", "y"),
+        value("c = true;\ny = \"a${(1r / 2, 1)[0]}\";\n", "y"),
         "\"a1r/2r\""
+    );
+    assert_eq!(
+        value("c = true;\ny = \"a${(0.5, 1)[0]}\";\n", "y"),
+        "\"a0.5\""
     );
 }
 
 #[test]
-fn a_decimal_a_called_function_returns_is_rejected() {
-    // DESIGN.md L1.26a: "`g(positional c: bool) = if c { 1 } else { 2.5 }` is `(bool) -> 1 |
-    // 2.5`, ... and `y = g(c)` is rejected at the `2.5`, which nothing fixes".
-    let g = "g(positional c: bool) = if c { 1 } else { 2.5 };";
-    let src = format!("{g}\nc = true;\ny = g(c);\n");
-    assert_eq!(sig(&src, "g"), "bool -> 1 | 2.5");
-    let (f64, rat) = (
-        "g(positional c: bool) = if c { 1 } else { 2.5f64 };",
-        "g(positional c: bool) = if c { 1 } else { 2.5r };",
-    );
-    assert_eq!(type_errors(&src), [unfixed("2.5", f64, rat, Some("g"))]);
-    fixes_check(&src, g, [f64, rat]);
-    // A body that is the decimal, one that returns it in a tuple, one that calls a function
+fn a_division_a_called_function_returns_is_rejected() {
+    // A body that is the division, one that returns it in a tuple, one that calls a function
     // that returns it, and bodies that return it in a payload, which nothing fixes, as at
-    // `y = #bad(0.5)`: the message names the call the value is bound to.
-    for (defs, call, name) in [
-        ("f() = 0.5;\n", "y = f();", "f"),
-        ("f(x: int) = (x, 0.5);\n", "y = f(x: 1);", "f"),
-        ("f() = 0.5;\ng() = f();\n", "y = g();", "g"),
-        ("f() = #bad(0.5);\n", "y = f();", "f"),
-        ("f() = (1, #bad(0.5));\n", "y = f();", "f"),
+    // `y = #bad(1 / 2)`: the rejection is at the body's line, whose fixes rewrite it.
+    for (defs, call) in [
+        ("f() = 1 / 2;\n", "y = f();"),
+        ("f(x: int) = (x, 1 / 2);\n", "y = f(x: 1);"),
+        ("f() = 1 / 2;\ng() = f();\n", "y = g();"),
+        ("f() = #bad(1 / 2);\n", "y = f();"),
+        ("f() = (1, #bad(1 / 2));\n", "y = f();"),
         (
-            "f(positional c: bool) = if c { #bad(0.5) } else { #ok };\n",
+            "f(positional c: bool) = if c { #bad(1 / 2) } else { #ok };\n",
             "y = f(true);",
-            "f",
         ),
         (
-            "f(x) = if x > 0 { #bad(x) } else { #bad(0.5) };\n",
+            "f(x) = if x > 0 { #bad(x) } else { #bad(1 / 2) };\n",
             "y = f(x: 1.0f64);",
-            "f",
         ),
     ] {
         let src = format!("{defs}{call}\n");
-        let line = defs.lines().next().unwrap();
-        let f64 = line.replace("0.5", "0.5f64");
-        let rat = line.replace("0.5", "0.5r");
-        assert_eq!(
-            type_errors(&src),
-            [unfixed("0.5", &f64, &rat, Some(name))],
-            "{src}"
-        );
-        fixes_check(&src, line, [&f64, &rat]);
+        half_rejected(&src, defs.lines().next().unwrap());
+        // The same body with a decimal returns an `f64`.
+        let src = src.replacen("1 / 2", "0.5", 1);
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
     }
-    assert_eq!(value("f() = 0.5r;\ny = f();\n", "y"), "1r/2r");
-    assert_eq!(value("f() = #bad(0.5r);\ny = f();\n", "y"), "#bad(1r/2r)");
+    assert_eq!(value("f() = 1r / 2;\ny = f();\n", "y"), "1r/2r");
+    assert_eq!(value("f() = #bad(1r / 2);\ny = f();\n", "y"), "#bad(1r/2r)");
+    assert_eq!(value("f() = 0.5;\ny = f();\n", "y"), "0.5");
+    assert_eq!(value("f() = #bad(0.5);\ny = f();\n", "y"), "#bad(0.5)");
 }
 
 #[test]
-fn a_binding_of_a_call_with_a_literal_argument_keeps_no_unfixed_decimal() {
+fn a_binding_of_a_call_settles_each_literal_of_its_result_as_alone() {
     // Item LIT-unfixed-decimal-binding, the program of its note: `y = g(true)` with `g` of type
-    // `(bool) -> 1 | 2.5` was accepted as `1`. DESIGN.md L1.26a: "`y = g(c)` is rejected at the
-    // `2.5`, which nothing fixes". The argument's value does not matter: the type of `g(true)`
-    // is the type of `g`'s result, which keeps the `2.5`.
+    // `(bool) -> 1 | 2.5`. DESIGN.md L1.26a: "`y = g(c)` reads the `1` at `int` and the `2.5`
+    // at `f64`, as each would be read alone where nothing fixes it". The argument's value does
+    // not matter to the type: the type of `g(true)` is the type of `g`'s result.
     let g = "g(positional c: bool) = if c { 1 } else { 2.5 };";
-    let (f64, rat) = (
-        "g(positional c: bool) = if c { 1 } else { 2.5f64 };",
-        "g(positional c: bool) = if c { 1 } else { 2.5r };",
-    );
-    for (defs, call, name) in [
-        ("", "y = g(true);", "g"),
-        ("", "y = g(false);", "g"),
-        // Through a nested call: the message names the call the value is bound to, and the
-        // fixes still rewrite the line that writes the decimal.
-        ("k(positional c: bool) = g(c);\n", "y = k(true);", "k"),
+    assert_eq!(sig(&format!("{g}\n"), "g"), "bool -> 1 | 2.5");
+    for (defs, call, v) in [
+        ("c = true;\n", "y = g(c);", "1"),
+        ("", "y = g(true);", "1"),
+        ("", "y = g(false);", "2.5"),
+        // Through nested calls.
+        ("k(positional c: bool) = g(c);\n", "y = k(true);", "1"),
         (
             "k(positional c: bool) = g(c);\nm(positional c: bool) = k(c);\n",
             "y = m(false);",
-            "m",
+            "2.5",
         ),
     ] {
         let src = format!("{g}\n{defs}{call}\n");
-        assert_eq!(
-            type_errors(&src),
-            [unfixed("2.5", f64, rat, Some(name))],
-            "{src}"
-        );
-        fixes_check(&src, g, [f64, rat]);
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        assert_eq!(value(&src, "y"), v, "{src}");
     }
-    // The fixes give these values: the `1` meets no carrier and is the `int` 1, and the
+    // The suffixes give these values: the `1` meets no carrier and is the `int` 1, and the
     // decimal is the carrier its suffix names.
-    let at = |line: &str, call: &str| format!("{line}\n{call}\n");
-    assert_eq!(value(&at(f64, "y = g(true);"), "y"), "1");
-    assert_eq!(value(&at(f64, "y = g(false);"), "y"), "2.5");
-    assert_eq!(value(&at(rat, "y = g(false);"), "y"), "5r/2r");
-    // A carrier at the use fixes both values, so nothing is rejected: an `f64` parameter
-    // reads the `1` as 1.0. (A declared binding, `y: f64 = g(true);`, is the other fix DESIGN
-    // names; this zedc does not compile a declared binding yet.)
+    let rat = "g(positional c: bool) = if c { 1 } else { 2.5r };";
+    assert_eq!(value(&format!("{rat}\ny = g(false);\n"), "y"), "5r/2r");
+    // A carrier at the use fixes both values: an `f64` parameter reads the `1` as 1.0. (A
+    // declared binding, `y: f64 = g(true);`, is the other fix DESIGN names; this zedc does not
+    // compile a declared binding yet.)
     let fixed = format!("{g}\nh(positional z: f64) = z;\na = h(g(true));\nb = h(g(false));\n");
     assert_eq!(type_errors(&fixed), Vec::<String>::new());
     assert_eq!(value(&fixed, "a"), "1.0");
     assert_eq!(value(&fixed, "b"), "2.5");
+}
+
+#[test]
+fn a_division_in_a_branch_of_a_called_function_is_rejected_at_its_own_literal() {
+    // `y = g(c)` settles each branch as it would be alone (DESIGN.md L1.26a): the `1` at
+    // `int`, and the `5 / 2` is rejected, as `y = 5 / 2` is; its fixes rewrite the `5`. The
+    // top level does so: `y = if c { 1 } else { 5 / 2 }` is rejected at the `5`. A call does
+    // not, in this zedc (`branch_division_names_the_one`; row
+    // LIT-branch-division-names-wrong-literal).
+    let g = "g(positional c: bool) = if c { 1 } else { 5 / 2 };";
+    let (rat, f64) = (
+        "g(positional c: bool) = if c { 1 } else { 5r / 2 };",
+        "g(positional c: bool) = if c { 1 } else { 5.0f64 / 2 };",
+    );
+    let old = "y = if c { 1 } else { 5 / 2 };";
+    let src = format!("c = true;\n{old}\n");
+    assert_eq!(
+        type_errors(&src),
+        [unfixed(
+            "5",
+            "y = if c { 1 } else { 5r / 2 };",
+            "y = if c { 1 } else { 5.0f64 / 2 };"
+        )]
+    );
+    assert_eq!(value(&format!("{rat}\ny = g(false);\n"), "y"), "5r/2r");
+    assert_eq!(value(&format!("{f64}\ny = g(false);\n"), "y"), "2.5");
+    for (defs, call) in [
+        ("c = true;\n", "y = g(c);"),
+        ("", "y = g(true);"),
+        ("k(positional c: bool) = g(c);\n", "y = k(true);"),
+        (
+            "k(positional c: bool) = g(c);\nm(positional c: bool) = k(c);\n",
+            "y = m(false);",
+        ),
+    ] {
+        let src = format!("{g}\n{defs}{call}\n");
+        // The `5` in DESIGN.md; the `1`, with fixes that do not check, in this zedc.
+        branch_division_names_the_one(&src);
+    }
 }
 
 #[test]
@@ -343,34 +381,40 @@ fn a_literal_branch_joins_a_class_beside_atoms() {
 }
 
 #[test]
-fn the_decimals_a_value_ends_in_are_rejected_in_one_message() {
-    let src = "c = true;\ny = (if c { 0.5 } else { 1 }, if c { 0.25 } else { 2 });\n";
+fn the_divisions_in_two_branched_parts_of_a_value_are_each_rejected() {
+    // Each `if` is its own place, so each division is one rejection at its own literal. (A
+    // plain tuple of divisions is one message: `tuples::the_divisions_of_a_tuple_are_rejected_
+    // in_one_message`.)
+    let old = "y = (if c { 1 / 2 } else { 1 }, if c { 1 / 4 } else { 2 });";
+    let src = format!("c = true;\n{old}\n");
     assert_eq!(
-        type_errors(src),
+        type_errors(&src),
         [
-            "2 parts of the value of `y` are literals that nothing here gives a carrier, and Zed \
-             does not choose one for them; the steps below give each one. Try `y = (if c { 0.5f64 \
-             } else { 1 }, if c { 0.25f64 } else { 2 })` instead.\n  fixes, each checked \
-             here:\n    y = (if c { 0.5f64 } else { 1 }, if c { 0.25f64 } else { 2 });    the \
-             literal is then the f64 0.5; the literal is then the f64 0.25\n    y = (if c { 0.5r } \
-             else { 1 }, if c { 0.25r } else { 2 });        the literal is then exactly 0.5, a \
-             rat; the literal is then exactly 0.25, a rat [0.5]"
+            unfixed(
+                "1",
+                "y = (if c { 1r / 2 } else { 1 }, if c { 1 / 4 } else { 2 });",
+                "y = (if c { 1.0f64 / 2 } else { 1 }, if c { 1 / 4 } else { 2 });"
+            ),
+            unfixed(
+                "1",
+                "y = (if c { 1 / 2 } else { 1 }, if c { 1r / 4 } else { 2 });",
+                "y = (if c { 1 / 2 } else { 1 }, if c { 1.0f64 / 4 } else { 2 });"
+            ),
         ]
     );
-    let old = "y = (if c { 0.5 } else { 1 }, if c { 0.25 } else { 2 });";
-    fixes_check(
-        src,
-        old,
-        [
-            "y = (if c { 0.5f64 } else { 1 }, if c { 0.25f64 } else { 2 });",
-            "y = (if c { 0.5r } else { 1 }, if c { 0.25r } else { 2 });",
-        ],
-    );
+    // With both fixed, and with decimals there, the value is accepted.
+    for fixed in [
+        "y = (if c { 1r / 2 } else { 1 }, if c { 1r / 4 } else { 2 });",
+        "y = (if c { 0.5 } else { 1 }, if c { 0.25 } else { 2 });",
+    ] {
+        let src = format!("c = true;\n{fixed}\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{fixed}");
+    }
 }
 
-/// `y = (0.5, 1.5, …);`, `n` decimals on one line.
-pub(super) fn decimals(n: usize) -> String {
-    let parts: Vec<String> = (0..n).map(|i| format!("{i}.5")).collect();
+/// `y = (0 / 2, 1 / 2, …);`, `n` divisions of integer literals on one line.
+pub(super) fn divisions(n: usize) -> String {
+    let parts: Vec<String> = (0..n).map(|i| format!("{i} / 2")).collect();
     format!("y = ({});\n", parts.join(", "))
 }
 
@@ -380,9 +424,9 @@ pub(super) fn printed(src: &str) -> String {
 }
 
 /// A chain of `n` functions, each returning a call of the one before, the first returning
-/// `0.5`, and `n` bindings, each a call of the last.
-pub(super) fn chain(n: usize) -> String {
-    let mut src = String::from("c0() = 0.5;\n");
+/// `body`, and `n` bindings, each a call of the last.
+pub(super) fn chain(n: usize, body: &str) -> String {
+    let mut src = format!("c0() = {body};\n");
     for k in 1..=n {
         src += &format!("c{k}() = c{}();\n", k - 1);
     }
@@ -393,21 +437,24 @@ pub(super) fn chain(n: usize) -> String {
 }
 
 #[test]
-fn many_decimals_on_one_line_print_the_line_once_in_one_message() {
+fn many_divisions_on_one_line_print_the_line_once_in_one_message() {
     // A small instance of the benchmark
-    // `bench::tuple_rest::many_decimals_on_one_line_print_the_line_once`.
-    let src = decimals(5);
+    // `bench::tuple_rest::many_divisions_on_one_line_print_the_line_once`.
+    let src = divisions(5);
     assert_eq!(
         printed(&src).matches(&src[..20]).count(),
         1,
         "the line is printed once"
     );
+    assert_eq!(type_errors(&src).len(), 1);
 }
 
 #[test]
-fn calls_of_a_chain_that_returns_a_decimal_are_one_error() {
+fn calls_of_a_chain_that_returns_a_division_are_one_error() {
     // A small instance of the benchmark
     // `bench::tuple_rest::many_calls_of_a_long_chain_check_in_linear_time`.
-    let errors = type_errors(&chain(2));
+    let errors = type_errors(&chain(2, "1 / 2"));
     assert_eq!(errors.len(), 1, "{errors:?}");
+    // With a decimal the chain returns an `f64`.
+    assert_eq!(value(&chain(2, "0.5"), "y1"), "0.5");
 }

@@ -70,39 +70,36 @@ fn where_nothing_gives_a_carrier_the_menu_writes_the_first_literal() {
     assert_eq!(
         first(src),
         "Nothing gives the integer literals a carrier, and `/` has none at `int`: `y = 1 + 7 / 2`. \
-         Try `y = 1.0f64 + 7 / 2` instead."
+         Try `y = 1r + 7 / 2` instead."
     );
     assert_eq!(
         checked(src),
         pairs(&[
-            ("y = 1.0f64 + 7 / 2;", "y is 4.5"),
             ("y = 1r + 7 / 2;", "y is 9r/2r"),
+            ("y = 1.0 + 7 / 2;", "y is 4.5"),
             ("y = f64(1) + 7 / 2;", "y is 4.5"),
         ])
     );
-    // A decimal fixed by its suffix gives its carrier to the `/` it meets.
-    assert_eq!(
-        checked("y = 0.5 * (7 / 2);\n"),
-        pairs(&[
-            ("y = 0.5f64 * (7 / 2);", "y is 1.75"),
-            ("y = 0.5r * (7 / 2);", "y is 7r/4r"),
-        ])
-    );
+    // A decimal gives its carrier to the `/` it meets: `f64` where nothing fixes it (author
+    // decision 2026-11-12), or the carrier of its suffix.
+    assert_eq!(y("y = 0.5 * (7 / 2);\n"), "1.75");
+    assert_eq!(y("y = 0.5f64 * (7 / 2);\n"), "1.75");
+    assert_eq!(y("y = 0.5r * (7 / 2);\n"), "7r/4r");
     // A `^` whose exponent is an integer literal takes `rat` too, by its arrow (rat, int): the
     // exponent keeps `int` while the base takes `rat` (POW-rat-literal-ops).
     assert_eq!(
         checked("y = 2 ^ 3 / 2;\n"),
         pairs(&[
-            ("y = 2.0f64 ^ 3 / 2;", "y is 4.0"),
             ("y = 2r ^ 3 / 2;", "y is 2r ^ 3 / 2"),
+            ("y = 2.0 ^ 3 / 2;", "y is 4.0"),
             ("y = f64(2) ^ 3 / 2;", "y is 4.0"),
         ])
     );
     assert_eq!(
         checked("y = 1 + 2 ^ 3 / 2;\n"),
         pairs(&[
-            ("y = 1.0f64 + 2 ^ 3 / 2;", "y is 5.0"),
             ("y = 1r + 2 ^ 3 / 2;", "y is 1r + 2 ^ 3 / 2"),
+            ("y = 1.0 + 2 ^ 3 / 2;", "y is 5.0"),
             ("y = f64(1) + 2 ^ 3 / 2;", "y is 5.0"),
         ])
     );
@@ -126,36 +123,78 @@ fn a_tuple_comparison_gives_a_component_its_carrier() {
 
 #[test]
 fn a_tuple_menu_names_the_value_where_a_pair_is_an_operation() {
+    // A decimal in a tuple comparison is an `f64` where nothing fixes it (author decision
+    // 2026-11-12), and gives its carrier to the operation in the other component.
+    assert_eq!(y("y = (1 + 2, 0.5) == (3.0f64, 1);\n"), "false");
+    assert_eq!(y("y = (1 + 2, 0.5) == (3r, 0.5);\n"), "true");
+    assert_eq!(y("y = (1 + 0.5, 0) == (2.5, 0);\n"), "false");
+    // DESIGN.md step L1.26b: an operation on literals alone with a decimal among its operands
+    // takes `f64` where nothing fixes its carrier, and `1 == 1.0` is `true`; step L1.26a: an
+    // operation on literals alone "takes the carrier of what it meets". So `2 + 1` meets the
+    // `f64` `1 + 0.5` and `y` is `false`. This zedc keeps `2 + 1` at `int` and rejects the
+    // comparison as always `false`, as it does `y = 1 + 0.5 == 2 + 1;` and `2^0.5 == 1 + 1`
+    // (`top_body_agree::a_comparison_of_an_f64_with_an_int_is_rejected_in_every_place`); row
+    // LIT-f64-op-meets-int-op.
+    assert_eq!(
+        type_errors("y = (1 + 0.5, 0) == (2 + 1, 0);\n"),
+        [
+            "No value is both `f64` and `int`: component `[0]` of the left operand compared by \
+             `==` with component `[0]` of the right operand is always `false`. Try `false` \
+             instead. [(1 + 0.5, 0) == (2 + 1, 0)]"
+        ]
+    );
     // sec:diagnostics, "The value a fix names": the binder is named "where the binder's value
-    // is a literal or an operation on literals". `1 + 2` takes the carrier of `3.0f64` in its
-    // pair, so the fix that writes `0.5` with a carrier gives `y` a value.
-    let src = "y = (1 + 2, 0.5) == (3.0f64, 1);\n";
+    // is the literal, or an operation on literals alone", as `y = (3^2 + 1, 1 / 2) == (10, 1 /
+    // 2);` has `y is (3r^2 + 1, 1 / 2) == (10, 1 / 2)`: one rejection, whose every fix names
+    // `y`. `1 + 2` takes the carrier of `3.0f64` in its pair, and the `/` of integer literals
+    // in the other pair has none. This zedc names the literal, as in a call or a body, and
+    // rejects each `/` of a pair that meets another `/` on its own; row
+    // LIT-tuple-compare-names-literal. Each fix it lists checks.
+    let literal = |n: &str| {
+        [
+            format!("the literal is then exactly {n}, a rat"),
+            format!("the literal is then the f64 {n}.0"),
+        ]
+    };
+    let [rat, f64] = literal("1");
     assert_eq!(
-        checked(src),
-        pairs(&[
-            ("y = (1 + 2, 0.5f64) == (3.0f64, 1);", "y is false"),
-            ("y = (1 + 2, 0.5r) == (3.0f64, 1);", "y is false"),
-        ])
+        checked("y = (1 + 2, 1 / 2) == (3.0f64, 1);\n"),
+        [
+            (
+                "y = (1 + 2, 1r / 2) == (3.0f64, 1);".to_string(),
+                rat.clone()
+            ),
+            (
+                "y = (1 + 2, 1.0f64 / 2) == (3.0f64, 1);".to_string(),
+                f64.clone()
+            ),
+        ]
     );
-    assert_eq!(
-        checked("y = (1 + 2, 0.5) == (3r, 0.5);\n"),
-        pairs(&[
-            ("y = (1 + 2, 0.5f64) == (3r, 0.5);", "y is true"),
-            ("y = (1 + 2, 0.5r) == (3r, 0.5);", "y is true"),
-        ])
+    assert_eq!(y("y = (1 + 2, 1r / 2) == (3.0f64, 1);\n"), "false");
+    assert_eq!(y("y = (1 + 2, 1.0f64 / 2) == (3.0f64, 1);\n"), "false");
+    let errors = type_errors("y = (1 + 2, 1 / 2) == (3r, 1 / 2);\n");
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    for (e, fix) in errors.iter().zip([
+        "y = (1 + 2, 1r / 2) == (3r, 1 / 2);",
+        "y = (1 + 2, 1 / 2) == (3r, 1r / 2);",
+    ]) {
+        assert!(e.contains(&format!("\n    {fix}        {rat}\n")), "{e}");
+        assert_eq!(y(&format!("{fix}\n")), "true", "{fix}");
+    }
+    // Two rejections: the comparison, as above, and the `1`.
+    let errors = type_errors("y = (1 + 1 / 2, 0) == (2 + 1, 0);\n");
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(
+        errors[0].starts_with("No value is both `f64` and `int`"),
+        "{errors:?}"
     );
-    // The fixed decimal gives its carrier to the operation in the other component.
-    assert_eq!(
-        checked("y = (1 + 0.5, 0) == (2 + 1, 0);\n"),
-        pairs(&[
-            ("y = (1 + 0.5f64, 0) == (2 + 1, 0);", "y is false"),
-            ("y = (1 + 0.5r, 0) == (2 + 1, 0);", "y is false"),
-        ])
+    assert!(
+        errors[1].contains("\n    y = (1 + 1r / 2, 0) == (2 + 1, 0);        ")
+            && errors[1].contains(&rat),
+        "{errors:?}"
     );
-    // Each fix compiles and gives the value it names.
-    assert_eq!(y("y = (1 + 2, 0.5f64) == (3.0f64, 1);\n"), "false");
-    assert_eq!(y("y = (1 + 2, 0.5r) == (3r, 0.5);\n"), "true");
-    assert_eq!(y("y = (1 + 0.5f64, 0) == (2 + 1, 0);\n"), "false");
+    assert_eq!(y("y = (1 + 1r / 2, 0) == (2 + 1, 0);\n"), "false");
+    assert_eq!(y("y = (1 + 1.0f64 / 2, 0) == (2 + 1, 0);\n"), "false");
 }
 
 #[test]
@@ -169,12 +208,12 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     assert_eq!(
         checked(src),
         pairs(&[
-            ("y = 2.0f64 ^ (1.0f64 + 1) / 2;", "y is 2.0"),
             ("y = 2r ^ (1 + 1) / 2;", "y is 2r ^ (1 + 1) / 2"),
+            ("y = 2.0 ^ (1.0 + 1) / 2;", "y is 2.0"),
             ("y = f64(2) ^ (f64(1) + 1) / 2;", "y is 2.0"),
         ])
     );
-    assert_eq!(y("y = 2.0f64 ^ (1.0f64 + 1) / 2;\n"), "2.0");
+    assert_eq!(y("y = 2.0 ^ (1.0 + 1) / 2;\n"), "2.0");
     assert_eq!(y("y = 2r ^ (1 + 1) / 2;\n"), "2r");
     assert_eq!(y("y = f64(2) ^ (f64(1) + 1) / 2;\n"), "2.0");
     // A literal exponent takes the carrier `f64` of the base it meets, and keeps `int` under a
@@ -183,8 +222,8 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     assert_eq!(
         checked("y = 0xFF / 2 ^ 2;\n"),
         pairs(&[
-            ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
             ("y = rat(0xFF) / 2 ^ 2;", "y is rat(0xFF) / 2 ^ 2"),
+            ("y = f64(0xFF) / 2 ^ 2;", "y is 63.75"),
         ])
     );
     assert_eq!(y("y = f64(0xFF) / 2 ^ 2;\n"), "63.75");
@@ -200,22 +239,21 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
 /// LIT-rat-int-op-exponent), so `^` keeps `rat` and the `rat` fix is offered beside `f64`. An
 /// exponent whose value is no exact `f64`, as `2 ^ 100 - 1`, removes `f64` as that value
 /// written as one literal does, and `f32` too, since a literal base takes no `f32` through
-/// `f32 ^ int` (DESIGN.md L1.17; plan row LIT-f32-inexact-exponent): `rat` alone is named,
-/// and the exact `rat` fix alone is offered.
+/// `f32 ^ int` (DESIGN.md L1.17; plan row LIT-f32-inexact-exponent): the exact `rat` fix alone
+/// is offered. The headline names no carriers, and the menu lists `rat` first (author
+/// decision 2026-11-12).
 #[test]
 fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
-    for (body, carriers, fix) in [
-        ("2 ^ (1 + 1) / 3", "f32 | f64 | rat", "2.0f64 ^ (1 + 1) / 3"),
-        ("2 ^ 2 ^ 10 / 3", "f32 | f64 | rat", "2.0f64 ^ 2 ^ 10 / 3"),
-        ("2 ^ 2 ^ 100 / 3", "f32 | f64 | rat", "2.0f64 ^ 2 ^ 100 / 3"),
+    for (body, fix) in [
+        ("2 ^ (1 + 1) / 3", "2r ^ (1 + 1) / 3"),
+        ("2 ^ 2 ^ 10 / 3", "2r ^ 2 ^ 10 / 3"),
+        ("2 ^ 2 ^ 100 / 3", "2r ^ 2 ^ 100 / 3"),
         (
             "2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
-            "rat",
             "2r ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
         ),
         (
             "2 ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
-            "rat",
             "2r ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
         ),
     ] {
@@ -223,11 +261,21 @@ fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
         assert_eq!(
             first(&src),
             format!(
-                "Nothing gives the literal `2` a carrier of `{carriers}`. \
+                "Nothing gives the literal `2` a carrier. \
                  Try `h(positional c: bool) = {fix}` instead."
             ),
             "{src}"
         );
+    }
+    // Where the exponent's value is no exact `f64`, the `rat` fix alone is offered.
+    for (body, n) in [
+        ("2 ^ (1 + 1) / 3", 2),
+        ("2 ^ 2 ^ 100 / 3", 2),
+        ("2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)", 1),
+        ("2 ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375", 1),
+    ] {
+        let src = format!("h(positional c: bool) = {body};\n");
+        assert_eq!(super::fixes::fixes(&src).len(), n, "{src}");
     }
     // The `rat` fix is exact: `2r`, where the `f64` arithmetic gives `nan`.
     let at = |body: &str| y(&format!("h(positional c: bool) = {body};\ny = h(true);\n"));

@@ -19,7 +19,7 @@ use super::super::scaling::{
     flat_exponent, half_of_a_power, if_of_a_power, int_pair_of_a_power, long,
     main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument, nested_divisions,
     nested_quotients, pair_of_a_power, pairs, power_divisor, powers_at_the_top, powers_in_a_body,
-    powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions,
+    powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions, tuple_of_a_power,
 };
 
 /// Besides its ratio: `n` follows for `n` literals, and the elaboration of the checked unit
@@ -91,9 +91,11 @@ fn a_body_of_many_generic_literal_arguments_scales() {
     });
 }
 
-/// With `d = 0.5` nothing gives the literals a carrier, and each fix writes the decimal with
-/// one, on one line of length of order n, and names the value of `y`, folded over the `2n`
-/// operations (MSG-literal-fixes). Negative controls (each run once, not committed), at
+/// With `d = (1 / 2)` nothing gives the literals a carrier, and each fix writes the first literal
+/// with one, on one line of length of order n, and names the value of `y`, folded over the `2n`
+/// operations (MSG-literal-fixes). The controls below were run with
+/// `d = 0.5`, before a decimal that nothing fixes took `f64` (author decision 2026-11-12), when
+/// each fix wrote the decimal. Negative controls (each run once, not committed), at
 /// n = 500 and 4,000, when each fix wrote the first literal of every sum: `Rewrite::line`
 /// building a new line for each edit failed at 33.0 times the bytes; applying each edit in
 /// place by `String::replace_range`, which moves the rest of the line each time, passed at 8.2
@@ -106,12 +108,12 @@ fn a_body_of_many_generic_literal_arguments_scales() {
 fn a_menu_of_a_long_line_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 860;
-        let units = scaling::inputs(n, |m| Resolved::new(&product(m, "0.5")));
+        let units = scaling::inputs(n, |m| Resolved::new(&product(m, "(1 / 2)")));
         for (m, u) in &units {
             let [e] = &u.type_errors()[..] else {
                 panic!("one rejection")
             };
-            assert_eq!(e.matches("(1 + 0)").count(), 3 * m, "{e}");
+            assert_eq!(e.matches("(1 + 0)").count(), 5 * m - 4, "{e}");
         }
         scaling::check("rejecting a value of n sums with a menu", n, |m| {
             std::hint::black_box(units[&m].type_errors());
@@ -470,12 +472,12 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_squares() {
     );
 }
 
-/// Checks `make(m)` at `n` and `8n`, rejected once each, as work of order 0.
-fn one_rejection_does_not_grow(what: &str, n: usize, make: fn(usize) -> String) {
+/// Checks `make(m)` at `n` and `8n`, rejected `count` times each, as work of order 0.
+fn rejections_do_not_grow(what: &str, n: usize, count: usize, make: fn(usize) -> String) {
     scaling::on_a_thread(1 << 29, || {
         let units = scaling::inputs(n, |m| Resolved::new(&make(m)));
         for u in units.values() {
-            assert_eq!(u.type_errors().len(), 1, "{what}");
+            assert_eq!(u.type_errors().len(), count, "{what}");
         }
         scaling::check_order(what, n, 0, |m| {
             std::hint::black_box(units[&m].type_errors());
@@ -487,38 +489,57 @@ fn one_rejection_does_not_grow(what: &str, n: usize, make: fn(usize) -> String) 
 // operation as the fix writes it, `x is 3r^200000 / 2`, and do not compute it: the power has
 // about 95 n digits at an exponent of 200 n, and the message, its fixes and the check cost the
 // text, which does not grow with n (order 0; DESIGN.md sec:diagnostics, "The value a fix
-// names"). The same holds where the binding compares tuples, whose fix names the comparison
-// where a pair at `int` or `rat` holds a `^`. Before MSG-fixnote-huge-value each fix computed
-// the power: at n = 500 the division took 19.7 times the bytes at 8n, and through `zedc run` at
-// the exponents 200,000 and 1,600,000 the comparisons took 4.9 times (`rat`) and 6.7 times
-// (`int`) the instructions (COMPLEXITY.md row MSG-fixnote-huge-value).
+// names"). The same holds for a pair of a tuple, `y[0] is 3r^200000 / 2`. DESIGN.md names a
+// comparison of tuples the same way where a pair at `int` or `rat` holds a `^`; this zedc gives
+// those comparisons no menu that names the binder (rows LIT-tuple-compare-power-menu and
+// LIT-tuple-compare-names-literal), and their messages still cost the text. Before
+// MSG-fixnote-huge-value each fix computed the power: at n = 500 the division took 19.7 times
+// the bytes at 8n, and through `zedc run` at the exponents 200,000 and 1,600,000 the
+// comparisons took 4.9 times (`rat`) and 6.7 times (`int`) the instructions (COMPLEXITY.md row
+// MSG-fixnote-huge-value).
 
 /// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_division() {
-    one_rejection_does_not_grow(
+    rejections_do_not_grow(
         "the fixes of a division of a power of 3 at 200 n",
         500,
+        1,
         half_of_a_power,
     );
 }
 
 /// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
-fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
-    one_rejection_does_not_grow(
-        "the fixes of a comparison holding a power of 3 at 200 n",
+fn a_fix_names_a_power_of_literals_without_computing_it_in_a_tuple() {
+    rejections_do_not_grow(
+        "the fixes of a pair of a tuple holding a power of 3 at 200 n",
         500,
+        1,
+        tuple_of_a_power,
+    );
+}
+
+/// Besides its ratio: one rejection, with no menu (row LIT-tuple-compare-power-menu). Small
+/// instance: `scaling::a_fix_names_a_power_of_literals`.
+#[test]
+fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
+    rejections_do_not_grow(
+        "the message of a comparison holding a power of 3 at 200 n",
+        500,
+        1,
         pair_of_a_power,
     );
 }
 
-/// Besides its ratio: one rejection. Small instance: `scaling::a_fix_names_a_power_of_literals`.
+/// Besides its ratio: two rejections, one per `1 / 2` (row LIT-tuple-compare-names-literal).
+/// Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison_at_int() {
-    one_rejection_does_not_grow(
+    rejections_do_not_grow(
         "the fixes of a comparison holding a power of 3 at 200 n at int",
         500,
+        2,
         int_pair_of_a_power,
     );
 }

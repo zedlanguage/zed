@@ -2234,15 +2234,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => HashSet::new(),
         };
         let parts = || match (&targets[..], &value.kind) {
-            ([t], _) => {
-                let binder = match t {
-                    Target::Name(_, s) => Some(*s),
-                    Target::Wild => None,
-                };
-                unfixed_parts(value, name(t), binder, true, text, &taken)
-            }
+            ([t], _) => unfixed_parts(value, name(t), true, text, &taken),
             (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
-                .flat_map(|(t, x)| unfixed_parts(x, name(t), None, false, text, &taken))
+                .flat_map(|(t, x)| unfixed_parts(x, name(t), false, text, &taken))
                 .collect(),
             _ => Vec::new(),
         };
@@ -3081,7 +3075,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             self.drop_met(before);
             let what = format!("the default of `{}`", p.name);
-            let parts = unfixed_parts(d, &p.name, None, true, self.t.text, &taken);
+            let parts = unfixed_parts(d, &p.name, true, self.t.text, &taken);
             self.rejects_unfixed(before, parts, &what);
             let mut out = Ty::empty();
             for piece in t.pieces() {
@@ -23973,8 +23967,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let left: Vec<Carrier> = Carrier::of_mask(m).filter(|c| c.numeric()).collect();
                 ls.filter_map(move |l| {
                     let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
-                    (!int && left.len() > 1 && !unfixed_takes_f64(&left, decimal))
-                        .then(|| (l, left.clone()))
+                    (!int
+                        && left.len() > 1
+                        && !floats_take_f64(&left)
+                        && !unfixed_takes_f64(&left, decimal))
+                    .then(|| (l, left.clone()))
                 })
             });
             found.into_iter().flatten()

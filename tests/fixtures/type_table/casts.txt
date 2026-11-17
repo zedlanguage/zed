@@ -14,7 +14,7 @@ int | #none => int | #none -- sec:corner_cases "Casts are domain proofs"
 f64 | #none => int | #inexact | #invalid | #none -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => int -- sec:corner_cases "Casts are domain proofs"
-=2.5 => error * -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => error * !! CAST-fixes-literal: int | #inexact | #invalid -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => error * -- sec:corner_cases "Casts are domain proofs"
 =2r => int -- sec:corner_cases "Casts are domain proofs"
 =k => int -- sec:corner_cases "Casts are domain proofs"
@@ -32,7 +32,7 @@ int | #none => rat | #none -- sec:corner_cases "Casts are domain proofs"
 f64 | #none => rat | #invalid | #none -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
-=2.5 => rat !! CAST-fixes-literal: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => rat !! CAST-fixes-literal: rat | #invalid -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => rat -- sec:corner_cases "Casts are domain proofs"
 =2r => rat -- sec:corner_cases "Casts are domain proofs"
 =k => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
@@ -50,7 +50,7 @@ int | #none => f32 | #inexact | #none | #overflow -- sec:corner_cases "Casts are
 f64 | #none => f32 | #inexact | #none | #overflow -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f32 -- sec:corner_cases "Casts are domain proofs"
-=2.5 => f32 !! CAST-fixes-literal: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => f32 !! CAST-fixes-literal: f32 | #inexact | #overflow -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f32 -- sec:corner_cases "Casts are domain proofs"
 =2r => f32 -- sec:corner_cases "Casts are domain proofs"
 =k => f32 -- sec:corner_cases "Casts are domain proofs"
@@ -68,7 +68,7 @@ int | #none => f64 | #inexact | #none | #overflow -- sec:corner_cases "Casts are
 f64 | #none => f64 | #none -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f64 -- sec:corner_cases "Casts are domain proofs"
-=2.5 => f64 !! CAST-fixes-literal: error Decimal literal, or `/` of integer literals, that nothing gives a carrier -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => f64 -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f64 -- sec:corner_cases "Casts are domain proofs"
 =2r => f64 -- sec:corner_cases "Casts are domain proofs"
 =k => f64 -- sec:corner_cases "Casts are domain proofs"
@@ -86,7 +86,7 @@ int | #none => f16 | #inexact | #none | #overflow !! L1.18a: notyet -- sec:corne
 f64 | #none => f16 | #inexact | #none | #overflow !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! L1.18a: notyet -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f16 !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
-=2.5 => f16 !! L1.18a: notyet -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => f16 !! L1.18a: notyet -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f16 !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
 =2r => f16 !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
 =k => f16 !! L1.18a: notyet -- sec:corner_cases "Casts are domain proofs"
@@ -104,7 +104,7 @@ int | #none => i32 | #none | #overflow !! INT-128: notyet -- sec:corner_cases "C
 f64 | #none => i32 | #inexact | #invalid | #none | #overflow !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! INT-128: notyet -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => i32 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
-=2.5 => error * !! INT-128: notyet -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => error * !! INT-128: notyet -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => error * !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =2r => i32 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =k => i32 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
@@ -122,7 +122,7 @@ int | #none => u8 | #none | #overflow !! INT-128: notyet -- sec:corner_cases "Ca
 f64 | #none => u8 | #inexact | #invalid | #none | #overflow !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! INT-128: notyet -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => u8 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
-=2.5 => error * !! INT-128: notyet -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => error * !! INT-128: notyet -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => error * !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =2r => u8 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
 =k => u8 !! INT-128: notyet -- sec:corner_cases "Casts are domain proofs"
@@ -140,7 +140,7 @@ int | #none => char32 | #invalid | #overflow | #none !! STR-types: notyet -- sec
 f64 | #none => error * !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! STR-types: notyet -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => char32 !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
-=2.5 => error * !! STR-types: notyet -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => error * !! STR-types: notyet -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => error * !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =2r => error * !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =k => char32 !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
@@ -158,7 +158,7 @@ int | #none => Utf8String | #none !! STR-types: notyet -- sec:corner_cases "Cast
 f64 | #none => Utf8String | #none !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =#none => error * !! STR-types: notyet -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => Utf8String !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
-=2.5 => Utf8String !! STR-types: notyet -- sec:diagnostics "Decimal literal ... that nothing gives a carrier": the forms that fix the carrier ... a cast of an operand (half = f64(1) / 2)
+=2.5 => Utf8String !! STR-types: notyet -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => Utf8String !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =2r => Utf8String !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
 =k => Utf8String !! STR-types: notyet -- sec:corner_cases "Casts are domain proofs"
