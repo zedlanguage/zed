@@ -249,8 +249,8 @@ fn no_is_repair_is_offered_for_a_function_type() {
 /// repair wrote the definition inside the code, `if v is type Part1 = int | #x; (Part1, Part1) { … }`,
 /// which no parser reads. Now the message writes the definition once, on a line of its own,
 /// and the repair says to write it at the top level; its name is no name of the program.
-/// Applied, the repaired program parses and resolves, and the declarations are the one thing
-/// this zedc does not compile yet (DESIGN.md step L2.1); the same test with the parts written
+/// Applied, the repaired program parses and resolves, and the declaration is the one thing
+/// this zedc does not compile yet (DESIGN.md step L2.1); the same test with the part written
 /// out is accepted.
 #[test]
 fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
@@ -261,59 +261,55 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         Ok(_) => panic!("accepted:\n{bad}"),
         Err(e) => e,
     };
-    // The headline writes the tuple whole (DESIGN sec:diagnostics, "Types in a message"). The
-    // note giving the type found for `k`, `Part2 -> (0, Part2)` (MSG-bounded-param-printed-
-    // underscore, 759ca91d4), writes the tuple inside another part and twice, so the steps
-    // name it `Part2`.
     assert!(
         out.contains(
             "`ap` does not take #nf, only (Part1, Part1).\n  \
-             Part1 and Part2 stand for parts written more than once:\n    \
-             type Part1 = int | #x;\n    type Part2 = (Part1, Part1);\n"
+             Part1 stands for a part written more than once:\n    type Part1 = int | #x;\n"
         ),
-        "{out}"
-    );
-    assert!(
-        out.contains("the type the checker found for `k` is `Part2 -> (0, Part2)`"),
         "{out}"
     );
     // The test is written with the program's own argument, `y`, never a value `v`
     // (MSG-is-repair-v).
     assert!(
         out.contains(
-            "repair: `if y is Part2 { k(y) } else { … }`, with the declarations above written \
+            "repair: `if y is (Part1, Part1) { k(y) } else { … }`, with the declaration above written \
              first at the top level of the file, before the function\n"
         ),
         "{out}"
     );
     assert!(
-        out.contains("repair: handle the values that are not Part2 with `else` or `match`"),
+        out.contains(
+            "repair: handle the values that are not (Part1, Part1) with `else` or `match`"
+        ),
         "{out}"
     );
     assert!(!out.contains("`v`"), "{out}");
+    // `a` stands in two places of the type found for `k`, so it prints as a type variable, not
+    // as the bound `ap` gives it, which would print the pair as a second part
+    // (MAIN-red-2026-11-16b; DESIGN.md sec:diagnostics, "Types in a message").
     assert!(
-        out.contains("repair: pass `ap` a value of Part2\n"),
+        out.contains("the type the checker found for `k` is `T -> (0, T)`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("repair: pass `ap` a value of (Part1, Part1)\n"),
         "{out}"
     );
     assert!(!out.contains("type Part1 = int | #x; "), "{out}");
-    // The repair applied: it parses and resolves, and only the declarations are refused.
+    // The repair applied: it parses and resolves, and only the declaration is refused.
     let fixed = format!(
-        "type Part1 = int | #x;\ntype Part2 = (Part1, Part1);\n{t}k(positional a) = (ap(a), a);\n\
-         h(positional y: (int | #x, int | #x) | #nf) = if y is Part2 {{ k(y) }} else {{ 0 }};\n"
+        "type Part1 = int | #x;\n{t}k(positional a) = (ap(a), a);\n\
+         h(positional y: (int | #x, int | #x) | #nf) = if y is (Part1, Part1) {{ k(y) }} else {{ 0 }};\n"
     );
     let refused = match zedc::run::load(fixed.as_bytes()) {
         Ok(_) => panic!("type declarations compile now: check the repair in full:\n{fixed}"),
         Err(e) => e,
     };
-    assert_eq!(refused.lines().count(), 2, "{refused}");
-    for at in ["1:1", "2:1"] {
-        assert!(
-            refused.contains(&format!(
-                "{at}: a type declaration is part of the Zed language"
-            )),
-            "{refused}"
-        );
-    }
+    assert_eq!(refused.lines().count(), 1, "{refused}");
+    assert!(
+        refused.contains("1:1: a type declaration is part of the Zed language"),
+        "{refused}"
+    );
     let inline = format!(
         "{t}k(positional a) = (ap(a), a);\n\
          h(positional y: (int | #x, int | #x) | #nf) = if y is (int | #x, int | #x) {{ k(y) }} else {{ 0 }};\n"
@@ -330,13 +326,10 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         Err(e) => e,
     };
     assert!(
-        out.contains("repair: `if y is Part3 { k(y) } else { … }`"),
+        out.contains("repair: `if y is (Part2, Part2) { k(y) } else { … }`"),
         "{out}"
     );
-    assert!(
-        out.contains("\n    type Part2 = int | #x;\n    type Part3 = (Part2, Part2);\n"),
-        "{out}"
-    );
+    assert!(out.contains("\n    type Part2 = int | #x;\n"), "{out}");
 }
 
 /// A `main` that loads checks the functions beside it.
@@ -352,14 +345,14 @@ fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
     for (h, want, fixed) in [
         (
             "h(positional y: (int | #x, int | #x) | #nf) = k(y else 1);\n",
-            "repair: `a = y else 1; if a is Part2 { k(a) } else { … }`",
+            "repair: `a = y else 1; if a is (Part1, Part1) { k(a) } else { … }`",
             "h(positional y: (int | #x, int | #x) | #nf) = \
              { a = y else 1; if a is (int | #x, int | #x) { k(a) } else { 0 } };\n",
         ),
         // The parameter's name is a name the call writes: the next one is taken.
         (
             "h(positional a: (int | #x, int | #x) | #nf) = k(a else 1);\n",
-            "repair: `a2 = a else 1; if a2 is Part2 { k(a2) } else { … }`",
+            "repair: `a2 = a else 1; if a2 is (Part1, Part1) { k(a2) } else { … }`",
             "h(positional a: (int | #x, int | #x) | #nf) = \
              { a2 = a else 1; if a2 is (int | #x, int | #x) { k(a2) } else { 0 } };\n",
         ),
@@ -399,9 +392,10 @@ fn no_is_repair_is_offered_where_no_value_passes_the_test() {
         Err(e) => e,
     };
     assert!(!out.contains(" is ("), "{out}");
-    assert!(!out.contains(" is Part"), "{out}");
     assert!(
-        out.contains("repair: handle the values that are not Part2 with `else` or `match`"),
+        out.contains(
+            "repair: handle the values that are not (Part1, Part1) with `else` or `match`"
+        ),
         "{out}"
     );
     // The control: the test such a repair would write is accepted, with a branch that never
