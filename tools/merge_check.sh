@@ -34,17 +34,20 @@
 #     tests/full, which needs --full): a lib's or bin's unit tests, named after the target, and
 #     each [[test]]; a selected group g selects the piece short-g too, where one exists (the
 #     short-addresses build of l01_37a_short_addresses and l01_37_oracle).
-#     A file under tests/full/<piece>/ selects that piece of the full battery alone, and any other
-#     file under tests/full/ (main.rs) every piece of it; they run after the local groups, with
-#     tools/run_tests.sh --full --only, unrecorded (MERGE-runtime-inputs). A step folder of the
-#     same name as a piece (l01_21_test_runner) runs in that call too, since --only selects by
-#     name. tests/full is not selected through its dependencies (a compiler crate changed):
-#     MERGE-full-by-dependency;
+#     The pieces of the full battery are groups too, each named full-<piece> after its folder
+#     tests/full/<piece>/, as tools/run_tests.sh names them. A file under tests/full/<piece>/
+#     selects that piece alone, and any other file under tests/full/ (main.rs) every piece
+#     (MERGE-runtime-inputs). All pieces are one test binary, built in the package whose [[test]]
+#     target's main file lies in tests/full/ (zed-tests), so when that package is selected (a
+#     change to it, or to any package it depends on, a compiler crate) every piece is selected
+#     (MERGE-full-by-dependency). The pieces run after the local groups, in a call of their own,
+#     tools/run_tests.sh --full --only, and are recorded and mapped (2a, 3) as the local groups
+#     are; the messages name them apart, as tests/full pieces;
 #  2a. with --reads <dir>: adds every group whose pieces read at run time a path the branch's
 #     change can affect, by the rule of "The record" below, from the map <dir>/<group>.reads (a
 #     line `commit <sha>`, the commit it was traced at, then the paths the group's pieces named),
-#     and names the groups of the workspace the map has no file for (new since, or never traced
-#     with --record). A change to docs/plan_dag.md alone so selects l01_26_type_resolution and
+#     and names the groups and tests/full pieces of the workspace the map has no file for (new
+#     since, or never traced with --record). A change to docs/plan_dag.md alone so selects l01_26_type_resolution and
 #     m0_03_grammar_tools, which read it, where by compilation it selects nothing. After a passing
 #     run with --record, each group that ran gets its map file written again from the trace. The
 #     map is shared by every worktree (merge-push.sh passes /home/luke/Work/wt/merge-reads), so a
@@ -165,6 +168,11 @@ mapfile -t testdirs < <(jq -r --arg r "$wsroot/" '.packages[] | (.manifest_path 
   and ((.["required-features"] // []) == [])) | (.src_path | ltrimstr($r) | sub("/[^/]*$"; "")) as $d
   | select($d != $p and $d != ($p + "/src") and $d != ($p | if . == "" then "src" else . end))
   | "\($d) \(.name | gsub("-"; "_"))"' <<<"$meta")
+# The package the full battery is built in: the one with a target whose main file lies in
+# tests/full/ (zed-tests). Its pieces are the folders tests/full/<piece>/ at HEAD.
+fullpkg=$(jq -r --arg f "$wsroot/tests/full/" '.packages[] | select(any(.targets[]; .src_path
+  | startswith($f))) | .name' <<<"$meta")
+fullpieces=$(for d in tests/full/*/; do [ -d "$d" ] && d=${d%/} && echo "full-${d#tests/full/}"; done | sort)
 
 # The include forms: one grep over the workspace's Rust sources, as `<source> <named path>` with
 # the path resolved against the source's directory and, for #[path] in a file that is not
@@ -245,9 +253,9 @@ touched_keys() {
        END { print "*" }' <(git ls-tree -r -d --name-only "$1") <(git ls-tree -r -d --name-only "$2") -
 }
 
-# Sets sel to the groups that the changed files "$@" select, one per line, sorted, each group g
-# followed in the order by short-g, and fullsel to the pieces of tests/full they select, and
-# prints how, each line headed "merge check$label:".
+# Sets sel to the groups that the changed files "$@" select, one per line, sorted: each local
+# group g, short-g for each, and full-<piece> for each piece of tests/full; and prints how, each
+# line headed "merge check$label:".
 select_groups() {
   local -A seen=() pkgs=() direct=() full=()
   local crate_srcs=() all= full_all= queue=("$@") f hit td pd d s p selected groups
@@ -301,6 +309,13 @@ select_groups() {
     | .set | unique | join(" ")' <<<"$meta")
   echo "merge check$label: changed packages: ${!pkgs[*]}${all:+ (a workspace file: all)}"
   echo "merge check$label: with their dependents: $selected"
+  # The full battery is one binary of $fullpkg: a change that reaches the package reaches every
+  # piece. A finer split, by what each piece's module uses, would need the crates each module
+  # names, which cargo metadata does not give; not done.
+  if [ -n "$fullpkg" ] && [[ " $selected " == *" $fullpkg "* ]]; then
+    full_all=1
+    echo "merge check$label: $fullpkg, the package tests/full is built in, is selected: every piece of tests/full"
+  fi
 
   groups=$(jq -r --arg sel " $selected " '.packages[] | select(.name as $n | $sel | contains(" \($n) "))
     | .targets[] | select(.test and ((.["required-features"] // []) == [])
@@ -308,28 +323,42 @@ select_groups() {
     | .name | gsub("-"; "_")' <<<"$meta")
   [ ${#direct[@]} -gt 0 ] && echo "merge check$label: test targets changed alone: ${!direct[*]}"
   # The pieces of tests/full selected, those whose folder exists at HEAD.
-  if [ -n "$full_all" ]; then
-    for d in tests/full/*/; do d=${d%/}; full[${d#tests/full/}]=1; done
-  fi
-  fullsel=$(for p in "${!full[@]}"; do [ -d "tests/full/$p" ] && echo "$p"; done | sort)
-  [ -z "$fullsel" ] || echo "merge check$label: tests/full pieces: $(paste -sd' ' <<<"$fullsel")"
+  local fullsel=$fullpieces
+  [ -n "$full_all" ] || fullsel=$(for p in "${!full[@]}"; do [ -d "tests/full/$p" ] && echo "full-$p"; done | sort)
   groups+=$'\n'$(printf '%s\n' "${!direct[@]}")
   [ ${#crate_srcs[@]} -gt 0 ] && groups+=$'\ns_01f_import_graph'
   # A test target built with the feature short-addresses runs as the piece short-<group> too.
   groups=$(command grep -a . <<<"$groups" | sort -u)
   [ -n "$groups" ] && groups+=$'\n'$(sed 's/^/short-/' <<<"$groups")
-  sel=$(command grep -a . <<<"$groups" | sort -u)
+  sel=$(command grep -a . <<<"$groups"$'\n'"$fullsel" | sort -u)
+}
+
+# The local groups of the groups $1 (one per line), and the pieces of tests/full among them with
+# full- taken off, as a message names them: `local` prints the first, `full` the second.
+part_of() {
+  if [ "$1" = local ]; then
+    command grep -a -v '^full-' <<<"$2" | command grep -a .
+  else
+    command grep -a '^full-' <<<"$2" | sed 's/^full-//'
+  fi
+}
+# ` tests/full pieces: <pieces>` for the pieces of tests/full among the groups $1, or nothing.
+full_note() {
+  local p
+  p=$(part_of full "$1")
+  [ -z "$p" ] || echo "; tests/full pieces: $(paste -sd' ' <<<"$p")"
 }
 
 label=
 select_groups "${changed[@]}"
-fsel=$fullsel
 # Step 2a: the groups of the map that read a path the branch's change can affect, among the
-# groups the workspace has now (g, or short-g for a group g), and the groups it has no file for.
+# groups the workspace has now (g, or short-g for a group g, or full-<piece>), and the groups it
+# has no file for.
 if [ -n "$reads" ]; then
   known=$(jq -r '.packages[].targets[] | select(.test and ((.["required-features"] // []) == [])
     and (.kind | index("custom-build") or index("example") or index("bench") | not))
-    | .name | gsub("-"; "_")' <<<"$meta" | sort -u)
+    | .name | gsub("-"; "_")' <<<"$meta"; echo "$fullpieces")
+  known=$(command grep -a . <<<"$known" | sort -u)
   mapped=$(for f in "$reads"/*.reads; do [ -f "$f" ] && basename "$f" .reads; done | sort -u)
   rsel=
   if [ -n "$mapped" ]; then
@@ -338,17 +367,24 @@ if [ -n "$reads" ]; then
            sub(/\.reads$/, "", g); print g; nextfile }' - "$reads"/*.reads |
       awk 'NR == FNR { k[$0] = 1; next } ($0 in k) || (/^short-/ && (substr($0, 7) in k))' <(echo "$known") - | sort -u)
   fi
-  echo "merge check: groups that read at run time a path the change can affect (map $reads):${rsel:+ $(paste -sd' ' <<<"$rsel")}"
+  r=$(part_of local "$rsel")
+  echo "merge check: groups that read at run time a path the change can affect (map $reads):${r:+ $(paste -sd' ' <<<"$r")}$(full_note "$rsel")"
   uncovered=$(comm -23 <(echo "$known") <(echo "$mapped") | command grep -a .)
-  [ -z "$uncovered" ] || echo "merge check: the map has no reads of $(wc -l <<<"$uncovered") groups, which only compilation selects: $(paste -sd' ' <<<"$uncovered")"
+  u=$(part_of local "$uncovered")
+  [ -z "$u" ] || echo "merge check: the map has no reads of $(wc -l <<<"$u") groups, which only compilation selects: $(paste -sd' ' <<<"$u")"
+  u=$(part_of full "$uncovered")
+  [ -z "$u" ] || echo "merge check: the map has no reads of $(wc -l <<<"$u") tests/full pieces, which only compilation selects: $(paste -sd' ' <<<"$u")"
   sel=$(command grep -a . <<<"$sel"$'\n'"$rsel" | sort -u)
 fi
-if [ -z "$sel" ] && [ -z "$fsel" ] && [ -z "$selftest" ]; then
+if [ -z "$sel" ] && [ -z "$selftest" ]; then
   echo "merge check: no package changed; no tests to run"
   exit 0
 fi
 snew=$sel
-echo "merge check: groups:${snew:+ $(paste -sd' ' <<<"$snew")}"
+s=$(part_of local "$snew")
+echo "merge check: groups:${s:+ $(paste -sd' ' <<<"$s")}"
+s=$(part_of full "$snew")
+[ -z "$s" ] || echo "merge check: tests/full pieces: $(paste -sd' ' <<<"$s")"
 [ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: both its parts run"
 
 # The record (see the header): `<commit>`, then `group <g>` for each group that passed there, then
@@ -395,13 +431,17 @@ if [ -n "$record" ] && [ -n "$snew" ]; then
       echo "merge check: ${#dfiles[@]} files changed since the record's commit $(git rev-parse --short "$told"); passed there and not touched since: $(paste -sd' ' <<<"$keep")"
     fi
   fi
-  echo "merge check: to run:${torun:+ $(paste -sd' ' <<<"$torun")}"
+  s=$(part_of local "$torun")
+  echo "merge check: to run:${s:+ $(paste -sd' ' <<<"$s")}"
+  s=$(part_of full "$torun")
+  [ -z "$s" ] || echo "merge check: tests/full pieces to run: $(paste -sd' ' <<<"$s")"
 fi
 [ -n "$groups_only" ] && exit 0
 [ -z "$list" ] || record=
 
 # Writes the record for HEAD: the groups of keep with their reads from the old record, and the
-# groups of torun, which just passed, with the reads of their pieces in the trace directory $1.
+# groups of torun, which just passed, with the reads of their pieces in the trace directories
+# "$@" (one for each call of run_tests.sh, which empties its directory's file groups first).
 # A piece reads for each of its group, step and name that is in torun (run_tests.sh --only
 # selects it by any of the three). Written to <file>.new, then moved over <file>, so a reader
 # sees the old record or the new one; and only when HEAD is the commit checked and its tracked
@@ -416,11 +456,11 @@ write_record() {
     command grep -a . <<<"$keep"$'\n'"$torun" | sort -u | sed 's/^/group /'
     {
       [ -z "$keep" ] || awk 'NR == FNR { k[$0] = 1; next } $1 == "read" && ($2 in k)' <(echo "$keep") "$record"
-      [ -z "$torun" ] || awk -v dir="$1" 'NR == FNR { r[$0] = 1; next }
-        { f = $1; gsub("/", "_", f); f = dir "/" f ".reads"
+      [ -z "$torun" ] || awk 'NR == FNR { r[$0] = 1; next }
+        { dir = FILENAME; sub(/\/groups$/, "", dir); f = $1; gsub("/", "_", f); f = dir "/" f ".reads"
           for (i = 1; i <= 3; i++) if ($i in r && !seen[$i]++) gs[n++] = $i
           while ((getline p < f) > 0) for (j = 0; j < n; j++) print "read " gs[j] " " p
-          close(f); n = 0; delete seen }' <(echo "$torun") "$1/groups"
+          close(f); n = 0; delete seen }' <(echo "$torun") "${@/%//groups}"
     } | sort -u
     echo end
   } >"$record.new" && mv "$record.new" "$record"
@@ -469,18 +509,23 @@ fi
 if [ -n "$snew" ] && [ -z "$torun" ]; then
   echo "merge check: passed (every selected group passed at the record's commit, with the same inputs)"
   write_record
-  [ -n "$fsel" ] || exit 0
+  exit 0
 fi
-if [ -n "$torun" ]; then
-  trace=()
+# The local groups run first, then the pieces of tests/full in a call with --full, each call with
+# a trace directory of its own; the record is written once both passed.
+tdirs=()
+for kind in local full; do
+  run=$(part_of "$kind" "$torun")
+  [ -n "$run" ] || continue
+  trace=() full=()
+  [ "$kind" = full ] && run=$(sed 's/^/full-/' <<<"$run") && full=(--full)
   if [ -n "$record" ]; then
-    tdir=$(git rev-parse --path-format=absolute --git-path merge-check-trace)
+    tdir=$(git rev-parse --path-format=absolute --git-path "merge-check-trace${full:+-full}")
     trace=(--trace "$tdir")
+    tdirs+=("$tdir")
   fi
-  tools/run_tests.sh --only "^($(paste -sd'|' <<<"$torun"))\$" "${trace[@]}" $list "$jobs" || { echo "merge check: FAILED: tests (above)" >&2; exit 1; }
-  [ -z "$record" ] || { write_record "$tdir"; write_reads; }
-fi
-if [ -n "$fsel" ]; then
-  tools/run_tests.sh --full --only "^($(paste -sd'|' <<<"$fsel"))\$" $list "$jobs" || { echo "merge check: FAILED: tests/full (above)" >&2; exit 1; }
-fi
+  tools/run_tests.sh "${full[@]}" --only "^($(paste -sd'|' <<<"$run"))\$" "${trace[@]}" $list "$jobs" ||
+    { echo "merge check: FAILED: $([ "$kind" = full ] && echo tests/full || echo tests) (above)" >&2; exit 1; }
+done
+[ -z "$record" ] || [ ${#tdirs[@]} -eq 0 ] || { write_record "${tdirs[@]}"; write_reads; }
 echo "merge check: passed"

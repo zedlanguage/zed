@@ -18,10 +18,16 @@
 # (tools/time_tests.sh times the tests this way).
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
-# outside tools. It stops before any test if a tool is missing; nothing is skipped.
+# outside tools. It stops before any test if a tool is missing; nothing is skipped. Each folder
+# tests/full/<piece>/ is a piece named full-<piece>, which is also its group and step, so that it
+# is never confused with the local step folder of the same name (tests/steps/l01_21_test_runner
+# and tests/full/l01_21_test_runner): not in --only, in its log, or in the files of --trace.
 # --only runs only the pieces whose name, or whose group (the step folder, or the test binary's
 # name without its hash, e.g. zedc, deep_heap, short-l01_37_oracle), matches the extended regular
-# expression; a piece of a binary split per test also matches as <group>::<test>. A test binary
+# expression; a piece of a binary split per test also matches as <group>::<test>, and a piece
+# named with its binary's hash (a library's unit tests, a benchmark) as <group>[::<path>] with the
+# hash taken off. A pattern with :: that names tests inside a whole-binary piece (zed_kernel::btree::)
+# runs each test it matches as a piece of its own, with --exact. A test binary
 # whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
 # has that folder as a second group, so a selection of the step runs it too. A pattern that
 # matches no piece stops the run with an error. The short-addresses build is made only when a
@@ -141,9 +147,14 @@ if [ -n "$only" ]; then
     exit 2
   fi
 fi
-# Whether the piece $2 of group $1 is selected: always without --only.
+# Whether the piece $2 of group $1 is selected: always without --only. A piece of a library's
+# unit tests or a benchmark is named after its binary, hash and all (zed_kernel-744b8b7231e6eb90
+# or zed_kernel-744b8b7231e6eb90::btree::bench::<test>), so it also matches with the hash taken
+# off (zed_kernel::btree::bench::<test>), as its group is (TOOLS-only-lib-pieces,
+# TEST-bench-select-one).
 selected() {
-  [ -z "$only" ] || [[ $2 =~ $only || $1 =~ $only ]] || { [[ $2 != "$1"* ]] && [[ $1::$2 =~ $only ]]; }
+  [ -z "$only" ] || [[ $2 =~ $only || $1 =~ $only ]] || { [[ $2 != "$1"* ]] && [[ $1::$2 =~ $only ]]; } ||
+    { [[ $2 =~ ^$1-[0-9a-f]+(::.*)?$ ]] && [[ $1${BASH_REMATCH[1]} =~ $only ]]; }
 }
 if [ -n "$full_suite" ]; then
   features=--features=zed-tests/full
@@ -376,7 +387,22 @@ select_pieces() {
   while read -r k group step name dir bin args; do
     [ "$k" = "$run_kind" ] || continue
     [ "$k" = test ] || args="${args:+$args }--nocapture"
-    { selected "$group" "$name" || selected "$step" "$name"; } || continue
+    if ! selected "$group" "$name" && ! selected "$step" "$name"; then
+      # A piece of a binary named with its hash, not selected as a whole, still gives each of
+      # its tests whose <group>::<test> --only matches as a piece of its own, run as with
+      # --each-test, so that --only '^zed_kernel::btree::' runs those unit tests of the library
+      # (TOOLS-only-lib-pieces). Only a pattern with :: can match such a name, so only then is
+      # the binary's list read (once per binary, as above). A benchmark is a piece per test
+      # already, so this is for correctness pieces alone.
+      [[ $k == test && $only == *::* && $name =~ ^$group-[0-9a-f]+(::|$) ]] || continue
+      list_binary "$bin"
+      for t in $(piece_tests "$bin" $args); do
+        [[ $group::$t =~ $only ]] || continue
+        [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
+        echo "${name%%::*}::$t $dir $bin --exact $t"
+      done
+      continue
+    fi
     if [ -z "$each_test" ]; then
       [ -z "$trace" ] || echo "$name $group $step" >>"$trace/groups"
       echo "$name $dir $bin${args:+ $args}"
@@ -548,7 +574,7 @@ else
     if [ -n "$full_suite" ]; then
       for d in tests/full/*/; do
         d=$(basename "$d")
-        wants "$a" "$d" "$d" && any=1 && tests+="--test full"$'\n'
+        wants "$a" "full-$d" "full-$d" && any=1 && tests+="--test full"$'\n'
       done
     fi
     for s in $short_steps; do
@@ -847,7 +873,7 @@ step_pieces() {
   if [ -n "$full" ]; then
     for d in tests/full/*/; do
       n=$(basename "$d")
-      echo "$n $n $n tests $full $n::"
+      echo "full-$n full-$n full-$n tests $full $n::"
     done
   fi
 } | split_benchmarks >"$table"

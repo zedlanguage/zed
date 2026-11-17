@@ -168,22 +168,36 @@ check "a file moved from one package to another selects both" \
   "merge check: groups: $(sorted "$(short a b c s_01f_import_graph step_x step_y t)")" \
   "$(git mv crates/c/src/inl.rs crates/a/src/inl.rs && git commit -q -m move &&
     "$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: groups')"
-# tests/full (MERGE-runtime-inputs): a piece's folder selects that piece alone, run with --full;
-# its main.rs selects every piece; neither selects the package t.
+# tests/full (MERGE-runtime-inputs): a piece's folder selects that piece alone, run with --full
+# under its name full-<piece>; its main.rs selects every piece; neither selects the package t.
+# A change that reaches t through its dependencies selects every piece (MERGE-full-by-dependency).
 full_run() {
   groups_after "$1" >/dev/null
   "$check_script" --base base 2>&1 | command grep -a -E '^(run_tests|merge check: (groups|tests/full|passed))'
 }
 check "a file in a piece's folder of tests/full selects that piece alone, run with --full" \
-  "merge check: tests/full pieces: z
-merge check: groups:
-run_tests --full --only ^(z)\$ 6
+  "merge check: groups:
+merge check: tests/full pieces: z
+run_tests --full --only ^(full-z)\$ 6
 merge check: passed" "$(full_run tests/full/z/mod.rs)"
 check "tests/full/main.rs selects every piece of tests/full" \
-  "merge check: tests/full pieces: w z
-merge check: groups:
-run_tests --full --only ^(w|z)\$ 6
+  "merge check: groups:
+merge check: tests/full pieces: w z
+run_tests --full --only ^(full-w|full-z)\$ 6
 merge check: passed" "$(full_run tests/full/main.rs)"
+all_b=$(sorted "$(short b s_01f_import_graph step_x step_y t)")
+check "a crate the package of tests/full depends on selects every piece, run with --full after the local groups" \
+  "merge check: groups: $all_b
+merge check: tests/full pieces: w z
+run_tests --only ^($(tr ' ' '|' <<<"$all_b"))\$ 6
+run_tests --full --only ^(full-w|full-z)\$ 6
+merge check: passed" "$(full_run crates/b/src/lib.rs)"
+check "a crate the package of tests/full does not depend on selects no piece" \
+  "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
+  "$(full_run crates/c/src/lib.rs | command grep -a -E '^merge check: (groups|tests/full)')"
+check "a failing run of tests/full stops the check with exit 1" "merge check: FAILED: tests/full (above)
+1" "$(groups_after tests/full/w/mod.rs >/dev/null
+    STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
 # The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
 check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh" \
@@ -200,13 +214,16 @@ FAILED: tools/test_merge_check.sh select, rc=1
     command grep -a -o -E '^self select|FAILED: tools/test_merge_check.sh [a-z]+, rc=[0-9]+'
     echo "${PIPESTATUS[0]}")"
 # The map of run-time reads (step 2a): group c read docs/plan.md, step_y listed data, t stat'ed
-# the root; gone, no longer a group of the workspace, read docs/plan.md too.
+# the root, the piece z of tests/full read docs/plan.md; gone, no longer a group of the
+# workspace, read docs/plan.md too, and so did full-gone, no longer a piece.
 map=$ws/target/map
 mkdir -p "$map"
 printf 'commit 0\ndocs/plan.md\n' >"$map/c.reads"
 printf 'commit 0\ndata\n' >"$map/step_y.reads"
 printf 'commit 0\n.\n' >"$map/t.reads"
 printf 'commit 0\ndocs/plan.md\n' >"$map/gone.reads"
+printf 'commit 0\ndocs/plan.md\n' >"$map/full-z.reads"
+printf 'commit 0\ndocs/plan.md\n' >"$map/full-gone.reads"
 # Commits a change to the file $1 on the base and prints the map's and the selection's lines.
 map_after() {
   git checkout -q --detach base
@@ -215,13 +232,15 @@ map_after() {
   git add -A
   git commit -q -m "change $1"
   "$check_script" --base base --reads "$map" --groups 2>&1 |
-    command grep -a -E '^merge check: (groups|the map|no package)' | sed "s|$map|MAP|"
+    command grep -a -E '^merge check: (groups|the map|no package|tests/full)' | sed "s|$map|MAP|"
 }
-uncovered="merge check: the map has no reads of 3 groups, which only compilation selects: a b step_x"
-check "a file that a group read at run time selects that group, by the map" \
-  "merge check: groups that read at run time a path the change can affect (map MAP): c
+uncovered="merge check: the map has no reads of 3 groups, which only compilation selects: a b step_x
+merge check: the map has no reads of 1 tests/full pieces, which only compilation selects: w"
+check "a file that a group and a piece of tests/full read at run time selects both, by the map" \
+  "merge check: groups that read at run time a path the change can affect (map MAP): c; tests/full pieces: z
 $uncovered
-merge check: groups: c" "$(map_after docs/plan.md)"
+merge check: groups: c
+merge check: tests/full pieces: z" "$(map_after docs/plan.md)"
 check "a file changed in a directory a group listed selects nothing" \
   "merge check: groups that read at run time a path the change can affect (map MAP):
 $uncovered
@@ -256,7 +275,8 @@ all_c="$(sorted "$(short c s_01f_import_graph)")"
 # what ran, the outcome and the exit code.
 record_run() {
   "$check_script" --base "$1" --record "$rec" "${@:2}" 2>&1 |
-    command grep -a -E '^(run_tests|merge check: (to run|passed|FAILED))' | sed 's/ --trace [^ ]*//'
+    command grep -a -E '^(run_tests|merge check: (to run|tests/full pieces to run|passed|FAILED))' |
+    sed 's/ --trace [^ ]*//'
   echo "${PIPESTATUS[0]}"
 }
 # Moves main, the tag upstream (the toy repository's branch main is another ref), on by a change
@@ -332,6 +352,42 @@ check "a change under tools/ since the record runs every selected group" "merge 
 printf '%s\n' "$(head -n 2 "$rec")" >"$rec"
 check "a record cut short is ignored" "merge check: to run: $all_c" \
   "$(record_run upstream --groups | command grep -a 'to run')"
+# The pieces of tests/full in the record (MERGE-full-by-dependency): a branch that changes crate c
+# and the piece z runs the local groups, then z with --full, each with a trace directory of its
+# own, and records both; full-z read docs/plan.md.
+rec=$ws/target/record-full
+: >"$rec"
+echo 'full-z docs/plan.md' >>"$STUB_READS"
+git checkout -q --detach base
+git tag -f upstream base >/dev/null
+echo "// changed" >>crates/c/src/lib.rs
+echo "// changed" >>tests/full/z/mod.rs
+git commit -q -a -m "branch: change c and the piece z"
+git tag -f branch >/dev/null
+check "local groups and a piece of tests/full run in two calls, the second with --full" \
+  "merge check: to run: $all_c
+merge check: tests/full pieces to run: z
+run_tests --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
+run_tests --full --only ^(full-z)\$ 6
+merge check: passed
+0" "$(record_run base --reads "$ws/target/map-full")"
+check "the record holds the piece of tests/full and what it read, from the trace of its own call" \
+  "group full-z
+read c docs/plan.md
+read full-z docs/plan.md" "$(command grep -a -E '^(group full-z|read (c|full-z) )' "$rec")"
+check "and the map file of the piece is written" "commit $(git rev-parse HEAD)
+docs/plan.md" "$(cat "$ws/target/map-full/full-z.reads")"
+check "the same commit again runs neither" "merge check: to run:
+merge check: passed (every selected group passed at the record's commit, with the same inputs)
+0" "$(record_run base)"
+main_moves docs/plan.md
+check "main moved by a file the piece read at run time: the piece runs again with --full" \
+  "merge check: to run: c short-s_01f_import_graph
+merge check: tests/full pieces to run: z
+run_tests --only ^(c|short-s_01f_import_graph)\$ 6
+run_tests --full --only ^(full-z)\$ 6
+merge check: passed
+0" "$(record_run upstream)"
 git checkout -q --detach base
 fi
 popd >/dev/null || exit 1

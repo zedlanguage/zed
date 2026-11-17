@@ -94,6 +94,22 @@ check "--bench runs each benchmark of the selection as a piece" \
   "$(run --list --reuse-table --bench --only '^l01_15_' | sort)"
 check "a benchmark matches as <group>::<test>" "l01_15_kernel_terms::bench::the_printer_scales_with_depth" \
   "$(run --list --reuse-table --bench --only '^l01_15_kernel_terms::bench::the_printer')"
+# A library's unit tests are one piece named with the binary's hash, zed_kernel-<hash>; a pattern
+# <crate>::<path> runs each of its tests that matches as a piece of its own
+# (TOOLS-only-lib-pieces), and a benchmark matches without the hash (TEST-bench-select-one).
+check "a library's unit tests match as <crate>::<path>, one piece each" \
+  "$(listed_by_libtest '^zed_kernel-' | grep '^zed_kernel-[0-9a-f]*::btree::')" \
+  "$(selected '^zed_kernel::btree::')"
+check "the unit tests so selected are more than one" "yes" \
+  "$([ "$(selected '^zed_kernel::btree::' | wc -l)" -gt 1 ] && echo yes)"
+check "a benchmark of a library matches by its name without the hash, alone" \
+  "zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n" \
+  "$(run --list --reuse-table --bench --only '^zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$' |
+    sed 's/^zed_kernel-[0-9a-f]*::/zed_kernel::/')"
+out=$(run --list --reuse-table --bench --only '^zed_kernel::btree::bench::no_benchmark_is_named_this$')
+rc=$?
+check "a benchmark name without the hash that matches nothing exits non-zero" \
+  "1 NO PIECE MATCHES --only '^zed_kernel::btree::bench::no_benchmark_is_named_this\$' among the benchmarks" "$rc $out"
 # m0_08 is the one step folder with no benchmark (l01_03, used here before, has had some since
 # TEST-bench-move-rest, 97a4150e9); pick another if it gains one.
 out=$(run --list --reuse-table --bench --only '^m0_08_')
@@ -106,7 +122,7 @@ check "--each-test runs each correctness test of a step with benchmarks" \
 check "--each-test runs the tests of a split step's pieces, filtered and --exact" \
   "$(listed_by_libtest '^l01_38_presburger')" "$(run --list --reuse-table --each-test --only '^l01_38_presburger' | sort)"
 check "--each-test runs the tests of pieces with --exact and --skip" \
-  "$(listed_by_libtest '^(zedc_preimage|zed_kernel)-')" \
+  "$(listed_by_libtest '^(zedc_preimage|zed_kernel)(-|::)')" \
   "$(run --list --reuse-table --each-test --only '^(zedc_preimage|zed_kernel)$' | sort)"
 # The binaries the last run built, by name without the hash.
 built() {
