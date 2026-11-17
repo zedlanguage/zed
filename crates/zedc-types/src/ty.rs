@@ -7985,12 +7985,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// [`Comparing::diff`] sets this memo aside with the names, so a kept verdict is never read
     /// for other functions. The names are keys by identity: each is one function as read.
     ///
-    /// Both refusals below, of a kept verdict and of a fresh one, are reached by
+    /// The refusals of a verdict kept by name (`fitted`) and of a fresh one are reached by
     /// `a_refused_comparison_of_result_functions_refuses_the_call` in
     /// tests/steps/l01_26_type_resolution/deep_ops.rs (TYPES-fits-read-refusal): the outer
     /// comparison reads one pair twice, so the fresh refusal is given first and the kept one
     /// second. Either alone gives the right message there; with both taken out the call is
-    /// wrongly said not to fit. Each costs O(1) more than the verdict it gives.
+    /// wrongly said not to fit. The refusal of a verdict kept by readings (`fitted_read`) is
+    /// reached by no test: that program, one with a second level of nesting, and one with the
+    /// function as a parameter beside `x: T` reach only the other two
+    /// (TYPES-fits-read-key-refusal). Each costs O(1) more than the verdict it gives.
     async fn fits_read(&'m self, v: &Arc<str>, s: &Arc<Sig>, se: &Env, w: &Arc<str>) -> bool {
         let key = (v.clone(), w.clone());
         let (q, qe) = {
