@@ -197,23 +197,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(sigs)
     }
 
-    /// The entries of the families `sigs`: the union of their arrows' results, less the
-    /// misses `#notFound` and `#outOfBounds`.
-    // Not proved: an entry is never itself `#notFound` or `#outOfBounds`, as at `map_end`.
+    /// The entries of the families `sigs`: the union of the values they store
+    /// ([`super::super::family_values`], which proves that a stored `#notFound` or
+    /// `#outOfBounds` is kept and a miss is not). O(arrows).
     fn entries_of(sigs: &[Arc<Sig>]) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-        Ty::union_all(sigs.iter().flat_map(|s| s.arrows.iter().map(|a| &a.result))).without(&misses)
+        let each: Vec<Ty> = sigs
+            .iter()
+            .map(|s| super::super::family_values(s))
+            .collect();
+        Ty::union_all(&each)
     }
 
-    /// Whether the family `sig` has an entry in every value of its type: some arrow whose key
-    /// type lists a key and whose result holds no miss, a key always present (as at
-    /// [`Self::fold_level`]).
+    /// Whether the family `sig` has an entry in every value of its type: some exact arrow
+    /// whose key type lists a key, a key always present. Only a partial arrow misses
+    /// ([`super::super::family_values`]); an exact arrow whose result holds `#notFound`
+    /// stores it, as `[#notFound]` does, and has its key.
     fn never_empty(sig: &Sig) -> bool {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-        (sig.arrows.iter()).any(|a| {
-            a.params.first().is_some_and(|k| !k.lists_nothing())
-                && (&a.result.atoms() & &misses) == KType::empty()
-        })
+        (sig.arrows.iter())
+            .any(|a| !a.partial && a.params.first().is_some_and(|k| !k.lists_nothing()))
     }
 
     /// `x.count`: the number of top-level entries, an `int`; a loose atom `x` passes through.
@@ -331,12 +332,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let answer = match q {
             Quantifier::Any | Quantifier::All => Ty::carrier(Carrier::Bool),
             Quantifier::Find => {
-                let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-                // The keys of the arrows that give an entry; an arrow that gives only a miss
-                // lists keys the family does not hold.
+                // The keys of the arrows that store an entry; an arrow that gives only a miss
+                // lists keys the family does not hold ([`super::super::family_values`]).
                 let keys = Ty::union_all(sigs.iter().flat_map(|s| {
                     (s.arrows.iter())
-                        .filter(|a| !a.result.without(&misses).lists_nothing())
+                        .filter(|a| !a.value().lists_nothing())
                         .map(|a| &a.params[0])
                 }));
                 keys.union(&Ty::set(KType::atom("none")))
@@ -385,12 +385,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The `#empty` `fold_level` adds for a level that may be empty; no entry is an atom,
         // since `fold_level` takes only entries of the operator's carrier.
         let entry = folded.without(&KType::atom("empty"));
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut families = Ty::empty();
         for sig in sigs {
             let mut s = (*sig).clone();
+            // Each arrow keeps its keys and whether it is partial, a partial one missing with
+            // `#notFound` as before; its value is now the prefix's fold.
             for a in &mut s.arrows {
-                a.result = entry.union(&Ty::set(&a.result.atoms() & &misses));
+                let params = std::mem::take(&mut a.params);
+                *a = a.remade(params, |_| entry.clone());
             }
             s.word = None;
             s.needs = Vec::new();
@@ -446,12 +448,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 apply(self, what, &fsig, vec![Some(Arg::of(entries))], false, span).0
             }
         };
-        let not_found = Ty::set(KType::atom("notFound"));
         let mut runs = Ty::empty();
         for sig in sigs {
             let mut s = (*sig).clone();
+            // A run holds some of the keys, so each arrow is partial, with the values it
+            // stored (FP-chunkby-runs-partial). Before, its result gained `#notFound` and it
+            // stayed exact, which says every key is in each run and `#notFound` is stored.
             for a in &mut s.arrows {
-                a.result = a.result.union(&not_found);
+                let params = std::mem::take(&mut a.params);
+                *a = Arrow::partial_of(params, a.value().into_owned());
             }
             // A run holds some of the keys, which `Sig::keys` would not describe.
             s.dense = Dense::No;
@@ -1026,18 +1031,18 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The bounds of the keys of the families `sigs` (DESIGN.md sec:type_language, the bound
     /// table): `L`, the keys each of them surely holds, and `U`, the keys any of them may
-    /// hold. A key is sure where its arrow is not partial and gives no miss, as for a list
-    /// display; a range, a `Lines` input or a `where` result guarantees no key. `sigs` is not
-    /// empty.
+    /// hold. A key is sure where its arrow is not partial, as for a list display; a range, a
+    /// `Lines` input or a `where` result guarantees no key. An exact arrow whose result holds
+    /// `#notFound` stores it ([`super::super::family_values`]), as `[n, #notFound]` does, so
+    /// its keys are sure. `sigs` is not empty.
     // Complexity tradeoff: one union per arrow and one meet per family, linear in the arrows;
     // the pairwise test of each family of one operand against each of the other's, which
     // `zip_end` would need without these two bounds, is quadratic in the families.
     fn key_bounds(sigs: &[Arc<Sig>]) -> (Ty, Ty) {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let sure = |s: &Sig| {
             Ty::union_all(
                 (s.arrows.iter())
-                    .filter(|a| !a.partial && (&a.result.atoms() & &misses) == KType::empty())
+                    .filter(|a| !a.partial)
                     .map(|a| &a.params[0]),
             )
         };
@@ -1065,7 +1070,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The bounds `L` and `U` of [`Self::key_bounds`] as sets of ints, where every family of
     /// `sigs` has int keys: a family with exact keys ([`Sig::keys`]), as a range with literal
     /// ends, holds just those, each sure; any other gives its key types' listed ints, sure
-    /// where the arrow is total and gives no miss. A key type of infinitely many ints, as
+    /// where the arrow is exact. A key type of infinitely many ints, as
     /// `int`, gives every int to `U` and none to `L`. `None` where a family may have a key
     /// that is not an int. `sigs` is not empty.
     ///

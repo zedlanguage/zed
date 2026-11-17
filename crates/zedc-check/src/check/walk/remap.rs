@@ -219,9 +219,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 out.extend((depth..=n).map(|_| Ty::dynamic()));
                 return Some(out);
             }
+            // The source's own misses pass by, as at any call; below it, `cur` is the values
+            // the level stores, so a stored `#notFound` there is an entry that is no family.
             let rest = cur.pieces().into_iter().any(|p| match p {
                 Piece::Fn(sig) => !sig.data && !(depth == 0 && declared_map(&sig)),
-                Piece::Set(k) => !(&k - &misses).is_empty(),
+                Piece::Set(k) => depth > 0 || !(&k - &misses).is_empty(),
                 _ => true,
             });
             let fams = (cur.fns.iter())
@@ -254,9 +256,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let keys = fams
                 .iter()
                 .flat_map(|g| g.arrows.iter().map(|a| &a.params[0]));
-            let next = fams.iter().flat_map(|g| g.arrows.iter().map(|a| &a.result));
+            // The values the level stores, a stored `#notFound` among them
+            // ([`super::super::family_values`]).
+            let next: Vec<Ty> = fams
+                .iter()
+                .map(|g| super::super::family_values(g))
+                .collect();
             out.push(Ty::union_all(keys));
-            cur = Ty::union_all(next).without(&misses);
+            cur = Ty::union_all(&next);
         }
         if cur.fns.iter().any(|g| g.data) {
             // Plan row REMAP-fewer-binders: binding a whole inner family as the value needs a
@@ -327,16 +334,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         else {
             return None;
         };
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut cur = t.clone();
         for _ in 1..binders.len() {
             let (open, kept) = self.remap_level(&cur);
             if kept.is_some() {
                 return kept;
             }
-            let next = (open.fns.iter().filter(|g| g.data))
-                .flat_map(|g| g.arrows.iter().map(|a| &a.result));
-            cur = Ty::union_all(next).without(&misses);
+            // The values the level stores, as `remap_source` walks them.
+            let next: Vec<Ty> = (open.fns.iter().filter(|g| g.data))
+                .map(|g| super::super::family_values(g))
+                .collect();
+            cur = Ty::union_all(&next);
         }
         None
     }
@@ -363,7 +371,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             } => binders.len().saturating_sub(1).max(1),
             _ => 1,
         };
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut cur = t.clone();
         for level in 0..levels {
             // The variables that name classes not yet resolved at this level, by name, each
@@ -388,9 +395,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return (level, open);
             }
             let (opened, _) = self.remap_level(&cur);
-            let next = (opened.fns.iter().filter(|g| g.data))
-                .flat_map(|g| g.arrows.iter().map(|a| &a.result));
-            cur = Ty::union_all(next).without(&misses);
+            // The values the level stores, as `remap_source` walks them.
+            let next: Vec<Ty> = (opened.fns.iter().filter(|g| g.data))
+                .map(|g| super::super::family_values(g))
+                .collect();
+            cur = Ty::union_all(&next);
         }
         (levels, 0)
     }
@@ -984,13 +993,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: one pass over the result type of `map_end`, O(arrows); no second
     // check of `f`.
     pub(super) fn flat_map_end(&mut self, t: Ty, at: Span) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         for p in t.pieces() {
             let Piece::Fn(sig) = p else { continue };
             if !sig.data {
                 continue;
             }
-            let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result)).without(&misses);
+            let all = super::super::family_values(&sig);
             let entries = all.without_loose();
             // A dynamic entry, or one of a class not yet resolved, is checked where it is known.
             let families = (entries.pieces().iter()).all(|q| {
@@ -1111,8 +1119,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             fams.iter()
                 .flat_map(|g| g.arrows.iter().map(|a| &a.params[0])),
         );
-        let values = Ty::union_all(fams.iter().flat_map(|g| g.arrows.iter().map(|a| &a.result)))
-            .without(&misses);
+        // The values the families store, a stored `#notFound` among them, which `f` is given
+        // and the groups keep ([`super::super::family_values`]).
+        let each: Vec<Ty> = fams
+            .iter()
+            .map(|g| super::super::family_values(g))
+            .collect();
+        let values = Ty::union_all(&each);
         if values.fns.iter().any(|g| g.data) {
             // Plan row GROUP-nested: the kernel's reindex walks leaves, and `f` takes the whole
             // inner family `m[k]`; that needs a reindex over keypaths that stop above the

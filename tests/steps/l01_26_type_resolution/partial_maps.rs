@@ -279,6 +279,125 @@ pub(super) fn bounded(n: usize) -> String {
     )
 }
 
+/// A family may store `#notFound` as a value (DESIGN.md sec:corner_cases, author P350), and its
+/// entries are then the values its arrows store, that `#notFound` among them: only a partial
+/// arrow's `#notFound` is a miss (`Arrow::value`). `zip` pairs the stored `#notFound` and keeps
+/// it in the pair. Before (plan row TYPES-entries-keep-stored-notfound), every `#notFound` of an
+/// arrow's result was read as a miss, so `zip` found no key it could show was in both operands
+/// and refused these programs.
+#[test]
+fn zip_keeps_a_stored_not_found_in_the_pair() {
+    for (src, want) in [
+        (
+            "f(n: int) = [n, #notFound].zip([n, #notFound]);",
+            "type Part1 = int | #notFound;\n(n: int) -> (0 | 1) -> (Part1, Part1)",
+        ),
+        (
+            "f(n: int) = [n, #notFound].map(x -> x).zip([n, 4]);",
+            "(n: int) -> (0 | 1) -> (int | #notFound, int)",
+        ),
+        (
+            "f(n: int) = {\"a\" -> 1, \"b\" -> #notFound}.zip({\"a\" -> 1, \"b\" -> #notFound});",
+            "type Part1 = 1 | #notFound;\n(n: int) -> (\"a\" | \"b\") -> (Part1, Part1)",
+        ),
+        // The contrast: a family that stores no `#notFound` zips as before.
+        (
+            "f(n: int) = [n, n].zip([n, n]);",
+            "(n: int) -> (0 | 1) -> (int, int)",
+        ),
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(src, "f"), want, "{src}");
+    }
+}
+
+/// The words that read a family's entries see a stored `#notFound` as an entry: `first` may
+/// give it, `group` keeps it in its groups, and a read at a key every arrow guarantees gives it
+/// and no miss. A read that may miss gives the miss beside it, `#outOfBounds` on a list. Before
+/// (TYPES-entries-keep-stored-notfound), `first` gave `int | #none`, `group` dropped the value,
+/// and `[3, #notFound][0]` gave `3 | #outOfBounds`: the stored value read as a miss.
+#[test]
+fn the_words_that_read_entries_keep_a_stored_not_found() {
+    for (src, want) in [
+        (
+            "f(n: int) = [n, #notFound].first;",
+            "(n: int) -> int | #notFound",
+        ),
+        (
+            "f(n: int) = [n, #notFound].group(x -> 1);",
+            "(n: int) -> 1 ->? (0 | 1) ->? int | #notFound",
+        ),
+        (
+            "f(n: int) = [3, #notFound][0];",
+            "(n: int) -> 3 | #notFound",
+        ),
+        (
+            "f(k: int) = [3, #notFound][k];",
+            "(k: int) -> 3 | #notFound | #outOfBounds",
+        ),
+        (
+            "f(n: int) = {\"a\" -> 1, \"b\" -> #notFound}[\"b\"];",
+            "(n: int) -> 1 | #notFound",
+        ),
+        // The contrasts: a list that stores no `#notFound` misses with `#outOfBounds` alone,
+        // and a partial family's miss is `#notFound`.
+        ("f(k: int) = [3, 4][k];", "(k: int) -> 3 | 4 | #outOfBounds"),
+        (
+            "f(n: int) = [3, 4].where(x -> x > 3)[0];",
+            "(n: int) -> 3 | 4 | #notFound",
+        ),
+        (
+            "f(n: int) = [1, 2].where(x -> x > 0).first;",
+            "(n: int) -> 1 | 2 | #none",
+        ),
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(src, "f"), want, "{src}");
+    }
+}
+
+/// A stored `#notFound` is an atom entry like any other, so the words that refuse an atom
+/// entry refuse it as they refuse `#a`: a sum by `(+)`, and a remap level that must hold
+/// families. Before (TYPES-entries-keep-stored-notfound), the `#notFound` was dropped as a miss:
+/// `[n, #notFound] >< (+)` was typed `int`, which a run that adds `#notFound` does not give.
+#[test]
+fn a_stored_not_found_is_refused_where_an_atom_entry_is() {
+    for (stored, atom) in [
+        (
+            "f(n: int) = [n, #notFound] >< (+);",
+            "f(n: int) = [n, #a] >< (+);",
+        ),
+        (
+            "f(n: int) = [[1], #notFound] as (i -> j -> v) into (j -> i -> v);",
+            "f(n: int) = [[1], #a] as (i -> j -> v) into (j -> i -> v);",
+        ),
+    ] {
+        assert_eq!(type_errors(atom).len(), 1, "{atom}");
+        assert_eq!(type_errors(stored).len(), 1, "{stored}");
+    }
+}
+
+/// Plan row FP-chunkby-runs-partial: each run of `chunkBy` holds only some of the source's
+/// keys, so its arrows are partial, `K ->? V`, and a read of a key of another run misses. Before,
+/// the runs kept the source's exact arrows and printed `(0 | 1 | 2) -> 1 | 2`, promising every
+/// key of the source in every run.
+#[test]
+fn the_runs_of_chunk_by_are_partial_maps() {
+    for (src, want) in [
+        (
+            "f(n: int) = [1, 1, 2].chunkBy(x -> x);",
+            "(n: int) -> [(0 | 1 | 2) ->? 1 | 2]",
+        ),
+        (
+            "f(n: int) = [1, 1, 2].chunkBy(x -> x)[0];",
+            "(n: int) -> ((0 | 1 | 2) ->? 1 | 2) | #outOfBounds",
+        ),
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        assert_eq!(sig(src, "f"), want, "{src}");
+    }
+}
+
 #[test]
 fn many_and_deep_bounded_maps_are_looked_up_and_printed() {
     // A small instance of the benchmark

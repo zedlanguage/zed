@@ -4057,8 +4057,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `f` applied to `V`. A loose atom `x` may be passes through, as at a call.
     ///
     /// With `filter`, `x.where(f)`: `f` must give a `bool` for each entry, and the result has
-    /// each family's keys and entries, any key of which may now be missing, so each arrow's
-    /// result gains `#notFound` and the family is no longer dense (DESIGN.md sec:type_language,
+    /// each family's keys and entries, any key of which may now be missing, so each arrow is
+    /// partial and the family is no longer dense (DESIGN.md sec:type_language,
     /// the `where` row: the guarantee becomes empty, the permission rides through).
     ///
     /// `kept` is the receiver where it is a call of `flatMap`, whose lists a refusal of `f`
@@ -4080,7 +4080,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         kept: Option<&'a Expr>,
         recv: Recv,
     ) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let (name, word) = match filter {
             true => ("where", "`where`"),
             false => ("map", "`map`"),
@@ -4113,10 +4112,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         for p in x.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => {
-                    // Not proved: an entry is never itself `#notFound` or `#outOfBounds`; a
-                    // family that holds one as a value has it read here as a miss, and the
-                    // result's arrows keep it as a miss, not as an entry `f` maps.
-                    let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result)).without(&misses);
+                    // The values the family stores, a stored `#notFound` or `#outOfBounds`
+                    // among them and no miss ([`super::family_values`], which proves it).
+                    let all = super::family_values(&sig);
                     // An entry that is a loose atom passes through `f` as through any call
                     // (rule 6 of sec:type_resolution), so `f` is given the rest. `where` would
                     // ask its test of such an entry, which gives the atom and no verdict; what
@@ -4221,13 +4219,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                             ],
                         );
                     }
+                    // Each arrow keeps its keys. `map` keeps whether it is partial, so a key
+                    // that may miss still misses with `#notFound`, and its value is what `f`
+                    // gives with the loose atoms passed by. `where` keeps some keys, so each
+                    // arrow is partial, with the values the source stored. Before, an exact
+                    // arrow's result gained `#notFound` and it stayed exact, which says each
+                    // key is kept and `#notFound` stored there.
                     let mut out_sig = (*sig).clone();
-                    let not_found = Ty::set(KType::atom("notFound"));
+                    let mapped = w.union(&loose);
                     for a in &mut out_sig.arrows {
-                        let missed = Ty::set(&a.result.atoms() & &misses);
-                        a.result = match filter {
-                            true => a.result.union(&not_found),
-                            false => w.union(&loose).union(&missed),
+                        let params = std::mem::take(&mut a.params);
+                        *a = match filter {
+                            true => Arrow::partial_of(params, a.value().into_owned()),
+                            false => a.remade(params, |_| mapped.clone()),
                         };
                     }
                     // `where` keeps some keys, so neither every key of an interval nor the
@@ -4284,8 +4288,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The entries of `x` as `map`, `where`, `flatMap` and `group` pass them to their
-    /// function: each family's entries without the misses `#notFound` and `#outOfBounds` and
-    /// without the loose atoms, which pass by a function as by any call (rule 6 of
+    /// function: the values each family stores ([`super::family_values`]) without the loose
+    /// atoms, which pass by a function as by any call (rule 6 of
     /// sec:type_resolution). A class not yet resolved takes the use as a need
     /// ([`NeedKind::Entries`]) and gives its result, a class bound at each call before any use
     /// recorded after it (FAIL-map-lambda-calls-param-entry); a value of type `_` gives `_`.
@@ -4710,7 +4714,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     // stop when the type settles; a naive check would apply `f` once per entry. At most
     // `Carrier::ALL.len() + 1` rounds run (below).
     fn fold_dir_end(&mut self, x: &Ty, init: &Ty, f: Arg<'a>, span: Span, right: bool) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let (word, shape) = match right {
             false => ("`foldl`", "`(a, x) -> a + x`"),
             true => ("`foldr`", "`(x, a) -> x + a`"),
@@ -4783,10 +4786,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut values = Ty::empty();
         for p in x.pieces() {
             match p {
-                Piece::Fn(sig) if sig.data => {
-                    let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result));
-                    values = values.union(&all.without(&misses));
-                }
+                Piece::Fn(sig) if sig.data => values = values.union(&super::family_values(&sig)),
                 Piece::Dyn => self.any(word, span),
                 // As at `levels_of`: the program may write no type parameter. Not reached by a
                 // test: a variable's level returns above.
@@ -5313,13 +5313,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // (4) A value that flows into a class later is checked by `check_on`, through
         // `meet`. A type variable with no class (`Ty::dynamic` below) or a family with no
         // entries records no carrier, which `finish` rejects beside any identity.
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-        let entries = Ty::union_all(
-            (x.fns.iter())
-                .filter(|s| s.data)
-                .flat_map(|s| s.arrows.iter().map(|a| &a.result)),
-        )
-        .without(&misses);
+        // The values the families store, a stored `#notFound` among them, which no carrier
+        // holds, so the fold refuses it as it refuses any atom entry ([`super::family_values`]).
+        let each: Vec<Ty> = (x.fns.iter())
+            .filter(|s| s.data)
+            .map(|s| super::family_values(s))
+            .collect();
+        let entries = Ty::union_all(&each);
         let written = op.written();
         let word = self.fold_word(form, site);
         // A class takes the fold as a need, checked at each call of the generic function,
@@ -5498,13 +5498,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             return t;
         }
         // An operator with no identity at the carrier folds an empty family to `#empty`. A
-        // family with a key always present, an arrow whose result holds no miss, is not
-        // empty, and its fold never gives `#empty`.
+        // family with a key always present, an exact arrow, is not empty, and its fold never
+        // gives `#empty`. Only a partial arrow misses ([`super::family_values`]).
         let nonempty = (x.fns.iter()).filter(|s| s.data).all(|s| {
-            (s.arrows.iter()).any(|a| {
-                a.params.first().is_some_and(|k| !k.lists_nothing())
-                    && (&a.result.atoms() & &misses) == KType::empty()
-            })
+            (s.arrows.iter())
+                .any(|a| !a.partial && a.params.first().is_some_and(|k| !k.lists_nothing()))
         });
         match nonempty {
             true => t,
@@ -8465,7 +8463,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let at = Some(s.span);
                         self.key_outside(&sig, &x, at, s.span, false).unwrap_or(t)
                     }
-                    Some((Some(true), x)) => found_inside(t, &x.ty),
+                    Some((Some(true), x)) => found_inside(t, &x.ty, &sig),
                     _ => t,
                 }
             }
@@ -17902,12 +17900,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .0
                         }
                     };
-                    let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    let r = if dense {
+                        out_of_bounds(r, &x.ty, &sig)
+                    } else {
+                        r
+                    };
                     // With `within`, the key is one of the family's own keys
                     // ([`Self::within_count`]), as where its bounds show it.
                     let r = match self.exact_key_read(&sig, &x) {
-                        Some(true) => found_inside(r, &x.ty),
-                        _ if within && sig.data => found_inside(r, &x.ty),
+                        Some(true) => found_inside(r, &x.ty, &sig),
+                        _ if within && sig.data => found_inside(r, &x.ty, &sig),
                         _ => r,
                     };
                     out = out.union(&r);
@@ -17998,9 +18000,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                             span,
                         )
                         .0;
-                    let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    let r = if dense {
+                        out_of_bounds(r, &x.ty, &sig)
+                    } else {
+                        r
+                    };
                     let r = match self.exact_key_read(&sig, &x) {
-                        Some(true) => found_inside(r, &x.ty),
+                        Some(true) => found_inside(r, &x.ty, &sig),
                         _ => r,
                     };
                     out = out.union(&r);
@@ -23354,12 +23360,12 @@ fn sum_by_region(x: &Ty) -> bool {
 /// at the definition, as before: the need carries `beside` unreplaced (`NeedKind::SumMethod`),
 /// so a variable inside it would not take the call's type.
 fn empty_families_beside_tuples(x: &Ty) -> Option<Ty> {
-    let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
     let mut families = false;
     for p in x.pieces() {
         match p {
             Piece::Fn(s) if s.data => {
-                if !(s.arrows.iter()).all(|a| a.result.without(&misses).lists_nothing()) {
+                // A family that stores no value ([`super::family_values`]).
+                if !(s.arrows.iter()).all(|a| a.value().lists_nothing()) {
                     return None;
                 }
                 families = true;
@@ -24690,8 +24696,8 @@ impl<'a> Ck<'_, 'a> {
             true => "#outOfBounds",
             false => "#notFound",
         };
-        let entries = Ty::union_all(sig.arrows.iter().map(|a| &a.result))
-            .without(&(&KType::atom("notFound") | &KType::atom("outOfBounds")));
+        // The values the map stores, a stored `#notFound` among them ([`super::family_values`]).
+        let entries = super::family_values(sig);
         let keys_text = match (&sig.keys, exact) {
             (Some(k), true) => exact_keys_text(k),
             _ => self.text(&keys),
@@ -24848,18 +24854,19 @@ fn exact_keys_within(k: &WrittenRange, r: &WrittenRange) -> bool {
     exact_keys_empty(k) || k.within(r)
 }
 
-/// `r`, the entry type of a read of a family at a key each of whose ints is one of its keys
-/// ([`Ck::exact_key_read`]), with no miss: neither `#notFound` nor `#outOfBounds`, unless the
-/// key's own loose atoms hold it, which the read passes by and does not make.
-fn found_inside(r: Ty, key: &Ty) -> Ty {
+/// `r`, the entry type of a read of the family `sig` at a key each of whose ints is one of its
+/// keys ([`Ck::exact_key_read`]), with no miss: neither `#notFound` nor `#outOfBounds`, unless
+/// the key's own loose atoms hold it, which the read passes by and does not make, or the
+/// family stores it ([`super::family_values`]), as `[3, #notFound][0]` gives the `#notFound`
+/// stored at key 0. Before (TYPES-entries-keep-stored-notfound), a stored one was dropped
+/// too. O(arrows of `sig`).
+fn found_inside(r: Ty, key: &Ty, sig: &Sig) -> Ty {
     let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-    let dropped = &misses - &key.loose();
+    let stored = &super::family_values(sig).atoms() & &misses;
+    let dropped = &(&misses - &key.loose()) - &stored;
     r.without(&dropped)
 }
 
-/// `r`, the entry type of a read of a family whose keys are one integer interval, every key
-/// present, with its miss `#notFound` written `#outOfBounds` (DESIGN.md sec:type_language, the
-/// `m[k]` row). A `#notFound` the key `key` brings is passed by, not a miss, so it stays.
 impl<'t, 'a> Ck<'t, 'a> {
     /// The read `v[k]` of a family `sig` whose keys the key type `k` meets but does not lie
     /// inside (author decision R11, DESIGN.md sec:type_language): the entries of each arrow
@@ -24884,16 +24891,40 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 }
 
-fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
+/// `r`, the entry type of a read of the family `sig` whose keys are one integer interval,
+/// every key present, at the key `key`, with its miss `#notFound` written `#outOfBounds`
+/// (DESIGN.md sec:type_language, the `m[k]` row). A `#notFound` the key brings is passed by,
+/// not a miss, so it stays. So does one the family stores ([`super::family_values`]): then
+/// `#notFound` in `r` may be the stored value, and it is a miss too only where the read may
+/// miss, at a partial arrow or a key outside the exact arrows' keys, which gives
+/// `#outOfBounds` beside it. `[3, #notFound][0]` is `3 | #notFound`; before
+/// (TYPES-entries-keep-stored-notfound), it was `3 | #outOfBounds`.
+// Complexity tradeoff: one pass over the arrows of `sig` and one subtype test of the key,
+// O(arrows), the cost of the read's own application; telling the stored `#notFound` from the
+// miss in `r` alone is not possible, since both are the one atom.
+fn out_of_bounds(r: Ty, key: &Ty, sig: &Sig) -> Ty {
     let not_found = KType::atom("notFound");
     if (&r.atoms() & &not_found).is_empty() {
         return r;
     }
-    let r = match (&key.loose() & &not_found).is_empty() {
-        true => r.without(&not_found),
+    let out_of_bounds = Ty::set(KType::atom("outOfBounds"));
+    let passed = !(&key.loose() & &not_found).is_empty();
+    let stored = !(&super::family_values(sig).atoms() & &not_found).is_empty();
+    if !stored {
+        let r = if passed { r } else { r.without(&not_found) };
+        return r.union(&out_of_bounds);
+    }
+    let exact = Ty::union_all(
+        sig.arrows
+            .iter()
+            .filter(|a| !a.partial)
+            .map(|a| &a.params[0]),
+    );
+    let may_miss = sig.arrows.iter().any(|a| a.partial) || !key.without_loose().subtype(&exact);
+    match may_miss {
+        true => r.union(&out_of_bounds),
         false => r,
-    };
-    r.union(&Ty::set(KType::atom("outOfBounds")))
+    }
 }
 
 /// The type `t` of the tuple display `e`, with the component of each span of `new` of the

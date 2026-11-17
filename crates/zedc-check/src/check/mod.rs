@@ -4744,16 +4744,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         root
     }
 
-    /// The entries of the family `sig` as `Ck::word_entries` (walk.rs) gives them: without
-    /// the misses `#notFound` and `#outOfBounds` and without the loose atoms. Written here,
+    /// The entries of the family `sig` as `Ck::word_entries` (walk.rs) gives them: the values
+    /// it stores ([`family_values`]), without the loose atoms. Written here,
     /// with [`Self::noted_entries`], so the note on a generic lambda parameter in this file
     /// calls nothing in `walk.rs`, which would close an import cycle (step S.1f, plan row
     /// S1F-check-limits-fp-ops-cycle).
     fn family_entries(sig: &Sig) -> Ty {
-        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-        (Ty::union_all(sig.arrows.iter().map(|a| &a.result)))
-            .without(&misses)
-            .without_loose()
+        family_values(sig).without_loose()
     }
 
     /// `Ck::word_entries` (walk.rs) for a message: no need is made, and a class not yet
@@ -11099,6 +11096,38 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
             stores_not_found: false,
         })
         .collect()
+}
+
+/// The values the family `sig` stores: the union of its arrows' value types
+/// ([`Arrow::value`]). A `#notFound` there is a stored value, as in `[n, #notFound]` (author
+/// P350; DESIGN.md sec:corner_cases, `m : Utf8String -> int | #notFound`), and so is an
+/// `#outOfBounds`. Before (TYPES-entries-keep-stored-notfound), each reader took the union of
+/// the arrows' results less both atoms, so a stored `#notFound` was read as a miss: `map`
+/// kept it out of what `f` is given, `zip` refused the pair, and `first` gave `#none` for it.
+///
+/// Proof that the value types are exactly the stored values, a miss being only the
+/// `#notFound` of a partial arrow that does not store it, and no `#outOfBounds` ever a miss:
+/// every family the checker makes is built by one of these, each of which says so.
+/// - A display (`Ck::display_step`, walk.rs) is [`Sig::one`], exact, its result the union of
+///   the stored entries' types.
+/// - A range, a `Lines` input, a written `[V]`, `concat`, `zip`, `group`, the strings of
+///   `split`, the outer level of `chunkBy`, and `#errs` payloads have one arrow made by
+///   [`Arrow::partial_of`] of its value type ([`Sig::one_partial`]); a written `K -> V` and
+///   `K ->? V` are [`Arrow::exact`] and [`Arrow::partial_of`].
+/// - `map`, `where`, `scan` and the runs of `chunkBy` build each arrow from the source's with
+///   [`Arrow::exact`], [`Arrow::partial_of`] or [`Arrow::remade`], their values from these
+///   values; `Domains::meet` (zedc-types) builds through the same two, and the other
+///   copies of a family (substitution, permuted or dropped parameters) keep each arrow's
+///   `partial` and `stores_not_found`.
+/// - `#outOfBounds` is put in no arrow: a dense family's arrows answer `#notFound`
+///   (`Dense`), which a read turns into `#outOfBounds` at the read (`out_of_bounds`,
+///   walk.rs). So an `#outOfBounds` in a result is one the family stores.
+// Complexity tradeoff: one union of the arrows' values, O(arrows), the cost of the union of
+// results it replaces; a value is borrowed but for a partial arrow that does not store
+// `#notFound`, which is copied once without the atom.
+fn family_values(sig: &Sig) -> Ty {
+    let values: Vec<Cow<'_, Ty>> = sig.arrows.iter().map(Arrow::value).collect();
+    Ty::union_all(values.iter().map(|v| &**v))
 }
 
 fn positional(n: usize) -> Vec<SParam> {
