@@ -1567,3 +1567,33 @@ fn a_parameter_with_a_bound_is_printed_with_its_bound() {
     let want = "the type the checker found for `num` is `(x: int) -> int`";
     assert!(report.contains(want), "{num}: {report}");
 }
+
+/// Row TEST-arrow-lambda-stack-replay: a lambda passed at an intersection of function types
+/// inside a generic function, `outer`, calls `outer`'s parameter `f` on its own parameter `g`.
+/// That call is a need of `outer`, met at `outer(f: …)` once with `g` of each arrow's type,
+/// after the lambda's body was checked, and it rebuilds `g` with a test of `int` and of `f64`.
+/// Before the fix the lambda was no longer recorded then, and the refusal offered `x: (x: int |
+/// f64) ->? int`, a parameter `g` does not have; it now names the lambda, as it does when the
+/// refusal arises while the body is checked (`a_lambda_checked_at_each_arrow_is_rebuilt_once`),
+/// and the repair it offers runs. The program stays refused.
+#[test]
+fn an_arrow_lambda_refused_through_a_call_s_needs_is_named() {
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
+    let split = "split(h1: (g: (x: int) -> int) -> int, h2: (g: (x: f64) -> int) -> int) = h1(g: small) + h2(g: small4);\n";
+    for (call, f) in [("f(g)", "x -> pass(x: x)"), ("f(x: g)", "pass")] {
+        let lam = format!("g -> ({call}, 1)[1]");
+        let src = format!("{head}{both}outer(f) = both(h: {lam});\na = outer(f: {f});\n");
+        let want = format!(
+            "`{lam}` is passed as `((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> \
+             int)` and rebuilds `g` in another way at each arrow. Try `{lam}` once at each arrow \
+             instead, as arguments of types `(g: (x: int) -> int) -> int` and `(g: (x: f64) -> \
+             int) -> int`. [g]"
+        );
+        assert_eq!(type_errors(&src), [want], "{src}");
+        // The repair offered: the lambda passed once at each arrow.
+        let fixed =
+            format!("{head}{split}outer(f) = split(h1: {lam}, h2: {lam});\na = outer(f: {f});\n");
+        runs_to(&fixed, "a", "2");
+    }
+}

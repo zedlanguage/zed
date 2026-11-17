@@ -1758,10 +1758,13 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
-    /// Each lambda whose body is being checked at an arrow of an intersection of function
-    /// types ([`Self::fit_step`]), with that intersection, innermost last. A second rebuilding
-    /// at a span inside one is refused with words for the lambda ([`Self::arrow_lambda_twice`]).
-    arrow_lambdas: Vec<(Span, Arc<Sig>)>,
+    /// Each lambda whose body has been checked at the arrows of an intersection of function
+    /// types ([`Self::fit_step`]), by its span, with that intersection. A second rebuilding at
+    /// a span inside one is refused with words for the lambda ([`Self::arrow_lambda_twice`]).
+    /// Kept for the whole check, not only while the body is checked: a call's needs recorded
+    /// in the body are met later, at a call of the generic function the lambda lies in, and
+    /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
+    arrow_lambdas: HashMap<Span, Arc<Sig>>,
     /// The spans of the needs [`Ck::meet`] is checking, outermost first: the uses in the
     /// bodies a check of a fold passes through on its way from the call that meets it
     /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
@@ -2278,7 +2281,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
-            arrow_lambdas: Vec::new(),
+            arrow_lambdas: HashMap::new(),
             need_chain: Vec::new(),
             fold_uses: HashSet::new(),
             same_use: Vec::new(),
@@ -6667,16 +6670,37 @@ impl Ck<'_, '_> {
     }
 
     /// Refuses a second, different rebuilding at `at` where `at` lies in the body of a lambda
-    /// being checked at an arrow of an intersection of function types (`arrow_lambdas`), in
-    /// words for that lambda, and gives whether it did. The repair offered is the one the
-    /// checker accepts: the lambda passed once at each arrow, as an argument of that arrow's
-    /// type alone, where its body is checked once and rebuilt once
-    /// (`a_lambda_checked_at_each_arrow_is_rebuilt_once`). The search is innermost first and
-    /// costs the depth of lambdas nested at intersections, once per refusal.
+    /// checked at the arrows of an intersection of function types (`arrow_lambdas`), in words
+    /// for that lambda, and gives whether it did. The repair offered is the one the checker
+    /// accepts: the lambda passed once at each arrow, as an argument of that arrow's type
+    /// alone, where its body is checked once and rebuilt once
+    /// (`a_lambda_checked_at_each_arrow_is_rebuilt_once`).
+    ///
+    /// The two callers reach it at these times (row TEST-arrow-lambda-stack-replay):
+    /// - [`Self::fit_twice`], only from [`Self::put`], which returns first while needs are
+    ///   replayed (`replaying > 0`, for the whole of [`Self::meet`]); so only on the walk of
+    ///   the body itself, while the lambda is checked at its second arrow.
+    /// - [`Self::coerce_at`], from [`Self::meet`]: at a call in the body, while the body is
+    ///   checked, and also later, at a call of the generic function the lambda lies in, whose
+    ///   needs recorded in the body give spans in it ([`Self::need_arg_via`], from
+    ///   [`Ck::call_written`]): `f(g)` in `outer(f) = both(h: g -> (f(g), 1)[1])` is met at
+    ///   `outer(f: x -> pass(x: x))`, once with `g` of each arrow's type, after the body's
+    ///   check ended. So the record is kept for the whole check, not only while the body is
+    ///   checked. [`Ck::settle_calls`] meets no need and reaches neither caller.
+    ///
+    /// A different rebuilding at one span needs that span checked at two types, which only
+    /// the arrows of such a lambda make (the proof at [`Self::coerce_at`]), so a span in no
+    /// recorded lambda keeps the other words. The lambda named is the innermost that holds
+    /// `at`; with one lambda checked at an intersection inside another, the outer one's arrows
+    /// may be those that make the two types, and naming the inner one there is not proved
+    /// right (row MSG-arrow-lambda-nested-cause). Cost: O(l) for the l lambdas recorded, once
+    /// per refusal; the naive way, a stack cut when each body ends, loses the lambda before a
+    /// later call meets the body's needs.
     fn arrow_lambda_twice(&mut self, at: Span) -> bool {
-        let Some((l, e)) = (self.arrow_lambdas.iter().rev())
-            .find(|(l, _)| l.start <= at.start && at.end <= l.end)
-            .cloned()
+        let Some((l, e)) = (self.arrow_lambdas.iter())
+            .filter(|(l, _)| l.start <= at.start && at.end <= l.end)
+            .min_by_key(|(l, _)| (l.end - l.start, l.start))
+            .map(|(l, e)| (*l, e.clone()))
         else {
             return false;
         };

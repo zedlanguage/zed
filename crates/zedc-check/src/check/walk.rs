@@ -8458,11 +8458,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.x += 1;
             }
             Some(FitWait::Body) => {
-                // The entry pushed for this lambda below, and any an abandoned check inside
-                // its body left above it.
-                if let Some(i) = (self.arrow_lambdas.iter()).rposition(|(l, _)| *l == s.span) {
-                    self.arrow_lambdas.truncate(i);
-                }
                 let r = m.take_ty();
                 let want = s.e.arrows[s.a].result.subst(&s.unheld);
                 if !self.subtype(&r, &want) {
@@ -8537,8 +8532,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let want = Want::of(&arrow.result.subst(&s.unheld));
             let body = s.body;
+            // Kept after the body, for needs met later ([`Ck::arrow_lambda_twice`]).
             if s.e.arrows.len() > 1 {
-                self.arrow_lambdas.push((s.span, s.e.clone()));
+                self.arrow_lambdas.insert(s.span, s.e.clone());
             }
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
