@@ -19,7 +19,7 @@ use zedc::zir::memory::{HeldPart, Mode, held_family_term, held_term, port_var};
 
 use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
-use crate::tables::{NodeInfo, Tables};
+use crate::tables::{NamedShape, NodeInfo, Placing, Tables};
 
 /// A match's binders: each word and its node in the [`Paths`] of the scrutinee.
 type Binders = Vec<(Word, usize)>;
@@ -45,7 +45,14 @@ pub(crate) struct Run {
     /// The number of the node whose hook recorded [`Run::err`], when a hook with a node
     /// recorded it: the executable prints the site of that node (plan row RT-sites).
     pub err_at: Option<usize>,
+    /// The address of each lambda's entry, then of its body ([`Tables::body`]), then of each
+    /// function that calls a body on [`Run::named`] ([`Tables::trampoline`]).
     entries: Vec<i64>,
+    /// The call [`rt_named`] placed: the body's address, the closure's word and the
+    /// arguments' words, flat; kept between calls.
+    named: Vec<i64>,
+    /// For each node, the merge its last call by name made ([`place_named`]).
+    merged: Vec<Option<Merged>>,
     pub kernel_calls: u64,
     /// For each atom node, the shape last made from constant name and field words.
     shapes: Vec<Option<(Word, Word, Shape)>>,
@@ -78,7 +85,9 @@ impl State {
             pending: Word::err(),
             err: None,
             err_at: None,
-            entries: vec![0; t.lambdas.len()],
+            entries: vec![0; t.entry_count()],
+            named: Vec::new(),
+            merged: vec![None; t.nodes.len()],
             kernel_calls: 0,
             shapes: vec![None; t.nodes.len()],
         };
@@ -159,6 +168,8 @@ pub(crate) const HOOKS: &[(&str, usize, usize)] = &[
     ("rt_pending", 0, 2),
     ("rt_error", 1, 2),
     ("rt_pow", 2, 1),
+    ("rt_named", 1, 2),
+    ("rt_args", 1, 1),
 ];
 
 /// Each hook's address, in the order of [`HOOKS`].
@@ -178,7 +189,248 @@ pub(crate) fn addresses() -> Vec<*const u8> {
         rt_pending as extern "C" fn() -> Word as *const u8,
         rt_error as extern "C" fn(i64) -> Word as *const u8,
         rt_pow as extern "C" fn(i64, i64) -> i64 as *const u8,
+        rt_named as extern "C" fn(i64) -> Named as *const u8,
+        rt_args as extern "C" fn(i64) -> i64 as *const u8,
     ]
+}
+
+/// The address of the buffer of the next hook's words, made `n` words long, for native code
+/// to store them in as `rt_arg` would pass them one at a time: each [`Word`] two `i64`s, tag
+/// first. The next hook call must be the one that reads them: any hook may move the buffer.
+// Complexity tradeoff: `rt_arg` costs a hook call per word, about 30 instructions and the
+// borrow of the run; here one call per node and two stores per word. Used by a call by name
+// ([`rt_named`]), whose p arguments made it 8 times the cost of a direct call at p = 320
+// (`a_placed_call_costs_about_a_direct_call_in_native_code`, row CALL-callee-places-native).
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
+extern "C" fn rt_args(n: i64) -> i64 {
+    with(|_, s| {
+        s.args.clear();
+        s.args.resize(n as usize, Word::err());
+        s.args.as_mut_ptr() as i64
+    })
+}
+
+/// Where [`rt_named`] sends a call: the address of the function that calls a body on the
+/// words of `buf` ([`Tables::trampoline`]), 0 when the kernel is to run the call, or
+/// [`Word::ERR`] when the run failed; laid out as two `i64` results.
+#[repr(C)]
+pub(crate) struct Named {
+    call: i64,
+    buf: i64,
+}
+
+/// A call by name, `callNamed` node `id` on the words [`rt_args`] gave: when the function is a
+/// closure a `place` made in native code ([`placed_clo`]) and its parameter list places every
+/// argument, the call placed, in [`Run::named`], as the kernel's `placing` places it (DESIGN.md
+/// sec:values_morphisms, "The function called places the arguments"): each argument in its
+/// parameter, and a function with a fill called through its fill on the parameters, a `false`
+/// in each defaulted one the call leaves out, then a flag for each defaulted one, `true` where
+/// left out. The body is called as a direct call calls it, on what the node borrows, with a
+/// reference to each argument it consumes. In every other case nothing is changed, the words
+/// included, and the kernel runs the call on them (`rt_node` next), which gives the same
+/// value or error (row CALL-callee-places-native).
+// Complexity tradeoff: the kernel's call (`rt_node`) builds the term of the function and of
+// each argument and runs it, O(p + a) for p parameters and a arguments and a large constant,
+// and the function's body runs in the kernel. Here the call's sorted names and the function's
+// sorted parameter names are merged once, O(p + a) comparisons of the names' ranks (each
+// O(1), [`Tables::rank_names`]), once for each node and list unless an argument has a flag
+// ([`place_named`]), with no allocation after the first call (the merges and the buffers
+// are kept), and the body runs in native code. The naive merge searches the parameter names
+// for each argument, O(p·a). Tradeoff: the arguments are copied twice, into the buffer and
+// the call's. Nothing is refused.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
+extern "C" fn rt_named(id: i64) -> Named {
+    with(|t, s| {
+        let ins = std::mem::take(&mut s.args);
+        let r = place_named(t, s, id as usize, &ins);
+        s.args = ins;
+        if !matches!(r, Ok(None)) {
+            s.args.clear();
+        }
+        match r {
+            Ok(Some(call)) => Named {
+                call,
+                buf: s.named.as_ptr() as i64,
+            },
+            Ok(None) => Named { call: 0, buf: 0 },
+            Err(e) => {
+                fail(s, e, Some(id as usize));
+                Named {
+                    call: Word::ERR,
+                    buf: 0,
+                }
+            }
+        }
+    })
+}
+
+/// A parameter of [`Merged::from`] that the call leaves out.
+const LEFT: u32 = u32::MAX;
+
+/// The merge of a call by name with a parameter list, kept for the call's node.
+#[derive(Clone)]
+struct Merged {
+    /// The parameter list's number among [`Tables::placings`].
+    placing: u32,
+    /// For each parameter, the index among the call's arguments of the one it gets, or
+    /// [`LEFT`]; none when the list does not place the call.
+    from: Option<Vec<u32>>,
+}
+
+/// The address of the function that calls the body [`rt_named`] places node `id`'s call
+/// on, with the call in [`Run::named`]; none when the kernel is to run it.
+// Complexity tradeoff: the merge of the call's names with the list, O(p + a), depends only on
+// the node and the list when the call leaves no argument out by a flag, so it is kept for the
+// node ([`Run::merged`]) and a call through the same list copies the arguments, O(p), with no
+// compare; it was 40% of a placed call's run time at p = 320 (row CALL-callee-places-native).
+// A node called through lists that alternate merges at each call, as before. Memory: O(p)
+// per node that calls by name.
+fn place_named(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<i64>, String> {
+    let sh = t.nodes[id]
+        .named
+        .as_deref()
+        .expect("a call with a literal shape");
+    let (lambda, pi, fill) = match s.heap.obj(ins[1])? {
+        Some(Obj::Clo {
+            lambda,
+            caps,
+            placed: Some(pi),
+        }) => {
+            let fill = t.placings[*pi as usize].fill;
+            (*lambda, *pi, fill.then(|| *caps.last().expect("a fill")))
+        }
+        _ => return Ok(None),
+    };
+    let p = &t.placings[pi as usize];
+    let (given, flags) = ins[2..].split_at(sh.k + sh.names.len());
+    let from = match s.merged[id].take() {
+        Some(m) if m.placing == pi && !sh.flagged => m.from,
+        old => {
+            let mut from = old.and_then(|m| m.from).unwrap_or_default();
+            merge(sh, p, flags, &mut from).then_some(from)
+        }
+    };
+    let r = match &from {
+        Some(from) => call_placed(t, s, given, from, (ins[1], lambda), p, fill),
+        None => Ok(None),
+    };
+    s.merged[id] = Some(Merged { placing: pi, from });
+    r
+}
+
+/// Sets `from` to the parameter each argument of the call of shape `sh` goes to under list
+/// `p`, the flags `flags` saying which the call leaves out; false when the list does not place
+/// the call: an argument it has no parameter for, two for one parameter, or a parameter left
+/// out that the function does not fill.
+fn merge(sh: &NamedShape, p: &Placing, flags: &[Word], from: &mut Vec<u32>) -> bool {
+    if sh.k > p.n {
+        return false;
+    }
+    // As the kernel reads a flag: a name is left out when its flag is the boolean true.
+    let yes = Word {
+        tag: Word::BOOL,
+        bits: 1,
+    };
+    let left_out = |i: usize| sh.opt[i].is_some_and(|x| flags.get(x) == Some(&yes));
+    from.clear();
+    from.extend(0..sh.k as u32);
+    from.resize(p.n, LEFT);
+    // One merge of the call's sorted names with the function's, as the kernel's, by the
+    // names' ranks ([`Tables::rank_names`]), which keep their order.
+    let (mut i, mut j) = (0, 0);
+    while i < sh.names.len() {
+        if left_out(i) {
+            i += 1;
+            continue;
+        }
+        let Some(q) = p.ranks.get(j) else {
+            return false;
+        };
+        match sh.ranks[i].cmp(q) {
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => {
+                let slot = &mut from[p.places[j]];
+                if *slot != LEFT {
+                    return false;
+                }
+                *slot = (sh.k + sh.at[i]) as u32;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    // Without a fill every parameter needs a value; with one, every parameter without a
+    // default.
+    !(from.iter().zip(&p.defaulted)).any(|(x, d)| *x == LEFT && (!p.fill || !d))
+}
+
+/// The call of closure `f`, of `lambda` with list `p` and fill `fill`, on the arguments
+/// `given` as `from` places them, in [`Run::named`], as [`place_named`] gives it; none, with
+/// nothing changed, when the kernel is to run it: a body that does not take the parameters
+/// one word each.
+fn call_placed(
+    t: &Tables,
+    s: &mut Run,
+    given: &[Word],
+    from: &[u32],
+    (f, lambda): (Word, usize),
+    p: &Placing,
+    fill: Option<Word>,
+) -> Result<Option<i64>, String> {
+    let (callee, clo, arity) = match fill {
+        None => (lambda, f, p.n),
+        Some(g) => match s.heap.obj(g)? {
+            Some(Obj::Clo { lambda, .. }) => (*lambda, g, p.n + p.defaults),
+            _ => return Ok(None),
+        },
+    };
+    if t.lambdas[callee].params != arity {
+        return Ok(None);
+    }
+    let push = |b: &mut Vec<i64>, w: Word| b.extend([w.tag, w.bits]);
+    let mut b = std::mem::take(&mut s.named);
+    b.clear();
+    // The body, as a direct call calls it: it borrows what the call borrows, and gets a
+    // reference to each argument it consumes.
+    // Complexity tradeoff: calling the entry instead gave every argument a reference here
+    // and the entry dropped it after, two count changes per argument the body borrows, 25% of
+    // a placed call's run time at p = 320 (row CALL-callee-places-native). The cost is the
+    // bodies' addresses, registered once a run.
+    b.push(s.entries[t.body(callee)]);
+    push(&mut b, clo);
+    let left = Word {
+        tag: Word::BOOL,
+        bits: 0,
+    };
+    for (&x, m) in from.iter().zip(&t.lambdas[callee].modes) {
+        let w = if x == LEFT { left } else { given[x as usize] };
+        if *m == Mode::Owned && w.tag == Word::CELL {
+            s.heap.inc(w)?;
+        }
+        push(&mut b, w);
+    }
+    if fill.is_some() {
+        for (&x, _) in from.iter().zip(&p.defaulted).filter(|(_, d)| **d) {
+            push(
+                &mut b,
+                Word {
+                    tag: Word::BOOL,
+                    bits: i64::from(x == LEFT),
+                },
+            );
+        }
+    }
+    s.named = b;
+    Ok(Some(s.entries[t.trampoline(arity)]))
 }
 
 /// Float `^` on the bits of two floats, neither a NaN: IEEE 754 `pow`, a NaN it makes (a
@@ -594,7 +846,22 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         Op::Lambda => Ok(s.heap.alloc(Obj::Clo {
             lambda: ni.lambda.expect("a lambda's index"),
             caps: ins.into(),
+            placed: None,
         })),
+        // `place(table, f[, fill])` with a literal table and closures the program made: the
+        // closure `f` with the table's parameter list, and the fill after its captures, so a
+        // call of it by name places its arguments in native code (`rt_named`) and a call by
+        // position calls its entry as before (row CALL-callee-places-native). Any other `f`
+        // is the kernel's.
+        // Complexity tradeoff: the kernel's `place` copies the closure's environment into a
+        // new closure, O(captures), as this does; nothing more. Nothing is refused.
+        Op::Prim(Prim::Place) if ni.placing.is_some() => match placed_clo(t, s, ni, ins)? {
+            Some(w) => {
+                consume(s, ni, ins)?;
+                Ok(w)
+            }
+            None => slow(t, s, ni, ins),
+        },
         Op::Read(p) => match s.ev.world.inputs.get(&**p) {
             Some(v) => {
                 let v = v.clone();
@@ -899,6 +1166,48 @@ fn called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<Word>, String> {
     passed(s, p, args)
 }
 
+/// The closure `place` node `ni` makes of `ins`, owned, when its function and fill are
+/// closures the program made, `f` of as many parameters as the table lists (so its entry takes
+/// the placed arguments, one word each) and the fill with no list of its own; none otherwise,
+/// with nothing changed. As the kernel's `place`, a closure that already had a list gets this
+/// one in its place, and its old fill is left out.
+fn placed_clo(
+    t: &Tables,
+    s: &mut Run,
+    ni: &NodeInfo,
+    ins: &[Word],
+) -> Result<Option<Word>, String> {
+    let pi = ni.placing.expect("a placing node");
+    let lambda = match s.heap.obj(ins[1])? {
+        Some(Obj::Clo { lambda, .. }) if t.lambdas[*lambda].params == t.placings[pi as usize].n => {
+            *lambda
+        }
+        _ => return Ok(None),
+    };
+    // The lambda's own captures; a fill an earlier `place` gave the closure is after them.
+    let n = t.nodes[t.lambdas[lambda].node].node().inputs.len();
+    let fill = match ins.get(2) {
+        Some(&f) => match s.heap.obj(f)? {
+            Some(Obj::Clo { placed: None, .. }) => Some(f),
+            _ => return Ok(None),
+        },
+        None => None,
+    };
+    let Some(Obj::Clo { caps, .. }) = s.heap.obj(ins[1])? else {
+        unreachable!("checked above")
+    };
+    let mut caps: Vec<Word> = caps[..n].to_vec();
+    caps.extend(fill);
+    for &c in &caps {
+        s.heap.inc(c)?;
+    }
+    Ok(Some(s.heap.alloc(Obj::Clo {
+        lambda,
+        caps: caps.into(),
+        placed: Some(pi),
+    })))
+}
+
 /// The kernel runs the node, the owned inputs are dropped, and the value is allocated. The
 /// value may be a function or hold one, a family of functions a `map` made included (row
 /// FAIL-native-fam-result-holds-function): the kernel gives it apart from its run
@@ -1051,10 +1360,22 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
             Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
                 let q = match s.heap.obj(*clo)? {
-                    Some(Obj::Clo { lambda, .. }) => {
+                    Some(Obj::Clo { lambda, placed, .. }) => {
                         let ni = &t.nodes[t.lambdas[*lambda].node];
-                        let caps = HeldPart::terms(std::mem::take(terms));
-                        HeldPart::closure(raise_node(ni.node(), ni.number, &t.swapped, &caps)?)?
+                        let mut caps = HeldPart::terms(std::mem::take(terms));
+                        // A closure a `place` made ([`placed_clo`]): `place(table, f, fill)`,
+                        // the fill its last capture, as the kernel's `placed_fun_term` gives it.
+                        let placed = placed.map(|p| &t.placings[p as usize]);
+                        let fill = placed.and_then(|p| if p.fill { caps.pop() } else { None });
+                        let f = raise_node(ni.node(), ni.number, &t.swapped, &caps)?;
+                        HeldPart::closure(match placed {
+                            None => f,
+                            Some(p) => {
+                                let mut args = vec![Term::Lit(p.table.clone()), f];
+                                args.extend(fill);
+                                Term::Prim(Prim::Place, args)
+                            }
+                        })?
                     }
                     // A closure the kernel made: its lambda with its captures bound inside,
                     // as a closure the program made is raised (`raise_node`'s `Caps::Given`).
@@ -1526,6 +1847,7 @@ mod tests {
             w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
                 caps: vec![w].into(),
+                placed: None,
             });
         }
         // The kernel's terms drop by recursion, so this one is left to the end of the process.
@@ -1558,6 +1880,7 @@ mod tests {
         let w = s.run.heap.alloc(Obj::Clo {
             lambda: inner,
             caps: vec![Word::int(1), Word::int(2)].into(),
+            placed: None,
         });
         let made = term(&s.t, &mut s.run, w, &mut Lets::default()).unwrap();
         assert!(matches!(made, Term::Lam(..)));
@@ -1645,6 +1968,7 @@ mod tests {
             w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
                 caps: vec![w, w].into(),
+                placed: None,
             });
         }
         // A tree of every path would hold 2^64 copies of the bottom closure.
@@ -1679,6 +2003,7 @@ mod tests {
         let clo = |a, b| Obj::Clo {
             lambda: inner,
             caps: vec![Word::int(a), Word::int(b)].into(),
+            placed: None,
         };
         let mut lets = Lets::default();
         let old = s.run.heap.alloc(clo(1, 2));

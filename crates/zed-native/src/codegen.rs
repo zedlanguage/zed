@@ -87,6 +87,9 @@ struct Gen<'a, M: Module> {
     hooks: HashMap<&'static str, FuncId>,
     bodies: Vec<FuncId>,
     entries: Vec<FuncId>,
+    /// For each number of parameters of [`Tables::arities`], the function that calls a body
+    /// of that many on the words of a buffer ([`Gen::trampoline`]).
+    trampolines: Vec<(usize, FuncId)>,
     /// Where each function's IR text goes, as emitted and before Cranelift's passes, when
     /// asked for.
     ir: Option<&'a mut String>,
@@ -155,6 +158,13 @@ pub(crate) fn define<'a, M: Module>(
                 .map_err(err)?,
         );
     }
+    let mut trampolines = Vec::new();
+    for a in t.arities() {
+        let id = m
+            .declare_function(&format!("zed_named_{a}"), Linkage::Local, &sig(m, 2, 2))
+            .map_err(err)?;
+        trampolines.push((a, id));
+    }
     let root = m
         .declare_function("zed_root", Linkage::Export, &sig(m, 0, 2))
         .map_err(err)?;
@@ -165,12 +175,16 @@ pub(crate) fn define<'a, M: Module>(
         hooks,
         bodies,
         entries,
+        trampolines,
         ir,
     };
     cg.root(root)?;
     for i in 0..t.lambdas.len() {
         cg.body(i)?;
         cg.entry(i)?;
+    }
+    for i in 0..cg.trampolines.len() {
+        cg.trampoline(i)?;
     }
     Ok(Funcs { root })
 }
@@ -194,6 +208,17 @@ impl<M: Module> Gen<'_, M> {
             b.append_block_params_for_function_params(entry);
             b.switch_to_block(entry);
             let ps = b.block_params(entry).to_vec();
+            // The code goes in a block after the entry block, which holds only the jump to it.
+            // Complexity tradeoff: Cranelift's verifier (cranelift-codegen 0.137,
+            // `Verifier::block_integrity`) checks every parameter of a block at each of its
+            // instructions, so code in an entry block of 2 + 2p parameters, whose stores of
+            // the p words are O(p) instructions, cost O(p²) to verify: 15 times the time at 4
+            // times p, measured at p = 320 and 1280 (row CALL-callee-places-native). With one
+            // instruction in the entry block it costs O(p), and every other block has a fixed
+            // number of parameters. The jump is to the next block and emits no code.
+            let start = b.create_block();
+            b.ins().jump(start, &[]);
+            b.switch_to_block(start);
             let err = b.create_block();
             let mut fx = Fx {
                 b,
@@ -227,6 +252,21 @@ impl<M: Module> Gen<'_, M> {
                 let r = cg.fref(fx, cg.entries[i]);
                 let a = fx.b.ins().func_addr(I64, r);
                 let l = fx.b.ins().iconst(I64, i as i64);
+                cg.call(fx, "rt_register", &[l, a]);
+            }
+            if !cg.trampolines.is_empty() {
+                for i in 0..cg.t.lambdas.len() {
+                    let r = cg.fref(fx, cg.bodies[i]);
+                    let a = fx.b.ins().func_addr(I64, r);
+                    let l = fx.b.ins().iconst(I64, cg.t.body(i) as i64);
+                    cg.call(fx, "rt_register", &[l, a]);
+                }
+            }
+            for i in 0..cg.trampolines.len() {
+                let (arity, id) = cg.trampolines[i];
+                let r = cg.fref(fx, id);
+                let a = fx.b.ins().func_addr(I64, r);
+                let l = fx.b.ins().iconst(I64, cg.t.trampoline(arity) as i64);
                 cg.call(fx, "rt_register", &[l, a]);
             }
             let g = &cg.t.regions[0].region;
@@ -287,6 +327,29 @@ impl<M: Module> Gen<'_, M> {
                     cg.dec(fx, w);
                 }
             }
+            Ok(vec![(out[0], out[1])])
+        })
+    }
+
+    /// The function that calls a body of `a` parameters, `a` the arity of
+    /// `self.trampolines[i]`, on a buffer [`crate::hooks`]' `rt_named` filled: the body's
+    /// address, then the closure's word and the `a` parameters' words, each two `i64`s. It
+    /// takes the buffer's address as its one word and gives the body's result. The words are
+    /// all loaded before the call, so a call by name inside the body may fill the buffer
+    /// again.
+    fn trampoline(&mut self, i: usize) -> Result<(), String> {
+        let (a, id) = self.trampolines[i];
+        self.function(id, 1, 1, |cg, fx, ps| {
+            let buf = ps[0].0;
+            let flags = MemFlagsData::trusted();
+            let addr = fx.b.ins().load(I64, flags, buf, 0);
+            let words: Vec<V> = (0..2 * (1 + a))
+                .map(|k| fx.b.ins().load(I64, flags, buf, 8 * (1 + k as i32)))
+                .collect();
+            let s = sig(cg.m, 2 * (1 + a), 2);
+            let sr = fx.b.import_signature(s);
+            let inst = fx.b.ins().call_indirect(sr, addr, &words);
+            let out = fx.b.inst_results(inst).to_vec();
             Ok(vec![(out[0], out[1])])
         })
     }
@@ -359,11 +422,27 @@ impl<M: Module> Gen<'_, M> {
     }
 
     fn inc(&mut self, fx: &mut Fx<'_>, w: W) {
-        self.call(fx, "rt_inc", &[w.0, w.1]);
+        self.on_cell(fx, "rt_inc", w);
     }
 
     fn dec(&mut self, fx: &mut Fx<'_>, w: W) {
-        self.call(fx, "rt_dec", &[w.0, w.1]);
+        self.on_cell(fx, "rt_dec", w);
+    }
+
+    /// Hook `hook` called on `w` when `w` is a cell: the heap counts references to cells only,
+    /// and its `inc` and `dec` change nothing for any other word.
+    // Complexity tradeoff: the hook call on every word cost a call and the borrow of the run,
+    // about 60 instructions, for a word that is not a cell too; a callee of p `int` parameters
+    // dropped each through it, 25% of a placed call's run time at p = 320 (row
+    // CALL-callee-places-native). Here one compare and branch per word, and the call for a
+    // cell alone; the cost is one more block per count change compiled.
+    fn on_cell(&mut self, fx: &mut Fx<'_>, hook: &str, w: W) {
+        let next = fx.b.create_block();
+        let cell = fx.b.ins().icmp_imm_s(IntCC::Equal, w.0, Word::CELL);
+        self.when(fx, cell, next);
+        self.call(fx, hook, &[w.0, w.1]);
+        fx.b.ins().jump(next, &[]);
+        fx.b.switch_to_block(next);
     }
 
     /// Emits region `at`, its arms inline, on `args`; gives its results.
@@ -526,6 +605,14 @@ impl<M: Module> Gen<'_, M> {
                 self.states(fx, w, n)
             }
             Op::Apply => self.apply(fx, id, ins)?,
+            Op::Prim(Prim::CallNamed)
+                if t.nodes[id].named.is_some()
+                    && !self.trampolines.is_empty()
+                    && t.nodes[id].modes.iter().all(|m| *m != Mode::Owned) =>
+            {
+                let w = self.named(fx, id, ins);
+                self.states(fx, w, n)
+            }
             _ => {
                 let w = self.slow(fx, id, ins);
                 self.states(fx, w, n)
@@ -541,6 +628,48 @@ impl<M: Module> Gen<'_, M> {
         }
         let k = fx.b.ins().iconst(I64, id as i64);
         self.call_word(fx, "rt_node", &[k])
+    }
+
+    /// Call by name `id` on `ins`, every input borrowed: placed by the runtime (`rt_named`)
+    /// and run through the body of the function called, or, where the runtime does not place
+    /// it, run by the runtime as any node (row CALL-callee-places-native).
+    // Complexity tradeoff: before, every call by name ran in the kernel ([`Gen::slow`]),
+    // O(p + a) for p parameters and a arguments with a large constant, and the function's
+    // body with it. Here one runtime call merges the names, O(p + a), and the body runs in
+    // native code. The arguments are stored straight into the runtime's buffer (`rt_args`),
+    // two stores each, where one `rt_arg` hook call each made the placed call 8.4 times the
+    // run cost of a direct call at p = 320; a call the runtime does not place runs in the
+    // kernel on the same buffer (`rt_named` leaves it). Nothing is refused.
+    fn named(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc]) -> W {
+        let n = fx.b.ins().iconst(I64, ins.len() as i64);
+        let buf = self.call(fx, "rt_args", &[n])[0];
+        let flags = MemFlagsData::trusted();
+        for (i, l) in ins.iter().enumerate() {
+            let w = self.get(fx, *l);
+            fx.b.ins().store(flags, w.0, buf, 16 * i as i32);
+            fx.b.ins().store(flags, w.1, buf, 16 * i as i32 + 8);
+        }
+        let k = fx.b.ins().iconst(I64, id as i64);
+        let r = self.call(fx, "rt_named", &[k]);
+        let (call, buf) = (r[0], r[1]);
+        self.checked(fx, (call, buf));
+        let merge = self.merge(fx, 1);
+        let kern = fx.b.create_block();
+        let nz = fx.b.ins().icmp_imm_s(IntCC::NotEqual, call, 0);
+        self.when(fx, nz, kern);
+        let s = sig(self.m, 2, 2);
+        let sr = fx.b.import_signature(s);
+        let zero = fx.b.ins().iconst(I64, 0);
+        let inst = fx.b.ins().call_indirect(sr, call, &[buf, zero]);
+        let out = fx.b.inst_results(inst).to_vec();
+        let w = self.checked(fx, (out[0], out[1]));
+        self.jump(fx, merge, &[w]);
+        fx.b.switch_to_block(kern);
+        let k = fx.b.ins().iconst(I64, id as i64);
+        let w = self.call_word(fx, "rt_node", &[k]);
+        self.jump(fx, merge, &[w]);
+        fx.b.switch_to_block(merge);
+        self.params(fx, merge)[0]
     }
 
     /// The words at `ins`, flat, for a call.

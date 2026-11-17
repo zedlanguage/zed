@@ -40,6 +40,149 @@ pub(crate) struct NodeInfo {
     /// The node's number in the legalized graph, in preorder over every region at every depth
     /// (`zedc::zir::legalize::Legalized`): what tells the kernel whether it was swapped.
     pub number: usize,
+    /// For a `place` whose table is a literal of the form the kernel reads: the index of its
+    /// parameter list in [`Tables::placings`].
+    pub placing: Option<u32>,
+    /// For a `callNamed` whose shape is a literal of the form the kernel reads: the shape.
+    pub named: Option<Box<NamedShape>>,
+}
+
+/// The parameter list a `place` node gives the closure it makes (DESIGN.md
+/// sec:values_morphisms, "The function called places the arguments"), read once from the
+/// literal table `(n, names, places, defaulted)` the elaborator wrote, as the kernel's
+/// `placing` reads it at each call.
+pub(crate) struct Placing {
+    /// The literal table, for the kernel term of a closure that carries it.
+    pub table: Value,
+    /// The number of parameters.
+    pub n: usize,
+    /// The parameter names, strictly increasing.
+    pub names: Vec<Value>,
+    /// Each name's rank among all the names of the program ([`Tables::rank_names`]).
+    pub ranks: Vec<u32>,
+    /// For each name, the parameter it names; no two names name one parameter.
+    pub places: Vec<usize>,
+    /// For each parameter, whether the function fills it with a default when a call leaves
+    /// it out.
+    pub defaulted: Vec<bool>,
+    /// The number of defaulted parameters.
+    pub defaults: usize,
+    /// Whether the node is given the function that fills the defaults, its third input.
+    pub fill: bool,
+}
+
+/// The shape `(k, names, at[, opt])` of a `callNamed` node, read once from its literal, as
+/// the kernel's `placing` reads it: the node's inputs after the shape and the function are `k`
+/// positional arguments, one argument for each name, and the flags.
+pub(crate) struct NamedShape {
+    /// The number of positional arguments.
+    pub k: usize,
+    /// The argument names, strictly increasing.
+    pub names: Vec<Value>,
+    /// Each name's rank among all the names of the program ([`Tables::rank_names`]).
+    pub ranks: Vec<u32>,
+    /// For each name, its argument's index after the positional ones.
+    pub at: Vec<usize>,
+    /// For each name, the index among the flags of the flag that leaves its argument out, if
+    /// any.
+    pub opt: Vec<Option<usize>>,
+    /// Whether some argument has a flag: then which arguments the call passes changes from
+    /// one run of it to the next.
+    pub flagged: bool,
+}
+
+impl Placing {
+    /// The list `table` gives, or none when it is not of the form the elaborator writes; the
+    /// kernel then runs the node and gives the error.
+    fn read(table: &Value, fill: bool) -> Option<Placing> {
+        let Value::Tuple(xs) = table else { return None };
+        let [
+            Value::Int(n),
+            Value::Tuple(names),
+            Value::Tuple(places),
+            Value::Tuple(defaulted),
+        ] = xs.as_slice()
+        else {
+            return None;
+        };
+        let n = usize::try_from(*n).ok()?;
+        let places = places.iter().map(index).collect::<Option<Vec<_>>>()?;
+        let defaulted = (defaulted.iter())
+            .map(|d| match d {
+                Value::Bool(b) => Some(*b),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let mut named = vec![false; n];
+        for &p in &places {
+            if std::mem::replace(named.get_mut(p)?, true) {
+                return None;
+            }
+        }
+        let ok = places.len() == names.len()
+            && defaulted.len() == n
+            && names.windows(2).all(|w| w[0] < w[1]);
+        ok.then(|| Placing {
+            table: table.clone(),
+            n,
+            names: names.to_vec(),
+            ranks: Vec::new(),
+            places,
+            defaults: defaulted.iter().filter(|d| **d).count(),
+            defaulted,
+            fill,
+        })
+    }
+}
+
+impl NamedShape {
+    /// The shape `shape` gives for a node of `inputs` inputs, or none when it is not of the
+    /// form the elaborator writes; the kernel then runs the node and gives the error.
+    fn read(shape: &Value, inputs: usize) -> Option<NamedShape> {
+        let Value::Tuple(xs) = shape else { return None };
+        let (k, names, at, opt) = match xs.as_slice() {
+            [k, Value::Tuple(names), Value::Tuple(at)] => (k, names, at, None),
+            [k, Value::Tuple(names), Value::Tuple(at), Value::Tuple(opt)] => {
+                (k, names, at, Some(opt))
+            }
+            _ => return None,
+        };
+        let k = index(k)?;
+        let at = at.iter().map(index).collect::<Option<Vec<_>>>()?;
+        // As the kernel reads `opt`: a non-negative integer is a flag's index, anything else
+        // none.
+        let opt: Vec<Option<usize>> = match opt {
+            Some(o) => o.iter().map(index).collect(),
+            None => vec![None; names.len()],
+        };
+        let flags = opt.iter().flatten().count();
+        let mut taken = vec![false; names.len()];
+        for &a in &at {
+            if std::mem::replace(taken.get_mut(a)?, true) {
+                return None;
+            }
+        }
+        let ok = at.len() == names.len()
+            && opt.len() == names.len()
+            && inputs == 2 + k + names.len() + flags
+            && names.windows(2).all(|w| w[0] < w[1]);
+        ok.then(|| NamedShape {
+            k,
+            names: names.to_vec(),
+            ranks: Vec::new(),
+            at,
+            flagged: opt.iter().any(Option::is_some),
+            opt,
+        })
+    }
+}
+
+/// `v` as an index: a non-negative integer.
+fn index(v: &Value) -> Option<usize> {
+    match v {
+        Value::Int(i) => usize::try_from(*i).ok(),
+        _ => None,
+    }
 }
 
 impl NodeInfo {
@@ -117,6 +260,8 @@ pub(crate) struct Tables {
     pub fuse: bool,
     /// The nodes legalization swapped, by number.
     pub swapped: Arc<Swapped>,
+    /// The parameter list of each `place` node that has one ([`NodeInfo::placing`]).
+    pub placings: Vec<Placing>,
 }
 
 /// A region being numbered. Regions nest as deep as the term, so the regions in progress are
@@ -146,6 +291,7 @@ impl Tables {
             const_at: HashMap::new(),
             fuse: plan.fuse,
             swapped: g.swapped().clone(),
+            placings: Vec::new(),
         };
         let mut plans = Vec::new();
         let mut lambda_at = vec![None; plan.regions.len()];
@@ -159,7 +305,49 @@ impl Tables {
         for id in 0..t.nodes.len() {
             t.resolve(id, plan, &plans, &lambda_at)?;
         }
+        t.rank_names();
         Ok((t, plans))
+    }
+
+    /// Gives each name of a parameter list and of a call's shape its rank among all of them,
+    /// so that a call by name compares two ranks where it would compare two names.
+    // Complexity tradeoff: the merge of a placed call compared the names as values
+    // (`Value::cmp`, a text compare each) at every call run; ranks saved about 120
+    // instructions per argument at p = 320
+    // (`a_placed_call_costs_about_a_direct_call_in_native_code`, row CALL-callee-places-native).
+    // Here the N names of the program are sorted once, O(N log N) compares,
+    // and each is ranked by a binary search, O(N log N); a call then compares integers, O(1)
+    // each. Equal names get one rank, and ranks keep the names' order, so every merge takes
+    // the same steps as it would on the names.
+    fn rank_names(&mut self) {
+        let shapes = self.nodes.iter().filter_map(|n| n.named.as_deref());
+        let mut all: Vec<&Value> = (self.placings.iter().flat_map(|p| &p.names))
+            .chain(shapes.flat_map(|s| &s.names))
+            .collect();
+        all.sort_unstable();
+        all.dedup_by(|a, b| (*a).cmp(*b) == std::cmp::Ordering::Equal);
+        let rank = |v: &Value| {
+            all.binary_search_by(|x| (*x).cmp(v))
+                .expect("every name is ranked") as u32
+        };
+        let placings: Vec<Vec<u32>> = (self.placings.iter())
+            .map(|p| p.names.iter().map(rank).collect())
+            .collect();
+        let shapes: Vec<Option<Vec<u32>>> = (self.nodes.iter())
+            .map(|n| {
+                n.named
+                    .as_deref()
+                    .map(|s| s.names.iter().map(rank).collect())
+            })
+            .collect();
+        for (p, r) in self.placings.iter_mut().zip(placings) {
+            p.ranks = r;
+        }
+        for (n, r) in self.nodes.iter_mut().zip(shapes) {
+            if let (Some(s), Some(r)) = (n.named.as_deref_mut(), r) {
+                s.ranks = r;
+            }
+        }
     }
 
     /// Numbers the nodes of `g` and its planned regions in preorder, and gives each its number
@@ -217,8 +405,24 @@ impl Tables {
                 callee: None,
                 error: None,
                 number,
+                placing: None,
+                named: None,
             };
             number += 1;
+            match (&node.op, node.inputs.first()) {
+                (Op::Prim(Prim::Place), Some(Src::Const(table)))
+                    if matches!(node.inputs.len(), 2 | 3) =>
+                {
+                    if let Some(p) = Placing::read(table, node.inputs.len() == 3) {
+                        info.placing = Some(self.placings.len() as u32);
+                        self.placings.push(p);
+                    }
+                }
+                (Op::Prim(Prim::CallNamed), Some(Src::Const(shape))) if node.inputs.len() >= 2 => {
+                    info.named = NamedShape::read(shape, node.inputs.len()).map(Box::new);
+                }
+                _ => {}
+            }
             match &node.op {
                 Op::Prim(p) if node.inputs.is_empty() && p.arity().is_some() => {
                     if !self.prims.contains(p) {
@@ -326,6 +530,41 @@ impl Tables {
         self.nodes[id].callee = Some(li);
         self.nodes[id].error = error;
         Ok(())
+    }
+
+    /// The numbers of parameters of the lambdas, each once, when a call by name may place its
+    /// arguments in native code: some `place` and some `callNamed` have literals of the form
+    /// the kernel reads. Each gets a function that calls a body of that many parameters on
+    /// the words of a buffer ([`Tables::trampoline`]); none when no call is placed so.
+    pub fn arities(&self) -> Vec<usize> {
+        if self.placings.is_empty() || self.nodes.iter().all(|n| n.named.is_none()) {
+            return Vec::new();
+        }
+        let mut a: Vec<usize> = self.lambdas.iter().map(|l| l.params).collect();
+        a.sort_unstable();
+        a.dedup();
+        a
+    }
+
+    /// The index among the registered entries of the body of lambda `i`, which takes each
+    /// parameter as the lambda's [`LambdaInfo::modes`] say: after the lambdas' entries, and
+    /// registered only when [`Tables::arities`] has some.
+    pub fn body(&self, i: usize) -> usize {
+        self.lambdas.len() + i
+    }
+
+    /// The index among the registered entries of the function that calls a body of `arity`
+    /// parameters on a buffer: after the lambdas' bodies.
+    pub fn trampoline(&self, arity: usize) -> usize {
+        2 * self.lambdas.len() + arity
+    }
+
+    /// The number of registered entries: the lambdas', and when [`Tables::arities`] has some,
+    /// their bodies' and those of the arities.
+    pub fn entry_count(&self) -> usize {
+        self.arities()
+            .last()
+            .map_or(self.lambdas.len(), |&a| self.trampoline(a) + 1)
     }
 
     /// Where node `id` is (`r.3/0.1`), for a message.

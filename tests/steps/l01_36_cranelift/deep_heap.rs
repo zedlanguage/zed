@@ -278,6 +278,7 @@ fn a_function_matches_a_binder_and_no_shape() {
     let f = h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     let w = h.alloc(Obj::Tuple(vec![f, Word::int(1)].into()));
     let (mut paths, mut out) = (Paths::default(), Vec::new());
@@ -349,6 +350,7 @@ fn a_closure_below_a_value_is_not_data() {
     let f = h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     let w = h.alloc(Obj::Tuple(vec![Word::int(1), f].into()));
     let e = h.value(w).unwrap_err();

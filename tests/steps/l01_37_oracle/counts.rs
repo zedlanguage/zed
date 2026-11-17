@@ -18,6 +18,7 @@ fn live_cells_are_listed_by_type_and_allocating_node() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: vec![Word::int(1)].into(),
+        placed: None,
     });
     h.dec(gone).unwrap();
     let survivor = |kind, node, cells| Survivor { kind, node, cells };

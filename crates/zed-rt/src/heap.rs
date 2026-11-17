@@ -174,8 +174,13 @@ pub enum Obj {
     Clo {
         /// The lambda.
         lambda: usize,
-        /// The captures, in the lambda node's input order.
+        /// The captures, in the lambda node's input order; for a closure a `place` made with a
+        /// function that fills defaults, that function after them.
         caps: Box<[Word]>,
+        /// For a closure a `place` made: the index of its parameter list among the program's
+        /// (zed-native's `Tables::placings`), by which a call by name places its arguments
+        /// (row CALL-callee-places-native). A positional call does not read it.
+        placed: Option<u32>,
     },
     /// A tuple or an atom with a part that is no data, a function or a value that holds one
     /// (DESIGN.md step L1.17): no data value, so never read as one, and its parts are words as

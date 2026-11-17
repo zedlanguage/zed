@@ -183,6 +183,7 @@ fn the_parts_of_each_kind_of_cell() {
             Obj::Clo {
                 lambda: 0,
                 caps: ws[..2].into(),
+                placed: None,
             },
             2,
         ),
@@ -190,6 +191,7 @@ fn the_parts_of_each_kind_of_cell() {
             Obj::Clo {
                 lambda: 1,
                 caps: Box::new([]),
+                placed: None,
             },
             0,
         ),
@@ -417,6 +419,7 @@ fn reading_a_word_that_is_no_data_value_is_a_bug_in_zedc() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     assert_eq!(h.value(clo).unwrap_err(), closure_as_data());
     let inside = h.alloc(Obj::Tuple(vec![clo, Word::int(1)].into()));
@@ -435,6 +438,7 @@ fn functions_are_closures_primitives_and_lookup_ports() {
     let clo = h.alloc(Obj::Clo {
         lambda: 2,
         caps: [Word::int(5)].into(),
+        placed: None,
     });
     let s = h.alloc(Obj::Str("s".into()));
     let k = h.uncounted(Value::atom("e"));
@@ -476,6 +480,7 @@ fn a_capture_is_read_from_a_closure_and_from_nothing_else() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: [Word::int(5), s].into(),
+        placed: None,
     });
     assert_eq!(h.capture(clo, 0).unwrap(), Word::int(5));
     assert_eq!(h.capture(clo, 1).unwrap(), s);
@@ -593,6 +598,7 @@ fn dropping_a_closure_or_an_atom_drops_each_part_once() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: [s, Word::int(1)].into(),
+        placed: None,
     });
     let atom = h.alloc(Obj::Atom {
         name: "a".into(),
@@ -717,6 +723,7 @@ fn a_function_matches_only_a_wildcard_a_name_and_a_type_of_functions() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     let prim = Word {
         tag: Word::PRIM,
@@ -1152,6 +1159,7 @@ fn survivors_group_live_cells_by_kind_and_allocating_node() {
     h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     let gone = h.fresh(&Value::str("gone")).unwrap();
     h.dec(gone).unwrap();
@@ -1227,6 +1235,7 @@ fn comparing_a_closure_with_a_literal_is_a_bug_in_zedc() {
     let clo = h.alloc(Obj::Clo {
         lambda: 0,
         caps: Box::new([]),
+        placed: None,
     });
     let t = h.alloc(Obj::Tuple(vec![clo, Word::int(1)].into()));
     let lit = Pattern::Lit(Value::tuple(vec![Value::Int(0), Value::Int(1)]));

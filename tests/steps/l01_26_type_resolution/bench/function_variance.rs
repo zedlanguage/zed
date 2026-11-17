@@ -511,6 +511,99 @@ fn a_curried_call_placing_p_named_arguments_scales() {
     });
 }
 
+/// The functions of [`placing_p_named_arguments_in_the_function_called_scales`] at p
+/// parameters, `h` the value of `pick`, and `a` the sum of 1024 calls by name: `k0` holds a
+/// call of `h`, which `h`'s function places, and the same call of `g` by its own name, one in
+/// each arm of an `if`, and runs the first (`placed`) or the second; each `k{i}` calls
+/// `k{i - 1}` twice. Both programs compile the same code, once, and differ only in which
+/// call runs 1024 times; a `map` or recursion would run in the kernel. Each call gives 1.
+fn placed_or_direct(p: usize, placed: bool) -> zed_kernel::Term {
+    use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
+    let ps: Vec<String> = (0..p).map(|i| format!("x{i}: int")).collect();
+    let rs: Vec<String> = (0..p).rev().map(|i| format!("x{i}: int")).collect();
+    let args = (0..p)
+        .map(|i| format!("x{i}: z"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let levels: String = (1..=10)
+        .map(|i| format!("k{i}(z: int) = k{}(z: z) + k{}(z: z + 1);\n", i - 1, i - 1))
+        .collect();
+    let first = if placed { "z >= 0" } else { "z < 0" };
+    let src = format!(
+        "f({}) = x0 - x1;\ng({}) = x1 - x0 + 1;\npick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\nk0(z: int) = if {first} {{ h({args}) }} else {{ g({args}) }};\n{levels}a = k10(z: 0);\n",
+        ps.join(", "),
+        rs.join(", "),
+    );
+    with_prelude(elab(&src).unwrap().get("a").unwrap())
+}
+
+/// [`placing_p_named_arguments_in_the_function_called_scales`] in native code (row
+/// CALL-callee-places-native): one call by name in `run`, run 16384 times through `f`'s and
+/// `g`'s parameter lists in turn, so that each run merges the call's sorted names with the
+/// list, O(p), where a merge kept for one list would be reused; no call of the kernel, and the
+/// functions' bodies run in native code. `k0` makes two calls and each `k{i}` calls `k{i - 1}`
+/// twice, so compiling is linear in p too, and the runs outweigh it enough that an O(p²) merge
+/// fails the test: one that also searched the list for each name gave 18.3 (sizes 40 and
+/// 320, in instructions), against 3.9 for the code's. Small instance:
+/// `function_variance::a_call_its_function_places_runs_in_native_code_alone`.
+#[test]
+fn placing_p_named_arguments_in_native_code_scales() {
+    use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
+    use zed_tests::step_helpers::l01_36_cranelift::native;
+    let what = "16384 calls of p named arguments placed by the function called in turn through \
+                two lists, in native code";
+    let make = |p: usize| {
+        let ps: Vec<String> = (0..p).map(|i| format!("x{i}: int")).collect();
+        let rs: Vec<String> = (0..p).rev().map(|i| format!("x{i}: int")).collect();
+        let args = (0..p)
+            .map(|i| format!("x{i}: z"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let levels: String = (1..=13)
+            .map(|i| format!("k{i}(z: int) = k{}(z: z) + k{}(z: z + 1);\n", i - 1, i - 1))
+            .collect();
+        let src = format!(
+            "f({}) = x0 - x1;\ng({}) = x1 - x0 + 1;\npick(c: bool) = if c {{ f }} else {{ g }};\nrun(k, z) = k({args});\nk0(z: int) = run(k: pick(c: true), z: z) + run(k: pick(c: false), z: z);\n{levels}a = k13(z: 0);\n",
+            ps.join(", "),
+            rs.join(", "),
+        );
+        with_prelude(elab(&src).unwrap().get("a").unwrap())
+    };
+    let n = 40;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let o = native(&inputs[&m]).unwrap();
+        assert_eq!((o.value.to_string(), o.kernel_calls), ("8192".into(), 0));
+    });
+}
+
+/// In native code a program whose call by name the function called places costs about what
+/// the same program calling that function by its own name costs, at p = 320, 1024 calls,
+/// compiling included (row CALL-callee-places-native; before it, the placed call ran in the
+/// kernel). The placed call passes its arguments three times, into the runtime's buffer, into
+/// the placed order and into the body, and merges two sorted lists of p names unless the
+/// merge kept for the call's list holds; the direct call passes them once. So the run alone
+/// costs more: at 65536 calls the placed program ran 1425M instructions and the direct one
+/// 722M (1.97); compiling outweighs that difference at 1024 calls.
+#[test]
+fn a_placed_call_costs_about_a_direct_call_in_native_code() {
+    use zed_tests::step_helpers::l01_36_cranelift::native;
+    let (placed, direct) = (placed_or_direct(320, true), placed_or_direct(320, false));
+    let run = |t: &zed_kernel::Term| {
+        let o = native(t).unwrap();
+        assert_eq!((o.value.to_string(), o.kernel_calls), ("1024".into(), 0));
+    };
+    scaling::compare_costs(
+        "1024 calls of 320 named arguments in native code, placed by the function called and \
+         to the function by its name, compiling included",
+        "both programs compile the same code and run the body in native code; the placed call \
+         adds one runtime call and two more passes of the 320 arguments",
+        1.10,
+        || run(&direct),
+        || run(&placed),
+    );
+}
+
 /// A hot call through a value that agrees with the one function the value holds costs the same
 /// in a unit where another call is placed by the function called: the value is then a closure
 /// that carries its parameter list, which a call that agrees does not read (DESIGN.md

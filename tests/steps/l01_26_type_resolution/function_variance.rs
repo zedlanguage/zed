@@ -192,6 +192,63 @@ fn a_call_through_functions_differing_in_places_or_defaults_runs() {
     );
 }
 
+/// The value of `name` in `src` from native code, which calls the kernel for no node: as
+/// [`runs_to`], and the run's `kernel_calls` is 0.
+fn runs_natively_to(src: &str, name: &str, want: &str) {
+    use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+    use zed_tests::step_helpers::l01_36_cranelift::native;
+    runs_to(src, name, want);
+    let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let t = with_prelude(u.get(name).expect("checked by runs_to"));
+    let o = native(&t).unwrap_or_else(|e| panic!("{src}: {e}"));
+    assert_eq!(o.kernel_calls, 0, "native code called the kernel: {src}");
+}
+
+/// The calls of [`a_call_through_functions_differing_in_places_or_defaults_runs`] and of the
+/// curried calls below run in native code with no call of the kernel: the function value
+/// carries its parameter list, and the call places its arguments by a merge of the two sorted
+/// lists in the runtime, O(p + a), then calls the function's entry (row
+/// CALL-callee-places-native). Before, each `place` and each call by name ran in the kernel.
+#[test]
+fn a_call_its_function_places_runs_in_native_code_alone() {
+    let reordered = "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\n";
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    runs_natively_to(&format!("{reordered}{pick}a = h(a: 5, b: 2);\n"), "a", "52");
+    runs_natively_to(
+        &format!("{reordered}call(k) = k(a: 5, b: 2);\na = call(k: f) * 100 + call(k: g);\n"),
+        "a",
+        "352",
+    );
+    let defaults = "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\n";
+    runs_natively_to(&format!("{defaults}{pick}a = h(x: 3);\n"), "a", "6");
+    runs_natively_to(&format!("{defaults}{pick}a = h(y: 4, x: 3);\n"), "a", "12");
+    runs_natively_to(
+        &format!("{defaults}call(k) = k(x: 3);\na = call(k: f) * 100 + call(k: g);\n"),
+        "a",
+        "406",
+    );
+    runs_natively_to(
+        &format!("f(x: int, y: int = 1) = x + y;\ng(x: int) = x * 7;\n{pick}a = h(x: 3);\n"),
+        "a",
+        "21",
+    );
+    runs_natively_to(
+        "g(x: int, y: int = x) = x + y;\nk = g;\nm = [k, k];\na = m[0](x: 3) + m[1](x: 4, y: 1);\n",
+        "a",
+        "11",
+    );
+    runs_natively_to(
+        &format!("{reordered}{pick}p = h(a: 5, ...);\na = p(b: 2);\n"),
+        "a",
+        "52",
+    );
+    runs_natively_to(
+        &format!("{defaults}{pick}p = h(x: 3, ...);\na = p() * 100 + p(y: 5);\n"),
+        "a",
+        "615",
+    );
+}
+
 /// A call through a value that leaves out a parameter whose default reads an earlier
 /// parameter, or a name the function holds, gets the value the call by the function's name
 /// gives: the function fills the default in the scope of its declaration (row
