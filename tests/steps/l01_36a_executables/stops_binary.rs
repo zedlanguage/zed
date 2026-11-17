@@ -189,8 +189,8 @@ fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
     // code; the executable inside a runtime hook its machine code called, where an unwinding
     // panic would abort the process (status 134), and under a memory limit the limit's
     // SIGABRT handler would report a memory fault. Both are a fault of the run (DESIGN.md
-    // sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a `#bug`, a fault or a
-    // limit"), with one report, and the wave commits nothing.
+    // sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a fault or a limit"),
+    // with one report, and the wave commits nothing.
     for (name, limit) in [
         ("bug", ""),
         ("bug_limited", "@limits(memory: 1073741824)\n"),

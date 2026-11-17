@@ -304,8 +304,8 @@ pub fn running() -> bool {
 /// ([`crate::rejection::run_bug`]), naming the content address of the program whose wave it
 /// stopped once the wave has taken it (`PROGRAM`, plan row EXE-bug-report-address), and
 /// ends the process with status 3, a fault of the run
-/// (DESIGN.md sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a `#bug`, a
-/// fault or a limit"): the panic hook of the
+/// (DESIGN.md sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a fault or a
+/// limit"): the panic hook of the
 /// executable `zedc build` makes, and of `zedc run` while [`running`] (plan row
 /// EXE-panic-status). It ends the process from the hook, before the panic unwinds: an unwinding
 /// panic in a runtime hook that machine code called, or out of the executable's C `main`,
