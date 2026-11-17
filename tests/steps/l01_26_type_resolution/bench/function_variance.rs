@@ -387,6 +387,13 @@ fn one_body_summing_its_parameter_n_times_called_n_times_scales() {
     many_uses_alike_scale("t.sum");
 }
 
+/// A remap (`NeedKind::Remap`) at [`many_uses_alike_scale`] (FAIL-remap-need-site-product,
+/// 54.40 times the instructions at 8n before).
+#[test]
+fn one_body_remapping_its_parameter_n_times_called_n_times_scales() {
+    many_uses_alike_scale("(t as (k -> v) into (v -> k)).count");
+}
+
 /// One generic body with n brackets `t[0]` alike whose results resolve differently, called at
 /// n places (row TEST-component-site-need-key). The brackets cycle through four forms: passed
 /// to `drop`, which takes any value (a type variable with no bound), passed to a parameter of

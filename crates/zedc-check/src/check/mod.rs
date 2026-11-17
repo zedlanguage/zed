@@ -1555,6 +1555,10 @@ type WrittenUses = Vec<(Span, Option<Rc<[Option<Span>]>>)>;
 /// the number of uses when made, and the list.
 type WrittenVia = (usize, Option<Rc<[Span]>>);
 
+/// One need being met ([`Ck::meet_alike`]): its site, and the uses alike its signature left
+/// out for it ([`Need::alike`]).
+type MeetAlike = (Option<Span>, Arc<[(Span, Span)]>);
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1811,6 +1815,11 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// For each need being met ([`Ck::meet`]), innermost last, its site and the uses alike
+    /// its signature left out for it ([`Need::alike`]): a need the check makes on a class of
+    /// the function around, at the same site, takes them ([`Ck::need`]), so a use left out in
+    /// an inner function keeps its own error where the outer function's call fails.
+    meet_alike: Vec<MeetAlike>,
     /// Each lambda whose body has been checked at the arrows of an intersection of function
     /// types ([`Self::fit_step`]), by its span, with that intersection. A second rebuilding at
     /// a span inside one is refused with words for the lambda ([`Self::arrow_lambda_twice`]).
@@ -1853,6 +1862,10 @@ struct Ck<'t, 'a> {
     /// ([`Info::reduce`], [`Info::split_folds`], [`Info::fold_calls`], [`Info::fold_reads`],
     /// the error of a fold it cannot split). Undone with a trial, as [`Ck::alike_calls`] is.
     alike_folds: Vec<(Span, Span)>,
+    /// Each remap whose need a signature left out ([`Ck::share_alike`]), with the remap whose
+    /// need it kept: [`Ck::settle_calls`] gives the first the witness entries of the second's
+    /// plan ([`Info::remaps`]). Undone with a trial, as [`Ck::alike_calls`] is.
+    alike_remaps: Vec<(Span, Span)>,
     /// Each signature recorded at a call through a value ([`Ck::record_call`]), in the order
     /// recorded; undone with a trial. [`Ck::settle_calls`] compares those of each call in the
     /// order of the text.
@@ -2385,6 +2398,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
+            meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
             need_chain: Vec::new(),
             fold_uses: HashSet::new(),
@@ -2394,6 +2408,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike_log: Vec::new(),
             alike_brackets: Vec::new(),
             alike_folds: Vec::new(),
+            alike_remaps: Vec::new(),
             call_records: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
@@ -6832,6 +6847,7 @@ struct Mark {
     alike_log: usize,
     alike_brackets: usize,
     alike_folds: usize,
+    alike_remaps: usize,
     call_records: usize,
 }
 
@@ -6840,15 +6856,20 @@ struct Mark {
 /// its receiver's type, the word and its function's type ([`NeedKind::Level`]); a fold by
 /// its receiver's type, its operator and form ([`NeedKind::Reduce`]) or the families summed
 /// beside it ([`NeedKind::SumMethod`]). A scan and a fold also keep the receiver as written,
-/// which their messages quote ([`Ck::fold_subject`]). Two uses whose keys are one once each
-/// class is written as its root ([`AlikeSite::map_tys`]) make one need on each class of the
-/// receiver but for the site ([`Ck::share_alike`]).
+/// which their messages quote ([`Ck::fold_subject`]). A remap whose every level's key is a
+/// binder of its own `as` pattern or `_`, with no `><` ([`NeedKind::Remap`]), by the pattern
+/// alone: the number of binders, the binder each level reads (`None` for `_`), and the
+/// parameter declared a partial map its source names, whose written key ranges the check
+/// reads ([`Ck::remap_alike`]). Two uses whose keys are one once each class is written as its
+/// root ([`AlikeSite::map_tys`]) make one need on each class of the receiver but for the site
+/// ([`Ck::share_alike`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum AlikeSite {
     Component(Ty, Option<usize>, Ty, bool),
     Level(Ty, LevelWord, Ty, String),
     Reduce(Ty, Reducer, FoldForm, String),
     Sum(Ty, Ty, String),
+    Remap(usize, Vec<Option<usize>>, Option<usize>),
 }
 
 impl AlikeSite {
@@ -6859,6 +6880,7 @@ impl AlikeSite {
             AlikeSite::Level(x, w, g, s) => AlikeSite::Level(f(x), *w, f(g), s.clone()),
             AlikeSite::Reduce(x, op, form, s) => AlikeSite::Reduce(f(x), *op, *form, s.clone()),
             AlikeSite::Sum(x, beside, s) => AlikeSite::Sum(f(x), f(beside), s.clone()),
+            AlikeSite::Remap(..) => self.clone(),
         }
     }
 }
@@ -7076,6 +7098,7 @@ impl Ck<'_, '_> {
             alike_log: self.alike_log.len(),
             alike_brackets: self.alike_brackets.len(),
             alike_folds: self.alike_folds.len(),
+            alike_remaps: self.alike_remaps.len(),
             call_records: self.call_records.len(),
         }
     }
@@ -7094,6 +7117,7 @@ impl Ck<'_, '_> {
         }
         self.alike_brackets.truncate(m.alike_brackets);
         self.alike_folds.truncate(m.alike_folds);
+        self.alike_remaps.truncate(m.alike_remaps);
         self.call_records.truncate(m.call_records);
     }
 }
@@ -13601,6 +13625,7 @@ mod tests {
             alike_log: 0,
             alike_brackets: 0,
             alike_folds: 0,
+            alike_remaps: 0,
             call_records: 0,
         });
         assert!(ck.info.passes.is_empty());

@@ -429,6 +429,53 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The key under which the remap `e` is paired with remaps alike ([`AlikeSite::Remap`],
+    /// [`Ck::share_alike`]), where every level of its `into` pattern is `_` or a name bound by
+    /// its own `as` pattern and no level is folded; `None` otherwise, and the remap is paired
+    /// with none.
+    ///
+    /// Why the pattern alone decides the check of the remap at a source type: a key that is a
+    /// binder takes that binder's type, which is the source's key or value type at the
+    /// binder's place ([`Self::remap_source`]); the layout, the witness ([`Self::injective`]
+    /// reads which binder each key is, and through [`Self::key_span`] the declared ranges of a
+    /// parameter the source names) and the rank ([`Self::remap_rank`], the number of binders)
+    /// read nothing else of the text. A key that computes (`k + 1`) or a folded level would
+    /// also record at the spans of its own expressions (operators, literals, `><`'s fold),
+    /// which a remap left out would lack; so it is paired with none.
+    pub(in crate::check) fn remap_alike(&self, e: &Expr) -> Option<AlikeSite> {
+        let ExprKind::Remap {
+            of,
+            binders: Some(binders),
+            levels: Some(levels),
+        } = &e.kind
+        else {
+            return None;
+        };
+        let ids: HashMap<usize, usize> = (binders.iter().enumerate())
+            .filter_map(|(i, b)| match b {
+                Target::Name(name, span) => Some((self.id(*span, name), i)),
+                Target::Wild => None,
+            })
+            .collect();
+        let read = |l: &RemapLevel| -> Option<Option<usize>> {
+            if l.reduce.is_some() {
+                return None;
+            }
+            let Some(k) = &l.key else {
+                return Some(None);
+            };
+            let ExprKind::Name(_) = &k.kind else {
+                return None;
+            };
+            match self.t.res.uses.get(&k.span) {
+                Some(Ref::Bound(b)) if b.len() == 1 => ids.get(&b[0]).map(|&i| Some(i)),
+                _ => None,
+            }
+        };
+        let keys = levels.iter().map(read).collect::<Option<Vec<_>>>()?;
+        Some(AlikeSite::Remap(binders.len(), keys, self.keyed_param(of)))
+    }
+
     /// The key binder `e` names, by its place in the `as` pattern of `s`.
     fn key_binder(&self, s: &RemapF<'a>, e: &Expr) -> Option<usize> {
         let ExprKind::Name(_) = &e.kind else {

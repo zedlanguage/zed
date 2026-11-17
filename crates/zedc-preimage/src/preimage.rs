@@ -2029,14 +2029,15 @@ impl<'t> Scoped<'t> {
         }
         // The relation, and the condition that the test's value is not an atom where the
         // relation must hold exactly where the test is `true` ([`Tr::definedness`]).
+        // The condition is read only for a body that has a relation: with none, the result is
+        // `None` whatever the condition is (below), and reading it walks the body again, Θ(n)
+        // for a callee of n terms in each caller's scope (FAIL-linear-question-callee-per-caller).
         let definedness = self.tr.definedness;
         let (body, defined) = match lam {
             Some(l) => {
                 let body = tx.question(&mut self.tr, l);
-                (
-                    body,
-                    definedness.then(|| tx.question_defined(&mut self.tr, l)),
-                )
+                let defined = body.is_some() && definedness;
+                (body, defined.then(|| tx.question_defined(&mut self.tr, l)))
             }
             None => {
                 // Each parameter bound to its atom, read where the scope binds nothing. The
@@ -2050,10 +2051,8 @@ impl<'t> Scoped<'t> {
                     scope = tx.bind(scope, p, to);
                 }
                 let body = tx.formula(&mut self.tr, root, scope);
-                (
-                    body,
-                    definedness.then(|| tx.defined(&mut self.tr, root, scope)),
-                )
+                let defined = body.is_some() && definedness;
+                (body, defined.then(|| tx.defined(&mut self.tr, root, scope)))
             }
         };
         let body = match (body, defined) {
@@ -9554,6 +9553,23 @@ impl<'m, 't> Walk<'m, 't> {
 
     async fn formula_at(&'m self, t: Tid, env: Eid) -> Option<Formula> {
         use Prim::*;
+        // An arithmetic primitive's value is a number, or an atom passed on from an operand,
+        // never a bool (`zed_kernel::eval`, `prim_on` and `int_binary`; a type error is no
+        // value): its constant is no bool, and the primitive is none of those matched below,
+        // so the formula is `None` whatever the operands are. Found without reading them.
+        // Complexity tradeoff: the naive way reads the term's constant first, which walks every
+        // operand for the inputs it reads ([`Walk::mentions`]) in each scope it is read in: the
+        // body of `many(t) = 0 + t[0] + ... + t[0]`, n terms, called by n functions through a
+        // tuple, which has no linear term ([`Walk::call_key`]), so each call reads the body in
+        // its own scope, Θ(n) each and Θ(n²) for the unit's questions (59.5 times the
+        // instructions at 8n). Here O(1) per call, O(n) for the unit. Tradeoff: none for such a
+        // body; the body of a test called so is still read once per call, Θ(n²) for the unit
+        // (row FAIL-linear-question-tuple-callee-per-caller). Test
+        // `l01_38_presburger::bench::checker::the_linear_questions_of_n_callers_of_one_long_body_scale`,
+        // COMPLEXITY.md row FAIL-linear-question-callee-per-caller.
+        if let Node::Prim(Add | Sub | Mul | Div | IntDiv | Mod | Neg | Pow, _) = self.node(t) {
+            return None;
+        }
         if let Some(v) = self.constant(t, env).await {
             return match v {
                 Value::Bool(true) => Some(Formula::top()),

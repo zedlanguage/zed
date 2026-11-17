@@ -4690,19 +4690,21 @@ impl Need {
             NeedKind::Component { site, .. }
             | NeedKind::Level { site, .. }
             | NeedKind::Reduce(_, site, _)
-            | NeedKind::SumMethod { site, .. } => Some(site),
+            | NeedKind::SumMethod { site, .. }
+            | NeedKind::Remap { at: site, .. } => Some(site),
             _ => None,
         }
     }
 
     /// The site its kind records at, for the kinds that hold one apart from the use: a
-    /// bracket, a level word, a fold and `.sum`.
+    /// bracket, a level word, a fold, `.sum` and a remap.
     pub fn site_mut(&mut self) -> Option<&mut Span> {
         match &mut self.kind {
             NeedKind::Component { site, .. }
             | NeedKind::Level { site, .. }
             | NeedKind::Reduce(_, site, _)
-            | NeedKind::SumMethod { site, .. } => Some(site),
+            | NeedKind::SumMethod { site, .. }
+            | NeedKind::Remap { at: site, .. } => Some(site),
             _ => None,
         }
     }

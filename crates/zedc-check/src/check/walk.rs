@@ -4420,6 +4420,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             Piece::Set(k) => (&k - &misses).is_empty(),
             _ => false,
         });
+        // A remap whose source is only classes not yet resolved (and misses) records nothing
+        // here: all it records, its plan's witness and what its key expressions record, is
+        // written by the checks of its needs. So a later remap alike may leave its needs to
+        // the first's ([`Self::share_alike`]) and take the first's witness entries when the
+        // check ends ([`Self::settle_calls`]); its own key expressions are then never checked,
+        // as those of a generic function no call instantiates are not.
+        if only_misses
+            && self.replaying == 0
+            && let Some(key) = self.remap_alike(e)
+        {
+            self.alike_seen(key, e.span);
+        }
         if !only_misses {
             let t = match self.remap_pending(e, &src) {
                 // A class below a key level, as `r` of `({ 0 -> r })`: the remap is checked
@@ -4553,14 +4565,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     (&b.order, b.kept, &b.folds, b.leaf) == (&a.order, a.kept, &a.folds, a.leaf),
                     "a remap's plan but its witness is read from its text"
                 );
-                let mut entries: Vec<&str> =
-                    b.witness.split('+').filter(|w| !w.is_empty()).collect();
-                for w in a.witness.split('+').filter(|w| !w.is_empty()) {
-                    if !entries.contains(&w) {
-                        entries.push(w);
-                    }
-                }
-                b.witness = entries.join("+").into();
+                add_witness(&mut b, &a);
                 Some(b)
             }
             (b, a) => a.or(b),
@@ -8066,6 +8071,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.info.brackets.insert(l, n);
             }
         }
+        // Each remap whose need [`Ck::share_alike`] left out ([`Ck::alike_remaps`]) takes the
+        // witness entries of the remap whose need it kept, which that need's checks wrote; the
+        // rest of its plan is read from its text and is the same ([`Self::remap_alone`]). A
+        // kept remap may itself be left out by the signature of a function around, so each
+        // goes to the end of its chain of pairs, as a fold does in [`Ck::finish`]: O(p·d) for
+        // p pairs and chains d long, d at most the depth of nested functions; `seen` ends a
+        // cycle, which no pairing makes. The witness is a record only, which the evaluator
+        // does not rely on, so an entry a check of the kept remap at another call added
+        // changes nothing a program does.
+        let pairs: HashMap<Span, Span> =
+            std::mem::take(&mut self.alike_remaps).into_iter().collect();
+        let mut left: Vec<Span> = pairs.keys().copied().collect();
+        left.sort_unstable();
+        for l in left {
+            let (mut at, mut seen) = (pairs[&l], HashSet::from([l]));
+            while let Some(&next) = pairs.get(&at)
+                && seen.insert(at)
+            {
+                at = next;
+            }
+            if let Some(a) = self.info.remaps.get(&at).cloned()
+                && let Some(b) = self.info.remaps.get_mut(&l)
+            {
+                add_witness(b, &a);
+            }
+        }
         // No call refused in the walk's order means every recording agrees with the first met
         // at its call, and so with each other: nothing to refuse in the text's order.
         if !self.errors.iter().any(|e| e.unordered) {
@@ -9309,6 +9340,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
         }
     }
+}
+
+/// Adds to the witness of the remap plan `b` each catalog entry of `a`'s it lacks, after its
+/// own, in `a`'s order ([`Ck::remap_alone`]).
+fn add_witness(b: &mut RemapPlan, a: &RemapPlan) {
+    let mut entries: Vec<&str> = b.witness.split('+').filter(|w| !w.is_empty()).collect();
+    for w in a.witness.split('+').filter(|w| !w.is_empty()) {
+        if !entries.contains(&w) {
+            entries.push(w);
+        }
+    }
+    b.witness = entries.join("+").into();
 }
 
 /// The expression a branch `e` gives: the one expression of a block of nothing else, else `e`.
@@ -11759,17 +11802,28 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// written, which the pairing's key holds. So the two sites' records go through the same
     /// steps, and the two needs give one type at each call: the two result variables are one
     /// at every call. What L would record at its site at calls, [`Ck::settle_calls`] and
-    /// [`Ck::finish`] copy from F's (`alike_brackets`, `alike_folds`); a level word records
-    /// nothing at its site but a scan's fold, which records no identity
+    /// [`Ck::finish`] copy from F's (`alike_brackets`, `alike_folds`, and for a remap
+    /// `alike_remaps`, its witness entries; a remap is paired only where [`Self::remap_alike`]
+    /// finds its keys all binders, so it records nothing at spans of its own); a level word
+    /// records nothing at its site but a scan's fold, which records no identity
     /// ([`FoldForm::records_identity`]). Where F fails at a call, [`Self::replay`] replays each
-    /// left-out need of its group, so each use keeps its own error and notes.
+    /// left-out need of its group, so each use keeps its own error and notes; a bracket first
+    /// takes the meaning the earlier calls gave F's, the one record a check reads back
+    /// ([`Self::bracket_meaning_of`]). Every other read of a site reads the program's text
+    /// there (the receiver as written, `sum(x)` or `x.sum`, a remap's expression) or keeps a
+    /// record the elaborator reads (`folds`, a remap's witness), which no verdict reads. Where F is met
+    /// in the body of a function around and makes a need there at its own site, that need
+    /// carries the left-out sites at its own span ([`Self::need`], `meet_alike`), so they
+    /// fail with it at a call of that function too.
     ///
-    /// Complexity tradeoff: a bracket `t[0]` written n times in a generic body called at c
-    /// places was n needs in the signature, each met at each call, O(n·c); the later ones
-    /// alike are now left out, so the calls meet one, O(n + c) in all, plus O(m) at a call
-    /// for a group of m where its need fails there, paid only when an error is reported. Here
-    /// one hash of each need's kind and of its use's key with roots, and two lookups, O(n)
-    /// for n needs of bounded size.
+    /// Complexity tradeoff: a bracket `t[0]` (or a remap `t as (k -> v) into (v -> k)`)
+    /// written n times in a generic body called at c places was n needs in the signature,
+    /// each met at each call, O(n·c); the later ones alike are now left out, so the calls
+    /// meet one, O(n + c) in all, plus O(m) at a call for a group of m where its need fails
+    /// there, paid only when an error is reported. Here one hash of each need's kind and of
+    /// its use's key with roots, and two lookups, O(n) for n needs of bounded size. A need
+    /// made again in a function around copies the list of m left-out sites, O(m) per need
+    /// so made, which is at most what the m needs themselves cost before the grouping.
     fn share_alike(&mut self, needs: Vec<Need>) -> (Vec<Need>, Binds) {
         if self.alike_sites.is_empty() {
             return (needs, Binds::new());
@@ -11838,6 +11892,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         NeedKind::Reduce(..) | NeedKind::SumMethod { .. } => {
                             self.alike_folds.push((site, first))
                         }
+                        NeedKind::Remap { .. } => self.alike_remaps.push((site, first)),
                         _ => {}
                     }
                     members[i].push((n.span, site));
@@ -12263,13 +12318,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[j].given = true;
             Ty::var(format!("${j}").into())
         });
-        let need = Need {
+        let mut need = Need {
             on: Ty::var(format!("${r}").into()),
             kind,
             result: result.clone(),
             span,
             alike: Arc::from([]),
         };
+        // A need met from a signature that makes this one at its own site, on a class of the
+        // function around, carries the sites of the uses alike left out for it there, each at
+        // this need's own span: the need each of those uses would have made here, had it been
+        // kept. A failure of this one at a call of the function around then replays them
+        // ([`Self::replay`]), so each use keeps the error it would have had alone.
+        if let Some((Some(site), alike)) = self.meet_alike.last()
+            && !alike.is_empty()
+            && need.site() == Some(*site)
+        {
+            need.alike = alike.iter().map(|&(_, s)| (span, s)).collect();
+        }
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
         self.lower(vars.order, level);
@@ -12486,6 +12552,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
         let on = self.bound(on, binds);
         self.need_chain.push(n.span);
+        self.meet_alike.push((n.site(), n.alike.clone()));
         self.replaying += 1;
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => {
@@ -12680,6 +12747,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         self.replaying -= 1;
         self.need_chain.pop();
+        self.meet_alike.pop();
         self.need_args = None;
         self.need_from = None;
         // Each argument the use's applications passed atoms of by is named by the variables
@@ -12744,6 +12812,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // checks for a group of m, on the error path only.
             if self.errors.len() > from {
                 for &(at, site) in n.alike.iter() {
+                    if let (NeedKind::Component { .. }, Some(kept)) = (&n.kind, n.site()) {
+                        self.bracket_meaning_of(site, kept);
+                    }
                     self.replay_one(what, &n.alike_at(at, site), binds, span);
                 }
             }
@@ -17955,6 +18026,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         false
+    }
+
+    /// Gives the bracket at `left`, whose need [`Self::share_alike`] left out for the one at
+    /// `kept`, the meaning the calls met so far gave `kept` ([`Info::brackets`],
+    /// [`Ck::bracket_plain`]), before [`Self::replay`] checks it at a call: the only records at a
+    /// site that a later check reads back ([`Self::bracket_meaning`]), which `left`'s own need
+    /// would have written alike, met at the same calls on the same types. `kept`'s records
+    /// also hold what this call's check of it wrote, which changes no answer: `bracket_plain`
+    /// is added to only where the value is plain, and then a meaning is kept only for fewer
+    /// than 2 parameters, where `was_plain` is not read; `brackets` is written only where the
+    /// bracket is met with one count, the count this value gives again. O(1).
+    fn bracket_meaning_of(&mut self, left: Span, kept: Span) {
+        if let Some(&n) = self.info.brackets.get(&kept) {
+            self.info.brackets.insert(left, n);
+        }
+        if self.bracket_plain.contains(&kept) {
+            self.bracket_plain.insert(left);
+        }
     }
 
     /// A function of `n` parameters, or with `n` none no function.

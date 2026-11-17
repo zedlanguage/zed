@@ -470,6 +470,146 @@ fn brackets_alike_give_the_errors_of_one_bracket_in_any_order() {
     assert!(alone.iter().all(Option::is_some));
 }
 
+/// A body whose remaps alike take a source that is not a family gives one error at each remap,
+/// as it would with each remap alone: called directly, and called through a generic function in
+/// between, where the need of the remap the signature kept is made again on the class of the
+/// function around and must carry the remaps left out with it (rows FAIL-remap-need-site-product
+/// and PROOF-need-site-read-only).
+#[test]
+fn remaps_alike_each_give_their_error_through_a_generic_function_between() {
+    let body = "many(t) = (t as (k -> v) into (v -> k)).count + (t as (k -> v) into (v -> k)).count \
+                + (t as (k -> v) into (v -> k)).count;\n";
+    let sources: Vec<usize> = body.match_indices("t as").map(|(at, _)| at).collect();
+    assert_eq!(sources.len(), 3);
+    for rest in [
+        "x = many(t: 5);\n",
+        "mid(u) = many(t: u);\nx = mid(u: 5);\n",
+        "mid(u) = many(t: u);\nouter(w) = mid(u: w);\nx = outer(w: 5);\n",
+    ] {
+        let src = format!("{body}{rest}");
+        let (info, _) = super::info(&src);
+        let mut at: Vec<usize> = info.errors.iter().map(|e| e.span.start).collect();
+        at.sort();
+        assert_eq!(at, sources, "{src}: {:?}", info.errors);
+        assert!(
+            (info.errors.iter()).all(|e| e.message.contains("its source `t` is 5")),
+            "{src}: {:?}",
+            info.errors
+        );
+    }
+}
+
+/// A body whose brackets alike are given two meanings by two calls, a function of 2 parameters
+/// at one and a tuple at the other, gives at the later call the error a body with one such
+/// bracket gives, once for each bracket, each with its note at its own bracket, in either
+/// order of the calls (row PROOF-need-site-read-only: the meaning an earlier call gave a
+/// bracket is recorded at its site, and a bracket left out of the signature is checked again
+/// at the site of the one kept, which holds what its own would).
+#[test]
+fn brackets_alike_given_two_meanings_each_give_their_error() {
+    // Each error by the call it is at, its message, and where its notes are in the body.
+    let errors = |body: &str, src: &str| -> Vec<(String, String, Vec<usize>)> {
+        let (info, _) = super::info(src);
+        let mut got: Vec<(String, String, Vec<usize>)> = (info.errors.iter())
+            .map(|e| {
+                let notes = (e.notes.iter())
+                    .map(|n| n.span.start)
+                    .filter(|&s| s < body.len())
+                    .collect();
+                (
+                    src[e.span.start..e.span.end].to_string(),
+                    e.message.clone(),
+                    notes,
+                )
+            })
+            .collect();
+        got.sort();
+        got
+    };
+    let g = "g(a, b) = a + b;\n";
+    for calls in [
+        "x = many(t: g);\ny = many(t: (5, 6));\n",
+        "y = many(t: (5, 6));\nx = many(t: g);\n",
+    ] {
+        let (one_body, body) = ("many(t) = t[1];\n", "many(t) = (t[1], t[1]);\n");
+        let one = errors(one_body, &format!("{one_body}{g}{calls}"));
+        assert_eq!(one.len(), 1, "{calls}: {one:?}");
+        // The note at the bracket (at 10 in the one-bracket body), and the one at the
+        // definition (at 0).
+        assert_eq!(one[0].2, [10, 0], "{one:?}");
+        let mut want: Vec<(String, String, Vec<usize>)> = (body.match_indices("t[1]"))
+            .map(|(b, _)| (one[0].0.clone(), one[0].1.clone(), vec![b, 0]))
+            .collect();
+        want.sort();
+        let alike = format!("{body}{g}{calls}");
+        assert_eq!(errors(body, &alike), want, "{alike}");
+    }
+}
+
+/// A body whose brackets, folds or `.sum`s alike fail at a call gives the errors that body
+/// would give with each use alone. Called directly: one error per use, with its note at that
+/// use. Called through generic functions in between: the errors of a body with one such use,
+/// since each error then notes the call in the function between and not the use (row
+/// PROOF-need-site-read-only: a need made again on the class of a function around carries the
+/// uses left out, each at that need's own span).
+#[test]
+fn uses_alike_each_give_their_error_through_a_generic_function_between() {
+    // Each error by its message and the places of its span and notes: inside the body, the
+    // place itself; after it, the place counted from the body's end, as `!` and that count.
+    let errors = |body: &str, rest: &str| -> Vec<(String, String, Vec<String>)> {
+        let src = format!("{body}{rest}");
+        let (info, _) = super::info(&src);
+        let place = |s: usize| match s.checked_sub(body.len()) {
+            Some(after) => format!("!{after}"),
+            None => s.to_string(),
+        };
+        let mut got: Vec<_> = (info.errors.iter())
+            .map(|e| {
+                let notes = e.notes.iter().map(|n| place(n.span.start)).collect();
+                (place(e.span.start), e.message.clone(), notes)
+            })
+            .collect();
+        got.sort();
+        got
+    };
+    for (one, body, use_text) in [
+        (
+            "many(t) = t[2];\n",
+            "many(t) = t[2] * 10 + t[2] * 100 + t[2];\n",
+            "t[2]",
+        ),
+        (
+            "many(t) = t >< (+);\n",
+            "many(t) = (t >< (+)) * 10 + (t >< (+)) * 100 + (t >< (+));\n",
+            "(t >< (+))",
+        ),
+        (
+            "many(t) = t.sum;\n",
+            "many(t) = t.sum * 10 + t.sum * 100 + t.sum;\n",
+            "t.sum",
+        ),
+    ] {
+        let direct = "x = many(t: 5);\n";
+        let got = errors(body, direct);
+        let mut at: Vec<String> = got.iter().map(|(_, _, n)| n[0].clone()).collect();
+        at.sort();
+        let mut uses: Vec<String> = body
+            .match_indices(use_text)
+            .map(|(s, _)| s.to_string())
+            .collect();
+        uses.sort();
+        assert_eq!(at, uses, "{body}{direct}: {got:?}");
+        for between in [
+            "mid(u) = many(t: u);\nx = mid(u: 5);\n",
+            "mid(u) = many(t: u);\nouter(w) = mid(u: w);\nx = outer(w: 5);\n",
+        ] {
+            let alone = errors(one, between);
+            assert_eq!(alone.len(), 1, "{one}{between}: {alone:?}");
+            assert_eq!(errors(body, between), alone, "{body}{between}");
+        }
+    }
+}
+
 /// The bounds of a type variable in the signature a body is shown with do not change where
 /// uses alike share one need (`Ck::share_alike`, row TEST-component-site-need-key): for each
 /// body, the type shown now, with the set of its bounds equal to the set of the bounds in the
