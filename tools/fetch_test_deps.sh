@@ -9,6 +9,7 @@
 #                        rejects the official std with E0514, so target builds use this
 #   bin/                 <target>-cc, clang with the flags for each sysroot
 #   podman/              storage for tests, apart from the user's own Podman config
+#   rustup/              the context of the image with rustup that s09_release runs
 set -euo pipefail
 deps=${XDG_CACHE_HOME:-$HOME/.cache}/zed-test-deps
 mkdir -p "$deps/dl" "$deps/bin" "$deps/rust"
@@ -76,5 +77,29 @@ runroot = "/run/user/$(id -u)/zed-test-podman"
 graphroot = "$deps/podman/root"
 CONF
 CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error pull -q $image
+
+# The image localhost/zed-test-rustup:<pin>, with rustup, the toolchain the root's
+# rust-toolchain.toml pins and an older default, 1.98.0, for the full piece s09_release, which
+# checks that rustup picks the pin over the default (BUILD-toolchain-pin-rustup). The test machine
+# has no rustup, and the test runs the container with no network, so rustup and both toolchains
+# are installed here, at build time. rustup-init is the musl build (the image is Alpine), checked by
+# its SHA-256 like every file above; rustup checks each toolchain it installs against the SHA-256
+# in the release's manifest, fetched over HTTPS. The toolchains need libgcc_s. A new pin needs
+# this script run again; until then the test finds no image of that tag.
+pin=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$(dirname "$0")/../rust-toolchain.toml")
+[ -n "$pin" ] || { echo "rust-toolchain.toml names no channel"; exit 1; }
+fetch https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-musl/rustup-init 1552169aba2836777136ccff7a381e95c17233b5d8250cd5e10ae3cb971bfcfc
+mkdir -p "$deps/rustup"
+install -m 755 "$deps/dl/rustup-init" "$deps/rustup/rustup-init"
+cat >"$deps/rustup/Containerfile" <<IMAGE
+FROM $image
+COPY rustup-init /usr/local/bin/rustup-init
+RUN apk add --no-cache libgcc && \\
+    rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.98.0 && \\
+    /root/.cargo/bin/rustup toolchain install --profile minimal $pin
+ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+IMAGE
+CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error build -q \
+  -t "localhost/zed-test-rustup:$pin" "$deps/rustup"
 touch "$deps/done"
 echo "$deps ready"

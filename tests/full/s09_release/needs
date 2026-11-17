@@ -1,2 +1,4 @@
 rustc
 cargo
+podman
+systemd-run

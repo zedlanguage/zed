@@ -149,7 +149,9 @@ fn rust_builds_for_each_target() {
 /// KillMode=process ends the unit when podman exits: without it `--wait` also waits for the
 /// container's monitor process (conmon), which `podman run -d` leaves in the unit until the
 /// container ends (47 s for `sleep 50`, measured). Outside a user namespace, podman runs directly.
-fn podman(args: &[&str]) -> Output {
+/// systemd-run expands `${name}` in the arguments it passes (not `$name` or `%h`, measured
+/// 2026-11-17), so an argument that holds a shell script names its variables as `$name`.
+pub(crate) fn podman(args: &[&str]) -> Output {
     let storage = deps().join("podman/storage.conf");
     let identity = std::fs::read_to_string("/proc/self/uid_map")
         .is_ok_and(|m| m.split_whitespace().eq(["0", "0", "4294967295"]));
