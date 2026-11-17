@@ -125,12 +125,13 @@ fn k_joined_components_cost_at_most_twice_the_rows_written_out() {
 /// m = 1 to 5, costs a bounded factor of the same rows written out
 /// (PERF-types-joined-split-several-differing). The split rows form a binary tree of 2^m
 /// leaves, each held whole, and 2^m - 1 inner rows, each tried in the shapes of its bucket
-/// before it is split. The shapes are variables, which the filing cannot tell apart, so each
-/// row written out is also searched through the bucket: the fits counted per tuple were 2, 5,
-/// 16, 60, 240, 976 and 3968 written out and 5, 17, 60, 225, 874, 3451 and 13724 joined for
-/// m = 1 to 7, a ratio of 2.5 to 3.75 that does not grow with m. The instructions, 1.26, 2.02,
-/// 2.35, 2.68, 2.99, 3.30 and 3.45 times, rise toward that ratio as the fixed cost of a tuple
-/// shrinks against the fits; measured, not proved, beyond m = 7.
+/// before it is split. The shapes are variables, which the filing cannot tell apart. Before
+/// PERF-types-variable-shapes-one-bucket each row written out was also searched through the
+/// bucket: the fits counted per tuple were 2, 5, 16, 60, 240, 976 and 3968 written out and 5,
+/// 17, 60, 225, 874, 3451 and 13724 joined for m = 1 to 7, a ratio of 2.5 to 3.75 that does
+/// not grow with m, and the instructions 1.26, 2.02, 2.35, 2.68, 2.99, 3.30 and 3.45 times.
+/// Since then a row finds its shape by the pins at all its places, and the instructions are
+/// 1.26, 2.09, 2.41, 2.66 and 2.79 times for m = 1 to 5 (load 65); measured, not proved.
 #[test]
 fn k_joined_components_differing_on_m_components_cost_a_bounded_factor() {
     for m in 1..=5 {
@@ -146,6 +147,37 @@ fn k_joined_components_differing_on_m_components_cost_a_bounded_factor() {
             || assert!(fits_sig(&s, &joined)),
         );
     }
+}
+
+/// N = 2^m shapes of variables for each of 2 tuples of 8 components, differing on their last m
+/// components, against the same rows written out, N = 16 and 128
+/// (PERF-types-variable-shapes-one-bucket). The shapes fall in one bucket, as variables are
+/// not filed; a binding pins a shape at each place where its component is one variable bound
+/// alone ([`Bound`] in ty.rs), so a row finds the shapes that agree with it at every place
+/// pinned by one lookup in each set of places pinned, and tries one shape. Before, a shape was
+/// pinned at the first such place only, and row r tried the shapes before it that agree with
+/// it there, N²/4 fits for N rows (2, 5, 16, 60, 240, 976, 3968 for N = 2 to 128). Besides its
+/// ratio: each form fits at each size. Small instances:
+/// `fits::k_joined_components_fit_shapes_that_differ_on_some_of_them`.
+#[test]
+fn shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales() {
+    let what =
+        "N shapes of variables differing on log N of 8 components, against the rows written out";
+    let n = 16;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| {
+            let m = n.trailing_zeros() as usize;
+            (
+                n,
+                k_joined_rows(2, 8, &(8 - m..8).collect::<Vec<_>>(), false),
+            )
+        })
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let [s, written, _] = &sigs[&n];
+        assert!(fits_sig(s, written), "{what} at {n}");
+    });
 }
 
 /// [`k_joined_components_differing_on_m_components_cost_a_bounded_factor`] at m = 3, n and 8n
