@@ -2234,9 +2234,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => HashSet::new(),
         };
         let parts = || match (&targets[..], &value.kind) {
-            ([t], _) => unfixed_parts(value, name(t), true, text, &taken),
+            ([t], _) => {
+                let binder = match t {
+                    Target::Name(_, s) => Some(*s),
+                    Target::Wild => None,
+                };
+                unfixed_parts(value, name(t), binder, true, text, &taken)
+            }
             (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
-                .flat_map(|(t, x)| unfixed_parts(x, name(t), false, text, &taken))
+                .flat_map(|(t, x)| unfixed_parts(x, name(t), None, false, text, &taken))
                 .collect(),
             _ => Vec::new(),
         };
@@ -2858,6 +2864,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !sites.insert(l.site) {
                 continue;
             }
+            // A decimal that nothing fixes takes `f64` where `f64` holds it (DESIGN.md step
+            // L1.26b): `y = g(c)` with `g(positional c: bool) = if c { 1 } else { 2.5 }` reads
+            // `2.5` at `f64`. One past the range of `f64` is rejected, with the `rat` fix.
+            if fits(&l, Carrier::F64) {
+                self.adopt_to(&l, Carrier::F64);
+                continue;
+            }
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
                 .into_iter()
                 .filter(|&c| fits(&l, c))
@@ -3068,7 +3081,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             self.drop_met(before);
             let what = format!("the default of `{}`", p.name);
-            let parts = unfixed_parts(d, &p.name, true, self.t.text, &taken);
+            let parts = unfixed_parts(d, &p.name, None, true, self.t.text, &taken);
             self.rejects_unfixed(before, parts, &what);
             let mut out = Ty::empty();
             for piece in t.pieces() {
@@ -3585,17 +3598,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 StrPart::Text(t) => s.text.push_str(t),
                 StrPart::Hole(h) => {
                     // A hole takes every carrier, as `String` does, so it gives a literal
-                    // none: `"${0.5}"` is rejected, and `"${1}"` is an `int` (step L1.26b);
-                    // so is a decimal in a component of a tuple or a payload of an atom
-                    // there, `"${(0.5, 1)}"`. The walk costs the size of the hole
+                    // none: `"${0.5}"` is the `f64` `0.5`, and `"${1}"` an `int` (step
+                    // L1.26b); so is a decimal in a component of a tuple or a payload of an
+                    // atom there, `"${(0.5, 1)}"`. The walk costs the size of the hole
                     // ([`value_parts`]).
                     for (x, _) in value_parts(h).leaves {
                         if let Some(l) = literal(x, self.t.text).filter(|l| l.bare)
                             && lit_carrier(&l.value) != Carrier::Int
                         {
-                            let notes = self.derive(&[l.site]);
-                            let m = unfixed(&l, &[Carrier::F64, Carrier::Rat]);
-                            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                            self.adopt_to(&l, Carrier::F64);
                         }
                     }
                     s.hole = Some(h);
@@ -6687,7 +6698,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             return self.sum(x, span);
         }
         // A decimal with no suffix as the operand of a cast at the top level, as in
-        // `f64(0.1)`, is rejected, since a cast fixes no carrier for its operand (step L1.26b).
+        // `f64(0.1)`, takes `f64`, since a cast fixes no carrier for its operand and a decimal
+        // that nothing fixes takes `f64` (step L1.26b), where the cast does not always fail
+        // at `f64`; otherwise it is rejected with the fixes below.
         // A fix that writes it with a carrier at which the cast always fails is not offered
         // (DESIGN.md sec:domains: "A cast `f64(9007199254740993r)` is never offered [...] since
         // the integer has no exact `f64`, so the cast gives `#inexact` for its one input"):
@@ -6718,7 +6731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .collect();
             if let [c, ..] = cs[..] {
-                if !floats {
+                if !floats && c != Carrier::F64 {
                     let notes = self.derive(&[l.site]);
                     let m = unfixed(&l, &cs);
                     self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
@@ -6738,25 +6751,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(span),
             );
             // `String` takes every carrier, so it gives a literal none: an integer literal is
-            // `int`, and a decimal one, as in `String(0.5)`, is rejected (step L1.26b).
-            if let Some(l) = x.lit.as_ref().filter(|l| l.bare)
+            // `int`, and a decimal one, as in `String(0.5)`, `f64` (step L1.26b).
+            if let Some(l) = x.lit.clone().filter(|l| l.bare)
                 && lit_carrier(&l.value) != Carrier::Int
             {
-                let notes = self.derive(&[l.site]);
-                let m = unfixed(l, &[Carrier::F64, Carrier::Rat]);
-                self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                self.adopt_to(&l, Carrier::F64);
+                x.lit = None;
+                x.ty = Ty::carrier(Carrier::F64);
             }
             // So is one a branch of an `if` of literals gives, `String(if c { 1 } else
             // { 2.5 })`, and one a call gives through its body, `String(g(c))` with
             // `g(positional c: bool) = if c { 1 } else { 2.5 }` ([`Self::unfixed_calls`]).
             let bs = x.branches.iter().flat_map(|bs| bs.iter());
-            let found: Vec<(Span, Span, Msg)> = (bs.filter_map(|b| match b {
+            let decimals: Vec<Lit> = (bs.filter_map(|b| match b {
                 Branch::Lit(l) if l.bare && lit_carrier(&l.value) != Carrier::Int => Some(l),
                 _ => None,
             }))
-            .map(|l| (l.site, l.site, unfixed(l, &[Carrier::F64, Carrier::Rat])))
+            .cloned()
             .collect();
-            self.reject_unfixed(&"the argument of `String`", found);
+            for l in &decimals {
+                self.adopt_to(l, Carrier::F64);
+            }
             if x.lit.is_none() {
                 let args = [Some(x.clone())];
                 self.unfixed_calls("`String`", &word_sig(w), &args);
@@ -15615,10 +15630,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A literal written as a component stays one, and adopts the carrier of the
                 // component it is paired with, as it would as an argument alone: the `1` in
                 // `min((0.5f64, 1), (1, 2))` is an `f64`.
-                // Two literals with no suffix, one of them a decimal, give each other no
-                // carrier: each such decimal is rejected, all of them in one message at the
-                // end, and is read here as the `f64` of the first fix, so that nothing else
-                // is rejected for it.
+                // Of two literals with no suffix, one of them a decimal, the decimal takes
+                // `f64`, as a pair of literal operands of `min` of two numbers does, and the
+                // other follows it (DESIGN.md sec:reduction, item 5; step L1.26b):
+                // `min((1, 2.0), (1, 3))` is `(1, 2.0)`. A decimal past the range of `f64` is
+                // rejected, all of them in one message at the end, and is read here as an
+                // `f64`, so that nothing else is rejected for it.
                 let lits = at.each_ref().map(|w| match w {
                     Some(Part::Lit(l)) if l.bare => Some(l),
                     _ => None,
@@ -15627,11 +15644,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let [Some(l), Some(m)] = lits {
                     for (side, l) in [l, m].into_iter().enumerate() {
                         if is_decimal(&l.value) {
-                            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
-                                .into_iter()
-                                .filter(|&c| fits(l, c))
-                                .collect();
-                            unfixed_found.push((l.site, l.site, unfixed(l, &cs)));
+                            match fits(l, Carrier::F64) {
+                                true => {
+                                    self.adopt_to(l, Carrier::F64);
+                                }
+                                false => {
+                                    let cs: Vec<Carrier> = [Carrier::Rat]
+                                        .into_iter()
+                                        .filter(|&c| fits(l, c))
+                                        .collect();
+                                    unfixed_found.push((l.site, l.site, unfixed(l, &cs)));
+                                }
+                            }
                             fixed[side] = Some(Lit {
                                 bare: false,
                                 ..l.clone()
@@ -19299,12 +19323,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (Some(l), Some(m)) => {
                     let (lc, mc) = (lit_carrier(&l.value), lit_carrier(&m.value));
                     // A literal with a suffix fixes the other's carrier. Of two without one,
-                    // two integers are `int`, and a decimal is given no carrier by the
-                    // other, which takes the carrier of its use too: it is rejected.
+                    // two integers are `int`, and with a decimal among them both take `f64`
+                    // where the decimal fits it (DESIGN.md step L1.26b: `1 == 1.0` is
+                    // `true`); one past the range of `f64` is rejected.
+                    let d = if lc == Carrier::F64 { l } else { m };
                     match (l.bare, m.bare) {
                         (true, true) if lc == Carrier::Int && mc == Carrier::Int => {}
+                        (true, true) if fits(d, Carrier::F64) => {
+                            self.adopt_to(l, Carrier::F64);
+                            self.adopt_to(m, Carrier::F64);
+                        }
                         (true, true) => {
-                            let d = if lc == Carrier::F64 { l } else { m };
                             let notes = [l, m]
                                 .map(|l| Note {
                                     span: l.span,
@@ -20760,12 +20789,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 [c] => c,
                                 // Float formats alone, `f64` among them, take `f64`.
                                 [c, ..] if floats_take_f64(&takes) => c,
+                                // A decimal among them takes `f64` where it is left (DESIGN.md step
+                                // L1.26b): `y = inc(x: 2.5)` is the `f64` `3.5`.
+                                _ if unfixed_takes_f64(
+                                    &takes,
+                                    lits.iter().any(|l| is_decimal(&l.value)),
+                                ) =>
+                                {
+                                    Carrier::F64
+                                }
                                 [c, ..] => {
                                     let l = (lits.iter())
                                         .find(|l| is_decimal(&l.value))
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
-                                    let m = unfixed(l, &takes);
+                                    let m = unfixed_alone(l, &takes);
                                     let sites = lits.iter().map(|l| l.site).collect();
                                     self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
                                     c
@@ -21326,14 +21364,27 @@ impl<'t, 'a> Ck<'t, 'a> {
             if cs.is_empty() {
                 continue;
             }
-            found.push((l.site, l.site, unfixed(l, &cs)));
+            // A decimal that nothing fixes takes `f64` where `f64` holds it (DESIGN.md step
+            // L1.26b): `y = inc(x: 2.5)` is the `f64` `3.5`. One past the range of `f64` is
+            // rejected, with the `rat` fix alone.
+            match cs.contains(&Carrier::F64) {
+                true => {
+                    self.adopt_to(l, Carrier::F64);
+                }
+                false => found.push((l.site, l.site, unfixed(l, &cs))),
+            }
         }
         for l in &payloads {
-            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
-                .into_iter()
-                .filter(|&c| fits(l, c))
-                .collect();
-            found.push((l.site, l.site, unfixed(l, &cs)));
+            match fits(l, Carrier::F64) {
+                true => {
+                    self.adopt_to(l, Carrier::F64);
+                }
+                false => {
+                    let cs: Vec<Carrier> =
+                        [Carrier::Rat].into_iter().filter(|&c| fits(l, c)).collect();
+                    found.push((l.site, l.site, unfixed(l, &cs)));
+                }
+            }
         }
         found.sort_by_key(|(s, _, _)| s.start);
         self.reject_unfixed(&format_args!("the arguments of {what}"), found);
@@ -23896,12 +23947,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A literal that two or more of the word's numeric carriers take, and that nothing
         // else here gives one, as `abs(0.5)` or `String(0.5)`: an integer literal is `int`
         // where `int` is among them, float formats alone, `f64` among them, take `f64`, as
-        // `sqrt(2.0)` does ([`floats_take_f64`]), and otherwise it is rejected (steps L1.26a and
-        // L1.26b). One value gives one error: of two such operands, as in `0.5 * 2.0`, the first
-        // decimal literal, or else the first literal, is rejected. A branch of an `if` of
-        // literals is a literal there as it is alone: `f64(if c { 1 } else { 2.5 })` is
-        // rejected at the `2.5`, as `f64(0.5)` is, and `f64(if c { 1 } else { 2 })` is an
-        // `int` at the `int` arrow.
+        // `sqrt(2.0)` does ([`floats_take_f64`]), so does every literal of the call where a decimal
+        // is among them and `f64` is left, `abs(0.5)` and `min(0.5, 2)` (step L1.26b), and
+        // otherwise it is rejected (steps L1.26a and L1.26b). One value gives one error: of two
+        // such operands the first decimal literal, or else the first literal, is rejected. A
+        // branch of an `if` of literals is a literal there as it is alone:
+        // `f64(if c { 1 } else { 2.5 })` is the `f64` `2.5` where `c` is false, as `f64(0.5)` is
+        // `0.5`, and `f64(if c { 1 } else { 2 })` is an `int` at the `int` arrow.
+        // Complexity: one pass over the arguments' literals for `decimal`, then the one below,
+        // O(l) for l literals.
+        let decimal = (takes.keys())
+            .filter_map(|&i| args.get(i).and_then(Option::as_ref))
+            .any(|a| {
+                let mut bs = a.branches.iter().flat_map(|bs| bs.iter());
+                a.lit.as_ref().is_some_and(|l| is_decimal(&l.value))
+                    || bs.any(|b| matches!(b, Branch::Lit(l) if l.bare && is_decimal(&l.value)))
+            });
         let unfixed_lits = takes.iter().flat_map(|(&i, m)| {
             let found = (m.zip(args.get(i).and_then(Option::as_ref))).map(|(m, a)| {
                 let bs = a.branches.iter().flat_map(|bs| bs.iter());
@@ -23912,7 +23973,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let left: Vec<Carrier> = Carrier::of_mask(m).filter(|c| c.numeric()).collect();
                 ls.filter_map(move |l| {
                     let int = lit_carrier(&l.value) == Carrier::Int && left.contains(&Carrier::Int);
-                    (!int && left.len() > 1 && !floats_take_f64(&left)).then(|| (l, left.clone()))
+                    (!int && left.len() > 1 && !unfixed_takes_f64(&left, decimal))
+                        .then(|| (l, left.clone()))
                 })
             });
             found.into_iter().flatten()

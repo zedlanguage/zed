@@ -148,14 +148,14 @@ fn a_literal_left_the_formats_f32_and_f64_takes_f64() {
     let src = "f(positional n) = 2^n;\ny = f(2.0);\nz = f(3);\n";
     assert_eq!(value(src, "y"), "4.0");
     assert_eq!(value(src, "z"), "8");
-    // A literal `rat` may still take is not chosen: `0.5 * 2` and `y = 0.5` stay rejected.
-    for src in ["y = 0.5 * 2;\n", "y = 0.5;\n"] {
-        assert!(
-            errors(src)
-                .iter()
-                .any(|e| e.starts_with("Nothing gives the literal `0.5` a carrier")),
-            "{src}: {:?}",
-            errors(src)
-        );
-    }
+    // A decimal that nothing fixes takes `f64` though `rat` may take it too (DESIGN.md step
+    // L1.26b, author decision 2026-11-12): `0.5 * 2` is `1.0` and `y = 0.5` is `0.5`.
+    assert_eq!(value("y = 0.5 * 2;\n", "y"), "1.0");
+    assert_eq!(value("y = 0.5;\n", "y"), "0.5");
+    // Only a `/` of integer literals alone stays rejected.
+    assert!(
+        errors("y = 1 / 2;\n")
+            .iter()
+            .any(|e| e.starts_with("Nothing gives the integer literals a carrier")),
+    );
 }

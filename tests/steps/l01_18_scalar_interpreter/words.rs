@@ -47,16 +47,10 @@ fn summing_an_order() {
     assert_eq!(x("sum((1r/2r, 1r/3r))"), "5r/6r");
     assert_eq!(x("sum((9, int(text(\"x\"))))"), "#invalid");
     // An integer literal beside an f64 is read as one (DESIGN.md L1.26a); a decimal literal
-    // that nothing gives a carrier is rejected; a string is no number.
+    // that nothing gives a carrier takes `f64` (step L1.26b), and the integer follows it; a
+    // string is no number.
     assert_eq!(x("sum((1, 2.0f64))"), "3.0");
-    assert_eq!(
-        errors("x = sum((1, 2.0));\n"),
-        [
-            "Nothing gives the literal `2.0` a carrier. Try `x = sum((1, 2.0f64))` instead.\n  \
-             fixes, each checked here:\n    x = sum((1, 2.0f64));    the literal is then the f64 \
-             2.0\n    x = sum((1, 2.0r));      the literal is then exactly 2.0, a rat [2.0]"
-        ]
-    );
+    assert_eq!(x("sum((1, 2.0))"), "3.0");
     assert_eq!(
         errors("x = sum((1, \"a\"));\n"),
         ["`sum` does not take (1, \"a\"): it adds only numbers. [sum((1, \"a\"))]"]
@@ -73,16 +67,10 @@ fn min_and_max_of_each_number_kind() {
     assert_eq!(x("min(min(4, 2), 3)"), "2");
     assert_eq!(x("3.max(7)"), "7");
     // An integer literal beside an f64 is read as one (DESIGN.md L1.26a); a decimal literal
-    // that nothing gives a carrier is rejected.
+    // that nothing gives a carrier takes `f64` (step L1.26b), and the integer follows it.
     assert_eq!(x("max(0, 2.5f64)"), "2.5");
-    assert_eq!(
-        errors("x = max(0, 2.5);\n"),
-        [
-            "Nothing gives the literal `2.5` a carrier. Try `x = max(0, 2.5f64)` instead.\n  \
-             fixes, each checked here:\n    x = max(0, 2.5f64);    the literal is then the f64 \
-             2.5\n    x = max(0, 2.5r);      the literal is then exactly 2.5, a rat [2.5]"
-        ]
-    );
+    assert_eq!(x("max(0, 2.5)"), "2.5");
+    assert_eq!(x("min(0.5, 2)"), "0.5");
     assert_eq!(
         zed_tests::step_helpers::l01_16_elaboration::value("f = max;\nx = f(1, 2);\n", "x"),
         "2"

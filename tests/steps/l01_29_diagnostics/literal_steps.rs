@@ -27,7 +27,7 @@ fn a_division_of_divisions_of_literals_names_no_type_for_them() {
     let d = open_div();
     let want = format!(
         "1:5: Nothing gives the integer literals a carrier, and `/` has none at `int`: \
-         `y = (1 / 2) / (3 / 4)`. Try `y = (1.0f64 / 2) / (3 / 4)` instead.
+         `y = (1 / 2) / (3 / 4)`. Try `y = (1r / 2) / (3 / 4)` instead.
   [1] 1:5: {d}
       1 | y = (1 / 2) / (3 / 4);
         |     ^^^^^^^ [2]    ^ [7]
@@ -41,8 +41,10 @@ fn a_division_of_divisions_of_literals_names_no_type_for_them() {
   [6] 1:16: this literal, 3, is 3
   [7] 1:20: this literal, 4, is 4
   fixes, each checked here:
-    y = (1.0f64 / 2) / (3 / 4);    y is 0.6666666666666666
     y = (1r / 2) / (3 / 4);        y is 2r/3r
+    y: rat = (1 / 2) / (3 / 4);    y is 2r/3r
+    y = (1.0 / 2) / (3 / 4);       y is 0.6666666666666666
+    y: f64 = (1 / 2) / (3 / 4);    y is 0.6666666666666666
     y = (f64(1) / 2) / (3 / 4);    y is 0.6666666666666666"
     );
     assert_eq!(out, want);

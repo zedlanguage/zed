@@ -1,6 +1,6 @@
 //! Unbounded integers and exact rationals, from literals through arithmetic.
 
-use zed_tests::step_helpers::l01_16_elaboration::{elab, errors, term, value};
+use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, errors, term, value};
 
 #[test]
 fn integers_widen_past_64_bits_and_narrow_back() {
@@ -117,15 +117,10 @@ fn numbers_of_different_kinds_do_not_mix() {
              the literal is then exactly 2.0, a rat [2.0f64]"
         ]
     );
-    // Two literals without a suffix, one a decimal, have nothing to give them a carrier.
-    assert_eq!(
-        errors("c = 1 == 1.0;\n"),
-        [
-            "Nothing gives the literal `1.0` a carrier. Try `c = 1 == 1.0f64` instead.\n  fixes, \
-             each checked here:\n    c = 1 == 1.0f64;    c is true\n    c = 1 == 1.0r;      c is \
-             true [1.0]"
-        ]
-    );
+    // Two literals without a suffix, one a decimal, that nothing gives a carrier take `f64`
+    // (DESIGN.md step L1.26b): `1 == 1.0` is `true`, with no warning.
+    assert_eq!(value("c = 1 == 1.0;\n", "c"), "true");
+    assert!(checked("c = 1 == 1.0;\n").info.warnings.is_empty());
     assert_eq!(value("a = 1r + 1;\n", "a"), "2r");
     assert_eq!(value("b = 1r < 2;\n", "b"), "true");
     assert_eq!(value("c = 1 == 1.0f64;\n", "c"), "true");

@@ -4335,13 +4335,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The carrier the literals of the class `r` take where nothing else gives them one, of
     /// the carriers its mask leaves ([`Self::resolve`] when its function ends, and
     /// [`Ck::fix_bound`] where a name in a body is bound to it). An integer literal is an
-    /// `int` where the class may be one. Otherwise, as for a decimal literal or a `/` of
-    /// integer literals, nothing chooses among the carriers left, and the first decimal
-    /// literal, or else the first literal, is rejected (steps L1.26a and L1.26b), unless the
-    /// carriers left are float formats alone, `f64` among them, which take `f64`
-    /// ([`floats_take_f64`]), and a decimal literal or a use of float formats alone left them
-    /// ([`Class::floats`]): `2^(1 + 1) / 3` is rejected, as it is at the top level, and not
-    /// read at `f64`.
+    /// `int` where the class may be one. A decimal literal among them, with `f64` left, takes
+    /// `f64`, `rat` left or not, and so do float formats alone, `f64` among them, that a use
+    /// of float formats alone left ([`Class::floats`], [`unfixed_takes_f64`]): `g() = 0.5 *
+    /// 2` is `1.0`. Otherwise, as for a `/` of integer literals, nothing chooses among the
+    /// carriers left, and the first decimal literal, or else the first literal, is rejected
+    /// (steps L1.26a and L1.26b): `2^(1 + 1) / 3` is rejected, as it is at the top level, and
+    /// not read at `f64`.
     /// Where `rat` alone is left, the literals take it only if a use asked for it
     /// ([`Class::rat`]): in `2 ^ (2^100 - 1) / 3` the operations alone leave it, no float
     /// format holding the exponent exactly, and the base is rejected naming `rat`, as an
@@ -4367,7 +4367,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return LitsTake::Left;
         }
         let decimal = || c.lits.iter().any(|(l, _)| is_decimal(&l.value));
-        if floats_take_f64(&left) && (c.floats || decimal()) {
+        if (floats_take_f64(&left) && c.floats) || unfixed_takes_f64(&left, decimal()) {
             return LitsTake::F64;
         }
         let mut joined = c
@@ -6260,6 +6260,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 [] => None,
                 _ if ints && takes.contains(&Carrier::Int) => Some(Carrier::Int),
                 [c] => Some(c),
+                // A decimal literal among them takes `f64` where it is left (DESIGN.md step
+                // L1.26b): `r = h((1.5, 2))` with `h(positional p) = if p[0] < 5 { p[0] } else
+                // { 0 }` is `1.5`.
+                _ if takes.contains(&Carrier::F64) && lits.iter().any(|l| is_decimal(&l.value)) => {
+                    Some(Carrier::F64)
+                }
                 [c, ..] => {
                     let decimal = lits.iter().any(|l| is_decimal(&l.value));
                     if !decimal
@@ -8958,6 +8964,20 @@ fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
     })
 }
 
+/// The literal `l` written with the carrier `c` where nothing fixes its carrier: as
+/// [`with_carrier`] writes it, but at `f64` as a decimal with no suffix, `1.0` for `1`, which
+/// takes `f64` there (DESIGN.md step L1.26b); a literal in another base in a cast, `f64(0xFF)`.
+fn plain_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
+    let decimal = is_decimal(&l.value);
+    let digits = decimal || lit_digits(l).bytes().all(|b| b.is_ascii_digit());
+    let d = spelled_digits(l);
+    fmt::from_fn(move |f| match (digits, c) {
+        (true, Carrier::F64) if decimal => write!(f, "{d}"),
+        (true, Carrier::F64) => write!(f, "{d}.0"),
+        _ => write!(f, "{}", with_carrier(l, c)),
+    })
+}
+
 /// The message for the literal `l` where a number of one of the carriers `held` is expected,
 /// one or more, none of which it can take: a decimal literal at `int`, which a decimal never
 /// is; a literal written with the suffix `f64` or `f32` at other carriers, since the suffix
@@ -9210,6 +9230,19 @@ fn floats_take_f64(cs: &[Carrier]) -> bool {
         && cs.iter().all(|&c| matches!(c, Carrier::F64 | Carrier::F32))
 }
 
+/// Whether literals with no suffix that nothing gives a carrier, which leave the carriers `cs`
+/// to it, take `f64`, where `decimal` says a decimal literal is among them: `f64` is left and
+/// either a decimal is among them, whatever else is left, `rat` among it or not, or the float
+/// formats alone are left ([`floats_take_f64`]). DESIGN.md step L1.26b (author decision,
+/// 2026-11-12, which reverses the rejection of 2026-11-09): "Where nothing fixes its carrier a
+/// decimal literal takes `f64`, and so does an operation on literals alone with a decimal
+/// among its operands": `y = 0.5 * 2` is the `f64` `1.0` and `1 == 1.0` is `true`. A `/` of
+/// integer literals alone, with no decimal, still leaves `f64` and `rat` and is rejected,
+/// the exact repair first. O(|cs|), at most the four numeric carriers.
+fn unfixed_takes_f64(cs: &[Carrier], decimal: bool) -> bool {
+    cs.contains(&Carrier::F64) && (decimal || floats_take_f64(cs))
+}
+
 /// The carrier an operation on literals alone takes at the parameter `i` of `sig`
 /// ([`Ck::lit_args_take`]): the one numeric carrier other than `int` that every arrow
 /// declares there, or `f64` where the arrows declare float formats alone, `f64` among them
@@ -9274,9 +9307,6 @@ struct OpenLits {
     decimal: bool,
     /// A `/`, which has no arrow at `int`.
     div: bool,
-    /// A `^` whose exponent is no `int` ([`int_exponent_value`]): `^` has no arrow that takes
-    /// two `rat`s.
-    no_rat: bool,
 }
 
 impl OpenLits {
@@ -9284,16 +9314,17 @@ impl OpenLits {
         OpenLits {
             decimal: self.decimal || o.decimal,
             div: self.div || o.div,
-            no_rat: self.no_rat || o.no_rat,
         }
     }
 
-    /// Whether the operation takes `f64`, as in a function body ([`Ck::lits_take`]): it is no
-    /// `rat` and no `int`, which leaves the formats `f32` and `f64`, and a decimal literal,
-    /// its own or `follower`, a bare decimal literal it is compared with, does not choose
-    /// among them ([`floats_take_f64`]).
+    /// Whether the operation takes `f64`, as in a function body ([`Ck::lits_take`]): a decimal
+    /// literal, its own or `follower`, a bare decimal literal it is compared with, takes `f64`
+    /// where nothing fixes it, whatever else is left, `rat` among it or not
+    /// ([`unfixed_takes_f64`]): `y = 0.5 * 2` is `1.0` and `y = 1 / 2 == 0.5` is `true`. An
+    /// integer literal with no decimal stays an `int`, and a `/` of integer literals alone
+    /// is rejected.
     fn takes_f64(self, follower: bool) -> bool {
-        self.no_rat && (self.decimal || (self.div && follower))
+        self.decimal || (self.div && follower)
     }
 }
 
@@ -9302,10 +9333,8 @@ impl OpenLits {
 /// stack.
 fn open_lits(e: &Expr) -> Option<OpenLits> {
     let mut o = OpenLits::default();
-    // Each node with whether it is inside an exponent already read as an `int`, whose own
-    // powers then have `int` exponents too, since its fold folded them.
-    let mut todo = vec![(e, false)];
-    while let Some((x, int)) = todo.pop() {
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
         if let Some(l) = literal(x, None) {
             if !l.bare {
                 return None;
@@ -9321,18 +9350,9 @@ fn open_lits(e: &Expr) -> Option<OpenLits> {
                 b,
             ) => {
                 o.div |= *op == BinaryOp::Div;
-                // Complexity tradeoff: reading the exponent of every `^` ([`int_exponent_value`])
-                // costs its size, O(n^2) over a nest of n powers; read only outside an exponent
-                // read already, and only until one is found no `int`, each node is read at most
-                // twice, O(n).
-                let mut int_b = int;
-                if *op == BinaryOp::Pow && !int && !o.no_rat {
-                    int_b = int_exponent_value(b).is_some();
-                    o.no_rat = !int_b;
-                }
-                todo.extend([(&**b, int_b), (&**a, int)]);
+                todo.extend([&**b, &**a]);
             }
-            ExprKind::Unary(UnaryOp::Neg, a) => todo.push((a, int)),
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
             _ => return None,
         }
     }
@@ -9342,14 +9362,14 @@ fn open_lits(e: &Expr) -> Option<OpenLits> {
 /// The operations on bare literals alone in `e`, a part of a value bound outside every
 /// function ([`unfixed_parts`]), that take `f64` where nothing gives them a carrier, as the
 /// same line in a function body does (author decision, 2026-11-12: a decimal literal that no
-/// use fixes takes `f64`; DESIGN.md step L1.26a, `g() = 2^-1.0` is `0.5`): an operation whose
-/// carriers its operators and literals leave are the float formats alone
-/// ([`OpenLits::takes_f64`]), so `y = 2^-1.0` is `0.5` and `y = 2^0.5 + 1/2` an `f64`, while
-/// `y = 0.5^2`, whose `^` takes `rat` with an integer exponent, and `y = 0.5 * 2` stay
-/// rejected. As in a body, `<`, `<=`, `>` and `>=` make one class of their two sides, so
+/// use fixes takes `f64`, and so does an operation on literals alone with a decimal among its
+/// operands; DESIGN.md step L1.26b, `g() = 2^-1.0` is `0.5`): an operation with a decimal
+/// literal ([`OpenLits::takes_f64`]), so `y = 2^-1.0` is `0.5`, `y = 2^0.5 + 1/2` an `f64`,
+/// `y = 0.5^2` is `0.25` and `y = 0.5 * 2` is `1.0`, while `y = 2^(1/2)`, with no decimal,
+/// stays rejected. As in a body, `<`, `<=`, `>` and `>=` make one class of their two sides, so
 /// `y = 1 < 2^0.5` takes `f64` on both; `==` and `!=` keep the sides apart, and a bare
 /// literal compared with an operation follows it, so `y = 2^-1.0 == 0.5` takes `f64` on both,
-/// `y = 2^(1/2) == 0.5` too, but in `y = 2^0.5 == 0.5^2` the right side stays rejected. Tuple
+/// `y = 2^(1/2) == 0.5` too, and in `y = 2^0.5 == 0.5^2` each side takes it. Tuple
 /// displays compared pair by pair ([`paired`]) take each pair so.
 ///
 /// Complexity tradeoff: a body finds this by a class per operation, merged as each operator
@@ -9367,6 +9387,11 @@ fn f64_operands(e: &Expr) -> Vec<&Expr> {
             for (x, y) in pairs {
                 let bare = |z: &Expr| literal(z, None).filter(|l| l.bare);
                 match (bare(x), bare(y)) {
+                    // Two literals, a decimal among them: both take `f64`, `1 == 1.0` is
+                    // `true` (DESIGN.md step L1.26b).
+                    (Some(l), Some(m)) if is_decimal(&l.value) || is_decimal(&m.value) => {
+                        out.extend([x, y])
+                    }
                     (Some(_), Some(_)) => {}
                     (Some(l), None) if side(y, is_decimal(&l.value)) => out.extend([x, y]),
                     (None, Some(l)) if side(x, is_decimal(&l.value)) => out.extend([x, y]),
@@ -9391,33 +9416,46 @@ fn f64_operands(e: &Expr) -> Vec<&Expr> {
 /// what it meets takes, two or more and no `int`: a decimal literal alone (`y = 0.1`), a
 /// decimal or an integer literal in an operation on literals alone (`y = 0.5 * 2`,
 /// `half() = 1 / 2`), or a call of a generic function with literal arguments only
-/// (`y = inc(x: 2.5)`). The fixes write the literal with each carrier, `0.1f64` or `0.1r`,
-/// and for an integer `1.0f64` or `1r`; an integer literal in another base takes no suffix,
-/// so it is written in a cast, `f64(0xFF)` or `rat(0xFF)`. Each fix names the value the
+/// (`y = half(x: 1)` with `half(x) = x / 2`). The fixes write the literal with each carrier,
+/// the exact one first, `1r`, then `1.0f64`; an integer literal in another base takes no
+/// suffix, so it is written in a cast, `rat(0xFF)` or `f64(0xFF)`. Each fix names the value the
 /// literal then is ([`lit_holds`]); a binding's fixes, which name the value its binder holds,
-/// are [`unfixed_binding`]'s.
+/// are [`unfixed_binding`]'s. A literal that stands alone is [`unfixed_alone`]'s.
 fn unfixed(l: &Lit, cs: &[Carrier]) -> Msg {
+    unfixed_written(l, cs, false)
+}
+
+/// [`unfixed`] for a literal that stands alone where nothing else fixes its carrier, as the
+/// argument of a call of a generic function: the `f64` fix writes it as a decimal with no
+/// suffix, `1.0`, which takes `f64` there as a decimal that nothing fixes does (DESIGN.md
+/// sec:diagnostics, "The value a fix names": `y = half(x: 1r)`, then `y = half(x: 1.0)`;
+/// [`plain_carrier`]). In an operation on literals the suffix stays, `f(1.0f64 / 2)`: the
+/// check of a fix does not see where an operation of bare literals with a `/` or a decimal
+/// goes, so it drops the fix (`Ck::lit_op_meets`), though `f(1.0 / 2)` checks.
+fn unfixed_alone(l: &Lit, cs: &[Carrier]) -> Msg {
+    unfixed_written(l, cs, true)
+}
+
+/// [`unfixed`] and [`unfixed_alone`], the second where `plain`.
+fn unfixed_written(l: &Lit, cs: &[Carrier], plain: bool) -> Msg {
     let decimal = is_decimal(&l.value);
     let mut fixes = Vec::new();
-    let carriers = [Carrier::F64, Carrier::Rat].into_iter();
+    let carriers = [Carrier::Rat, Carrier::F64].into_iter();
     // A decimal past the range of `f64` is offered no `f64` form, which would round it.
     let at = |c: Carrier| match c {
         Carrier::Rat => !decimal || l.bare,
         _ => l.past_f64.is_none(),
     };
     for c in carriers.filter(|&c| cs.contains(&c) && at(c)) {
-        let with = with_carrier(l, c);
-        fixes.push(Rewrite::lit(l, &with, &lit_holds(l, c)));
+        let fix = match plain {
+            true => Rewrite::lit(l, &plain_carrier(l, c), &lit_holds(l, c)),
+            false => Rewrite::lit(l, &with_carrier(l, c), &lit_holds(l, c)),
+        };
+        fixes.push(fix);
     }
-    let names = carrier_names(cs);
-    let m = match decimal {
-        true => literal_message(l, |f, w| write!(f, "Nothing gives {w} a carrier"), ""),
-        false => literal_message(
-            l,
-            |f, w| write!(f, "Nothing gives {w} a carrier of `{names}`"),
-            "",
-        ),
-    };
+    // The headline names no carriers: the fixes do (DESIGN.md sec:diagnostics, "The value a
+    // fix names": "Nothing gives the literal `1` a carrier. Try `y = half(x: 1r)` instead.").
+    let m = literal_message(l, |f, w| write!(f, "Nothing gives {w} a carrier"), "");
     Msg::new(m, fixes)
 }
 
@@ -9671,10 +9709,12 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// `y = 0.5f64 * (1 + 2)`; or else, for a `/` of integer literals, which is rejected at the
 /// `/`, the first literal of the value (DESIGN.md sec:diagnostics, "A `/` of integer
 /// literals": "the menu writes the carrier at the first literal of the value"):
-/// `half = 1.0f64 / 2`, `half = 1r / 2` and `half = f64(1) / 2`, the suffixes first, as
-/// DESIGN's menu for `q = (1 + 2) / (3 + 4)` lists them: `y = 1.0f64 + 7 / 2`. Where a carrier
+/// `half = 1r / 2`, `half = 1.0 / 2` and `half = f64(1) / 2`, the exact fix first, as
+/// DESIGN's menu for `q = (1 + 2) / (3 + 4)` lists them: `y = 1.0 + 7 / 2`; where the value is
+/// the whole of the name `n` bound at `binder`, each carrier's first fix is followed by the
+/// binding declared at it, `half: rat = 1 / 2`. Where a carrier
 /// written there would not reach the other operand of a `^` ([`unreached`]), the fix writes
-/// the first literal of that operand too: `y = 2.0f64 ^ (1.0f64 + 1) / 2`. Each fix
+/// the first literal of that operand too: `y = 2.0 ^ (1.0 + 1) / 2`. Each fix
 /// names the value `n` then holds ([`folded`]). A comparison of two
 /// such operations, `y = 1 == 1.0`, is taken too, at the top of `e` alone, since a comparison
 /// gives a `bool`, which no operation here takes; it joins the carriers of its sides as the
@@ -9692,6 +9732,7 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 fn unfixed_binding(
     e: &Expr,
     n: &str,
+    binder: Option<Span>,
     place: &dyn fmt::Display,
     whole: bool,
     src: Option<&str>,
@@ -9752,9 +9793,11 @@ fn unfixed_binding(
             }
         }
     }
+    // The exact form first (DESIGN.md sec:diagnostics, "A `/` of integer literals": "The exact
+    // fixes come first"), then the decimal, then the cast.
     let forms = [
-        Form::Suffix(Carrier::F64),
         Form::Suffix(Carrier::Rat),
+        Form::Suffix(Carrier::F64),
         Form::Cast,
     ]
     .into_iter();
@@ -9834,22 +9877,41 @@ fn unfixed_binding(
         .all(|l| fits(l, Carrier::F64));
     let forms = forms.filter(|f| exact || f.carrier() != Carrier::F64);
     let forms = forms.filter(|f| digits || *f != Form::Suffix(Carrier::F64));
-    // Without decimal digits both forms are casts, written `f64(0xFF)` then `rat(0xFF)`.
-    let mut forms: Vec<Form> = forms.collect();
-    if !digits {
-        forms.sort_by_key(|f| *f != Form::Cast);
-    }
+    // Without decimal digits both forms are casts, written `rat(0xFF)` then `f64(0xFF)`.
+    let forms: Vec<Form> = forms.collect();
     let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
-    let fixes = (forms.into_iter()).map(|f| {
+    // Each carrier's first form is followed by the binding declared at that carrier, where the
+    // value is the whole of a name's, as DESIGN's menu for `half = 1 / 2` lists them:
+    // `half = 1r / 2`, `half: rat = 1 / 2`, `half = 1.0 / 2`, `half: f64 = 1 / 2`,
+    // `half = f64(1) / 2` (sec:diagnostics, "A `/` of integer literals"). The declared fix
+    // holds what the carrier's form holds. It costs one more fix of the length of the line.
+    let mut fixes = Vec::with_capacity(forms.len() + 2);
+    let mut declared: Vec<Carrier> = Vec::with_capacity(2);
+    for f in forms {
         let leaves = if f.carrier() == Carrier::Rat {
             &rat_leaves
         } else {
             &leaves
         };
-        leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src)
-    });
-    Some((d.span, Msg::new(m, fixes.collect())))
+        let fix = leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src);
+        let c = f.carrier();
+        let decl = match (&fix, binder, bound) {
+            (Some(r), Some(b), Some(n)) if !declared.contains(&c) => {
+                declared.push(c);
+                let value = fmt::from_fn(|f| match text(e.span) {
+                    Some(v) => write!(f, "{n}: {} = {v}", c.name()),
+                    None => write!(f, "{n}: {}", c.name()),
+                });
+                let colon = format!(": {}", c.name());
+                Rewrite::new(&[(point(b.end), &colon)], &r.holds, &value)
+            }
+            _ => None,
+        };
+        fixes.push(fix);
+        fixes.extend(decl.map(Some));
+    }
+    Some((d.span, Msg::new(m, fixes)))
 }
 
 /// The type variables of a signature in sets that its needs tie together, each set marked
@@ -10091,6 +10153,7 @@ impl ValueParts<'_> {
 fn unfixed_parts(
     e: &Expr,
     n: &str,
+    binder: Option<Span>,
     whole: bool,
     src: Option<&str>,
     taken: &HashSet<Span>,
@@ -10101,7 +10164,9 @@ fn unfixed_parts(
     for &(x, at) in &parts.leaves {
         let place = parts.place(root, at);
         let whole = whole && at.is_none();
-        if let Some((s, m)) = unfixed_binding(x, n, &place, whole, src, taken) {
+        if let Some((s, m)) =
+            unfixed_binding(x, n, binder.filter(|_| whole), &place, whole, src, taken)
+        {
             out.push((x.span, s, m));
         }
     }
@@ -10151,8 +10216,9 @@ fn decimal_alone(t: &Ty) -> bool {
 }
 
 /// One way to write a literal with a carrier: in a cast to `f64`, `f64(1)`; or with the
-/// suffix of the carrier, `1.0f64`, `0.5f64` or `1r`, which is a cast where the literal is
-/// written in another base ([`with_carrier`]).
+/// suffix of the carrier, `1r` or `0.5r`, which is a cast where the literal is written in
+/// another base ([`with_carrier`]); at `f64` a decimal needs no suffix, `1.0` or `0.5`, since
+/// a decimal that nothing fixes takes `f64` (step L1.26b).
 #[derive(Clone, Copy, PartialEq)]
 enum Form {
     Cast,
@@ -10191,6 +10257,12 @@ fn leaves_with(
             let with = with_carrier(p, c);
             fmt::from_fn(move |f| match form {
                 Form::Cast => write!(f, "f64({})", spelled_digits(p)),
+                // Nothing fixes the value here, so a decimal with no suffix takes `f64`
+                // (DESIGN.md step L1.26b): `half = 1.0 / 2`, not `1.0f64`.
+                Form::Suffix(Carrier::F64) if is_decimal(&p.value) => {
+                    write!(f, "{}", spelled_digits(p))
+                }
+                Form::Suffix(Carrier::F64) => write!(f, "{}.0", spelled_digits(p)),
                 Form::Suffix(_) => write!(f, "{with}"),
             })
         })

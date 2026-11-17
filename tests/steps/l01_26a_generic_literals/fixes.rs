@@ -4,7 +4,7 @@
 //! that the checker accepts the program and, where the fix names a binder's value, that the
 //! binder holds that value.
 
-use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::{checked as l01_16_checked, value};
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// The heading line of a menu.
@@ -103,53 +103,24 @@ fn a_division_of_integer_literals_lists_three_lines() {
     );
 }
 
+/// A decimal literal that nothing fixes is no error: it takes `f64`, and so does an operation
+/// on literals alone with a decimal among its operands, with no warning and no menu (DESIGN.md
+/// step L1.26b, author decision 2026-11-12). These lines each listed a menu before.
 #[test]
-fn an_unfixed_decimal_lists_a_line_for_each_carrier() {
-    assert_eq!(
-        checked("y = 0.5;\n"),
-        pairs(&[("y = 0.5f64;", "y is 0.5"), ("y = 0.5r;", "y is 1r/2r")])
-    );
-    assert_eq!(
-        checked("y = 0.5 * 2 + 1;\n"),
-        pairs(&[
-            ("y = 0.5f64 * 2 + 1;", "y is 2.0"),
-            ("y = 0.5r * 2 + 1;", "y is 2r"),
-        ])
-    );
-    assert_eq!(
-        checked("y = 1 == 1.0;\n"),
-        pairs(&[
-            ("y = 1 == 1.0f64;", "y is true"),
-            ("y = 1 == 1.0r;", "y is true")
-        ])
-    );
-    assert_eq!(
-        checked("y = 1 + 2 < 0.5;\n"),
-        pairs(&[
-            ("y = 1 + 2 < 0.5f64;", "y is false"),
-            ("y = 1 + 2 < 0.5r;", "y is false"),
-        ])
-    );
-    // A suffix on `0.5` reaches `1 + 2`, an operation on literals alone, which takes the
-    // carrier of what it meets, so the fixes write the decimal the message names.
-    assert_eq!(
-        checked("y = (1 + 2) * 0.5;\n"),
-        pairs(&[
-            ("y = (1 + 2) * 0.5f64;", "y is 1.5"),
-            ("y = (1 + 2) * 0.5r;", "y is 3r/2r"),
-        ])
-    );
-    assert_eq!(
-        checked("y = (1 + 2) * 0.5 ^ 2;\n"),
-        pairs(&[("y = (1 + 2) * 0.5f64 ^ 2;", "y is 0.75")])
-    );
-    assert_eq!(
-        checked("y = (1 + 2) * (3 + 0.5);\n"),
-        pairs(&[
-            ("y = (1 + 2) * (3 + 0.5f64);", "y is 10.5"),
-            ("y = (1 + 2) * (3 + 0.5r);", "y is 21r/2r"),
-        ])
-    );
+fn an_unfixed_decimal_takes_f64_with_no_menu() {
+    for (src, want) in [
+        ("y = 0.5;\n", "0.5"),
+        ("y = 0.5 * 2 + 1;\n", "2.0"),
+        ("y = 1 == 1.0;\n", "true"),
+        ("y = 1 + 2 < 0.5;\n", "false"),
+        // `0.5` reaches `1 + 2`, an operation on literals alone, which takes its carrier.
+        ("y = (1 + 2) * 0.5;\n", "1.5"),
+        ("y = (1 + 2) * 0.5 ^ 2;\n", "0.75"),
+        ("y = (1 + 2) * (3 + 0.5);\n", "10.5"),
+    ] {
+        assert_eq!(value(src, "y"), want, "{src}");
+        assert!(l01_16_checked(src).info.warnings.is_empty(), "{src}");
+    }
 }
 
 /// A power whose exponent is an `int` lists `rat` as well, by the arrow (rat, int) of `^`:

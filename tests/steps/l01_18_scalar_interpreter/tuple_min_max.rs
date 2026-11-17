@@ -78,16 +78,12 @@ fn tuples_min_and_max_cannot_order_are_refused() {
             "`min` does not take (\"a\", \"b\"): no arrow of `min` takes these types. [min((1, \"a\"), (1, \"b\"))]"
         ]
     );
-    assert_eq!(
-        errors("x = min((1, 2.0), (1, 3));\n"),
-        // As `min(2.0, 3)` is: nothing gives the decimal a carrier (DESIGN.md L1.26a).
-        [
-            "Nothing gives the literal `2.0` a carrier. Try `x = min((1, 2.0f64), (1, 3))` \
-             instead.\n  fixes, each checked here:\n    x = min((1, 2.0f64), (1, 3));    the \
-             literal is then the f64 2.0\n    x = min((1, 2.0r), (1, 3));      the literal is then \
-             exactly 2.0, a rat [2.0]"
-        ]
-    );
+    // Not refused: a literal component follows the other component of its pair, and a pair of
+    // literals alone with a decimal among them is `f64`, as `min(2.0, 3)` is (DESIGN.md
+    // sec:reduction, item 5; step L1.18).
+    assert_eq!(x("min((1, 2.0), (1, 3))"), "(1, 2.0)");
+    assert_eq!(x("max((1, 2.0), (1, 3))"), "(1, 3.0)");
+    assert_eq!(x("min((1, 3), (1, 2.0))"), "(1, 2.0)");
     assert_eq!(
         errors("x = min((1, 2), 3);\n"),
         ["`min` does not take (1, 2) and 3, only two tuples or two numbers. [min((1, 2), 3)]"]
