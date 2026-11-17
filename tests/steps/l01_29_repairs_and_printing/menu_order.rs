@@ -18,8 +18,7 @@
 //! type, `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a
 //! top-level binding with a declared type yet. Nor are the five messages of sec:level_names
 //! (layers L7 and L8): zedc does not compile a `names` facet or a named slice yet. The example
-//! `k = int(7r/2r);` of sec:facets is held for plan row CAST-round-whole: zedc rejects it, but
-//! as "`int` here always fails", not as DESIGN's "No `int` equals the value" with its menu.
+//! `k = int(7r/2r);` of sec:facets is compared menu and all (plan row CAST-round-whole).
 
 use super::rejected;
 
@@ -188,17 +187,10 @@ const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
         false,
         false,
     ),
-    // The cast of sec:facets that no `int` equals (spec 7d1cf81): zedc compiles it but still
-    // rejects it under its older first sentence, held in [`HELD_FOR_ROW`].
+    // The cast of sec:facets that no `int` equals (spec 7d1cf81), its menu the six rounding
+    // functions (plan row CAST-round-whole).
     ("k = int(7r/2r);", &["k = int(7r/2r);"], true, true),
 ];
-
-/// The examples zedc compiles but still rejects under another first sentence, each by the
-/// piece that finds it in [`PROGRAMS`] and the plan row that writes DESIGN's message. Each is
-/// checked to differ from DESIGN's first sentence, so that the entry fails, and is to be
-/// removed, once its row lands.
-#[cfg(feature = "spec")]
-const HELD_FOR_ROW: &[(&str, &str)] = &[("k = int(7r/2r);", "CAST-round-whole")];
 
 /// The source lines the steps of `example` show: its lines indented by seven spaces.
 #[cfg(feature = "spec")]
@@ -255,16 +247,8 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
             .filter(|(piece, ..)| shown(example).any(|l| l.contains(piece)))
             .collect();
         assert_eq!(found.len(), 1, "the program of\n{example}");
-        let (piece, pieces, compiled, compare_menu) = found[0];
+        let (_, pieces, compiled, compare_menu) = found[0];
         let out = rejected(&program(&program_of(example, pieces)));
-        if let Some((_, row)) = HELD_FOR_ROW.iter().find(|(p, _)| p == piece) {
-            assert_ne!(
-                first(&out),
-                first(example),
-                "zedc writes DESIGN's message now: take it out of HELD_FOR_ROW ({row})"
-            );
-            continue;
-        }
         if !compiled {
             // Held back: zedc does not compile the example yet. Once it does, this fails, and
             // the example is to be compared like the others.

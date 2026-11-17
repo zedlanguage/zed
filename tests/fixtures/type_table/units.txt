@@ -11,4 +11,4 @@ template: ($0 + $1) / $2
 f64 with units("m"), f64 with units("m"), f64 with units("s") => f64 with units("m/s") !! L12.2: notyet -- sec:facets "km/s is km¹·s⁻¹"
 
 template: f32($0)
-f64 with units("m") => f32 with units("m") | #inexact | #overflow !! L12.2: notyet -- sec:corner_cases "Casts are domain proofs"; author decision on facets "casts keep units"
+f64 with units("m") => f32 with units("m") !! L12.2: notyet -- sec:corner_cases "Casts are domain proofs"; author decision on facets "casts keep units"

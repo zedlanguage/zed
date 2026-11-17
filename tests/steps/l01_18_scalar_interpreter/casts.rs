@@ -1,6 +1,7 @@
-//! The checked casts: `T(x)` is `x` as a `T` when it is the same number, `#overflow` when a
-//! number lies beyond the largest finite `T`, `#inexact` when one in range has no equal `T`,
-//! and `#invalid` when the source is not a `T` at all.
+//! The casts (step L1.18): a cast to a float format is the nearest float, ties to even, the
+//! infinity of its sign past the range; `int` of a number is accepted only where the checker
+//! proves it whole, and is otherwise a compile error with the rounding functions as its menu;
+//! `#invalid` when the source is not a `T` at all.
 
 use super::x;
 use num_bigint::BigUint;
@@ -28,20 +29,28 @@ fn reading_a_quantity_from_a_form_field() {
 #[test]
 fn a_float_to_int_must_be_whole() {
     assert_eq!(x("int(3.0f64)"), "3");
-    assert_eq!(x("int(real(-2.5f64))"), "#inexact");
     assert_eq!(x("int(1.0e20f64)"), "100000000000000000000");
-    assert_eq!(x("int(1.0f64 / 0.0)"), "#invalid");
-    assert_eq!(x("int(0.0f64 / 0.0)"), "#invalid");
-    assert_eq!(x("int(rat(7) / rat(2))"), "#inexact");
+    // An infinity or the NaN is not whole either.
+    assert!(!errors("x = int(1.0f64 / 0.0);\n").is_empty());
+    assert!(!errors("x = int(0.0f64 / 0.0);\n").is_empty());
     assert_eq!(x("int(rat(6) / rat(2))"), "3");
-    // An operand of literals alone whose cast always fails is rejected, as `int(2.5f64)` is
-    // (DESIGN.md sec:domains; row LIT-cast-inexact-rat-fix).
+    // A number the checker does not prove whole is a compile error whose menu is the six
+    // rounding functions (DESIGN.md sec:facets and step L1.18), whatever value it holds.
+    for (written, value) in [("7r/2r", "3.5"), ("rat(7) / rat(2)", "3.5"), ("2.5f64", "2.5")] {
+        let got = errors(&format!("k = int({written});\n"));
+        assert_eq!(
+            got,
+            [format!(
+                "No `int` equals the value: `int({written})`. Try `round({written})` instead. \
+                 [int({written})]"
+            )],
+            "{value}"
+        );
+    }
+    let got = errors("f(x: f64) = int(x);\n");
     assert_eq!(
-        errors("x = int(7r/2r);\n"),
-        [
-            "`int` here always fails: its operand `7r/2r` gives `#inexact`, so this call never \
-             gives a value. [int(7r/2r)]"
-        ]
+        got,
+        ["No `int` equals the value: `int(x)`. Try `round(x)` instead. [int(x)]"]
     );
 }
 
@@ -65,71 +74,78 @@ fn a_rational_reads_as_string_writes_it_or_as_a_decimal() {
 }
 
 #[test]
-fn a_number_to_f64_must_be_exactly_representable() {
+fn a_number_to_f64_rounds_to_nearest_ties_to_even() {
     assert_eq!(x("f64(3)"), "3.0");
     assert_eq!(
         x("f64(2^60)"),
         "1152921504606847000.0",
         "the shortest digits that read back"
     );
-    assert_eq!(x("f64(2^60 + 1)"), "#inexact", "2^60 + 1 needs 61 bits");
-    assert_eq!(x("f64(3r/8r)"), "0.375");
-    assert_eq!(x("f64(rat(1) / rat(3))"), "#inexact");
-    // Of literals alone the cast always fails and is rejected (DESIGN.md sec:domains; row
-    // LIT-cast-inexact-rat-fix).
     assert_eq!(
-        errors("x = f64(1r/3r);\n"),
-        [
-            "`f64` here always fails: its operand `1r/3r` gives `#inexact`, so this call never \
-             gives a value. [f64(1r/3r)]"
-        ]
+        x("f64(2^60 + 1)"),
+        "1152921504606847000.0",
+        "2^60 + 1 needs 61 bits and rounds to 2^60"
     );
+    assert_eq!(x("f64(3r/8r)"), "0.375");
+    assert_eq!(x("f64(rat(1) / rat(3))"), "0.3333333333333333");
+    // The lines of DESIGN.md sec:facets: of literals alone the cast rounds as at run time.
+    assert_eq!(x("f64(1r/3r)"), "0.3333333333333333");
+    assert_eq!(x("f64(9007199254740993)"), "9007199254740992.0");
+    assert_eq!(x("f64(9007199254740995)"), "9007199254740996.0");
+    assert_eq!(x("f64(10^309)"), "inf");
     assert_eq!(x("f64(rat(1) / rat(2^1074))"), "5.0e-324");
-    assert_eq!(x("f64(rat(1) / rat(2^1075))"), "#inexact");
+    // Half the least subnormal is a tie between it and zero, which is even.
+    assert_eq!(x("f64(rat(1) / rat(2^1075))"), "0.0");
+    assert_eq!(x("f64(rat(3) / rat(2^1076))"), "5.0e-324");
 }
 
 #[test]
-fn a_float_reads_correctly_rounded_and_overflow_is_overflow() {
+fn a_float_reads_correctly_rounded_and_past_the_range_is_infinite() {
     assert_eq!(x("f64(\"0.1\") == 0.1"), "true");
     assert_eq!(x("f64(\"2.5e-3\")"), "0.0025");
     assert_eq!(x("f64(\"7\")"), "7.0");
-    assert_eq!(x("f64(text(\"1e400\"))"), "#overflow");
-    assert_eq!(x("f64(text(\"-1e400\"))"), "#overflow");
+    assert_eq!(x("f64(text(\"1e400\"))"), "inf");
+    assert_eq!(x("f64(text(\"-1e400\"))"), "-inf");
     assert_eq!(x("f64(text(\"1,5\"))"), "#invalid");
     assert_eq!(x("f64(text(\"infinity\"))"), "#invalid");
     assert_eq!(x("f64(text(\"1e\"))"), "#invalid");
 }
 
-/// A36: a finite number beyond the largest finite value of a float format is `#overflow`, and
-/// one in range with no equal float `#inexact`. The largest `f64` is `(2^53 - 1) * 2^971`; one
-/// more rounds to it at the nearest, yet lies outside the range, so it is `#overflow` too.
+/// Step L1.18: a cast to a float format rounds to nearest, ties to even, as IEEE 754 does. The
+/// largest `f64` is `(2^53 - 1) * 2^971`; a number below it plus half its last unit rounds to
+/// it, and one at or past that midpoint (a tie, whose even side is the infinity) is the
+/// infinity of its sign.
 #[test]
-fn a_number_beyond_the_largest_float_is_overflow() {
+fn a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity() {
     let max = "(2^53 - 1) * 2^971";
     assert_eq!(x(&format!("f64({max})")), "1.7976931348623157e308");
     assert_eq!(x(&format!("f64(-({max}))")), "-1.7976931348623157e308");
-    assert_eq!(x(&format!("f64({max} + 1)")), "#overflow");
-    assert_eq!(x(&format!("f64(-({max}) - 1)")), "#overflow");
-    assert_eq!(x(&format!("f64({max} - 1)")), "#inexact");
-    assert_eq!(x("f64(2^1024)"), "#overflow");
+    assert_eq!(x(&format!("f64({max} + 1)")), "1.7976931348623157e308");
+    assert_eq!(x(&format!("f64(-({max}) - 1)")), "-1.7976931348623157e308");
+    assert_eq!(x(&format!("f64({max} - 1)")), "1.7976931348623157e308");
+    assert_eq!(x("f64(2^1024)"), "inf");
+    assert_eq!(x("f64(-(2^1024))"), "-inf");
     // Rats beyond it, with and without a binary form, and just inside it.
-    assert_eq!(x(&format!("f64(rat({max}) + 1r/2r)")), "#overflow");
-    assert_eq!(x("f64(rat(10^400) / 3r)"), "#overflow");
-    assert_eq!(x("f64(rat(3)^700)"), "#overflow");
-    assert_eq!(x(&format!("f64(rat({max}) - 1r/2r)")), "#inexact");
-    assert_eq!(x("f64(1r / rat(3)^700)"), "#inexact");
+    assert_eq!(x(&format!("f64(rat({max}) + 1r/2r)")), "1.7976931348623157e308");
+    assert_eq!(x("f64(rat(10^400) / 3r)"), "inf");
+    assert_eq!(x("f64(rat(3)^700)"), "inf");
+    assert_eq!(x(&format!("f64(rat({max}) - 1r/2r)")), "1.7976931348623157e308");
+    assert_eq!(x("f64(1r / rat(3)^700)"), "0.0");
     // `f32`: its largest is `(2^24 - 1) * 2^104`, from an int, a rat or an `f64`.
     let max32 = "(2^24 - 1) * 2^104";
     assert_eq!(x(&format!("f32({max32})")), "3.4028235e38f32");
-    assert_eq!(x(&format!("f32({max32} + 1)")), "#overflow");
-    assert_eq!(x(&format!("f32({max32} - 1)")), "#inexact");
-    assert_eq!(x("f32(rat(2^128))"), "#overflow");
-    assert_eq!(x("f32(real(1.0e39f64))"), "#overflow");
-    assert_eq!(x("f32(real(-1.0e39f64))"), "#overflow");
+    assert_eq!(x(&format!("f32({max32} + 1)")), "3.4028235e38f32");
+    assert_eq!(x(&format!("f32({max32} - 1)")), "3.4028235e38f32");
+    assert_eq!(x("f32(rat(2^128))"), "inff32");
+    assert_eq!(x(&format!("f32({max32} + 2^103)")), "inff32", "the midpoint, a tie, to even");
+    assert_eq!(x(&format!("f32({max32} + 2^103 - 1)")), "3.4028235e38f32");
+    assert_eq!(x("f32(real(1.0e39f64))"), "inff32");
+    assert_eq!(x("f32(real(-1.0e39f64))"), "-inff32");
     assert_eq!(x(&format!("f32(f64({max32}))")), "3.4028235e38f32");
-    // An infinity is not finite: `f32` keeps it, and `int` and `rat` of it are `#invalid`.
+    // An infinity is not finite: `f32` keeps it, `rat` of it is `#invalid`, and `int` of a
+    // float not proved whole is rejected.
     assert_eq!(x("String(f32(real(1.0e308f64 * 10.0f64)))"), "\"inf\"");
-    assert_eq!(x("int(real(1.0e308f64 * 10.0f64))"), "#invalid");
+    assert_eq!(x("rat(real(1.0e308f64 * 10.0f64))"), "#invalid");
     // `int` and `rat` have no largest value.
     assert_eq!(x("int(rat(2^2000)) == 2^2000"), "true");
     assert_eq!(x("rat(2^2000) == rat(2^2000)"), "true");
@@ -272,7 +288,7 @@ fn a_number_received_in_pieces_reads_as_one() {
         "true"
     );
     // A float of 393 digits after the point rounds to the nearest f64, and one past the
-    // largest f64 is #overflow (A36), written in pieces as in one.
+    // largest f64 is the infinity, written in pieces as in one.
     let half = [
         format!("0.5{}", "0".repeat(130)),
         "0".repeat(130),
@@ -284,7 +300,7 @@ fn a_number_received_in_pieces_reads_as_one() {
         "0".repeat(130),
         "0".repeat(140),
     ];
-    assert_eq!(x(&format!("f64({})", joined(&huge))), "#overflow");
+    assert_eq!(x(&format!("f64({})", joined(&huge))), "inf");
 }
 
 #[test]

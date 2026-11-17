@@ -136,7 +136,7 @@ fn an_int_compared_with_an_f64_is_offered_the_widening_cast_where_it_is_exact() 
         "{out}"
     );
     checks(&edited(&src, "= tempC < tempK", "= f64(tempC) < tempK"));
-    // An unbounded `int` is offered no cast: `f64(n)` carries `#inexact` above 2^53.
+    // An unbounded `int` is offered no cast: `f64(n)` is inexact above 2^53.
     let src = program("warm(tempC: int, tempK: f64) = tempC < tempK;");
     let out = rejected(&src);
     assert!(

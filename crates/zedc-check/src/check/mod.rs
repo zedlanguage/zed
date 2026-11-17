@@ -1519,10 +1519,9 @@ struct Class {
     /// whether either was.
     refused: bool,
     /// The carriers, as a mask of [`Carrier::bit`], at which a prelude word applied to an
-    /// operation on its literals alone always fails, as `f64` does on `1 / 10` at `rat`,
-    /// `1/10` having no exact `f64` ([`Ck::word_unoffered`]): a fix that gives the literals
-    /// such a carrier is not offered (DESIGN.md sec:domains: "A cast `f64(9007199254740993r)`
-    /// is never offered"; row LIT-cast-inexact-rat-fix). Of a merged class, those of both.
+    /// operation on its literals alone always fails, as `rat` does on `2^1024 + 1` at `f64`,
+    /// where it is the infinity ([`Ck::word_unoffered`]): a fix that gives the literals such a
+    /// carrier is not offered (row LIT-cast-inexact-rat-fix). Of a merged class, those of both.
     unoffered: u8,
 }
 
@@ -2090,6 +2089,10 @@ struct Ck<'t, 'a> {
     /// the fold as written ([`Ck::fold_word`]; plan row MSG-sum-function-form-headline). Read
     /// off the text alone, so kept across trials.
     sum_calls: HashSet<Span>,
+    /// The value of each binding of one name, `k = int(7r/2r);`, by the value's span, with the
+    /// name: a fix of a call that is the whole value says what the name then holds, `k is 4`
+    /// ([`Ck::int_not_whole`]). Read off the text alone, so kept across trials.
+    bound_names: HashMap<Span, &'a str>,
     /// For the first parameter of each lambda given to `map`, `where`, `flatMap` or `group`
     /// that stays generic ([`Ck::entry_param`]), by the parameter's span: the word, the span
     /// of the receiver, and the receiver's type, whose entries the word gives the lambda. A note on the
@@ -2547,6 +2550,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             int_exponents: HashMap::new(),
             receivers: HashMap::new(),
             sum_calls: HashSet::new(),
+            bound_names: HashMap::new(),
             entry_params: HashMap::new(),
             entry_classes: HashMap::new(),
             rat_folds: HashMap::new(),
@@ -6828,32 +6832,47 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     Some(out)
 }
 
-/// The type of the cast `w` applied to `t` where the cast cannot fail or lose information on
-/// any value of `t`, as `rat(n)` of an `int`: none where it may give an atom `t` does not hold,
-/// as `f64(n)` (`#inexact`) or `int(r)` (`#inexact`), so that a repair never narrows a type
-/// (DESIGN.md sec:diagnostics).
+/// The type of the cast `w` of a value of the type `t`, where the cast cannot fail or lose
+/// information on any value of `t`, as `rat(n)` of an `int`; none where it may give an atom `t`
+/// does not hold, as `rat(x)` of an `f64` (`#invalid`), or may lose information, as `f64(r)` of
+/// a `rat` or `int(x)` of an `f64` (not proved whole), so that a repair never narrows a type
+/// (DESIGN.md sec:diagnostics, "A repair never narrows a type"). `f64` of an int the checker
+/// proves lies within ±2^53 (`exact`, [`Comparison::exact`]) is exact, as [`Ck::word_end`]
+/// applies it: `f64(n)` of an `int` under `if n >= 0 && n <= 100`, which a repair menu then
+/// offers.
+///
+/// Since step L1.18 a cast to a float format rounds with no atom and `int` of a float is a
+/// compile error unless proved whole, so the atoms of a cast no longer mark a loss: the casts
+/// that keep every value are named here ([`keeps_values`]), and the atoms are still compared.
 ///
 /// Complexity tradeoff (COMPLEXITY.md row MSG-concise-casts): naive version, apply the cast to
 /// each value `t` may hold and check each result exactly, O(the values of `t`), unbounded for
 /// an `int`; this version reads the cast's arrows once per piece of `t` ([`converted`]) and
 /// compares the atoms of the result with those of `t`, O(the size of `t`), the cost of printing
 /// `t` in the message that offers the cast.
-/// The type of the cast `w` of a value of the type `t`, where the cast cannot fail or lose
-/// information on any value of `t` ([`cast_widening`]), with `f64` of an int the checker proves
-/// lies within ±2^53 (`exact`, [`Comparison::exact`]) exact, as [`Ck::word_end`] applies it:
-/// `f64(n)` of an `int` under `if n >= 0 && n <= 100`, which a repair menu then offers
-/// (DESIGN.md sec:diagnostics, "A repair never narrows a type"). Cost: [`cast_widening`], or
-/// one conversion by the signature of the exact cast.
 fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
-    match w == "f64" && exact {
-        true => converted(&int_cast_sig(Carrier::F64, IntCast::Exact), t)
-            .filter(|r| r.atoms() == t.atoms()),
-        false => cast_widening(w, t),
-    }
+    let mut sig = word_sig(w);
+    Arc::make_mut(&mut sig)
+        .arrows
+        .retain(|a| keeps_values(w, &a.params[0], exact));
+    converted(&sig, t).filter(|r| r.atoms() == t.atoms())
 }
 
-fn cast_widening(w: &str, t: &Ty) -> Option<Ty> {
-    converted(&word_sig(w), t).filter(|r| r.atoms() == t.atoms())
+/// Whether the cast `w` gives back every value of the type `from`, one of its arrows'
+/// parameters, as the same number: `int` of an `int`, `rat` of an `int`, a `rat` or a float
+/// (whose infinities and NaN give `#invalid`, which [`widening`] reads from the atoms), `f64` of
+/// either float format and `f32` of an `f32`, and `f64` of an int proved within ±2^53
+/// (`exact`). A word that is not a numeric cast keeps its arrows.
+fn keeps_values(w: &str, from: &Ty, exact: bool) -> bool {
+    use Carrier::*;
+    let is = |cs: &[Carrier]| cs.iter().any(|c| *from == Ty::carrier(*c));
+    match w {
+        "int" => is(&[Int]),
+        "rat" => is(&[Int, Rat, F64, F32]),
+        "f64" => is(&[F64, F32]) || (exact && is(&[Int])),
+        "f32" => is(&[F32]),
+        _ => true,
+    }
 }
 
 /// `out` with the atoms of `ts` added, with their payloads: when two of them can carry
@@ -8596,6 +8615,10 @@ pub(crate) struct Msg {
     /// The repairs of a rejected application, in the order its notes offer them, each with the
     /// call it rewrites ([`Ck::repairs`]): the headline ends with the first one still offered.
     noted: Vec<NotedRepair>,
+    /// The call each fix rewrites whole, where the headline shows that call alone, `Try
+    /// `round(7r/2r)` instead.` for `k = int(7r/2r);`, not the corrected line
+    /// ([`Ck::int_not_whole`]).
+    call: Option<Span>,
 }
 
 /// A repair offered as a note of a rejected application, as "repair: write `rat(x)`; the
@@ -8618,6 +8641,7 @@ impl From<String> for Msg {
             fixes: Vec::new(),
             dropped: false,
             noted: Vec::new(),
+            call: None,
         }
     }
 }
@@ -8630,6 +8654,7 @@ impl Msg {
             fixes: fixes.into_iter().flatten().collect(),
             dropped: false,
             noted: Vec::new(),
+            call: None,
         }
     }
 
@@ -8640,6 +8665,7 @@ impl Msg {
             fixes: Vec::new(),
             dropped: false,
             noted,
+            call: None,
         }
     }
 
@@ -8720,7 +8746,10 @@ impl Msg {
                 // The headline ends with the first fix, the corrected source line in full,
                 // where it is one line (DESIGN.md sec:diagnostics, "A short headline"), within
                 // the brackets the line opens and closes ([`Rewrite::headline`]).
-                let first = source.and_then(|s| self.fixes[0].headline(s));
+                let first = source.and_then(|s| match self.call {
+                    Some(call) => self.fixes[0].within(s, call),
+                    None => self.fixes[0].headline(s),
+                });
                 let first = first.as_deref().unwrap_or(&lines[0]);
                 let first = first.trim().trim_end_matches([';', ',']).trim_end();
                 let text = (!first.contains('\n')).then(|| {
@@ -8820,6 +8849,7 @@ fn grouped(head: String, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
             fixes,
             dropped,
             noted: Vec::new(),
+            call: None,
         },
         notes,
     )
@@ -9756,23 +9786,35 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 
 /// The first of the formats `f64` and `f32` among the carriers `held` of which the decimal
 /// literal `l`, written without its suffix, is exactly a value, with that value under its `-`.
-/// Its digits are read at `rat` and cast to each format, which gives `#inexact` where the
-/// format holds no equal number, so a literal the format would round, `0.1` at `f64`, is not
-/// returned. A decimal is never an `int`, and the lexer takes a suffix on a decimal only.
+/// Its digits are read at `rat` and cast to each format, which rounds to nearest, and the
+/// format's value is cast back to `rat`, which is exact, so a literal the format would round,
+/// `0.1` at `f64`, whose value back differs from its digits, is not returned. A decimal is
+/// never an `int`, and the lexer takes a suffix on a decimal only.
 // Complexity tradeoff: the digits are read once at `rat`, O(n log^2 n) in their number
-// (COMPLEXITY.md K41), then each of at most two casts rounds that `rat` once; the naive test,
-// reading the digits once per format, costs the same up to that factor of two. It runs only
-// on a literal already rejected.
+// (COMPLEXITY.md K41), then each of at most two casts rounds that `rat` once and casts the
+// result back, O(the format's width); the naive test, reading the digits once per format,
+// costs the same up to that factor of two. It runs only on a literal already rejected.
 fn unsuffixed_exact(l: &Lit, held: &[Carrier]) -> Option<(Carrier, Value)> {
-    let exact = Value::rat(Rat::decimal(lit_digits(l)).ok()??);
+    let digits = Rat::decimal(lit_digits(l)).ok()??;
+    let exact = Value::rat(digits.clone());
     held.iter().find_map(|&c| {
         let v = match c {
             Carrier::F64 => run(Prim::CastF64, &exact)?,
             Carrier::F32 => run(Prim::CastF32, &exact)?,
             _ => return None,
         };
-        (!matches!(v, Value::Atom(_))).then(|| (c, neg_value(&v, l.neg())))
+        let back = run(Prim::CastRat, &v)?;
+        (as_rat(&back).as_ref() == Some(&digits)).then(|| (c, neg_value(&v, l.neg())))
     })
+}
+
+/// The exact rational value of an int or rat `v`.
+fn as_rat(v: &Value) -> Option<Rat> {
+    match v {
+        Value::Int(n) => Some(Rat::int((*n).into())),
+        Value::Big(r) | Value::Rat(r) => Some((**r).clone()),
+        _ => None,
+    }
 }
 
 /// The message for the decimal literal `l` beside an operand of carrier `int` of the operator
@@ -11221,7 +11263,7 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
 /// - [`Arrow::exact`], directly or by [`Sig::one`]: a display (`Ck::display_step`, walk.rs),
 ///   its result the union of the stored entries' types, and a written `K -> V`; and the
 ///   literals with `partial: false` of operators, casts, prelude words and handlers in this
-///   file (`arrows`, `op_sig`, `word_sig`, `int_cast_sig`, `bit_sig`, `handled_sig`), which
+///   file (`arrows`, `op_sig`, `word_sig`, `bit_sig`, `handled_sig`), which
 ///   are functions, never families (`data` false), so this reader never meets them.
 /// - [`Arrow::remade`] and copies from the source's arrows: `map`, `where`, `scan` and the
 ///   runs of `chunkBy` (walk/fp_ops.rs), whose values are made from these values;
@@ -11235,9 +11277,7 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
 ///   `partial`, and `sig_parts` stores `#notFound` where the source did or a variable of the
 ///   value is bound to a type holding it. An exact result whose `#notFound` came from a
 ///   binding is a value the binding gives, so stored.
-/// - The other field writes: `int_cast_sig`'s `a.result = ..` (this file) sets a cast's result
-///   with no `#notFound`, on a function, not a family; `o.result = ..` (walk.rs) is a need's
-///   result, not an arrow's.
+/// - The other field writes: `o.result = ..` (walk.rs) is a need's result, not an arrow's.
 /// - `covers` (ty.rs) also makes copies whose result is a partial arrow's value, which break
 ///   (a); they are compared only, never put in a family.
 /// - `#outOfBounds` is put in no arrow: a dense family's arrows answer `#notFound`
@@ -11476,11 +11516,14 @@ fn word_sig(w: &str) -> Arc<Sig> {
             partial: false,
             stores_not_found: false,
         }],
+        // `int` of a float or a `rat` is accepted only where the checker proves the value
+        // whole (step L1.18; `word_applied` rejects any other with "No `int` equals the
+        // value"), and a whole value is never an infinity or the NaN, so it gives no atom.
         "int" => vec![
             arrow(Int, Int, &[]),
-            arrow(F64, Int, &["inexact", "invalid"]),
-            arrow(F32, Int, &["inexact", "invalid"]),
-            arrow(Rat, Int, &["inexact"]),
+            arrow(F64, Int, &[]),
+            arrow(F32, Int, &[]),
+            arrow(Rat, Int, &[]),
             arrow(Str, Int, &["invalid"]),
         ],
         "rat" => vec![
@@ -11490,23 +11533,23 @@ fn word_sig(w: &str) -> Arc<Sig> {
             arrow(Rat, Rat, &[]),
             arrow(Str, Rat, &["invalid"]),
         ],
-        // A float format has a largest finite value: a number beyond it is `#overflow` and one
-        // within it with no equal float `#inexact` (A36, DESIGN.md "Casts are domain proofs").
-        // A text is read correctly rounded, so it gives no `#inexact`: `#overflow` where it
-        // rounds past the largest finite value and `#invalid` where it is not a number.
+        // A cast to a float format is the float nearest the value, ties to even, and the
+        // infinity of its sign beyond the largest finite one (step L1.18), so it gives no atom;
+        // what it lost is the `inexact()` and `overflow()` facts of step L10.3b. A text that is
+        // not a number is `#invalid`.
         "f64" => vec![
-            arrow(Int, F64, &["inexact", "overflow"]),
+            arrow(Int, F64, &[]),
             arrow(F64, F64, &[]),
-            arrow(Rat, F64, &["inexact", "overflow"]),
-            arrow(Str, F64, &["invalid", "overflow"]),
+            arrow(Rat, F64, &[]),
+            arrow(Str, F64, &["invalid"]),
             // Every `f32` is an `f64`.
             arrow(F32, F64, &[]),
         ],
         "f32" => vec![
-            arrow(Int, F32, &["inexact", "overflow"]),
-            arrow(F64, F32, &["inexact", "overflow"]),
-            arrow(Rat, F32, &["inexact", "overflow"]),
-            arrow(Str, F32, &["invalid", "overflow"]),
+            arrow(Int, F32, &[]),
+            arrow(F64, F32, &[]),
+            arrow(Rat, F32, &[]),
+            arrow(Str, F32, &["invalid"]),
             arrow(F32, F32, &[]),
         ],
         "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
@@ -11557,60 +11600,6 @@ fn word_sig(w: &str) -> Arc<Sig> {
         hull: None,
         facts: Default::default(),
     })
-}
-
-/// The largest magnitude of the contiguous run of integers every one of which the float format
-/// `c` holds exactly: 2^53 for `f64` (DESIGN.md "Casts are domain proofs": "`f64(n)` is exact
-/// when `|n| ≤ 2^53`") and, by the same rule, 2^24 for `f32`, the other format.
-fn exact_int_bound(c: Carrier) -> i64 {
-    match c {
-        Carrier::F32 => 1 << 24,
-        _ => 1 << 53,
-    }
-}
-
-/// The largest finite value of the float format `c`, `f64` or `f32`, as an int: an int beyond
-/// it in magnitude makes the cast `#overflow` (A36, DESIGN.md "Casts are domain proofs").
-fn largest_float_int(c: Carrier) -> Num {
-    let f = match c {
-        Carrier::F32 => FloatFormat::F32,
-        _ => FloatFormat::F64,
-    };
-    Num::from(f.largest())
-}
-
-/// What the checker proves of the ints an operand of the cast to a float format may be.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum IntCast {
-    /// Nothing: an int may lie beyond the format's largest finite value.
-    Unproved,
-    /// Each lies within ±[`largest_float_int`]: the cast of an int gives no `#overflow`.
-    InRange,
-    /// Each lies within ±[`exact_int_bound`]: the cast of an int gives no atom.
-    Exact,
-}
-
-/// The cast to the float format `c`, `f64` or `f32`, at an operand whose ints the checker proves
-/// lie in range or exact (`proof`): its arrow at `int` gives no `#overflow` for one in range,
-/// and no atom for one exact, since each such int has an equal value in `c` (DESIGN.md "Casts
-/// are domain proofs"). Its other arrows, and every arrow when nothing is proved, are those of
-/// [`word_sig`].
-fn int_cast_sig(c: Carrier, proof: IntCast) -> Arc<Sig> {
-    let mut sig = word_sig(c.name());
-    let fails: &[&str] = match proof {
-        IntCast::Unproved => return sig,
-        IntCast::InRange => &["inexact"],
-        IntCast::Exact => &[],
-    };
-    let int = Ty::carrier(Carrier::Int);
-    for a in &mut Arc::make_mut(&mut sig).arrows {
-        if a.params[0] == int {
-            a.result = fails
-                .iter()
-                .fold(Ty::carrier(c), |t, n| t.union(&Ty::set(KType::atom(n))));
-        }
-    }
-    sig
 }
 
 /// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed

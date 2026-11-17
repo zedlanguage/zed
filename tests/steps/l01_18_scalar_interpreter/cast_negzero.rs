@@ -32,15 +32,15 @@ fn a_float_cast_of_a_negative_zero_keeps_its_sign() {
 }
 
 /// The neighbors of the case, through the same narrowing: a positive zero, the zeros equal
-/// under IEEE `==`, a tiny float that rounds to a zero of either sign (not equal to it, so
-/// `#inexact`), the least `f32` subnormal, and `f64` of the infinities and the NaN.
+/// under IEEE `==`, a tiny float that rounds to the zero of its sign (IEEE 754 round to
+/// nearest, step L1.18), the least `f32` subnormal, and `f64` of the infinities and the NaN.
 #[test]
 fn a_float_narrowed_to_f32_near_zero_and_f64_of_an_f64() {
     let cases = [
         ("f32(real(0.0f64))", "0.0f32"),
         ("f32(real(-0.0f64)) == f32(real(0.0f64))", "true"),
-        ("f32(real(1.0e-46f64))", "#inexact"),
-        ("f32(real(-1.0e-46f64))", "#inexact"),
+        ("f32(real(1.0e-46f64))", "0.0f32"),
+        ("f32(real(-1.0e-46f64))", "-0.0f32"),
         ("f32(real(1.401298464324817e-45f64))", "1.0e-45f32"),
         ("f32(real(-1.401298464324817e-45f64))", "-1.0e-45f32"),
         ("f64(real(0.0f64))", "0.0"),

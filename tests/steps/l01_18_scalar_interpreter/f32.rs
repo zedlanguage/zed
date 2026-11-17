@@ -61,19 +61,22 @@ fn overflow_rounds_to_infinity() {
     assert_eq!(x("String(-3.0e38f32 * 2.0f32)"), "\"-inf\"");
     // The same product at `f64` is finite.
     assert_eq!(x("String(3.0e38f64 * 2.0f64)"), "\"6.0e38\"");
-    // Text past the largest `f32` is `#overflow`, not infinity, as at `f64` (A36).
-    assert_eq!(x("f32(text(\"1e39\"))"), "#overflow");
-    assert_eq!(x("f64(text(\"1e400\"))"), "#overflow");
+    // Text past the largest `f32` reads as the infinity, as at `f64` (step L1.18).
+    assert_eq!(x("String(f32(text(\"1e39\")))"), "\"inf\"");
+    assert_eq!(x("String(f32(text(\"-1e39\")))"), "\"-inf\"");
+    assert_eq!(x("String(f64(text(\"1e400\")))"), "\"inf\"");
 }
 
 #[test]
-fn casts_to_f32_are_exact_or_fail() {
-    // 2^24 is the last of the run of integers `f32` holds; 2^24 + 1 is not an `f32`.
+fn casts_to_f32_round_to_nearest_ties_to_even() {
+    // 2^24 is the last of the run of integers `f32` holds; 2^24 + 1 is not an `f32` and is a
+    // tie, to the even 2^24; 2^24 + 3 is a tie to the even 2^24 + 4.
     assert_eq!(x("f32(16777216)"), "16777216.0f32");
-    assert_eq!(x("f32(whole(16777217))"), "#inexact");
+    assert_eq!(x("f32(whole(16777217))"), "16777216.0f32");
+    assert_eq!(x("f32(whole(16777219))"), "16777220.0f32");
     assert_eq!(x("f32(whole(-16777216))"), "-16777216.0f32");
     assert_eq!(x("f32(real(0.5f64))"), "0.5f32");
-    assert_eq!(x("f32(real(0.1f64))"), "#inexact");
+    assert_eq!(x("f32(real(0.1f64)) == 0.1f32"), "true");
     assert_eq!(x("f32(1r / 4r)"), "0.25f32");
     // Read straight from the digits: `f32("0.1")` is the `f32` nearest 0.1.
     assert_eq!(x("f32(text(\"0.1\")) == 0.1f32"), "true");
@@ -85,19 +88,18 @@ fn casts_from_f32() {
     assert_eq!(x("f64(0.1f32) == 0.10000000149011612f64"), "true");
     assert_eq!(x("int(4.0f32)"), "4");
     assert_eq!(x("rat(0.75f32)"), "3r/4r");
-    assert_eq!(x("int(f32(text(\"2.5\")))"), "#inexact");
+    assert_eq!(x("round(f32(text(\"2.5\")))"), "2");
     assert_eq!(x("int(f32(text(\"inf\")))"), "#invalid");
 }
 
 #[test]
-fn a_cast_that_always_fails_is_rejected() {
-    for src in [
-        "x = f32(16777217);\n",
-        "x = f32(0.1f64);\n",
-        "x = int(2.5f32);\n",
-    ] {
-        assert!(!errors(src).is_empty(), "{src}");
-    }
+fn a_float_cast_of_literals_rounds_and_an_int_cast_not_whole_is_rejected() {
+    // Since step L1.18 a cast to a float format never fails: of literals alone it rounds as
+    // at run time. `int` of a value the checker does not prove whole is rejected.
+    assert_eq!(x("f32(16777217)"), "16777216.0f32");
+    assert_eq!(x("f32(0.1f64) == 0.1f32"), "true");
+    assert!(!errors("x = int(2.5f32);\n").is_empty());
+    assert_eq!(x("int(2.0f32)"), "2");
 }
 
 #[test]

@@ -662,11 +662,11 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_holding_no_union_as_before(
 /// The test first read `rat(b) ^ (2^64)`. Since QUESTIONS A100 (answered B, 2026-11-13) that
 /// power is a compile error, as it needs at least 128 EiB and Linux x86_64 addresses 16 EiB,
 /// and `rat` of an `int` no longer gives `#invalid`; the next test pins that rejection. The cast
-/// `f64(b)` keeps the program's shape and its rejection at 3:15: `2^64 + 13` has no exact `f64`,
-/// so the cast gives `#inexact`, and a float power builds no exact number, so the size rule
-/// does not apply.
+/// `rat(f64(b) ^ (2^64))` keeps the program's shape and its rejection at 3:15: a cast to `f64`
+/// rounds and gives no atom (step L1.18), but the power may be an infinity, which `rat` gives
+/// `#invalid` for, and a float power builds no exact number, so the size rule does not apply.
 const WIDE: &str =
-    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(f64(b) ^ (2^64));\n}\n";
+    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(f64(b) ^ (2^64)));\n}\n";
 
 #[test]
 fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() {

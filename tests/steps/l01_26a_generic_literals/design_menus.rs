@@ -208,26 +208,29 @@ fn a_cast_of_a_division_names_the_literal() {
         ])
     );
     assert_eq!(value("y = f64(1r / 2);\n", "y"), "0.5");
-    // DESIGN.md sec:domains: "A cast `f64(9007199254740993r)` is never offered [...] since the
-    // integer has no exact `f64`, so the cast gives `#inexact` for its one input and is
-    // rejected as an operation that always fails". `1r / 10` has no exact `f64` either, so
-    // `f64(1r / 10)` is neither offered nor accepted (row LIT-cast-inexact-rat-fix), at the
-    // top level and in a body alike. At `rat` each fix casts exactly.
+    // A cast to a float format rounds to nearest, ties to even, and gives no atom (DESIGN.md
+    // sec:corner_cases, "Casts are domain proofs": "So `f64(1r/3r)` [...] and
+    // `f64(9007199254740993)` are accepted"), so `f64(1r / 10)` is offered and accepted, at the
+    // top level and in a body alike, as `f64(1r / 2)` is. Before CAST-round-whole it gave
+    // `#inexact` for its one input and was rejected as a cast that always fails.
     assert_eq!(
         checked("y = f64(1 / 10);\n"),
-        pairs(&[("y = f64(1.0f64 / 10);", "the literal is then the f64 1.0")])
+        pairs(&[
+            ("y = f64(1r / 10);", "the literal is then exactly 1, a rat"),
+            ("y = f64(1.0f64 / 10);", "the literal is then the f64 1.0"),
+        ])
     );
     assert_eq!(
         checked("f() = f64(1 / 10);\n"),
-        pairs(&[("f() = f64(1.0f64 / 10);", "the literal is then the f64 1.0")])
+        pairs(&[
+            ("f() = f64(1r / 10);", "the literal is then exactly 1, a rat"),
+            ("f() = f64(1.0f64 / 10);", "the literal is then the f64 1.0"),
+        ])
     );
     for src in ["y = f64(1r / 10);\n", "f() = f64(1r / 10);\n"] {
-        let message = first(src);
-        assert!(
-            message.contains("always fails") && message.contains("#inexact"),
-            "{src}: {message}"
-        );
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
     }
+    assert_eq!(value("y = f64(1r / 10);\n", "y"), "0.1");
     assert_eq!(value("y = f64(1.0f64 / 10);\n", "y"), "0.1");
     assert_eq!(
         checked("y = rat(1 / 10);\n"),

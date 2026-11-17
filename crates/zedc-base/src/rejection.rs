@@ -282,7 +282,7 @@ rows! {
     LogUnitInOperation => "Logarithmic unit in an operation that would change with the unit",
     ExponentialBaseDiffers => "Exponential whose base differs from the logarithm's",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
-    // No diagnostic uses the next two rows yet: plan rows FPWARN and CAST-round-whole emit them.
+    // No diagnostic uses the next row yet: plan row FPWARN emits it.
     RoundedAtRefusingParameter => "Rounded value at a parameter that refuses it",
     NoIntEquals => "No `int` equals the value",
     MutatingCallOnValue => "`*.` call on a receiver that is not a state variable",

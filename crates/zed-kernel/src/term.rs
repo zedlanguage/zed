@@ -86,8 +86,8 @@ pub enum Prim {
     Atom,
     /// `String(x)`: a string as itself, any other value as it prints (step L1.18).
     Show,
-    /// `int(x)`, the checked cast: exact, `#inexact`, or `#invalid` (DESIGN.md, "Casts are
-    /// domain proofs").
+    /// `int(x)`, the checked cast: the `int` equal to `x`, or `#invalid` of a string that is
+    /// not one or a float that is not finite; the checker proves a number whole (step L1.18).
     CastInt,
     /// `rat(x)`, the checked cast.
     CastRat,

@@ -143,15 +143,6 @@ fn a_cast_of_a_literal_that_never_converts_is_rejected() {
             "f(s: String) = int(\"n/a\");",
             cast_fails("int", "\"n/a\"", "#invalid"),
         ),
-        ("a = int(2.5f64);", cast_fails("int", "2.5f64", "#inexact")),
-        (
-            "a = int(-2.5f64);",
-            cast_fails("int", "-2.5f64", "#inexact"),
-        ),
-        (
-            "a = f64(9007199254740993r);",
-            cast_fails("f64", "9007199254740993r", "#inexact"),
-        ),
     ];
     for (src, message) in cases {
         assert_eq!(type_errors(src), [message], "{src}");
@@ -165,16 +156,28 @@ fn a_cast_of_a_literal_that_never_converts_is_rejected() {
     ] {
         assert_eq!(type_errors(src), [named], "{src}");
     }
+    // A float that is not whole is no `int`: the cast is rejected as one no `int` equals,
+    // with the rounding functions as its menu (step L1.18), not as one that always fails.
+    for lit in ["2.5f64", "-2.5f64"] {
+        let errors = type_errors(&format!("a = int({lit});"));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].starts_with(&format!(
+                "No `int` equals the value: `int({lit})`. Try `round({lit})` instead."
+            )),
+            "{}",
+            errors[0]
+        );
+    }
+    // A cast to a float format rounds, so it never fails.
+    assert!(type_errors("a = f64(9007199254740993r);").is_empty());
 }
 
 #[test]
 fn a_cast_that_may_convert_keeps_its_atom() {
     let cases = [
         ("f(s: String) = int(s);", "(s: String) -> int | #invalid"),
-        (
-            "f(x: f64) = int(x);",
-            "(x: f64) -> int | #inexact | #invalid",
-        ),
+        ("f(x: f64) = rat(x);", "(x: f64) -> rat | #invalid"),
     ];
     for (src, want) in cases {
         assert!(type_errors(src).is_empty(), "{src}");

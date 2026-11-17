@@ -146,7 +146,7 @@ fn an_int_power_rejection_shows_the_negative_exponent() {
 /// The diagnostics of the program whose `main` has the body `body` after `defs`, which must
 /// be rejected, and the program with `body` in place of the fixes in `fixed`, each run on
 /// its input with the output it must give. No repair names a value the program does not
-/// have, and none casts an int to a float, a cast that may fail with `#inexact`.
+/// have, and none casts an int to a float, a cast that rounds above 2^53 in magnitude.
 fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
     let main = |body: &str| format!("{defs}\nmain(m: MainArgs) {{\n{body}\n}}\n");
     let src = main(body);
@@ -164,7 +164,7 @@ fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
 }
 
 /// An int power under a negative exponent through a name (POW-rat): `2.0f64^k` is no repair,
-/// as `k` is an int, and `f64(k)` or `f64(x)` may fail with `#inexact`, so the one repair is
+/// as `k` is an int, and `f64(k)` or `f64(x)` rounds above 2^53 in magnitude, so the one repair is
 /// the exact `rat` power, `2r^k` for a literal base and `rat(x)^-1` for a name, each printed
 /// as the headline's `Try`, and each runs to `1r/2r` as printed. Before, neither had a repair.
 #[test]

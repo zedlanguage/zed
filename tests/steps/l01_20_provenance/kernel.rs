@@ -86,11 +86,11 @@ fn an_atom_passed_through_functions_keeps_its_literal_as_origin() {
 
 #[test]
 fn a_failure_bound_by_a_match_arm_keeps_its_origin() {
-    // match int("7.5x") { #inexact -> 0; n -> n + 1 }: the sum read the cast through `n`.
+    // match int("7.5x") { #notFound -> 0; n -> n + 1 }: the sum read the cast through `n`.
     let t = Term::Match(
         rc(prim(Prim::CastInt, vec![lit(s("7.5x"))])),
         vec![
-            (Pattern::Lit(Value::atom("inexact")), lit(0)),
+            (Pattern::Lit(Value::atom("notFound")), lit(0)),
             (Pattern::Bind("n".into()), add(var("n"), lit(1))),
         ],
     );

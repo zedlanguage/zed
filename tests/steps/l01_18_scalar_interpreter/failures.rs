@@ -16,12 +16,12 @@ fn one_failure_flows_through_the_arithmetic() {
 #[test]
 fn two_failures_merge_into_a_set() {
     assert_eq!(
-        x("int(text(\"seven\")) + int(real(2.5f64))"),
-        "#errs({#inexact, #invalid})"
+        x("int(text(\"seven\")) + 10 div whole(0)"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
-        x("int(real(2.5f64)) + int(text(\"seven\"))"),
-        "#errs({#inexact, #invalid})",
+        x("10 div whole(0) + int(text(\"seven\"))"),
+        "#errs({#divByZero, #invalid})",
         "the set has no order to invent"
     );
     assert_eq!(
@@ -33,11 +33,11 @@ fn two_failures_merge_into_a_set() {
 
 #[test]
 fn a_merge_flattens_and_else_replaces_it() {
-    let src = "price = int(text(\"n/a\"));\nqty = int(real(1.5f64));\nfee = 10 div whole(0);\n\
+    let src = "price = int(text(\"n/a\"));\nqty = int(text(\"1.5\"));\nfee = 10 div whole(0);\n\
                total = price * qty + fee;\nshown = total else 0;\n";
     let v =
         |n| zed_tests::step_helpers::l01_16_elaboration::value(&format!("{}{src}", super::PASS), n);
-    assert_eq!(v("total"), "#errs({#divByZero, #inexact, #invalid})");
+    assert_eq!(v("total"), "#errs({#divByZero, #invalid})");
     assert_eq!(v("shown"), "0");
 }
 

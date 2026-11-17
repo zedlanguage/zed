@@ -1,7 +1,7 @@
 //! `int` and `f64` of an operation on integer literals in a body (item CAST-int-f64-lit-class).
 //! A cast keeps an atom only where its operand can give it (QUESTIONS A36): `int` of an int
-//! gives none, and `f64` of an int gives `#inexact` only past 2^53 and `#overflow` only past
-//! the largest finite `f64`. A name bound to integer literals alone is an `int` where it is
+//! gives none, and a cast to a float format gives none, rounding to nearest, ties to even (step
+//! L1.18). A name bound to integer literals alone is an `int` where it is
 //! bound (QUESTIONS A63), so `int(b)` with `b = 2^64 + 13` is an `int`, and `f64(b)` with
 //! `b = 2^3 + 1` an `f64`, and neither asks for an `else`.
 
@@ -54,78 +54,117 @@ fn int_of_an_operation_on_integer_literals_has_no_atom() {
 }
 
 #[test]
-fn f64_of_an_operation_on_integer_literals_keeps_only_the_atoms_its_value_gives() {
-    for (body, ty, v) in [
+fn f64_of_an_operation_on_integer_literals_rounds_with_no_atom() {
+    for (body, v) in [
         // Within ±2^53 every int is exact in f64.
-        ("b = 2^3 + 1; return f64(b);", "() -> f64", "9.0"),
-        ("return f64(2^3 + 1);", "() -> f64", "9.0"),
-        (
-            "b = 2^53; return f64(b);",
-            "() -> f64",
-            "9007199254740992.0",
-        ),
-        (
-            "b = -(2^53); return f64(b);",
-            "() -> f64",
-            "-9007199254740992.0",
-        ),
-        // Past 2^53 it may be inexact, but below the largest finite f64 it never overflows.
-        (
-            "b = 2^53 + 1; return f64(b);",
-            "() -> f64 | #inexact",
-            "#inexact",
-        ),
-        (
-            "b = 2^1000; return f64(b);",
-            "() -> f64 | #inexact",
-            "1.0715086071862673e301",
-        ),
+        ("b = 2^3 + 1; return f64(b);", "9.0"),
+        ("return f64(2^3 + 1);", "9.0"),
+        ("b = 2^53; return f64(b);", "9007199254740992.0"),
+        ("b = -(2^53); return f64(b);", "-9007199254740992.0"),
+        // Past 2^53 it rounds to nearest, ties to even, and past the largest finite f64 it is
+        // the infinity of its sign (step L1.18).
+        ("b = 2^53 + 1; return f64(b);", "9007199254740992.0"),
+        ("b = 2^53 + 3; return f64(b);", "9007199254740996.0"),
+        ("b = 2^1000; return f64(b);", "1.0715086071862673e301"),
+        ("b = 2^2000; return f64(b);", "inf"),
+        ("b = -(2^2000); return f64(b);", "-inf"),
     ] {
         let src = format!("f() {{ {body} }}\ny = f();\n");
-        assert_eq!(sig_f(&src), ty, "{src}");
+        assert_eq!(sig_f(&src), "() -> f64", "{src}");
         assert_eq!(value(&src, "y"), v, "{src}");
     }
-    // `f32` likewise, at its own bounds: 2^24 is exact, 2^24 + 1 is not.
-    for (body, ty, v) in [
-        ("return f32(2^24);", "() -> f32", "16777216.0f32"),
-        (
-            "b = 2^24 + 1; return f32(b);",
-            "() -> f32 | #inexact",
-            "#inexact",
-        ),
+    // `f32` likewise, at its own bounds: 2^24 is exact, 2^24 + 1 rounds to it.
+    for (body, v) in [
+        ("return f32(2^24);", "16777216.0f32"),
+        ("b = 2^24 + 1; return f32(b);", "16777216.0f32"),
+        ("b = 2^24 + 3; return f32(b);", "16777220.0f32"),
     ] {
         let src = format!("f() {{ {body} }}\ny = f();\n");
-        assert_eq!(sig_f(&src), ty, "{src}");
+        assert_eq!(sig_f(&src), "() -> f32", "{src}");
         assert_eq!(value(&src, "y"), v, "{src}");
     }
-    // Past the largest finite f64 the cast overflows: `2^2000` keeps `#overflow`.
-    let src = "f() { b = 2^2000; return f64(b); }\ny = f();\n";
-    assert!(sig_f(src).contains("#overflow"), "{src}");
-    assert_eq!(value(src, "y"), "#overflow");
 }
 
 #[test]
-fn f64_of_2_to_53_plus_1_still_asks_for_an_else() {
+fn f64_of_2_to_53_plus_1_needs_no_else() {
     let src = "main(m: MainArgs) {\n    b = 2^53 + 1;\n    m.stdout <- String(f64(b));\n}\n";
-    let errors = type_errors(src);
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("#inexact"), "{errors:?}");
-    let src =
-        "main(m: MainArgs) {\n    b = 2^53 + 1;\n    m.stdout <- String(f64(b)) else \"\";\n}\n";
     assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    let r = run("l01_26a_cast_f64_round", src, "", &[]);
+    assert_eq!(r.status, 0, "{src}: {}", r.stderr);
+    assert_eq!(r.stdout, "9007199254740992.0\n", "{src}");
 }
 
 #[test]
-fn a_cast_of_a_parameter_keeps_its_atoms() {
-    // A parameter may be any value of its carrier, a NaN or an infinity among them.
-    assert_eq!(
-        sig_f("f(x: f64) = int(x);\n"),
-        "(x: f64) -> int | #inexact | #invalid"
+fn a_cast_of_a_parameter_keeps_only_the_atoms_it_may_give() {
+    // A parameter may be any value of its carrier, a NaN or an infinity among them: `int` of
+    // an `f64` is not proved whole and is rejected, and `f64` of an `int` rounds.
+    let errors = type_errors("f(x: f64) = int(x);\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].starts_with("No `int` equals the value: `int(x)`. Try `round(x)` instead."),
+        "{}",
+        errors[0]
     );
+    assert_eq!(sig_f("f(x: int) = f64(x);\n"), "(x: int) -> f64");
+}
+
+/// The menu of "No `int` equals the value" (DESIGN.md sec:corner_cases, "Casts are domain
+/// proofs", and step L1.18): `int(7r/2r)` and `int(2.5f64)` are rejected with the rounding
+/// functions offered, each with the value it gives, and each fix checks as written and gives
+/// that value; `int(x)` with a parameter `x: f64` is offered the same words, each of which
+/// checks, with the type `int | #NaN | #overflow` (a NaN or an infinity has no whole number).
+#[test]
+fn the_menu_of_an_int_cast_not_proved_whole_offers_each_rounding_and_each_checks() {
+    use super::fixes::fixes;
+    for (lit, want) in [
+        (
+            "7r/2r",
+            [("round", "", "4"), ("round", ", ties: #away", "4")],
+        ),
+        (
+            "2.5f64",
+            [("round", "", "2"), ("round", ", ties: #away", "3")],
+        ),
+    ] {
+        let src = format!("k = int({lit});\n");
+        let got = fixes(&src);
+        let mut expected: Vec<(String, String)> = want
+            .iter()
+            .map(|(w, ties, v)| (format!("k = {w}({lit}{ties});"), v.to_string()))
+            .collect();
+        expected.extend(
+            [("floor", "3"), ("ceil", "4"), ("trunc", "3")]
+                .iter()
+                .map(|(w, v)| (format!("k = {w}({lit});"), v.to_string())),
+        );
+        let away = if lit == "7r/2r" { "4" } else { "3" };
+        expected.push((format!("k = awayFromZero({lit});"), away.to_string()));
+        assert_eq!(got.len(), expected.len(), "{src}: {got:?}");
+        for ((line, holds), (want_line, v)) in got.iter().zip(&expected) {
+            assert_eq!(line, want_line, "{src}");
+            assert!(holds.starts_with(&format!("k is {v}")), "{line}: {holds}");
+            let fixed = format!("{line}\n");
+            assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{line}");
+            assert_eq!(value(&fixed, "k"), *v, "{line}");
+        }
+    }
+    let got = fixes("f(positional x: f64) = int(x);\n");
+    let words: Vec<&str> = got.iter().map(|(l, _)| l.as_str()).collect();
     assert_eq!(
-        sig_f("f(x: int) = f64(x);\n"),
-        "(x: int) -> f64 | #inexact | #overflow"
+        words,
+        [
+            "f(positional x: f64) = round(x);",
+            "f(positional x: f64) = round(x, ties: #away);",
+            "f(positional x: f64) = floor(x);",
+            "f(positional x: f64) = ceil(x);",
+            "f(positional x: f64) = trunc(x);",
+            "f(positional x: f64) = awayFromZero(x);",
+        ]
     );
+    for (line, _) in &got {
+        let fixed = format!("{line}\n");
+        assert_eq!(sig_f(&fixed), "f64 -> int | #NaN | #overflow", "{line}");
+    }
 }
 
 /// A body of `n` names, each bound to the last plus `1` from `2^3`, `n` casts of the last to

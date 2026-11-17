@@ -126,9 +126,10 @@ fn rat_of_a_string() {
 }
 
 /// `f64(s)` and `f32(s)`: an optional `-`, then `inf`, `nan`, or digits with an optional
-/// fraction and exponent, correctly rounded; `#overflow` for a finite text past the largest
-/// finite value, a value at most half the least subnormal is a signed zero with no atom, and
-/// any other text `#invalid` (DESIGN.md L1.18). `f32(s)` rounds once from the digits.
+/// fraction and exponent, rounded to nearest, ties to even: a finite text past the largest
+/// finite value is the infinity of its sign, a value at most half the least subnormal is a
+/// signed zero, and any other text `#invalid` (DESIGN.md L1.18). `f32(s)` rounds once from the
+/// digits.
 #[test]
 fn floats_of_a_string() {
     let f = |x: f64| Some(Value::float(x));
@@ -149,8 +150,8 @@ fn floats_of_a_string() {
         (Prim::CastF64, s("1e-400"), f(0.0)),
         (Prim::CastF64, s("-1e-400"), f(-0.0)),
         (Prim::CastF64, s("5e-324"), f(f64::from_bits(1))),
-        (Prim::CastF64, s("1e400"), Some(atom("overflow"))),
-        (Prim::CastF64, s("-1e400"), Some(atom("overflow"))),
+        (Prim::CastF64, s("1e400"), f(f64::INFINITY)),
+        (Prim::CastF64, s("-1e400"), f(f64::NEG_INFINITY)),
         (Prim::CastF64, s("+5"), Some(atom("invalid"))),
         (Prim::CastF64, s(".5"), Some(atom("invalid"))),
         (Prim::CastF64, s("5."), Some(atom("invalid"))),
@@ -162,7 +163,8 @@ fn floats_of_a_string() {
         (Prim::CastF32, s("0.1"), g(0.1)),
         (Prim::CastF32, s("-0"), g(-0.0)),
         (Prim::CastF32, s(past_mid), g(1.0 + f32::EPSILON)),
-        (Prim::CastF32, s("1e39"), Some(atom("overflow"))),
+        (Prim::CastF32, s("1e39"), g(f32::INFINITY)),
+        (Prim::CastF32, s("-1e39"), g(f32::NEG_INFINITY)),
         (Prim::CastF32, s("1e-50"), g(0.0)),
         (Prim::CastF32, s("-inf"), g(f32::NEG_INFINITY)),
         (Prim::CastF32, s("nan"), g(f32::NAN)),
@@ -170,10 +172,11 @@ fn floats_of_a_string() {
     ]);
 }
 
-/// Casts between the number kinds: the value when it is the same number, `#inexact` when a
-/// number in range has no equal one, `#overflow` past the largest finite float, `#invalid` for
-/// an infinity or the NaN at an exact kind; `f64` of an `f32` always exact (DESIGN.md L1.18,
-/// "Casts are domain proofs").
+/// Casts between the number kinds (DESIGN.md L1.18, "Casts are domain proofs"): a cast to a
+/// float is the nearest float, ties to even, the infinity of its sign past the range and a
+/// signed zero below half the least subnormal; `int` of a number that is not whole is a type
+/// error, since the checker accepts it only where it proves the value whole; `#invalid` for an
+/// infinity or the NaN at an exact kind; `f64` of an `f32` always exact.
 #[test]
 fn casts_between_number_kinds() {
     let two53 = 1i64 << 53;
@@ -186,10 +189,10 @@ fn casts_between_number_kinds() {
             Value::rat(Rat::int(BigInt::from(1) << 70u32)),
             Some(big(BigInt::from(1) << 70u32)),
         ),
-        (Prim::CastInt, rat(1, 3), Some(atom("inexact"))),
+        (Prim::CastInt, rat(1, 3), None),
         (Prim::CastInt, Value::float(2.0), Some(int(2))),
         (Prim::CastInt, Value::float(-0.0), Some(int(0))),
-        (Prim::CastInt, Value::float(2.5), Some(atom("inexact"))),
+        (Prim::CastInt, Value::float(2.5), None),
         (
             Prim::CastInt,
             Value::float(1e20),
@@ -225,15 +228,18 @@ fn casts_between_number_kinds() {
         (Prim::CastRat, Value::float(f64::NAN), Some(atom("invalid"))),
         (Prim::CastRat, rat(-1, 3), Some(rat(-1, 3))),
         (Prim::CastF64, int(two53), Some(Value::float(two53 as f64))),
-        (Prim::CastF64, int(two53 + 1), Some(atom("inexact"))),
+        (Prim::CastF64, int(two53 + 1), Some(Value::float(two53 as f64))),
+        (Prim::CastF64, int(two53 + 3), Some(Value::float(two53 as f64 + 4.0))),
         (
             Prim::CastF64,
             int(-two53 - 2),
             Some(Value::float(-(two53 as f64) - 2.0)),
         ),
         (Prim::CastF64, rat(1, 4), Some(Value::float(0.25))),
-        (Prim::CastF64, rat(1, 3), Some(atom("inexact"))),
-        (Prim::CastF64, two_1024.clone(), Some(atom("overflow"))),
+        (Prim::CastF64, rat(1, 3), Some(Value::float(1.0 / 3.0))),
+        (Prim::CastF64, rat(-1, 3), Some(Value::float(-1.0 / 3.0))),
+        (Prim::CastF64, two_1024.clone(), Some(Value::float(f64::INFINITY))),
+        (Prim::CastF64, big(-(BigInt::from(1) << 1024u32)), Some(Value::float(f64::NEG_INFINITY))),
         (Prim::CastF64, Value::float(-2.5), Some(Value::float(-2.5))),
         (
             Prim::CastF64,
@@ -250,10 +256,10 @@ fn casts_between_number_kinds() {
             int(1 << 24),
             Some(Value::float32(16_777_216.0)),
         ),
-        (Prim::CastF32, int((1 << 24) + 1), Some(atom("inexact"))),
+        (Prim::CastF32, int((1 << 24) + 1), Some(Value::float32(16_777_216.0))),
         (Prim::CastF32, Value::float(0.5), Some(Value::float32(0.5))),
-        (Prim::CastF32, Value::float(0.1), Some(atom("inexact"))),
-        (Prim::CastF32, Value::float(1e300), Some(atom("overflow"))),
+        (Prim::CastF32, Value::float(0.1), Some(Value::float32(0.1))),
+        (Prim::CastF32, Value::float(1e300), Some(Value::float32(f32::INFINITY))),
         (
             Prim::CastF32,
             Value::float(f64::NEG_INFINITY),
@@ -269,7 +275,7 @@ fn casts_between_number_kinds() {
             Value::float32(-0.0),
             Some(Value::float32(-0.0)),
         ),
-        (Prim::CastF32, two_1024, Some(atom("overflow"))),
+        (Prim::CastF32, two_1024, Some(Value::float32(f32::INFINITY))),
         // A float narrowed keeps the sign of a zero (FAIL-values-cast-negzero), as `f64` of an
         // `f64` keeps the value whole; a rational has no sign of zero to keep.
         (
@@ -280,17 +286,18 @@ fn casts_between_number_kinds() {
         (Prim::CastF32, Value::float(0.0), Some(Value::float32(0.0))),
         (Prim::CastF64, Value::float(-0.0), Some(Value::float(-0.0))),
         (Prim::CastF64, Value::float(0.0), Some(Value::float(0.0))),
-        // The least `f32` subnormal, `2^-149`, is exact; a float below half of it rounds to a
-        // zero, which is not equal to it, at either sign.
+        // The least `f32` subnormal, `2^-149`, is exact; a float below half of it rounds to the
+        // zero of its sign.
         (
             Prim::CastF32,
             Value::float(f64::from(f32::from_bits(1))),
             Some(Value::float32(f32::from_bits(1))),
         ),
-        (Prim::CastF32, Value::float(1e-46), Some(atom("inexact"))),
-        (Prim::CastF32, Value::float(-1e-46), Some(atom("inexact"))),
-        // The largest `f32` is exact; the next `f64` above it is past the format's range,
-        // though it rounds to the largest `f32` (A36), at either sign.
+        (Prim::CastF32, Value::float(1e-46), Some(Value::float32(0.0))),
+        (Prim::CastF32, Value::float(-1e-46), Some(Value::float32(-0.0))),
+        // The largest `f32` is exact; the next `f64` above it rounds back to it, as IEEE 754
+        // rounds below `f32::MAX + ulp/2`; that midpoint, a tie, rounds to the even side,
+        // the infinity, at either sign.
         (
             Prim::CastF32,
             Value::float(f64::from(f32::MAX)),
@@ -299,12 +306,22 @@ fn casts_between_number_kinds() {
         (
             Prim::CastF32,
             Value::float(f64::from(f32::MAX).next_up()),
-            Some(atom("overflow")),
+            Some(Value::float32(f32::MAX)),
         ),
         (
             Prim::CastF32,
             Value::float(-f64::from(f32::MAX).next_up()),
-            Some(atom("overflow")),
+            Some(Value::float32(-f32::MAX)),
+        ),
+        (
+            Prim::CastF32,
+            Value::float(f64::from(f32::MAX) + 2f64.powi(103)),
+            Some(Value::float32(f32::INFINITY)),
+        ),
+        (
+            Prim::CastF32,
+            Value::float((f64::from(f32::MAX) + 2f64.powi(103)).next_down()),
+            Some(Value::float32(f32::MAX)),
         ),
     ]);
 }

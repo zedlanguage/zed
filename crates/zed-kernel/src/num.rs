@@ -2265,63 +2265,6 @@ pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
         .map(|bits| f32::from_bits(bits as u32))
 }
 
-/// The float equal to `r`, when there is one; [`TooLarge`] when rounding `r` was refused the
-/// memory it needs.
-pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
-    // A double is m * 2^k, so its denominator is a power of two.
-    let den = r.den.magnitude();
-    let dyadic = den.trailing_zeros().unwrap_or(0) + 1 == den.bits()
-        && r.pows.iter().all(|(p, e)| *p == 2 || e.is_positive());
-    if !dyadic {
-        return Ok(None);
-    }
-    let x = match r.to_f64() {
-        Ok(x) => x,
-        Err(LiteralRounding::TooLarge(e)) => return Err(e),
-        Err(LiteralRounding::Infinite | LiteralRounding::Zero) => return Ok(None),
-    };
-    Ok(match Exact::float(x) {
-        Exact::Finite(f) => (*f == *r).then_some(x),
-        Exact::NegInf | Exact::PosInf | Exact::NaN => None,
-    })
-}
-
-/// Whether `|r|` lies beyond the largest finite value of the format `f`
-/// ([`FloatFormat::largest`]), which makes a cast of `r` to `f` `#overflow` (DESIGN.md,
-/// "Casts are domain proofs"); [`TooLarge`] when the comparison was refused the memory it needs.
-///
-/// Complexity tradeoff: the naive test rounds `r` to the format and asks whether the result is
-/// infinite. That misses `(MAX, MAX + ulp/2)`, which rounds to `MAX`, and it rounds a value
-/// with no binary form, such as `10^400 / 3` or `3^(10^9)` held as a power, when only its size
-/// is wanted. Here, for a plain `r` with a numerator of `a` bits and a denominator of `b` bits,
-/// `2^(a-1-b) < |r| < 2^(a-b+1)` settles the answer in `O(1)` unless `a - b` is within two of
-/// `emax`. In that case, and for an `r` holding prime powers, `r` is compared exactly with the
-/// largest value by [`Rat::magnitude_order`]: `O(M(n))` for coefficients of `n` bits, and the
-/// bound comparison of `bound::cmp` for the powers, which builds none of them.
-pub(crate) fn beyond_float(r: &Rat, f: FloatFormat) -> Result<bool, TooLarge> {
-    let emax = f.emax();
-    if r.is_plain() {
-        let a = r.num.magnitude().bits() as i64;
-        let b = r.den.magnitude().bits() as i64;
-        if a - b < emax {
-            return Ok(false);
-        }
-        if a - b > emax + 1 {
-            return Ok(true);
-        }
-    }
-    Ok(r.magnitude_order(&Rat::int(f.largest()), true)? == Ordering::Greater)
-}
-
-/// The `f32` equal to `r`, when there is one, by the rule of [`exact_f64`].
-pub(crate) fn exact_f32(r: &Rat) -> Result<Option<f32>, TooLarge> {
-    // Every f32 is an f64, so an f32 equal to `r` is the f64 equal to `r`, narrowed.
-    Ok(exact_f64(r)?.and_then(|x| {
-        let n = x as f32;
-        (f64::from(n) == x).then_some(n)
-    }))
-}
-
 #[cfg(test)]
 mod bench;
 

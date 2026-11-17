@@ -25,7 +25,7 @@ by up to 0.3% from run to run with the order of the test threads.
 | Calls through a value; named and positional calls | `calls.rs`, `named_calls.rs` | |
 | The type table of every operator | `op_table.rs` | The slow `div_mod` case is not split (row brief) |
 | Divisors that hold no zero; operations that always fail | `divisors.rs`, `always_fails.rs` | |
-| `f64(n)` exact for a bounded `int` | `exact_casts.rs` | |
+| A float cast gives no atom; `int` of a number not proved whole is rejected; `f64(n)` offered beside a bounded `int` | `exact_casts.rs` | |
 | `==` with no common value; ordered tuples | `no_common_value.rs`, `ordered_tuples.rs` | |
 | Lookups: tuple keys, `#outOfBounds`, partial maps | `tuple_keys.rs`, `out_of_bounds.rs`, `partial_maps.rs` | |
 | `Never`: as a type, as an operand | `never.rs`, `never_operands.rs` | |

@@ -397,13 +397,13 @@ fn close_numbers_order_and_round_exactly_when_memory_is_given() {
         Value::Int(7)
     );
     assert_eq!(eval(&get(family, num(a))).unwrap(), Value::atom("notFound"));
-    // Just below the halfway point rounds down to 1; it is not a float, so the cast is
-    // `#inexact`, and `to_f64` gives the rounded value.
+    // Just below the halfway point rounds down to 1: the cast and `to_f64` both give the
+    // nearest float (step L1.18).
     let q = below_half_ulp(s);
     assert_eq!(q.to_f64(), Ok(1.0));
     assert_eq!(
         eval(&prim(Prim::CastF64, vec![lit(Value::rat(q))])).unwrap(),
-        Value::atom("inexact")
+        Value::float(1.0)
     );
     // Powers far apart order without building: `2^(2^40)` has 2^40 bits.
     assert_eq!(
@@ -565,7 +565,8 @@ fn casting_a_wide_number_shares_its_digits() {
 }
 
 /// The casts of numbers that fit: an integer-valued rational in the 64-bit range is an `Int`,
-/// a wide one a wide `int`, and one that is not an integer is `#inexact`.
+/// a wide one a wide `int`; one that is not an integer is a type error, since the checker
+/// accepts `int` only of a number it proves whole (step L1.18).
 #[test]
 fn casts_between_int_and_rat_keep_the_value() {
     let wide = Value::integer(built_above(1 << 12));
@@ -574,7 +575,7 @@ fn casts_between_int_and_rat_keep_the_value() {
     assert_eq!(int(rat(&Value::Int(-5))), Value::Int(-5));
     assert_eq!(int(rat(&wide)), wide);
     assert_eq!(rat(&wide).number_kind(), Some(1));
-    assert_eq!(int(third()), Value::atom("inexact"));
+    assert!(eval(&prim(Prim::CastInt, vec![lit(third())])).is_err());
     assert_eq!(int(Value::float(4.0)), Value::Int(4));
     assert_eq!(rat(&third()), third());
 }

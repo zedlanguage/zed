@@ -69,21 +69,21 @@ out), lines covered before the completeness tests and after:
 | `rat(s)` refuses every other text, a zero denominator included | `rat_text.rs` `text_that_string_never_writes_is_invalid` | |
 | A decimal read by `rat` keeps or cancels its powers of 2 and 5 | `rat_text.rs` `a_decimal_keeps_the_powers_of_2_and_5_it_does_not_cancel`, `a_decimal_is_reduced_as_by_the_gcd_whatever_its_powers_of_2_and_5` | |
 | `f64(s)`: `inf`, `-inf`, `nan`, `-nan`, signed forms, fractions, exponents | `an_f64_text_reads_inf_nan_and_signed_forms` | |
-| `f64(s)` correctly rounded; beyond the range `#overflow` | `casts.rs` `a_float_reads_correctly_rounded_and_overflow_is_overflow` | |
+| `f64(s)` correctly rounded; beyond the range the infinity of its sign | `casts.rs` `a_float_reads_correctly_rounded_and_past_the_range_is_infinite` | |
 | `f64("-0")` is `-0.0`; a text below half the least subnormal is a signed zero | `casts.rs` `a_float_read_from_text_keeps_the_sign_of_zero`, `a_float_text_below_the_least_subnormal_reads_as_a_signed_zero` | |
 | `+5`, `.5`, `infinity`, `Infinity`, `NaN`, `1E5`, `1e+5`, `5.`, hex floats, spaces are `#invalid` | `an_f64_text_reads_inf_nan_and_signed_forms` | |
 | `#underflow` on a parse | | An atom of `@fpwarn` alone, step L10.3b |
-| `f32(s)` reads what `f64(s)` reads, rounded once from the digits | `an_f32_text_reads_what_an_f64_text_reads`, `f32.rs` `casts_to_f32_are_exact_or_fail` | |
+| `f32(s)` reads what `f64(s)` reads, rounded once from the digits | `an_f32_text_reads_what_an_f64_text_reads`, `f32.rs` `casts_to_f32_round_to_nearest_ties_to_even` | |
 | A number received in pieces reads as one | `casts.rs` `a_number_received_in_pieces_reads_as_one`, `a_number_joined_from_a_thousand_pieces_reads_as_one` | |
 | `int` and `rat` of an infinity or the NaN, at `f64` and `f32`, are `#invalid`; of `-0.0` are `0` and `0r` | `int_and_rat_of_a_float_that_is_no_number_are_invalid` | |
-| `int` of a float that is not whole; `rat` of a float is its exact rational | `casts.rs` `a_float_to_int_must_be_whole`, `a_float_is_an_exact_rational` | |
-| `f64` of an `int` or `rat`: equal, `#overflow`, `#inexact` | `casts.rs` `a_number_to_f64_must_be_exactly_representable`, `a_number_beyond_the_largest_float_is_overflow`, `f64_of_an_int_or_rat_is_equal_or_fails_by_the_reason` | |
-| `f32` of an `int`, `rat` or `f64`: equal, `#overflow` at either sign, `#inexact`, infinities and the NaN kept, an underflow `#inexact` | `f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason`, `f32.rs` `casts_to_f32_are_exact_or_fail` | |
+| `int` of a number the checker does not prove whole is a compile error with the six rounding functions as its menu; `rat` of a float is its exact rational | `casts.rs` `a_float_to_int_must_be_whole`, `a_float_is_an_exact_rational` | |
+| `f64` of an `int` or `rat`: nearest, ties to even, the infinity past the range | `casts.rs` `a_number_to_f64_rounds_to_nearest_ties_to_even`, `a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity`, `f64_of_an_int_or_rat_is_equal_or_fails_by_the_reason` | |
+| `f32` of an `int`, `rat` or `f64`: nearest, ties to even, the infinity of its sign past the range, infinities and the NaN kept, an underflow the zero of its sign | `f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason`, `f32.rs` `casts_to_f32_round_to_nearest_ties_to_even` | |
 | `f32` of an `f32` is itself | `f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason` | |
 | `f32` and `f64` of an `f64` `-0.0` keep the sign | `cast_negzero.rs` | Fixed by row FAIL-values-cast-negzero; neighbors (`0.0`, tiny floats of each sign, the least subnormal, `f64` of `-inf` and `nan`) in the same file |
 | `f64` of an `f32` is exact, `-0.0`, infinities, the NaN and subnormals included | `f64_of_an_f32_is_exact`, `f32.rs` `casts_from_f32` | |
-| `f32(n)` exact for an `n` the checker shows within ±2^24; one past keeps `#inexact` | `f32_of_an_int_shown_within_two_to_the_24_is_exact` | |
-| A cast that always fails is rejected | `f32.rs` `a_cast_that_always_fails_is_rejected` | |
+| `f32(n)` is an `f32` with no atom within ±2^24 and past it, where it rounds | `f32_of_an_int_shown_within_two_to_the_24_is_exact` | |
+| A float cast of literals rounds; an int cast not proved whole is rejected | `f32.rs` `a_float_cast_of_literals_rounds_and_an_int_cast_not_whole_is_rejected` | |
 | Rounding near a boundary under a memory limit | `l01_17` `memory_check.rs` `rounding_near_a_boundary_is_refused_when_memory_is_short`, `rounding_near_an_f32_boundary_is_refused_when_memory_is_short` | |
 | `f32` arithmetic rounds once; NaN in gives NaN out; signed zero; subnormals; overflow to infinity | `f32.rs` | |
 | `f32` `-x`, `abs`, `min`, `max` are exact, with `-0.0` and the NaN | `f32_abs_negation_min_and_max_are_exact` | |

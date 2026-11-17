@@ -42,7 +42,7 @@ fn many_bounded_comparisons_scale() {
 #[test]
 fn many_casts_of_ints_in_range_scale() {
     // n functions, each casting its parameter under a test that bounds it beyond ±2^53 and
-    // within the largest `f64`: the path that drops `#overflow` and keeps `#inexact`.
+    // within the largest `f64`, where the cast may round.
     let units = resolved(200, casts_in_range);
     scaling::check("n functions, each a cast of an int in range", 200, |n| {
         let info = units[&n].check();
@@ -52,7 +52,7 @@ fn many_casts_of_ints_in_range_scale() {
 
 #[test]
 fn many_casts_of_literals_scale() {
-    // n functions, each casting a `rat` literal that converts, so each result drops both atoms.
+    // n functions, each casting a `rat` literal.
     let units = resolved(2000, casts_of_literals);
     scaling::check("n functions, each a cast of a rat literal", 2000, |n| {
         let info = units[&n].check();
@@ -62,11 +62,11 @@ fn many_casts_of_literals_scale() {
 
 #[test]
 fn a_cast_of_a_power_does_not_grow_with_its_exponent() {
-    // `1e<k>r` holds 2^k * 5^k as two exponents, so its cast costs the same at k and 8k: a cast
+    // `1e<k>r` holds 2^k * 5^k as two exponents, so its check costs the same at k and 8k: one
     // that built the power would cost k^1.47 or more (COMPLEXITY.md K41).
     let units = resolved(1_000_000, cast_of_a_power);
     scaling::check_order("the cast of 1e<k>r", 1_000_000, 0, |k| {
         let info = units[&k].check();
-        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }

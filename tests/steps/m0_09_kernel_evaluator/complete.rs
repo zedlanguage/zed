@@ -375,12 +375,13 @@ fn sum_of_a_tuple_is_its_total_and_merges_its_failures() {
 }
 
 #[test]
-fn numeric_casts_are_exact_or_give_an_atom() {
-    // DESIGN.md L1.18: numeric casts exact, `#inexact` or `#overflow`; `int` of an infinity
-    // or the NaN is `#invalid`; `f64` of an int or a rat is the float equal to it.
+fn numeric_casts_round_to_a_float_and_int_takes_a_whole_number() {
+    // DESIGN.md L1.18: a cast to a float format rounds to nearest, ties to even; `int` takes a
+    // whole number, the checker rejecting any other, so the kernel meets one only in an
+    // ill-typed term; `int` of an infinity or the NaN is `#invalid`.
     table(vec![
-        ("int of 2.7", prim(CastInt, vec![f(2.7)]), "#inexact"),
-        ("int of -2.7", prim(CastInt, vec![f(-2.7)]), "#inexact"),
+        ("int of 2.7", prim(CastInt, vec![f(2.7)]), "error: `int` applied to `f64`, which is not whole"),
+        ("int of -2.7", prim(CastInt, vec![f(-2.7)]), "error: `int` applied to `f64`, which is not whole"),
         ("int of 2.0", prim(CastInt, vec![f(2.0)]), "2"),
         (
             "int of 1e20, past a word",
@@ -393,7 +394,7 @@ fn numeric_casts_are_exact_or_give_an_atom() {
             prim(CastInt, vec![f(f64::INFINITY)]),
             "#invalid",
         ),
-        ("int of 7r/2r", prim(CastInt, vec![q(7, 2)]), "#inexact"),
+        ("int of 7r/2r", prim(CastInt, vec![q(7, 2)]), "error: `int` applied to `rat`, which is not whole"),
         ("int of \"12\"", prim(CastInt, vec![lit("12")]), "12"),
         ("rat of 0.5", prim(CastRat, vec![f(0.5)]), "1r/2r"),
         (
@@ -402,18 +403,18 @@ fn numeric_casts_are_exact_or_give_an_atom() {
             "-1r/3r",
         ),
         ("f64 of 3", prim(CastF64, vec![lit(3)]), "3.0"),
-        ("f64 of 1r/3r", prim(CastF64, vec![q(1, 3)]), "#inexact"),
+        ("f64 of 1r/3r", prim(CastF64, vec![q(1, 3)]), "0.3333333333333333"),
         (
             "f64 of 2^53 + 1",
             prim(CastF64, vec![lit(9007199254740993i64)]),
-            "#inexact",
+            "9007199254740992.0",
         ),
         (
             "f64 of 10^20",
             prim(CastF64, vec![big()]),
             "100000000000000000000.0",
         ),
-        ("f32 of 0.1", prim(CastF32, vec![f(0.1)]), "#inexact"),
+        ("f32 of 0.1", prim(CastF32, vec![f(0.1)]), "0.1f32"),
     ]);
 }
 

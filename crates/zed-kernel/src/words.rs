@@ -2,10 +2,11 @@
 //! and `f64`, `abs`, the string words `len`, `lower`, `upper` and `trim`, and the code point
 //! and UTF-8 words `codePoint`, `scalar`, `utf8` and `fromUtf8` (step L1.39c).
 //!
-//! A cast is a domain proof (DESIGN.md, "Casts are domain proofs"): `T(x)` is `x` as a `T`
-//! when the value is the same number, `#overflow` when a finite source lies beyond the largest
-//! finite `T` (a float format, or a text that rounds past it), `#inexact` when a numeric source
-//! in range has no equal `T`, and `#invalid` when the source is not a `T` at all: a string that
+//! A cast is a domain proof (DESIGN.md, "Casts are domain proofs", and step L1.18): a cast to a
+//! float format is the float nearest the source, ties to even, and the infinity of its sign
+//! beyond the largest finite one; `int` of a float or a `rat` is the `int` equal to it, which
+//! the checker accepts only where it proves the value whole, so no well-typed term casts a
+//! number that is not whole; `#invalid` is a source that is not a `T` at all: a string that
 //! does not read as one, or a float that is infinite or NaN cast to an exact kind.
 
 use std::collections::HashMap;
@@ -16,25 +17,16 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
 use crate::num::{
-    Exact, FloatFormat, Rat, Rounding, TooLarge, beyond_float, bits_of_digits, exact_f32,
-    exact_f64, read_decimal, read_f32_ieee, read_f64_ieee, room, show_f32, show_f64,
+    Exact, LiteralRounding, Rat, Rounding, TooLarge, bits_of_digits, read_decimal, read_f32_ieee,
+    read_f64_ieee, room, show_f32, show_f64,
 };
 use crate::term::Prim;
 use crate::text::Text;
 use crate::value::Family;
 use crate::value::Value;
 
-/// The format a float cast `p` gives: `f32` for `CastF32`, and `f64` for `CastF64`.
-fn float_format(p: Prim) -> FloatFormat {
-    match p {
-        Prim::CastF32 => FloatFormat::F32,
-        _ => FloatFormat::F64,
-    }
-}
-
 /// `p(x)` for one of the words above; a type error when `x` is not of a kind `p` takes.
 pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
-    let inexact = || Value::atom("inexact");
     let invalid = || Value::atom("invalid");
     let overflow = || Value::atom("overflow");
     let out = match (p, x) {
@@ -69,10 +61,11 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 None => invalid(),
             }
         }
+        // A finite text beyond the float range reads as the infinity of its sign, as IEEE 754
+        // rounds it (step L1.18); the `overflow()` fact it carries is step L10.3b's.
         (Prim::CastF64, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| unread("f64", s.len(), e))?;
             match read_f64(&s) {
-                Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float(f),
                 None => invalid(),
             }
@@ -80,7 +73,6 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::CastF32, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| unread("f32", s.len(), e))?;
             match read_f32(&s) {
-                Some(f) if f.is_infinite() && !s.ends_with("inf") => overflow(),
                 Some(f) => Value::float32(f),
                 None => invalid(),
             }
@@ -88,22 +80,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // Every `f32` is an `f64`; an infinity or NaN is one in either format.
         (Prim::CastF64, Value::Float32(f)) => Value::float(f64::from(f.get())),
         (Prim::CastF32, Value::Float32(_)) | (Prim::CastF64, Value::Float(_)) => x.clone(),
-        (Prim::CastF32, Value::Float(f)) if !f.get().is_finite() => Value::float32(f.get() as f32),
-        // A finite `f64` is narrowed as a float, not through its exact rational, which has no
-        // sign of zero: `f32(-0.0f64)` is `-0.0f32`. Past the largest finite `f32` is
-        // `#overflow`, ahead of the test for an equal float (A36), as for the other kinds below;
-        // `as f32` rounds to nearest, so the narrowing is exact just when it widens back to `f`.
-        (Prim::CastF32, Value::Float(f)) => {
-            let f = f.get();
-            let n = f as f32;
-            if f.abs() > f64::from(f32::MAX) {
-                overflow()
-            } else if f64::from(n) == f {
-                Value::float32(n)
-            } else {
-                inexact()
-            }
-        }
+        // An `f64` is narrowed as a float, not through its exact rational, which has no sign
+        // of zero: `f32(-0.0f64)` is `-0.0f32`. `as f32` is the IEEE 754 narrowing: nearest,
+        // ties to even, the infinity of its sign past `f32::MAX + ulp/2`, and the NaN kept.
+        (Prim::CastF32, Value::Float(f)) => Value::float32(f.get() as f32),
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {
                 return type_err(p, x);
@@ -125,30 +105,36 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                     None => Value::Big(n.clone()),
                 },
                 (Prim::CastInt, _) if r.is_integer() => Value::integer(r.into_owned()),
-                (Prim::CastInt, _) => inexact(),
-                (Prim::CastRat, _) => Value::rat(r.into_owned()),
-                // A number beyond the largest finite float is out of the format's range, which
-                // is `#overflow`, ahead of the test for an equal float (A36).
-                _ if beyond_float(&r, float_format(p)).map_err(|e| {
-                    KernelError::RoundTooLarge {
-                        to: float_format(p).name(),
-                        need: e,
-                    }
-                })? =>
-                {
-                    overflow()
+                // The checker accepts `int(x)` only where it proves `x` whole (step L1.18).
+                (Prim::CastInt, _) => {
+                    return Err(KernelError::Type(format!(
+                        "`int` applied to `{}`, which is not whole",
+                        x.kind_type()
+                    )));
                 }
-                (Prim::CastF32, _) => match exact_f32(&r) {
-                    Ok(Some(f)) => Value::float32(f),
-                    Ok(None) => inexact(),
-                    Err(e) => {
+                (Prim::CastRat, _) => Value::rat(r.into_owned()),
+                // An `int` or a `rat` is rounded once, from its exact value, to the nearest
+                // float, ties to even (step L1.18): past the largest finite float that is the
+                // infinity of its sign, and below half the least subnormal the zero of its sign.
+                //
+                // Complexity tradeoff: the naive way builds the number and divides, or rounds
+                // twice (to `f64`, then to `f32`), which is wrong at a tie of the second
+                // rounding. `Rat::to_f64` and `Rat::to_f32` round once by bounds of the exact
+                // value, building no kept power of a prime: O(M(n)) in the bits of a plain
+                // coefficient, and a value far past the range is settled from its size.
+                (Prim::CastF32, _) => match r.to_f32() {
+                    Ok(f) => Value::float32(f),
+                    Err(LiteralRounding::Infinite) => Value::float32(with_sign(f32::INFINITY, r.is_negative())),
+                    Err(LiteralRounding::Zero) => Value::float32(with_sign(0.0f32, r.is_negative())),
+                    Err(LiteralRounding::TooLarge(e)) => {
                         return Err(KernelError::RoundTooLarge { to: "f32", need: e });
                     }
                 },
-                _ => match exact_f64(&r) {
-                    Ok(Some(f)) => Value::float(f),
-                    Ok(None) => inexact(),
-                    Err(e) => {
+                _ => match r.to_f64() {
+                    Ok(f) => Value::float(f),
+                    Err(LiteralRounding::Infinite) => Value::float(with_sign(f64::INFINITY, r.is_negative())),
+                    Err(LiteralRounding::Zero) => Value::float(with_sign(0.0f64, r.is_negative())),
+                    Err(LiteralRounding::TooLarge(e)) => {
                         return Err(KernelError::RoundTooLarge { to: "f64", need: e });
                     }
                 },
@@ -467,6 +453,11 @@ fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
         p.written(),
         x.kind_type()
     )))
+}
+
+/// `x`, negated when `neg`: the infinity or zero a cast rounds a number of that sign to.
+fn with_sign<T: std::ops::Neg<Output = T>>(x: T, neg: bool) -> T {
+    if neg { -x } else { x }
 }
 
 /// A part of a value that more than one holder can share, read once by [`room_to_print`].

@@ -2188,7 +2188,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.k(Frame::ExprStmt(s));
                 m.job(Job::Expr(value));
             }
-            StmtKind::Bind { value, .. } => {
+            StmtKind::Bind { targets, value } => {
+                if let [Target::Name(n, _)] = &targets[..] {
+                    self.bound_names.insert(value.span, n.as_str());
+                }
                 m.k(Frame::Bind(s, self.errors.len()));
                 m.job(Job::Expr(value));
             }
@@ -7682,9 +7685,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Marks the carriers at which the prelude word `w` always fails on its operand `x`, an
     /// operation on literals alone whose class nothing has given a carrier yet, so that a fix
     /// that gives its literals such a carrier is not offered ([`Class::unoffered`]): in
-    /// `f() = f64(1 / 10);`, `1/10` at `rat` has no exact `f64`, so `f64(1r / 10)`, which is
-    /// rejected as a cast that always fails, is not offered, and `f64(1.0f64 / 10)` is (row
-    /// LIT-cast-inexact-rat-fix). The value at `rat` is read from the text as
+    /// `f() = rat(2^1024 + 1);`, the operation at `f64` is the infinity, of which `rat` is
+    /// `#invalid`, so a fix that writes it at `f64` would be rejected as a cast that always
+    /// fails (row LIT-cast-inexact-rat-fix). Since CAST-round-whole a float cast has no atom on
+    /// a number, as it rounds, and `int` of a value not proved whole is the error of
+    /// [`Self::int_not_whole`]. The value at `rat` is read from the text as
     /// [`Self::rat_folded`] reads it, with no power computed ([`text_rat`]); the one at `f64`,
     /// whose values have a fixed size, is folded ([`folded`]). O(size of the operand), once
     /// per application of a word.
@@ -7739,13 +7744,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `f64(0.1)`, takes `f64`, since a cast fixes no carrier for its operand and a decimal
         // that nothing fixes takes `f64` (step L1.26b), where the cast does not always fail
         // at `f64`; otherwise it is rejected with the fixes below.
-        // A fix that writes it with a carrier at which the cast always fails is not offered
-        // (DESIGN.md sec:domains: "A cast `f64(9007199254740993r)` is never offered [...] since
-        // the integer has no exact `f64`, so the cast gives `#inexact` for its one input"):
-        // `f64(0.1)` lists `f64(0.1f64)` alone, since `0.1r` has no exact `f64`, and `f64(0.5)`
-        // lists `0.5f64` and `0.5r`. The operand then takes the first carrier left, so the call
-        // is typed as with it. Each carrier's value is cast once, as
-        // [`Self::word_atoms`] casts it, at the cost it names.
+        // A fix that writes it with a carrier at which the word gives an atom for its one
+        // value is not offered. A float cast gives none of a number since
+        // CAST-round-whole (DESIGN.md "Casts are domain proofs": it rounds to nearest, ties to
+        // even), so `f64(0.5)` lists `0.5f64` and `0.5r`; and `int` of a value that is not
+        // whole is rejected after the operand takes its carrier, so `int(2.5)` takes `f64`.
+        // The operand then takes the first carrier left, so the call is typed as with it.
+        // Each carrier's value is cast once, as [`Self::word_atoms`] casts it, at the cost it
+        // names.
         // The literal's value at the carrier it takes is kept as the operand's one value, so
         // the atoms the word cannot give on it are dropped: `round(2.5)` is an `int`, with no
         // `#NaN` or `#overflow` (DESIGN.md sec:facets, "Rounding to a whole number").
@@ -7824,11 +7830,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if matches!(w, "int" | "rat" | "f64" | "f32") {
             self.cast_takes_int(&mut x, w, span);
         }
-        let sig = match w {
-            "f64" => int_cast_sig(Carrier::F64, self.int_cast(&x, Carrier::F64)),
-            "f32" => int_cast_sig(Carrier::F32, self.int_cast(&x, Carrier::F32)),
-            _ => word_sig(w),
-        };
+        let sig = word_sig(w);
         // Printing a number the text fixes writes its digits; rounding one to a float reads it
         // as far as it lies from a boundary (DESIGN.md, the numbers section).
         let builds = match w {
@@ -7865,6 +7867,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             (None, None) => self.operand_values(&x),
         };
+        if w == "int" {
+            self.int_not_whole(&x, values.as_ref(), span);
+        }
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
         let no_zero = w == "rat" && self.ints_without_zero(&x);
@@ -7889,15 +7894,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Takes the operand `x` of the cast `w` (`int`, `rat`, `f64` or `f32`) at `span` at `int`
     /// if it is an operation on integer literals alone written in place, as `2^64 + 13` in
     /// `rat(2^64 + 13)`, and reads it as an `int` from then on. A cast keeps an atom only where
-    /// its operand can give it (QUESTIONS A36): `int` and `rat` of an int give none, and `f64`
-    /// or `f32` of an int gives `#inexact` only past the format's exact integers and
-    /// `#overflow` only past its largest finite value, which [`Self::int_cast`] then reads from
-    /// the operand's text, so `f64(2^3 + 1)` is an `f64` and `f64(2^53 + 1)` keeps `#inexact`.
-    /// Nothing else reads the class, so it takes `int` when its function ends anyway
+    /// its operand can give it (QUESTIONS A36): `int`, `rat`, `f64` and `f32` of an int give
+    /// none, a float cast rounding to nearest, ties to even (DESIGN.md "Casts are domain
+    /// proofs"). Nothing else reads the class, so it takes `int` when its function ends anyway
     /// ([`Ck::lits_take`]). Until then it keeps the float formats among its carriers, and at
-    /// `f64` `2^2000` is the infinity, of which `rat` is `#invalid` and `int` `#invalid`, so the
-    /// atoms of the float arrows are dropped by taking the class at `int` now, not by dropping
-    /// them alone. A name bound to such an operation, `b` with `b = 2^64 + 13`, is an `int`
+    /// `f64` `2^2000` is the infinity, of which `rat` is `#invalid` and `int` is not proved
+    /// whole, so the class is taken at `int` now, and `int(2^64 + 13)` is accepted. A name bound to such an operation, `b` with `b = 2^64 + 13`, is an `int`
     /// already, fixed where it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are:
     /// a class that holds a bare decimal literal, or a `/`, as `rat(1 / 2)`, which no use took
     /// `int` from but its own operation, and which is rejected for want of a carrier when its
@@ -7912,7 +7914,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // (LIT-name-int-fixed), this also rejected the cast where a later use had taken `int`
     // from the class; that use is now rejected itself, at the use. Before CAST-int-f64-lit-class
     // it was done for `rat` alone, and `int(2^64 + 13)` and `f64(2^3 + 1)` kept the atoms of
-    // every arrow of the cast.
+    // every arrow of the cast; since CAST-round-whole a float cast has no atom of an int.
     fn cast_takes_int(&mut self, x: &mut Arg<'a>, w: &str, span: Span) {
         let Some(k) = self.class_beside_atoms(&x.ty) else {
             return;
@@ -7925,6 +7927,127 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             x.ty = Ty::carrier(Carrier::Int).union(&Ty::set(x.ty.atoms()));
         }
+    }
+
+    /// Rejects the cast `int(x)` at `span` where the checker does not prove `x` whole
+    /// (DESIGN.md sec:corner_cases, "Casts are domain proofs"; row "No `int` equals the value"
+    /// of sec:diagnostics): `x` has a `rat`, `f64` or `f32` part, and `values`, the values of
+    /// `x` the checker lists ([`Self::operand_values`]), are not all finite and whole. At this
+    /// step the proof reads a constant, and the result of a rounding function, an `int`; step
+    /// L1.39 widens it to the whole-number fact of its store. The cast's result stays `int`,
+    /// so nothing after it fails again. The menu offers the six rounding calls in place of the
+    /// cast, each checked by applying its word to `x` in a trial, with what the binding then
+    /// holds: the value the word gives where `x` is one constant, `k is 4`, else the type the
+    /// trial gives, `k is int | #NaN | #overflow`. The test at run time, `r: f64 = trunc(x);
+    /// k = if x.isFinite() && x == r { int(x) } else { … };`, which DESIGN.md names as a sixth
+    /// fix, is a repair note and not in the menu: its `…` is the program's to write, and its
+    /// `int(x)` is proved whole only by the whole-number fact of step L1.39, so the checker
+    /// cannot check it here.
+    // Complexity tradeoff: naive version, a check of the whole program again with each fix in
+    // place, the program's size per fix. Used: one pass over the listed values, at most the
+    // values a type lists, and six trials of one word's application to `x`, each the cost of
+    // that application ([`Self::word_applied`]); none of it in a trial, where the cast's
+    // rejection alone is wanted.
+    fn int_not_whole(&mut self, x: &Arg<'a>, values: Option<&WordOperand>, span: Span) {
+        let parts = [KType::rat(), KType::f64(), KType::f32()];
+        if parts.iter().all(|t| (&x.ty.set & t).lists_nothing()) {
+            return;
+        }
+        let listed = values.and_then(|v| match v {
+            WordOperand::Values(vs, _) => Some(vs.clone()),
+            WordOperand::Type(t) => t.kernel()?.values_listed(),
+        });
+        let whole = |v: &Value| match v {
+            Value::Rat(r) => r.is_integer(),
+            Value::Float(f) => f.get().is_finite() && f.get().fract() == 0.0,
+            Value::Float32(f) => f.get().is_finite() && f.get().fract() == 0.0,
+            _ => true,
+        };
+        if listed.as_ref().is_some_and(|vs| vs.iter().all(whole)) {
+            return;
+        }
+        let at = x.at.unwrap_or(span);
+        let arg = self.code(Some(at)).unwrap_or("x").to_string();
+        let call = self.code(Some(span)).unwrap_or("int(x)").to_string();
+        let numbers: Vec<&Value> = (listed.iter().flatten())
+            .filter(|v| matches!(v, Value::Rat(_) | Value::Float(_) | Value::Float32(_)))
+            .collect();
+        let text = format!("No `int` equals the value: `{call}`");
+        let mut notes = vec![Note {
+            span,
+            text: match numbers.iter().find(|v| !whole(v)) {
+                Some(v) => {
+                    let value = decimal_of(v);
+                    match value == arg {
+                        true => format!(
+                            "an int cast takes a number only where the checker proves it \
+                             whole; {arg} is not whole"
+                        ),
+                        false => format!(
+                            "an int cast takes a number only where the checker proves it \
+                             whole; {arg} is {value}"
+                        ),
+                    }
+                }
+                None => format!(
+                    "an int cast takes a number only where the checker proves it whole; \
+                     `{arg}` is {}, which may hold a value that is not whole",
+                    self.show(&Ty::set(x.ty.set.clone()))
+                ),
+            },
+        }];
+        if self.trying {
+            self.reject(Some(Row::NoIntEquals), span, Msg::from(text), notes);
+            return;
+        }
+        if numbers.is_empty() {
+            notes.extend(self.derive(&[at]));
+            notes.push(Note {
+                span,
+                text: format!(
+                    "repair: test at run time, `r: f64 = trunc({arg}); if {arg}.isFinite() && \
+                     {arg} == r {{ int({arg}) }} else {{ … }}`"
+                ),
+            });
+        }
+        let bound = self.bound_names.get(&span).copied();
+        let rules: [(&'a str, Prim, &str, &str); 6] = [
+            ("round", Prim::Round, "", ", the nearest int, ties to even"),
+            (
+                "round",
+                Prim::RoundTiesAway,
+                ", ties: #away",
+                ", the nearest int, ties away from zero",
+            ),
+            ("floor", Prim::Floor, "", ""),
+            ("ceil", Prim::Ceil, "", ""),
+            ("trunc", Prim::Trunc, "", ", toward zero"),
+            ("awayFromZero", Prim::AwayFromZero, "", ", away from zero"),
+        ];
+        let mut fixes = Vec::with_capacity(rules.len());
+        for (word, p, ties, why) in rules {
+            let Some(ty) = self.tried(|ck| ck.word_applied(word, x.clone(), span)) else {
+                continue;
+            };
+            let fixed = format!("{word}({arg}{ties})");
+            // One value where every listed value gives the same one, as the literals of each
+            // carrier of `2.5` do; the type the trial gives otherwise.
+            let gives: Vec<Value> = numbers.iter().filter_map(|v| run(p, v)).collect();
+            let one = (gives.first())
+                .filter(|g| gives.len() == numbers.len() && gives.iter().all(|h| h == *g));
+            let value = match one {
+                Some(g) => format!("{g}{why}"),
+                None => self.show(&ty),
+            };
+            let holds = match bound {
+                Some(n) => format!("{n} is {value}"),
+                None => format!("{fixed} is {value}"),
+            };
+            fixes.push(Rewrite::new(&[(span, &fixed)], &holds, &fixed));
+        }
+        let mut m = Msg::new(text, fixes);
+        m.call = Some(span);
+        self.reject(Some(Row::NoIntEquals), span, m, notes);
     }
 
     /// Whether the operand `x` of `rat` holds ints alone, none of them 0, by its type, its
@@ -7952,33 +8075,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// An operand with no int part, or with no expression to read, is not shown to be. Unlike
     /// [`Self::int_range`], it builds no text to show the ints. Cost: one read of what the text
     /// shows and one narrowing by the enclosing tests (COMPLEXITY.md C26, F175), the work a bit
-    /// word's operand takes; building the text as well would print a type at each cast.
+    /// word's operand takes, and one subset test against one interval, `O(log p)` for `p`
+    /// pieces ([`IntervalSet::is_subset`]); building the text as well would print a type at
+    /// each cast.
     fn exact_in_f64(&mut self, x: &Arg<'a>) -> bool {
-        self.int_cast(x, Carrier::F64) == IntCast::Exact
-    }
-
-    /// What the checker proves of the ints the operand `x` of the cast to the float format `c`
-    /// may be: that each lies within ±[`exact_int_bound`] of `c`, as [`Self::exact_in_f64`] says
-    /// for `f64`, so the cast is exact; or else that each lies within the format's largest finite
-    /// value, so it is not `#overflow` (A36). Both are read from one interval: the naive way,
-    /// a separate read for each fact, would walk the text and the enclosing tests twice. Cost:
-    /// one [`Self::ints_of`] and two subset tests against one interval, `O(log p)` each for `p`
-    /// pieces ([`IntervalSet::is_subset`]).
-    fn int_cast(&mut self, x: &Arg<'a>, c: Carrier) -> IntCast {
         let ns = &x.ty.set & &KType::int();
         let Some(e) = x.expr.filter(|_| !ns.is_empty()) else {
-            return IntCast::Unproved;
+            return false;
         };
         let (ints, _, _) = self.ints_of(&ns, e);
-        let b = exact_int_bound(c);
-        if ints.is_subset(&IntervalSet::of(-b, b)) {
-            return IntCast::Exact;
-        }
-        let m = largest_float_int(c);
-        match ints.is_subset(&IntervalSet::range(Fin(-&m), Fin(m))) {
-            true => IntCast::InRange,
-            false => IntCast::Unproved,
-        }
+        ints.is_subset(&IntervalSet::of(-(1 << 53), 1 << 53))
     }
 
     /// A call of the bit word `w`, the primitive `p` (step L1.39a): its arguments placed by
@@ -15278,8 +15384,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and is no class of literals, which a test does not narrow, a test of it, of a name
     /// bound in the body or of a new name that holds it ([`fresh`]); and last on floats, which
     /// take a negative exponent, with an int literal base or exponent written as a float
-    /// literal, or with a base parameter declared a float. No repair casts an int to a float: `f64(k)` may
-    /// fail, with `#inexact`. Without the program's text, the test in words. Each repair on a
+    /// literal, or with a base parameter declared a float. No repair casts an int to a float: `f64(k)` rounds
+    /// above 2^53 in magnitude. Without the program's text, the test in words. Each repair on a
     /// `rat` or a float comes with the operand it rewrites, the base 0 or the exponent 1, and
     /// the carrier it writes there, which [`Self::power_swapped`] checks.
     fn power_repairs(&self, p: &PowerUse) -> Vec<(Repair, Option<(usize, Carrier)>)> {
@@ -16909,7 +17015,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// step that reaches the pair through tuples compared component by component, the reason,
     /// and the repairs (DESIGN.md sec:diagnostics, "A short headline, the detail in the
     /// notes"). A repair casts one side's numbers to the other's kind with a cast that cannot
-    /// fail or lose information ([`cast_widening`]), or compares a component of a tuple met by
+    /// fail or lose information ([`widening`]), or compares a component of a tuple met by
     /// a value that is not one; each is tried before it is offered, and each is written as the
     /// whole comparison rewritten, `(x[0], rat(x[1])) < y`, so it is offered only where each
     /// level on the way holds one tuple shape, which one tuple written out can stand for.
@@ -19839,7 +19945,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The repairs of a rejected application the checker discharges: each argument wrapped
     /// in a prelude word, when the application then checks, tried with the checker's state
     /// restored after. At an operator or a call of a prelude word the wrapped argument keeps
-    /// its place, so a failure of the word, `#inexact` of `f64(r)`, passes by as it does where
+    /// its place, so a failure of the word, `#invalid` of `rat(x)`, passes by as it does where
     /// the repair is written (rule 6 of sec:type_resolution): `max(f64(r), x)` as
     /// `f64(r) + x`. At a call of a declared function it has none, so a word whose failure the
     /// parameter does not take is not offered: `discount(price: int("12"))`. The trial sees
@@ -20827,18 +20933,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         c: &Carry,
     ) -> Option<Ty> {
         // A fix that puts the operand of a word at `rat`, where the text gives the operand's
-        // value there, gives the word that one value: `1r / 10` in `f64(1 / 10)` is `1/10`,
-        // which has no exact `f64`, so the cast always fails with `#inexact` and the fix is
-        // dropped, as `f64(1r / 10)` written is rejected ([`Self::operand_values`]; DESIGN.md
-        // sec:domains: "A cast `f64(9007199254740993r)` is never offered"; row
-        // LIT-cast-inexact-rat-fix). The operand is read from its text ([`text_rat`]), O(its
-        // size), once per fix carried to the word.
+        // value there, gives the word that one value: `1r / 2` in `int(1 / 2)` is `1/2`, which
+        // is not whole, so the cast is rejected ([`Self::int_not_whole`]) and the fix is
+        // dropped, as `int(1r / 2)` written is rejected ([`Self::operand_values`]; row
+        // LIT-cast-inexact-rat-fix); so is one at which the word gives only an atom. The
+        // operand is read from its text ([`text_rat`]), O(its size), once per fix carried to
+        // the word.
         if let Construct::Word(word) = w.form
             && c.ty.numeric_carrier() == Some(Carrier::Rat)
             && let Some(e) = w.args[i].as_ref().and_then(|a| a.expr)
             && let Some(RatFact::Value(v)) = self.rat_fact(e).or_else(|| text_rat(e))
             && let Some(p) = zedc_base::interp::prim(word)
-            && matches!(run(p, &v), Some(Value::Atom(_)))
+            && !matches!(run(p, &v), Some(r) if !matches!(r, Value::Atom(_)))
         {
             return None;
         }
@@ -24666,13 +24772,16 @@ impl WordOperand {
     }
 }
 
-/// The exact rational value of an int or rat `v`.
-fn as_rat(v: &Value) -> Option<Rat> {
-    match v {
-        Value::Int(n) => Some(Rat::int((*n).into())),
-        Value::Big(r) | Value::Rat(r) => Some((**r).clone()),
-        _ => None,
+/// The number `v` as a note names it: a `rat` that a float holds exactly by its decimal, `3.5`
+/// for `7r/2r`, and any other value as Zed writes it.
+fn decimal_of(v: &Value) -> String {
+    if let Value::Rat(r) = v
+        && let Ok(f) = r.to_f64()
+        && run(Prim::CastRat, &Value::float(f)).and_then(|b| as_rat(&b)).as_ref() == Some(&**r)
+    {
+        return Value::float(f).to_string();
     }
+    v.to_string()
 }
 
 // The rule "Operation that always fails" (DESIGN.md sec:failure) for the built-in operations
@@ -24912,10 +25021,10 @@ impl<'a> Ck<'_, 'a> {
             }
             return Some(WordOperand::Values(values, Some(l.written().to_string())));
         }
-        // A `rat` the text gives the value of, as `1r / 10`, is that one value
-        // ([`Self::rat_fact`]), so `f64(1r / 10)` always fails with `#inexact` and is rejected
-        // as `f64(0.1r)` is (DESIGN.md sec:domains; row LIT-cast-inexact-rat-fix). O(1): the
-        // fact was kept when the operation was walked.
+        // A `rat` the text gives the value of, as `7r / 2`, is that one value
+        // ([`Self::rat_fact`]), so `int(7r / 2)` is rejected as `int(3.5r)` is, its value not
+        // whole ([`Self::int_not_whole`]; row LIT-cast-inexact-rat-fix). O(1): the fact was
+        // kept when the operation was walked.
         if let Some(e) = x.expr
             && x.ty.numeric_carrier() == Some(Carrier::Rat)
             && let Some(RatFact::Value(v)) = self.rat_fact(e)
@@ -24939,15 +25048,14 @@ impl<'a> Ck<'_, 'a> {
     /// memory leaves `r` as it is.
     ///
     /// Complexity tradeoff: the naive method types the call from the word's signature alone, in
-    /// O(1), and so lists `#inexact` and `#overflow` for `f64(3r)`, which never gives either
-    /// (item CAST-literal-exact). The method used runs the cast on each listed value, at most 3
-    /// for a literal (a bare integer as int, f64 and rat), and O(V) casts for V listed values.
-    /// Each costs what the cast costs when the program runs: O(d^1.47) for a literal of d digits
-    /// (COMPLEXITY.md K41), and no cheaper test decides whether a long digit string is exact in
-    /// the target format. A `rat` written with an exponent, `1e400000r`, holds its powers of 2
-    /// and 5 as exponents, and the kernel decides both atoms from them without building the
-    /// power (`beyond_float` compares magnitudes by bounds, `exact_f64` tests the dyadic shape
-    /// first), so its cast does not grow with the exponent. COMPLEXITY.md row C39.
+    /// O(1), and so lists `#invalid` for `rat(2.5f64)`, which never gives it (item
+    /// CAST-literal-exact). The method used runs the word on each listed value, at most 3 for a
+    /// literal (a bare integer as int, f64 and rat), and O(V) runs for V listed values. Each
+    /// costs what the word costs when the program runs: O(d^1.47) for a literal of d digits
+    /// (COMPLEXITY.md K41). A `rat` written with an exponent, `1e400000r`, holds its powers of
+    /// 2 and 5 as exponents, and the kernel rounds it to a float from them without building the
+    /// power (COMPLEXITY.md K127), so its cast does not grow with the exponent. COMPLEXITY.md
+    /// row C39.
     fn word_atoms(
         &mut self,
         w: &str,

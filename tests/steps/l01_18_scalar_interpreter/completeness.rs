@@ -1,8 +1,8 @@
 //! Cases of DESIGN.md step L1.18 that the other files of this step leave out, one test per
 //! construct. COMPLETENESS.md beside this file lists every case and the test that covers it.
 
-use super::x;
-use zed_tests::step_helpers::l01_16_elaboration::elab;
+use super::{PASS, x};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, errors};
 
 /// `int(s)` reads an optional `-` and ASCII digits and nothing else.
 #[test]
@@ -60,8 +60,8 @@ fn an_f64_text_reads_inf_nan_and_signed_forms() {
         ("2.5e3", "2500.0"),
         ("25e-1", "2.5"),
         ("007.5", "7.5"),
-        ("1e309", "#overflow"),
-        ("-1e309", "#overflow"),
+        ("1e309", "inf"),
+        ("-1e309", "-inf"),
         ("", "#invalid"),
         ("-", "#invalid"),
         (" 1", "#invalid"),
@@ -98,7 +98,8 @@ fn an_f32_text_reads_what_an_f64_text_reads() {
         ("-0", "-0.0f32"),
         ("0.1", "0.1f32"),
         ("3.4028235e38", "3.4028235e38f32"),
-        ("3.5e38", "#overflow"),
+        ("3.5e38", "inff32"),
+        ("-3.5e38", "-inff32"),
         ("1e-50", "0.0f32"),
         ("-1e-50", "-0.0f32"),
         ("1e-45", "1.0e-45f32"),
@@ -112,7 +113,9 @@ fn an_f32_text_reads_what_an_f64_text_reads() {
     }
 }
 
-/// `int` and `rat` of an infinity or the NaN are `#invalid`, at `f32` as at `f64`.
+/// `rat` of an infinity or the NaN is `#invalid`, at `f32` as at `f64`. `int` of one is
+/// rejected, as of any float the checker does not prove whole (step L1.18); the kernel's
+/// `#invalid` for it is tested in zed-kernel's completeness/words.rs.
 #[test]
 fn int_and_rat_of_a_float_that_is_no_number_are_invalid() {
     for e in [
@@ -120,50 +123,54 @@ fn int_and_rat_of_a_float_that_is_no_number_are_invalid() {
         "real(-1.0f64 / 0.0)",
         "real(0.0f64 / 0.0)",
     ] {
-        assert_eq!(x(&format!("int({e})")), "#invalid", "int({e})");
+        assert!(!errors(&format!("{PASS}x = int({e});\n")).is_empty(), "int({e})");
         assert_eq!(x(&format!("rat({e})")), "#invalid", "rat({e})");
-        assert_eq!(x(&format!("int(f32({e}))")), "#invalid", "int(f32({e}))");
+        assert!(!errors(&format!("{PASS}x = int(f32({e}));\n")).is_empty(), "int(f32({e}))");
         assert_eq!(x(&format!("rat(f32({e}))")), "#invalid", "rat(f32({e}))");
     }
+    assert!(!errors("x = int(1.0f64 / 0.0);\n").is_empty());
     assert_eq!(x("rat(real(-0.0f64))"), "0r");
-    assert_eq!(x("int(real(-0.0f64))"), "0");
+    assert_eq!(x("int(-0.0f64)"), "0");
 }
 
-/// `f64` of an `int` or a `rat` is the equal float, `#overflow` beyond the largest finite `f64`
-/// and `#inexact` otherwise; the run of integers `f64` holds ends at 2^53.
+/// `f64` of an `int` or a `rat` is the nearest float, ties to even, and the infinity of its
+/// sign past the largest finite `f64` (step L1.18); the run of integers `f64` holds ends at
+/// 2^53, where `2^53 + 1` is a tie between `2^53` and `2^53 + 2` and goes to the even one.
 #[test]
 fn f64_of_an_int_or_rat_is_equal_or_fails_by_the_reason() {
     assert_eq!(x("f64(whole(2^53))"), "9007199254740992.0");
-    assert_eq!(x("f64(whole(2^53 + 1))"), "#inexact");
+    assert_eq!(x("f64(whole(2^53 + 1))"), "9007199254740992.0");
     assert_eq!(x("f64(whole(2^53 + 2))"), "9007199254740994.0");
-    assert_eq!(x("f64(whole(-(2^53) - 1))"), "#inexact");
-    assert_eq!(x("f64(whole(2^1024))"), "#overflow");
-    assert_eq!(x("f64(whole(-(2^1024)))"), "#overflow");
+    assert_eq!(x("f64(whole(2^53 + 3))"), "9007199254740996.0");
+    assert_eq!(x("f64(whole(-(2^53) - 1))"), "-9007199254740992.0");
+    assert_eq!(x("f64(whole(2^1024))"), "inf");
+    assert_eq!(x("f64(whole(-(2^1024)))"), "-inf");
     assert_eq!(x("f64(rat(whole(3)) / 4r)"), "0.75");
-    assert_eq!(x("f64(rat(whole(1)) / 3r)"), "#inexact");
-    assert_eq!(x("f64(rat(whole(-1)) / 3r)"), "#inexact");
-    assert_eq!(x("f64(rat(whole(2^1026)) / 3r)"), "#overflow");
+    assert_eq!(x("f64(rat(whole(1)) / 3r)"), "0.3333333333333333");
+    assert_eq!(x("f64(rat(whole(-1)) / 3r)"), "-0.3333333333333333");
+    assert_eq!(x("f64(rat(whole(2^1026)) / 3r)"), "inf");
     assert_eq!(x("f64(rat(whole(0)))"), "0.0");
 }
 
-/// `f32` of an `int`, a `rat` or an `f64` is the equal `f32`, `#overflow` for a finite value
-/// beyond the largest finite `f32` and `#inexact` otherwise; the run of integers ends at 2^24.
+/// `f32` of an `int`, a `rat` or an `f64` is the nearest `f32`, ties to even, and the infinity
+/// of its sign past the largest finite `f32`; the run of integers ends at 2^24.
 #[test]
 fn f32_of_an_int_rat_or_f64_is_equal_or_fails_by_the_reason() {
     assert_eq!(x("f32(whole(2^24))"), "16777216.0f32");
-    assert_eq!(x("f32(whole(2^24 + 1))"), "#inexact");
-    assert_eq!(x("f32(whole(-(2^24) - 1))"), "#inexact");
-    assert_eq!(x("f32(whole(2^128))"), "#overflow");
+    assert_eq!(x("f32(whole(2^24 + 1))"), "16777216.0f32");
+    assert_eq!(x("f32(whole(-(2^24) - 1))"), "-16777216.0f32");
+    assert_eq!(x("f32(whole(2^128))"), "inff32");
     assert_eq!(x("f32(rat(whole(1)) / 4r)"), "0.25f32");
-    assert_eq!(x("f32(rat(whole(1)) / 10r)"), "#inexact");
+    assert_eq!(x("f32(rat(whole(1)) / 10r) == 0.1f32"), "true");
     assert_eq!(x("f32(real(0.5f64))"), "0.5f32");
-    assert_eq!(x("f32(real(0.1f64))"), "#inexact");
-    assert_eq!(x("f32(real(1.0e39f64))"), "#overflow");
-    assert_eq!(x("f32(real(-1.0e39f64))"), "#overflow");
+    assert_eq!(x("f32(real(0.1f64)) == 0.1f32"), "true");
+    assert_eq!(x("f32(real(1.0e39f64))"), "inff32");
+    assert_eq!(x("f32(real(-1.0e39f64))"), "-inff32");
     assert_eq!(x("f32(real(1.0f64 / 0.0))"), "inff32");
     assert_eq!(x("f32(real(-1.0f64 / 0.0))"), "-inff32");
     assert_eq!(x("f32(real(0.0f64 / 0.0))"), "nanf32");
-    assert_eq!(x("f32(real(1.0e-50f64))"), "#inexact");
+    assert_eq!(x("f32(real(1.0e-50f64))"), "0.0f32");
+    assert_eq!(x("f32(real(-1.0e-50f64))"), "-0.0f32");
     // An `f32` is its own `f32`.
     assert_eq!(x("f32(f32(text(\"1.5\")))"), "1.5f32");
     assert_eq!(x("f32(f32(text(\"nan\")))"), "nanf32");
@@ -195,28 +202,28 @@ fn a_cast_of_a_tuple_atom_or_bool_is_a_type_error() {
 #[test]
 fn failures_merge_in_every_kind_and_in_sum() {
     assert_eq!(
-        x("int(text(\"a\")) + int(real(0.5f64)) + 1 div whole(0)"),
-        "#errs({#divByZero, #inexact, #invalid})"
+        x("int(text(\"a\")) + 1 div whole(0)"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
         x("rat(text(\"a\")) * rat(real(0.0f64 / 0.0)) + 1r / rat(whole(0))"),
         "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
-        x("f64(text(\"a\")) - f64(whole(2^53 + 1))"),
-        "#errs({#inexact, #invalid})"
+        x("f64(text(\"a\")) - f64(rat(whole(1)) / rat(whole(0)))"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
-        x("f32(text(\"1e39\")) / f32(text(\"x\"))"),
-        "#errs({#invalid, #overflow})"
+        x("f32(text(\"x\")) / f32(rat(whole(1)) / rat(whole(0)))"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
-        x("int(text(\"a\")) < int(real(0.5f64))"),
-        "#errs({#inexact, #invalid})"
+        x("int(text(\"a\")) < 1 div whole(0)"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(
-        x("sum((int(text(\"a\")), 2, int(real(0.5f64))))"),
-        "#errs({#inexact, #invalid})"
+        x("sum((int(text(\"a\")), 2, 1 div whole(0)))"),
+        "#errs({#divByZero, #invalid})"
     );
     assert_eq!(x("sum((int(text(\"a\")), int(text(\"b\"))))"), "#invalid");
     assert_eq!(
@@ -445,9 +452,9 @@ fn the_evaluator_refuses_a_word_on_a_kind_it_does_not_take() {
     }
 }
 
-/// `f32(n)` of an `int` the checker shows within ±2^24, the run of integers `f32` holds, is
-/// exact, with no `#inexact`; one past either bound keeps it, as `f64(n)` within ±2^53 does
-/// (l01_26 `exact_casts.rs`).
+/// `f32(n)` of an `int` is an `f32` with no atom, within the run of integers `f32` holds,
+/// ±2^24, and past it, where it rounds to nearest, ties to even (step L1.18); whether it
+/// rounded is the `inexact()` fact of step L10.3b, not part of the type.
 #[test]
 fn f32_of_an_int_shown_within_two_to_the_24_is_exact() {
     use zed_tests::step_helpers::l01_26_type_resolution::sig;
@@ -457,14 +464,9 @@ fn f32_of_an_int_shown_within_two_to_the_24_is_exact() {
     };
     assert_eq!(under("n >= 0 && n <= 100"), "int -> f32");
     assert_eq!(under("n >= -16777216 && n <= 16777216"), "int -> f32");
-    assert_eq!(
-        under("n >= -16777217 && n <= 16777216"),
-        "int -> f32 | #inexact"
-    );
-    assert_eq!(
-        under("n >= -16777216 && n <= 16777217"),
-        "int -> f32 | #inexact"
-    );
+    assert_eq!(under("n >= -16777217 && n <= 16777216"), "int -> f32");
+    assert_eq!(under("n >= -16777216 && n <= 16777217"), "int -> f32");
+    assert_eq!(under("true"), "int -> f32");
 }
 
 /// A string is printed as a Zed string literal that reads back as the same text (DESIGN.md

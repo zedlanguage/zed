@@ -112,7 +112,7 @@ fn a_mismatch_in_a_later_component_is_reported_in_full() {
              other kind [x < y]\nrepair: `(x[0], rat(x[1])) < y` [x < y]"
         ]
     );
-    // `f64(x[1])` may give `#inexact`, which inside a tuple is data, so no cast is offered.
+    // `f64(x[1])` rounds above 2^53 in magnitude, so no cast is offered.
     let text = "f(positional x: (int, int), positional y: (int, f64)) = x < y;\n";
     assert_eq!(
         full(text),

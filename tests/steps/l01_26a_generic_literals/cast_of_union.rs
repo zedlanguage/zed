@@ -64,14 +64,20 @@ fn repairs_check(src: &str) -> usize {
 #[test]
 fn a_cast_takes_each_value_of_a_call_at_its_own_arrow() {
     // The case of the item: `f64` has arrows at `int` and at `f64`, and each value has one.
-    for (c, f, i) in [("true", "1.0", "1"), ("false", "2.5", "#inexact")] {
+    for (c, f) in [("true", "1.0"), ("false", "2.5")] {
         let src = format!("{FORCED}\ny = f64(g({c}));\n");
         assert_eq!(y_type(&src), "f64");
         assert_eq!(value(&src, "y"), f);
-        let src = format!("{FORCED}\ny = int(g({c}));\n");
-        // Neither value is text, so neither gives `#invalid` (item CAST-literal-exact).
-        assert_eq!(y_type(&src), "int | #inexact");
-        assert_eq!(value(&src, "y"), i);
+        // `g(c)` may be 2.5, which is not whole, so `int` of it is rejected (step L1.18).
+        let errors = type_errors(&format!("{FORCED}\ny = int(g({c}));\n"));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].starts_with(&format!(
+                "No `int` equals the value: `int(g({c}))`. Try `round(g({c}))` instead."
+            )),
+            "{}",
+            errors[0]
+        );
     }
     // As the `if` itself is, and as a `rat` value is at the `rat` arrow.
     assert_eq!(y_type("y = f64(if true { 1 } else { 2.5f64 });\n"), "f64");
@@ -103,7 +109,7 @@ fn a_call_beside_an_operand_of_one_carrier_is_still_read_at_it() {
 fn a_cast_reads_a_decimal_a_call_returns_at_f64() {
     for (word, v) in [
         ("f64", "2.5"),
-        ("int", "#inexact"),
+        ("round", "2"),
         ("abs", "2.5"),
         ("String", "\"2.5\""),
     ] {
@@ -181,9 +187,8 @@ fn a_value_no_arrow_of_the_cast_takes_is_rejected_and_named() {
 #[test]
 fn every_repair_offered_checks_as_written() {
     // `scalar` takes an `int`. With the suffix, or a bare decimal, which the call reads at
-    // `f64`, `int(g(true))` checks. Whether it is offered is not pinned: it can give
-    // `#inexact`, and a cast that can fail is not to be offered (author, 2026-11-12; follow-up
-    // MSG-concise-style). Whatever is offered checks. (A bare decimal was rejected where the
+    // `f64`, `round(g(true))` checks, and `int(g(true))` does not: `g` may give 2.5, which is
+    // not whole (step L1.18). Whatever is offered checks. (A bare decimal was rejected where the
     // call is used, so no wrap there checked; since it takes `f64` (author decision
     // 2026-11-12) what stays rejected in `g` is a division of integer literals, which is
     // rejected in `g`'s body whatever wraps its uses.)
@@ -191,7 +196,8 @@ fn every_repair_offered_checks_as_written() {
         let src = format!("{g}\ny = scalar(g(true));\n");
         assert!(!type_errors(&src).is_empty(), "{src}");
         repairs_check(&src);
-        assert!(type_errors(&format!("{g}\ny = scalar(int(g(true)));\n")).is_empty());
+        assert!(type_errors(&format!("{g}\ny = scalar(round(g(true)));\n")).is_empty());
+        assert!(!type_errors(&format!("{g}\ny = scalar(int(g(true)));\n")).is_empty());
     }
     // `String` takes every carrier; the wrap in `String` is offered, and checks.
     for g in [FORCED, BARE] {
