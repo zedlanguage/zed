@@ -2453,3 +2453,25 @@ fn a_meet_of_functions_over_a_function_domain_and_another_domain_is_empty() {
         "`{text}` reads as `{t}`"
     );
 }
+
+/// FAIL-types-met-bindable-partial-narrow: a function of `((int ->? B) & (int -> int | f64 |
+/// bool)) for B in int | f64` answers each `int` in `int | f64 | bool`, and in `B` at the one
+/// carrier its call fixes, so it is an `int -> int` (at `B = int`) and an `int -> f64` (at `B =
+/// f64`). Before, `B` was read only as `int | f64`, and neither held. Controls, each a no: `int
+/// -> bool`, which no carrier of `B` narrows to; and the same with `B` also in the partial
+/// arrow's parameter, `(B ->? B) & (int -> int | f64 | bool)`, where a call may take the `int`
+/// key with `B = f64`, so its answer is not narrowed.
+#[test]
+fn a_bounded_variable_of_a_partial_arrows_value_type_narrows_at_each_carrier() {
+    use zedc::check::read::parse_type;
+    let s = parse_type("((int ->? B) & (int -> int | f64 | bool)) for B in int | f64").unwrap();
+    for r in ["int", "f64"] {
+        let q = parse_type(&format!("int -> {r}")).unwrap();
+        assert!(s.subtype(&q), "`{s}` is an `{q}`");
+    }
+    let q = parse_type("int -> bool").unwrap();
+    assert!(!s.subtype(&q), "`{s}` is not an `{q}`");
+    let s = parse_type("((B ->? B) & (int -> int | f64 | bool)) for B in int | f64").unwrap();
+    let q = parse_type("int -> int").unwrap();
+    assert!(!s.subtype(&q), "`{s}` is not an `{q}`");
+}

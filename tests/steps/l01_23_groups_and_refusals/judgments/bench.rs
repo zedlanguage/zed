@@ -578,3 +578,39 @@ fn a_row_against_shapes_whose_pieces_all_rest_on_forks_is_decided_in_linear_time
         assert!(left.subtype(right));
     });
 }
+
+/// A bounded overload over `n` atoms, `((#k0 | … | #k(n-1)) ->? B) & ((#k0 | … | #k(n-1)) ->
+/// int | f64 | bool) for B in int | f64`, against `n` arrows `(#ki -> int)`
+/// (FAIL-types-met-bindable-partial-narrow): each arrow of `q` is covered by the meet of the
+/// exact arrow with the partial arrow at `B = int`. The partial arrows are read at each carrier
+/// of `B` once for the comparison (`Cx::open`, `Narrowing`), not once per arrow of `q`. With
+/// `-> bool` in place of `-> int` in `q`, no binding narrows to it, and the answer is no.
+#[test]
+fn a_bounded_partial_arrow_narrowing_many_arrows_is_compared_in_linear_time() {
+    use zedc::check::read::parse_type;
+    let n = 64;
+    let pairs = scaling::inputs(n, |n| {
+        let atoms = (0..n)
+            .map(|i| format!("#k{i}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let s = format!("(({atoms}) ->? B) & (({atoms}) -> int | f64 | bool) for B in int | f64");
+        let q = |r: &str| {
+            let q: Vec<String> = (0..n).map(|i| format!("(#k{i} -> {r})")).collect();
+            parse_type(&q.join(" & ")).unwrap()
+        };
+        (parse_type(&s).unwrap(), q("int"), q("bool"))
+    });
+    scaling::check("a bounded partial arrow narrowing n arrows", n, |m| {
+        let (s, q, _) = &pairs[&m];
+        assert!(s.subtype(q));
+    });
+    scaling::check(
+        "a bounded partial arrow narrowing none of n arrows",
+        n,
+        |m| {
+            let (s, _, bool_q) = &pairs[&m];
+            assert!(!s.subtype(bool_q));
+        },
+    );
+}

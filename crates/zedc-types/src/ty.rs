@@ -5894,6 +5894,9 @@ struct Cx<'s> {
     /// ([`fits_in`]): the permission an instance of an arrow of `s` is compared with where it
     /// is not within the arrow of `q` it covers alone ([`instance_within`]).
     q_arrows: Arc<[Arrow]>,
+    /// The partial arrows of `s` as read, in the innermost comparison of function types open
+    /// now ([`fits_in`]), again at each instance [`Cx::open`] reads them at ([`Narrowing`]).
+    narrow_at: Vec<Vec<Arrow>>,
     /// For each instance compared with all of `q_arrows` ([`within_q`]), by its parameter types,
     /// whether it is within them, in the innermost comparison of function types open now.
     within_q: HashMap<Vec<Ty>, bool>,
@@ -8157,7 +8160,7 @@ impl<'m, 's> Comparing<'m, 's> {
         // The same two functions met under other names (FAIL-types-fn-outer-variable-nest).
         // Proof that the kept verdict is this one: [`fits_in`] of `s` by `se` and `q` by `qe`
         // reads, besides the two signatures and readings, only state it sets itself (`free`,
-        // `wide`, `bind_none`, `witnessed`, `q_arrows`, `within_q`, and `compared` by
+        // `wide`, `bind_none`, `witnessed`, `q_arrows`, `narrow_at`, `within_q`, and `compared` by
         // [`Cx::open`]), `solve`, fixed for the comparison, memos keyed by nodes or by names
         // (`kept_rows`, `kept_compared`, `bound_fns`, `fitted`), which answer alike wherever
         // they are read, names it makes, and the names the two hold or their readings name. A
@@ -8209,10 +8212,10 @@ impl<'m, 's> Comparing<'m, 's> {
     /// a signature of either nest holds outside functions is its own, so no reading of a scope
     /// around is ever looked up, and neither are the rigid bounds, own bounds or names kept
     /// there (`rigid`, `own_bounds`, `owned`). The other state [`fits_in`] reads (`wide`,
-    /// `free`, `bind_none`, `witnessed`, `q_arrows`, `within_q`, `compared`) it sets for itself
-    /// and gives back; the memos `fitted` and `fitted_written` start empty in the state of its
-    /// own and are dropped with it, so none of their names is read outside it. The rows read
-    /// once for the whole comparison and their names (`kept_rows`, `kept_read`,
+    /// `free`, `bind_none`, `witnessed`, `q_arrows`, `narrow_at`, `within_q`, `compared`) it
+    /// sets for itself and gives back; the memos `fitted` and `fitted_written` start empty in
+    /// the state of its own and are dropped with it, so none of their names is read outside it.
+    /// The rows read once for the whole comparison and their names (`kept_rows`, `kept_read`,
     /// `kept_compared`, `fns`, `closed`) are carried into the state of its own and back
     /// (PERF-types-shared-row-bench-2ec6b9418), which changes no verdict: (a) the comparison
     /// inside looks up `fns` and `closed` only by the variables of the types it reads, and
@@ -13279,7 +13282,8 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if !same_params {
         return false;
     }
-    let (mark, sas, qas, renamed, free, wide) = c.cx.borrow_mut().open(s, se, q, qe);
+    let (mark, sas, qas, renamed, free, wide, narrow_at) = c.cx.borrow_mut().open(s, se, q, qe);
+    let outer_narrow_at = std::mem::replace(&mut c.cx.borrow_mut().narrow_at, narrow_at);
     let qas: Arc<[Arrow]> = qas.into();
     let outer = std::mem::replace(&mut c.cx.borrow_mut().free, free);
     let outer_wide = std::mem::replace(&mut c.cx.borrow_mut().wide, wide);
@@ -13327,6 +13331,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     cx.bind_none = outer_bind_none;
     cx.witnessed = outer_witnessed;
     cx.q_arrows = outer_q_arrows;
+    cx.narrow_at = outer_narrow_at;
     cx.within_q = outer_within_q;
     cx.forget(mark);
     fits
@@ -13422,6 +13427,7 @@ impl Cx<'_> {
         Option<Masks>,
         SortedNames,
         Binds,
+        Vec<Vec<Arrow>>,
     ) {
         let cx = self;
         let mark = Mark {
@@ -13513,13 +13519,47 @@ impl Cx<'_> {
         };
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
+        // The partial arrows of `s` again at each carrier of the one bounded own variable read
+        // as its mask above that stands in their value types and nowhere else
+        // (FAIL-types-met-bindable-partial-narrow; [`Narrowing`], with the proof). Cost: a test
+        // of the bound per own variable; one walk of the arrows of `s`, and a reading of its
+        // partial arrows per carrier, only where such a variable has several carriers.
+        let mut narrow_at = Vec::new();
+        let loose: Vec<(&Arc<str>, u8)> = (s.own.iter())
+            .filter_map(|v| {
+                let m = *s.bounds.get(v)?;
+                (!s.held.contains(v) && !one(m) && m & OTHER == 0).then_some((v, m))
+            })
+            .collect();
+        if !loose.is_empty() && s.arrows.iter().any(|a| a.partial) {
+            let (mut inside, mut outside) = (Vars::default(), Vars::default());
+            for a in &s.arrows {
+                a.params.iter().for_each(|p| p.vars_in(&mut outside));
+                a.result.vars_in(match a.partial {
+                    true => &mut inside,
+                    false => &mut outside,
+                });
+            }
+            s.needs.iter().for_each(|n| n.vars_in(&mut outside));
+            let only: Vec<&(&Arc<str>, u8)> = (loose.iter())
+                .filter(|(v, _)| inside.contains(v) && !outside.contains(v))
+                .collect();
+            if let [&(v, m)] = only[..] {
+                for k in Carrier::of_mask(m) {
+                    let mut at = se.clone();
+                    at.insert(v.clone(), Read::Mask(k.bit()));
+                    let partial = s.arrows.iter().filter(|a| a.partial);
+                    narrow_at.push(partial.map(|a| read(a, &at, cx)).collect());
+                }
+            }
+        }
         if !several.is_empty() {
             for v in repeated(&qas, &several, &cx.fns) {
                 wide.remove(&v);
             }
         }
         free.sort();
-        (mark, sas, qas, renamed, free.into(), wide)
+        (mark, sas, qas, renamed, free.into(), wide, narrow_at)
     }
 
     /// For each function of `fns` in `result`, the result of an arrow of `s` as read, that
@@ -13920,7 +13960,7 @@ async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, 
         qas
     };
     if !sas.iter().chain(qas).any(|a| a.partial) {
-        if !cover(s, sas, &[], qas, c).await {
+        if !cover(s, sas, &Narrowing::default(), qas, c).await {
             return false;
         }
     } else {
@@ -13952,14 +13992,19 @@ async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, 
         };
         let (vsas, vqas) = (valued(sas), valued(qas));
         // The partial arrows of `s`, with their value types, narrow what its exact arrows
-        // answer where they take all of an arrow of `q` ([`met`]).
-        let narrow: Vec<Arrow> = vsas.iter().filter(|a| a.partial).cloned().collect();
+        // answer where they take all of an arrow of `q` ([`met`]), as read and at each
+        // instance [`Cx::open`] kept.
+        let value = |a: &Arrow| Arrow {
+            result: a.value().into_owned(),
+            ..a.clone()
+        };
+        let narrow = Narrowing::new(sas, value, c);
         if !cover(s, &exact(sas), &narrow, &exact(qas), c).await {
             return false;
         }
         for qa in vqas.iter().filter(|a| a.partial) {
             let before = c.begin_alone();
-            let ok = cover(s, &vsas, &[], std::slice::from_ref(qa), c).await;
+            let ok = cover(s, &vsas, &Narrowing::default(), std::slice::from_ref(qa), c).await;
             let why = c.end_alone(before);
             if ok && why.is_none() {
                 continue;
@@ -14754,7 +14799,7 @@ async fn arrow_permitted<'m, 'q>(
 async fn cover<'m>(
     s: &Sig,
     sas: &[Arrow],
-    narrow: &[Arrow],
+    narrow: &Narrowing,
     qas: &[Arrow],
     c: &'m Comparing<'m, '_>,
 ) -> bool {
@@ -15120,7 +15165,7 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
 async fn covered<'m>(
     s: &Sig,
     sas: &[Arrow],
-    narrow: &[Arrow],
+    narrow: &Narrowing,
     index: &ArrowIndex<'_>,
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
@@ -15272,16 +15317,20 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// (above); leaving one out makes the intersection larger, so a yes without it is a yes with
 /// it, and leaving out never makes a yes. Test, a bindable variable in the partial arrow's
 /// parameter and in its value type: `a_partial_arrow_holding_a_bindable_variable_narrows_nothing`.
-/// A known wrong no: `((x0: int) ->? B) & ((x0: int) -> int | f64 | bool) for B in int |
-/// f64` is refused for `(x0: int) -> int`, which it fits at `B = int`
-/// (FAIL-types-met-bindable-partial-narrow). Before, a partial arrow of `s` took no part in covering an
-/// exact arrow of `q`, so `(int ->? #b) & (int -> _)` was refused as within `int -> #b`.
+/// A bounded own variable of `s` that no parameter holds, read as its mask, the union of its
+/// carriers, is also tried at each carrier, where it is the only such variable and stands in
+/// the value types of partial arrows only ([`Narrowing`], with its proof): `((x0: int) ->? B) &
+/// ((x0: int) -> int | f64 | bool) for B in int | f64` fits `(x0: int) -> int` at `B = int`
+/// (FAIL-types-met-bindable-partial-narrow). Elsewhere the mask alone is joined, a wrong no
+/// where an instance would have narrowed. Before, a partial arrow of `s` took no part in
+/// covering an exact arrow of `q`, so `(int ->? #b) & (int -> _)` was refused as within `int ->
+/// #b`.
 /// Cost: one comparison of the parameters per partial arrow of `s`, which a family or a
 /// bounded morphism has one or two of.
 async fn met<'m>(
     s: &Sig,
     sas: &[Arrow],
-    narrow: &[Arrow],
+    narrow: &Narrowing,
     cands: &[usize],
     qa: &Arrow,
     c: &'m Comparing<'m, '_>,
@@ -15292,7 +15341,10 @@ async fn met<'m>(
         return false;
     }
     let mut narrowed: Vec<Ty> = Vec::new();
-    for pa in narrow {
+    // The same value types at each instance of [`Narrowing::at`], and whether one differs.
+    let mut at: Vec<Vec<Ty>> = vec![Vec::new(); narrow.at.len()];
+    let mut differs = false;
+    for (i, pa) in narrow.arrows.iter().enumerate() {
         let free = {
             let cx = c.cx.borrow();
             !holds_bindable(s, pa, &cx)
@@ -15310,8 +15362,17 @@ async fn met<'m>(
         }
         if takes {
             narrowed.push(pa.result.clone());
+            for (k, instance) in narrow.at.iter().enumerate() {
+                let r = &instance[i].result;
+                differs |= *r != pa.result;
+                at[k].push(r.clone());
+            }
         }
     }
+    // The value types to join: as read, then at each instance where one of them differs.
+    let tries: Vec<Vec<Ty>> = std::iter::once(narrowed)
+        .chain(at.into_iter().filter(|_| differs))
+        .collect();
     // The results of the arrows that take all of `qa`, and, at each parameter, the parameter
     // types of the arrows within and of those outside, with their results.
     let mut whole: Vec<Ty> = Vec::new();
@@ -15331,11 +15392,13 @@ async fn met<'m>(
         }
     }
     if !whole.is_empty() {
-        whole.extend(narrowed.iter().cloned());
-        if meet_within(&whole, &qa.result, c).await {
-            return true;
+        for narrowed in &tries {
+            whole.extend(narrowed.iter().cloned());
+            if meet_within(&whole, &qa.result, c).await {
+                return true;
+            }
+            whole.truncate(whole.len() - narrowed.len());
         }
-        whole.truncate(whole.len() - narrowed.len());
     }
     // At a parameter no arrow outside takes a part of, `H` is the arrows that take all of `qa`.
     for (&j, parts) in &outside {
@@ -15353,14 +15416,69 @@ async fn met<'m>(
             }
         }
         if !h.is_empty() {
-            h.extend(narrowed.iter().cloned());
-            if meet_within(&h, &qa.result, c).await {
-                return true;
+            for narrowed in &tries {
+                h.extend(narrowed.iter().cloned());
+                if meet_within(&h, &qa.result, c).await {
+                    return true;
+                }
+                h.truncate(h.len() - narrowed.len());
             }
         }
     }
     uncovered(refused, c);
     false
+}
+
+/// The partial arrows of `s` in a comparison of function types, each with its value type as its
+/// result, that narrow what its exact arrows answer ([`met`]), and the same arrows at each
+/// instance of `s` that [`Cx::open`] makes for them (`at`, [`Cx::narrow_at`]), each list in the
+/// order of `arrows` (FAIL-types-met-bindable-partial-narrow).
+///
+/// [`Cx::open`] reads a bounded own variable of `s` that no parameter holds as its mask, the
+/// union of its carriers, at every place; for one that stands in the value types of partial
+/// arrows and nowhere else, it also reads those arrows with the variable read as each carrier
+/// of its bound. So `((x0: int) ->? B) & ((x0: int) -> int | f64 | bool)` for `B in int |
+/// f64`, read with `B` as `int | f64`, meets `(x0: int) -> int | f64`, which is not within
+/// `(x0: int) -> int`, and at `B = int` it meets `(x0: int) -> int`, which is.
+///
+/// Proof that a yes at an instance is a yes. A function of `s` is of each instance of `s`: `s`
+/// is the type of the value compared, and a call of it fixes the variable to one carrier of its
+/// bound (rule 6 of sec:type_resolution), whichever the call gives, so the value works at each.
+/// One instance suffices to cover one arrow of `q`: a value of every instance is of each arrow
+/// of `q` some instance covers, so of their intersection, as [`instance_within`] tries each
+/// binding ([`unbound_carriers`]). Here the variable stands in no exact arrow and in no
+/// parameter of a partial arrow, so the instance at a carrier has the exact arrows of `s` as
+/// read, which [`met`] intersects, and the partial arrows of `at`, whose value types [`met`]
+/// joins as it joins those read with the mask (proof at [`met`]). The value types read with the
+/// mask hold those of each instance, so [`met`] tries them first and the instances only after
+/// a no. A bound with values of no carrier (`OTHER`) takes other types, which are not tried,
+/// and a variable that stands elsewhere, or a second such variable, gives no instances: the
+/// mask alone, a wrong no where an instance would narrow, as before.
+///
+/// Complexity tradeoff: the naive way, every binding of every such variable, is the product of
+/// their bounds; used: one variable, at most six instances (one per carrier), each a copy of
+/// the partial arrows of `s`, which a family or a bounded morphism has one or two of, made once
+/// for the comparison by [`Cx::open`]; [`met`] then makes one more [`meet_within`] per instance
+/// at each of its two places, only where an instance's value type differs from the one read.
+#[derive(Default)]
+struct Narrowing {
+    arrows: Vec<Arrow>,
+    at: Vec<Vec<Arrow>>,
+}
+
+impl Narrowing {
+    /// The partial arrows of `sas`, the arrows of `s` as [`Cx::open`] read them, each with its
+    /// value type as its result (`value`), and the same at each instance it kept, in the order
+    /// of `s`'s partial arrows, which is theirs in `sas`. An instance list of another length
+    /// would not be of these arrows, and is left out.
+    fn new(sas: &[Arrow], value: impl Fn(&Arrow) -> Arrow, c: &Comparing<'_, '_>) -> Narrowing {
+        let arrows: Vec<Arrow> = sas.iter().filter(|a| a.partial).map(&value).collect();
+        let at = (c.cx.borrow().narrow_at.iter())
+            .filter(|instance| instance.len() == arrows.len())
+            .map(|instance| instance.iter().map(&value).collect())
+            .collect();
+        Narrowing { arrows, at }
+    }
 }
 
 /// Whether the intersection of `results` is within `result`. A result that holds `_` is left
@@ -19334,7 +19452,7 @@ mod tests {
     pub(super) async fn reference<'m>(
         s: &Sig,
         sas: &[Arrow],
-        narrow: &[Arrow],
+        narrow: &Narrowing,
         qas: &[Arrow],
         c: &'m Comparing<'m, '_>,
     ) -> bool {
@@ -20511,6 +20629,38 @@ mod tests {
             s.note_held();
             assert!(!fits_sig(&s, &q), "{s} in {q}");
         }
+    }
+
+    /// FAIL-types-met-bindable-partial-narrow: `((x0: int) ->? B) & ((x0: int) -> int | f64 |
+    /// bool)` for `B in int | f64` holds `(x0: int) -> int` at `B = int`, where it is the meet
+    /// of `(x0: int) ->? int` and the exact arrow, and `(x0: int) -> f64` at `B = f64`
+    /// ([`Narrowing`]). Controls, each a no: `(x0: int) -> bool`, which no binding of
+    /// `B` narrows to; `B in bool | f64` against `(x0: int) -> int`
+    /// (`a_partial_arrow_holding_a_bindable_variable_narrows_nothing`); and `B` also in the
+    /// partial arrow's parameter, which [`met`] leaves out.
+    #[test]
+    fn a_partial_arrow_holding_a_bindable_variable_narrows_at_its_binding() {
+        let int = Ty::carrier(Carrier::Int);
+        let f64 = Ty::carrier(Carrier::F64);
+        let bool = Ty::carrier(Carrier::Bool);
+        let wide = int.union(&bool).union(&f64);
+        let exact = Arrow::exact(vec![int.clone()], wide);
+        let q = |r: &Ty| sig(vec![Arrow::exact(vec![int.clone()], r.clone())], 1, false);
+        let b = Ty::var("B".into());
+        let with = |pa: Arrow| {
+            let mut s = sig(vec![pa, exact.clone()], 1, true);
+            s.bounds
+                .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
+            s.note_held();
+            s
+        };
+        let s = with(Arrow::partial_of(vec![int.clone()], b.clone()));
+        for r in [&int, &f64] {
+            assert!(fits_sig(&s, &q(r)), "{s} in {}", q(r));
+        }
+        assert!(!fits_sig(&s, &q(&bool)), "{s} in {}", q(&bool));
+        let s = with(Arrow::partial_of(vec![b.clone()], b));
+        assert!(!fits_sig(&s, &q(&int)), "{s} in {}", q(&int));
     }
 
     /// An overload with a bounded variable fits where one of its arrows is expected
