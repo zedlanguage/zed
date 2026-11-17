@@ -23,9 +23,10 @@ fn each_form_round_trips() {
             "f(n) = loop t {\n  while t < n;\n  initial x = 0;\n  x' = x + 1;\n};\n",
         ),
         ("f(x) = loop {   };", "f(x) = loop { };\n"),
+        ("f(n) = loop { break ; };", "f(n) = loop {\n  break;\n};\n"),
         (
-            "f(n) = loop { break n; };",
-            "f(n) = loop {\n  break n;\n};\n",
+            "f(n) = loop{if n>1{break;}else{};};",
+            "f(n) = loop {\n  if n > 1 {\n    break;\n  } else { };\n};\n",
         ),
         ("f(x) = loop { x };", "f(x) = loop { x };\n"),
         (
@@ -84,25 +85,11 @@ fn guards_are_written_where_their_timing_is() {
 #[test]
 fn parentheses_where_the_grammar_needs_them() {
     check(&[
-        // A `break` is a whole expression, like a lambda.
-        ("f(c, x) = c || (break x);", "f(c, x) = c || (break x);\n"),
-        (
-            "f(x) = loop { break (y -> y); };",
-            "f(x) = loop {\n  break (y -> y);\n};\n",
-        ),
-        (
-            "f(x) = loop { break (x else 0); };",
-            "f(x) = loop {\n  break x else 0;\n};\n",
-        ),
-        (
-            "f(x) = loop { y = (break x) else 0; };",
-            "f(x) = loop {\n  y = (break x) else 0;\n};\n",
-        ),
         // A `loop` has no head, so it takes a suffix or an operator as a block does; in an `if`
         // condition its block would open the branch, so there it is parenthesized.
         (
-            "f(x) = (loop { break 1; })::len;",
-            "f(x) = loop {\n  break 1;\n}::len;\n",
+            "f(x) = (loop { break; })::len;",
+            "f(x) = loop {\n  break;\n}::len;\n",
         ),
         ("f(x) = loop { x }.v + 1;", "f(x) = loop { x }.v + 1;\n"),
         (

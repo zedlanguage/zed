@@ -2156,8 +2156,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_) => unreachable!(
-                "name resolution rejects every `initial` statement, indexed definition, while and until before the checker reads the program"
+            | StmtKind::Until(_)
+            | StmtKind::Break => unreachable!(
+                "name resolution rejects every `initial` statement, indexed definition, while, until and break before the checker reads the program"
             ),
             StmtKind::Expr(value) => {
                 m.k(Frame::ExprStmt(s));
@@ -2183,9 +2184,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The expression statement `s`, whose value is of `v` (DESIGN.md sec:tour_methods,
-    /// "Statement position must write something, and drop nothing"): a call that pushes to a
-    /// port on every path ([`super::ports::silent_tail`]) and gives nothing but the push's
-    /// acknowledgment, which is not a declared result. Otherwise it is the row "Statement that
+    /// "Statement position must write something, and drop nothing"): each path writes to a port
+    /// or does nothing, at least one writes ([`super::ports::silent_tail`]), and the value is
+    /// nothing but the push's acknowledgment, which is not a declared result. Otherwise it is the row "Statement that
     /// writes nothing, or drops a declared result". The value is dropped, so no name is
     /// bound and nothing else is checked here: `say("hi", out: m.stdout);` means
     /// `_ = say("hi", out: m.stdout);`, whose value has no loose atom to drop.
@@ -2202,7 +2203,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             _ => None,
         };
-        if let Some(tail) = super::ports::silent_tail(value, self.t.res, &self.port_writers) {
+        let silent = super::ports::silent_tail(value, self.t.res, &self.port_writers);
+        if let Some(super::ports::Silent::NoWrite) = silent {
+            let shown = code(value);
+            self.rejects_with(
+                Row::WritesNothing,
+                s.span,
+                format!("Statement has no effect: `{shown}` writes to no port on any path."),
+                vec![Note {
+                    span: value.span,
+                    text: "repair: delete the statement, which changes nothing the program gives"
+                        .into(),
+                }],
+            );
+            return;
+        }
+        if let Some(super::ports::Silent::Drops(tail)) = silent {
             let shown = code(tail);
             let why = match callee(tail) {
                 Some(f) => {
@@ -3693,9 +3709,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::SortKey { .. } => unreachable!(
                 "name resolution rejects every sort key before the checker reads the program"
             ),
-            ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
+            ExprKind::Loop { .. } | ExprKind::Spread { .. } => {
                 unreachable!(
-                    "name resolution rejects every loop, break and spread before the checker reads the program"
+                    "name resolution rejects every loop and spread before the checker reads the program"
                 )
             }
             // A `rat` literal is decorated and keeps its carrier.

@@ -54,10 +54,10 @@ pub(super) fn body(n: usize) -> String {
     format!("f(n) = loop t {{ {} }};\n", stmts.join(" "))
 }
 
-/// `f(n) = loop t0 { loop t1 { … loop { break n; }; … }; };`, `n` loops nested, `n >= 1`.
+/// `f(n) = loop t0 { loop t1 { … loop { break; }; … }; };`, `n` loops nested, `n >= 1`.
 pub(super) fn nested(n: usize) -> String {
     let opens: String = (0..n).map(|i| format!("loop t{i} {{ ")).collect();
-    format!("f(n) = {opens}break n;{};\n", " };".repeat(n - 1) + " }")
+    format!("f(n) = {opens}break;{};\n", " };".repeat(n - 1) + " }")
 }
 
 /// `x[i in 0..<1] = cold(i); x[i in 1..<2] = x[i - 1] + 1; …`, a piecewise definition of `n`

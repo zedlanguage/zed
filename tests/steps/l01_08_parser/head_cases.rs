@@ -78,11 +78,13 @@ pub const HEAD_CASES: &[(&str, &str)] = &[
         "if loop t { until true; } == 0 { 1 } else { 2 }",
         "(if ((loop t ({ (until true ;) })) == 0) ({ 1 }) else ({ 2 }))",
     ),
-    // `break` is an `Expr`, not a primary: it is no operand of `||`, and stands in a body.
+    // `break;` is a statement, not an expression: it is no operand of `||`, takes no value,
+    // and stands in a body.
     ("if c || break { 1 } else { 2 }", "ERROR"),
+    ("if c { break 1 } else { 2 }", "ERROR"),
     (
-        "if c { break 1 } else { 2 }",
-        "(if c ({ (break 1) }) else ({ 2 }))",
+        "if c { break; } else { 2 }",
+        "(if c ({ break ; }) else ({ 2 }))",
     ),
     // Outside a head an `else` tail takes a block: in an arm body, an arm guard, a block.
     (

@@ -2,6 +2,7 @@
 //! its default run (TEST-bench-move-rest). Each check they make besides the ratio is made at
 //! small sizes by a correctness test of the module whose name each file bears.
 
+mod breaks;
 mod carry_forward;
 mod initial;
 mod scaling;

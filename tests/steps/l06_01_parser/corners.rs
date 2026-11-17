@@ -9,12 +9,12 @@ use super::{check, refused};
 fn a_loop_with_and_without_a_step_name() {
     check(&[
         (
-            "f(x) = loop i { break i; };",
-            "(def f (x) = (loop i (block (do (break i)))))",
+            "f(x) = loop i { break; };",
+            "(def f (x) = (loop i (block (break))))",
         ),
         (
-            "f(x) = loop { break x; };",
-            "(def f (x) = (loop (block (do (break x)))))",
+            "f(x) = loop { break; };",
+            "(def f (x) = (loop (block (break))))",
         ),
         // The step name is a name, not a keyword or an expression.
         ("f(x) = loop while { };", "syntax"),
@@ -22,20 +22,21 @@ fn a_loop_with_and_without_a_step_name() {
     ]);
 }
 
-/// `break` ends the innermost loop; a step name names the step index (DESIGN.md
-/// sec:generations), so an inner `break i` reads the outer loop's step.
+/// `break;` ends the innermost loop; a step name names the step index (DESIGN.md
+/// sec:generations), so an inner loop's guard reads the outer loop's step, and a `break;` in
+/// the inner loop's body, at any depth, is placed there.
 #[test]
 fn nested_loops_whose_break_reads_the_outer_step() {
     check(&[
         (
-            "f(n) = loop i { loop j { until j > n; break i; }; };",
-            "(def f (n) = (loop i (block (do (loop j (block (do (break i)) (until (> \
-             j n))))))))",
+            "f(n) = loop i { loop j { until j > n + i; break; }; };",
+            "(def f (n) = (loop i (block (do (loop j (block (break) (until (> j (+ n \
+             i)))))))))",
         ),
         (
-            "f(n) = loop i { initial r = 0; r' = loop j { break i + j; }; };",
-            "(def f (n) = (loop i (block (initial (r) 0) (= (r') (loop j (block (do (break (+ i \
-             j)))))))))",
+            "f(n) = loop i { initial r = 0; r' = loop j { if j > i { break; } else { }; }; };",
+            "(def f (n) = (loop i (block (initial (r) 0) (= (r') (loop j (block (do (if (> j i) \
+             (block (break)) (block)))))))))",
         ),
     ]);
 }

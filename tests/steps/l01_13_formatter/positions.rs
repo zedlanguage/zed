@@ -65,7 +65,11 @@ fn each_parenthesis_a_position_needs_is_kept() {
         HEAD_CASES
             .iter()
             .filter(|(_, tree)| *tree != "ERROR")
-            .map(|(text, _)| format!("h(x, y, xs, ys, a, b, c, p, v, s) = {text};")),
+            // A `break;` ends only a loop whose body holds it (LOOP-break-stmt).
+            .map(|(text, _)| match text.contains("break;") {
+                true => format!("h(x, y, xs, ys, a, b, c, p, v, s) = loop {{ z = {text}; }};"),
+                false => format!("h(x, y, xs, ys, a, b, c, p, v, s) = {text};"),
+            }),
     );
     let (mut wrong, mut built, mut refused) = (Vec::new(), 0, 0);
     for unit in &units {

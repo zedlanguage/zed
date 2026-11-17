@@ -251,6 +251,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | StmtKind::Method(_)
             | StmtKind::Import(_)
             | StmtKind::Local(_)
+            | StmtKind::Break
             | StmtKind::UnitAnnot(_) => {}
         }
     }
@@ -436,7 +437,6 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::Map(_)
             | ExprKind::For { .. }
             | ExprKind::Loop { .. }
-            | ExprKind::Break(_)
             | ExprKind::Spread { .. }
             | ExprKind::SortKey { .. } => Kind::Top,
         };

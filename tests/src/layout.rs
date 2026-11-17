@@ -179,7 +179,6 @@ fn expr_kids<'a>(
         | ExprKind::Member { of: a, .. }
         | ExprKind::Read { of: a, .. }
         | ExprKind::Loop { body: a, .. }
-        | ExprKind::Break(a)
         | ExprKind::Spread { of: a, .. } => out.push(a),
         ExprKind::SortKey { key, .. } => out.extend(key.as_deref()),
         ExprKind::Binary(_, a, b)
@@ -281,7 +280,7 @@ fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a
             zedc::ast::Field::Typed { default, .. } => default.as_ref(),
             zedc::ast::Field::Import { .. } => None,
         })),
-        StmtKind::Type(_) | StmtKind::Import(_) => {}
+        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
         StmtKind::Annotated { annots, decl } => {
             for a in annots {
                 out.extend(&a.positional);

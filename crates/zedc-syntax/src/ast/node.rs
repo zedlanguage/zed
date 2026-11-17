@@ -210,8 +210,6 @@ pub enum ExprKind {
         /// The body, a block that need not export.
         body: Box<Expr>,
     },
-    /// `break e`: ends the loop, `e` its result.
-    Break(Box<Expr>),
     /// `c*.m`: the member `m` of `c` called so that it writes `c'`.
     Spread {
         /// The receiver.
@@ -519,6 +517,9 @@ pub enum StmtKind {
     While(Expr),
     /// `until c;`, the guard tested after each step.
     Until(Expr),
+    /// `break;`, which ends the innermost `loop` or `for` around it and takes no value
+    /// (DESIGN.md sec:generations, "`break;`").
+    Break,
     /// `e;`, an expression statement, which may write a generation, as `c*.tick();` does.
     Expr(Expr),
     /// `return e;` or `return a, b;`, the block's export; a trailing expression is `return e;`.
@@ -839,6 +840,7 @@ impl StmtKind {
             | StmtKind::IndexedDef(_)
             | StmtKind::Push { .. }
             | StmtKind::Expr(_)
+            | StmtKind::Break
             | StmtKind::Function(_)
             | StmtKind::Method(_)
             | StmtKind::Struct(_)

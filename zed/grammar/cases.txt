@@ -192,7 +192,7 @@ Expr ::: a + b >< f ::: ((a + b) (>< f))
 Expr ::: x is int | #none ::: (x is (int | #none))
 Expr ::: m into (asc k -> v) ::: (m (into ( ((asc k) -> v) )))
 Expr ::: a into (x.id && y.id -> v) ::: (a (into ( (((x (. id)) && (y (. id))) -> v) )))
-Expr ::: break x ::: (break x)
+Expr ::: break x ::: ERROR
 Expr ::: this.x ::: (this (. x))
 Expr ::: m into (desc s, asc n -> v) ::: (m (into ( (((desc s) , (asc n)) -> v) )))
 Expr ::: ((s, c)) -> s.region ::: (( (( s , c )) ) -> (s (. region)))
@@ -373,24 +373,24 @@ Item ::: struct Span { lo: int, hi: int[lo..] } ::: (struct Span { (lo : int) , 
 Expr ::: e.fold(Expr: fe, Stmt: fs) ::: ((e (. fold)) (( ((Expr : fe) , (Stmt : fs)) )))
 Item ::: same(a: String ->? int with finite(), b: String ->? int with finite()) = a == b; ::: (same ( ((a : ((String ->? int) (with (finite ( ))))) , (b : ((String ->? int) (with (finite ( )))))) ) (= (a == b) ;))
 Item ::: best = cur >< max else 0; ::: (best = ((cur (>< max)) (else 0)) ;)
-# `break e` stands at the level of Expr and requires its operand, so it never captures a head's body or what follows it (CRITIQUE-AGY-2 1.1, 1.3)
+# `break;` is a statement with no operand (sec:grammar, `Break = 'break' ';'`): it takes no value, is no operand and no expression, and stands in a body, a branch or an arm block (LOOP-break-stmt)
 Expr ::: if c || break { 1 } else { 2 } ::: ERROR
-Expr ::: if c || (break x) { 1 } else { 2 } ::: (if (c || (( (break x) ))) ({ 1 }) else ({ 2 }))
+Expr ::: if c || (break x) { 1 } else { 2 } ::: ERROR
 Expr ::: if break {} else {} ::: ERROR
 Expr ::: match break { #a -> 1 } ::: ERROR
-Expr ::: a < break b < c ::: ERROR
-Expr ::: a < (break b) ::: (a < (( (break b) )))
-Expr ::: a else (break b) ::: (a (else (( (break b) ))))
+Expr ::: a < (break b) ::: ERROR
+Expr ::: a else (break b) ::: ERROR
 Expr ::: break ::: ERROR
-Expr ::: if c { break i } else { i } ::: (if c ({ (break i) }) else ({ i }))
-Expr ::: match v { #a -> break 1, _ -> 2 } ::: (match v { (#a -> (break 1)) , (_ -> 2) })
-# an unparenthesized `break` operand takes its own else tail and stops there: no tail, arrow or list item continues it (BREAK-cases)
-Expr ::: break a else b ::: (break (a (else b)))
-Expr ::: a else break b else c ::: ERROR
-Expr ::: m into (break a && b || c -> v) ::: ERROR
-Expr ::: m into ((break a) -> v) ::: (m (into ( ((( (break a) )) -> v) )))
-Expr ::: [break x ..] ::: ERROR
-Expr ::: [(break x) ..] ::: ([ ((( (break x) )) ..) ])
+Expr ::: if c { break i } else { i } ::: ERROR
+Expr ::: if c { break 3; } else { i } ::: ERROR
+Expr ::: if c { break } else { i } ::: ERROR
+Expr ::: match v { #a -> break 1, _ -> 2 } ::: ERROR
+Expr ::: m into ((break a) -> v) ::: ERROR
+Expr ::: [(break x) ..] ::: ERROR
+Expr ::: if c { break; } else { i } ::: (if c ({ break ; }) else ({ i }))
+Expr ::: loop { break; } ::: (loop ({ break ; }))
+Expr ::: loop t { if t > 2 { break; } else { }; } ::: (loop t ({ ((if (t > 2) ({ break ; }) else { }) ;) }))
+Expr ::: match v { #a -> { break; }, _ -> 2 } ::: (match v { (#a -> ({ break ; })) , (_ -> 2) })
 # an annotation's arguments are the parentheses after it only when the declaration after them still parses (CRITIQUE-AGY-2 3.6)
 Item ::: @fused (a + b).map(f); ::: (@fused ((((( (a + b) )) (. map)) (( f ))) ;))
 Item ::: @fused () -> { }; ::: (@fused ((( ) -> { }) ;))

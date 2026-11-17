@@ -23,25 +23,32 @@ fn loops_build_with_and_without_a_step_name() {
     ]);
 }
 
+/// `break;` is a statement, with no value (DESIGN.md sec:grammar, `Break = 'break' ';'`;
+/// author P310, "no `break e`"), at any depth of a loop's or a `for`'s body; a block that ends
+/// in it exports nothing. With a value, as an operand, or with no `;`, it is a syntax error
+/// (step L6.6b).
 #[test]
-fn breaks_build_as_expressions() {
+fn breaks_build_as_statements() {
     check(&[
         (
-            "f(n) = loop { break n; };",
-            "(def f (n) = (loop (block (do (break n)))))",
+            "f(n) = loop { break; };",
+            "(def f (n) = (loop (block (break))))",
         ),
-        ("f(x) = c || (break x);", "(def f (x) = (|| c (break x)))"),
         (
-            "f(xs, v) = loop i { hit = if xs[i] == v { break i } else { i }; };",
-            "(def f (xs v) = (loop i (block (= (hit) (if (== (index xs i) v) (block (return \
-             (break i))) (block (return i)))))))",
+            "f(xs, v) = loop i { if xs[i] == v { break; } else { }; };",
+            "(def f (xs v) = (loop i (block (do (if (== (index xs i) v) (block (break)) \
+             (block))))))",
         ),
-        // The operand is an `Expr12`: a lambda there is parenthesized.
         (
-            "f(x) = loop { break (y -> y); };",
-            "(def f (x) = (loop (block (do (break (fn (y) y))))))",
+            "f(xs) = for x in xs { if x > 0 { break; } else { }; x };",
+            "(def f (xs) = (for (x) xs (block (do (if (> x 0) (block (break)) (block))) \
+             (return x))))",
         ),
-        ("f(x) = loop { break y -> y; };", "syntax"),
+        ("f(n) = loop { break n; };", "syntax"),
+        ("f(n) = loop { break 3; };", "syntax"),
+        ("f(c, x) = loop { y = c || (break x); };", "syntax"),
+        ("f(c) = loop { if c || break { }; };", "syntax"),
+        ("f(c) = loop { break };", "syntax"),
     ]);
 }
 

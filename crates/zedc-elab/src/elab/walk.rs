@@ -768,7 +768,8 @@ impl<'a> Elab<'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
+            | StmtKind::Until(_)
+            | StmtKind::Break => unreachable!("resolve rejects the forms of layer L6"),
             // A call that pushes to a port, its value dropped as `_ = e;` drops it.
             StmtKind::Expr(value) => {
                 m.k(Frame::Bind(s));
@@ -1148,7 +1149,7 @@ impl<'a> Elab<'a> {
                 return;
             }
             ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
-            ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
+            ExprKind::Loop { .. } | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")
             }
             // The lexer has removed the `_` from a literal's digits, so they are read where they

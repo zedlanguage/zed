@@ -319,6 +319,10 @@ impl Builder<'_, '_> {
             }
             "While" => StmtKind::While(self.node(kids[0])?),
             "Until" => StmtKind::Until(self.node(kids[0])?),
+            "Break" => {
+                self.break_placed(d)?;
+                StmtKind::Break
+            }
             "ExprStmt" => StmtKind::Expr(self.node(kids[0])?),
             "Function" => StmtKind::Function(self.function(d, 0)?),
             "Method" => StmtKind::Method(Box::new(Method {

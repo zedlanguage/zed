@@ -101,7 +101,6 @@ rows! {
     WithInitialItem => "A `with initial` item",
     BareLoopEntry => "A boundary entry of a loop written without `initial`",
     InitialOutsideLoop => "An `initial` statement outside a loop, or under `local`",
-    // No diagnostic uses this row yet: plan row LOOP-break-stmt emits it.
     BreakOutsideLoop => "`break` outside the body of a loop or a `for`",
     InitialNotUpdated => "An `initial` statement for a name the loop does not update",
     InitialReadsLoop => "An `initial` value that reads a name of its own loop",

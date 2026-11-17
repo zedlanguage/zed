@@ -26,8 +26,15 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(c, x) = c || (break x);",
-            &[concat!(zed_tests::not_yet!("a `break`"), " [(break x)]")],
+            "f(xs) = for x in xs { if x > 0 { break; } else { }; x };",
+            // `break;` stands only in a loop's or a `for`'s body, refused here as well.
+            &[
+                concat!(
+                    zed_tests::not_yet!("a `for`"),
+                    " [for x in xs { if x > 0 { break; } else { }; x }]"
+                ),
+                concat!(zed_tests::not_yet!("a `break`"), " [break;]"),
+            ],
         ),
         (
             "f(x) = x*.h;",

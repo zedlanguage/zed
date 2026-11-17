@@ -372,7 +372,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                     Field::Import { .. } => None,
                 }))
             }
-            StmtKind::Type(_) | StmtKind::Import(_) => {}
+            StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
             StmtKind::UnitAnnot(a) => todo.extend(annot(a).map(expr)),
         }
     }
@@ -477,7 +477,6 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::Map(_)
             | ExprKind::For { .. }
             | ExprKind::Loop { .. }
-            | ExprKind::Break(_)
             | ExprKind::Spread { .. }
             | ExprKind::SortKey { .. } => {}
         }
@@ -611,7 +610,6 @@ impl<'t, 'a> Walk<'t, 'a> {
                 | ExprKind::Map(_)
                 | ExprKind::For { .. }
                 | ExprKind::Loop { .. }
-                | ExprKind::Break(_)
                 | ExprKind::Spread { .. }
                 | ExprKind::SortKey { .. } => {}
             }
@@ -884,7 +882,6 @@ pub(super) fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
         | ExprKind::Member { of: a, .. }
         | ExprKind::Read { of: a, .. }
         | ExprKind::Loop { body: a, .. }
-        | ExprKind::Break(a)
         | ExprKind::Spread { of: a, .. } => push(a),
         ExprKind::SortKey { key, .. } => key.as_deref().into_iter().for_each(push),
         ExprKind::Binary(_, a, b)

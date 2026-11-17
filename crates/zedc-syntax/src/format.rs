@@ -82,7 +82,7 @@ fn level(e: &Expr) -> u8 {
     }
     match &e.kind {
         // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any `Expr`.
-        ExprKind::Lambda { .. } | ExprKind::Break(_) | ExprKind::SortKey { .. } => LAMBDA,
+        ExprKind::Lambda { .. } | ExprKind::SortKey { .. } => LAMBDA,
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(*op),
         ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
@@ -1071,6 +1071,7 @@ impl<'a> Formatter<'a> {
                 self.put("until ");
                 then![stack; value(c), put(";")];
             }
+            StmtKind::Break => self.put("break;"),
             // A statement that starts with `{` would be read as a block or a display.
             StmtKind::Expr(e) if starts_with_block(e) => {
                 self.put("(");
@@ -1459,10 +1460,6 @@ impl<'a> Formatter<'a> {
             }
             ExprKind::Spread { of, name } => {
                 then![stack; Job::Postfix { of, ind }, put(format!("*.{name}"))];
-            }
-            ExprKind::Break(of) => {
-                self.put("break ");
-                stack.push(at(of, ELSE));
             }
             ExprKind::SortKey { desc, key } => {
                 match key {

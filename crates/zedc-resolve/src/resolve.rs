@@ -2038,6 +2038,7 @@ impl Resolver<'_> {
                     | StmtKind::Push { .. }
                     | StmtKind::While(_)
                     | StmtKind::Until(_)
+                    | StmtKind::Break
                     | StmtKind::Expr(_)
                     | StmtKind::Initial(_)
                     | StmtKind::UnitAnnot(_)
@@ -2154,6 +2155,7 @@ impl Resolver<'_> {
             | StmtKind::Push { .. }
             | StmtKind::While(_)
             | StmtKind::Until(_)
+            | StmtKind::Break
             | StmtKind::Expr(_)
             | StmtKind::Initial(_)
             | StmtKind::UnitAnnot(_) => {}
@@ -2198,6 +2200,7 @@ impl Resolver<'_> {
             StmtKind::Local(_) => "a `local` declaration again",
             StmtKind::IndexedDef(_) => "an indexed definition",
             StmtKind::While(_) | StmtKind::Until(_) => "a loop guard",
+            StmtKind::Break => "a `break`",
             StmtKind::Expr(_) => "an expression statement",
             StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
                 "an annotated declaration. Write the annotation before `local`"
@@ -2300,6 +2303,9 @@ impl Resolver<'_> {
             StmtKind::IndexedDef(_) => self.later(s.span, "an indexed definition"),
             StmtKind::While(_) => self.later(s.span, "a `while` guard"),
             StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
+            // The syntax tree's builder refused a `break;` outside a loop's body
+            // (`Row::BreakOutsideLoop`); one in a body is of layer L6.
+            StmtKind::Break => self.later(s.span, "a `break`"),
             // A call that pushes to a port (DESIGN.md sec:tour_methods, L1.19); the checker
             // refuses one that writes nothing (`check::ports::silent_tail`).
             StmtKind::Expr(value) => todo.push(Task::Expr(value)),
@@ -2410,6 +2416,7 @@ impl Resolver<'_> {
                 StmtKind::Initial(_) => Some("an `initial` statement"),
                 StmtKind::IndexedDef(_) => Some("an indexed definition"),
                 StmtKind::While(_) | StmtKind::Until(_) => Some("a loop guard"),
+                StmtKind::Break => Some("a `break`"),
                 StmtKind::Expr(_) => Some("an expression statement"),
                 StmtKind::Local(_) => Some("a `local` declaration again"),
                 StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
@@ -3390,10 +3397,6 @@ impl Resolver<'_> {
             // declare and resolution does not bind yet, so the body is not walked: its names would
             // be reported as not defined.
             ExprKind::Loop { .. } => self.later(e.span, "a `loop`"),
-            ExprKind::Break(value) => {
-                self.later(e.span, "a `break`");
-                todo.push(Task::Expr(value));
-            }
             ExprKind::Spread { of, name } => {
                 self.later(e.span, "a call `*.` that writes its receiver");
                 todo.push(Task::Member(e.span, name));

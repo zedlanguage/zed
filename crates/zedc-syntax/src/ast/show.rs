@@ -58,8 +58,8 @@ fn each<'a, T: 'a>(
 /// `(tuple a b)`, `(fn (x (y: int)) e)`, `(is e T)`, `(else e #a d)`, `(record (x: 1))`,
 /// `(with p (= c.x 1))`, `(match x (-> p e) (-> q (where c) f))`; from layer L3 `(..< a b)`,
 /// `(.. a)`, `(in x s)`, `(not in x s)`, `(>< m op)`, `(:: xs len)`, `(section +)`, `(array a b)`,
-/// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`; from layer L6 `(loop t body)`,
-/// `(break e)` and `(*. c m)`.
+/// `(set a b)`, `(map (-> k v))`, and `(for (k v) m (where c) body)`; from layer L6 `(loop t body)`
+/// and `(*. c m)`.
 fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
     let at = |e: &'a Expr| Show::Expr(e);
     match &e.kind {
@@ -296,7 +296,6 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             }
             out.extend([at(body), Text(")")]);
         }
-        ExprKind::Break(e) => out.extend([Text("(break "), at(e), Text(")")]),
         ExprKind::Spread { of, name } => {
             out.extend([Text("(*. "), at(of), Text(" "), Text(name), Text(")")]);
         }
@@ -366,7 +365,8 @@ fn params_spaced<'a>(params: &'a [Param], out: &mut Vec<Show<'a>>) {
 /// parentheses; from layer L6, the start values `(initial (x) 0)`, `(initial (c) e carryForward)`,
 /// `(initial (a b) e)` and `(initial (x: f64) 0.0)` and the boundary entry
 /// `(initial p ((at -2)) -1)`, an indexed definition
-/// `(indexed x ((in i s) (at k)) e (with (= x ((at -1)) 0)))`, `(while c)`, `(until c)`, and an
+/// `(indexed x ((in i s) (at k)) e (with (= x ((at -1)) 0)))`, `(while c)`, `(until c)`,
+/// `(break)`, and an
 /// expression statement `(do e)`.
 fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
     match &s.kind {
@@ -412,6 +412,7 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
         }
         StmtKind::While(c) => out.extend([Text("(while "), Show::Expr(c), Text(")")]),
         StmtKind::Until(c) => out.extend([Text("(until "), Show::Expr(c), Text(")")]),
+        StmtKind::Break => out.push(Text("(break)")),
         StmtKind::Expr(e) => out.extend([Text("(do "), Show::Expr(e), Text(")")]),
         StmtKind::Return(es) => {
             out.push(Text("(return"));

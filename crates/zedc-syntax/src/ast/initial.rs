@@ -287,8 +287,7 @@ fn expr_kids<'e>(e: &'e Expr, work: &mut Vec<Work<'e>>) {
         ExprKind::Unary(_, a)
         | ExprKind::Is { of: a, .. }
         | ExprKind::Member { of: a, .. }
-        | ExprKind::Read { of: a, .. }
-        | ExprKind::Break(a) => work.push(Work::Expr(a)),
+        | ExprKind::Read { of: a, .. } => work.push(Work::Expr(a)),
         ExprKind::SortKey { key, .. } => exprs(key.as_deref(), work),
         ExprKind::Binary(_, a, b)
         | ExprKind::Index(a, b)
@@ -494,7 +493,7 @@ fn stmt_kids<'e>(s: &'e Stmt, work: &mut Vec<Work<'e>>) {
             Field::Typed { default, .. } => default.as_ref().map(Work::Expr),
             Field::Import { .. } => None,
         })),
-        StmtKind::Type(_) | StmtKind::Import(_) => {}
+        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
     }
     work[start..].reverse();
 }
@@ -1661,6 +1660,11 @@ fn every_path<'e>(
                         tasks.push(Task::Stmt(d, ctx, role));
                         continue;
                     }
+                    // A path through `break;` ends the loop, so it needs no update.
+                    StmtKind::Break => {
+                        results.push((role, Must::All));
+                        continue;
+                    }
                     StmtKind::Initial(_)
                     | StmtKind::Function(_)
                     | StmtKind::Method(_)
@@ -1762,10 +1766,6 @@ fn every_path<'e>(
                             }
                             (None, _) => kids.push(Task::Expr(of, plain, Role::Always)),
                         }
-                    }
-                    ExprKind::Break(a) => {
-                        own = Must::All;
-                        kids.push(Task::Expr(a, plain, Role::Always));
                     }
                     ExprKind::Member {
                         of,

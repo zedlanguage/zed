@@ -887,7 +887,7 @@ pub const RESERVED: [(&str, &str, &str); 37] = [
     ),
     (
         "break",
-        "it ends a loop early with a value, as `break e`",
+        "it begins the statement `break;`, which ends a loop early, as `if c { break; } else { };`",
         "stop",
     ),
     (

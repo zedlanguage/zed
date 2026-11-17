@@ -301,6 +301,7 @@ impl<'a> Tables<'a> {
             | StmtKind::Initial(_)
             | StmtKind::While(_)
             | StmtKind::Until(_)
+            | StmtKind::Break
             | StmtKind::UnitAnnot(_) => {}
         }
     }
@@ -366,7 +367,8 @@ impl<'a> Tables<'a> {
             StmtKind::IndexedDef(_)
             | StmtKind::Initial(_)
             | StmtKind::While(_)
-            | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
+            | StmtKind::Until(_)
+            | StmtKind::Break => unreachable!("resolve rejects the forms of layer L6"),
         }
     }
 
@@ -943,6 +945,7 @@ fn what(s: &Stmt) -> String {
         StmtKind::IndexedDef(_)
         | StmtKind::Initial(_)
         | StmtKind::While(_)
-        | StmtKind::Until(_) => unreachable!("resolve rejects the forms of layer L6"),
+        | StmtKind::Until(_)
+        | StmtKind::Break => unreachable!("resolve rejects the forms of layer L6"),
     }
 }

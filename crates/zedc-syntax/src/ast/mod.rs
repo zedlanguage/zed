@@ -22,6 +22,7 @@
 //! like any other here. A form of a later layer is an error naming that layer.
 
 mod body;
+mod breaks;
 mod builder;
 mod drop;
 mod infix;
@@ -201,7 +202,7 @@ fn forms() -> &'static [Form] {
             | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Infix" | "Prefix"
             | "Power" | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If"
             | "Literal" | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "ArrayExpr"
-            | "For" | "Loop" | "Break" => Form::Expr,
+            | "For" | "Loop" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
             | "RankArrayType" => Form::Type,
@@ -417,10 +418,6 @@ impl<'a, 's> Builder<'a, 's> {
                     span,
                 })
             }
-            "Break" => Ok(Expr {
-                kind: ExprKind::Break(Box::new(self.node(kids[0])?)),
-                span: self.span(n),
-            }),
             _ => unreachable!("make builds only these rules as expressions"),
         }
     }

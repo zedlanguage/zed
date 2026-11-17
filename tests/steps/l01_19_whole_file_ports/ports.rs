@@ -5,6 +5,7 @@
 //! an output port reads it and is rejected.
 
 use zed_tests::deep::resolved;
+use zed_tests::oracle;
 use zedc::check::ports::ports;
 use zedc::check::walk::check_text;
 use zedc::resolve::tables::Tables;
@@ -207,70 +208,124 @@ fn statement_errors(body: &str) -> Vec<(String, String, Vec<String>)> {
         .collect()
 }
 
-/// A block written as the row of the plan states it, `{ if c { say(…); } else { } };`, with
-/// the write on one branch, never reaches the statement check: a block in the place of a value
-/// (a branch of an `if`, a `match` arm, the statement itself) gives that value, so it must end
-/// in an export, and the parser refuses one that does not (DESIGN.md sec:grammar, `Block`; the
-/// builder's `Builder::node`). Only a function's body and a `loop`'s body may export nothing.
+/// Red before green: the parser refused every block here that exports nothing, "this block
+/// exports nothing, and a block gives a value, so it must export one", and the empty `{ }` as an
+/// empty block. On a path of an expression statement a block may export nothing: `{ }` is a
+/// path that does nothing, and a block that exports nothing writes when one of its statements
+/// writes; the statement is legal when each path writes or does nothing and at least one
+/// writes (DESIGN.md sec:tour_methods, "Statement position must write something, and drop
+/// nothing"; row FAIL-exprstmt-empty-paths). Each statement here writes when its condition
+/// holds and nothing otherwise, run with no argument (`k` is 0) and with 5.
 #[test]
-fn a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser() {
-    let no_export = "this block exports nothing, and a block gives a value, so it must export \
-                     one. End it with an expression, or with `return e;` to give the value `e`.";
-    let empty = "this `{}` is an empty block, and a block gives a value, so it must export one: \
-                 a brace after `->`, `else`, or the head of an `if` or a `for` is a block. To \
-                 write the empty family there, write `{ {} }`, or `({})` after `->` or a \
-                 fallback's `else`.";
+fn a_block_with_a_write_on_one_branch_and_no_export_is_a_statement() {
     // A brace in statement position is a block when a statement follows it (sec:grammar,
     // `!HEAD &('{' Item) ~Block`), here `j = k;`; `{ if … }` is the family of one value.
-    for (name, body, col, why) in [
-        // The write in the `then` branch only, by a call and by a push: the first block the
-        // parser builds, the `then` branch, exports nothing.
-        (
-            "stmt_block_then_call",
-            "{ j = k; if j > 1 { say(\"x\", out: m.stdout); } else { } };",
-            21,
-            no_export,
-        ),
+    for (name, body, none, five) in [
+        // The write in the `then` branch only, by a push and by a call.
         (
             "stmt_block_then_push",
             "{ j = k; if j > 1 { m.stdout <- \"x\"; } else { } };",
-            21,
-            no_export,
+            "",
+            "x\n",
         ),
-        // The write in the `else` branch only: the empty `then` branch.
+        (
+            "stmt_then_call",
+            "if k > 1 { say(\"x\", out: m.stdout); } else { };",
+            "",
+            "x\n",
+        ),
+        // The write in the `else` branch only.
         (
             "stmt_block_else_call",
             "{ j = k; if j > 1 { } else { say(\"x\", out: m.stdout); } };",
-            21,
-            empty,
+            "x\n",
+            "",
         ),
-        // Nested twice, the silent branch two blocks down.
+        // Nested twice, the empty branch two blocks down.
         (
             "stmt_block_nested",
             "{ j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout); } else { } } \
              else { say(\"y\", out: m.stdout) } };",
-            32,
-            no_export,
-        ),
-        // A `match` arm whose block writes and exports nothing.
-        (
-            "stmt_block_arm",
-            "{ j = k; match j { 1 -> { say(\"x\", out: m.stdout); }, _ -> 0 } };",
-            27,
-            no_export,
-        ),
-        // Every branch exports, and the `if` is a statement of the outer block, which then
-        // exports nothing.
-        (
-            "stmt_block_outer",
-            "{ j = k; if j > 1 { say(\"x\", out: m.stdout) } else { 0 }; };",
-            3,
-            no_export,
+            "y\n",
+            "x\n",
         ),
     ] {
+        assert_eq!(statement_errors(body), [], "{body}");
         let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {body}"));
-        assert_eq!(rejected(name, &src), format!("5:{col}: {why}"), "{src}");
+        for (args, want) in [(&[][..], none), (&["--", "5"][..], five)] {
+            let out = run(name, &src, "", args);
+            assert_eq!(
+                (out.status, out.stdout.as_str(), out.stderr.as_str()),
+                (0, want, ""),
+                "{src} {args:?}"
+            );
+        }
+        // The interpreter and the native code (step L1.37) write the same bytes, with `k`
+        // read from the first line of standard input.
+        let src = with_say(&format!("k = int(m.stdin[0] else \"\") else 0;\n  {body}"));
+        for input in ["", "5\n"] {
+            let ((report, want), _) =
+                oracle::native(|engines| oracle::program(&src, input.as_bytes(), engines));
+            assert_eq!(report.mismatches, Vec::<String>::new(), "{src} {input:?}");
+            assert!(report.compared > 0 && want.is_some(), "{src} {input:?}");
+        }
     }
+}
+
+/// The contrasts: a statement that writes on no path, `if c { } else { };` or a block of
+/// bindings, is refused at the statement; a value dropped on a path is refused at the value,
+/// here in an `if` that is a statement of a block that exports nothing; and a block in the
+/// place of a value still exports one (step L1.11), so `x = if c { } else { 1 };` is refused
+/// by the parser (DESIGN.md sec:tour_methods).
+#[test]
+fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
+    let none = |stmt: &str| {
+        let shown = stmt.strip_suffix(';').unwrap();
+        vec![(
+            format!("Statement has no effect: `{shown}` writes to no port on any path."),
+            stmt.to_string(),
+            vec![shown.to_string()],
+        )]
+    };
+    // The block's export is an `if` that writes on no path, so the block writes on none.
+    for body in [
+        "if k > 1 { } else { };",
+        "{ j = k; };",
+        "{ j = k; if j > 1 { } else { } };",
+    ] {
+        assert_eq!(statement_errors(body), none(body), "{body}");
+    }
+    // The `if` is a statement of the block: it is refused itself, and the block counts it as a
+    // statement and is not refused again.
+    assert_eq!(
+        statement_errors("{ j = k; if j > 1 { } else { }; };"),
+        none("if j > 1 { } else { };")
+    );
+    let inner = "if j > 1 { say(\"x\", out: m.stdout) } else { 0 };";
+    let body = format!("{{ j = k; {inner} }};");
+    assert_eq!(
+        statement_errors(&body),
+        [(
+            "Statement has no effect: `0` writes to no port, and its value is dropped.".into(),
+            inner.to_string(),
+            vec!["0".to_string(); 3]
+        )]
+    );
+    let src = with_say("k = int(m.args[0] else \"\") else 0;\n  if k > 1 { } else { };");
+    assert_eq!(
+        rejected("stmt_empty_paths", &src),
+        "5:3: Statement has no effect: `if k > 1 { } else { }` writes to no port on any path."
+    );
+    let src = with_say(
+        "k = int(m.args[0] else \"\") else 0;\n  x = if k > 1 { } else { 1 };\n  \
+         m.stdout <- \"a\";",
+    );
+    assert_eq!(
+        rejected("stmt_value_block_empty", &src),
+        "5:16: this `{}` is an empty block, and a block gives a value, so it must export one: a \
+         brace after `->`, `else`, or the head of an `if` or a `for` is a block. To write the \
+         empty family there, write `{ {} }`, or `({})` after `->` or a fallback's `else`."
+    );
 }
 
 /// The forms of a write on one branch that a program can write: each branch ends in an export,

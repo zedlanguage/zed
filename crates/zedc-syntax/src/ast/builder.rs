@@ -372,6 +372,12 @@ pub(super) struct Builder<'a, 's: 'a> {
     /// The text of each expression that is a whole argument of a call, listed on the first
     /// use of an output of `main` ([`Builder::passed`]).
     pub(super) args: std::cell::OnceCell<HashMap<Span, Span>>,
+    /// For each node, the nearest `loop` or `for` body, lambda, function or method above it,
+    /// listed on the first `break;` ([`Builder::stop_of`]).
+    pub(super) stops: std::cell::OnceCell<Vec<usize>>,
+    /// For each node, whether it is on a path of an expression statement, listed on the first
+    /// block that exports nothing ([`Builder::on_path`]).
+    pub(super) paths: std::cell::OnceCell<Vec<bool>>,
 }
 
 impl<'a, 's> Builder<'a, 's> {
@@ -581,6 +587,8 @@ impl<'a, 's> Builder<'a, 's> {
             methods,
             parents: std::cell::OnceCell::new(),
             args: std::cell::OnceCell::new(),
+            stops: std::cell::OnceCell::new(),
+            paths: std::cell::OnceCell::new(),
         }
     }
 
@@ -689,6 +697,8 @@ impl<'a, 's> Builder<'a, 's> {
     /// The expression node `n` built to.
     pub(super) fn node(&mut self, n: usize) -> Result<Expr, Error> {
         let e = self.body(n)?;
+        // A block that ends in `break;` gives no value, and one on a path of an expression
+        // statement gives one that is dropped, so either may export nothing ([`super::breaks`]).
         if let ExprKind::Block(stmts) = &e.kind
             && self.tree.name(n) == "Block"
             && !matches!(
@@ -698,6 +708,8 @@ impl<'a, 's> Builder<'a, 's> {
                     ..
                 })
             )
+            && !super::breaks::ends_in_break(stmts)
+            && !self.on_path(n)
         {
             // Only a brace in body position, after `->`, `else`, or an `if` or `for` head, makes
             // an empty block; elsewhere `{}` is the empty family (sec:lexical), which is what a

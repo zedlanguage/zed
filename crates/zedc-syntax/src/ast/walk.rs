@@ -27,7 +27,6 @@ pub fn expr_kids_mut<'a>(kind: &'a mut ExprKind, out: &mut Vec<&'a mut Expr>) {
         | ExprKind::Member { of: a, .. }
         | ExprKind::Read { of: a, .. }
         | ExprKind::Loop { body: a, .. }
-        | ExprKind::Break(a)
         | ExprKind::Spread { of: a, .. } => out.push(a),
         ExprKind::SortKey { key, .. } => out.extend(key.as_deref_mut()),
         ExprKind::Binary(_, a, b)
@@ -163,7 +162,7 @@ fn leaf_kids<'a>(kind: &'a mut StmtKind, out: &mut Vec<&'a mut Expr>) {
                 Field::Import { .. } => None,
             }))
         }
-        StmtKind::Type(_) | StmtKind::Import(_) => {}
+        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
         StmtKind::UnitAnnot(a) => annot_kids(a, out),
     }
 }

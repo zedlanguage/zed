@@ -4,6 +4,7 @@
 //! form builds and formats; name resolution refuses it, naming the step that compiles it.
 
 mod bench;
+mod breaks;
 mod carry_forward;
 mod clause_edges;
 mod corners;

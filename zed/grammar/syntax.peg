@@ -21,6 +21,7 @@ Decl          = ~Local                                                          
               | ~Emit                                                              L4
               | ~While                                                             L6
               | ~Until                                                             L6
+              | ~Break                                                             L6
               | ~Function                                                          L1
               | ~Method                                                            L2
               | ~IndexedDef                                                        L6
@@ -38,6 +39,7 @@ Return        = 'return' Expr % ',' ';'                                         
 Emit          = 'emit' Expr ';'                                                    L4
 While         = 'while' Expr ';'                                                   L6
 Until         = 'until' Expr ';'                                                   L6
+Break         = 'break' ';'                                                        L6
 ExprStmt      = Expr ';'                                                           L1
 
 Import        = 'import' Path '.' '{' Name % ',' ','? '}' Pin? ';'                 L2
@@ -103,9 +105,7 @@ BoundaryItem  = Name ('[' IndexKey ']')+ '=' Expr                               
 Signature     = Name ':' Type ';'                                                  L7
 
 Expr          = Lambda                                                             L1
-              | Break                                                              L6
               | Expr12                                                             L1
-Break         = 'break' Expr12                                                     L6
 Lambda        = (Name | '(' Params? ')') '->' (Block | !'{' Expr)                  L1
 Expr12        = Expr12 ElseTail                                                    L1
               | ~Or                                                                L1

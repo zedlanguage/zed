@@ -396,78 +396,110 @@ pub fn ports(t: &Tables<'_>) -> Ports {
     }
 }
 
-/// The first part of the expression statement whose value is `value`, in the order of the
-/// text, that ends a path writing to no port; none when every path writes. DESIGN.md
-/// sec:tour_methods: "a call in statement position is legal when it writes a generation
-/// (`c*.tick()`) or a port, and dead otherwise", and "the check is per flow path: each branch
-/// of an `if` or `match` and each block's export is checked on its own". A path writes when it
-/// ends in a call of one of `writers`, the functions with an output port parameter, which every
-/// call fills with an output port ([`ports`] rejects any other argument there). The default of
-/// an `else` stands in for a failure and is no path of its own, as the repair `c*.m() else #ok;`
-/// shows. A block with no export is not known to write, and is the part that ends a silent
-/// path.
-// Complexity tradeoff: each node on the paths is visited once, from an explicit stack, so the
-// check of one statement costs the size of its branches and exports, O(1) for a bare call; a
-// statement's paths are disjoint parts of its text, so a unit's statements cost O(size of the
-// unit) in all. A recursive search costs the same, with the depth of the nest on the call
-// stack.
+/// Why an expression statement has no effect ([`silent_tail`]).
+#[derive(Debug)]
+pub enum Silent<'e> {
+    /// This part ends a path that gives a value and writes to no port, so the statement drops
+    /// the value.
+    Drops(&'e Expr),
+    /// No path writes: each one does nothing.
+    NoWrite,
+}
+
+/// Whether the expression statement whose value is `value` has no effect, and why: the first
+/// part, in the order of the text, that ends a path dropping a value, or else, when no path
+/// writes, [`Silent::NoWrite`]; none when the statement is legal. DESIGN.md sec:tour_methods:
+/// "a call in statement position is legal when it writes a generation (`c*.tick()`) or a port,
+/// and dead otherwise", "the check is per flow path: each branch of an `if` or `match` and each
+/// block's export is checked on its own", and "a block may export nothing: the empty block
+/// `{ }` is a path that does nothing, and a block that exports nothing writes when one of its
+/// statements writes or is `break;`. An expression statement is legal when each of its paths
+/// writes, breaks or does nothing, and at least one path writes or breaks".
+///
+/// A path writes when it ends in a call of one of `writers`, the functions with an output port
+/// parameter, which every call fills with an output port ([`ports`] rejects any other argument
+/// there). The default of an `else` stands in for a failure and is no path of its own, as the
+/// repair `c*.m() else #ok;` shows. A block that exports nothing (the parser allows one only on
+/// a path of an expression statement, or ending in `break;`) writes when one of its statements
+/// is a push, a `break;` or an expression statement, or a binding whose value writes on some
+/// path; otherwise it does nothing. An expression statement in it counts whatever it does, since
+/// it is checked on its own, and refused there when it writes on no path: the block's statement
+/// is then not refused a second time. No path is claimed to write on every run: a block that
+/// leaves early (a `while` or `until` guard, a failure that bubbles out) does nothing on that
+/// run, which the rule allows (row SILENT-tail-no-export-safe, which made the old rule, that
+/// every path writes, refuse such a block).
+// Complexity tradeoff: each node on the paths, and on the paths of the values that a no-export
+// block's bindings name, is visited once, from an explicit stack, so the check of one statement
+// costs the size of its branches and exports, O(1) for a bare call. A nested expression
+// statement is not walked again: it counts as a write, and its own check walks it, so a unit's
+// statements cost O(size of the unit) in all, where walking it from each enclosing statement
+// would cost O(size x depth). A recursive search costs the same, with the depth of the nest on
+// the call stack.
 pub fn silent_tail<'e>(
     value: &'e Expr,
     res: &Resolution,
     writers: &HashSet<usize>,
-) -> Option<&'e Expr> {
-    let mut stack = vec![value];
-    while let Some(e) = stack.pop() {
+) -> Option<Silent<'e>> {
+    // Each part with whether a binding names its value, so that a path ending in it gives the
+    // value to the name and drops nothing.
+    let mut stack = vec![(value, false)];
+    let mut writes = false;
+    while let Some((e, named)) = stack.pop() {
         // The parts of a path are pushed last first, so they are met in the order of the text.
-        let writes = match &e.kind {
-            ExprKind::Call { callee, .. } => matches!(
-                res.uses.get(&callee.span),
-                Some(Ref::Bound(ids)) if ids.iter().any(|f| writers.contains(f))
-            ),
+        let gives = match &e.kind {
+            ExprKind::Call { callee, .. } => {
+                let w = matches!(
+                    res.uses.get(&callee.span),
+                    Some(Ref::Bound(ids)) if ids.iter().any(|f| writers.contains(f))
+                );
+                writes |= w;
+                !w
+            }
             ExprKind::If {
                 then, otherwise, ..
             } => {
-                stack.extend([&**otherwise, &**then]);
-                true
+                stack.extend([(&**otherwise, named), (&**then, named)]);
+                false
             }
             ExprKind::Else { of, .. } => {
-                stack.push(of);
-                true
+                stack.push((of, named));
+                false
             }
             ExprKind::Match { arms, .. } => {
-                stack.extend(arms.iter().rev().map(|a| &a.body));
-                true
+                stack.extend(arms.iter().rev().map(|a| (&a.body, named)));
+                false
             }
             ExprKind::Block(stmts) => match stmts.last().map(|s| &s.kind) {
                 Some(StmtKind::Return(es)) => match &es[..] {
                     [one] => {
-                        stack.push(one);
-                        true
+                        stack.push((one, named));
+                        false
                     }
                     // A tuple of values is no write, whatever its parts do.
-                    _ => false,
+                    _ => true,
                 },
-                // No program reaches this arm today: every block this walk meets stands in the
-                // place of a value (the statement itself, a branch of an `if`, a `match` arm, a
-                // block's export), and the parser refuses such a block when it ends in no export
-                // (`zedc_syntax`'s `Builder::node`); only a function's or a `loop`'s body may
-                // export nothing, and neither is walked here. Test:
-                // `l01_19_whole_file_ports::ports::a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser`.
-                // Were it reached, the block is not known to write, whatever it holds, and the
-                // statement is refused at it: that a push or an expression statement in it makes
-                // every path write needs each of its statements to run whenever the block ends,
-                // which is not proved for a block that leaves early (a `while` or `until` guard,
-                // a failure that bubbles out). Test:
-                // `check::ports::tests::a_block_that_exports_nothing_is_not_known_to_write`.
-                _ => false,
+                // A block that exports nothing; `{ }` does nothing. Test:
+                // `check::ports::tests::a_block_that_exports_nothing_writes_when_a_statement_writes`.
+                _ => {
+                    for s in stmts.iter().rev() {
+                        match &s.kind {
+                            StmtKind::Push { .. } | StmtKind::Break | StmtKind::Expr(_) => {
+                                writes = true;
+                            }
+                            StmtKind::Bind { value, .. } => stack.push((value, true)),
+                            _ => {}
+                        }
+                    }
+                    false
+                }
             },
-            _ => false,
+            _ => true,
         };
-        if !writes {
-            return Some(e);
+        if gives && !named {
+            return Some(Silent::Drops(e));
         }
     }
-    None
+    (!writes).then_some(Silent::NoWrite)
 }
 
 /// Whether a parameter of the declared type `ty` is a `Lines` port.
@@ -498,7 +530,7 @@ fn what(k: Kind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zedc_syntax::ast::Stmt;
+    use zedc_syntax::ast::{Stmt, Target};
 
     fn at(start: usize) -> Span {
         Span {
@@ -532,14 +564,13 @@ mod tests {
         }
     }
 
-    /// A block that exports nothing is not known to write, whatever it holds, so `silent_tail`
-    /// gives the block itself as the part that writes nothing (row SILENT-tail-no-export-safe).
-    /// The parser refuses such a block wherever this walk could meet it
-    /// (`l01_19_whole_file_ports::ports::a_block_with_a_write_on_one_branch_and_no_export_is_refused_by_the_parser`),
-    /// so it is built here directly. A block that exports a call of a writer writes, which the
-    /// same tables show.
+    /// A block that exports nothing writes when one of its statements is a push, an expression
+    /// statement, `break;`, or a binding whose value calls a writer, and otherwise does nothing:
+    /// `{ }` and a block of bindings of plain values are statements that write on no path
+    /// (DESIGN.md sec:tour_methods, row FAIL-exprstmt-empty-paths). A block that exports a call
+    /// of a writer writes, and one that exports a call of no writer drops its value.
     #[test]
-    fn a_block_that_exports_nothing_is_not_known_to_write() {
+    fn a_block_that_exports_nothing_writes_when_a_statement_writes() {
         let mut res = Resolution::default();
         for start in [0, 10, 20] {
             res.uses
@@ -557,6 +588,14 @@ mod tests {
                 span: at(30),
             },
         };
+        let bind = |value: Expr| StmtKind::Bind {
+            targets: vec![Target::Wild],
+            value,
+        };
+        let plain = |start: usize| Expr {
+            kind: ExprKind::Bool(true),
+            span: at(start),
+        };
         for (name, e) in [
             (
                 "a call of a writer",
@@ -567,15 +606,31 @@ mod tests {
                 "a call and a push",
                 block(vec![stmt(StmtKind::Expr(call(10)), 10), stmt(push(), 30)]),
             ),
-            ("nothing", block(Vec::new())),
+            ("a break", block(vec![stmt(StmtKind::Break, 40)])),
+            (
+                "a binding of a call of a writer",
+                block(vec![stmt(bind(call(0)), 0)]),
+            ),
         ] {
             let tail = silent_tail(&e, &res, &writers);
-            assert!(
-                tail.is_some_and(|t| std::ptr::eq(t, &e)),
-                "{name}: {tail:?}"
-            );
+            assert!(tail.is_none(), "{name}: {tail:?}");
+        }
+        for (name, e) in [
+            ("nothing", block(Vec::new())),
+            (
+                "a binding of a plain value",
+                block(vec![stmt(bind(plain(50)), 50)]),
+            ),
+        ] {
+            let tail = silent_tail(&e, &res, &writers);
+            assert!(matches!(tail, Some(Silent::NoWrite)), "{name}: {tail:?}");
         }
         let exported = block(vec![stmt(StmtKind::Return(vec![call(20)]), 20)]);
         assert!(silent_tail(&exported, &res, &writers).is_none());
+        let dropped = block(vec![stmt(StmtKind::Return(vec![plain(60)]), 60)]);
+        assert!(matches!(
+            silent_tail(&dropped, &res, &writers),
+            Some(Silent::Drops(e)) if e.span == at(60)
+        ));
     }
 }

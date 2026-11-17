@@ -247,8 +247,8 @@ fn each_kind_of_expression_and_statement_is_counted_once() {
         ),
         (
             "a named loop, break in an if",
-            "x = loop t { initial x = 0; x' = x + 1; _ = if x > 2 { break x } else { 0 }; };\n",
-            21,
+            "x = loop t { initial x = 0; x' = x + 1; if x > 2 { break; } else { }; };\n",
+            17,
         ),
         (
             "an indexed definition: key set and value",

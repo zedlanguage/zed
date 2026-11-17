@@ -211,9 +211,9 @@ fn every_path_that_updates_or_breaks_is_accepted() {
         "c*.a();",
         "x' = if c*.a() > 1 { 0 } else { 1 };",
         "x' = if t > 1 { c*.a() } else { c*.b() };",
-        "x' = if t > 1 { c*.a() } else { break 0 };",
-        "x' = if t > 1 { break 0 } else { if t > 2 { c*.a() } else { c*.b() } };",
-        "x' = match t { 0 -> c*.a(), 1 -> break 1, _ -> c*.b() };",
+        "x' = if t > 1 { c*.a() } else { break; };",
+        "x' = if t > 1 { break; } else { if t > 2 { c*.a() } else { c*.b() } };",
+        "x' = match t { 0 -> c*.a(), 1 -> { break; }, _ -> c*.b() };",
         "x' = c*.a() && t > 1;",
         "x' = (c*.a() else 0) + 1;",
         "x' = { y = c*.a(); y };",
@@ -264,7 +264,7 @@ fn an_update_in_a_nested_block_counts() {
         ],
         &[
             "initial c = 0;",
-            "x' = if t > 1 { c' = 1; 0 } else { break 0 };",
+            "x' = if t > 1 { c' = 1; 0 } else { break; };",
         ],
         // A domain of an indexed definition is computed once on a step.
         &["initial c = 0;", "d[i in 0..<c*.a()] = i;"],
@@ -340,7 +340,7 @@ fn return_ends_no_path() {
         ],
         &[
             "initial c = 0;",
-            "x' = if t > 1 { return break 0; } else { c*.a() };",
+            "x' = if t > 1 { return 0; break; } else { c*.a() };",
         ],
     ] {
         accepted(&t_loop(body));
@@ -1124,11 +1124,11 @@ fn two_sentinels_keep_the_carry_in_each_repair() {
     );
 }
 
-/// `n` statements `x' = if t > i { ci*.a() } else { break 0 };`, each with its own variable
-/// updated on one path and the other ending in `break`, then `tail`.
+/// `n` statements `x' = if t > i { ci*.a() } else { break; };`, each with its own variable
+/// updated on one path and the other ending in `break;`, then `tail`.
 fn wide(n: usize, tail: &str) -> String {
     let stmts: String = (0..n)
-        .map(|i| format!("x{i}' = if t > {i} {{ c{i}*.a() }} else {{ break 0 }}; "))
+        .map(|i| format!("x{i}' = if t > {i} {{ c{i}*.a() }} else {{ break; }}; "))
         .collect();
     format!("r = loop t {{ while t < 9; {stmts}{tail} }};\n")
 }
@@ -1136,7 +1136,7 @@ fn wide(n: usize, tail: &str) -> String {
 /// [`wide`] with each call on a path of a field and an entry, `c{i}.pos[{i}]*.a()`.
 fn fields(n: usize, tail: &str) -> String {
     let stmts: String = (0..n)
-        .map(|i| format!("x{i}' = if t > {i} {{ c{i}.pos[{i}]*.a() }} else {{ break 0 }}; "))
+        .map(|i| format!("x{i}' = if t > {i} {{ c{i}.pos[{i}]*.a() }} else {{ break; }}; "))
         .collect();
     format!("r = loop t {{ while t < 9; {stmts}{tail} }};\n")
 }
@@ -1160,10 +1160,10 @@ fn branches(n: usize, tail: &str) -> String {
 }
 
 /// `n` nested `if`s, the innermost updating `c` in one branch and every other branch ending in
-/// `break`; with `carried`, `c` carries.
+/// `break;`; with `carried`, `c` carries.
 fn deep(n: usize, carried: bool) -> String {
     let open = "if t > 1 { ".repeat(n);
-    let close = " } else { break 0 }".repeat(n);
+    let close = " } else { break; }".repeat(n);
     let facet = if carried { " with carryForward" } else { "" };
     format!(
         "r = loop t {{ while t < 9; initial c = 0{facet}; x' = {open}if t > 2 {{ c*.a() }} else \

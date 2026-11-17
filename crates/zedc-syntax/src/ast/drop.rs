@@ -38,7 +38,6 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
         | ExprKind::Member { of: a, .. }
         | ExprKind::Read { of: a, .. }
         | ExprKind::Loop { body: a, .. }
-        | ExprKind::Break(a)
         | ExprKind::Spread { of: a, .. } => out.push(*a),
         ExprKind::SortKey { key, .. } => out.extend(key.map(|k| *k)),
         ExprKind::Binary(_, a, b)
@@ -162,7 +161,7 @@ fn stmt_kids(kind: StmtKind, out: &mut Vec<Expr>) {
                 Field::Import { .. } => None,
             }))
         }
-        StmtKind::Type(_) | StmtKind::Import(_) => {}
+        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
         // The declaration is not annotated again, so this recursion is one level deep.
         StmtKind::Annotated { annots, decl } => {
             for Annot {

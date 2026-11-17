@@ -275,6 +275,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`x = 0;`, a plain binding"),
     ),
     (
+        Row::BreakOutsideLoop,
+        "",
+        "f(x) = { return x; };\n",
+        "f(x) = { break; };\n",
+        "1:10",
+        Some("`return e;`, which ends the function `f` with the value `e`"),
+    ),
+    (
         Row::ReservedWordAsName,
         "",
         "rest = 3;\n",
