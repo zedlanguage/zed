@@ -11,8 +11,11 @@
 # seven crates), with [[test]] targets step_x and step_y in tests/steps/<step>/ and full, which
 # needs a feature. tools/run_tests.sh is a stub that prints its arguments and exits with $STUB_RC.
 # More files of crates b and c name files of other packages by #[path] in a mod.rs file, inside
-# inline modules, and by include! (TEST-merge-check-nested-path). The last cases rebase a branch
-# on a main that moves and check what --record runs again (MERGE-push-race).
+# inline modules, and by include! (TEST-merge-check-nested-path). Pieces w and z of tests/full, the
+# toy's own tools/test_merge_check.sh (a stub) and a map of run-time reads (--reads) test the
+# selection of tests/full, the self-tests and step 2a (MERGE-runtime-inputs,
+# MERGE-tools-self-tests). The last cases rebase a branch on a main that moves and check what
+# --record runs again (MERGE-push-race).
 # MERGE_CHECK names another script to test, such as an older version, to see these cases fail.
 check_script=${MERGE_CHECK:-$(pwd)/tools/merge_check.sh}
 part=$1
@@ -66,6 +69,13 @@ echo '// table' >crates/c/data/table.rs
 echo '//! x.' >tests/steps/x/mod.rs
 echo '//! y.' >tests/steps/y/mod.rs
 echo '//! full.' >tests/full/main.rs
+mkdir -p tests/full/w tests/full/z
+echo '//! w.' >tests/full/w/mod.rs
+echo '//! z.' >tests/full/z/mod.rs
+# The toy's own tools/test_merge_check.sh, which merge_check.sh runs when a file it tests changes:
+# it prints its part and fails the part named by $STUB_SELF_FAIL.
+printf '#!/bin/bash\necho "self $1"\n[ "$1" != "$STUB_SELF_FAIL" ]\n' >tools/test_merge_check.sh
+chmod +x tools/test_merge_check.sh
 echo '# Notes' >docs/notes.md
 echo '# Plan' >docs/plan.md
 mkdir -p data
@@ -158,6 +168,72 @@ check "a file moved from one package to another selects both" \
   "merge check: groups: $(sorted "$(short a b c s_01f_import_graph step_x step_y t)")" \
   "$(git mv crates/c/src/inl.rs crates/a/src/inl.rs && git commit -q -m move &&
     "$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: groups')"
+# tests/full (MERGE-runtime-inputs): a piece's folder selects that piece alone, run with --full;
+# its main.rs selects every piece; neither selects the package t.
+full_run() {
+  groups_after "$1" >/dev/null
+  "$check_script" --base base 2>&1 | command grep -a -E '^(run_tests|merge check: (groups|tests/full|passed))'
+}
+check "a file in a piece's folder of tests/full selects that piece alone, run with --full" \
+  "merge check: tests/full pieces: z
+merge check: groups:
+run_tests --full --only ^(z)\$ 6
+merge check: passed" "$(full_run tests/full/z/mod.rs)"
+check "tests/full/main.rs selects every piece of tests/full" \
+  "merge check: tests/full pieces: w z
+merge check: groups:
+run_tests --full --only ^(w|z)\$ 6
+merge check: passed" "$(full_run tests/full/main.rs)"
+# The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
+# tools/test_merge_check.sh; a part that fails refuses the branch.
+check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh" \
+  "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+merge check: tools/test_merge_check.sh select and record passed
+merge check: passed
+0" "$(groups_after tools/run_tests.sh '# changed' >/dev/null
+    "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+check "a failing part of tools/test_merge_check.sh refuses the branch with exit 1" \
+  "self select
+FAILED: tools/test_merge_check.sh select, rc=1
+1" "$(STUB_SELF_FAIL=select "$check_script" --base base 2>&1 |
+    command grep -a -o -E '^self select|FAILED: tools/test_merge_check.sh [a-z]+, rc=[0-9]+'
+    echo "${PIPESTATUS[0]}")"
+# The map of run-time reads (step 2a): group c read docs/plan.md, step_y listed data, t stat'ed
+# the root; gone, no longer a group of the workspace, read docs/plan.md too.
+map=$ws/target/map
+mkdir -p "$map"
+printf 'commit 0\ndocs/plan.md\n' >"$map/c.reads"
+printf 'commit 0\ndata\n' >"$map/step_y.reads"
+printf 'commit 0\n.\n' >"$map/t.reads"
+printf 'commit 0\ndocs/plan.md\n' >"$map/gone.reads"
+# Commits a change to the file $1 on the base and prints the map's and the selection's lines.
+map_after() {
+  git checkout -q --detach base
+  mkdir -p "$(dirname "$1")"
+  echo "${2:-// changed}" >>"$1"
+  git add -A
+  git commit -q -m "change $1"
+  "$check_script" --base base --reads "$map" --groups 2>&1 |
+    command grep -a -E '^merge check: (groups|the map|no package)' | sed "s|$map|MAP|"
+}
+uncovered="merge check: the map has no reads of 3 groups, which only compilation selects: a b step_x"
+check "a file that a group read at run time selects that group, by the map" \
+  "merge check: groups that read at run time a path the change can affect (map MAP): c
+$uncovered
+merge check: groups: c" "$(map_after docs/plan.md)"
+check "a file changed in a directory a group listed selects nothing" \
+  "merge check: groups that read at run time a path the change can affect (map MAP):
+$uncovered
+merge check: no package changed; no tests to run" "$(map_after data/notes.txt)"
+check "a file added in a new directory under a directory a group listed selects that group, not the root's" \
+  "merge check: groups that read at run time a path the change can affect (map MAP): step_y
+$uncovered
+merge check: groups: step_y" "$(map_after data/sub/new.txt)"
+check "a file added at the root selects the group that stat'ed the root" \
+  "merge check: groups that read at run time a path the change can affect (map MAP): t
+$uncovered
+merge check: groups: t" "$(map_after new.txt)"
 git checkout -q --detach base
 fi
 
@@ -198,7 +274,11 @@ check "with no record, every selected group runs, and the record is written" \
   "merge check: to run: $all_c
 run_tests --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
 merge check: passed
-0" "$(record_run base)"
+0" "$(record_run base --reads "$ws/target/map-record")"
+check "a passing run writes the map file of each group that ran, from the trace" "commit $(git rev-parse HEAD)
+docs/plan.md
+commit $(git rev-parse HEAD)
+data" "$(cat "$ws/target/map-record/c.reads" "$ws/target/map-record/short-c.reads")"
 check "the record names the commit, the groups and what each read" "$(git rev-parse HEAD)
 group c
 group s_01f_import_graph
