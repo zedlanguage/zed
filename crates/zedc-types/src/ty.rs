@@ -17443,16 +17443,26 @@ impl Sig {
         let several = morphism.is_none() && self.arrows.len() != 1;
         let hoisted = at == PrintAt::Member && several;
         let bounds = scope.open(self, hoisted);
+        // A list, `[V]`, is bracketed already: only a bounds clause after it needs a pair, and
+        // only where a whole type does not stand.
+        let list = self.list();
         // Where only a bounds clause needs the pair, the clause decides it once the arrows are
         // written, as it binds only the variables they write ([`Scope::written`]).
-        let wrap = Sig::wraps(at, several, false);
-        let begun = !wrap && !bounds.is_empty() && Sig::wraps(at, several, true);
+        let wrap = list.is_none() && Sig::wraps(at, several, false);
+        let begun = !wrap
+            && !bounds.is_empty()
+            && match list {
+                Some(_) => at != PrintAt::Any,
+                None => Sig::wraps(at, several, true),
+            };
         if wrap {
             parts.push(Print::Text("("));
         } else if begun {
             parts.push(Print::Begin);
         }
-        if let Some(m) = morphism {
+        if let Some(v) = list {
+            parts.extend([Print::Text("["), Print::Found(v), Print::Text("]")]);
+        } else if let Some(m) = morphism {
             m.parts(parts);
         } else {
             // A function of one positional parameter is written `K -> V`, its key a `TypeNot`
@@ -17509,6 +17519,25 @@ impl Sig {
         if wrap {
             parts.push(Print::Text(")"));
         }
+    }
+
+    /// The entry type `V | #notFound` of a list, if it is one, written `[V]`: a family of the
+    /// ranks `0 ..< n`, `n` not known to the type ([`Dense::Ranks`]), so one partial arrow
+    /// `int ->? V` of one unnamed positional parameter with no range (DESIGN.md
+    /// sec:type_language: `[T]` is `int[0..<n] -> T`; `choices : [Choice]`). A list whose
+    /// keys the type knows, as `[1, 2]`'s `(0 | 1) -> 1 | 2`, keeps its arrow, which says more.
+    /// `[V]` reads back as this arrow (zedc-check's `read::parse_type`).
+    fn list(&self) -> Option<&Ty> {
+        let ([p], [a]) = (&self.params[..], &self.arrows[..]) else {
+            return None;
+        };
+        let ranks = self.data && self.dense == Dense::Ranks;
+        let bare = p.positional && p.name.is_empty() && p.range.is_none();
+        (ranks
+            && bare
+            && a.params[0] == Ty::carrier(Carrier::Int)
+            && matches!(self.morphism(), Some(Morphism::Partial { .. })))
+        .then_some(&a.result)
     }
 
     /// The part of the result of its arrow `a`: the hull of its ints, as a range each end

@@ -12855,9 +12855,13 @@ impl<'a> Denote<'a> {
                 steps.extend(ps.iter().rev().map(|p| Step::Ty(&p.ty)));
                 return;
             }
-            TypeKind::Array(_) => unreachable!(
-                "name resolution rejects every array type before the checker reads the program"
-            ),
+            // Resolve rejects a written one; the reader of printed types reads one, which the
+            // checker prints for a list (MSG-list-type-printed-by-arrows). It is a function
+            // type of no written parameter, opened and closed as one.
+            TypeKind::Array(of) => {
+                steps.extend([Step::Make(t), Step::Ty(of), Step::Close, Step::Open]);
+                return;
+            }
             // Name resolution lets a range through only as the whole type of a parameter, whose
             // range the checker reads apart ([`Ck::param_range`]) and meets into its cell: the
             // type is the type ranged over.
@@ -13083,6 +13087,22 @@ impl<'a> Denote<'a> {
                     ]
                 };
                 self.sig_of(names, arrows)
+            }
+            // A list `[V]` is the family of the ranks `0 ..< n`, `n` not known: the partial arrow
+            // `int ->? V`, its lookup `V | #notFound`, as `split` gives ([`strings_rank`]).
+            TypeKind::Array(_) => {
+                let value = vals.pop().expect("a list's entry type is denoted");
+                let arrow = Arrow {
+                    params: vec![Ty::carrier(Carrier::Int)],
+                    result: value.union(&Ty::set(KType::atom("notFound"))),
+                    partial: true,
+                };
+                let mut t = self.sig_of(positional(1), vec![arrow]);
+                let s = t.fns.pop().expect("a function type denotes one signature");
+                let mut s = Sig::unwrap_to_change(s);
+                s.data = true;
+                s.dense = Dense::Ranks;
+                Ty::func(Arc::new(s))
             }
             _ => unreachable!("only a type with parts is made from them"),
         }

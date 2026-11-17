@@ -3553,6 +3553,14 @@ impl Resolver<'_> {
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::AtomAny(_) | TypeKind::Every(Every::Struct) if self.printed.is_some() => {}
+            // A printed list `[V]` is the function type `int ->? V` the checker reads it as
+            // (MSG-list-type-printed-by-arrows), so it is the home of the variables in `V` as
+            // that arrow is.
+            TypeKind::Array(of) if self.printed.is_some() => {
+                self.arrows.push(t.span);
+                todo.push(Task::ArrowEnd);
+                todo.push(Task::Ty(of));
+            }
             TypeKind::Apply(name, ps) => {
                 self.later(t.span, "an applied type");
                 todo.extend(ps.iter().rev().map(|p| Task::Ty(&p.ty)));

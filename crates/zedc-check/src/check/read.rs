@@ -4,7 +4,8 @@
 //! type, `#ioError(op: String, path: String, why: String)`, a form of layer L2 the checker builds
 //! from L1 on (L29-print), the leaves of layer L10 `_` and a literal type, and after a signature
 //! whose type variables are bounded the clause `for T in int | f64 | rat` (DESIGN.md
-//! sec:type_resolution); this reads those too. The empty type prints as `Never`, a prelude type
+//! sec:type_resolution); this reads those too, and a list `[V]`, a form of step L3.1 the
+//! checker prints for a family of the ranks `0 ..< n` (MSG-list-type-printed-by-arrows). The empty type prints as `Never`, a prelude type
 //! name of L1; its L10 form `!_` is read as well.
 
 use std::borrow::Cow;
@@ -139,11 +140,8 @@ fn read_part(
                      checker never prints"
                 ));
             }
-            TypeKind::Array(_) => {
-                return Err(format!(
-                    "`{text}` holds an array type, which the checker never prints"
-                ));
-            }
+            // A list, which the checker prints `[V]` (MSG-list-type-printed-by-arrows).
+            TypeKind::Array(of) => stack.push(of),
             // A signature prints a parameter's range, `(x: int[1..]) -> int`, but a printed
             // type read back holds none: the kernel has no ranged type to read it as.
             TypeKind::Range { .. } => {
