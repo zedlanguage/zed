@@ -2343,3 +2343,212 @@ fn a_choice_on_an_exclusive_or_whose_branches_cover_everything_is_the_leaf() {
     assert!(merged.subtype(&all) && all.subtype(&merged));
     assert!(merged.decidable(), "{}", merged.surface());
 }
+
+// CANON-choose-true-branch (Opus, round 2 of the xor-shape cross-review, N1): the choice
+// `c&x | !c&y` with the branch `x` the leaf `true` was kept as `c | !c&y`, another node than
+// `c | y` built by `zip`. A union kept as an expression is not hash-consed (`Part::expr` takes a
+// new id at each call), so `or(&c, &y)` made twice has two ids; the two are compared by contents
+// and digest, which differed before the repair (cross-review round 3, Gemini Q2).
+#[test]
+fn a_choice_with_a_true_branch_is_the_union_in_its_one_form() {
+    let [a, b, c, d, e] = [0, 1, 2, 3, 4].map(|i| Part::literal(atom(i)));
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let y = xor_by_or(&xor_by_or(&b, &d), &e);
+    assert!(y.xor_tag().is_some());
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| or(&and(c, x), &and(&c.not(), y));
+    // `c?a:y | c?!a:y`: the branches join to `true` and `y`.
+    let merged = or(&pick(&c, &a, &y), &pick(&c, &a.not(), &y));
+    let direct = or(&c, &y);
+    let holds = |bits: u32| move |r: &Row| (0..5).any(|i| bits >> i & 1 == 1 && *r == atom(i));
+    for bits in 0..32 {
+        assert_eq!(
+            merged.eval(&holds(bits)),
+            direct.eval(&holds(bits)),
+            "{bits:b}"
+        );
+    }
+    assert!(merged == direct, "{merged:?} is not {direct:?}");
+    assert_eq!(merged.digest(), direct.digest());
+}
+
+/// The other branch `true`: `c?y:a | c?y:!a` is `!c | y`.
+#[test]
+fn a_choice_with_a_true_second_branch_is_the_union_in_its_one_form() {
+    let [a, b, c, d, e] = [0, 1, 2, 3, 4].map(|i| Part::literal(atom(i)));
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let y = xor_by_or(&xor_by_or(&b, &d), &e);
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| or(&and(c, x), &and(&c.not(), y));
+    let merged = or(&pick(&c, &y, &a), &pick(&c, &y, &a.not()));
+    let direct = or(&c.not(), &y);
+    let holds = |bits: u32| move |r: &Row| (0..5).any(|i| bits >> i & 1 == 1 && *r == atom(i));
+    for bits in 0..32 {
+        assert_eq!(
+            merged.eval(&holds(bits)),
+            direct.eval(&holds(bits)),
+            "{bits:b}"
+        );
+    }
+    assert!(merged == direct, "{merged:?} is not {direct:?}");
+    assert_eq!(merged.digest(), direct.digest());
+}
+
+// Widened by the round 2 review (Gemini R2-F3, Cases III and IV).
+
+/// Case III: the condition is itself a choice; both branches meet `w` and `!w` to `a ^ e`.
+#[test]
+fn a_choice_on_a_compound_condition_whose_meets_agree_is_that_meet() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [a, b, e, p, q, r, s] = [0, 1, 3, 4, 5, 6, 7].map(|i| Part::literal(atom(i)));
+    let w = xor_by_or(&p, &q);
+    let dx = xor_by_or(&r, &s);
+    let c = or(&and(&dx, &a), &and(&dx.not(), &b));
+    let ae = xor_by_or(&a, &e);
+    let x = or(&and(&dx, &or(&a.not(), &e.not())), &and(&dx.not(), &ae));
+    let y = or(&and(&dx, &or(&a, &e)), &and(&dx.not(), &ae));
+    let half = |w: &Part<Row>| or(&and(&c, &and(&x, w)), &and(&c.not(), &and(&y, w)));
+    let merged = or(&half(&w), &half(&w.not()));
+    let holds = |bits: u32| move |row: &Row| (0..8).any(|i| bits >> i & 1 == 1 && *row == atom(i));
+    for bits in 0..256 {
+        assert_eq!(merged.eval(&holds(bits)), ae.eval(&holds(bits)), "{bits:b}");
+    }
+    assert_eq!(merged.id(), ae.id(), "{merged:?} is not {ae:?}");
+}
+
+/// Case IV: the meets of the two choices on `a` are `a&d` and `!a&d`, which is `d`.
+#[test]
+fn a_meet_of_choices_whose_branches_meet_to_one_set_is_that_set() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [a, d, r, s, t, u] = [0, 2, 6, 7, 8, 9].map(|i| Part::literal(atom(i)));
+    let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
+    let ad = and(&a, &d);
+    let nad = and(&a.not(), &d);
+    let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
+    let right = or(
+        &and(&a, &or(&ad, &w.not())),
+        &and(&a.not(), &or(&nad, &z.not())),
+    );
+    let merged = and(&left, &right);
+    let holds = |bits: u32| move |row: &Row| (0..10).any(|i| bits >> i & 1 == 1 && *row == atom(i));
+    for bits in 0..1024 {
+        assert_eq!(merged.eval(&holds(bits)), d.eval(&holds(bits)), "{bits:b}");
+    }
+    assert_eq!(merged.id(), d.id(), "{merged:?} is not {d:?}");
+}
+
+/// Case IV with `d` a meet of `m` literals, so that the meets are chains of `m + 1` literals:
+/// the small instances of `the_union_of_a_choices_meets_scales`.
+#[test]
+fn a_meet_of_choices_whose_branches_meet_to_a_meet_of_literals_is_that_meet() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    for m in [1, 2, 3, 6] {
+        let lit = |i: usize| Part::literal(atom(i as u64));
+        let a = lit(0);
+        let d = (1..=m).fold(Part::leaf(true), |f, i| and(&f, &lit(i)));
+        let [r, s, t, u] = [m + 1, m + 2, m + 3, m + 4].map(lit);
+        let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
+        let (ad, nad) = (and(&a, &d), and(&a.not(), &d));
+        let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
+        let right = or(
+            &and(&a, &or(&ad, &w.not())),
+            &and(&a.not(), &or(&nad, &z.not())),
+        );
+        let merged = and(&left, &right);
+        let holds = |bits: u32| {
+            move |row: &Row| (0..m + 5).any(|i| bits >> i & 1 == 1 && *row == atom(i as u64))
+        };
+        for bits in 0..1u32 << (m + 5) {
+            assert_eq!(
+                merged.eval(&holds(bits)),
+                d.eval(&holds(bits)),
+                "{m} {bits:b}"
+            );
+        }
+        assert!(merged == d, "{m}: {merged:?} is not {d:?}");
+    }
+}
+
+/// The union of two choices with one branch `true` and the other an exclusive or of `m`
+/// atoms: the small instances of `the_union_of_a_choices_meets_scales`.
+#[test]
+fn a_choice_with_a_true_branch_and_a_long_exclusive_or_is_the_union() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    for m in [2, 3, 5, 8] {
+        let [a, c] = [0, 1].map(|i| Part::literal(atom(i)));
+        let y = (2..2 + m as u64).fold(Part::leaf(false), |f, i| {
+            xor_by_or(&f, &Part::literal(atom(i)))
+        });
+        let pick = |x: &Part<Row>| or(&and(&c, x), &and(&c.not(), &y));
+        let merged = or(&pick(&a), &pick(&a.not()));
+        let direct = or(&c, &y);
+        let holds = |bits: u32| {
+            move |row: &Row| (0..m + 2).any(|i| bits >> i & 1 == 1 && *row == atom(i as u64))
+        };
+        for bits in 0..1u32 << (m + 2) {
+            assert_eq!(
+                merged.eval(&holds(bits)),
+                direct.eval(&holds(bits)),
+                "{m} {bits:b}"
+            );
+        }
+        assert!(merged == direct, "{m}: {merged:?} is not {direct:?}");
+    }
+}
+
+/// Parts built on one thread and met on another: each thread has its own tables of cells, so
+/// the complement of a literal taken there is a cell of that thread, and a list rebuilt there
+/// is a second cell of the same contents. Both are still found complements of what was built
+/// here (`Part::lists_opposite`). Before, the choice on `a` below, built here, was kept as an
+/// expression when met on another thread, as the scaling checks meet their inputs.
+#[test]
+fn parts_built_on_one_thread_meet_on_another_in_their_one_form() {
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let [a, d, p, q, r, s, t, u, v] = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(|i| Part::literal(atom(i)));
+    // Case IV of `a_meet_of_choices_whose_branches_meet_to_one_set_is_that_set`.
+    let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
+    let (ad, nad) = (and(&a, &d), and(&a.not(), &d));
+    let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
+    let right = or(
+        &and(&a, &or(&ad, &w.not())),
+        &and(&a.not(), &or(&nad, &z.not())),
+    );
+    // A list that is no literal and no chain, and its complement, made here.
+    let l = or(&and(&p, &q), &v);
+    assert!(
+        matches!(&l, Part::Bdd(b) if b.as_literal().is_none()),
+        "{l:?}"
+    );
+    let not_l = l.not();
+    let na = a.not();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let Part::Bdd(x) = &a else {
+                    panic!("a literal is a list")
+                };
+                let Part::Bdd(y) = &na else {
+                    panic!("a literal is a list")
+                };
+                assert!(Part::lists_opposite(x, y) && Part::lists_opposite(y, x));
+                assert!(!Part::lists_opposite(x, x));
+                let again = or(&and(&p, &q), &v);
+                let (Part::Bdd(x), Part::Bdd(y)) = (&again, &not_l) else {
+                    panic!("lists")
+                };
+                assert!(Part::lists_opposite(x, y) && Part::lists_opposite(y, x));
+                let Part::Bdd(l) = &l else { panic!("a list") };
+                assert!(!Part::lists_opposite(x, l));
+                assert_eq!(or(&again, &not_l).is_leaf(), Some(true));
+                let merged = and(&left, &right);
+                assert!(merged == d, "{merged:?} is not {d:?}");
+            })
+            .join()
+            .unwrap()
+    });
+}

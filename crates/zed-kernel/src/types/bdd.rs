@@ -944,6 +944,188 @@ impl<A: Literal> Part<A> {
         }
     }
 
+    /// Whether the list `x` is the complement of the list `y`, making no cell. A literal's
+    /// complement is the literal on its atom with the other value, so two literals are compared
+    /// by atom and value, and a literal is no other list's complement. Any other list's
+    /// complement is its first cell with the value flipped, and a live cell is the one cell of
+    /// its contents in its thread's table, so on one thread `y` is that complement exactly when
+    /// it has that cell and value. Cells made on two threads are two cells of one contents
+    /// (each thread has its own tables), so when the ids differ and the digests agree the two
+    /// are compared by contents.
+    // Complexity tradeoff (COMPLEXITY.md CANON-choose-true-branch): the naive version took
+    // `x.not()` and compared first cells' ids, O(1), but `not` of a literal looks the literal
+    // up in the calling thread's table, so a literal and its complement made on another thread
+    // were not found complements, and a choice on a literal condition built on one thread was
+    // kept as an expression when met on another (the scaling checks run on threads of their
+    // own). Used: two literals by atom and value, O(1) atom comparisons; other lists by id, O(1),
+    // then, only for cells of two threads with equal digests, by contents, O(size of the
+    // lists), which on one thread is reached only by a collision of 64-bit digests.
+    fn lists_opposite(x: &Bdd<A>, y: &Bdd<A>) -> bool {
+        match (x.as_literal(), y.as_literal()) {
+            (Some((a, t)), Some((b, u))) => return t != u && a == b,
+            (Some(_), None) | (None, Some(_)) => return false,
+            (None, None) => {}
+        }
+        match (x, y) {
+            (Bdd::List(c, v), Bdd::List(d, w)) => {
+                let n = Bdd::List(c.clone(), !v);
+                v != w && (c.id == d.id || (n.digest() == y.digest() && n == *y))
+            }
+            (Bdd::Leaf(p), Bdd::Leaf(q)) => p != q,
+            (Bdd::List(..), Bdd::Leaf(_)) | (Bdd::Leaf(_), Bdd::List(..)) => false,
+        }
+    }
+
+    /// Whether `a` is the complement of `b` as the two are kept, making no part: two lists by
+    /// their first cells, two exclusive ors by their tags, and an expression by its complement
+    /// as kept or its form `Not`. `false` when the complement is not yet made, where
+    /// `Connect::same_as_not` would make it.
+    fn opposite_as_kept(a: &Part<A>, b: &Part<A>) -> bool {
+        let kept = |p: &Part<A>, q: &Part<A>| match p {
+            Part::Expr(e) => {
+                e.known().is_some_and(|n| n == *q)
+                    || matches!(e.form.get(), Some(Form::Not(r)) if r == q)
+            }
+            Part::Bdd(_) => false,
+        };
+        match (a, b) {
+            (Part::Bdd(x), Part::Bdd(y)) => Part::lists_opposite(x, y),
+            (Part::Expr(e), Part::Expr(f)) if e.xor.is_some() && f.xor.is_some() => {
+                let (Some(u), Some(v)) = (&e.xor, &f.xor) else {
+                    unreachable!("both tested")
+                };
+                xor::opposite(u, v)
+            }
+            _ => kept(a, b) || kept(b, a),
+        }
+    }
+
+    /// The complement of `p` as kept, making no part but a list's: `None` for an expression
+    /// whose complement is not yet made.
+    fn not_as_kept(p: &Part<A>) -> Option<Part<A>> {
+        match p {
+            Part::Bdd(b) => Some(Part::Bdd(b.not())),
+            Part::Expr(e) => e.known().or_else(|| match e.form.get() {
+                Some(Form::Not(q)) => Some(q.clone()),
+                _ => None,
+            }),
+        }
+    }
+
+    /// `a | b` when a rule of `Connect::zipped` gives it from the parts as they are kept, with
+    /// no call of `Connect`, so that `Connect::choose` can take the union of its meets without
+    /// finding its own choice again: a leaf or equal operands; the two halves of an exclusive
+    /// or (`xor::xor_of`); complements, as kept ([`Part::opposite_as_kept`]); two lists that
+    /// `Bdd::zip_chain` joins; and `c&x | !c&x`, which is `x`. `None` when none fits.
+    /// None of the calls made enters `Connect`: `xor::xor_of` reads no exclusive or's halves
+    /// (`xor::pair`) and makes a node of the table (`Part::xor`); `zip_chain` edits lists; the
+    /// order of parts compares two exclusive ors by their sets, not their halves. So the
+    /// function ends, after a constant number of calls, each of the cost it has in `zipped`.
+    fn union_as_kept(a: &Part<A>, b: &Part<A>) -> Option<Part<A>> {
+        if let Some(z) = Part::zip_at_once(a, b, Op::Or).or_else(|| xor::xor_of(a, b, Op::Or)) {
+            return Some(z);
+        }
+        if Part::opposite_as_kept(a, b) {
+            return Some(Part::leaf(true));
+        }
+        if let (Part::Bdd(x), Part::Bdd(y)) = (a, b)
+            && let Some(z) = x.zip_chain(y, Op::Or)
+        {
+            return Some(Part::Bdd(z));
+        }
+        match Part::choice_of_as_kept(a, b) {
+            Some((_, x, y)) if x == y => Some(x),
+            _ => None,
+        }
+    }
+
+    /// `(c, x, y)` when `a | b` is the choice `c&x | !c&y`, found as `Connect::choice_of`
+    /// finds it under `Or` but with the complements as kept ([`Part::opposite_as_kept`],
+    /// [`Part::not_as_kept`]), so with no call of `Connect`. When two or more conditions fit,
+    /// `None`, as there. A complement not yet made can hide a second condition that `choice_of`
+    /// would find; the one choice found is then a choice still, so the part built from it is
+    /// the same set.
+    fn choice_of_as_kept(a: &Part<A>, b: &Part<A>) -> Option<(Part<A>, Part<A>, Part<A>)> {
+        let inner = Op::And;
+        let r = b.operands(inner)?;
+        let l = a.operands(inner)?;
+        let within = |n: &Part<A>, d: &Bdd<A>| match n {
+            Part::Bdd(n) => n
+                .as_literal()
+                .filter(|(atom, taken)| d.chain_takes(inner, atom) == Some(*taken))
+                .map(|(atom, taken)| (atom.clone(), taken)),
+            Part::Expr(_) => None,
+        };
+        let mut found = Vec::new();
+        match (&l, &r) {
+            (Operands::Two(p, q), Operands::Two(s, t)) => {
+                for (c, x) in [(p, q), (q, p)] {
+                    for (n, y) in [(s, t), (t, s)] {
+                        if Part::opposite_as_kept(c, n) {
+                            found.push(((*c).clone(), (*x).clone(), (*y).clone()));
+                        }
+                    }
+                }
+            }
+            (Operands::Two(p, q), Operands::Chain(d)) => {
+                for (c, x) in [(p, q), (q, p)] {
+                    if let Some((atom, taken)) = Part::not_as_kept(c).and_then(|n| within(&n, d)) {
+                        let y = Part::Bdd(d.chain_without(inner, &atom, taken));
+                        found.push(((*c).clone(), (*x).clone(), y));
+                    }
+                }
+            }
+            (Operands::Chain(d), Operands::Two(s, t)) => {
+                for (n, y) in [(s, t), (t, s)] {
+                    if let Some((atom, taken)) = Part::not_as_kept(n).and_then(|m| within(&m, d)) {
+                        let c = Part::Bdd(Bdd::literal_of(&atom, taken));
+                        let x = Part::Bdd(d.chain_without(inner, &atom, taken));
+                        found.push((c, x, (*y).clone()));
+                    }
+                }
+            }
+            (Operands::Chain(d), Operands::Chain(e)) => {
+                // As in `Connect::choice_of`: the shorter chain's literals looked up in the
+                // longer, `O(k log n)`.
+                let short_is_d = d.chain_len(inner) <= e.chain_len(inner);
+                let (short, long) = if short_is_d { (d, e) } else { (e, d) };
+                let lits = short
+                    .chain(inner)
+                    .expect("an operand chain has its literals");
+                let mut both = (lits.into_iter())
+                    .filter(|(atom, taken)| long.chain_takes(inner, atom) == Some(!*taken));
+                let (Some((atom, taken)), None) = (both.next(), both.next()) else {
+                    return None;
+                };
+                let taken = if short_is_d { taken } else { !taken };
+                found.push((
+                    Part::Bdd(Bdd::literal_of(atom, taken)),
+                    Part::Bdd(d.chain_without(inner, atom, taken)),
+                    Part::Bdd(e.chain_without(inner, atom, !taken)),
+                ));
+            }
+        }
+        let mut found = found.into_iter();
+        match (found.next(), found.next()) {
+            (Some(one), None) => Some(one),
+            _ => None,
+        }
+    }
+
+    /// `(c, x, y)` when `p` is the choice `c&x | !c&y` in its one form, found as
+    /// `Connect::choice` finds it but with the complements as kept
+    /// ([`Part::choice_of_as_kept`]); the condition is not put in the order `choice` puts it.
+    fn choice_as_kept(&self) -> Option<(Part<A>, Part<A>, Part<A>)> {
+        let Part::Expr(e) = self else { return None };
+        if e.xor.is_some() {
+            return None;
+        }
+        let Form::Or(a, b) = e.form() else {
+            return None;
+        };
+        Part::choice_of_as_kept(a, b)
+    }
+
     /// The operands of an expression's `And` or `Or`, under `op`, or the literals of a chain
     /// under `op`.
     fn operands(&self, op: Op) -> Option<Operands<'_, A>> {
@@ -1105,11 +1287,7 @@ impl<'m> Connect<'m> {
     /// `l01_23_subtyping::one_pass`, COMPLEXITY.md K71).
     async fn same_as_not<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>) -> bool {
         match (a, b) {
-            (Part::Bdd(x), Part::Bdd(y)) => match (x.not(), y) {
-                (Bdd::List(c, v), Bdd::List(d, w)) => c.id == d.id && v == *w,
-                (Bdd::Leaf(p), Bdd::Leaf(q)) => p == *q,
-                (Bdd::List(..), Bdd::Leaf(_)) | (Bdd::Leaf(_), Bdd::List(..)) => false,
-            },
+            (Part::Bdd(x), Part::Bdd(y)) => Part::lists_opposite(x, y),
             (Part::Expr(e), _) => e.known().is_some_and(|c| c == *b) || self.not(a).await == *b,
             _ => self.not(b).await == *a,
         }
@@ -1141,33 +1319,63 @@ impl<'m> Connect<'m> {
             (Some(false), Some(true)) => return self.not(&c).await,
             _ => {}
         }
-        let first = self.zip(&c, x, Op::And).await;
-        let not_c = self.not(&c).await;
-        let parts = [first, self.zip(&not_c, y, Op::And).await];
+        // The two parts whose union the choice is: `c | y` when `x` is `true`, since
+        // `c | !c&y` is `c | y`, and `x | !c` when `y` is; otherwise the meets `c&x` and
+        // `!c&y`. A branch `false` needs no arm: its meet is `false`, which the first rule of
+        // `Part::union_as_kept` drops (cross-review of xor-shape, round 3, Gemini Q2).
+        let parts = match (x.is_leaf(), y.is_leaf()) {
+            (Some(true), _) => [c.clone(), y.clone()],
+            (_, Some(true)) => [x.clone(), self.not(&c).await],
+            _ => {
+                let first = self.zip(&c, x, Op::And).await;
+                let not_c = self.not(&c).await;
+                [first, self.zip(&not_c, y, Op::And).await]
+            }
+        };
         let [a, b] = if parts[0].before(&parts[1]) {
             parts
         } else {
             let [p, q] = parts;
             [q, p]
         };
-        // The meets may be a leaf, the two halves of an exclusive or (`a&!b`, `!a&b`), whose one
-        // form is not this union (module `xor`), or two lists that `zip_chain` joins as lists
-        // (`a&(a|b) | !a&b` is `a|b`; cross-review of PERF-xor-shape-free, round 2, Sol X2-F4),
-        // as `Connect::zipped` finds them. `zipped` itself is not called on the meets: its rules
-        // for choices can find this choice again. Complexity tradeoff: the naive method keeps the
-        // union as an expression, in constant time, and leaves a second node for one function
-        // (cross-review round 3, Claude R3-T1). The leaf and tag tests build no form; a test of
-        // equal or opposite tags can compare two sets' contents when they were made on different
-        // threads or tie at a digest (cross-review round 3, Sol X3-F2). When the second test fits
-        // it joins the two sets of atoms (`xor::join`), in the work of `set::symmetric`. The
-        // third is the call `zipped` makes on two lists, at its cost.
-        if let Some(z) = Part::zip_at_once(&a, &b, Op::Or).or_else(|| xor::xor_of(&a, &b, Op::Or)) {
+        // `zipped` itself is not called on the two parts: its rules for choices can find this
+        // choice again, and no measure is known that falls on that round trip (cross-review of
+        // xor-shape, round 3: Opus refuted the step "a meet's choice comes from `c`'s", Gemini
+        // the claim "two meets choose on one condition only when `c` chooses on it"). So the
+        // union is taken by `Part::union_as_kept`, which makes no call of `Connect` and does not
+        // recurse, and so ends; when no rule of it fits, by the rule for two choices on one
+        // condition below, one level deep; and otherwise kept as the expression.
+        // Complexity tradeoff (COMPLEXITY.md CANON-choose-true-branch): the naive method keeps
+        // the union of the meets as an expression, in constant time, and leaves a second node
+        // for one function: `c | y` as `c | !c&y` (Opus, round 2, N1), a union of meets that
+        // agree as an expression, and a list covered by the two meets as no leaf. Used: a fixed
+        // number of tests, each of constant time or of the cost of the call `zipped` makes on
+        // such parts (`Part::union_as_kept`), at most three unions of that kind here, and no
+        // part compared in full but where the order of parts walks equal digests, as everywhere
+        // in this module. Given up: a union whose meets agree only two or more choices deep, or
+        // which needs a complement not yet made, is still a second node; and a list absorbed by
+        // another list that is no chain (`l & (l|b)`, Opus R3-C3) is not found (plan row
+        // CANON-list-absorb).
+        if let Some(z) = Part::union_as_kept(&a, &b) {
             return z;
         }
-        if let (Part::Bdd(x), Part::Bdd(y)) = (&a, &b)
-            && let Some(z) = x.zip_chain(y, Op::Or)
-        {
-            return Part::Bdd(z);
+        // `c&u | !c&v` and `c&s | !c&t` are `c&(u|s) | !c&(v|t)`, which is `u|s` when the two
+        // unions are equal.
+        if let (Some((c, u, v)), Some((d, s, t))) = (a.choice_as_kept(), b.choice_as_kept()) {
+            let same = if c == d {
+                Some((s, t))
+            } else if Part::opposite_as_kept(&c, &d) {
+                Some((t, s))
+            } else {
+                None
+            };
+            if let Some((s, t)) = same
+                && let (Some(l), Some(r)) =
+                    (Part::union_as_kept(&u, &s), Part::union_as_kept(&v, &t))
+                && l == r
+            {
+                return l;
+            }
         }
         Part::expr(Form::Or(a, b))
     }
@@ -2555,7 +2763,7 @@ mod xor {
 
     /// Whether `x` is the complement of `y`: one set of atoms, compared by contents when the
     /// two were made on two threads ([`set::same`]), and the other constant.
-    fn opposite<A: Literal>(x: &Tag<A>, y: &Tag<A>) -> bool {
+    pub(super) fn opposite<A: Literal>(x: &Tag<A>, y: &Tag<A>) -> bool {
         x.1 != y.1 && set::same(&x.0, &y.0)
     }
 

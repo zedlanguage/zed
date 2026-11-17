@@ -439,6 +439,90 @@ fn the_connectives_on_parts_scale_by_depth() {
 }
 
 #[test]
+fn the_union_of_a_choices_meets_scales() {
+    // `Connect::choose` takes the union of its meets by `Part::union_as_kept`, a fixed number of
+    // the tests `Connect::zipped` makes, and by one level of the rule for two choices on one
+    // condition (CANON-choose-true-branch). Small instances:
+    // `a_meet_of_choices_whose_branches_meet_to_a_meet_of_literals_is_that_meet` and
+    // `a_choice_with_a_true_branch_and_a_long_exclusive_or_is_the_union`. Here `d` is a meet `D`
+    // of m literals, so the meets `a&D` and `!a&D` are chains whose condition is found by
+    // looking the shorter's m + 1 literals up in the longer, `O(m log m)`, as `zipped` finds
+    // it (COMPLEXITY.md K67 (2)); and `y` is an exclusive or of m atoms, whose union with `c`
+    // takes constant work (measured alone, without the comparison below: 122967 and 124538
+    // instructions at m = 4096 and 32768). Each check runs on a thread of its own
+    // (`scaling::check`), so the answer, made there, and `direct`, made here, are two nodes of
+    // one set, and comparing them walks the m atoms: that comparison is the linear term of the
+    // second check. A choice keeps the complements it makes, so each run takes parts of its
+    // own, on atoms of their own.
+    let n = 1 << 12;
+    let (small, large) = scaling::Meter::new().runs();
+    type Pairs = std::sync::Mutex<Vec<(Part<Row>, Part<Row>, Part<Row>)>>;
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let lits = |base: u64, m: usize| (base..base + m as u64).map(|i| Part::literal(atom(i)));
+    let meets: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
+        .map(|(m, runs)| {
+            let parts = (0..runs as u64)
+                .map(|i| {
+                    let base = (2000 + 3 * i) * m as u64;
+                    let a = Part::literal(atom(base));
+                    let d = lits(base + 1, m).fold(Part::leaf(true), |f, l| and(&f, &l));
+                    let [r, s, t, u] =
+                        [m + 1, m + 2, m + 3, m + 4].map(|k| Part::literal(atom(base + k as u64)));
+                    let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
+                    let (ad, nad) = (and(&a, &d), and(&a.not(), &d));
+                    let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
+                    let right = or(
+                        &and(&a, &or(&ad, &w.not())),
+                        &and(&a.not(), &or(&nad, &z.not())),
+                    );
+                    (left, right, d)
+                })
+                .collect();
+            (m, std::sync::Mutex::new(parts))
+        })
+        .into();
+    scaling::check(
+        "the meet of two choices whose meets are chains on one condition, by literals",
+        n,
+        |m| {
+            let (left, right, d) = meets[&m]
+                .lock()
+                .expect("the parts of a size")
+                .pop()
+                .expect("parts per run");
+            assert!(and(&left, &right) == d);
+        },
+    );
+    let picks: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
+        .map(|(m, runs)| {
+            let parts = (0..runs as u64)
+                .map(|i| {
+                    let base = (5000 + 3 * i) * m as u64;
+                    let [a, c] = [0, 1].map(|k| Part::literal(atom(base + k)));
+                    let y = lits(base + 2, m).fold(Part::leaf(false), |f, l| xor_by_or(&f, &l));
+                    let pick = |x: &Part<Row>| or(&and(&c, x), &and(&c.not(), &y));
+                    (pick(&a), pick(&a.not()), or(&c, &y))
+                })
+                .collect();
+            (m, std::sync::Mutex::new(parts))
+        })
+        .into();
+    scaling::check(
+        "the union of two choices with the branch true, by the atoms of the other",
+        n,
+        |m| {
+            let (p, q, direct) = picks[&m]
+                .lock()
+                .expect("the parts of a size")
+                .pop()
+                .expect("parts per run");
+            assert!(or(&p, &q) == direct);
+        },
+    );
+}
+
+#[test]
 fn restricting_lists_that_share_a_tail_scales() {
     // Small instances: `restricting_with_a_shared_memo_gives_the_lists_restricted_alone`.
     // Item CHAIN-restrict-memo: `m` lists, each a block of its own before one tail of `m`
