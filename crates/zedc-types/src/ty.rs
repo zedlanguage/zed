@@ -7401,6 +7401,21 @@ thread_local! {
     static SCAN_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whether [`unbound_carriers`] drops the last binding it lists: the negative control of
+    /// the brute-force check of its completeness.
+    static DROP_LEAST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether [`unbound_carriers`] lists every binding of the variable to a union of carriers
+    /// of its bound, and `Never` where the bound takes values of no carrier: the brute force
+    /// its short list is checked against.
+    static EVERY_BINDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// What the comparison of the pieces of one type with a type `t` of the expected side keeps
 /// between the pieces: where `t` sits, its shapes filed once a piece needs them, and the
 /// buckets of its tuple shapes searched past their first shape, each with the tuple that did.
@@ -13680,6 +13695,18 @@ async fn instance_within<'m>(
 /// no function among the parameters and result, where a type is not monotone in `v`; the
 /// result does not hold `v`; and one such variable only, as [`instances`] tries one.
 ///
+/// Proof that the list is complete (PROOF-unbound-carriers-complete): where some instance of
+/// the cover at a binding of `v` is within `q`, one listed is. A call binds `v` to one carrier
+/// of its bound or, where the bound takes values of no carrier, to a type `T` of such values
+/// (rule 6). Each carrier is listed. For `T`, `Never` is listed, and the instance at `Never`
+/// is within the instance at `T`, as the parameters are monotone in `v` (no function holds
+/// it, required above); so where the one at `T` is within `q`, the one at `Never` is too.
+/// Where a requirement fails, `b` alone is tried: a wrong no is possible there, never a wrong
+/// yes, as `b` is the cover's own binding. Checked by brute force against every binding of
+/// `v` to a union of carriers of its bound (`Never` where the bound takes values of no
+/// carrier; elsewhere it is no instance, and would fit where none does), with a negative control that
+/// drops the last listed binding: `a_generic_arrow_fits_where_some_binding_of_its_variable_fits`.
+///
 /// FAIL-types-bindable-union-param-refused: the cover of `(x: (A, bool) | (C, bool))` by
 /// `(x: (C | ((int, U) | (int, U, U),), bool) | (A, bool)) for U in int | f64` binds nothing,
 /// and with `U` unbound the instance was within no parameter of `q`, so the program was
@@ -13705,6 +13732,24 @@ fn unbound_carriers(s: &Sig, sa: &Arrow, b: &Binds, cx: &Cx) -> Vec<Binds> {
             let mut least: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
             if m & OTHER != 0 {
                 least.push(Ty::empty());
+            }
+            #[cfg(test)]
+            if DROP_LEAST.with(|d| d.get()) {
+                least.pop();
+            }
+            #[cfg(test)]
+            if EVERY_BINDING.with(|d| d.get()) {
+                let cs: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
+                least = (1..1usize << cs.len())
+                    .map(|k| {
+                        (cs.iter().enumerate())
+                            .filter(|(i, _)| k >> i & 1 == 1)
+                            .fold(Ty::empty(), |t, (_, c)| t.union(c))
+                    })
+                    .collect();
+                if m & OTHER != 0 {
+                    least.push(Ty::empty());
+                }
             }
             least
                 .into_iter()
@@ -14736,7 +14781,14 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// with nothing bound and it holds no variable the comparison binds ([`holds_bindable`]),
 /// in its parameters or its value type: an instance of it would be taken apart from the one
 /// the exact arrows take, which this does not check, so it is left out (the safe path: a
-/// wrong no, never a wrong yes). Before, a partial arrow of `s` took no part in covering an
+/// wrong no, never a wrong yes). Proof (PROOF-met-partial-narrow-bindable): every answer yes
+/// is [`meet_within`] of the results with the value types of `narrowed`, each sound to join
+/// (above); leaving one out makes the intersection larger, so a yes without it is a yes with
+/// it, and leaving out never makes a yes. Test, a bindable variable in the partial arrow's
+/// parameter and in its value type: `a_partial_arrow_holding_a_bindable_variable_narrows_nothing`.
+/// A known wrong no: `((x0: int) ->? B) & ((x0: int) -> int | f64 | bool) for B in int |
+/// f64` is refused for `(x0: int) -> int`, which it fits at `B = int`
+/// (FAIL-types-met-bindable-partial-narrow). Before, a partial arrow of `s` took no part in covering an
 /// exact arrow of `q`, so `(int ->? #b) & (int -> _)` was refused as within `int -> #b`.
 /// Cost: one comparison of the parameters per partial arrow of `s`, which a family or a
 /// bounded morphism has one or two of.
@@ -19778,6 +19830,153 @@ mod tests {
         let a = Arrow::exact(vec![y, int.clone()], int);
         let rigid = repeated(std::slice::from_ref(&a), &vs, &cx.fns);
         assert!(rigid.is_empty(), "{a:?}: {rigid:?}");
+    }
+
+    /// PROOF-unbound-carriers-complete, by brute force over small types: a signature of one
+    /// arrow whose parameter holds `B`, bounded by `int | f64`, by `int | f64 | bool`, or by
+    /// `int | f64` and values of no carrier (`OTHER`, listed as `Never`), is
+    /// compared with each `q` twice, once trying the bindings [`unbound_carriers`] lists, and
+    /// once trying every binding of `B` to a union of carriers of its bound
+    /// ([`EVERY_BINDING`]); the answers agree. `Never` is no instance of these bounds (rule 6),
+    /// and tried, `(x0: bool | B) -> int` would fit `(x0: bool) -> int`, though each instance
+    /// takes `int` or `f64` keys that `q` does not. `q` is every arrow and every pair of arrows over
+    /// a list of parameter types, so that a cover of `q`'s arrow often binds nothing in `B`
+    /// and the list is used. The overload of the instances is not the oracle: domains are
+    /// exact, so `((x0: bool | int) -> int) & ((x0: bool | f64) -> int)` takes `f64`, which
+    /// `(x0: int | bool) -> int` does not, while `(x0: bool | B) -> int for B in int | f64`
+    /// fits it at `B = int`. Negative control: with the last carrier dropped from the list
+    /// ([`DROP_LEAST`]), some pair answers apart.
+    #[test]
+    fn a_generic_arrow_fits_where_some_binding_of_its_variable_fits() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let f64t = Ty::carrier(Carrier::F64);
+        let boolt = Ty::carrier(Carrier::Bool);
+        let arrow = |p: Ty| Arrow::exact(vec![p], int.clone());
+        let b = || v("B");
+        let ps = [
+            boolt.union(&tup(b())),
+            boolt.union(&b()),
+            tup(boolt.clone()).union(&tup(b())),
+            tup(b()),
+            b(),
+            tup(b().union(&boolt)),
+            tup(b()).union(&tup(tup(b()))),
+        ];
+        let mut qps = vec![
+            boolt.clone(),
+            int.clone(),
+            f64t.clone(),
+            int.union(&f64t),
+            int.union(&boolt),
+        ];
+        for t in [&int, &f64t, &boolt] {
+            qps.push(tup(t.clone()));
+            qps.push(boolt.union(&tup(t.clone())));
+            qps.push(tup(boolt.clone()).union(&tup(t.clone())));
+            qps.push(tup(t.union(&boolt)));
+            qps.push(tup(tup(t.clone())));
+        }
+        qps.push(tup(int.union(&f64t)));
+        qps.push(tup(int.clone()).union(&tup(f64t.clone())));
+        let mut qs = Vec::new();
+        for (i, x) in qps.iter().enumerate() {
+            qs.push(sig(vec![arrow(x.clone())], 1, false));
+            for y in &qps[i + 1..] {
+                qs.push(sig(vec![arrow(x.clone()), arrow(y.clone())], 1, false));
+            }
+        }
+        let masks = [B_MASK, B_MASK | Carrier::Bool.bit(), B_MASK | OTHER];
+        let compare = || {
+            let (mut apart, mut fit) = (Vec::new(), 0);
+            for &m in &masks {
+                for p in &ps {
+                    let mut s = sig(vec![arrow(p.clone())], 1, true);
+                    s.bounds.insert("B".into(), m);
+                    s.note_held();
+                    for q in &qs {
+                        let a = fits_sig(&s, q);
+                        EVERY_BINDING.with(|d| d.set(true));
+                        let o = fits_sig(&s, q);
+                        EVERY_BINDING.with(|d| d.set(false));
+                        fit += usize::from(o);
+                        if a != o {
+                            apart.push(format!("{s} in {q}: {a}, at every binding {o}"));
+                        }
+                    }
+                }
+            }
+            (apart, fit)
+        };
+        let (apart, fit) = compare();
+        assert!(apart.is_empty(), "{}", apart.join("\n"));
+        assert!(fit > 0, "no pair fits, so the check compares nothing");
+        DROP_LEAST.with(|d| d.set(true));
+        let (dropped, _) = compare();
+        DROP_LEAST.with(|d| d.set(false));
+        assert!(
+            !dropped.is_empty(),
+            "the control drops a carrier and every pair still agrees"
+        );
+    }
+
+    /// PROOF-unbound-carriers-complete, second doubt: [`Domains::inhabited_fn`] claims an exact
+    /// arrow `P -> R` inhabited where `R` holds a value `r`, for any `P`. The witness is the
+    /// function giving `r` at every key of `P`: its domain is `P`, so the arrow, which bounds
+    /// the domain from both sides, holds it, whether `P` is `_` (every value) or `Never` (no
+    /// key). Control: a result with no value is not claimed, over either domain.
+    #[test]
+    fn an_exact_arrow_over_any_domain_with_a_result_value_is_inhabited() {
+        let int = Ty::carrier(Carrier::Int);
+        let over = |p: Ty, r: Ty| sig(vec![Arrow::exact(vec![p], r)], 1, false);
+        for p in [Ty::dynamic(), Ty::empty(), int.clone()] {
+            assert!(
+                Domains::inhabited_fn(&over(p.clone(), int.clone())),
+                "{p:?}"
+            );
+            assert!(
+                !Domains::inhabited_fn(&over(p.clone(), Ty::empty())),
+                "{p:?}"
+            );
+        }
+    }
+
+    /// PROOF-met-partial-narrow-bindable: [`met`] joins a partial arrow's value type to the
+    /// results it meets only where the arrow holds no variable the comparison binds. Left out,
+    /// the intersection is larger, so the answer can only turn from yes to no (proof at
+    /// [`met`]). A bindable variable on each side of the partial arrow, in its parameter and in
+    /// its value type, with `B in bool | f64`, where no instance fits `(x0: int) -> int`: the
+    /// answer is no. Control: the same arrow with `int` written for `B` narrows the exact
+    /// arrow's `int | bool | f64` to `int`, so the narrowing is live, and the signature fits.
+    #[test]
+    fn a_partial_arrow_holding_a_bindable_variable_narrows_nothing() {
+        let int = Ty::carrier(Carrier::Int);
+        let wide = int
+            .union(&Ty::carrier(Carrier::Bool))
+            .union(&Ty::carrier(Carrier::F64));
+        let exact = Arrow::exact(vec![int.clone()], wide);
+        let q = sig(vec![Arrow::exact(vec![int.clone()], int.clone())], 1, false);
+        let free = sig(
+            vec![
+                Arrow::partial_of(vec![int.clone()], int.clone()),
+                exact.clone(),
+            ],
+            1,
+            false,
+        );
+        assert!(fits_sig(&free, &q), "{free} in {q}");
+        let b = Ty::var("B".into());
+        for pa in [
+            Arrow::partial_of(vec![int.clone()], b.clone()),
+            Arrow::partial_of(vec![b], int.clone()),
+        ] {
+            let mut s = sig(vec![pa, exact.clone()], 1, true);
+            s.bounds
+                .insert("B".into(), Carrier::Bool.bit() | Carrier::F64.bit());
+            s.note_held();
+            assert!(!fits_sig(&s, &q), "{s} in {q}");
+        }
     }
 
     /// An overload with a bounded variable fits where one of its arrows is expected
