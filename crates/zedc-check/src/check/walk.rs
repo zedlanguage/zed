@@ -2313,6 +2313,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
         };
         if self.level == 0 {
+            // The errors each operation on literals alone wrote that is a whole argument of
+            // the call that is the value, read before `drop_met` forgets them.
+            let ops = self.call_arg_ops(value);
             self.drop_met(before);
             let mut found = parts();
             // The literals the value ends in through a branch, a block, an index or a call,
@@ -2324,6 +2327,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 found.sort_by_key(|(p, _, _)| p.start);
             }
             self.rejects_unfixed(before, found, &what);
+            if let Some((callee, ops)) = ops {
+                self.group_arg_ops(before, &callee, ops);
+            }
         } else {
             let names: Vec<&str> = targets.iter().map(name).collect();
             let bound = format!("the binding of `{}`", names.join(", "));
@@ -2782,6 +2788,100 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(k) => k.fixes.join(fixes),
                 None => carried.push(Carry { ty, fixes }),
             }
+        }
+    }
+
+    /// Where `value`, bound outside every function, is a call of a name, `f(1 / 2, 3 / 4)`:
+    /// the callee's name and, for each argument that is an operation on literals alone that
+    /// wrote errors as it was walked ([`Ck::lit_written`]), its span and the numbers of those
+    /// errors. `None` for any other value. O(a) for a arguments.
+    fn call_arg_ops(&self, value: &Expr) -> Option<(String, ArgOps)> {
+        let ExprKind::Call {
+            callee,
+            positional,
+            named,
+            ..
+        } = &value.kind
+        else {
+            return None;
+        };
+        let ExprKind::Name(name) = &callee.kind else {
+            return None;
+        };
+        let ops = (positional.iter().chain(named.iter().map(|(_, a)| a)))
+            .filter_map(|a| {
+                let r = self.lit_written.get(&a.span)?;
+                Some((
+                    a.span,
+                    self.errors[r.clone()].iter().map(|e| e.id).collect(),
+                ))
+            })
+            .collect();
+        Some((name.to_string(), ops))
+    }
+
+    /// Makes the rejections of two or more arguments of the call of `callee` that is a value
+    /// bound outside every function one error, as the parts of a tuple display are made one
+    /// ([`Self::reject_unfixed`]): `y = f(1 / 2, 3 / 4)` at parameters with no type gives one
+    /// message with the fix `y = f(1r / 2, 3r / 4)`, not one per `/` (row
+    /// MSG-call-division-args-grouping). `ops` holds each argument that is an operation on
+    /// literals alone with the numbers of the errors it wrote ([`Self::call_arg_ops`]); an
+    /// argument is a part where exactly one of them is left among the errors after the first
+    /// `before`, a literal that nothing gives a carrier. The errors are grouped here, when the
+    /// binding ends, since until then the errors are read by their indices
+    /// ([`Ck::lit_written`], [`Ck::lit_dropped`]), which a removal inside the call would shift.
+    ///
+    /// Complexity tradeoff: one set of the numbers of the arguments' errors, and one pass over
+    /// the binding's errors, O(a + e) for a arguments and e errors; finding each argument's
+    /// error by a scan of the errors would be O(a·e).
+    fn group_arg_ops(&mut self, before: usize, callee: &str, ops: ArgOps) {
+        if ops.len() < 2 {
+            return;
+        }
+        let mut arg_of: HashMap<usize, usize> = HashMap::new();
+        for (k, (_, ids)) in ops.iter().enumerate() {
+            arg_of.extend(ids.iter().map(|&id| (id, k)));
+        }
+        // For each argument, the index of its one error left, or `None` where it has several.
+        let mut left: Vec<Option<Option<usize>>> = vec![None; ops.len()];
+        for (i, e) in self.errors.iter().enumerate().skip(before) {
+            if let Some(&k) = arg_of.get(&e.id) {
+                left[k] = match left[k] {
+                    None if e.row == Some(Row::UnfixedDecimal) => Some(Some(i)),
+                    _ => Some(None),
+                };
+            }
+        }
+        // Each argument's one error, by its index, with the argument's span.
+        let taken: HashMap<usize, Span> = (ops.iter().zip(&left))
+            .filter_map(|((arg, _), x)| x.flatten().map(|i| (i, *arg)))
+            .collect();
+        if taken.len() < 2 {
+            return;
+        }
+        let found = self.errors.split_off(before);
+        let mut parts = Vec::with_capacity(taken.len());
+        // The notes of the errors grouped that lie outside their argument, as the step
+        // "`f` is declared here …" the call added to each, kept once in the one error.
+        let mut kept: Vec<Note> = Vec::new();
+        for (i, e) in found.into_iter().enumerate() {
+            match taken.get(&(before + i)) {
+                Some(&arg) => {
+                    let outside = |n: &Note| n.span.start < arg.start || arg.end < n.span.end;
+                    kept.extend(e.notes.into_iter().filter(outside));
+                    parts.push((arg, e.span, e.m));
+                }
+                None => self.errors.push(e),
+            }
+        }
+        // The parts in the order of the text, as [`Self::reject_unfixed`] takes them.
+        parts.sort_by_key(|(arg, _, _)| arg.start);
+        let at = self.errors.len();
+        self.reject_unfixed(&format_args!("the arguments of `{callee}`"), parts);
+        if let Some(e) = self.errors.get_mut(at) {
+            let mut shown: HashSet<Note> = e.notes.iter().cloned().collect();
+            e.notes
+                .extend(kept.into_iter().filter(|n| shown.insert(n.clone())));
         }
     }
 
@@ -26308,6 +26408,10 @@ fn arg_holding(sorted: &[(Span, usize)], s: Span) -> Option<usize> {
     let (a, j) = sorted[k];
     (s.end <= a.end).then_some(j)
 }
+
+/// The arguments of a call that are operations on literals alone, each by its span with the
+/// numbers ([`Found::id`]) of the errors it wrote ([`Ck::call_arg_ops`]).
+type ArgOps = Vec<(Span, Vec<usize>)>;
 
 /// The signature of a call of `sig` with its parameter `j` alone, for a signature whose
 /// parameters are checked apart ([`params_apart`]): its parameter `j` and the result of its

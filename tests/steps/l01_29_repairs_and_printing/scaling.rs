@@ -399,6 +399,56 @@ fn many_decimal_arguments_past_f64() {
     }
 }
 
+/// [`unfixed_decimal_arguments`] with each argument the division `1 / 2`, which nothing gives
+/// a carrier: the call is rejected once for all of them (row MSG-call-division-args-grouping),
+/// as [`past_f64_arguments`] is, and not once per `/`.
+pub(super) fn division_arguments(n: usize) -> String {
+    unfixed_decimal_arguments(n).replace("1.5", "1 / 2")
+}
+
+/// The program of [`division_arguments`] gives one message naming its `n` divisions, with
+/// the step that `f` has no type written, once, and the fixes writing every one at `rat` and
+/// at `f64`.
+pub(super) fn division_arguments_rejected(src: &str, n: usize) {
+    let errors = type_errors(src);
+    let [e] = &errors[..] else {
+        panic!("{src}: {errors:?}")
+    };
+    let head =
+        format!("{n} parts of the arguments of `f` are literals that nothing here gives a carrier");
+    assert!(e.starts_with(&head), "{e}");
+    let out = rejected(src);
+    let step = ": Nothing gives the literal `1` a carrier\n";
+    assert_eq!(out.matches(step).count(), n, "{out}");
+    assert_eq!(out.matches("`f` is declared here").count(), 1, "{out}");
+    for lit in ["1r", "1.0f64"] {
+        let fix = format!("y = f({});", vec![format!("{lit} / 2"); n].join(", "));
+        assert!(e.contains(&format!("\n    {fix}")), "{e}");
+    }
+}
+
+#[test]
+fn many_division_arguments() {
+    for n in [2, 5] {
+        division_arguments_rejected(&division_arguments(n), n);
+    }
+}
+
+/// One division among other arguments, or beside a literal past `f64`, is rejected as before:
+/// only two or more divisions of one call are grouped.
+#[test]
+fn one_division_argument_is_rejected_alone() {
+    for (args, n) in [("1 / 2, 1", 1), ("1 / 2, 1e400", 2)] {
+        let src = format!("f(positional p0, positional p1) = 1;\ny = f({args});\n");
+        let errors = type_errors(&src);
+        assert_eq!(errors.len(), n, "{src}: {errors:?}");
+        assert!(
+            errors[0].starts_with("Nothing gives the literal `1` a carrier. Try `y = f(1r / 2"),
+            "{errors:?}"
+        );
+    }
+}
+
 /// [`super::rare`]'s value that flows into `g` through a chain of `n` defaults, `k(h0 = g,
 /// h1 = h0, ...)`, which passes `x -> "s"` as the last; then `n` more parameters whose
 /// defaults read the two ends of the chain in turn, `m0 = h0, m1 = h{n-1}, m2 = h0, ...`, so
