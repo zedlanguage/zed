@@ -11,6 +11,16 @@
 #     tools/run_tests.sh is in the list because this script's cases depend on its --only and
 #     --trace, which the toy's stub imitates. Their result is not recorded: they run on every
 #     check of such a branch;
+#  0a. when a Cargo.toml or Cargo.lock changed: fails if some workspace package, built alone
+#     (`cargo tree -p <package>`, dev-dependencies included), gets a crate with features the
+#     workspace build (`cargo tree --workspace`) does not give it. tools/run_tests.sh --only
+#     makes the same comparison for the packages it builds and refuses on a difference, since a
+#     dylib's file name does not change with its features (BUILD-clif-feature-parity: zed-clif
+#     alone lacked hashbrown's defaults, so a re-check that ran without zed-clif's groups failed
+#     on main). Packages one at a time suffice: Cargo's feature resolution only adds features as
+#     packages join a build, so if each package alone gets the workspace's features, so does any
+#     set of them. Cost: 27 runs of cargo tree, about 6 s (measured 2026-11-17). Skipped with
+#     --groups and --list;
 #  1. when a file under crates/<crate>/src changed: adds the group s_01f_import_graph to the
 #     tests below. It runs the import graph checker, `zed_tools::imports::run`, the function the
 #     binary `zed-tools --bin imports` calls, over the src of every crate with no KNOWN_CYCLES
@@ -41,7 +51,32 @@
 #     (MERGE-runtime-inputs). All pieces are one test binary, built in the package whose [[test]]
 #     target's main file lies in tests/full/ (zed-tests), so when that package is selected (a
 #     change to it, or to any package it depends on, a compiler crate) every piece is selected
-#     (MERGE-full-by-dependency). The pieces run after the local groups, in a call of their own,
+#     (MERGE-full-by-dependency), with one narrowing (MERGE-dep-by-target): when none of that
+#     package's own files changed, it is left out of the closure, and of its targets only those
+#     whose sources use a changed package are selected. Its crate names for the changed packages
+#     (a dependency's rename or lib name, zed_tools) are the words; a file of its lib (tests/src)
+#     uses them when its code names one, names a word that an earlier such file adds (its module
+#     name, its macro_rules! macros, the types it implements traits for and does not define),
+#     names `super` below such a file, or includes such a file; to a fixed point. Then each other
+#     .rs file of the package that names a word is a change to its test target or tests/full
+#     piece, as above, and when some lib file uses them the lib's unit tests and the packages
+#     that depend on the package (zed-benches) are selected too. The package is selected whole
+#     instead when the lib's root file uses them; when such a file belongs to no test target or
+#     is included into another package; and when a package of the closure has a build script or,
+#     in its files or those it includes, at HEAD or at the base, an attribute that puts code into
+#     every binary that links it (#[no_mangle], #[export_name], #[link_section], #[used],
+#     #[global_allocator], a constructor), whose effect does not depend on any name. Every
+#     compiler crate reaches zed-native, which has both, so this narrows only changes to the
+#     package's other dependencies, zed-tools and zed-corpus-ref (2026-11-17: a change to
+#     zed-tools selects 92 groups and no tests/full piece, where it selected 222 and all 6). Not proved: that a test
+#     binary's behavior depends on code of a crate it links only through the names its sources
+#     name. A name built by a macro from pieces (`concat_idents!`, `paste!`), or code reached
+#     only through a trait object or generic made elsewhere, would break it; the lib's files
+#     that make such values name the crate and are taken. Words in strings and block comments,
+#     and the type parameter of a blanket impl, only select more. A word in a `//` comment
+#     (doc comments too, as no doc test runs) and a `mod <name>;` line select nothing. A
+#     #[path] through inline modules in a linked package is not followed by the attribute check.
+#     The pieces run after the local groups, in a call of their own,
 #     tools/run_tests.sh --full --only, and are recorded and mapped (2a, 3) as the local groups
 #     are; the messages name them apart, as tests/full pieces;
 #  2a. with --reads <dir>: adds every group whose pieces read at run time a path the branch's
@@ -74,7 +109,9 @@
 # Cost: one `cargo metadata --no-deps`, one grep over the workspace's .rs files for the include
 # forms, and a closure over the package graph, O(packages + edges) per round; the tests dominate.
 # A change to a compiler crate selects nearly every group, since zedc, zed-tools, zed-native and
-# zed-tests all depend on the compiler crates.
+# zed-tests all depend on the compiler crates. The narrowing of step 2 adds a grep of the
+# package's .rs files per round of its fixed point (3 rounds, 1 to 2 s, for a change to
+# zed-tools on 2026-11-17).
 #
 # The record. Let T_old be the commit whose check passed, S_old the groups that passed there, H
 # the commit checked now, M its base, S_new the groups the files changed from M to H select, and
@@ -90,7 +127,9 @@
 # nothing the trace could not name (`*`: a relative path in a call strace shows without its
 # directory, or .git, whose answers change with every commit). Proof that skipping such a g is
 # sound: g's test binaries are built from files step 2 maps to g, none of which differs between
-# T_old and H, so they are the same programs. Each piece, deterministic given its binary, its
+# T_old and H, so they are the same programs, except, under the narrowing of step 2, in code of
+# a linked crate that g's sources do not name, on which g's behavior does not depend by that
+# step's assumption (not proved). Each piece, deterministic given its binary, its
 # environment and what its file system calls return, made at T_old only the calls the trace
 # shows. A call's result depends only on the paths it names: for a file, its content, mode and
 # whether it exists; for a directory, whether it exists and, when listed, the names in it and
@@ -157,6 +196,28 @@ done
 
 meta=$(cargo metadata --no-deps --format-version 1 -q) || { echo "merge check: cargo metadata failed" >&2; exit 1; }
 wsroot=$(jq -r .workspace_root <<<"$meta")
+# Step 0a (header): a changed manifest or lock file.
+manifest=
+for f in "${changed[@]}"; do
+  case $f in Cargo.toml | */Cargo.toml | Cargo.lock) manifest=1 ;; esac
+done
+if [ -n "$manifest" ] && [ -z "$groups_only$list" ]; then
+  features_of() { cargo tree "$@" -f '{p} [{f}]' --prefix none | sed 's/ (\*)$//' | sort -u; }
+  wsfeat=$(features_of --workspace) || { echo "merge check: cargo tree --workspace failed" >&2; exit 1; }
+  bad=
+  for p in $(jq -r '.packages[].name' <<<"$meta"); do
+    d=$(comm -23 <(features_of -p "$p") <(echo "$wsfeat"))
+    [ -z "$d" ] || bad+="  $p:"$'\n'"$(sed 's/^/    /' <<<"$d")"$'\n'
+  done
+  if [ -n "$bad" ]; then
+    echo "merge check: a manifest or Cargo.lock changed, and these packages, built alone, get features the workspace build does not give them (tools/run_tests.sh refuses to build them so):"
+    printf %s "$bad"
+    echo "merge check: give each the workspace's features, as a dev-dependency"
+    echo "merge check: FAILED"
+    exit 1
+  fi
+  echo "merge check: a manifest or Cargo.lock changed: every package, built alone, gets the features the workspace build gives it"
+fi
 # Each workspace package as `<dir relative to the root> <name>`, deepest directories first.
 mapfile -t pkgdirs < <(jq -r --arg r "$wsroot/" '.packages[] |
   "\(.manifest_path | ltrimstr($r) | rtrimstr("Cargo.toml") | rtrimstr("/")) \(.name)"' <<<"$meta" |
@@ -174,6 +235,16 @@ mapfile -t testdirs < <(jq -r --arg r "$wsroot/" '.packages[] | (.manifest_path 
 fullpkg=$(jq -r --arg f "$wsroot/tests/full/" '.packages[] | select(any(.targets[]; .src_path
   | startswith($f))) | .name' <<<"$meta")
 fullpieces=$(for d in tests/full/*/; do [ -d "$d" ] && d=${d%/} && echo "full-${d#tests/full/}"; done | sort)
+# For step 2's narrowing: $fullpkg's directory, the directory of its lib target's root (tests/src)
+# and the lib's group (zed_tests). Without a lib and a directory of its own, there is no narrowing.
+fulldir= fulllib= fulllibgroup=
+if [ -n "$fullpkg" ]; then
+  read -r fulldir fulllib fulllibgroup < <(jq -r --arg r "$wsroot/" --arg p "$fullpkg" '.packages[]
+    | select(.name == $p) | (.manifest_path | ltrimstr($r) | rtrimstr("Cargo.toml") | rtrimstr("/")) as $d
+    | [.targets[] | select(.kind | index("lib"))][0] as $l
+    | select($l != null and $d != "")
+    | "\($d) \($l.src_path | ltrimstr($r) | sub("/[^/]*$"; "")) \($l.name | gsub("-"; "_"))"' <<<"$meta")
+fi
 
 # The include forms: one grep over the workspace's Rust sources, as `<source> <named path>` with
 # the path resolved against the source's directory and, for #[path] in a file that is not
@@ -254,12 +325,12 @@ touched_keys() {
        END { print "*" }' <(git ls-tree -r -d --name-only "$1") <(git ls-tree -r -d --name-only "$2") -
 }
 
-# Sets sel to the groups that the changed files "$@" select, one per line, sorted: each local
-# group g, short-g for each, and full-<piece> for each piece of tests/full; and prints how, each
-# line headed "merge check$label:".
-select_groups() {
-  local -A seen=() pkgs=() direct=() full=()
-  local crate_srcs=() all= full_all= queue=("$@") f hit td pd d s p selected groups
+# Takes the files of the array queue in turn, with the files that name each by an include form,
+# and records in the arrays of select_groups, its caller, what each changes: pkgs[<package>],
+# direct[<test target>], full[<piece>] or full_all for tests/full, all for a workspace file, and
+# crate_srcs.
+walk() {
+  local f hit td pd d s p
   while [ ${#queue[@]} -gt 0 ]; do
     f=${queue[0]}
     queue=("${queue[@]:1}")
@@ -295,24 +366,227 @@ select_groups() {
     done
     for s in ${includers[$f]} $(inline_includers "$f"); do queue+=("$s"); done
   done
+}
 
-  [ ${#crate_srcs[@]} -gt 0 ] && echo "merge check$label: changed crate sources ${crate_srcs[*]}: s_01f_import_graph runs the imports tool over every crate"
-  # The changed packages and every package that depends on one of them, by any kind of dependency.
-  selected=$(jq -r --arg all "$all" --arg seed "${!pkgs[*]}" '
+# Prints the changed packages of pkgs (of select_groups) and every package that depends on one of
+# them, by any kind of dependency, on one line; every package when all is set. The package $1, if
+# any, is left out, and so is what reaches the changed packages only through it.
+closure() {
+  jq -r --arg all "$all" --arg seed "${!pkgs[*]}" --arg skip "$1" '
     [.packages[].name] as $members
     | (if $all == "1" then $members else ($seed | split(" ") | map(select(. != ""))) end) as $start
-    | [.packages[] | {name, deps: [.dependencies[].name | select(. as $d | $members | index($d))]}] as $g
+    | [.packages[] | select(.name != $skip)
+       | {name, deps: [.dependencies[].name | select(. as $d | $members | index($d))]}] as $g
     | {set: $start, todo: $start}
     | until(.todo == [];
         .todo as $t | .set as $s
         | ([$g[] | select(.name as $n | ($s | index($n) | not)) | select(any(.deps[]; . as $d | $t | index($d))) | .name]) as $new
         | {set: ($s + $new), todo: $new})
-    | .set | unique | join(" ")' <<<"$meta")
+    | .set | unique | join(" ")' <<<"$meta"
+}
+
+# Attributes that put code or data into every binary that links a crate, used or not: an exported
+# or kept symbol, a section of its own (.init_array runs code before main), the global allocator.
+linkpat='#!?\[(unsafe\()?(no_mangle|export_name|link_section|used|global_allocator)([^A-Za-z0-9_]|$)|#\[ctor([^A-Za-z0-9_]|$)|init_array'
+# Prints those of the packages "$@" whose sources, at HEAD or at $from, hold an attribute of
+# linkpat, or that have a build script (which can add libraries and link arguments to every
+# binary that links the package). A package's sources are the files in its directory and the
+# files outside it that a file in it names by an include form (includers; the inline-module forms
+# of under_rest name files under the includer's own directory). O(packages × include forms) for
+# the second, against reading each package's include forms anew.
+link_symbols() {
+  local p pd d t s paths
+  for p in "$@"; do
+    d=
+    for pd in "${pkgdirs[@]}"; do
+      [ "${pd#* }" = "$p" ] && { d=${pd%% *}; break; }
+    done
+    paths=("${d:-.}")
+    if [ -n "$d" ]; then
+      for t in "${!includers[@]}"; do
+        [[ $t == "$d"/* ]] && continue
+        for s in ${includers[$t]}; do
+          [[ $s == "$d"/* ]] && { paths+=("$t"); break; }
+        done
+      done
+    fi
+    if jq -e --arg p "$p" '.packages[] | select(.name == $p) | any(.targets[]; .kind | index("custom-build"))' <<<"$meta" >/dev/null ||
+      git grep -q -E "$linkpat" HEAD -- "${paths[@]}" || git grep -q -E "$linkpat" "$from" -- "${paths[@]}"; then
+      echo "$p"
+    fi
+  done
+}
+
+# Prints the files among "$2"... whose code names a word of $1 (one per line), each once. Not
+# code: a line that is a `//` comment, doc comments included (tools/run_tests.sh runs no doc
+# tests; --doc only builds the documentation), and a declaration `mod <name>;`, which names the
+# module's file and uses nothing in it. Words in strings and block comments count, which can only
+# select more.
+rs_naming() {
+  local words=$1
+  shift
+  [ $# -gt 0 ] || return 0
+  awk -v words="$words" 'BEGIN { m = split(words, a, "\n"); for (i = 1; i <= m; i++) if (a[i] != "") n[a[i]] = 1 }
+    FNR == 1 { done = 0 }
+    done { next }
+    /^[ \t]*\/\// { next }
+    /^[ \t]*(pub(\([^)]*\))?[ \t]+)?mod[ \t]+[A-Za-z_0-9]+[ \t]*;/ { next }
+    { line = $0
+      while (match(line, /[A-Za-z_][A-Za-z0-9_]*/)) {
+        if (substr(line, RSTART, RLENGTH) in n) { print FILENAME; done = 1; break }
+        line = substr(line, RSTART + RLENGTH) } }' "$@"
+}
+
+# Prints the names by which code outside the file $1 of a lib can reach what it defines without
+# naming its module: its macro_rules! macros, and the types of its impl blocks that it does not
+# define itself (an impl of a trait for a type defined elsewhere is used through that type).
+# Generics are dropped and the last segment of a path kept.
+rs_items() {
+  awk '/^[ \t]*\/\// { next }
+    /^[ \t]*(pub(\([^)]*\))?[ \t]+)?(struct|enum|union|trait|type)[ \t]+[A-Za-z_]/ { l = $0
+      sub(/^[ \t]*(pub(\([^)]*\))?[ \t]+)?(struct|enum|union|trait|type)[ \t]+/, "", l); sub(/[^A-Za-z0-9_].*/, "", l); own[l] = 1 }
+    { l = $0
+      while (match(l, /macro_rules![ \t]*[A-Za-z_][A-Za-z0-9_]*/)) {
+        w = substr(l, RSTART, RLENGTH); sub(/.*[! \t]/, "", w); print w; l = substr(l, RSTART + RLENGTH) } }
+    hdr != "" || /^[ \t]*(pub(\([^)]*\))?[ \t]+)?(unsafe[ \t]+)?impl[ \t<]/ {
+      hdr = hdr " " $0
+      if (hdr !~ /[{;]|(^|[ \t])where([ \t]|$)/) next
+      h = hdr; hdr = ""
+      sub(/[{;].*/, "", h); sub(/(^|[ \t])where([ \t].*|$)/, "", h)
+      while (gsub(/<[^<>]*>/, "", h)) {}
+      sub(/.*impl[ \t]+/, "", h)
+      k = split(h, parts, /[ \t]+for[ \t]+/); t = parts[k]
+      gsub(/[^A-Za-z0-9_:]+$/, "", t); sub(/.*[^A-Za-z0-9_]/, "", t)
+      if (t != "") imp[t] = 1 }
+    END { for (t in imp) if (!(t in own)) print t }' "$1"
+}
+
+# The module files above the lib file $1, up to the lib's root directory (not the root file):
+# for <lib>/a/b.rs or <lib>/a/b/mod.rs, <lib>/a.rs and <lib>/a/mod.rs.
+ancestors() {
+  local d
+  d=$(dirname "$1")
+  [ "$(basename "$1")" = mod.rs ] && d=$(dirname "$d")
+  while [ "$d" != "$fulllib" ] && [[ $d == "$fulllib"/* ]]; do
+    echo "$d.rs"
+    echo "$d/mod.rs"
+    d=$(dirname "$d")
+  done
+}
+
+# Step 2's narrowing for the words "$@" (the crate names by which $fullpkg reaches the changed
+# packages). Sets libuse to the files of $fullpkg's lib that use them, users to its other .rs
+# files that do, and extra to the files outside the lib that include a file of libuse; sets why
+# when the lib's root file uses them. A lib file uses the words when its code names one, names a
+# word an earlier such file adds (its module's name, the file's stem or, for mod.rs, its
+# directory's; and rs_items), names `super` below such a file, or includes such a file by an
+# include form; repeated until no file is added. Each round reads the lib files not yet taken,
+# so O(rounds × lib size); rounds are at most the lib's files, and 3 on 2026-11-17.
+uses() {
+  local -A nset=() aff=()
+  local w f s a added libfiles=() supers=() cand=() new=()
+  for w in "$@"; do nset[$w]=1; done
+  mapfile -t libfiles < <(git ls-files -- "$fulllib/*.rs")
+  mapfile -t supers < <(git grep -l -w -F super -- "$fulllib/*.rs")
+  libuse= users=() extra=()
+  while :; do
+    cand=()
+    for f in "${libfiles[@]}"; do [ -n "${aff[$f]}" ] || cand+=("$f"); done
+    mapfile -t new < <(rs_naming "$(printf '%s\n' "${!nset[@]}")" "${cand[@]}")
+    for f in "${supers[@]}"; do
+      [ -n "${aff[$f]}" ] && continue
+      for a in $(ancestors "$f"); do
+        [ -n "${aff[$a]}" ] && { new+=("$f"); break; }
+      done
+    done
+    for f in "${!aff[@]}"; do
+      for s in ${includers[$f]} $(inline_includers "$f"); do
+        [[ $s == "$fulllib"/* ]] && [ -z "${aff[$s]}" ] && new+=("$s")
+      done
+    done
+    added=
+    for f in "${new[@]}"; do
+      [ -n "${aff[$f]}" ] && continue
+      aff[$f]=1
+      added=1
+      case $(basename "$f") in
+        lib.rs) [ "$(dirname "$f")" = "$fulllib" ] && why="$f, the root of $fullpkg's lib, uses them" ;;
+        mod.rs) nset[$(basename "$(dirname "$f")")]=1 ;;
+        *) nset[$(basename "$f" .rs)]=1 ;;
+      esac
+      for w in $(rs_items "$f"); do nset[$w]=1; done
+    done
+    [ -n "$added" ] || break
+  done
+  [ -n "$why" ] && return
+  libuse=$(printf '%s\n' "${!aff[@]}" | command grep -a . | sort | paste -sd' ')
+  for f in "${!aff[@]}"; do
+    for s in ${includers[$f]} $(inline_includers "$f"); do
+      [[ $s == "$fulllib"/* ]] || extra+=("$s")
+    done
+  done
+  mapfile -t cand < <(git grep -l -w -F -f <(printf '%s\n' "${!nset[@]}") -- "$fulldir/*.rs" ":(exclude)$fulllib")
+  mapfile -t users < <(rs_naming "$(printf '%s\n' "${!nset[@]}")" "${cand[@]}")
+}
+
+# Sets sel to the groups that the changed files "$@" select, one per line, sorted: each local
+# group g, short-g for each, and full-<piece> for each piece of tests/full; and prints how, each
+# line headed "merge check$label:". Files are read at HEAD, and the attributes of step 2's
+# narrowing at $from too.
+select_groups() {
+  local -A seen=() pkgs=() direct=() full=()
+  local crate_srcs=() all= full_all= queue=("$@") selected groups skip= why= n0= np linked p
+  local libuse= users=() extra=()
+  walk
+
+  [ ${#crate_srcs[@]} -gt 0 ] && echo "merge check$label: changed crate sources ${crate_srcs[*]}: s_01f_import_graph runs the imports tool over every crate"
   echo "merge check$label: changed packages: ${!pkgs[*]}${all:+ (a workspace file: all)}"
+  # Step 2's narrowing (header): $fullpkg is left out of the closure when none of its own files
+  # changed, and its groups are chosen by use below.
+  [ -n "$fulllib" ] && [ -z "$all" ] && [ -z "${pkgs[$fullpkg]}" ] && skip=$fullpkg
+  selected=$(closure "$skip")
+  if [ -n "$skip" ]; then
+    # The crate names by which $fullpkg's sources can use a selected package: those of its direct
+    # dependencies that are selected (a dependency's rename, or its lib target's name).
+    n0=$(jq -r --arg p "$fullpkg" --arg sel " $selected " '
+      ([.packages[] | {key: .name, value: ([.targets[] | select(any(.kind[]; . == "lib" or . == "rlib"
+        or . == "dylib" or . == "cdylib" or . == "proc-macro")) | .name][0] // .name)}] | from_entries) as $lib
+      | .packages[] | select(.name == $p) | .dependencies[] | select(.name as $d | $sel | contains(" \($d) "))
+      | (.rename // $lib[.name]) | gsub("-"; "_")' <<<"$meta" | sort -u)
+    if [ -n "$n0" ]; then
+      np=${#pkgs[@]}
+      linked=$(link_symbols $selected | paste -sd' ')
+      if [ -n "$linked" ]; then
+        why="a selected package has a build script, or defines a symbol the linker places in every binary that links it (#[no_mangle], #[export_name], #[link_section], #[used] or #[global_allocator]): $linked"
+      else
+        uses $n0
+        if [ -z "$why" ]; then
+          echo "merge check$label: $fullpkg reaches the changed packages through $(paste -sd' ' <<<"$n0"); its lib files that use those names, or the modules, macros and types such files define: ${libuse:-none}"
+          echo "merge check$label: its other files that use them: ${#users[@]}, in $(printf '%s\n' "${users[@]}" | command grep -a . | sed 's|/[^/]*$||' | sort -u | paste -sd' ')"
+          queue=("${users[@]}" "${extra[@]}")
+          walk
+          if [ ${#pkgs[@]} -ne "$np" ]; then
+            why="a file that uses them belongs to no test target of $fullpkg, or is included by #[path] into another package"
+          elif [ -n "$libuse" ]; then
+            # The lib's unit tests, and every package that depends on $fullpkg, link the lib.
+            direct[$fulllibgroup]=1
+            for p in $(jq -r --arg p "$fullpkg" '.packages[] | select(any(.dependencies[]; .name == $p)) | .name' <<<"$meta"); do
+              pkgs[$p]=1
+            done
+            selected=$(closure "$skip")
+          fi
+        fi
+      fi
+      if [ -n "$why" ]; then
+        echo "merge check$label: $why: $fullpkg is selected whole"
+        skip=
+        selected=$(closure "")
+      fi
+    fi
+  fi
   echo "merge check$label: with their dependents: $selected"
-  # The full battery is one binary of $fullpkg: a change that reaches the package reaches every
-  # piece. A finer split, by what each piece's module uses, would need the crates each module
-  # names, which cargo metadata does not give; not done.
+  # The full battery is one binary of $fullpkg: a change to the package, or one it is selected
+  # whole for, reaches every piece.
   if [ -n "$fullpkg" ] && [[ " $selected " == *" $fullpkg "* ]]; then
     full_all=1
     echo "merge check$label: $fullpkg, the package tests/full is built in, is selected: every piece of tests/full"
@@ -350,7 +624,7 @@ full_note() {
   [ -z "$p" ] || echo "; tests/full pieces: $(paste -sd' ' <<<"$p")"
 }
 
-label=
+label= from=$mb
 select_groups "${changed[@]}"
 # Step 2a: the groups of the map that read a path the branch's change can affect, among the
 # groups the workspace has now (g, or short-g for a group g, or full-<piece>), and the groups it
@@ -415,6 +689,7 @@ if [ -n "$record" ] && [ -n "$snew" ]; then
       sd=
       if [ ${#dfiles[@]} -gt 0 ]; then
         label=" (since the record's commit $(git rev-parse --short "$told"))"
+        from=$told
         select_groups "${dfiles[@]}"
         sd=$sel
         # The groups of the record that may read differently now: those that named a path

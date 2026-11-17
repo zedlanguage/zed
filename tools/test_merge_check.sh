@@ -14,7 +14,11 @@
 # inline modules, and by include! (TEST-merge-check-nested-path). Pieces w and z of tests/full, the
 # toy's own tools/test_merge_check.sh (a stub) and a map of run-time reads (--reads) test the
 # selection of tests/full, the self-tests and step 2a (MERGE-runtime-inputs,
-# MERGE-tools-self-tests). The last cases rebase a branch on a main that moves and check what
+# MERGE-tools-self-tests). t depends on more crates for the narrowing of step 2
+# (MERGE-dep-by-target): tool, named only by step_x; rootuse, named by t's lib root; lnk, which
+# exports a symbol; and feat, with a default feature x, for step 0a. t's lib file
+# tests/src/helper.rs names b and is used by step_x, the piece w and the lib file
+# tests/src/wrap.rs, which step_y uses. The last cases rebase a branch on a main that moves and check what
 # --record runs again (MERGE-push-race).
 # MERGE_CHECK names another script to test, such as an older version, to see these cases fail.
 check_script=${MERGE_CHECK:-$(pwd)/tools/merge_check.sh}
@@ -25,7 +29,7 @@ case $part in
 esac
 ws=$(pwd)/build/test-merge-check${part:+-$part}
 mkdir -p "$ws/crates/a/src" "$ws/crates/b/src/m" "$ws/crates/c/src/m" "$ws/crates/c/data" \
-  "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
+  "$ws/crates/tool/src" "$ws/crates/rootuse/src" "$ws/crates/lnk/src" "$ws/crates/feat/src" "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
 export CARGO_TARGET_DIR=$ws/target
 fails=0
 check() {
@@ -41,20 +45,31 @@ check() {
 git -C "$ws" config user.name test
 git -C "$ws" config user.email test@localhost
 pushd "$ws" >/dev/null || exit 1
-echo /target >.gitignore
-printf '[workspace]\nresolver = "3"\nmembers = ["crates/a", "crates/b", "crates/c", "tests"]\n' >Cargo.toml
+# Cargo.lock is not tracked: cargo tree (step 0a) writes it.
+printf '/target\n/Cargo.lock\n' >.gitignore
+printf '[workspace]\nresolver = "3"\nmembers = ["crates/*", "tests"]\n' >Cargo.toml
 pkg() { printf '[package]\nname = "%s"\nversion = "0.0.0"\nedition = "2024"\n%s' "$1" "$2"; }
 pkg a '' >crates/a/Cargo.toml
 pkg b $'\n[dependencies]\na = { path = "../a" }\n' >crates/b/Cargo.toml
 pkg c '' >crates/c/Cargo.toml
-pkg t $'\n[dependencies]\nb = { path = "../crates/b" }\n\n[features]\nfull = []\n
+pkg tool '' >crates/tool/Cargo.toml
+pkg rootuse '' >crates/rootuse/Cargo.toml
+pkg lnk '' >crates/lnk/Cargo.toml
+pkg feat $'\n[features]\ndefault = ["x"]\nx = []\n' >crates/feat/Cargo.toml
+for c in tool rootuse feat; do echo "//! $c." >"crates/$c/src/lib.rs"; done
+printf '//! lnk.\n#[unsafe(no_mangle)]\npub extern "C" fn lnk_f() {}\n' >crates/lnk/src/lib.rs
+pkg t $'\n[dependencies]\nb = { path = "../crates/b" }\ntool = { path = "../crates/tool" }
+rootuse = { path = "../crates/rootuse" }\nlnk = { path = "../crates/lnk" }
+feat = { path = "../crates/feat" }\n\n[features]\nfull = []\n
 [[test]]\nname = "step_x"\npath = "steps/x/mod.rs"\n\n[[test]]\nname = "step_y"\npath = "steps/y/mod.rs"\n
 [[test]]\nname = "full"\npath = "full/main.rs"\nrequired-features = ["full"]\n' >tests/Cargo.toml
 printf '#[cfg(test)]\n#[path = "../../../tests/src/seed.rs"]\nmod seed;\n' >crates/a/src/lib.rs
 echo '//! b.' >crates/b/src/lib.rs
 echo '//! c.' >crates/c/src/lib.rs
-printf '//! t.\npub mod seed;\n' >tests/src/lib.rs
+printf '//! t.\npub mod seed;\npub mod helper;\npub mod wrap;\nuse rootuse as _;\n' >tests/src/lib.rs
 echo '//! The seed.' >tests/src/seed.rs
+printf '//! A step helper.\n// Not code: tool lnk feat.\nuse b as _;\n' >tests/src/helper.rs
+printf '//! A helper over the helper.\nuse crate::helper as _;\n' >tests/src/wrap.rs
 # The Rust reference, "The path attribute": in a mod.rs, lib.rs or main.rs file, a #[path] is
 # relative to the file's directory, and inside inline modules to that directory followed by the
 # inline modules' names; in any other file, inside inline modules, to the directory followed by the
@@ -66,11 +81,11 @@ printf 'mod outer {\n    mod inner {\n        #[path = "../../../../../../tests/
   >crates/c/src/m/mod.rs
 for f in viamod inl nest; do echo "//! $f." >"tests/src/$f.rs"; done
 echo '// table' >crates/c/data/table.rs
-echo '//! x.' >tests/steps/x/mod.rs
-echo '//! y.' >tests/steps/y/mod.rs
+printf '//! x.\nuse t::helper as _;\nuse tool as _;\n' >tests/steps/x/mod.rs
+printf '//! y.\nuse t::wrap as _;\n' >tests/steps/y/mod.rs
 echo '//! full.' >tests/full/main.rs
 mkdir -p tests/full/w tests/full/z
-echo '//! w.' >tests/full/w/mod.rs
+printf '//! w.\nuse t::helper as _;\n' >tests/full/w/mod.rs
 echo '//! z.' >tests/full/z/mod.rs
 # The toy's own tools/test_merge_check.sh, which merge_check.sh runs when a file it tests changes:
 # it prints its part and fails the part named by $STUB_SELF_FAIL.
@@ -147,8 +162,45 @@ check "a docs file selects nothing" \
   "merge check: no package changed; no tests to run" \
   "$(groups_after docs/notes.md)"
 check "the workspace manifest selects every package" \
-  "merge check: groups: $(sorted "$(short a b c step_x step_y t)")" \
+  "merge check: groups: $(sorted "$(short a b c feat lnk rootuse step_x step_y t tool)")" \
   "$(groups_after Cargo.toml '# changed')"
+# The narrowing of step 2 (MERGE-dep-by-target).
+check "a crate the package of tests/full depends on, named by one step alone, selects that step alone" \
+  "merge check: groups: $(sorted "$(short s_01f_import_graph step_x tool)")" \
+  "$(groups_after crates/tool/src/lib.rs)"
+check "a crate named only in comments of the package of tests/full selects none of its targets" \
+  "merge check: groups: $(sorted "$(short feat s_01f_import_graph)")" \
+  "$(groups_after crates/feat/src/lib.rs)"
+check "a crate the root of that package's lib names selects the package whole" \
+  "merge check: groups: $(sorted "$(short rootuse s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after crates/rootuse/src/lib.rs)"
+check "a crate that exports a symbol selects the package whole" \
+  "merge check: groups: $(sorted "$(short lnk s_01f_import_graph step_x step_y t)")" \
+  "$(groups_after crates/lnk/src/lib.rs)"
+git checkout -q --detach base
+printf '//! lnk.\npub fn lnk_f() {}\n' >crates/lnk/src/lib.rs
+git commit -q -a -m "lnk: export nothing"
+check "a crate that exported a symbol at the base selects the package whole" \
+  "merge check: groups: $(sorted "$(short lnk s_01f_import_graph step_x step_y t)")" \
+  "$("$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: groups')"
+# Step 0a: tool asks for feat without its default features, which t gives it in the workspace
+# build.
+git checkout -q --detach base
+printf '\n[dependencies]\nfeat = { path = "../feat", default-features = false }\n' >>crates/tool/Cargo.toml
+git commit -q -a -m "tool: depend on feat without its defaults"
+check "a manifest that gives a package alone other features than the workspace build fails the check" \
+  "merge check: a manifest or Cargo.lock changed, and these packages, built alone, get features the workspace build does not give them (tools/run_tests.sh refuses to build them so):
+  tool:
+    feat v0.0.0 ($ws/crates/feat) []
+merge check: FAILED
+1" "$("$check_script" --base base 2>&1 | command grep -a -E '^(merge check: (a manifest|FAILED)|  )'; echo "${PIPESTATUS[0]}")"
+git checkout -q --detach base
+printf '\n[dependencies]\nfeat = { path = "../feat" }\n' >>crates/tool/Cargo.toml
+git commit -q -a -m "tool: depend on feat with its defaults"
+check "a manifest that gives every package the workspace build's features passes step 0a" \
+  "merge check: a manifest or Cargo.lock changed: every package, built alone, gets the features the workspace build gives it
+merge check: passed" \
+  "$("$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a manifest|passed|FAILED)')"
 git checkout -q --detach base
 echo "// changed" >>crates/c/src/lib.rs
 git commit -q -a -m "change c"
@@ -186,11 +238,11 @@ merge check: tests/full pieces: w z
 run_tests --full --only ^(full-w|full-z)\$ 6
 merge check: passed" "$(full_run tests/full/main.rs)"
 all_b=$(sorted "$(short b s_01f_import_graph step_x step_y t)")
-check "a crate the package of tests/full depends on selects every piece, run with --full after the local groups" \
+check "a crate that a step helper of the package of tests/full names selects every target and piece using the helper, the pieces run with --full after the local groups" \
   "merge check: groups: $all_b
-merge check: tests/full pieces: w z
+merge check: tests/full pieces: w
 run_tests --only ^($(tr ' ' '|' <<<"$all_b"))\$ 6
-run_tests --full --only ^(full-w|full-z)\$ 6
+run_tests --full --only ^(full-w)\$ 6
 merge check: passed" "$(full_run crates/b/src/lib.rs)"
 check "a crate the package of tests/full does not depend on selects no piece" \
   "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
@@ -234,7 +286,7 @@ map_after() {
   "$check_script" --base base --reads "$map" --groups 2>&1 |
     command grep -a -E '^merge check: (groups|the map|no package|tests/full)' | sed "s|$map|MAP|"
 }
-uncovered="merge check: the map has no reads of 3 groups, which only compilation selects: a b step_x
+uncovered="merge check: the map has no reads of 7 groups, which only compilation selects: a b feat lnk rootuse step_x tool
 merge check: the map has no reads of 1 tests/full pieces, which only compilation selects: w"
 check "a file that a group and a piece of tests/full read at run time selects both, by the map" \
   "merge check: groups that read at run time a path the change can affect (map MAP): c; tests/full pieces: z
