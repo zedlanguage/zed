@@ -2434,14 +2434,8 @@ fn refused_alike(
     if let Err(e) = boxed_as_named(items, bs, &f) {
         wrong.push(format!("{label}: {f}\n  {e}"));
     }
-    for (how, g) in four_ways(items).into_iter().skip(1) {
-        let other = boxed_names(&s, &g, &syms);
-        if other != got {
-            wrong.push(format!(
-                "{label}: {f}\n  {how}: {g}\n  {got:?}\n  {other:?}"
-            ));
-        }
-    }
+    let ways = four_ways(items).into_iter().skip(1);
+    wrong.extend(writings_that_differ(label, &f, &got, &s, &syms, ways));
     let mut reordered = vec![(
         "reversed",
         items.iter().rev().cloned().collect::<Vec<_>>(),
@@ -2466,6 +2460,28 @@ fn refused_alike(
         }
     }
     Some((s, got))
+}
+
+/// For each writing of `ways` whose sets and refusals in `s` differ from `got`, those of `f`,
+/// a line that shows both.
+fn writings_that_differ<'a>(
+    label: &str,
+    f: &Formula,
+    got: &BTreeMap<String, (IntervalSet, bool)>,
+    s: &Scope,
+    syms: &[Atom],
+    ways: impl IntoIterator<Item = (&'a str, Formula)>,
+) -> Vec<String> {
+    let mut wrong = Vec::new();
+    for (how, g) in ways {
+        let other = boxed_names(s, &g, syms);
+        if &other != got {
+            wrong.push(format!(
+                "{label}: {f}\n  {how}: {g}\n  {got:?}\n  {other:?}"
+            ));
+        }
+    }
+    wrong
 }
 
 /// Each name's hull from [`brute`].
@@ -2587,6 +2603,51 @@ fn a_refused_part_keeps_a_sound_box() {
 #[test]
 fn a_refused_joined_part_keeps_a_sound_box() {
     check_refused_case(12, 296, true, (1, 6, 2));
+}
+
+/// Case 23 of seed 977, each part two joined (FAIL-pendants-split-writing-seed): beside the
+/// equation `2 * a + b == c + z1 + 8` the part has `2 * a + b >= c + z1 - 2`, which the
+/// equation implies. Written with each equation split into two rows, the implied row has the
+/// terms of one of them and is merged into it; written with the equation as one row, it was
+/// kept beside it, changed the order in which the solver took the variables, and the solver
+/// refused every name for growth where the split writing gave every name empty. The solver
+/// now leaves out a row its equation implies. Every writing gives every name empty, none
+/// refused.
+#[test]
+fn an_equation_beside_a_row_it_implies_is_answered_as_when_split() {
+    let (items, bs) = random_case(977, 23, true);
+    let s = scope(&bs);
+    let syms = item_names(&items);
+    for (how, g) in four_ways(&items) {
+        let got = boxed_names(&s, &g, &syms);
+        assert!(
+            got.values()
+                .all(|(set, refused)| set.is_empty() && !refused),
+            "{how}: {g}\n  {got:?}"
+        );
+    }
+}
+
+/// The comparison of writings in [`refused_alike`] still finds a writing whose answer differs:
+/// the part of seed 977, case 23, which gives every name empty, against a planted writing
+/// `true`, which does not. The bug of FAIL-pendants-split-writing-seed, an answer that
+/// depends on the writing, is fixed, so no true writing of the part is left to plant.
+#[test]
+fn a_planted_writing_with_another_answer_is_found() {
+    let (items, bs) = random_case(977, 23, true);
+    let s = scope(&bs);
+    let syms = item_names(&items);
+    let [_, _, _, (_, split)] = four_ways(&items);
+    let got = boxed_names(&s, &split, &syms);
+    let wrong = writings_that_differ(
+        "planted",
+        &split,
+        &got,
+        &s,
+        &syms,
+        [("planted", Formula::top())],
+    );
+    assert_eq!(wrong.len(), 1, "{wrong:?}");
 }
 
 /// Case 15 of seed 894, each part two joined (FAIL-pendants-oracle-seed-894):

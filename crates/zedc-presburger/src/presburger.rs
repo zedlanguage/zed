@@ -14373,6 +14373,97 @@ fn point_past_refusal<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<Model> 
     rows.iter().all(|c| c.holds_linear(&m)).then_some(m)
 }
 
+/// `cons` without each row `t + j >= 0` or `-t + j >= 0` that an equation `t + k == 0` of
+/// `cons` implies (`j - k >= 0`, or `j + k >= 0`), in the order of `cons`. Such a row adds no
+/// condition, and the split writing of the equation, `t + k >= 0 && -t - k >= 0`, already
+/// merges it into one of its two rows ([`Formula::and_keeping`] keeps the tighter of two rows
+/// of one left-hand side); kept beside the equation, it changed the colors of the system
+/// ([`canonical`]) and so the order of the eliminations, and the Omega test refused for growth
+/// a part it answered when written split (FAIL-pendants-split-writing-seed,
+/// `l01_39_reduced_product::pendants::an_equation_beside_a_row_it_implies_is_answered_as_when_split`).
+/// A row that contradicts its equation is kept, so the system stays empty, and where two
+/// equations of the same terms have no common point nothing is dropped. Rows whose terms
+/// are a multiple of the equation's (`2t + j >= 0` beside `t + k == 0`) are not found and
+/// stay, as before. Done here, on the solver's input, and not where a conjunction is built
+/// ([`Joining`]): there a row dropped by the equation of one operand changed where the
+/// tighter row of a later operand stood, so a chain joined in one pass and two at a time gave
+/// two orders of one conjunction (`presburger::tests::a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time`,
+/// seed 15348137064077058214).
+// Complexity tradeoff: one hash per equation and one per row, each over its k terms with the
+// sign of its first coefficient turned positive, and the terms compared only against the
+// equations of the same hash, one equation kept per set of terms so that a bucket grows by
+// hash collisions alone: O(T) expected for T terms of `cons`, nothing copied when no row is
+// dropped. Naive version: compare each row with every equation, O(m²) for m constraints.
+// Tests `presburger::tests::the_solver_reads_an_equation_beside_a_row_it_implies_as_the_equation`
+// and `l01_38_omega_test::bench::names::satisfiable_scales_over_equalities_each_beside_a_row_they_imply`
+// (8.85 times the work at 8n; the naive version 42.4 times, at a quarter of the size).
+fn without_rows_equations_imply(cons: Vec<&Con>) -> Vec<&Con> {
+    // The hash of `terms` with the sign of the first coefficient turned positive.
+    fn key(terms: &BTreeMap<Atom, Int>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let turned = terms.values().next().is_some_and(|k| k.is_negative());
+        let mut h = rustc_hash::FxHasher::default();
+        for (a, k) in terms {
+            a.hash(&mut h);
+            if turned { -k } else { k.clone() }.hash(&mut h);
+        }
+        h.finish()
+    }
+    // `Some(negated)` where the terms of `c` are those of `e`, or those of `e` negated.
+    fn same_terms(e: &Con, c: &Con) -> Option<bool> {
+        let (e, c) = (&e.lin.terms, &c.lin.terms);
+        let ((_, k), (_, j)) = (e.iter().next()?, c.iter().next()?);
+        let negated = k.is_negative() != j.is_negative();
+        let same = e.len() == c.len()
+            && (e.iter().zip(c))
+                .all(|((a, k), (b, j))| a == b && if negated { k == &-j } else { k == j });
+        same.then_some(negated)
+    }
+    // One equation of each set of terms up to sign, so a bucket holds equations of distinct
+    // terms only, which share a hash by collision alone. A second equation of the same terms
+    // is the first, or has no point beside it; then `cons` has no point and is given back
+    // whole, whichever equation comes first.
+    let mut eqs: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
+    for (i, c) in cons.iter().enumerate() {
+        if c.rel == Rel::Eq && !c.lin.terms.is_empty() {
+            let places = eqs.entry(key(&c.lin.terms)).or_default();
+            let first = places.iter().find_map(|&p| {
+                let e = cons[p];
+                same_terms(e, c).map(|negated| (e, negated))
+            });
+            match first {
+                None => places.push(i),
+                Some((e, negated)) => {
+                    let (k, j) = (&e.lin.constant, &c.lin.constant);
+                    if if negated { k != &-j } else { k != j } {
+                        return cons;
+                    }
+                }
+            }
+        }
+    }
+    if eqs.is_empty() {
+        return cons;
+    }
+    let implied = |c: &Con| {
+        if c.rel != Rel::Ge || c.lin.terms.is_empty() {
+            return false;
+        }
+        eqs.get(&key(&c.lin.terms)).is_some_and(|places| {
+            places.iter().any(|&i| {
+                let e = cons[i];
+                let (k, j) = (&e.lin.constant, &c.lin.constant);
+                same_terms(e, c)
+                    .is_some_and(|negated| (if negated { j + k } else { j - k }) >= Int::ZERO)
+            })
+        })
+    };
+    if !cons.iter().any(|c| implied(c)) {
+        return cons;
+    }
+    cons.iter().copied().filter(|c| !implied(c)).collect()
+}
+
 /// [`solve`] by the Omega test alone.
 fn solve_omega<C: std::borrow::Borrow<Con>>(
     cons: &[C],
@@ -14394,6 +14485,7 @@ fn solve_omega<C: std::borrow::Borrow<Con>>(
     } else {
         raw_cons
     };
+    let cons = without_rows_equations_imply(cons);
     // A box and one row has a point or not by its two sums (module `one_row`); a point itself is
     // still the solver's, which the search over disjunctions reads.
     if !want {
@@ -27700,6 +27792,62 @@ pub(super) mod tests {
             lin: lin(terms, k),
             rel: Rel::Ge,
         })
+    }
+
+    /// An equation `t + k == 0` and a row `t + j >= 0` or `-t + j >= 0` reach the Omega test as
+    /// the equation alone where it implies the row, the row on either side and either sign of
+    /// `t` first; a row that contradicts it, and a row whose terms are a multiple of it, stay.
+    #[test]
+    fn the_solver_reads_an_equation_beside_a_row_it_implies_as_the_equation() {
+        let con = |terms: &[(&str, i128)], k: i128, rel: Rel| Con {
+            lin: lin(terms, k),
+            rel,
+        };
+        let eq = con(&[("x", 1), ("y", 1)], -3, Rel::Eq);
+        let eq_neg = con(&[("x", -1), ("y", -1)], 3, Rel::Eq);
+        let z = con(&[("z", 1)], 0, Rel::Ge);
+        for (rows, kept) in [
+            // x + y >= 1, x + y <= 5, x + y >= 3, x + y <= 3: implied.
+            (vec![con(&[("x", 1), ("y", 1)], -1, Rel::Ge)], vec![]),
+            (vec![con(&[("x", -1), ("y", -1)], 5, Rel::Ge)], vec![]),
+            (vec![con(&[("x", 1), ("y", 1)], -3, Rel::Ge)], vec![]),
+            (vec![con(&[("x", -1), ("y", -1)], 3, Rel::Ge)], vec![]),
+            // x + y >= 4, x + y <= 2: contradict the equation and stay.
+            (vec![con(&[("x", 1), ("y", 1)], -4, Rel::Ge)], vec![0]),
+            (vec![con(&[("x", -1), ("y", -1)], 2, Rel::Ge)], vec![0]),
+            // 2x + 2y >= 2: a multiple, not found.
+            (vec![con(&[("x", 2), ("y", 2)], -2, Rel::Ge)], vec![0]),
+            // x - y >= 1, other terms.
+            (vec![con(&[("x", 1), ("y", -1)], -1, Rel::Ge)], vec![0]),
+        ] {
+            for e in [&eq, &eq_neg] {
+                let before: Vec<&Con> = vec![&rows[0], e, &z];
+                let after: Vec<&Con> = vec![e, &rows[0], &z];
+                for (cons, at) in [(before, 0), (after, 1)] {
+                    let got = without_rows_equations_imply(cons.clone());
+                    let want: Vec<&Con> = (cons.iter().enumerate())
+                        .filter(|(i, _)| *i != at || kept.contains(&0))
+                        .map(|(_, c)| *c)
+                        .collect();
+                    assert_eq!(got, want, "{} beside {e}", rows[0]);
+                }
+            }
+        }
+        // With no equation, nothing is read twice and nothing dropped.
+        let rows = vec![&z];
+        assert_eq!(without_rows_equations_imply(rows.clone()), rows);
+        // One equation written twice, in either sign: the row is dropped, both are kept.
+        let row = con(&[("x", 1), ("y", 1)], -1, Rel::Ge);
+        for cons in [vec![&eq, &eq_neg, &row], vec![&eq_neg, &eq, &row]] {
+            assert_eq!(without_rows_equations_imply(cons.clone()), cons[..2]);
+        }
+        // Two equations of the same terms with no common point: nothing is dropped, in either
+        // order, though `x + y == 3` alone implies the row `x + y <= 3`.
+        let eq4 = con(&[("x", -1), ("y", -1)], 4, Rel::Eq);
+        let at_most_3 = con(&[("x", -1), ("y", -1)], 3, Rel::Ge);
+        for cons in [vec![&eq, &eq4, &at_most_3], vec![&eq4, &eq, &at_most_3]] {
+            assert_eq!(without_rows_equations_imply(cons.clone()), cons);
+        }
     }
 
     #[test]

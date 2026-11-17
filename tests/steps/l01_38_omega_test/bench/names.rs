@@ -2,7 +2,9 @@
 
 use crate::names::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
+use zedc::store::presburger::{
+    Atom, Con, Formula, Lin, decide, project_each, satisfiable, systems_solved,
+};
 
 #[test]
 fn a_chain_of_gadgets_ties_at_every_step() {
@@ -50,6 +52,55 @@ fn decide_scales_over_one_class_of_equalities() {
         let f = if n == 38000 { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
+}
+
+/// `v0 + ... + v[n-1] >= 0` and the chain `v[i] - v[i+1] == 1`, each equation beside the row
+/// `v[i+1] - v[i] >= -1 - i % 3`, which it implies and whose terms are its own negated, so that
+/// a conjunction does not merge the two and the solver leaves the row out
+/// (FAIL-pendants-split-writing-seed, `without_rows_equations_imply`). The long row keeps the
+/// system from the propagation that answers a chain alone, so the solver is asked.
+fn equalities_each_beside_a_row_they_imply(n: usize) -> Formula {
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{i}").into()));
+    let mut sum = Lin::constant(0);
+    for i in 0..n {
+        sum.plus_assign(&v(i));
+    }
+    let mut fs = vec![Formula::Con(Con::ge(&sum, &Lin::constant(0)))];
+    for i in 0..n - 1 {
+        fs.push(Formula::Con(Con::eq(
+            &v(i).minus(&v(i + 1)),
+            &Lin::constant(1),
+        )));
+        fs.push(Formula::Con(Con::ge(
+            &v(i + 1).minus(&v(i)),
+            &Lin::constant(-1 - (i % 3) as i64),
+        )));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn satisfiable_scales_over_equalities_each_beside_a_row_they_imply() {
+    // One hash per equation and per row finds each implied row: O(T) for T terms.
+    let n = 1200;
+    let (small, large) = (
+        equalities_each_beside_a_row_they_imply(n),
+        equalities_each_beside_a_row_they_imply(n * scaling::FACTOR),
+    );
+    systems_solved();
+    for f in [&small, &large] {
+        assert!(satisfiable(f).unwrap().is_some());
+    }
+    assert!(systems_solved() > 0, "the solver is asked");
+    scaling::check_order(
+        "a long row with equalities beside rows they imply",
+        n,
+        1,
+        |m| {
+            let f = if m == n { &small } else { &large };
+            let _ = std::hint::black_box(satisfiable(f));
+        },
+    );
 }
 
 #[test]
