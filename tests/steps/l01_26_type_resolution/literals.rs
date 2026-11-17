@@ -264,31 +264,30 @@ fn literals_in_a_tuple_compared_with_a_tuple() {
     );
     assert_eq!(value("y = (1, (2, 3)) == (1.0, (2r, 3));\n", "y"), "true");
     // A `/` of integer literals there meets only a bare integer, so nothing gives it a carrier.
+    // The binder's value is an operation on literals alone, so each fix names it with the
+    // binder, `y is false`, not "the literal is then" (DESIGN.md sec:diagnostics, "The value
+    // a fix names"; plan row LIT-tuple-compare-power-menu), and the `r` goes on the class's
+    // first literal, as in DESIGN's `y = (3r^20 / 2, 1) == (1, 2)`.
     assert_eq!(
         type_errors("y = (1, (2, 3)) == (1 / 2, (2r, 3));\n"),
         [format!(
-            "Nothing gives the literal `1` a carrier. Try `y = (1, (2, 3)) == (1r / 2, (2r, 3))` \
-             instead.{} [1]",
+            "Nothing gives the integer literals a carrier, and `/` has none at `int`: \
+             `y = (1, (2, 3)) == (1 / 2, (2r, 3))`. Try `y = (1r, (2, 3)) == (1 / 2, (2r, 3))` \
+             instead.{} [1 / 2]",
             menu(&[
-                (
-                    "y = (1, (2, 3)) == (1r / 2, (2r, 3));",
-                    "the literal is then exactly 1, a rat"
-                ),
-                (
-                    "y = (1, (2, 3)) == (1.0f64 / 2, (2r, 3));",
-                    "the literal is then the f64 1.0"
-                ),
+                ("y = (1r, (2, 3)) == (1 / 2, (2r, 3));", "y is false"),
+                ("y = (1.0, (2, 3)) == (1 / 2, (2r, 3));", "y is false"),
+                ("y = (f64(1), (2, 3)) == (1 / 2, (2r, 3));", "y is false"),
             ])
         )]
     );
-    assert_eq!(
-        value("y = (1, (2, 3)) == (1r / 2, (2r, 3));\n", "y"),
-        "false"
-    );
-    assert_eq!(
-        value("y = (1, (2, 3)) == (1.0f64 / 2, (2r, 3));\n", "y"),
-        "false"
-    );
+    for fix in [
+        "y = (1r, (2, 3)) == (1 / 2, (2r, 3));\n",
+        "y = (1.0, (2, 3)) == (1 / 2, (2r, 3));\n",
+        "y = (f64(1), (2, 3)) == (1 / 2, (2r, 3));\n",
+    ] {
+        assert_eq!(value(fix, "y"), "false", "{fix}");
+    }
     // A literal beside a value in a tuple: `(x, 1) == (y, z)` with `z: f64`.
     assert!(
         type_errors(

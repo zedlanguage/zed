@@ -2591,6 +2591,44 @@ impl<'t, 'a> Ck<'t, 'a> {
                 side.ty = Ty::carrier(c);
             }
         }
+        // A class whose `/` meets no carrier follows one that takes `f64` by a decimal, as it
+        // does under `<`: `f() = 1.0 / 2 == 1 / 2` is `true` (DESIGN.md step L1.26b, item
+        // LIT-division-meets-default-decimal), as at the top level ([`f64_operands`]), and so
+        // does each such pair of tuples compared component by component, `(1.0 / 2, 0) ==
+        // (1 / 2, 0)`; the class then takes `f64` below. One walk of the two types side by
+        // side and one read of each class ([`Self::class_takes`]), O(size of the sides).
+        let mut pairs = Vec::new();
+        let mut todo = vec![(x.ty.clone(), y.ty.clone())];
+        while let Some((a, b)) = todo.pop() {
+            match (self.class_of_ty(&a), self.class_of_ty(&b)) {
+                (Some(ka), Some(kb)) => pairs.push((ka, kb)),
+                _ => {
+                    let n = a.tuples.only().map_or(0, |cs| cs.len());
+                    if let (Some(ca), Some(cb)) = (only_tuple(&a, n), only_tuple(&b, n)) {
+                        todo.extend(ca.iter().cloned().zip(cb.iter().cloned()));
+                    }
+                }
+            }
+        }
+        for (ka, kb) in pairs {
+            for (k, other) in [(ka, kb), (kb, ka)] {
+                let (k, other) = (self.find(k), self.find(other));
+                if k != other
+                    && self.classes[k].generic
+                    && self.classes[k].binder.is_none()
+                    && matches!(
+                        self.class_takes(other, Carrier::NUMBER_BITS),
+                        Some((_, LitsTake::F64))
+                    )
+                    && matches!(
+                        self.class_takes(k, Carrier::NUMBER_BITS),
+                        Some((_, LitsTake::Rejected(_, left))) if left.contains(&Carrier::F64)
+                    )
+                {
+                    self.restrict(k, Carrier::F64.bit(), &format!("`{op}`"), span);
+                }
+            }
+        }
         let (kx, ky) = (self.class_of_ty(&x.ty), self.class_of_ty(&y.ty));
         if let (Some(kx), Some(ky)) = (kx, ky) {
             if self.follow_param(kx, ky) {

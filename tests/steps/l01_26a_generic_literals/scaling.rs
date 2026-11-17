@@ -385,28 +385,25 @@ fn a_fix_names_a_power_of_literals() {
         );
     }
     // DESIGN.md names the comparison too, `y is (3r^20 / 2, 1) == (1, 2)`, and the comparison
-    // whose pair at `int` holds the power, in one rejection each. This zedc gives the first no
-    // menu (row LIT-tuple-compare-power-menu), and rejects each `1` of the second on its own
-    // with a menu that names the literal (row LIT-tuple-compare-names-literal).
-    assert_eq!(
-        type_errors(&pair_of_a_power(1)),
-        [
-            "`/` does not take (int, 2): no arrow of `/` takes these types. Try `rat(3^200) / 2` \
-             instead. [3^200 / 2]"
-        ]
-    );
-    let errors = type_errors(&int_pair_of_a_power(1));
-    assert_eq!(errors.len(), 2, "{errors:?}");
-    for (e, fix) in errors.iter().zip([
-        "y = (3^200 + 1, 1r / 2) == (2, 1 / 2);",
-        "y = (3^200 + 1, 1 / 2) == (2, 1r / 2);",
-    ]) {
+    // whose pair at `int` holds the power, in one rejection each (rows
+    // LIT-tuple-compare-power-menu and LIT-tuple-compare-names-literal).
+    for (src, rat_fix) in [
+        (pair_of_a_power(1), "y = (3r^200 / 2, 1) == (1, 2);"),
+        (
+            int_pair_of_a_power(1),
+            "y = (3^200 + 1, 1r / 2) == (2, 1 / 2);",
+        ),
+    ] {
+        let fixes = super::fixes::fixes(&src);
+        let named = format!("y is {}", &rat_fix[4..rat_fix.len() - 1]);
+        assert_eq!(
+            fixes.first().map(|(l, h)| (l.as_str(), h.as_str())),
+            Some((rat_fix, named.as_str())),
+            "{src}{fixes:?}"
+        );
         assert!(
-            e.starts_with("Nothing gives the literal `1` a carrier.")
-                && e.contains(&format!(
-                    "\n    {fix}        the literal is then exactly 1, a rat\n"
-                )),
-            "{e}"
+            fixes.iter().all(|(_, h)| h.starts_with("y is ")),
+            "{src}{fixes:?}"
         );
     }
 }

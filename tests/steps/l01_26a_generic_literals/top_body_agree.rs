@@ -52,6 +52,17 @@ fn a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level() {
         ("2^(1/2) == 0.5", "false"),
         // Each side of `==` takes `f64` on its own.
         ("(1/2)^0.5 == 2^0.5", "false"),
+        // A `/` of integer literals compared with an operation holding a decimal meets its
+        // `f64` (DESIGN.md step L1.26b: the `f64` of a decimal is a carrier that such a `/`
+        // meets wherever the two reach one class; item LIT-division-meets-default-decimal), as
+        // it meets a bare decimal in `1 / 2 == 1.5`; pair by pair in tuples. These were
+        // rejected in every place, though the menu of `y = 1 / 2 == 1 / 2` offered
+        // `y = 1.0 / 2 == 1 / 2` as a fix that checks.
+        ("2^0.5 == 1/2", "false"),
+        ("1.0 / 2 == 1 / 2", "true"),
+        ("0.5 + 1 != 3 / 2", "false"),
+        ("(1.0 / 2, 0) == (1 / 2, 0)", "true"),
+        ("(0, (1 / 2, 0.5 + 1)) != (0, (1.0 / 2, 3 / 2))", "false"),
         // `<` makes one class of its sides.
         ("2^0.5 < 1.5", "true"),
         ("1 < 2^0.5", "true"),
@@ -98,31 +109,33 @@ fn a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level() {
         );
         assert_eq!(out.stdout, want, "{place}:\n{src}");
     }
-    // The same value in every place, `0.125`. A line gets the same warnings in every place
-    // (plan row POW-top-body-agree); this zedc warns in a body and in a block that `2^100`
-    // "widens past a machine word", twice, and at the top level not at all; row
-    // POW-body-widen-warning-top-agree.
-    let e = "0.5^(2^100 - 2^100 + 3)";
-    for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
-        assert_eq!(type_errors(src), Vec::<String>::new(), "{place}:\n{src}");
-        let out = run(
-            &format!("l01_26a_top_body_agree_widen_{place}"),
-            src,
-            "",
-            &[],
-        );
-        assert_eq!(
-            (out.status, out.stdout.as_str()),
-            (0, "0.125\n"),
-            "{place}:\n{src}"
-        );
-        let warned = out.stderr.matches("widens past a machine word").count();
-        assert_eq!(
-            warned,
-            if place == "top" { 0 } else { 2 },
-            "{place}:\n{}",
-            out.stderr
-        );
+    // A line gets the same value and the same warnings in every place (plan rows
+    // POW-top-body-agree, POW-body-widen-warning-top-agree). The exponent of `0.5^(…)`, an
+    // operation on integer literals alone, is read at `f64` by its value, `3.0`, and computes
+    // nothing at run time, so no `2^100` in it is an integer operation and none warns
+    // (DESIGN.md sec:domains: the warning is raised at each integer operation that crosses);
+    // a body and a block warned twice, the top level not at all. At `rat` the exponent keeps
+    // `int` and is computed, and each `2^100` warns, in every place.
+    for (e, v, warns) in [
+        ("0.5^(2^100 - 2^100 + 3)", "0.125", 0),
+        ("2^(2^100 - 2^100 + 3) + 2r", "10r", 2),
+    ] {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            assert_eq!(type_errors(src), Vec::<String>::new(), "{place}:\n{src}");
+            let out = run(
+                &format!("l01_26a_top_body_agree_widen_{place}"),
+                src,
+                "",
+                &[],
+            );
+            assert_eq!(
+                (out.status, out.stdout.as_str()),
+                (0, format!("{v}\n").as_str()),
+                "{place}:\n{src}"
+            );
+            let warned = out.stderr.matches("widens past a machine word").count();
+            assert_eq!(warned, warns, "{place}:\n{}", out.stderr);
+        }
     }
 }
 
@@ -131,8 +144,15 @@ fn a_line_rejected_in_a_body_is_rejected_at_the_top_level() {
     // Each holds a `/` of integer literals alone, which is rejected under `/` (author decision
     // 2026-11-12), or an `int` to a negative power. The lines with a decimal that this test
     // rejected before that decision take `f64` and are in
-    // `a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level`.
-    let lines = ["(1/2)^2", "(3/2)^-2", "2^-1", "2^0.5 == 1/2"];
+    // `a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level`, as does `2^0.5 == 1/2`,
+    // whose `/` meets the `f64` of the decimal. Two `/`s with no decimal stay rejected.
+    let lines = [
+        "(1/2)^2",
+        "(3/2)^-2",
+        "2^-1",
+        "1/2 == 1/2",
+        "(1/2, 0) == (1/2, 1)",
+    ];
     for e in lines {
         for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
             assert!(!type_errors(src).is_empty(), "{place}: accepted\n{src}");

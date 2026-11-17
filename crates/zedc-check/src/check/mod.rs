@@ -8674,6 +8674,8 @@ fn binder_holds<'a>(
     edits: &[(Span, &dyn fmt::Display)],
 ) -> impl fmt::Display + 'a {
     let named = match matches!(c, Carrier::Int | Carrier::Rat) && holds_power(e) {
+        // A comparison of tuple displays, each pair at its own carrier.
+        _ if let Some(h) = compared_holds(e, c, src, edits) => Some(h),
         true => src
             .and_then(|s| written_alone(s, e.span, edits))
             .map(Holds::Written),
@@ -9811,7 +9813,9 @@ fn open_lits(e: &Expr) -> Option<OpenLits> {
 /// stays rejected. As in a body, `<`, `<=`, `>` and `>=` make one class of their two sides, so
 /// `y = 1 < 2^0.5` takes `f64` on both; `==` and `!=` keep the sides apart, and a bare
 /// literal compared with an operation follows it, so `y = 2^-1.0 == 0.5` takes `f64` on both,
-/// `y = 2^(1/2) == 0.5` too, and in `y = 2^0.5 == 0.5^2` each side takes it. Tuple
+/// `y = 2^(1/2) == 0.5` too, and in `y = 2^0.5 == 0.5^2` each side takes it; an operation
+/// with a `/` follows one with a decimal as a bare decimal does, so `y = 1.0 / 2 == 1 / 2`
+/// takes `f64` on both. Tuple
 /// displays compared pair by pair ([`paired`]) take each pair so.
 ///
 /// Complexity tradeoff: a body finds this by a class per operation, merged as each operator
@@ -9849,7 +9853,20 @@ fn f64_operands(e: &Expr) -> Vec<&Expr> {
                         out.push(y)
                     }
                     (Some(_), None) | (None, Some(_)) => {}
-                    (None, None) => out.extend([x, y].into_iter().filter(|z| side(z, false))),
+                    // Two operations: a `/` meets the `f64` of a decimal on the other side,
+                    // `y = 1.0 / 2 == 1 / 2` is `true` (DESIGN.md step L1.26b, item
+                    // LIT-division-meets-default-decimal), while `y = 0.5 + 1 == 1 + 1`
+                    // keeps its `int` (row LIT-f64-op-meets-int-op).
+                    (None, None) => {
+                        let decimal = |z: &Expr| open_lits(z).is_some_and(|o| o.decimal);
+                        let (dx, dy) = (decimal(x), decimal(y));
+                        out.extend(
+                            [(x, dy), (y, dx)]
+                                .into_iter()
+                                .filter(|&(z, d)| side(z, d))
+                                .map(|(z, _)| z),
+                        )
+                    }
                 }
             }
             out
@@ -10104,6 +10121,87 @@ fn unfixed_comparison(
     Some((l.site, m))
 }
 
+/// The one pair of components that `==` compares in the tuple displays `a` and `b` ([`paired`])
+/// where either side is no operation on literals alone under `+`, `-`, `*`, `^` and a `-`
+/// ([`literals_alone`]), as one that divides is not, where every other pair is one: in
+/// `y = (3^20 / 2, 1) == (1, 2)`, the pair (`3^20 / 2`, `1`). A comparison of tuples carries
+/// a carrier across each pair alone ([`Ck::lit_pairs`]), so a fix that writes the first literal
+/// of that pair reaches its other side and leaves each other pair at the carrier of its own
+/// literals (row LIT-tuple-compare-power-menu). `None` where the displays differ in shape, are
+/// one pair, or have no such pair or more than one. It costs the size of the displays.
+fn divided_pair<'e>(a: &'e Expr, b: &'e Expr, src: Option<&str>) -> Option<(&'e Expr, &'e Expr)> {
+    let pairs = paired(a, b)?;
+    if pairs.len() == 1 && std::ptr::eq(pairs[0].0, a) {
+        return None;
+    }
+    let mut open = (pairs.into_iter())
+        .filter(|(x, y)| literals_alone(x, src).is_none() || literals_alone(y, src).is_none());
+    let pair = open.next()?;
+    open.next().is_none().then_some(pair)
+}
+
+/// What a comparison `e` of two tuple displays of one shape holds once a fix's edits `edits`
+/// give the literals of the pair of components they lie in the carrier `c`, each other pair
+/// taking the carrier of its own literals ([`literals_alone`]), `int` where they have none:
+/// `y is false` for the fix `y = (3.0^20 / 2, 1) == (1, 2)` of `y = (3^20 / 2, 1) == (1, 2)`.
+/// A pair at `int` or `rat` that holds a `^` is not folded, and the comparison is then named
+/// as the fix writes it, `y is (3r^20 / 2, 1) == (1, 2)` (DESIGN.md sec:diagnostics, "The
+/// value a fix names"). `None` where `e` is no such comparison or a pair does not fold. It
+/// costs the size of `e` ([`folded`]).
+fn compared_holds(
+    e: &Expr,
+    c: Carrier,
+    src: Option<&str>,
+    edits: &[(Span, &dyn fmt::Display)],
+) -> Option<Holds> {
+    let ExprKind::Binary(op @ (BinaryOp::Eq | BinaryOp::Ne), a, b) = &e.kind else {
+        return None;
+    };
+    let pairs = paired(a, b)?;
+    if pairs.len() == 1 && std::ptr::eq(pairs[0].0, &**a) {
+        return None;
+    }
+    let edited =
+        |x: &Expr| (edits.iter()).any(|(s, _)| x.span.start <= s.start && s.end <= x.span.end);
+    // The carrier of each pair: the fix's where it edits the pair, else that of its literals
+    // with a suffix, which all agree where the program checks, else `int`.
+    let mut ats = Vec::with_capacity(pairs.len());
+    for (x, y) in &pairs {
+        let at = match edited(x) || edited(y) {
+            true => c,
+            false => {
+                let ((xs, r), (ys, s)) = (literals_alone(x, src)?, literals_alone(y, src)?);
+                let own = (xs.iter().chain(&ys))
+                    .find(|l| !l.bare)
+                    .map(|l| lit_carrier(&l.value));
+                match r || s {
+                    true => Carrier::Rat,
+                    false => own.unwrap_or(Carrier::Int),
+                }
+            }
+        };
+        ats.push(at);
+    }
+    let powered = (pairs.iter().zip(&ats)).any(|((x, y), &at)| {
+        matches!(at, Carrier::Int | Carrier::Rat) && (holds_power(x) || holds_power(y))
+    });
+    if powered {
+        return src
+            .and_then(|s| written_alone(s, e.span, edits))
+            .map(Holds::Written);
+    }
+    let mut all = true;
+    for ((x, y), &at) in pairs.iter().zip(&ats) {
+        let (u, v) = (folded(x, at)?, folded(y, at)?);
+        all &= kernel_folded(Prim::Eq, vec![u, v])? == Value::Bool(true);
+    }
+    Some(Holds::Value(Value::Bool(if *op == BinaryOp::Eq {
+        all
+    } else {
+        !all
+    })))
+}
+
 /// The literals of the operations on literals `roots` (a value, or the two sides of a
 /// comparison) that a fix of [`unfixed_binding`] writes with a carrier, besides the literal at
 /// `written`, in the order of the text. The checker carries a carrier across `+`, `-`, `*`,
@@ -10216,6 +10314,14 @@ fn unfixed_binding(
         return Some(r);
     }
     let mut stack = match &e.kind {
+        // In a comparison of tuple displays the pair that divides is the one rejected, and the
+        // fixes write its first literal, whose carrier reaches its other side and no other
+        // pair ([`divided_pair`]); each names the comparison ([`binder_holds`]).
+        ExprKind::Binary(BinaryOp::Eq | BinaryOp::Ne, a, b)
+            if let Some((x, y)) = divided_pair(a, b, src) =>
+        {
+            vec![y, x]
+        }
         ExprKind::Binary(
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge,
             a,

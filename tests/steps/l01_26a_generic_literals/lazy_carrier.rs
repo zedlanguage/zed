@@ -147,54 +147,62 @@ fn a_tuple_menu_names_the_value_where_a_pair_is_an_operation() {
     // is the literal, or an operation on literals alone", as `y = (3^2 + 1, 1 / 2) == (10, 1 /
     // 2);` has `y is (3r^2 + 1, 1 / 2) == (10, 1 / 2)`: one rejection, whose every fix names
     // `y`. `1 + 2` takes the carrier of `3.0f64` in its pair, and the `/` of integer literals
-    // in the other pair has none. This zedc names the literal, as in a call or a body, and
-    // rejects each `/` of a pair that meets another `/` on its own; row
-    // LIT-tuple-compare-names-literal. Each fix it lists checks.
-    let literal = |n: &str| {
-        [
-            format!("the literal is then exactly {n}, a rat"),
-            format!("the literal is then the f64 {n}.0"),
-        ]
-    };
-    let [rat, f64] = literal("1");
+    // in the other pair has none; the one pair that holds a `/` is the one the fix writes in
+    // (plan rows LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu).
+    let fixes = [
+        "y = (1 + 2, 1r / 2) == (3.0f64, 1);",
+        "y = (1 + 2, 1.0 / 2) == (3.0f64, 1);",
+        "y = (1 + 2, f64(1) / 2) == (3.0f64, 1);",
+    ];
     assert_eq!(
         checked("y = (1 + 2, 1 / 2) == (3.0f64, 1);\n"),
-        [
-            (
-                "y = (1 + 2, 1r / 2) == (3.0f64, 1);".to_string(),
-                rat.clone()
-            ),
-            (
-                "y = (1 + 2, 1.0f64 / 2) == (3.0f64, 1);".to_string(),
-                f64.clone()
-            ),
-        ]
+        fixes.map(|f| (f.to_string(), "y is false".to_string()))
     );
-    assert_eq!(y("y = (1 + 2, 1r / 2) == (3.0f64, 1);\n"), "false");
-    assert_eq!(y("y = (1 + 2, 1.0f64 / 2) == (3.0f64, 1);\n"), "false");
-    let errors = type_errors("y = (1 + 2, 1 / 2) == (3r, 1 / 2);\n");
-    assert_eq!(errors.len(), 2, "{errors:?}");
-    for (e, fix) in errors.iter().zip([
+    for fix in fixes {
+        assert_eq!(y(&format!("{fix}\n")), "false", "{fix}");
+    }
+    // A `/` in each component of one pair: the fix writes the first, and the second meets
+    // its carrier, the `f64` of `1.0` too (DESIGN.md step L1.26b); one rejection.
+    let fixes = [
         "y = (1 + 2, 1r / 2) == (3r, 1 / 2);",
-        "y = (1 + 2, 1 / 2) == (3r, 1r / 2);",
-    ]) {
-        assert!(e.contains(&format!("\n    {fix}        {rat}\n")), "{e}");
+        "y = (1 + 2, 1.0 / 2) == (3r, 1 / 2);",
+        "y = (1 + 2, f64(1) / 2) == (3r, 1 / 2);",
+    ];
+    assert_eq!(
+        checked("y = (1 + 2, 1 / 2) == (3r, 1 / 2);\n"),
+        fixes.map(|f| (f.to_string(), "y is true".to_string()))
+    );
+    for fix in fixes {
         assert_eq!(y(&format!("{fix}\n")), "true", "{fix}");
     }
-    // Two rejections: the comparison, as above, and the `1`.
+    // One rejection, the `1`, where the comparison of `f64` with `int` was rejected too: the
+    // `/` has no carrier, so neither side is an `f64`.
+    let fixes = [
+        "y = (1r + 1 / 2, 0) == (2 + 1, 0);",
+        "y = (1.0 + 1 / 2, 0) == (2 + 1, 0);",
+        "y = (f64(1) + 1 / 2, 0) == (2 + 1, 0);",
+    ];
     let errors = type_errors("y = (1 + 1 / 2, 0) == (2 + 1, 0);\n");
-    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    for fix in fixes {
+        assert!(
+            errors[0]
+                .lines()
+                .any(|l| l.trim_start().starts_with(fix) && l.contains("  y is false")),
+            "{fix}: {errors:?}"
+        );
+    }
+    assert_eq!(y(&format!("{}\n", fixes[0])), "false");
+    assert_eq!(y(&format!("{}\n", fixes[2])), "false");
+    // The menu names `false` for the `1.0` fix, the value DESIGN gives, but this zedc keeps
+    // `2 + 1` at `int` beside the `f64` `1.0 + 1 / 2` and rejects that fix, as it rejects
+    // `y = 1.0 + 1 / 2 == 2 + 1;`, whose own menu lists it too; row LIT-f64-op-meets-int-op,
+    // whose fix makes this `false`.
     assert!(
-        errors[0].starts_with("No value is both `f64` and `int`"),
-        "{errors:?}"
+        type_errors(&format!("{}\n", fixes[1]))[0].starts_with("No value is both `f64` and `int`"),
+        "{}",
+        fixes[1]
     );
-    assert!(
-        errors[1].contains("\n    y = (1 + 1r / 2, 0) == (2 + 1, 0);        ")
-            && errors[1].contains(&rat),
-        "{errors:?}"
-    );
-    assert_eq!(y("y = (1 + 1r / 2, 0) == (2 + 1, 0);\n"), "false");
-    assert_eq!(y("y = (1 + 1.0f64 / 2, 0) == (2 + 1, 0);\n"), "false");
 }
 
 #[test]

@@ -520,8 +520,8 @@ fn a_fix_names_a_power_of_literals_without_computing_it_in_a_tuple() {
     );
 }
 
-/// Besides its ratio: one rejection, with no menu (row LIT-tuple-compare-power-menu). Small
-/// instance: `scaling::a_fix_names_a_power_of_literals`.
+/// Besides its ratio: one rejection, whose fixes name the comparison (row
+/// LIT-tuple-compare-power-menu). Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
     rejections_do_not_grow(
@@ -532,14 +532,14 @@ fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison() {
     );
 }
 
-/// Besides its ratio: two rejections, one per `1 / 2` (row LIT-tuple-compare-names-literal).
-/// Small instance: `scaling::a_fix_names_a_power_of_literals`.
+/// Besides its ratio: one rejection for both `1 / 2`, whose fixes name the comparison (row
+/// LIT-tuple-compare-names-literal). Small instance: `scaling::a_fix_names_a_power_of_literals`.
 #[test]
 fn a_fix_names_a_power_of_literals_without_computing_it_in_a_comparison_at_int() {
     rejections_do_not_grow(
         "the fixes of a comparison holding a power of 3 at 200 n at int",
         500,
-        2,
+        1,
         int_pair_of_a_power,
     );
 }

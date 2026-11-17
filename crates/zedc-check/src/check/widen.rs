@@ -269,7 +269,20 @@ impl<'t, 'a> Walk<'t, 'a> {
                 w.node(c, Some(root), wrap && wraps(c));
             }
         };
+        // An operation the checker reads by its value, as a literal, is elaborated as that
+        // constant and computes nothing at run time ([`Info::adopt`], read before any other
+        // form by the elaboration): in a body the exponent `2^100 - 2^100 + 3` of
+        // `0.5^(2^100 - 2^100 + 3)` is the `f64` `3.0`, so neither `2^100` widens, as at the
+        // top level (plan row POW-body-widen-warning-top-agree). An operation in
+        // [`Info::follows`] alone, a generic exponent, is still computed at its own `int`
+        // and keeps its children. Its value is known only where it adopts an `int` and
+        // follows no carrier. One or two lookups per node.
+        let constant = !matches!(e.kind, ExprKind::Int { .. }) && self.adopt.contains_key(&e.span);
         let kind = match &e.kind {
+            _ if constant => match self.adopt.get(&e.span) {
+                Some(Value::Int(v)) if !self.follows.contains_key(&e.span) => Kind::Lit(Some(*v)),
+                _ => Kind::Top,
+            },
             ExprKind::Int { .. } => Kind::Lit(self.literal(e, false)),
             ExprKind::Unary(UnaryOp::Neg, a) if matches!(a.kind, ExprKind::Int { .. }) => {
                 Kind::Lit(self.literal(a, true))

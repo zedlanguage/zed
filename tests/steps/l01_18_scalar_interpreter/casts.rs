@@ -32,8 +32,17 @@ fn a_float_to_int_must_be_whole() {
     assert_eq!(x("int(1.0e20f64)"), "100000000000000000000");
     assert_eq!(x("int(1.0f64 / 0.0)"), "#invalid");
     assert_eq!(x("int(0.0f64 / 0.0)"), "#invalid");
-    assert_eq!(x("int(7r/2r)"), "#inexact");
+    assert_eq!(x("int(rat(7) / rat(2))"), "#inexact");
     assert_eq!(x("int(rat(6) / rat(2))"), "3");
+    // An operand of literals alone whose cast always fails is rejected, as `int(2.5f64)` is
+    // (DESIGN.md sec:domains; row LIT-cast-inexact-rat-fix).
+    assert_eq!(
+        errors("x = int(7r/2r);\n"),
+        [
+            "`int` here always fails: its operand `7r/2r` gives `#inexact`, so this call never \
+             gives a value. [int(7r/2r)]"
+        ]
+    );
 }
 
 #[test]
@@ -65,7 +74,16 @@ fn a_number_to_f64_must_be_exactly_representable() {
     );
     assert_eq!(x("f64(2^60 + 1)"), "#inexact", "2^60 + 1 needs 61 bits");
     assert_eq!(x("f64(3r/8r)"), "0.375");
-    assert_eq!(x("f64(1r/3r)"), "#inexact");
+    assert_eq!(x("f64(rat(1) / rat(3))"), "#inexact");
+    // Of literals alone the cast always fails and is rejected (DESIGN.md sec:domains; row
+    // LIT-cast-inexact-rat-fix).
+    assert_eq!(
+        errors("x = f64(1r/3r);\n"),
+        [
+            "`f64` here always fails: its operand `1r/3r` gives `#inexact`, so this call never \
+             gives a value. [f64(1r/3r)]"
+        ]
+    );
     assert_eq!(x("f64(rat(1) / rat(2^1074))"), "5.0e-324");
     assert_eq!(x("f64(rat(1) / rat(2^1075))"), "#inexact");
 }

@@ -150,43 +150,36 @@ fn a_comparison_of_literal_tuples_names_the_binder() {
         ])
     );
     // So is a comparison of two tuples of literals, as DESIGN.md's `y = (3^2 + 1, 1 / 2) == (10,
-    // 1 / 2);` with `y is (3r^2 + 1, 1 / 2) == (10, 1 / 2)` shows. This zedc rejects the first
-    // literal of the `/` in a comparison of tuples with the menu of a literal in a call or a
-    // body, which names the literal, and leaves out the cast `f64(…)`; row
-    // LIT-tuple-compare-names-literal. Each fix it lists checks.
+    // 1 / 2);` with `y is (3r^2 + 1, 1 / 2) == (10, 1 / 2)` shows: the fix writes the carrier
+    // on the first literal of the pair that holds the `/`, here the bare literal it is
+    // compared with, which the `/` then follows. Each fix checks and gives the value it names
+    // (plan rows LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu).
     assert_eq!(
         checked("y = (1, (2, 3)) == (2 / 2, (2r, 3));\n"),
         pairs(&[
-            (
-                "y = (1, (2, 3)) == (2r / 2, (2r, 3));",
-                "the literal is then exactly 2, a rat"
-            ),
-            (
-                "y = (1, (2, 3)) == (2.0f64 / 2, (2r, 3));",
-                "the literal is then the f64 2.0"
-            ),
+            ("y = (1r, (2, 3)) == (2 / 2, (2r, 3));", "y is true"),
+            ("y = (1.0, (2, 3)) == (2 / 2, (2r, 3));", "y is true"),
+            ("y = (f64(1), (2, 3)) == (2 / 2, (2r, 3));", "y is true"),
         ])
     );
     assert_eq!(
         checked("y = (1, (2, 3)) != (1, (4 / 2, 4));\n"),
         pairs(&[
-            (
-                "y = (1, (2, 3)) != (1, (4r / 2, 4));",
-                "the literal is then exactly 4, a rat"
-            ),
-            (
-                "y = (1, (2, 3)) != (1, (4.0f64 / 2, 4));",
-                "the literal is then the f64 4.0"
-            ),
+            ("y = (1, (2r, 3)) != (1, (4 / 2, 4));", "y is true"),
+            ("y = (1, (2.0, 3)) != (1, (4 / 2, 4));", "y is true"),
+            ("y = (1, (f64(2), 3)) != (1, (4 / 2, 4));", "y is true"),
         ])
     );
-    for (fix, v) in [
-        ("y = (1, (2, 3)) == (2r / 2, (2r, 3));\n", "true"),
-        ("y = (1, (2, 3)) == (2.0f64 / 2, (2r, 3));\n", "true"),
-        ("y = (1, (2, 3)) != (1, (4r / 2, 4));\n", "true"),
-        ("y = (1, (2, 3)) != (1, (4.0f64 / 2, 4));\n", "true"),
+    for fix in [
+        "y = (1r, (2, 3)) == (2 / 2, (2r, 3));\n",
+        "y = (1.0, (2, 3)) == (2 / 2, (2r, 3));\n",
+        "y = (f64(1), (2, 3)) == (2 / 2, (2r, 3));\n",
+        "y = (1, (2r, 3)) != (1, (4 / 2, 4));\n",
+        "y = (1, (2.0, 3)) != (1, (4 / 2, 4));\n",
+        "y = (1, (f64(2), 3)) != (1, (4 / 2, 4));\n",
     ] {
-        assert_eq!(value(fix, "y"), v, "{fix}");
+        assert_eq!(type_errors(fix), Vec::<String>::new(), "{fix}");
+        assert_eq!(value(fix, "y"), "true", "{fix}");
     }
 }
 

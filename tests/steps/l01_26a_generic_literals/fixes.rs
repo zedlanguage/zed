@@ -362,43 +362,54 @@ fn a_value_at_rat_reached_through_a_power_is_named_by_the_operation() {
         assert_eq!(type_errors(fix), Vec::<String>::new(), "{fix}");
     }
     assert_eq!(value("y = (3r^20 / 2, 1);\n", "y"), "(3486784401r/2r, 1)");
-    // DESIGN.md says `y = (3^20 / 2, 1) == (1, 2);` has the fix `y = (3r^20 / 2, 1) == (1,
-    // 2);    y is (3r^20 / 2, 1) == (1, 2)`. This zedc gives the line no menu, only "`/` does
-    // not take (int, 2)" and the repair `rat(3^20) / 2`, which checks; row
-    // LIT-tuple-compare-power-menu.
+    // DESIGN.md: `y = (3^20 / 2, 1) == (1, 2);` "has `y = (3r^20 / 2, 1) == (1, 2);    y is
+    // (3r^20 / 2, 1) == (1, 2)`": the first pair takes `rat`, the second stays at `int`, and
+    // the `rat` pair holds a `^`, so the comparison is named as written. The fixes at `f64`, of
+    // fixed size, name the value (row LIT-tuple-compare-power-menu).
     assert_eq!(
-        type_errors("y = (3^20 / 2, 1) == (1, 2);\n"),
-        [
-            "`/` does not take (int, 2): no arrow of `/` takes these types. Try `rat(3^20) / 2` \
-             instead. [3^20 / 2]"
-        ]
+        checked("y = (3^20 / 2, 1) == (1, 2);\n"),
+        pairs(&[
+            (
+                "y = (3r^20 / 2, 1) == (1, 2);",
+                "y is (3r^20 / 2, 1) == (1, 2)"
+            ),
+            ("y = (3.0^20 / 2, 1) == (1, 2);", "y is false"),
+            ("y = (f64(3)^20 / 2, 1) == (1, 2);", "y is false"),
+        ])
     );
-    assert_eq!(value("y = (rat(3^20) / 2, 1) == (1, 2);\n", "y"), "false");
-    // DESIGN.md says a pair at `int` is named the same way, in `y = (3^2 + 1, 1 / 2) == (10, 1 /
-    // 2);`: the two `1 / 2` meet at `==`, so one rejection, whose fixes name `y`. This zedc
-    // rejects each `1` on its own, each with a menu that names the literal; row
-    // LIT-tuple-compare-names-literal. Either fix of either menu alone makes the line check,
-    // `y` then `true`.
+    for fix in [
+        "y = (3r^20 / 2, 1) == (1, 2);\n",
+        "y = (3.0^20 / 2, 1) == (1, 2);\n",
+        "y = (f64(3)^20 / 2, 1) == (1, 2);\n",
+    ] {
+        assert_eq!(value(fix, "y"), "false", "{fix}");
+    }
+    // DESIGN.md: a pair at `int` is named the same way, in `y = (3^2 + 1, 1 / 2) == (10, 1 /
+    // 2);`: the two `1 / 2` meet at `==`, so one rejection, whose fixes write the pair's first
+    // literal and name `y` by the comparison as written, the pair at `int` holding a `^` (row
+    // LIT-tuple-compare-names-literal). Each fix makes the line check, `y` then `true`.
     let src = "y = (3^2 + 1, 1 / 2) == (10, 1 / 2);\n";
-    let menu = |fix: [&str; 2]| {
-        format!(
-            "Nothing gives the literal `1` a carrier. Try `{}` instead.\n  fixes, each checked \
-             here:\n    {};        the literal is then exactly 1, a rat\n    {};    the literal \
-             is then the f64 1.0 [1]",
-            fix[0], fix[0], fix[1]
-        )
-    };
-    let first = [
-        "y = (3^2 + 1, 1r / 2) == (10, 1 / 2)",
-        "y = (3^2 + 1, 1.0f64 / 2) == (10, 1 / 2)",
+    let fixed = [
+        "y = (3^2 + 1, 1r / 2) == (10, 1 / 2);",
+        "y = (3^2 + 1, 1.0 / 2) == (10, 1 / 2);",
+        "y = (3^2 + 1, f64(1) / 2) == (10, 1 / 2);",
     ];
-    let second = [
-        "y = (3^2 + 1, 1 / 2) == (10, 1r / 2)",
-        "y = (3^2 + 1, 1 / 2) == (10, 1.0f64 / 2)",
-    ];
-    assert_eq!(type_errors(src), [menu(first), menu(second)]);
-    for fix in first.iter().chain(&second) {
-        assert_eq!(value(&format!("{fix};\n"), "y"), "true", "{fix}");
+    let named: Vec<String> = (fixed.iter())
+        .map(|f| {
+            format!(
+                "y is {}",
+                f.trim_start_matches("y = ").trim_end_matches(';')
+            )
+        })
+        .collect();
+    let expected: Vec<(&str, &str)> = fixed
+        .iter()
+        .copied()
+        .zip(named.iter().map(String::as_str))
+        .collect();
+    assert_eq!(checked(src), pairs(&expected));
+    for fix in fixed {
+        assert_eq!(value(&format!("{fix}\n"), "y"), "true", "{fix}");
     }
     // The note is on one line: a line break or a comment between two tokens is one space.
     assert_eq!(
