@@ -4,12 +4,34 @@
 //! every draw (below); where the point is a type's 64-bit digest a program can choose many such
 //! keys (plan row PERF-set-tied-digest-depth).
 //!
-//! A [`Priorities`] is a polynomial `q` of degree 4 over the field of the prime
-//! `p = 2^64 - 59`, its five coefficients drawn uniformly from `0..p` from the operating
-//! system's random bytes when the priorities are first asked for. The values of such a `q` at
-//! any five distinct points are independent and uniform over `0..p`, since the matrix that maps
-//! the coefficients to the five values is a Vandermonde matrix, invertible on distinct points
-//! (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996, start of section 6).
+//! A [`Priorities`] is a polynomial `q` of degree 4 ([`Priorities::new`]) or 7
+//! ([`Priorities::eight_wise`]) over the field of the prime `p = 2^64 - 59`, its coefficients
+//! drawn uniformly from `0..p` from the operating system's random bytes when the priorities are
+//! first asked for. The values of a `q` of degree `d` at any `d + 1` distinct points are
+//! independent and uniform over `0..p`, since the matrix that maps the coefficients to the
+//! values is a Vandermonde matrix, invertible on distinct points (Seidel and Aragon,
+//! "Randomized search trees", Algorithmica 16, 1996, start of section 6).
+//!
+//! Degree 7, for the treaps whose set operations are joins of two treaps (`set::union_if_agree`,
+//! `set::difference_if_agree`, `set::symmetric`, `settings::combine`; plan row
+//! PROOF-join-work-limited-independence, COMPLEXITY.md K123). The proof is the cross-review's
+//! (round R7, part (c), checked by three seats; the plan row has the record): under
+//! 8-wise independence two fixed key sets `S`, `T` with `v` in `S` and `u != v` in `T` have
+//! `Pr[v holds the strict maximum of S and u that of T] <= C1 / (|S| |T|)` (a sixth central
+//! moment, or mixed moments of orders 2 and 4, after the two endpoint values are fixed: six-wise
+//! independence remains). Each node an operation visits is charged to a pair (pivot, node
+//! visited) for which such an event on fixed intervals of the operands holds, and the sum of
+//! `1 / (|S| |T|)` over the pairs of two sorted key sets of `m <= n` keys is
+//! `O(m log(1 + n/m))`. With `N` keys in all, the work is then at most
+//! `C0 m log(1 + n/m) + 64 m N min(1, delta + N(N - 1)/(2p))` in expectation, `delta` the
+//! probability that two keys share a point of `q` (the case `T0` below): the finger bound when
+//! no two keys share a point and `N^3 / p` is bounded. It costs three multiplications more per
+//! priority (205 against 114 instructions per evaluation, measured by the cross-review), so
+//! the other treaps keep degree 4, and the treaps of degree 7 keep each node's priority when
+//! they rebuild it rather than evaluating `q` again. So kept, degree 7 did 1.0006, 1.0017 and
+//! 1.0014 times the work of degree 4 over the kernel's benchmarks under seeds 0, 1 and 2: the
+//! forced atoms, which make many settings, 1.019 under each seed, and the benchmarks whose work
+//! follows the drawn shape from 0.975 to 1.056, a new draw giving a new shape.
 //!
 //! The bound. Seidel and Aragon's Lemma 6.1 (essentially Mulmuley's, "Computational geometry",
 //! 1994, section 10.1): random variables uniform over a common integer range of size at least
@@ -95,19 +117,20 @@ fn add(a: u64, b: u64) -> u64 {
     reduce(u128::from(a) + u128::from(b))
 }
 
-/// The draw of one use of treap priorities: the coefficients of `q`, highest first, and the
-/// point `r` of the hash of longer keys.
+/// The draw of one use of treap priorities: the coefficients of `q`, highest first (the first
+/// `degree + 1` of `q` are used), and the point `r` of the hash of longer keys.
 #[derive(Clone, Copy, Debug)]
 struct Draw {
-    q: [u64; 5],
+    q: [u64; 8],
+    degree: usize,
     r: u64,
 }
 
 impl Draw {
-    /// `q(x mod P)`, by Horner's rule: four multiplications.
+    /// `q(x mod P)`, by Horner's rule: `degree` multiplications.
     fn at(&self, x: u64) -> u64 {
         let x = if x >= P { x - P } else { x };
-        self.q[1..]
+        self.q[1..=self.degree]
             .iter()
             .fold(self.q[0], |acc, &c| add(mul(acc, x), c))
     }
@@ -118,20 +141,33 @@ impl Draw {
 /// the same draw on every run.
 pub struct Priorities {
     tag: u64,
+    degree: usize,
     draw: OnceLock<Draw>,
 }
 
 impl Priorities {
-    /// The priorities of the use named `tag`, drawn on first use.
+    /// The priorities of the use named `tag`, drawn on first use: `q` of degree 4, 5-wise
+    /// independent.
     pub const fn new(tag: u64) -> Priorities {
         Priorities {
             tag,
+            degree: 4,
+            draw: OnceLock::new(),
+        }
+    }
+
+    /// The priorities of the use named `tag`, drawn on first use: `q` of degree 7, 8-wise
+    /// independent, for the treaps whose joins need the finger bound (module comment).
+    pub const fn eight_wise(tag: u64) -> Priorities {
+        Priorities {
+            tag,
+            degree: 7,
             draw: OnceLock::new(),
         }
     }
 
     fn draw(&self) -> &Draw {
-        self.draw.get_or_init(|| draw(self.tag))
+        self.draw.get_or_init(|| draw(self.tag, self.degree))
     }
 
     /// The priority of the key `x`, a number: `q(x mod P)`. The 59 numbers from `P` up share
@@ -227,19 +263,32 @@ impl std::hash::Hasher for Stream {
     }
 }
 
-/// The draw of the use `tag`: from `ZED_TREAP_SEED` when it is set, else from the system's
-/// random bytes. A coefficient is drawn below `P` by drawing 64 bits again while they are `P`
-/// or more (probability `59 / 2^64` each), so each is uniform over `0..P`.
-fn draw(tag: u64) -> Draw {
-    let mut next = source(tag);
+/// The draw of the use `tag`, `q` of degree `degree`: from `ZED_TREAP_SEED` when it is set, else
+/// from the system's random bytes. A coefficient is drawn below `P` by drawing 64 bits again
+/// while they are `P` or more (probability `59 / 2^64` each), so each is uniform over `0..P`.
+/// The `degree + 1` coefficients are drawn first, then `r`, so a draw of degree 4 is the one a
+/// seed gave before degree 7 was added.
+fn draw(tag: u64, degree: usize) -> Draw {
+    draw_from(source(tag), degree)
+}
+
+/// [`draw`] from the words `next`.
+fn draw_from(mut next: impl FnMut() -> u64, degree: usize) -> Draw {
     let mut below_p = || loop {
         let x = next();
         if x < P {
             return x;
         }
     };
-    let q = [below_p(), below_p(), below_p(), below_p(), below_p()];
-    Draw { q, r: below_p() }
+    let mut q = [0; 8];
+    for c in &mut q[..=degree] {
+        *c = below_p();
+    }
+    Draw {
+        q,
+        degree,
+        r: below_p(),
+    }
 }
 
 /// The 64-bit words of the draw of `tag`.

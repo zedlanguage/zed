@@ -11,11 +11,11 @@
 //! looked up in the table in `O(1)` expected; the walks keep stacks of their own, so a set of
 //! any shape is walked on a small stack.
 //!
-//! The depth. The priority of a literal is the run's random polynomial `q` of degree 4, one for
+//! The depth. The priority of a literal is the run's random polynomial `q` of degree 7, one for
 //! each value of `taken`, at its point, its atom's digest modulo `p = 2^64 - 59`. Fix a set of
 //! `n` literals, chosen with no knowledge of the draw (nothing the kernel computes reads a shape,
 //! paragraph below). Let `T0` be the literals whose point another of the set shares: they tie
-//! whatever the draw. Literals at distinct points take 5-wise independent uniform priorities, two
+//! whatever the draw. Literals at distinct points take 8-wise independent uniform priorities, two
 //! of them equal with probability `1/p`, so every node's expected depth is at most
 //! `T0 + n(n - 1)/p + 2c H_n`, `c` the constant of Seidel and Aragon's Lemma 6.1 ("Randomized
 //! search trees", Algorithmica 16, 1996, Lemma 4.3, Theorem 4.7 and section 6; the proof, ties
@@ -123,20 +123,26 @@ impl<A: Atom> Drop for Set<A> {
 
 /// The priorities of the literals, drawn once per run (module [`crate::priority`]): two uses, so
 /// that the taken and the refused literal of one atom are two independent points.
-static PRIORITIES: [Priorities; 2] = [Priorities::new(11), Priorities::new(12)];
+static PRIORITIES: [Priorities; 2] = [Priorities::eight_wise(11), Priorities::eight_wise(12)];
 
-/// The priority of `key`: the run's random polynomial of degree 4 at its atom's digest, one for
-/// each value of `taken`. Distinct points take 5-wise independent uniform priorities, which
+/// The priority of `key`: the run's random polynomial of degree 7 at its atom's digest, one for
+/// each value of `taken`. Distinct points take 8-wise independent uniform priorities, which
 /// bounds every node's expected depth by `O(log n)` plus the literals that share a point
 /// (module comment; Seidel and Aragon 1996, Theorem 3.3 and section 6; the proof is in module
-/// [`crate::priority`]). Atoms whose digests are equal modulo `2^64 - 59` share a point: they
-/// tie whatever the draw, and each such atom adds at most one to a depth.
+/// [`crate::priority`]), and the work of a join of sets of `m <= n` literals by
+/// `O(m log(1 + n/m))` in expectation (the finger bound, proved for 8-wise independence in
+/// module [`crate::priority`]; for degree 4 only `O(m log(n + m))` is proved). Atoms whose
+/// digests are equal modulo `2^64 - 59` share a point: they tie whatever the draw, and each such
+/// atom adds at most one to a depth.
 // Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the fixed hash this replaces,
 // `mix(mix(13, digest), taken)`, cost two mixes and gave one shape whatever the run, but no
 // bound: a program can name literals whose hashes rise in their order, and their set is a path
 // (2,030 of the first 2^20 integer literals, test `chosen_literals_give_a_logarithmic_height`),
-// `O(n)` per insertion. The draw costs four multiplications modulo `2^64 - 59` per new literal
-// (nodes rebuilt over new children keep theirs, [`remake`]) and gives depth `O(log n)` in
+// `O(n)` per insertion. The draw costs seven multiplications modulo `2^64 - 59` per new literal
+// (205 instructions against 114 at degree 4; nodes rebuilt over new children keep theirs,
+// [`remake`], so the kernel benchmarks did 1.0006 to 1.0017 times the work of degree 4 under
+// seeds 0 to 2, PROOF-join-work-limited-independence, COMPLEXITY.md K123)
+// and gives depth `O(log n)` in
 // expectation plus the number of literals that share a point, for every input. Given up: the
 // shape of a set follows the draw, so nothing printed or ordered reads it (`set::same` still
 // does, as one draw serves the whole process). Still open: atoms of one digest tie, and a
@@ -583,10 +589,17 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
             todo.push(Step::Join(hi.left.clone(), lo.left.clone()));
             continue;
         }
+        // `lo` does not hold `hi`'s literal: a literal's priority is a function of the literal,
+        // and a set's root is its highest literal by (priority, literal), so had `lo` held it
+        // below its root, that root would stand above `hi`'s literal and so above `hi`, against
+        // the choice of `hi`; and `lo`'s root has another atom. So the atom found in `lo`, if
+        // any, is taken the other way, and the sets disagree.
         let lo = match get(Some(&lo), atom) {
             None => Some(lo),
-            Some(t) if t == *taken => remove(&lo, &hi.key),
-            Some(_) => return None,
+            Some(t) => {
+                debug_assert_ne!(t, *taken, "a literal of both sets is at both roots");
+                return None;
+            }
         };
         let (l, r) = split(lo.as_ref(), &hi.key);
         todo.push(Step::Make(hi.clone()));
@@ -617,10 +630,9 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// the facing spines of two ranges of the fixed result `x \ y`, at most `|x| - 1` of them with
 /// both sides non-empty, two paths of its treap (cross-review round 3, Gemini R3-F1).
 /// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016) prove
-/// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 5-wise
-/// independent draw of module `priority` that is not proved, and it was measured with a
-/// constant near 4 (cross-review of PERF-xor-shape-free, round 2; plan row
-/// PROOF-join-work-limited-independence).
+/// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 8-wise
+/// independent draw here it is proved in module `priority` (the finger bound, cross-review of
+/// PROOF-join-work-limited-independence, round 7), plus the literals that share a point.
 pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Tree<A>> {
     /// A pair of subtrees whose difference is wanted, or the join of the last two differences.
     enum Step<A: Atom> {
@@ -680,10 +692,10 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // `O(m log N)` when no two keys share a point (each split, removal or join walks paths of treaps
 // of at most `N` keys; cross-review of PERF-xor-shape-free, round 2, Opus §4). Blelloch,
 // Ferizovic and Sun's `O(m log(n/m + 1))`, `O(n)` when `m` is near `n`, is proved for priorities
-// drawn independently and identically, not for the 5-wise independent draw; measured with a
-// constant near 4 under it (plan row PROOF-join-work-limited-independence). The proved bound is
-// of the naive method's order, so the gain over it, in work and in nodes made, is measured, not
-// proved (COMPLEXITY.md K123). For `m = 1` both make one path, and the one literal is
+// drawn independently and identically, and for the 8-wise independent draw of degree 7 used here
+// in module `priority` (the finger bound, plan row PROOF-join-work-limited-independence), plus
+// the literals that share a point; so the gain over the naive method is proved, a factor of
+// `log n` when `m` is near `n` (COMPLEXITY.md K123). For `m = 1` both make one path, and the one literal is
 // added or removed directly, which the step stack would make about 17% dearer (parity, 4.55G
 // against 3.89G instructions at 8,192 literals).
 pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {

@@ -271,7 +271,9 @@ impl<A: Literal> Bdd<A> {
         // block, then `x`'s without the atoms of `j`, then `!v` ([`set::difference_if_agree`]).
         // Complexity tradeoff: the difference splits the larger block at each node of the
         // smaller, `O(m log(n/m + 1))` nodes for blocks of `m <= n` literals (Blelloch,
-        // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016); the literals of
+        // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016; for the 8-wise
+        // independent priorities of the sets, module `priority`, plus the literals that share a
+        // point); the literals of
         // `j` joined one at a time to `x` made `O(log n)` nodes each, `O(m log n)`, the 10.8
         // times as many nodes from n = 256 to 2048 left in
         // `functions_equal_at_one_place_are_decided_a_second_time_in_linear_time` after the
@@ -2794,7 +2796,8 @@ mod xor {
     //! `O(1)` plus the set's depth per literal added, its digest the set's sum, so the priorities
     //! are drawn per run and no longer a fixed hash: every node's expected depth is at most
     //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica 16,
-    //! 1996, for 5-wise independent priorities; module `set`), with no condition on the hash
+    //! 1996, which holds for 5-wise independent priorities and so for the 8-wise ones of
+    //! module `set`), with no condition on the hash
     //! beyond `T0`, the literals sharing a digest, which a program can still make large (plan row
     //! PERF-set-tied-digest-depth). Given up: reading the whole
     //! form of an exclusive or of `n` atoms makes its `n - 1` nested ones, a removal from a set
@@ -3236,6 +3239,19 @@ mod list {
 
     /// The cell of `block` between `left` and `right`, the one in the table if there is one.
     fn cell<A: Literal>(left: Seq<A>, block: Arc<Set<A>>, right: Seq<A>) -> Arc<Cell<A>> {
+        let prio = priority(&block);
+        cell_at(left, block, right, prio)
+    }
+
+    /// [`cell`], given `prio`, the priority of `block` ([`priority`]): a cell rebuilt over other
+    /// children passes its own, so a miss in the table does not evaluate it again.
+    fn cell_at<A: Literal>(
+        left: Seq<A>,
+        block: Arc<Set<A>>,
+        right: Seq<A>,
+        prio: u64,
+    ) -> Arc<Cell<A>> {
+        debug_assert_eq!(prio, priority(&block), "a cell's priority is its block's");
         let key = (id(&left), block.id, id(&right));
         // One walk of the table finds the cell or the place for a new one; a cell found dead is
         // replaced there, and its weak handle dropped, which touches no table.
@@ -3255,7 +3271,7 @@ mod list {
                     name_digest(&right),
                     pow(&right),
                 ),
-                prio: priority(&block),
+                prio,
                 len: len(&left) + 1 + len(&right),
                 pow: pow(&left).wrapping_mul(R).wrapping_mul(pow(&right)),
                 left,
@@ -3293,8 +3309,8 @@ mod list {
         };
         for (n, from_x) in path.into_iter().rev() {
             node = Some(match from_x {
-                true => cell(n.left.clone(), n.block.clone(), node),
-                false => cell(node, n.block.clone(), n.right.clone()),
+                true => cell_at(n.left.clone(), n.block.clone(), node, n.prio),
+                false => cell_at(node, n.block.clone(), n.right.clone(), n.prio),
             });
         }
         node
@@ -3342,8 +3358,8 @@ mod list {
         let (mut l, mut r) = (None, None);
         for (n, before) in path.into_iter().rev() {
             match before {
-                true if want.0 => l = Some(cell(n.left.clone(), n.block.clone(), l)),
-                false if want.1 => r = Some(cell(r, n.block.clone(), n.right.clone())),
+                true if want.0 => l = Some(cell_at(n.left.clone(), n.block.clone(), l, n.prio)),
+                false if want.1 => r = Some(cell_at(r, n.block.clone(), n.right.clone(), n.prio)),
                 _ => {}
             }
         }
@@ -3406,7 +3422,8 @@ mod list {
         new: Vec<Arc<Set<A>>>,
         delta: Delta<'_, A>,
     ) -> Seq<A> {
-        let top = new.iter().map(|s| priority(s)).max();
+        let prios: Vec<u64> = new.iter().map(|s| priority(s)).collect();
+        let top = prios.iter().copied().max();
         let mut path: Vec<(&Arc<Cell<A>>, bool)> = Vec::new();
         let (mut at, mut i, mut j) = (t.as_ref(), i, j);
         let region = loop {
@@ -3434,15 +3451,19 @@ mod list {
         };
         let mut node = match (alone, &new[..]) {
             (Some(n), []) => merge(n.left.clone(), n.right.clone()),
-            (Some(n), [b]) if fits(n, priority(b)) => {
-                Some(cell(n.left.clone(), b.clone(), n.right.clone()))
-            }
+            (Some(n), [b]) if fits(n, prios[0]) => Some(cell_at(
+                n.left.clone(),
+                b.clone(),
+                n.right.clone(),
+                prios[0],
+            )),
             _ => {
                 let (before, rest) = split(&region.cloned(), i);
                 let after = suffix(&rest, j - i);
                 let mid = new
                     .into_iter()
-                    .fold(None, |s, b| merge(s, Some(cell(None, b, None))));
+                    .zip(prios)
+                    .fold(None, |s, (b, p)| merge(s, Some(cell_at(None, b, None, p))));
                 merge(merge(before, mid), after)
             }
         };
@@ -3455,8 +3476,8 @@ mod list {
         for k in (0..path.len()).rev() {
             let (n, left) = path[k];
             let made = match left {
-                true => cell(node, n.block.clone(), n.right.clone()),
-                false => cell(n.left.clone(), n.block.clone(), node),
+                true => cell_at(node, n.block.clone(), n.right.clone(), n.prio),
+                false => cell_at(n.left.clone(), n.block.clone(), node, n.prio),
             };
             if placed_left(k) {
                 carry(n, &made, delta);
@@ -4143,19 +4164,26 @@ mod list {
                         // priority keeps the order of the treap over the pieces, the joins below
                         // make one cell of the block between them, the cell made here.
                         let ((l, lw), (r, rw)) = (&left.0, &right.0);
-                        let direct = block.as_ref().is_some_and(|b| {
-                            let p = priority(b);
+                        // The block kept whole keeps the cell's priority.
+                        let block = block.map(|b| {
+                            let p = match b.id == c.block.id {
+                                true => c.prio,
+                                false => priority(&b),
+                            };
+                            (b, p)
+                        });
+                        let direct = block.as_ref().is_some_and(|&(_, p)| {
                             l.as_ref()
                                 .is_none_or(|l| value_at(*lw, l.len - 1) != wb && l.prio < p)
                                 && r.as_ref().is_none_or(|r| *rw != wb && r.prio <= p)
                         });
                         let made = if kept {
                             ((Some(c.clone()), w), None)
-                        } else if direct && let Some(b) = block {
+                        } else if direct && let Some((b, p)) = block {
                             let first = if l.is_some() { *lw } else { wb };
-                            ((Some(cell(l.clone(), b, r.clone())), first), right.1)
+                            ((Some(cell_at(l.clone(), b, r.clone(), p)), first), right.1)
                         } else {
-                            let mid = (block.map(|b| cell(None, b, None)), wb);
+                            let mid = (block.map(|(b, p)| cell_at(None, b, None, p)), wb);
                             (join(join(left.0, mid), right.0), right.1)
                         };
                         memo.insert(key(c, w), made);

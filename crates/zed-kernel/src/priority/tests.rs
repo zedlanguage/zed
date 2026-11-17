@@ -1,9 +1,19 @@
 use super::*;
 
-/// A fixed draw, so that the tests do not depend on the system's random bytes.
-fn fixed(q: [u64; 5], r: u64) -> Priorities {
-    let p = Priorities::new(0);
-    p.draw.set(Draw { q, r }).expect("a new use has no draw");
+/// A fixed draw of the degree `q.len() - 1` (4 or 7), so that the tests do not depend on the
+/// system's random bytes.
+fn fixed(q: &[u64], r: u64) -> Priorities {
+    let p = match q.len() {
+        5 => Priorities::new(0),
+        8 => Priorities::eight_wise(0),
+        n => panic!("no degree {}", n - 1),
+    };
+    let mut all = [0; 8];
+    all[..q.len()].copy_from_slice(q);
+    let degree = q.len() - 1;
+    p.draw
+        .set(Draw { q: all, degree, r })
+        .expect("a new use has no draw");
     p
 }
 
@@ -53,18 +63,49 @@ fn the_field_operations_agree_with_division_by_p() {
 
 #[test]
 fn a_priority_is_the_polynomial_at_the_key() {
-    let q = [3, P - 1, 0, 1 << 40, 7];
-    let pr = fixed(q, 5);
-    for x in [0, 1, 2, 1000, u64::MAX, P, P + 3] {
-        let x_mod = u128::from(x % P);
-        let p = u128::from(P);
-        let want = q
-            .iter()
-            .fold(0u128, |acc, &c| (acc * x_mod + u128::from(c)) % p);
-        assert_eq!(u128::from(pr.of(x)), want, "{x}");
+    let fours: &[u64] = &[3, P - 1, 0, 1 << 40, 7];
+    let sevens: &[u64] = &[3, P - 1, 0, 1 << 40, 7, P - 59 - 1, 1, 1 << 63];
+    for q in [fours, sevens] {
+        let pr = fixed(q, 5);
+        for x in [0, 1, 2, 1000, u64::MAX, P, P + 3] {
+            let x_mod = u128::from(x % P);
+            let p = u128::from(P);
+            let want = q
+                .iter()
+                .fold(0u128, |acc, &c| (acc * x_mod + u128::from(c)) % p);
+            assert_eq!(u128::from(pr.of(x)), want, "degree {}, {x}", q.len() - 1);
+        }
+        // The numbers from `P` up share the points of `0` to `58`.
+        assert_eq!(pr.of(P + 3), pr.of(3));
     }
-    // The numbers from `P` up share the points of `0` to `58`.
-    assert_eq!(pr.of(P + 3), pr.of(3));
+}
+
+#[test]
+fn a_draw_of_degree_4_is_the_first_five_coefficients_of_one_of_degree_7() {
+    // Under one seed the two degrees draw the same leading coefficients, in the same order,
+    // so a seed's degree-4 priorities did not change when degree 7 was added; and the two
+    // degrees give different priorities, the higher terms being drawn.
+    // The words include P and u64::MAX, which are drawn again.
+    let words = || {
+        let mut i = 0u64;
+        move || {
+            i += 1;
+            match i {
+                2 => P,
+                5 => u64::MAX,
+                _ => i.wrapping_mul(0x9e37_79b9_7f4a_7c15) % P,
+            }
+        }
+    };
+    let four = draw_from(words(), 4);
+    let seven = draw_from(words(), 7);
+    assert_eq!((four.degree, seven.degree), (4, 7));
+    assert_eq!(four.q[..5], seven.q[..5]);
+    assert!(four.q[5..].iter().all(|&c| c == 0));
+    assert!(seven.q.iter().chain([&four.r, &seven.r]).all(|&c| c < P));
+    // r follows the coefficients: the sixth word kept in degree 4, the ninth in degree 7.
+    assert_eq!(four.r, seven.q[5]);
+    assert_ne!(four.at(12345), seven.at(12345));
 }
 
 /// `g` of `bytes` written in pieces of the sizes `cuts`, taken in turn.
@@ -151,8 +192,8 @@ fn a_word_of_p_minus_1_or_more_is_two_symbols_no_other_word_begins_with() {
 fn equal_keys_take_equal_priorities_whatever_the_draw() {
     // Every draw, the run's included: a priority is a function of the key.
     let drawn = Priorities::new(1);
-    let a = fixed([1, 2, 3, 4, 5], 6);
-    let b = fixed([5, 4, 3, 2, 1], 7);
+    let a = fixed(&[1, 2, 3, 4, 5], 6);
+    let b = fixed(&[5, 4, 3, 2, 1, 9, 8, 7], 7);
     let key = (17u64, "a name", -5i64);
     let other = (17u64, "a name", -6i64);
     for p in [&drawn, &a, &b] {

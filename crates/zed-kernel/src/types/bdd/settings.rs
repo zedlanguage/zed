@@ -1,8 +1,9 @@
 //! Persistent ordered sets of settings, each an atom and a value, for [`Part::forced`]: treaps
 //! whose union and intersection split one set at the other's root and join the halves, so `k`
 //! settings meet `n` in `O(k log(n/k + 1))` expected time (Blelloch, Ferizovic and Sun, "Just
-//! join for parallel ordered sets", SPAA 2016), where adding the smaller set's settings to the
-//! larger one at a time takes `O(k log n)`.
+//! join for parallel ordered sets", SPAA 2016, for independent priorities; for the 8-wise
+//! independent priorities here, module [`crate::priority`]), where adding the smaller set's
+//! settings to the larger one at a time takes `O(k log n)`.
 //!
 //! Unlike the sets of module `set`, these nodes are kept in no table: [`Part::forced`] never asks
 //! whether two sets are one node, so a table lookup per node made would be cost with no use
@@ -62,14 +63,15 @@ impl<A: Atom> Drop for Node<A> {
 /// The priorities of the settings of each value, drawn once per run (module
 /// [`crate::priority`]): two uses, so that the two settings of one atom are two independent
 /// points.
-static PRIORITIES: [Priorities; 2] = [Priorities::new(1), Priorities::new(2)];
+static PRIORITIES: [Priorities; 2] = [Priorities::eight_wise(1), Priorities::eight_wise(2)];
 
-/// The priority of `key`: the run's random polynomial of degree 4 at its atom's digest, one for
-/// each value. Distinct digests take 5-wise independent uniform priorities, which bounds every
+/// The priority of `key`: the run's random polynomial of degree 7 at its atom's digest, one for
+/// each value. Distinct digests take 8-wise independent uniform priorities, which bounds every
 /// node's expected depth by `O(log n)` for every set of settings (Seidel and Aragon 1996,
-/// Theorem 3.3 and section 6; the proof is in module [`crate::priority`]), where the fixed hash
-/// this replaces had no bound for chosen settings (COMPLEXITY.md K123). Atoms of one digest share
-/// a point: they tie whatever the draw, and each such atom adds at most one to a depth.
+/// Theorem 3.3 and section 6) and the work of [`combine`] by the finger bound (module
+/// [`crate::priority`] has both proofs), where the fixed hash this replaces had no bound for
+/// chosen settings (COMPLEXITY.md K123). Atoms of one digest share a point: they tie whatever
+/// the draw, and each such atom adds at most one to a depth.
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
     PRIORITIES[usize::from(key.1)].of(key.0.digest())
 }
@@ -79,9 +81,12 @@ fn above<A: Atom>(a: &Node<A>, b: &Node<A>) -> bool {
     (a.prio, &a.key) > (b.prio, &b.key)
 }
 
-fn node<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Node<A>> {
+/// The node of `key`, whose priority is `prio` ([`priority`]), over `left` and `right`. Only
+/// [`from_keys`] evaluates [`priority`]; every other node made is a node of a set rebuilt with
+/// other children, and takes its stored priority, so no node costs a second evaluation.
+fn node_at<A: Atom>(prio: u64, key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Node<A>> {
     Arc::new(Node {
-        prio: priority(&key),
+        prio,
         len: 1 + len(&left) + len(&right),
         key,
         left,
@@ -94,7 +99,7 @@ fn remake<A: Atom>(n: &Arc<Node<A>>, left: Tree<A>, right: Tree<A>) -> Arc<Node<
     if same(&left, &n.left) && same(&right, &n.right) {
         return n.clone();
     }
-    node(n.key.clone(), left, right)
+    node_at(n.prio, n.key.clone(), left, right)
 }
 
 /// Whether two sets are one node (or both empty); a shortcut only, never an order.
@@ -180,7 +185,7 @@ pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
             let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
             let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
             let key = keys[i].take().expect("each key made once");
-            made[i] = Some(node(key, l, r));
+            made[i] = Some(node_at(prios[i], key, l, r));
             continue;
         }
         todo.push((i, true));
@@ -216,10 +221,10 @@ fn split<A: Atom>(t: &Tree<A>, key: &Key<A>) -> (Tree<A>, bool, Tree<A>) {
         }
     }
     for n in lefts.into_iter().rev() {
-        l = Some(node(n.key.clone(), n.left.clone(), l));
+        l = Some(node_at(n.prio, n.key.clone(), n.left.clone(), l));
     }
     for n in rights.into_iter().rev() {
-        r = Some(node(n.key.clone(), r, n.right.clone()));
+        r = Some(node_at(n.prio, n.key.clone(), r, n.right.clone()));
     }
     (l, found, r)
 }
@@ -247,9 +252,9 @@ fn join<A: Atom>(a: Tree<A>, b: Tree<A>) -> Tree<A> {
     };
     for (n, left) in spine.into_iter().rev() {
         bottom = Some(if left {
-            node(n.key.clone(), bottom, n.right.clone())
+            node_at(n.prio, n.key.clone(), bottom, n.right.clone())
         } else {
-            node(n.key.clone(), n.left.clone(), bottom)
+            node_at(n.prio, n.key.clone(), n.left.clone(), bottom)
         });
     }
     bottom
@@ -266,7 +271,9 @@ enum Op {
 /// other set split at its setting, the two sides combined past it, and for an intersection the
 /// root kept only when the other set had it. Two subtrees that are one node are their own
 /// union and intersection. For `k` settings into `n`, `O(k log(n/k + 1))` expected time
-/// (Blelloch, Ferizovic and Sun, SPAA 2016, theorem 4.1, splits and joins included).
+/// (Blelloch, Ferizovic and Sun, SPAA 2016, theorem 4.1, splits and joins included, for
+/// independent priorities; for the 8-wise independent ones of [`priority`], the finger bound of
+/// module [`crate::priority`], plus the settings that share a point).
 fn combine<A: Atom>(x: &Tree<A>, y: &Tree<A>, op: Op) -> Tree<A> {
     /// A pair of subtrees to combine, or a node to make over the two combined last: with its
     /// setting kept, or (for an intersection whose other set lacked it) the two joined.
