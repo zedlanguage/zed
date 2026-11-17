@@ -610,6 +610,175 @@ fn uses_alike_each_give_their_error_through_a_generic_function_between() {
     }
 }
 
+/// The errors of `src`, whose first line is a body `body` of uses `use_text`: each by its place
+/// and the places of its notes, a place in a use as `use<j>+<offset>` for the `j`-th use, the
+/// definition's start as `def`, another place in the body as `body`, and a place after the body
+/// as `!` and its distance from the body's end; with the text at the error and its message.
+fn errors_by_use(
+    body: &str,
+    use_text: &str,
+    src: &str,
+) -> Vec<(String, String, String, Vec<String>)> {
+    let (info, _) = super::info(src);
+    let uses: Vec<usize> = body.match_indices(use_text).map(|(s, _)| s).collect();
+    let place = |s: usize| match s.checked_sub(body.len()) {
+        Some(after) => format!("!{after}"),
+        None => match uses.iter().position(|&u| u <= s && s < u + use_text.len()) {
+            Some(j) => format!("use{j}+{}", s - uses[j]),
+            None if s == 0 => "def".to_string(),
+            None => "body".to_string(),
+        },
+    };
+    let mut got: Vec<_> = (info.errors.iter())
+        .map(|e| {
+            let notes = e.notes.iter().map(|n| place(n.span.start)).collect();
+            let at = src[e.span.start..e.span.end].to_string();
+            (place(e.span.start), at, e.message.clone(), notes)
+        })
+        .collect();
+    got.sort();
+    got
+}
+
+/// Whether `body`, whose uses `use_text` are alike, gives in `body` followed by `rest` the
+/// errors `one`, a body of one such use, gives followed by `rest`: each error that is placed or
+/// noted at the use once at each use of `body`, placed and noted at that use, and the other
+/// errors as they are. `None` if so, else the program and the two lists of errors.
+fn errors_as_each_alone(one: &str, body: &str, use_text: &str, rest: &str) -> Option<String> {
+    let alone = errors_by_use(one, use_text, &format!("{one}{rest}"));
+    let n = body.matches(use_text).count();
+    let at_use = |e: &(String, String, String, Vec<String>)| {
+        e.0.starts_with("use") || e.3.iter().any(|p| p.starts_with("use"))
+    };
+    let mut want: Vec<_> = (alone.iter())
+        .flat_map(|e| {
+            let copies = if at_use(e) { n } else { 1 };
+            (0..copies).map(move |j| {
+                let at = |p: &String| p.replacen("use0", &format!("use{j}"), 1);
+                (
+                    at(&e.0),
+                    e.1.clone(),
+                    e.2.clone(),
+                    e.3.iter().map(at).collect(),
+                )
+            })
+        })
+        .collect();
+    want.sort();
+    let src = format!("{body}{rest}");
+    let got = errors_by_use(body, use_text, &src);
+    (got != want).then(|| format!("{src}\n  got:  {got:?}\n  want: {want:?}"))
+}
+
+/// Uses alike in one generic body, called at two calls whose arguments give the uses different
+/// meanings or carriers, or make one of them fail, give in either order of the calls the errors
+/// each use would give alone, at each use (row PROOF-need-site-read-only's claim that a check
+/// at a later call reads back from a use's site only the meaning a bracket was given,
+/// `Ck::bracket_meaning`, which `Ck::replay` gives a use left out; tested here for every kind
+/// of use that is paired, at every pair of these arguments, directly and through a generic
+/// function between).
+#[test]
+fn uses_alike_at_two_calls_give_the_errors_of_each_use_alone() {
+    let args = [
+        "g",
+        "(5, 6)",
+        "(5,)",
+        "[1, 2]",
+        "[0.5, 1.5]",
+        "[]",
+        "{1 -> 2}",
+        "5",
+        "\"s\"",
+    ];
+    let mut wrong = Vec::new();
+    for use_text in [
+        "t[1]",
+        "(t >< (+))",
+        "(t >< max)",
+        "t.sum",
+        "sum(t)",
+        "t.count",
+        "(t as (k -> v) into (v -> k)).count",
+    ] {
+        let one = format!("many(t) = {use_text};\n");
+        let body = format!("many(t) = ({use_text}, {use_text}, {use_text});\n");
+        for a in args {
+            for b in args.iter().filter(|&&b| b != a) {
+                for rest in [
+                    format!("g(x, y) = x + y;\nx = many(t: {a});\ny = many(t: {b});\n"),
+                    format!(
+                        "g(x, y) = x + y;\nmid(u) = many(t: u);\nx = mid(u: {a});\ny = mid(u: {b});\n"
+                    ),
+                ] {
+                    wrong.extend(errors_as_each_alone(&one, &body, use_text, &rest));
+                }
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} programs:\n{}",
+        wrong.len(),
+        wrong.join("\n\n")
+    );
+}
+
+/// `sum(t)` and `t.sum` in one generic body are one use (`AlikeSite::Sum` keys the receiver as
+/// written, `t` for both), and each still gives its own error in its own words, and the value
+/// each gives alone (the claim of commit bbdf92520 that pairing them at one site is safe).
+#[test]
+fn sum_of_t_and_t_sum_alike_each_keep_their_own_error_and_value() {
+    for (first, second) in [("sum(t)", "t.sum"), ("t.sum", "sum(t)")] {
+        let body = format!("many(t) = ({first}, {second});\n");
+        for arg in ["5", "\"s\"", "(1, 2)", "g"] {
+            for rest in [
+                format!("g(x, y) = x + y;\nx = many(t: {arg});\n"),
+                format!("g(x, y) = x + y;\nmid(u) = many(t: u);\nx = mid(u: {arg});\n"),
+            ] {
+                // The errors of each use alone, at its place in `body`, against the errors of
+                // `body`: placed and noted at the uses by their order in `body`.
+                let mut want = Vec::new();
+                for (j, use_text) in [first, second].into_iter().enumerate() {
+                    let one = format!("many(t) = {use_text};\n");
+                    for e in errors_by_use(&one, use_text, &format!("{one}{rest}")) {
+                        let at = |p: &String| p.replacen("use0", &format!("use{j}"), 1);
+                        want.push((at(&e.0), e.1, e.2, e.3.iter().map(at).collect::<Vec<_>>()));
+                    }
+                }
+                // An error placed and noted at no use, which both give alike, is one error of
+                // `body`, as it is of a body of two uses alike written the same.
+                want.sort();
+                want.dedup();
+                // Each use's place, by its own text, since the two texts differ.
+                let src = format!("{body}{rest}");
+                let (info, _) = super::info(&src);
+                let starts = [body.find(first).unwrap(), body.rfind(second).unwrap()];
+                let lens = [first.len(), second.len()];
+                let place = |s: usize| match s.checked_sub(body.len()) {
+                    Some(after) => format!("!{after}"),
+                    None => match (0..2).find(|&j| starts[j] <= s && s < starts[j] + lens[j]) {
+                        Some(j) => format!("use{j}+{}", s - starts[j]),
+                        None if s == 0 => "def".to_string(),
+                        None => "body".to_string(),
+                    },
+                };
+                let mut got: Vec<_> = (info.errors.iter())
+                    .map(|e| {
+                        let notes = e.notes.iter().map(|n| place(n.span.start)).collect();
+                        let at = src[e.span.start..e.span.end].to_string();
+                        (place(e.span.start), at, e.message.clone(), notes)
+                    })
+                    .collect();
+                got.sort();
+                assert_eq!(got, want, "{src}");
+            }
+        }
+        for (arg, want) in [("[1, 2, 3]", "(6, 6)"), ("[0.5, 1.5]", "(2.0, 2.0)")] {
+            runs_to(&format!("{body}a = many(t: {arg});\n"), "a", want);
+        }
+    }
+}
+
 /// The bounds of a type variable in the signature a body is shown with do not change where
 /// uses alike share one need (`Ck::share_alike`, row TEST-component-site-need-key): for each
 /// body, the type shown now, with the set of its bounds equal to the set of the bounds in the

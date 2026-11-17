@@ -135,6 +135,14 @@ const UNITS: &[&str] = &[
     // A chain, each function calling the one before.
     "c0(x: int) = x > 0;\nc1(x: int) = c0(x: x) && x > 1;\nc2(x: int) = c1(x: x + 1) && x > 2;\n\
      c3(x: int) = c2(x: x) || c0(x: x - 3);",
+    // Callees that read a tuple parameter only as `t[k]`, whose body all such calls read once
+    // (FAIL-linear-question-tuple-callee-per-caller), called with tuples of other terms and
+    // other constants, through another such callee, and beside a callee that reads the whole
+    // tuple (`sum(t)`), which each call reads in its own scope.
+    "tg(t) = t[0] + t[1] >= 0;\ntw(u) = tg(t: (u[1], u[0])) && u[0] > 0;\n\
+     ts(t) = sum(t) > 2;\n\
+     ca(y: int) = tg(t: (y, 1)) && y > 2;\ncb(y: int) = tg(t: (y + 1, y)) || y < 0;\n\
+     cc(y: int, z: int) = tw(u: (z, y, 3)) && ts(t: (y, z)) && z < y;",
     DIVIDING,
 ];
 

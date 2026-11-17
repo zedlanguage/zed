@@ -12355,11 +12355,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         // this need's own span: the need each of those uses would have made here, had it been
         // kept. A failure of this one at a call of the function around then replays them
         // ([`Self::replay`]), so each use keeps the error it would have had alone.
-        if let Some((Some(site), alike)) = self.meet_alike.last()
+        // Why a left-out use keeps its own span where this need is made at the met need's
+        // span: a need made again at the span of the use it stands for (a remap, whose need
+        // keeps the remap's span through every function between) would, for the left-out
+        // use, have been made at that use's own span, its `at`; a need made at another span
+        // (the call in the function around) would have been made there for either use. Two
+        // spans are equal only for one place in the text, so the test picks the first case
+        // exactly (FAIL-remap-computed-key-need-site-product, the note "`mid` needs this of
+        // its argument here" of a left-out remap placed at the kept remap before).
+        if let Some(&(met, Some(site), ref alike)) = self.meet_alike.last()
             && !alike.is_empty()
-            && need.site() == Some(*site)
+            && need.site() == Some(site)
         {
-            need.alike = alike.iter().map(|&(_, s)| (span, s)).collect();
+            need.alike = (alike.iter())
+                .map(|&(at, s)| (if span == met { at } else { span }, s))
+                .collect();
         }
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
@@ -12577,7 +12587,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
         let on = self.bound(on, binds);
         self.need_chain.push(n.span);
-        self.meet_alike.push((n.site(), n.alike.clone()));
+        self.meet_alike.push((n.span, n.site(), n.alike.clone()));
         self.replaying += 1;
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => {

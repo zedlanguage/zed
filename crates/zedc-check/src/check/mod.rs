@@ -1555,9 +1555,9 @@ type WrittenUses = Vec<(Span, Option<Rc<[Option<Span>]>>)>;
 /// the number of uses when made, and the list.
 type WrittenVia = (usize, Option<Rc<[Span]>>);
 
-/// One need being met ([`Ck::meet_alike`]): its site, and the uses alike its signature left
-/// out for it ([`Need::alike`]).
-type MeetAlike = (Option<Span>, Arc<[(Span, Span)]>);
+/// One need being met ([`Ck::meet_alike`]): its span, its site, and the uses alike its
+/// signature left out for it ([`Need::alike`]).
+type MeetAlike = (Span, Option<Span>, Arc<[(Span, Span)]>);
 
 /// The keyspace of a value (plan row ZIP-count-facts; DESIGN.md sec:joins, "What proves two
 /// keyspaces equal"): two values of one keyspace hold the same keys in every run. It is the

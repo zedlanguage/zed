@@ -67,3 +67,40 @@ fn the_linear_questions_of_n_callers_of_one_long_body_scale() {
         },
     );
 }
+
+/// The test form of `the_linear_questions_of_n_callers_of_one_long_body_scale`: the long body
+/// is a test, `0 + t[0] + ... >= 0` (FAIL-linear-question-tuple-callee-per-caller).
+#[test]
+fn the_linear_questions_of_n_callers_of_one_long_test_scale() {
+    let unit = |n: usize| {
+        let mut src = String::from("many(t) = 0");
+        for _ in 0..n {
+            src.push_str(" + t[0]");
+        }
+        src.push_str(" >= 0;\n");
+        for i in 0..n {
+            src.push_str(&format!("c{i}(y: int) = many(t: (y, {i}));\n"));
+        }
+        src.push_str("main(m: MainArgs) { m.stdout <- \"hello\"; }\n");
+        src
+    };
+    let n = 100;
+    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let src = unit(m);
+            let program = zedc::run::load(src.as_bytes()).unwrap();
+            let tokens = zedc::lex::lex_fence(&src).unwrap();
+            (m, (zed_tests::deep::statements(&src), tokens, program, src))
+        })
+        .collect();
+    zed_tests::scaling::check(
+        "the linear questions of n callers of one long test",
+        n,
+        |m| {
+            let (stmts, tokens, program, src) = &units[&m];
+            let refused = zedc::front::linear_questions(src, tokens, stmts, program.unit());
+            assert!(refused.is_empty(), "{refused:?}");
+        },
+    );
+}

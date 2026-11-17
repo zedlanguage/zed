@@ -4500,6 +4500,10 @@ struct Tx<'t> {
     /// parameters passed as they are shares ([`identity_classes`]); a parameter of no class
     /// has its canonical atom ([`Tx::canonical`]).
     classes: HashMap<(Tid, usize), Arc<str>>,
+    /// Whether the body of a lambda reads the parameter of that name only as `p[k]`, `k` an
+    /// integer literal ([`Walk::read_by_get`]). It depends on the terms alone, and a term's
+    /// number is never reused ([`Terms`]), so it outlives the body being read.
+    read_by_get: HashMap<(Tid, Name), bool>,
     /// Within [`split_classes`], each set met with an input's domain ([`Tx::meet_domain`]), so
     /// that the classes whose runs meet one set with the domain share the result.
     split_meets: RefCell<Option<DomainMeets>>,
@@ -4598,6 +4602,7 @@ impl<'t> Tx<'t> {
             fresh: None,
             lets: Lets::new(),
             classes: HashMap::new(),
+            read_by_get: HashMap::new(),
             split_meets: RefCell::new(None),
             unbuilt: false,
             asking: false,
@@ -5463,6 +5468,13 @@ impl<'t> Tx<'t> {
     /// holds (`crate::lex::name`).
     fn canonical(&self, ps: Span, i: usize, (body, lam): At) -> Arc<str> {
         format!("{}#{body}.{lam}", self.name(self.param(ps, i))).into()
+    }
+
+    /// The input the `i`-th parameter of the lambda `(body, lam)` is bound to where its body,
+    /// which reads it only as `p[k]`, is read once for every call ([`Walk::formula_by_get`]):
+    /// the canonical atom and `.get`, which no written name and no canonical atom holds.
+    fn by_get(&self, ps: Span, i: usize, (body, lam): At) -> Arc<str> {
+        format!("{}.get", self.canonical(ps, i, (body, lam))).into()
     }
 
     /// The atom of the `i`-th parameter of the lambda whose body and scope are `(body, lam)`
@@ -9117,6 +9129,153 @@ impl<'m, 't> Walk<'m, 't> {
         f
     }
 
+    /// The key under which a call of the lambda `(body, lam)` of parameters `ps`, with the
+    /// arguments `args` read in `env`, that has no key of linear terms ([`Walk::call_key`]),
+    /// shares one reading of the body with every other such call ([`Walk::formula_by_get`]):
+    /// under a [`Scoped`] scope, for a lambda made before the body being read, when the body
+    /// reads each parameter only as `p[k]`, `k` an integer literal ([`Walk::read_by_get`]),
+    /// and each argument reads an input, reads no remainder ([`Walk::reads_mod`]) and cannot
+    /// fail ([`Walk::defined`] is `true`). The key holds, for each parameter, the atom
+    /// [`Tx::by_get`] names, which no linear term of an argument holds, so it is no key of
+    /// [`Walk::call_key`].
+    ///
+    /// Proof that the body's formula is the same under every argument list that passes these
+    /// checks, and so the same as under the inputs [`Walk::formula_by_get`] binds: nothing in
+    /// zedc-preimage matches `Prim::Tuple` or `Prim::TupleGet` by name, so each part of the
+    /// walk reads a term `p[k]` by the arm it gives any primitive it does not name, and reads
+    /// the parameter `p` only from such a term, since the body names it nowhere else. Those
+    /// arms are of two kinds. Some give a fixed answer without reading the operands:
+    /// [`Walk::fwd_prim`] (`Fwd::top()`), [`Walk::lin_at`] and [`Walk::formula_at`] (`None`),
+    /// [`Walk::clip_at`], [`Walk::pa_prim`], [`Walk::pa_line_prim`] and
+    /// [`Walk::by_class_prim`] (`None`), [`Walk::back_prim`] and [`Walk::scan_at`] (a stop at
+    /// `p[k]` itself, which is not [`scalar`]). The others read the operands: through
+    /// [`Walk::mentions`], `true` for `p` since its argument reads an input; [`Walk::reads_mod`],
+    /// `false`; [`Walk::defined`], `true` everywhere; and [`Walk::constant`] and
+    /// [`Walk::close_at`], which reach an operand only for a term that reads no input, never
+    /// `p[k]`, which reads `p`. A call in the body that is passed `p[k]` binds its parameter to
+    /// that term, which the same arms read. So the walk reads an argument only through those
+    /// three answers, which the checks fix, and the formula is the same for every argument
+    /// list; it holds no atom of an argument, since no linear term reads `p[k]`.
+    // Complexity tradeoff: each call that passes the checks costs O(the size of its arguments)
+    // for the checks, and the body is read once for all of them, O(the body); before, each
+    // call read the body in its own scope, O(the body) each, Θ(n²) for n calls of a body of n
+    // terms (`many(t) = 0 + t[0] + ... >= 0` called as `many(t: (y, {i}))` by n functions,
+    // 59.1 times the time at 8n, 7.8 now). Whether a body reads a parameter only as `p[k]` is
+    // found once per lambda and parameter, O(the body's distinct parts), and remembered
+    // ([`Tx::read_by_get`]). Tradeoff: a call that also passes an argument with a linear term,
+    // or a body that reads a parameter in another way (`sum(t)`, `t == u`, `f(t)`), is read
+    // once per call, as before. Test
+    // `l01_38_presburger::bench::checker::the_linear_questions_of_n_callers_of_one_long_test_scale`,
+    // COMPLEXITY.md row FAIL-linear-question-tuple-callee-per-caller.
+    async fn get_key(&'m self, ps: Span, (body, lam): At, args: Span, env: Eid) -> Option<CallKey> {
+        use presburger::Atom;
+        let before = self.with(|tx| (tx.fresh.as_ref()).is_some_and(|f| !f.of_body((body, lam))));
+        if !before || ps.len() == 0 || ps.len() != args.len() {
+            return None;
+        }
+        let mut key = Vec::with_capacity(ps.len());
+        for i in 0..ps.len() {
+            if !self.read_by_get(body, self.param(ps, i)) {
+                return None;
+            }
+            key.push(Lin::atom(Atom::Sym(
+                self.with(|tx| tx.by_get(ps, i, (body, lam))),
+            )));
+        }
+        for i in 0..args.len() {
+            let a = self.arg(args, i);
+            if self.mentions(a, env).await != Some(true) || self.reads_mod(a, env).await {
+                return None;
+            }
+        }
+        // What reading the arguments' conditions made is undone where one may fail, as for a
+        // comparison that does not translate ([`Walk::formula_at`]).
+        let mark = self.tr(|tr| tr.defs.len());
+        let logged = self.with(|tx| tx.run.memo.log.len());
+        for i in 0..args.len() {
+            let d = self.defined(self.arg(args, i), env).await;
+            if !d.is_some_and(|d| d.is_top()) {
+                self.tr(|tr| tr.truncate(mark));
+                self.with(|tx| tx.forget(logged));
+                return None;
+            }
+        }
+        Some(((body, lam), key, Vec::new()))
+    }
+
+    /// Whether the body `body` reads the parameter `p` only as `p[k]`, `k` an integer literal:
+    /// no other occurrence of `p`, no binder of the name `p` within it, and no term outside the
+    /// catalog ([`Node::Other`]), whose parts the check cannot see. Remembered per body and
+    /// name ([`Tx::read_by_get`]).
+    // Complexity tradeoff: one visit per distinct part of the body, with an explicit stack and a
+    // visited set, since the terms share parts (a visit per path could be exponential); once
+    // per lambda and parameter, O(the body), against O(1) for a remembered answer.
+    fn read_by_get(&self, body: Tid, p: Name) -> bool {
+        self.with(|tx| {
+            if let Some(&b) = tx.read_by_get.get(&(body, p)) {
+                return b;
+            }
+            let terms = &tx.terms;
+            let kid = |args: Span, i: usize| args.get(&terms.kids, i);
+            let mut seen = HashSet::new();
+            let mut todo = vec![body];
+            let mut only = true;
+            while let Some(u) = todo.pop() {
+                if !seen.insert(u) {
+                    continue;
+                }
+                match terms.nodes[u as usize] {
+                    Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => {}
+                    Node::Var(x) => only &= x != p,
+                    Node::Prim(Prim::TupleGet, args)
+                        if args.len() == 2
+                            && matches!(terms.nodes[kid(args, 0) as usize], Node::Var(x) if x == p)
+                            && matches!(terms.nodes[kid(args, 1) as usize], Node::Int(_)) => {}
+                    Node::Prim(_, args) => todo.extend((0..args.len()).map(|i| kid(args, i))),
+                    Node::App(f, args) => {
+                        todo.push(f);
+                        todo.extend((0..args.len()).map(|i| kid(args, i)));
+                    }
+                    Node::Let(n, e, b) => {
+                        only &= n != p;
+                        todo.extend([e, b]);
+                    }
+                    Node::Lam(ps, b) => {
+                        only &= (0..ps.len()).all(|i| ps.get(&terms.params, i) != p);
+                        todo.push(b);
+                    }
+                    Node::If(g, a, b) => todo.extend([g, a, b]),
+                    Node::Follow(v, own, _) => todo.extend([v, own]),
+                    Node::Other => only = false,
+                }
+                if !only {
+                    break;
+                }
+            }
+            tx.read_by_get.insert((body, p), only);
+            only
+        })
+    }
+
+    /// The formula of the body of the lambda `(body, lam)` of parameters `ps` with each
+    /// parameter bound to an input of its own over every integer, the atom of [`Tx::by_get`]
+    /// in `key`, as [`Walk::canonical_env`] binds it: the formula of each call of the key
+    /// ([`Walk::get_key`]). `t` is the call that made it, where a stop under recursion is
+    /// reported, as for [`Walk::canonical_formula`].
+    async fn formula_by_get(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        key: Vec<Lin>,
+    ) -> Option<Formula> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.canonical_env(ps, lam, None, &key);
+        let f = self.formula(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        f
+    }
+
     /// The canonical key of the call `k` of a lambda of parameters `ps`, when the call may be
     /// claimed (LOAD-chain-affine): the run reads a body under a [`Scoped`] scope, the lambda
     /// is one of the scope's, an argument is not a constant, and no argument holds a product;
@@ -9598,7 +9757,19 @@ impl<'m, 't> Walk<'m, 't> {
                             );
                             call.await
                         }
-                        None => self.formula_call(t, ps, (body, lam), args, env).await,
+                        None => match self.get_key(ps, (body, lam), args, env).await {
+                            Some(k) => {
+                                let key = k.1.clone();
+                                let call = self.translated(
+                                    |m| &mut m.formula_calls,
+                                    k,
+                                    Logged::FormulaCall,
+                                    move || self.formula_by_get(t, ps, (body, lam), key),
+                                );
+                                call.await
+                            }
+                            None => self.formula_call(t, ps, (body, lam), args, env).await,
+                        },
                     }
                 }
                 Callee::Prim(p) => {
