@@ -1206,6 +1206,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         site: Option<Span>,
         need: NeedFn<'t, 'a>,
     ) -> Ty {
+        // Taken at once, so no other check reads it; given again to the checks of the
+        // operand's pieces below, which are of the one call.
+        let from = self.concat_from.take();
         for (side, this) in [x, y].into_iter().enumerate() {
             if this.ty.vars.is_empty() {
                 continue;
@@ -1216,6 +1219,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut a = this.clone();
                 a.ty = t;
                 let (a, b) = if side == 0 { (&a, that) } else { (that, &a) };
+                ck.concat_from = from;
                 ck.list_concat_end(a, b, span, site, need)
             };
             let mut rest = this.ty.clone();
@@ -1317,6 +1321,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                             0 => format!("[{this}] ++ {other}"),
                             _ => format!("{other} ++ [{this}]"),
                         };
+                        // Checked at a call, the operand has no text of its own: where an
+                        // argument written in the program is its whole value, the repair is
+                        // that call with the argument put in a list, as `app(["s"])`, not
+                        // the template `[x] ++ xs` (plan row MSG-concat-need-repair-template).
+                        let at_call = match (a.at, from) {
+                            (None, Some((arg, first))) if first == (side == 0) => (self
+                                .operand_text(Some(arg.at)))
+                            .map(|t| (arg.at, format!("[{t}]")))
+                            .and_then(|e| edited(self.t.text?, arg.call, &[&e]))
+                            .map(|t| t.trim().to_string())
+                            .filter(|t| !t.contains('\n')),
+                            _ => None,
+                        };
+                        let form = at_call.unwrap_or(form);
                         self.error_offering(
                             at,
                             format!(
@@ -1448,6 +1466,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => Self::key_ints(&a).zip(Self::key_ints(&b)),
             false => None,
         };
+        // Whether the operands are shown to share their keys by where they come from, which
+        // the bounds of their types cannot show (plan row ZIP-count-facts): read only where
+        // the bounds leave a region, so a zip the bounds prove costs nothing more.
+        let mut shared = None;
         for from in [0, 1] {
             // The least key of the region `U_from - L_to`, the keys `from` may hold that the
             // other side may lack, and whether `from` surely holds it and the other surely
@@ -1492,6 +1514,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Ok(one) = found else {
                 continue;
             };
+            if *shared.get_or_insert_with(|| self.zip_shares_keys(x, y, span)) {
+                break;
+            }
             let (a, b) = (&names[from], &names[1 - from]);
             let head = "`zip` pairs the entries at equal keys, and";
             let message = match &one {
@@ -1511,22 +1536,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let pair = Ty::tuple(vec![Self::entries_of(&a), Self::entries_of(&b)]);
-        // Shown above, `U_a ⊆ L_b ⊆ U_b ⊆ L_a ⊆ U_a`, so the four are one set, every key of
-        // it in every family of both sides. An operand none of whose families has exact keys
-        // writes that set as its key type `U`, a sure key type, as for two lists. Where both
-        // have exact keys, the set is one interval (the `L` of a side with exact keys lies in
-        // them, and equals `U`, which holds them), kept as two ends on the arrow `int ->?`.
-        let plain = |side: &[Arc<Sig>]| side.iter().all(|s| s.keys.is_none());
-        let mut sig = match (&sets, plain(&a), plain(&b)) {
-            (Some(((_, u), _)), false, false) => {
-                let found = pair.union(&Ty::set(KType::atom("notFound")));
-                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
-                sig.arrows[0].partial = true;
-                sig.keys = exact_keys(u);
-                sig
-            }
-            (_, _, true) => Sig::one(positional(1), vec![ub], pair),
-            _ => Sig::one(positional(1), vec![ua], pair),
+        // Shown to share their keys by their origins, the operands hold one set of keys `K`
+        // in each run, which their types bound only as `L_a ∪ L_b ⊆ K ⊆ U_a ∩ U_b`: the keys
+        // are typed `U_a ∩ U_b`, the arrow partial, and a read of a key outside `K` misses.
+        // What either side's type knows of its keys' shape holds for `K`, as below.
+        let mut sig = if shared == Some(true) {
+            let found = pair.union(&Ty::set(KType::atom("notFound")));
+            let mut sig = Sig::one(positional(1), vec![ua.meet(&ub)], found);
+            sig.arrows[0].partial = true;
+            sig
+        } else {
+            Self::zip_sig(&sets, &a, &b, ua, ub, pair)
         };
         sig.data = true;
         // The two keyspaces were shown equal above, so what either side's type knows of its
@@ -1544,6 +1564,727 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig.note_held();
         out.union(&Ty::func(Arc::new(sig)))
     }
+
+    /// The signature of a `zip` whose bounds proved both operands' keys one set
+    /// ([`Self::zip_end`]).
+    fn zip_sig(
+        sets: &Option<KeyIntPair>,
+        a: &[Arc<Sig>],
+        b: &[Arc<Sig>],
+        ua: Ty,
+        ub: Ty,
+        pair: Ty,
+    ) -> Sig {
+        // Shown above, `U_a ⊆ L_b ⊆ U_b ⊆ L_a ⊆ U_a`, so the four are one set, every key of
+        // it in every family of both sides. An operand none of whose families has exact keys
+        // writes that set as its key type `U`, a sure key type, as for two lists. Where both
+        // have exact keys, the set is one interval (the `L` of a side with exact keys lies in
+        // them, and equals `U`, which holds them), kept as two ends on the arrow `int ->?`.
+        let plain = |side: &[Arc<Sig>]| side.iter().all(|s| s.keys.is_none());
+        match (sets, plain(a), plain(b)) {
+            (Some(((_, u), _)), false, false) => {
+                let found = pair.union(&Ty::set(KType::atom("notFound")));
+                let mut sig = Sig::one(positional(1), vec![Ty::carrier(Carrier::Int)], found);
+                sig.arrows[0].partial = true;
+                sig.keys = exact_keys(u);
+                sig
+            }
+            (_, _, true) => Sig::one(positional(1), vec![ub], pair),
+            _ => Sig::one(positional(1), vec![ua], pair),
+        }
+    }
+}
+
+/// The lower and upper key sets of both operands of a `zip` ([`Ck::key_ints`]).
+type KeyIntPair = ((IntervalSet, IntervalSet), (IntervalSet, IntervalSet));
+
+/// The assumption [`Ck::keyspace`] reads a recursive call of a declared function under while
+/// that function's record is found ([`Ck::record_fn`]): the function, and the parameter whose
+/// keys its result is assumed to keep, or none, whose calls then give [`Space::Any`].
+type Assume = Option<(usize, Option<usize>)>;
+
+/// One step of [`Ck::keyspace`]'s walk.
+enum KsTask<'a> {
+    /// Read the keyspace of the expression.
+    Eval(&'a Expr),
+    /// The last `n` keyspaces read are the branches of the `if` at the span: join them.
+    Join(Span, usize),
+    /// The last keyspace read is the binder's value's: keep it.
+    Memo(usize),
+    /// The last keyspace read holds only under the assumption.
+    Taint,
+}
+
+/// What [`Ck::ks_step`] makes of one expression.
+enum KsStep<'a> {
+    /// Its keyspace, and whether it holds only under the assumption.
+    Done(Space, bool),
+    /// Its keyspace is that expression's.
+    Then(&'a Expr),
+    /// Its keyspace is that expression's, read under the assumption.
+    Assumed(&'a Expr),
+    /// It is a name bound to that value: its keyspace is the value's, kept for the binder.
+    Bind(usize, &'a Expr),
+    /// It is an `if`: its keyspace is the branches' where they agree.
+    Join(Span, [&'a Expr; 2]),
+}
+
+/// What a callee may be, for the keyspace record of its call ([`Ck::callee_record`]).
+#[derive(Clone, Copy, PartialEq)]
+enum Callee {
+    /// A declared function, by its binder.
+    Fn(usize),
+    /// A lambda, by its span.
+    Lambda(Span),
+}
+
+impl<'t, 'a> Ck<'t, 'a> {
+    /// The keyspace of the value of `e` (plan row ZIP-count-facts; DESIGN.md sec:joins, "What
+    /// proves two keyspaces equal"), and whether it holds only under `assume`. Two values whose
+    /// keyspaces this gives equal, read in one run of one scope, hold the same keys. A form not
+    /// listed gives a keyspace of its own, [`Space::Own`] at its span, equal to no other but
+    /// itself, which is the safe answer: it proves nothing.
+    ///
+    /// Proof, by induction on the walk below, for two expressions read at one evaluation of
+    /// the expression that holds them both (the operands of a `zip`, or a range and a read
+    /// inside the lambda it is mapped with, which runs in the frame the range was read in):
+    /// - A name with one binder in [`Ck::facts`] (`name = value`, bound once: Zed has no
+    ///   assignment) holds the value `value` had where it was bound, so its keyspace is
+    ///   `value`'s. The names inside `value` are resolved where it was bound, in a scope
+    ///   around the reading one, so they name the same values from both operands.
+    /// - Any other name with one binder, not a function: [`Space::Binder`], its own value. A
+    ///   parameter, a port of `main` and a pattern's name hold one value in a run of their
+    ///   scope.
+    /// - `m.name` with no call and no function of the program named `name` reads a member
+    ///   of one value: the same value for the same `m` ([`Space::Member`]). The members such a
+    ///   form reads are the prelude's (`count`, `first`, a port of `MainArgs`): each a function
+    ///   of its operand alone. The ports of `main` are read once, before the body runs, so
+    ///   `m.stdin` is one value however often it is written (`zedc-elab`'s `main` binds each
+    ///   port to its parameter once).
+    /// - `a.map(f)` and `a.zip(b)` with the prelude's words keep the keys of `a`: `map` gives
+    ///   an entry at each key of `a`, and a `zip` that checks has the keys both share.
+    /// - `0 ..< x.count`, `x` a list ([`Dense::Ranks`]: its keys are `0 ..< n` for its count
+    ///   `n`), has the keys of `x`. Any other range `a ..< b` or `a ..= b` holds the ints
+    ///   between its ends, so two whose ends are the same ints the text fixes ([`Ck::known`],
+    ///   proved there) or the same binders hold the same keys ([`Space::Range`]). A name whose
+    ///   value is `x.count` is followed to it.
+    /// - `if c { a } else { b }`: the value is one branch's, so where both have one keyspace
+    ///   it is that one. Else it is a value of its own. A block that binds names and returns
+    ///   one value has that value's keyspace.
+    /// - A call whose callee is a declared function, a lambda, or a name bound to them (through
+    ///   names and `if`s), each of which records that its result has the keys of its
+    ///   parameter `i` ([`Ck::record_fn`]), has the keys of the argument at `i`. A callee
+    ///   that may be several functions keeps the record only where all of them record the
+    ///   same parameter, and its arguments are then placed by position only, as a call of a
+    ///   value places them.
+    /// - Under the assumption `(f, i)`, a call of `f` has the keys of its argument at `i`; that
+    ///   is what [`Ck::record_fn`] proves by induction, and every keyspace read through it is
+    ///   marked as holding only under the assumption, so it is never kept.
+    ///
+    /// The `if` and the calls are the only branching; a name's value is followed once per
+    /// read ([`KsTask::Memo`] keeps it for the read, and for later reads when no assumption
+    /// was used).
+    // Complexity tradeoff: each name's binder is followed once per read and once in all where
+    // no assumption is used (the memo), so n `zip`s of names each bound to a chain of `map`s
+    // over k bindings cost O(n + k); the naive walk, each read following the chain again,
+    // costs O(n k). A union-find of the classes, as the plan row describes, would merge the
+    // classes as bindings are made, at the same O(α) per step, but only once the checker walks
+    // a body's bindings in one pass with no backtracking, which it does not (a body may be
+    // checked again per call); the memo by binder is its equivalent here, since each binder's
+    // class is fixed by its value, which never changes.
+    pub(super) fn keyspace(&mut self, e: &'a Expr, assume: Assume) -> (Space, bool) {
+        let mut tasks = vec![KsTask::Eval(e)];
+        let mut vals: Vec<(Space, bool)> = Vec::new();
+        // The keyspace of each binder followed in this read, under its assumption: the visited
+        // set that keeps each binder followed once (author P207).
+        let mut local: HashMap<usize, (Space, bool)> = HashMap::new();
+        while let Some(t) = tasks.pop() {
+            match t {
+                KsTask::Eval(x) => match self.ks_step(x, assume, &local) {
+                    KsStep::Done(s, taint) => vals.push((s, taint)),
+                    KsStep::Then(y) => tasks.push(KsTask::Eval(y)),
+                    KsStep::Assumed(y) => {
+                        tasks.push(KsTask::Taint);
+                        tasks.push(KsTask::Eval(y));
+                    }
+                    KsStep::Bind(id, y) => {
+                        tasks.push(KsTask::Memo(id));
+                        tasks.push(KsTask::Eval(y));
+                    }
+                    KsStep::Join(span, [a, b]) => {
+                        tasks.push(KsTask::Join(span, 2));
+                        tasks.push(KsTask::Eval(b));
+                        tasks.push(KsTask::Eval(a));
+                    }
+                },
+                KsTask::Memo(id) => {
+                    let v = vals.last().expect("a binder's value was read").clone();
+                    if !v.1 {
+                        self.keyspaces.memo.insert(id, v.0.clone());
+                    }
+                    local.insert(id, v);
+                }
+                KsTask::Taint => vals.last_mut().expect("a call was read").1 = true,
+                KsTask::Join(span, n) => {
+                    let parts = vals.split_off(vals.len() - n);
+                    let taint = parts.iter().any(|p| p.1);
+                    let mut known = parts.into_iter().map(|p| p.0).filter(|s| *s != Space::Any);
+                    let joined = match known.next() {
+                        None => Space::Any,
+                        Some(s) if known.all(|t| t == s) => s,
+                        Some(_) => Space::Own(span),
+                    };
+                    vals.push((joined, taint));
+                }
+            }
+        }
+        vals.pop().expect("the expression was read")
+    }
+
+    /// One step of [`Self::keyspace`] on `e`, the rules listed there.
+    fn ks_step(
+        &mut self,
+        e: &'a Expr,
+        assume: Assume,
+        local: &HashMap<usize, (Space, bool)>,
+    ) -> KsStep<'a> {
+        let own = KsStep::Done(Space::Own(e.span), false);
+        match &e.kind {
+            ExprKind::Name(_) => {
+                let Some(id) = self.one_binder(e.span) else {
+                    return own;
+                };
+                if let Some((s, taint)) = local.get(&id) {
+                    return KsStep::Done(s.clone(), *taint);
+                }
+                if let Some(s) = self.keyspaces.memo.get(&id) {
+                    return KsStep::Done(s.clone(), false);
+                }
+                match self.facts.get(&id) {
+                    Some(&v) => KsStep::Bind(id, v),
+                    None if self.t.funcs.contains_key(&id) => own,
+                    None => KsStep::Done(Space::Binder(id), false),
+                }
+            }
+            ExprKind::Member {
+                of,
+                name,
+                safe: false,
+            } if !self.t.res.uses.contains_key(&e.span) => match self.one_binder(of.span) {
+                Some(id) if matches!(of.kind, ExprKind::Name(_)) => {
+                    KsStep::Done(Space::Member(id, name.clone()), false)
+                }
+                _ => own,
+            },
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+                ..
+            } => {
+                if let ExprKind::Member {
+                    of,
+                    name,
+                    safe: false,
+                } = &callee.kind
+                    && !matches!(self.t.res.uses.get(&callee.span), Some(Ref::Bound(_)))
+                {
+                    return match (name.as_str(), &positional[..], &named[..]) {
+                        ("map" | "zip", [_], []) => KsStep::Then(of),
+                        _ => own,
+                    };
+                }
+                let receiver = match &callee.kind {
+                    ExprKind::Member { of, .. } => Some(&**of),
+                    _ => None,
+                };
+                let Some((record, direct)) = self.callee_record(callee, assume) else {
+                    return own;
+                };
+                let arg = |i: usize| self.placed(record.0, direct, receiver, positional, named, i);
+                match record.1 {
+                    Recorded::Assumed(None) => KsStep::Done(Space::Any, true),
+                    Recorded::Assumed(Some(i)) => arg(i).map_or(own, KsStep::Assumed),
+                    Recorded::Kept(i) => arg(i).map_or(own, KsStep::Then),
+                }
+            }
+            ExprKind::Range(lo, end) => {
+                let (hi, through) = match end {
+                    RangeEnd::Below(h) => (&**h, false),
+                    RangeEnd::Through(h) => (&**h, true),
+                    RangeEnd::Open => return own,
+                };
+                let zero = self.known(lo).value == Some(Value::from(0));
+                if zero
+                    && !through
+                    && let Some(x) = self.count_of_list(hi)
+                {
+                    return KsStep::Then(x);
+                }
+                match (self.ks_end(lo), self.ks_end(hi)) {
+                    (Some(a), Some(b)) => KsStep::Done(Space::Range(a, b, through), false),
+                    _ => own,
+                }
+            }
+            ExprKind::If {
+                then, otherwise, ..
+            } => KsStep::Join(e.span, [then, otherwise]),
+            ExprKind::Block(_) => block_value(e).map_or(own, KsStep::Then),
+            _ => own,
+        }
+    }
+
+    /// The binder of the name or member at `span`, where it has one.
+    pub(super) fn one_binder(&self, span: Span) -> Option<usize> {
+        match self.t.res.uses.get(&span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => Some(ids[0]),
+            _ => None,
+        }
+    }
+
+    /// An end of a range as [`Space::Range`] holds it: the int the text fixes, else the
+    /// binder of a name.
+    fn ks_end(&mut self, e: &'a Expr) -> Option<KsEnd> {
+        if let Some(v) = self.known(e).value {
+            return Some(KsEnd::Val(v));
+        }
+        match e.kind {
+            ExprKind::Name(_) => self.one_binder(e.span).map(KsEnd::Name),
+            _ => None,
+        }
+    }
+
+    /// The list `x` where `e` is `x.count`, the prelude's count, or a name bound to it,
+    /// followed through `name = value` binders: `0 ..< e` then holds the keys of `x`
+    /// ([`Dense::Ranks`]: the keys of a list are the ranks below its count).
+    fn count_of_list(&self, mut e: &'a Expr) -> Option<&'a Expr> {
+        // Each binder is followed once (author P207); the binders' values are acyclic, so
+        // this holds only against a wrong table.
+        let mut seen = HashSet::new();
+        loop {
+            match &e.kind {
+                ExprKind::Name(_) => {
+                    let id = self.one_binder(e.span)?;
+                    if !seen.insert(id) {
+                        return None;
+                    }
+                    e = self.facts.get(&id)?;
+                }
+                ExprKind::Member {
+                    of,
+                    name,
+                    safe: false,
+                } if name == "count" && !self.t.res.uses.contains_key(&e.span) => {
+                    return self.is_list(of).then_some(&**of);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Whether the checker found `e` a list: every family it may be has the ranks as keys
+    /// ([`Dense::Ranks`]), and it is nothing else.
+    fn is_list(&self, e: &Expr) -> bool {
+        let Some((Some(t), _)) = self.seen.get(&e.span) else {
+            return false;
+        };
+        let mut any = false;
+        for p in t.pieces() {
+            match p {
+                Piece::Fn(sig) if sig.data && sig.dense == Dense::Ranks => any = true,
+                _ => return false,
+            }
+        }
+        any
+    }
+
+    /// What `callee` may be, and the parameter whose keys its result keeps, where every
+    /// function it may be keeps the same one ([`Self::keyspace`]); with whether it names one
+    /// declared function directly, by name or as a method, so that its arguments are placed
+    /// as that function's parameters take them.
+    fn callee_record(
+        &self,
+        callee: &'a Expr,
+        assume: Assume,
+    ) -> Option<((Callee, Recorded), bool)> {
+        let direct = match self.one_binder(callee.span) {
+            Some(id) if self.t.funcs.contains_key(&id) => Some(id),
+            _ => None,
+        };
+        let mut fns = Vec::new();
+        let mut todo = vec![callee];
+        let mut seen = HashSet::new();
+        while let Some(c) = todo.pop() {
+            if !seen.insert(c.span) {
+                continue;
+            }
+            match &c.kind {
+                ExprKind::Lambda { body, .. } => fns.push(Callee::Lambda(body.span)),
+                ExprKind::If {
+                    then, otherwise, ..
+                } => todo.extend([&**then, &**otherwise]),
+                ExprKind::Block(_) => todo.push(block_value(c)?),
+                ExprKind::Name(_) | ExprKind::Member { .. } => {
+                    let id = self.one_binder(c.span)?;
+                    match self.facts.get(&id) {
+                        _ if self.t.funcs.contains_key(&id) => fns.push(Callee::Fn(id)),
+                        Some(&v) => todo.push(v),
+                        None => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
+        let mut record = None;
+        for f in &fns {
+            let r = match *f {
+                Callee::Fn(id) if assume.is_some_and(|(a, _)| a == id) => {
+                    Recorded::Assumed(assume?.1)
+                }
+                Callee::Fn(id) => Recorded::Kept((*self.keyspaces.fns.get(&id)?)?),
+                Callee::Lambda(s) => Recorded::Kept((*self.keyspaces.lambdas.get(&s)?)?),
+            };
+            match record {
+                None => record = Some(r),
+                Some(q) if q == r => {}
+                Some(_) => return None,
+            }
+        }
+        let first = *fns.first()?;
+        let direct = direct.is_some() && fns.len() == 1;
+        Some(((first, record?), direct))
+    }
+
+    /// The argument a call places at the parameter `i` of `f`: the receiver at `0`, the
+    /// positional arguments in order after it, a named one at the parameter of its name, as
+    /// `fit` places them. Called through a value (`direct` false), a call's arguments are
+    /// positional only. None where the call gives none there, as a default.
+    fn placed(
+        &self,
+        f: Callee,
+        direct: bool,
+        receiver: Option<&'a Expr>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        i: usize,
+    ) -> Option<&'a Expr> {
+        if !direct {
+            return match (receiver, named) {
+                (None, []) => positional.get(i),
+                _ => None,
+            };
+        }
+        let Callee::Fn(id) = f else {
+            return None;
+        };
+        let params = &self.t.funcs.get(&id)?.params;
+        let skip = usize::from(receiver.is_some());
+        match receiver {
+            Some(r) if i == 0 => return Some(r),
+            _ => {}
+        }
+        if let Some(p) = i.checked_sub(skip).and_then(|j| positional.get(j)) {
+            return Some(p);
+        }
+        let name = &params.get(i)?.name;
+        named.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    /// Records which parameter's keys the result of the declared function `fid` keeps, its
+    /// body checked, then meets the keyspace needs of the calls of it met before
+    /// ([`Self::ks_call`]). DESIGN.md sec:joins: "For recursion, assume the record, then
+    /// check it."
+    ///
+    /// Proof that the record `i` holds: the second reading takes each recursive call to keep
+    /// the keys of its argument at `i`, and finds the body's keyspace that of the parameter
+    /// `i`. By induction on the depth of the recursion in a run that ends, a call at depth
+    /// `d + 1` keeps them (the hypothesis), so the call at depth `d` does; a call with no
+    /// recursive call inside it is the base case, read with no assumption used. The first
+    /// reading, with recursive calls agreeing with anything ([`Space::Any`]), only proposes
+    /// `i`, since the body is one parameter's keyspace at most at one `i`.
+    pub(super) fn record_fn(&mut self, fid: usize, body: &'a Expr, ids: &[usize]) {
+        let (s, _) = self.keyspace(body, Some((fid, None)));
+        let at = |s: &Space| match s {
+            Space::Binder(b) => ids.iter().position(|i| i == b),
+            _ => None,
+        };
+        let record = at(&s).filter(|&i| {
+            let (s, _) = self.keyspace(body, Some((fid, Some(i))));
+            s == Space::Binder(ids[i])
+        });
+        self.keyspaces.fns.insert(fid, record);
+        // A call queued inside the body itself may give the function a need of its own
+        // parameters ([`Self::same_keys`]), which the calls read before it must meet too: so
+        // the queue is read until the needs stop growing, without errors, then once more with
+        // them. Each round but the last adds a need, of which there are at most p² for p
+        // parameters.
+        let calls = self.keyspaces.queued.remove(&fid).unwrap_or_default();
+        loop {
+            let before = self.keyspaces.needs.get(&fid).map_or(0, Vec::len);
+            for &c in &calls {
+                self.ks_meet(c, false);
+            }
+            if self.keyspaces.needs.get(&fid).map_or(0, Vec::len) == before {
+                break;
+            }
+        }
+        self.keyspaces.finished.insert(fid);
+        for c in calls {
+            self.ks_meet(c, true);
+        }
+    }
+
+    /// Records which parameter's keys the result of the lambda with body `body` and
+    /// parameters `ids` keeps ([`Self::record_fn`], with no recursion: a lambda has no name
+    /// to call itself by).
+    pub(super) fn record_lambda(&mut self, body: &'a Expr, ids: &[Option<usize>]) {
+        let record = match self.keyspace(body, None).0 {
+            Space::Binder(b) => ids.iter().position(|i| *i == Some(b)),
+            _ => None,
+        };
+        self.keyspaces.lambdas.insert(body.span, record);
+    }
+
+    /// Notes that the parameter of the lambda `f`, mapped over `of` with `map` or `where`,
+    /// takes `of`'s entries, for [`Self::within_count`].
+    pub(super) fn range_param(&mut self, of: &'a Expr, f: &'a Expr) {
+        if let ExprKind::Lambda { params, .. } = &f.kind
+            && let [p] = &params[..]
+        {
+            let id = self.id(p.span, &p.name);
+            self.keyspaces.ranges.insert(id, of);
+        }
+    }
+
+    /// The call at `span` of the declared function `fid`, by the name at `callee`, with its
+    /// receiver and arguments: the arguments at each pair of parameters its body zips must
+    /// share their keys ([`Keyspaces::needs`]). Checked now if the body has been, else once it
+    /// is ([`Self::record_fn`]); a call read twice, as in a body checked again, once.
+    pub(super) fn ks_call(
+        &mut self,
+        fid: usize,
+        receiver: Option<&'a Expr>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        callee: Span,
+        span: Span,
+    ) {
+        if !self.keyspaces.checked.insert(callee) {
+            return;
+        }
+        let call = (fid, receiver, positional, named, span);
+        match self.keyspaces.finished.contains(&fid) {
+            true => self.ks_meet(call, true),
+            false => self.keyspaces.queued.entry(fid).or_default().push(call),
+        }
+    }
+
+    /// Meets the needs of the function of `call` there; with `report`, rejects a need not met.
+    fn ks_meet(&mut self, call: KsCall<'a>, report: bool) {
+        let (fid, receiver, positional, named, span) = call;
+        let needs = self.keyspaces.needs.get(&fid).cloned().unwrap_or_default();
+        for (i, j, zip) in needs {
+            let f = Callee::Fn(fid);
+            let a = self.placed(f, true, receiver, positional, named, i);
+            let b = self.placed(f, true, receiver, positional, named, j);
+            let met = match (a, b) {
+                (Some(a), Some(b)) => {
+                    let sa = self.keyspace(a, None).0;
+                    let sb = self.keyspace(b, None).0;
+                    // A need this call passes on to the caller's own parameters points at
+                    // this call, which is where the caller's body zips them.
+                    self.same_keys(&sa, &sb, span)
+                }
+                // A default is read at each call, in the function's frame: nothing shows its
+                // keys those of another argument.
+                _ => false,
+            };
+            if met || !report {
+                continue;
+            }
+            self.ks_refuse(fid, i, j, zip, span, [a, b]);
+        }
+    }
+
+    /// The error at the call at `span` of `fid`, whose body zips its parameters `i` and `j`
+    /// at `zip`, whose arguments there, `args`, are not shown to share their keys.
+    fn ks_refuse(
+        &mut self,
+        fid: usize,
+        i: usize,
+        j: usize,
+        zip: Span,
+        span: Span,
+        args: [Option<&'a Expr>; 2],
+    ) {
+        let f = self.t.funcs[&fid];
+        let [p, q] = [i, j].map(|k| f.params[k].name.clone());
+        let texts = args.map(|e| e.and_then(|e| self.operand_text(Some(e.span))));
+        let [a, b] = texts.clone().map(|t| match t {
+            Some(c) => format!("`{c}`"),
+            None => "the default".to_string(),
+        });
+        let x = texts[0]
+            .as_deref()
+            .map_or("xs".to_string(), postfix_operand);
+        let message = format!(
+            "`{}` zips its parameters `{p}` and `{q}`, so their arguments must have the same \
+             keys, and nothing shows that {a} and {b} do",
+            f.name
+        );
+        let mut notes = self.derive(&[span]);
+        notes.push(Note {
+            span: zip,
+            text: format!("`{p}` and `{q}` are zipped here"),
+        });
+        let repair = format!(
+            "repair: pass values with the same keys, as `{x}` and `{x}.map(f)`, or pair the \
+             ranks both lists hold inside `{}`",
+            f.name
+        );
+        notes.push(Note { span, text: repair });
+        self.error_with(span, message, notes);
+    }
+
+    /// Whether the keyspaces `a` and `b` are one ([`Self::keyspace`]), or two parameters of a
+    /// declared function whose body is still being checked, which then needs their arguments
+    /// to share their keys at each call ([`Keyspaces::needs`], DESIGN.md sec:joins: "A zip of
+    /// two parameters becomes a need checked at each call"); `zip` is the `zip` the need
+    /// comes from.
+    fn same_keys(&mut self, a: &Space, b: &Space, zip: Span) -> bool {
+        if a == b && *a != Space::Any {
+            return true;
+        }
+        let (Space::Binder(p), Space::Binder(q)) = (a, b) else {
+            return false;
+        };
+        let ks = &mut self.keyspaces;
+        let (Some(&(f, i)), Some(&(g, j))) = (ks.params.get(p), ks.params.get(q)) else {
+            return false;
+        };
+        if f != g {
+            return false;
+        }
+        let needs = ks.needs.entry(f).or_default();
+        let has = needs
+            .iter()
+            .any(|&(x, y, _)| (x, y) == (i, j) || (x, y) == (j, i));
+        match (has, ks.finished.contains(&f)) {
+            (true, _) => true,
+            (false, false) => {
+                needs.push((i, j, zip));
+                true
+            }
+            (false, true) => false,
+        }
+    }
+
+    /// Whether the operands of the `zip` at `span` share their keys by where they come from
+    /// ([`Self::keyspace`], [`Self::same_keys`]).
+    fn zip_shares_keys(&mut self, x: &Arg<'a>, y: &Arg<'a>, span: Span) -> bool {
+        let (Some(ex), Some(ey)) = (x.expr, y.expr) else {
+            return false;
+        };
+        let a = self.keyspace(ex, None).0;
+        let b = self.keyspace(ey, None).0;
+        self.same_keys(&a, &b, span)
+    }
+
+    /// Whether the read `of[key]` finds its key in `of` because `key` is the parameter of a
+    /// lambda mapped over `0 ..< e` (or filtered with `where`), with `e` the count `L.count`
+    /// of a list `L`, or `min(…)` of operands one of which is `L.count`, and `of` has the keys
+    /// of `L` (DESIGN.md sec:joins: "a read `x[i]` has no `#outOfBounds`").
+    ///
+    /// Proof: the lambda runs once for each entry of the range, with the entry's value, which
+    /// for a range is its key, so `0 ≤ key < e`; `min` is at most each operand, so
+    /// `e ≤ L.count`; `L`'s keys are the ranks `0 ..< L.count` ([`Dense::Ranks`]), so `key` is
+    /// a key of `L`, read in the frame of the range (the lambda's body reads only binders of
+    /// the scopes around it there, or its own); `of` has the same keys in that frame, by
+    /// [`Self::keyspace`], so the read finds `key`.
+    pub(super) fn within_count(&mut self, of: &'a Expr, key: Option<&'a Expr>) -> bool {
+        let Some(key) = key else {
+            return false;
+        };
+        let ExprKind::Name(_) = key.kind else {
+            return false;
+        };
+        let Some(range) = (self.one_binder(key.span)).and_then(|id| self.keyspaces.ranges.get(&id))
+        else {
+            return false;
+        };
+        let ExprKind::Range(lo, RangeEnd::Below(hi)) = &range.kind else {
+            return false;
+        };
+        if self.known(lo).value != Some(Value::from(0)) {
+            return false;
+        }
+        let ends: Vec<&'a Expr> = match &hi.kind {
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+                ..
+            } if named.is_empty()
+                && matches!(&callee.kind, ExprKind::Name(n) if n == "min")
+                && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
+            {
+                positional.iter().collect()
+            }
+            _ => vec![&**hi],
+        };
+        let lists: Vec<&'a Expr> = ends
+            .into_iter()
+            .filter_map(|e| self.count_of_list(e))
+            .collect();
+        if lists.is_empty() {
+            return false;
+        }
+        let at = self.keyspace(of, None).0;
+        lists.into_iter().any(|l| self.keyspace(l, None).0 == at)
+    }
+
+    /// Rejects each use of a declared function whose body zips two of its parameters
+    /// ([`Keyspaces::needs`]) as anything but a call by its name: passed as a value, it would
+    /// be called where no need is checked (plan row ZIP-count-facts).
+    pub(super) fn ks_escapes(&mut self) {
+        if self.keyspaces.needs.values().all(Vec::is_empty) {
+            return;
+        }
+        let mut found = Vec::new();
+        for (span, r) in &self.t.res.uses {
+            let Ref::Bound(ids) = r else {
+                continue;
+            };
+            let needy = ids
+                .iter()
+                .find(|id| self.keyspaces.needs.get(id).is_some_and(|n| !n.is_empty()));
+            if let Some(&id) = needy
+                && !self.keyspaces.checked.contains(span)
+            {
+                found.push((*span, id));
+            }
+        }
+        for (span, id) in found {
+            let f = self.t.funcs[&id];
+            let (i, j, _) = self.keyspaces.needs[&id][0];
+            let what = format!(
+                "passing `{}`, whose body zips its parameters `{}` and `{}`, as a value",
+                f.name, f.params[i].name, f.params[j].name
+            );
+            self.error(span, zedc_base::rejection::not_yet(&what));
+        }
+    }
+}
+
+/// What a callee's record says of its result's keys ([`Ck::callee_record`]).
+#[derive(Clone, Copy, PartialEq)]
+enum Recorded {
+    /// It keeps the keys of the parameter.
+    Kept(usize),
+    /// A recursive call, under the assumption ([`Assume`]).
+    Assumed(Option<usize>),
 }
 
 #[cfg(test)]

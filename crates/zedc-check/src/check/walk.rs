@@ -381,11 +381,11 @@ pub(super) enum Frame<'a> {
     },
     Index1 {
         k: &'a Expr,
-        of: Span,
+        of: &'a Expr,
         span: Span,
     },
-    /// A read `v[k]`: the type of `v`, the span of `v` and the span of the read.
-    AtKey(Ty, Span, Span),
+    /// A read `v[k]`: the type of `v`, `v` and the span of the read.
+    AtKey(Ty, &'a Expr, Span),
     /// A read `v[i]` with a literal `i`: as [`Frame::AtKey`], with `i` if it is a component number.
     AtIndex(Ty, Option<usize>, Span, Span),
     LambdaEnd {
@@ -544,6 +544,8 @@ pub(super) struct TestF<'a> {
 
 pub(super) struct InferF<'a> {
     f: &'a Function,
+    /// The binder of `f`.
+    fid: usize,
     params: Vec<SParam>,
     ids: Vec<usize>,
     given: Vec<Option<Ty>>,
@@ -940,6 +942,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut m = M::new();
         m.job(Job::Scope(unit, true));
         self.drive(&mut m);
+        self.ks_escapes();
         // Each rejection not built was one its call drops ([`Ck::lit_spares`]).
         debug_assert!(
             self.lit_spared.is_empty(),
@@ -1747,8 +1750,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     tys,
                     level,
                     f,
+                    fid,
                     ..
                 } = *s;
+                self.record_fn(fid, &f.body, &ids);
                 let ids: Vec<Option<usize>> = ids.into_iter().map(Some).collect();
                 self.join_narrowed(level);
                 let strip = self.widened_other(&ids, &tys);
@@ -1851,6 +1856,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.job(Job::Arg(k, Want::default()));
                     return;
                 };
+                let of = of.span;
                 // A key past 64 bits is no tuple index and no key of a dense family, as a
                 // negative one is not: it is read the same way, so a family whose keys are one
                 // integer interval misses it with `#outOfBounds` (FAIL-ports-key-past-i64).
@@ -1865,7 +1871,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::AtKey(v, of, span) => {
                 let x = m.take_arg();
                 let dense = self.dense_read(&v, span);
-                let t = self.at_key(&v, x, Some(of), span, dense);
+                let within = self.within_count(of, x.expr);
+                let t = self.at_key(&v, x, Some(of.span), span, dense, within);
                 m.ty(t);
             }
             Frame::AtIndex(v, i, of, span) => {
@@ -1882,6 +1889,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 body,
             } => {
                 let result = m.take_ty();
+                self.record_lambda(body, &ids);
                 self.join_narrowed(level);
                 let strip = self.widened_other(&ids, &tys);
                 let sig = self.handled_sig(names, &ids, tys, result, body);
@@ -2820,6 +2828,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// around it waits for that function.
     fn infer(&mut self, m: &mut M<'a>, f: &'a Function, span: Span) {
         let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
+        let fid = self.id(span, &f.name);
+        // A zip of two parameters is a need checked at each call by name (plan row
+        // ZIP-count-facts). `main` is called by no call of the program: its ports differ in
+        // their keys, so a zip of two of them is not shown, and its parameters get no place.
+        if f.main.is_none() {
+            for (i, &id) in ids.iter().enumerate() {
+                self.keyspaces.params.insert(id, (fid, i));
+            }
+        }
         let mut params: Vec<SParam> = Vec::with_capacity(f.params.len());
         for (i, (p, &id)) in f.params.iter().zip(&ids).enumerate() {
             let range = self.param_range(p, id);
@@ -2836,6 +2853,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let s = InferF {
             f,
+            fid,
             params,
             ids,
             given: Vec::new(),
@@ -7161,6 +7179,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             return self.atom_step(m, Box::new(s));
         }
+        // A call of a declared function by its name meets the keyspace needs of its body
+        // (plan row ZIP-count-facts), now or once its body has been checked.
+        if let ExprKind::Name(_) = callee.kind
+            && let Some(id) = self.one_binder(callee.span)
+            && self.t.funcs.contains_key(&id)
+        {
+            self.ks_call(id, None, positional, named, callee.span, span);
+        }
         if let Some(id) = self.declared(callee)
             && let Some(t) = self.env.get(&id)
             && let Some(sig) = only_fn(t)
@@ -8564,6 +8590,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = self.env.get(&id).cloned().unwrap_or_else(Ty::dynamic);
                 let args = Args::of(positional, named);
                 if self.t.funcs.contains_key(&id) {
+                    self.ks_call(id, Some(of), positional, named, member, span);
                     match only_fn(&f) {
                         Some(sig) => self.call_sig(
                             m,
@@ -8640,6 +8667,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let first = self.lambda_entries(&x.ty, f, span);
                         let word = if name == "map" { "map" } else { "where" };
                         self.entry_param(word, &x.ty, of, f);
+                        self.range_param(of, f);
                         let kept = Self::flat_map_receiver(of);
                         m.k(Frame::MapFn(x.ty, span, name == "where", kept, of.span));
                         self.word_fn(m, f, first);
@@ -8850,6 +8878,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ([y], [], false) => {
                         let x = Arg {
                             at: Some(of.span),
+                            expr: Some(of),
                             ..x
                         };
                         m.k(Frame::Zip(Box::new(x), span));
@@ -8997,11 +9026,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             m.k(Frame::Section { sig, what, span });
             return m.job(Job::Arg(k, Want::of(&want)));
         }
-        m.k(Frame::Index1 {
-            k,
-            of: of.span,
-            span,
-        });
+        m.k(Frame::Index1 { k, of, span });
         m.job(Job::Expr(of));
     }
 
@@ -12590,7 +12615,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             NeedKind::Index(k) => {
                 let k = Arg::of(self.bound(k, binds));
-                self.at_key(&on, k, None, span, false)
+                self.at_key(&on, k, None, span, false, false)
             }
             NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
@@ -12732,6 +12757,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A clone, as `binds` takes above: `on` is read again after the match.
                 let on = Arg::of(on.clone());
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
+                // The argument whose whole value the operand is, for the repair at its call
+                // ([`Ck::concat_from`]); none for the check of a value that flowed into a
+                // class, whose frame is of no call, as at `strings_sources`.
+                self.concat_from = (self.call_frames.last())
+                    .filter(|f| f.call == Some(span))
+                    .and_then(|f| f.whole_arg(&n.on))
+                    .map(|(arg, _)| (arg, *first));
                 self.list_concat_end(x, y, span, None, Self::need)
             }
         };
@@ -17670,8 +17702,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
     /// computed index of each tuple `v` may be. With `dense`, a family misses with
     /// `#outOfBounds` ([`Self::dense_read`]). With `of`, the span of `v` as written, a key
-    /// outside a function's keys is rejected ([`Self::key_outside`]).
-    fn at_key(&mut self, v: &Ty, x: Arg<'a>, of: Option<Span>, span: Span, dense: bool) -> Ty {
+    /// outside a function's keys is rejected ([`Self::key_outside`]). With `within`, the key
+    /// is shown to be one of the family's keys ([`Self::within_count`]), so the read finds it.
+    fn at_key(
+        &mut self,
+        v: &Ty,
+        x: Arg<'a>,
+        of: Option<Span>,
+        span: Span,
+        dense: bool,
+        within: bool,
+    ) -> Ty {
         if of.is_some() && !self.bracket_count(v, span) {
             return Ty::empty();
         }
@@ -17753,8 +17794,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     };
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    // With `within`, the key is one of the family's own keys
+                    // ([`Self::within_count`]), as where its bounds show it.
                     let r = match self.exact_key_read(&sig, &x) {
                         Some(true) => found_inside(r, &x.ty),
+                        _ if within && sig.data => found_inside(r, &x.ty),
                         _ => r,
                     };
                     out = out.union(&r);

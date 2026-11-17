@@ -960,6 +960,64 @@ fn reads_of_exact_keys_at_bounded_keys_check_in_linear_time() {
     );
 }
 
+/// Plan row ZIP-count-facts: checking a `main` of n statements, the i-th
+/// `x{i} = x{i-1}.map(v -> v)` and a write of `x0.zip(x{i}).count`, with `x0` the lines of
+/// `m.stdin`, is linear in n. A port's keys are known to no type, so each zip finds that
+/// `x{i}` has `x0`'s keys by following the chain of `map`s, which the memo of each name's
+/// keyspace walks once in all (`Ck::keyspace`); walking it again at each zip would check the
+/// unit in O(n²).
+#[test]
+fn zips_along_a_chain_of_maps_check_in_linear_time() {
+    const N_UNIT: usize = 300;
+    let units = scaling::inputs(N_UNIT, |k| {
+        let body: String = (1..k)
+            .map(|i| {
+                format!(
+                    "  x{i} = x{}.map(v -> v);\n  m.stdout <- \"${{x0.zip(x{i}).count}}\";\n",
+                    i - 1
+                )
+            })
+            .collect();
+        checked(&format!(
+            "main(m: MainArgs) {{\n  x0 = m.stdin;\n{body}}}\n"
+        ))
+    });
+    scaling::check(
+        "checking n statements `x{i} = x{i-1}.map(v -> v)` and `x0.zip(x{i})`, `x0` a port's \
+         lines",
+        N_UNIT,
+        |k| assert!(units[&k].check().errors.is_empty()),
+    );
+}
+
+/// Plan row ZIP-count-facts: checking n functions, the first zipping its two parameters and
+/// each other passing its own two on to the one before, is linear in n. Each function's need
+/// is found once, from its body, and each call meets the callee's needs once
+/// (`Ck::record_fn`, `Ck::ks_call`).
+#[test]
+fn a_need_passed_through_a_chain_of_calls_checks_in_linear_time() {
+    const N_UNIT: usize = 300;
+    let units = scaling::inputs(N_UNIT, |k| {
+        let text: String =
+            // Named `pass{i}`: `f32` and `f64` would name the prelude's types.
+            std::iter::once("pass0(positional a: Lines, positional b: Lines) = a.zip(b);\n".into())
+                .chain((1..k).map(|i| {
+                    format!(
+                        "pass{i}(positional a: Lines, positional b: Lines) = pass{}(a, b);\n",
+                        i - 1
+                    )
+                }))
+                .collect::<String>();
+        checked(&text)
+    });
+    scaling::check(
+        "checking n functions, each passing its two parameters to the one before, the first \
+         zipping them",
+        N_UNIT,
+        |k| assert!(units[&k].check().errors.is_empty()),
+    );
+}
+
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries
 /// takes n + 1 frames, so the frames at 8n are near 8 times those at n.
 #[test]

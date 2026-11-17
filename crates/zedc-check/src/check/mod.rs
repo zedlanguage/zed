@@ -1559,6 +1559,74 @@ type WrittenVia = (usize, Option<Rc<[Span]>>);
 /// out for it ([`Need::alike`]).
 type MeetAlike = (Option<Span>, Arc<[(Span, Span)]>);
 
+/// The keyspace of a value (plan row ZIP-count-facts; DESIGN.md sec:joins, "What proves two
+/// keyspaces equal"): two values of one keyspace hold the same keys in every run. It is the
+/// class of the value's origin, read from the program's text by `Ck::keyspace` in
+/// `walk/fp_ops.rs`, which says why each form gives the class it does.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum Space {
+    /// The value of the binder: a parameter, a port of `main`, a name a pattern binds. A
+    /// binder holds one value in each run of its scope.
+    Binder(usize),
+    /// The member `m.name`, no call, of the value of the binder `m`, as `m.stdin`: one value
+    /// for each value of `m`.
+    Member(usize, String),
+    /// The range from the first end to the second, the second included where `true`.
+    Range(KsEnd, KsEnd, bool),
+    /// A value of its own: the value of the expression at the span, as a call whose result
+    /// keeps no parameter's keys.
+    Own(Span),
+    /// The result of a recursive call while its function's record is still to be found
+    /// ([`Keyspaces::fns`]): it agrees with any other keyspace in an `if`, and nothing shown
+    /// with it is kept.
+    Any,
+}
+
+/// An end of a range in a [`Space::Range`]: an int the text fixes, or the value of a binder.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum KsEnd {
+    /// The int.
+    Val(Value),
+    /// The binder.
+    Name(usize),
+}
+
+/// A call of a declared function whose keyspace needs ([`Keyspaces::needs`]) are checked once
+/// its body is: the function, the receiver, the arguments and the call's span.
+type KsCall<'a> = (
+    usize,
+    Option<&'a Expr>,
+    &'a [Expr],
+    &'a [(String, Expr)],
+    Span,
+);
+
+/// What the checker knows of which values share their keys (plan row ZIP-count-facts).
+#[derive(Default)]
+struct Keyspaces<'a> {
+    /// For each declared function whose body has been checked, the parameter whose keys its
+    /// result has, if one has them all: the record DESIGN.md puts in the signature.
+    fns: HashMap<usize, Option<usize>>,
+    /// The same record for each lambda, by its span.
+    lambdas: HashMap<Span, Option<usize>>,
+    /// The keyspace of the value of each `name = value` binder, once read with no assumption.
+    memo: HashMap<usize, Space>,
+    /// The receiver of `map` or `where` whose entries each lambda parameter takes, by the
+    /// parameter's binder: `0 ..< n` for `i` in `(0 ..< n).map(i -> …)`.
+    ranges: HashMap<usize, &'a Expr>,
+    /// For each parameter of a declared function, by its binder: the function and its place.
+    params: HashMap<usize, (usize, usize)>,
+    /// For each declared function, the pairs of parameters whose arguments must share their
+    /// keys at each call, because the body zips them, and the span of the `zip`.
+    needs: HashMap<usize, Vec<(usize, usize, Span)>>,
+    /// The calls of each declared function met before its body was checked to the end.
+    queued: HashMap<usize, Vec<KsCall<'a>>>,
+    /// The declared functions whose bodies have been checked to the end.
+    finished: HashSet<usize>,
+    /// The spans of the callee names whose calls had their needs checked.
+    checked: HashSet<Span>,
+}
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1664,6 +1732,9 @@ struct Ck<'t, 'a> {
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
+    /// What the checker knows of which values share their keys (plan row ZIP-count-facts,
+    /// `walk/fp_ops.rs`).
+    keyspaces: Keyspaces<'a>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Rc<Origin<'a>>>,
     /// The number of narrowings in place ([`Ck::narrow`]): while it is 0, no name a bound value
@@ -1920,6 +1991,13 @@ struct Ck<'t, 'a> {
     /// that argument replaced (plan row MSG-generic-call-repair-code). Set just before the
     /// check and taken at its start, so no other check reads it; empty otherwise.
     strings_from: Vec<Option<ArgRewrite<'a>>>,
+    /// For the check of a `++` need ([`NeedKind::Concat`]) that `meet` is about to make at a
+    /// call, the argument of a call written in the program that gives the operand checked its
+    /// whole value, and whether that operand is the first, so that a repair puts that
+    /// argument in a list at its call, as `app(["s"])` (plan row
+    /// MSG-concat-need-repair-template). Set just before the check and taken at its start, as
+    /// [`Self::strings_from`] is; `None` otherwise.
+    concat_from: Option<(Forwarded<'a>, bool)>,
     /// The parameters of no declared type of the functions being checked, by binder: a value
     /// of one whose ints a use takes at least 0 is passed on to the calls (CHK-need-bound).
     open_params: HashSet<usize>,
@@ -2356,6 +2434,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             built: HashMap::new(),
             roots: coprime::Roots::default(),
             facts: HashMap::new(),
+            keyspaces: Keyspaces::default(),
             main_tails: HashSet::new(),
             main_pushes: HashSet::new(),
             whence: HashMap::new(),
@@ -2419,6 +2498,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             call_frames: Vec::new(),
             need_from: None,
             strings_from: Vec::new(),
+            concat_from: None,
             open_params: HashSet::new(),
             floors: HashMap::new(),
             ranged_floors: HashMap::new(),

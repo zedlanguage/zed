@@ -1838,3 +1838,237 @@ fn concatenation_on_a_generic_operand() {
         "{said}"
     );
 }
+
+/// Plan row MSG-concat-need-repair-template: a `++` on a parameter of no written type is
+/// checked at each call, where the operand has no text of its own; the repair is the call
+/// with its argument in a list, also where the argument is passed on through another call,
+/// and the repair runs.
+#[test]
+fn concat_checked_at_a_call_repairs_the_call() {
+    let src = "app(positional a) = a ++ [1];\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${app(\"s\")}\";\n}\n";
+    let (status, said) = ran("concat_need_repair", src);
+    assert!(status != 0, "{said}");
+    assert!(
+        said.contains("repair: put the value in a list, as `app([\"s\"])`"),
+        "{said}"
+    );
+    assert!(!said.contains("`[x] ++ xs`"), "{said}");
+    // The repair checks and runs.
+    let fixed = "app(positional a) = a ++ [1];\n\
+                 main(m: MainArgs) {\n  m.stdout <- \"${app([\"s\"]).count}\";\n}\n";
+    assert_eq!(ran("concat_need_repair_fixed", fixed), (0, "2\n".into()));
+    // Passed on: the argument written in the program is that of the outer call.
+    let src = "app(positional a) = a ++ [1];\nwrap(positional x) = app(x);\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${wrap(\"s\")}\";\n}\n";
+    rejected_saying(
+        "concat_need_repair_wrap",
+        src,
+        &["repair: put the value in a list, as `wrap([\"s\"])`"],
+    );
+}
+
+/// `program` run by `zedc run` with the lines `a` and `b` on its input and the arguments `x`
+/// and `y`: what it prints, or with status not 0 its error output.
+fn ran_on_input(name: &str, program: &str) -> (u8, String) {
+    let out = run(
+        &format!("fp_ops/{name}"),
+        program,
+        "a\nb\n",
+        &["--", "x", "y"],
+    );
+    match out.status {
+        0 => (0, out.stdout),
+        s => (s, out.stderr),
+    }
+}
+
+/// Step L5.2, plan row ZIP-count-facts (DESIGN sec:joins): a `zip` whose operands' keys
+/// come from one place is accepted though the count is known only at run time, and prints the
+/// pairs at every key; operands whose keys may differ are rejected. A function whose body
+/// zips two parameters needs their arguments to share their keys at each call, also through
+/// a call that passes them on; passing such a function as a value is not compiled yet.
+#[test]
+fn a_zip_of_keys_from_one_place_is_accepted() {
+    let main = |defs: &str, body: &str| {
+        format!(
+            "{defs}main(m: MainArgs) {{\n  xs = (0 ..< m.args.count).map(i -> i * 2);\n{body}}}\n"
+        )
+    };
+    let shown = |e: &str| format!("  m.stdout <- \"${{{e}}}\";\n");
+    let pair_up = "pairUp(positional a: Lines, positional b: Lines) = a.zip(b);\n";
+    let accepted = [
+        // Each read of one port is the same lines.
+        (main("", &shown("m.stdin.zip(m.stdin).count")), "2"),
+        (
+            main(
+                "",
+                &shown("m.stdin.zip(m.stdin.map(l -> 1)).map(p -> p[1])"),
+            ),
+            "{0 -> 1, 1 -> 1}",
+        ),
+        // `map` keeps its operand's keys, through a name.
+        (
+            main(
+                "",
+                &format!("  ys = xs.map(x -> x + 1);\n{}", shown("xs.zip(ys)")),
+            ),
+            "{0 -> (0, 1), 1 -> (2, 3)}",
+        ),
+        // An `if` whose branches share their keys.
+        (
+            main(
+                "",
+                &format!(
+                    "  c = m.args.count > 1;\n  ys = if c {{ xs }} else {{ xs.map(x -> x + 1) }};\n{}",
+                    shown("xs.zip(ys).count")
+                ),
+            ),
+            "2",
+        ),
+        // Ranges with the same ends; `0 ..< xs.count` and `xs`.
+        (
+            main(
+                "",
+                &shown("(0 ..< m.args.count).zip(0 ..< m.args.count).count"),
+            ),
+            "2",
+        ),
+        (
+            main("", &shown("xs.zip(0 ..< xs.count)")),
+            "{0 -> (0, 0), 1 -> (2, 1)}",
+        ),
+        // A function's result that keeps its parameter's keys.
+        (
+            main(
+                "twice(positional a) = a.map(x -> x * 2);\n",
+                &shown("xs.zip(twice(xs))"),
+            ),
+            "{0 -> (0, 0), 1 -> (2, 4)}",
+        ),
+        // A need met at each call, and passed on through `outer`.
+        (main(pair_up, &shown("pairUp(m.stdin, m.stdin).count")), "2"),
+        (
+            main(
+                &format!(
+                    "{pair_up}outer(positional p: Lines, positional q: Lines) = pairUp(p, q);\n"
+                ),
+                &shown("outer(m.stdin, m.stdin).count"),
+            ),
+            "2",
+        ),
+    ];
+    for (i, (src, want)) in accepted.iter().enumerate() {
+        assert_eq!(
+            ran_on_input(&format!("zip_keys_{i}"), src),
+            (0, format!("{want}\n")),
+            "{src}"
+        );
+    }
+    let nothing = "nothing shows that each key of";
+    let refused = [
+        // Two calls that may read different counts.
+        (
+            main(
+                "read(n: int) = (0 ..< n).map(i -> i * 2);\n",
+                &format!(
+                    "  ys = read(n: m.args.count);\n  zs = read(n: m.args.count + 1);\n{}",
+                    shown("ys.zip(zs).count")
+                ),
+            ),
+            nothing,
+        ),
+        // `where` drops keys.
+        (
+            main("", &shown("xs.zip(xs.where(x -> x > 0)).count")),
+            nothing,
+        ),
+        // An `if` whose branches may differ in their keys.
+        (
+            main(
+                "",
+                &format!(
+                    "  ys = (0 ..< m.args.count + 1).map(i -> i);\n  c = m.args.count > 1;\n  \
+                     zs = if c {{ xs }} else {{ ys }};\n{}",
+                    shown("xs.zip(zs).count")
+                ),
+            ),
+            nothing,
+        ),
+        // Two ports.
+        (
+            main(pair_up, &shown("pairUp(m.stdin, m.args).count")),
+            "`pairUp` zips its parameters `a` and `b`, so their arguments must have the same \
+             keys, and nothing shows that `m.stdin` and `m.args` do",
+        ),
+        (
+            main(
+                &format!(
+                    "{pair_up}outer(positional p: Lines, positional q: Lines) = pairUp(p, q);\n"
+                ),
+                &shown("outer(m.stdin, m.args).count"),
+            ),
+            "`outer` zips its parameters `p` and `q`",
+        ),
+        (
+            main(
+                pair_up,
+                "  f = pairUp;\n  m.stdout <- \"${f(m.stdin, m.stdin).count}\";\n",
+            ),
+            "passing `pairUp`, whose body zips its parameters `a` and `b`, as a value",
+        ),
+        // Literal keys that differ.
+        (
+            main("", &shown("[1, 2].zip([1])")),
+            "key 1 is in `[1, 2]` but not in `[1]`",
+        ),
+    ];
+    for (i, (src, text)) in refused.iter().enumerate() {
+        let (status, said) = ran_on_input(&format!("zip_keys_refused_{i}"), src);
+        assert!(status != 0 && said.contains(text), "{src}\n{said}");
+    }
+}
+
+/// Plan row ZIP-count-facts (DESIGN sec:joins): inside `0 ..< e`, where `e` is `x.count` or a
+/// `min` with `x.count` as an operand, a read `x[i]` has no `#outOfBounds`, so the repair
+/// offered for a `zip` of unequal keys has no failure member; a read at another key, or of
+/// another list, keeps it. Each type is shown by pushing the value to `m.stdout`, which
+/// rejects it and names its type.
+#[test]
+fn a_read_within_a_lists_count_has_no_miss() {
+    let main = |e: &str| {
+        format!(
+            "main(m: MainArgs) {{\n  xs = (0 ..< m.args.count).map(i -> i * 2);\n  \
+             ys = (0 ..< m.args.count + 1).map(i -> i);\n  m.stdout <- {e};\n}}\n"
+        )
+    };
+    let cases = [
+        (
+            "(0 ..< xs.count).map(i -> xs[i])",
+            "this call gives [int]\n",
+        ),
+        (
+            "(0 ..< min(xs.count, ys.count)).map(i -> (xs[i], ys[i]))",
+            "this call gives [(int, int)]\n",
+        ),
+        (
+            "(0 ..< min(xs.count, ys.count)).map(i -> (xs[i], ys[i + 1]))",
+            "this call gives [(int, int | #outOfBounds)]\n",
+        ),
+        (
+            "(0 ..< ys.count).map(i -> xs[i])",
+            "this call gives [int | #outOfBounds]\n",
+        ),
+    ];
+    for (i, (e, text)) in cases.iter().enumerate() {
+        let src = main(e);
+        let (status, said) = ran_on_input(&format!("within_count_{i}"), &src);
+        assert!(status != 0 && said.contains(text), "{src}\n{said}");
+    }
+    // The repair runs, and the read of a port's lines within its count prints them.
+    let src = "main(m: MainArgs) {\n  m.stdout <- (0 ..< m.stdin.count).map(i -> m.stdin[i]);\n}\n";
+    assert_eq!(
+        ran_on_input("within_count_lines", src),
+        (0, "a\nb\n".into())
+    );
+}
