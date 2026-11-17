@@ -3306,6 +3306,49 @@ impl<'t> Tx<'t> {
         }
     }
 
+    // Complexity tradeoff: one pass over the DAG in topological order, each node's state a
+    // persistent value-ordered AVL tree of excluded values (`PartitionNode`). A rebuilt set of
+    // pieces at each step would cost O(p) per step, O(n^2) on a chain of n links; the tree
+    // costs O(log p) per step when each operation at a step follows a bounded number of
+    // root-to-leaf paths, O(n log n) in all. The join primitives are those of Blelloch,
+    // Ferizovic and Sun, "Just join for parallel ordered sets" (SPAA 2016): `tree_node` joins
+    // trees of heights h1, h2 in O(|h1 - h2| + 1) and keeps the AVL bound, height at most
+    // 1.44 log2(p + 2) for p nodes; `tree_restrict` is their split, two paths;
+    // `tree_apply` and `tree_push` are O(1).
+    //
+    // Proof of O(log n) per link on `normal_round_down` (COMPLEXITY.md K124:
+    // `t_j = if i <= j { t } else { 6j + 2 - (t / 2) * 2 }`, `i` in [-10^6, 10^6], query
+    // `t_n != 0`). The then arm `t` and the copy of `t` in the else arm are two DAG nodes with
+    // the same children, so each link has four nodes: A_j (reached through then arms), B_j
+    // (reached through the `Round`), a `Reflect` and a `Round` (a probe counted 4n + 1 nodes
+    // visited). By induction from the root, before the step at link j:
+    //   (1) A_j's tree is one node, key [0, 0], its label in (-inf, j + 1] (an input
+    //       i <= j + 1 takes the then arm at every later link, so t_n = t_j, and t_j = 0 is
+    //       the one excluded value);
+    //   (2) every label in B_j's tree lies in [j + 2, inf) (B_j is reached only through the
+    //       else arm of link j + 1), and every key is [2k, 2k + 1] (a preimage of `Round`);
+    //   (3) B_j has at most 3 (n - j) + 1 nodes (each link adds one, and each clip of k
+    //       pieces cuts at most k - 1 nodes in two).
+    // The root is the base: one node [0, 0], its label the whole domain. Step at link j:
+    //   `restrict_x` on A_j's one node is O(1). On B_j both masks, i <= j and i > j, find the
+    //   root's span outside or inside them by (2): O(1), B_j's then part empty, its else part
+    //   B_j itself. A_{j-1} gets A_j's then part, one node, label (-inf, j]: (1) holds at
+    //   j - 1. The `Reflect` node gets B_j joined with A_j's else part, one node, label
+    //   {j + 1}: one insertion, O(log p). `Reflect` by 6j + 2, even, is a tag, O(1), and maps
+    //   [2k, 2k + 1] to [odd, even] and [0, 0] to [6j + 2, 6j + 2]. Each `clip_values` is one
+    //   `tree_restrict` per piece of the step's forward image plus a join, O(k log p), and
+    //   trims at most 2k nodes. `Round` by 2: a subtree whose bounds (each lo and hi + 1) all
+    //   have one residue mod 2 is shifted by a tag in O(1) (`tree_round`); only the node from
+    //   [0, 0] and the at most 2k nodes the `Round` node's clip trimmed have bounds of both
+    //   residues, so the recursion follows at most 2k + 1 paths, O(k log p), and every key is
+    //   again [2k', 2k' + 1]; the labels lie in [j + 1, inf): (2) holds at j - 1.
+    // So a link costs O(k log p) with p = O(n), O(n log n) in all if k and the pieces of a
+    // label (met or joined at each node touched) are bounded. Not proved: that both are
+    // bounded on this family. Evidence: `revision::map2` caps each sign
+    // region of an image to the most pieces its operand has in that region, and a probe found
+    // k <= 3 at every node (3 only at `Round`: [lo, -2], [0, 0], [2, hi]) at n = 16, 128,
+    // 1024 and 8192, labels of one piece each, p = n, heights 5, 8, 11 and 14, and nodes
+    // built per step at most 12, 32, 53 and 74, about 5.3 times the height.
     fn inverse_states(
         &mut self,
         root: At,
