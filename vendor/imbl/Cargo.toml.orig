@@ -1,0 +1,87 @@
+[package]
+name = "imbl"
+version = "7.0.2"
+authors = [
+    "Bodil Stokke <bodil@bodil.org>",
+    "Joe Neeman <joeneeman@gmail.com>",
+    "Arthur Silva <arthurprs@gmail.com>",
+]
+edition = "2018"
+license = "MPL-2.0+"
+rust-version = "1.85"
+description = "Immutable collection datatypes"
+repository = "https://github.com/jneem/imbl"
+documentation = "https://docs.rs/imbl"
+homepage = "https://github.com/jneem/imbl"
+readme = "./README.md"
+categories = ["data-structures"]
+keywords = ["immutable", "persistent", "hamt", "b-tree", "rrb-tree"]
+exclude = [
+    "dist/**",
+    "rc/**",
+    "release.toml",
+    "Makefile.toml",
+    "proptest-regressions/**",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lib]
+path = "./src/lib.rs"
+
+[build-dependencies]
+version_check = "0.9"
+
+[features]
+debug = []
+serde = ["dep:serde_core"]
+small-chunks = []
+triomphe = ["archery/triomphe"]
+
+[dependencies]
+imbl-sized-chunks = "0.2.0"
+rand_core = "0.9"
+rand_xoshiro = "0.7"
+archery = "1.2.1"
+quickcheck = { version = "1.0", optional = true }
+proptest = { version = "1.0", optional = true }
+serde_core = { version = "1.0.224", optional = true }
+rayon = { version = "1", optional = true }
+arbitrary = { version = "1.0", optional = true }
+bincode = {version = "2.0.1", optional = true, default-features=false, features = ["alloc", "std"]}
+wide = "0.7"
+equivalent = "1.0.2"
+
+[dev-dependencies]
+proptest = "1.0"
+serde_core = "1"
+serde_json = "1"
+rayon = "1"
+rand = { version = "0.9", features = ["small_rng"] }
+pretty_assertions = "1.0"
+metrohash = "1"
+proptest-derive = "0.6"
+static_assertions = "1.1.0"
+criterion = "0.7"
+rpds = { version = "1.1.0" }
+half = "2.6"
+
+# Include debug symbols when benchmarking, this is useful for profiling
+[profile.bench]
+debug = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
+[[bench]]
+name = "ordmap"
+harness = false
+
+[[bench]]
+name = "hashmap"
+harness = false
+
+[[bench]]
+name = "vector"
+harness = false

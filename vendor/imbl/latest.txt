@@ -1,0 +1,369 @@
+hashmap_i64/lookup_100  time:   [1.3760 µs 1.3807 µs 1.3854 µs]
+                        change: [−4.6932% −4.0330% −3.4528%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+hashmap_i64/lookup_1000 time:   [14.425 µs 14.486 µs 14.549 µs]
+                        change: [−2.9345% −2.3495% −1.7902%] (p = 0.00 < 0.05)
+                        Performance has improved.
+hashmap_i64/lookup_5000 time:   [79.850 µs 79.978 µs 80.114 µs]
+                        change: [−4.5416% −4.1857% −3.8585%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_i64/lookup_10000
+                        time:   [169.29 µs 169.65 µs 170.02 µs]
+                        change: [−1.5946% −1.0346% −0.5512%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+hashmap_i64/lookup_50000
+                        time:   [1.6213 ms 1.6235 ms 1.6255 ms]
+                        change: [−4.2986% −1.9377% +1.9056%] (p = 0.22 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+hashmap_i64/lookup_100000
+                        time:   [3.2820 ms 3.2873 ms 3.2927 ms]
+                        change: [−0.6736% −0.3626% −0.0672%] (p = 0.02 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_i64/lookup_500000
+                        time:   [24.203 ms 24.944 ms 25.923 ms]
+                        change: [−10.020% −6.2063% −1.5810%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+hashmap_i64/lookup_ne_10000
+                        time:   [143.30 µs 143.57 µs 143.84 µs]
+                        change: [−9.2138% −8.8894% −8.5771%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_i64/lookup_ne_100000
+                        time:   [2.8585 ms 2.8641 ms 2.8703 ms]
+                        change: [−9.4910% −9.1384% −8.7859%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+hashmap_i64/insert_mut_100
+                        time:   [4.2418 µs 4.2453 µs 4.2493 µs]
+                        change: [−5.1687% −4.9091% −4.6711%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+hashmap_i64/insert_mut_1000
+                        time:   [58.440 µs 58.500 µs 58.568 µs]
+                        change: [−3.8781% −3.6396% −3.4255%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+hashmap_i64/insert_mut_5000
+                        time:   [238.25 µs 238.43 µs 238.63 µs]
+                        change: [−3.0250% −2.7330% −2.4565%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 10 outliers among 100 measurements (10.00%)
+  6 (6.00%) high mild
+  4 (4.00%) high severe
+hashmap_i64/insert_mut_10000
+                        time:   [406.33 µs 406.68 µs 407.06 µs]
+                        change: [−2.5967% −2.3636% −2.1420%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+hashmap_i64/insert_mut_50000
+                        time:   [3.8333 ms 3.8409 ms 3.8500 ms]
+                        change: [−2.5959% −2.2947% −1.9529%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  7 (7.00%) high mild
+  1 (1.00%) high severe
+hashmap_i64/insert_mut_100000
+                        time:   [7.2024 ms 7.2360 ms 7.2736 ms]
+                        change: [−2.5129% −1.9008% −1.2120%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  6 (6.00%) high mild
+  6 (6.00%) high severe
+hashmap_i64/remove_mut_100
+                        time:   [4.3815 µs 4.4134 µs 4.4456 µs]
+                        change: [−1.4456% −0.4140% +0.8055%] (p = 0.47 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+hashmap_i64/remove_mut_1000
+                        time:   [51.334 µs 51.623 µs 51.900 µs]
+                        change: [−1.8727% −1.2802% −0.7005%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+hashmap_i64/remove_mut_10000
+                        time:   [483.68 µs 484.52 µs 485.49 µs]
+                        change: [−0.5957% −0.2771% +0.0372%] (p = 0.09 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+hashmap_i64/iter_1000   time:   [6.3995 µs 6.4848 µs 6.5714 µs]
+                        change: [+2.7441% +4.3661% +5.8052%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_i64/iter_10000  time:   [58.045 µs 58.170 µs 58.319 µs]
+                        change: [−0.0665% +0.2671% +0.5905%] (p = 0.12 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  2 (2.00%) high mild
+  8 (8.00%) high severe
+hashmap_i64/iter_100000 time:   [1.2522 ms 1.2548 ms 1.2576 ms]
+                        change: [−1.8644% −0.8901% +0.4450%] (p = 0.12 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+hashmap_i64/insert_100  time:   [37.280 µs 37.309 µs 37.341 µs]
+                        change: [−2.8489% −2.5915% −2.3505%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+hashmap_i64/remove_100  time:   [34.112 µs 34.391 µs 34.672 µs]
+                        change: [−0.2614% +0.6768% +1.6369%] (p = 0.17 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+hashmap_i64/insert_1000 time:   [631.76 µs 632.24 µs 632.76 µs]
+                        change: [−1.7333% −1.3715% −1.0763%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+hashmap_i64/remove_1000 time:   [669.64 µs 671.72 µs 673.84 µs]
+                        change: [−1.1389% −0.7858% −0.4377%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_i64/insert_10000
+                        time:   [10.159 ms 10.165 ms 10.172 ms]
+                        change: [−0.5413% −0.3295% −0.1498%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+hashmap_i64/remove_10000
+                        time:   [10.323 ms 10.330 ms 10.339 ms]
+                        change: [−0.1910% +0.0281% +0.2212%] (p = 0.80 > 0.05)
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+hashmap_i64/insert_50000
+                        time:   [64.126 ms 64.214 ms 64.309 ms]
+                        change: [−1.4730% −1.1845% −0.9175%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+hashmap_i64/remove_50000
+                        time:   [66.658 ms 66.749 ms 66.848 ms]
+                        change: [−1.0515% −0.7936% −0.5404%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  9 (9.00%) high mild
+  1 (1.00%) high severe
+
+hashmap_str/lookup_100  time:   [1.8888 µs 1.8916 µs 1.8943 µs]
+                        change: [−3.0684% −2.8211% −2.5841%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+hashmap_str/lookup_1000 time:   [21.956 µs 21.991 µs 22.025 µs]
+                        change: [−3.8710% −1.1185% +0.5113%] (p = 0.55 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  4 (4.00%) high mild
+  2 (2.00%) high severe
+hashmap_str/lookup_5000 time:   [145.59 µs 145.87 µs 146.18 µs]
+                        change: [−3.6438% −2.7267% −1.8709%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+hashmap_str/lookup_10000
+                        time:   [417.54 µs 418.74 µs 420.00 µs]
+                        change: [−1.7396% −0.9819% −0.2116%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+hashmap_str/lookup_50000
+                        time:   [3.0415 ms 3.0468 ms 3.0526 ms]
+                        change: [−6.4498% −6.1300% −5.8117%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+hashmap_str/lookup_100000
+                        time:   [6.4652 ms 6.5078 ms 6.5596 ms]
+                        change: [−7.8865% −4.5027% −1.7046%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+hashmap_str/lookup_500000
+                        time:   [135.74 ms 136.83 ms 137.99 ms]
+                        change: [−1.5646% −0.3754% +0.7792%] (p = 0.54 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+hashmap_str/lookup_ne_10000
+                        time:   [396.64 µs 397.95 µs 399.37 µs]
+                        change: [−3.1422% −2.1774% −1.3285%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+hashmap_str/lookup_ne_100000
+                        time:   [6.9086 ms 6.9622 ms 7.0217 ms]
+                        change: [−4.3552% −3.0996% −1.8612%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 15 outliers among 100 measurements (15.00%)
+  10 (10.00%) high mild
+  5 (5.00%) high severe
+hashmap_str/insert_mut_100
+                        time:   [7.9579 µs 7.9672 µs 7.9765 µs]
+                        change: [+0.1296% +0.3910% +0.6366%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_str/insert_mut_1000
+                        time:   [104.51 µs 104.64 µs 104.77 µs]
+                        change: [−0.4693% −0.2250% +0.0253%] (p = 0.08 > 0.05)
+                        No change in performance detected.
+Found 13 outliers among 100 measurements (13.00%)
+  4 (4.00%) low mild
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+hashmap_str/insert_mut_5000
+                        time:   [481.90 µs 482.34 µs 482.81 µs]
+                        change: [−2.0106% −1.6783% −1.3997%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+hashmap_str/insert_mut_10000
+                        time:   [900.58 µs 901.49 µs 902.45 µs]
+                        change: [−2.9734% −2.3215% −1.8300%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+hashmap_str/insert_mut_50000
+                        time:   [6.5591 ms 6.5835 ms 6.6107 ms]
+                        change: [−1.5488% −0.9364% −0.3769%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+hashmap_str/insert_mut_100000
+                        time:   [14.666 ms 14.789 ms 14.922 ms]
+                        change: [−1.6496% −0.3516% +0.9185%] (p = 0.60 > 0.05)
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+hashmap_str/remove_mut_100
+                        time:   [7.0705 µs 7.0972 µs 7.1239 µs]
+                        change: [−2.3038% −1.8072% −1.3143%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) low mild
+  2 (2.00%) high mild
+hashmap_str/remove_mut_1000
+                        time:   [75.285 µs 75.537 µs 75.765 µs]
+                        change: [−0.8947% −0.4115% +0.0724%] (p = 0.10 > 0.05)
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low severe
+  2 (2.00%) low mild
+  1 (1.00%) high severe
+hashmap_str/remove_mut_10000
+                        time:   [922.63 µs 923.78 µs 924.94 µs]
+                        change: [−0.8388% −0.5081% −0.1800%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+hashmap_str/iter_1000   time:   [6.1692 µs 6.2481 µs 6.3249 µs]
+                        change: [−2.1966% −0.8132% +0.6858%] (p = 0.27 > 0.05)
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_str/iter_10000  time:   [57.339 µs 57.422 µs 57.509 µs]
+                        change: [−2.3802% −2.1004% −1.8462%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high severe
+hashmap_str/iter_100000 time:   [1.2768 ms 1.2790 ms 1.2812 ms]
+                        change: [−2.3536% −1.2564% −0.2394%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 5 outliers among 100 measurements (5.00%)
+  1 (1.00%) high mild
+  4 (4.00%) high severe
+hashmap_str/insert_100  time:   [62.396 µs 62.451 µs 62.509 µs]
+                        change: [−0.3970% −0.1583% +0.0548%] (p = 0.18 > 0.05)
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  1 (1.00%) low severe
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+hashmap_str/remove_100  time:   [61.024 µs 61.796 µs 62.593 µs]
+                        change: [−1.3649% −0.1342% +1.2265%] (p = 0.84 > 0.05)
+                        No change in performance detected.
+hashmap_str/insert_1000 time:   [1.0415 ms 1.0421 ms 1.0429 ms]
+                        change: [+0.0575% +0.2605% +0.4542%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+Found 12 outliers among 100 measurements (12.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+hashmap_str/remove_1000 time:   [964.13 µs 966.02 µs 967.96 µs]
+                        change: [+0.2028% +0.4871% +0.7662%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hashmap_str/insert_10000
+                        time:   [12.825 ms 12.834 ms 12.843 ms]
+                        change: [+0.0676% +0.2834% +0.4718%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 8 outliers among 100 measurements (8.00%)
+  2 (2.00%) high mild
+  6 (6.00%) high severe
+hashmap_str/remove_10000
+                        time:   [12.769 ms 12.780 ms 12.792 ms]
+                        change: [+0.6736% +0.8862% +1.0779%] (p = 0.00 < 0.05)
+                        Change within noise threshold.
+Found 10 outliers among 100 measurements (10.00%)
+  5 (5.00%) high mild
+  5 (5.00%) high severe
+hashmap_str/insert_50000
+                        time:   [82.730 ms 82.954 ms 83.198 ms]
+                        change: [−0.6799% −0.2286% +0.2555%] (p = 0.35 > 0.05)
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  8 (8.00%) high mild
+hashmap_str/remove_50000
+                        time:   [79.123 ms 79.352 ms 79.609 ms]
+                        change: [−0.2835% +0.1893% +0.6733%] (p = 0.43 > 0.05)
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+

@@ -27,6 +27,9 @@ members = [
     "tests",
     "benches",
 ]
+# A patched copy of imbl, used through [patch.crates-io] below; not a workspace member, so it is
+# built as a dependency (one codegen unit, as [profile.dev.package."*"] sets) and not linted.
+exclude = ["vendor/imbl"]
 
 [workspace.package]
 version = "0.0.0"
@@ -82,6 +85,13 @@ perf-event2 = "0.7.4"
 stacker = "0.1.25"
 # Reads symbol tables: which runtime library a build of zed-native made (zed_native::link).
 object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "archive", "std"] }
+
+# imbl 7.0.2 with one change: `OrdMap::diff` steps over a subtree shared by both maps at any level,
+# not only within one leaf (IMBL-diff-branch-skip, COMPLEXITY.md PA-bind-cost). The changed files are
+# listed in vendor/imbl/CHANGES-zed.md. Every user of imbl, zed-kernel's own `imbl = "7.0.2"`
+# included, gets this copy.
+[patch.crates-io]
+imbl = { path = "vendor/imbl" }
 
 [workspace.lints.rust]
 missing_docs = "warn"
