@@ -16150,6 +16150,15 @@ impl Ty {
                     if let Some((_, _, written)) = scope.given.get(name) {
                         written.set(true);
                     }
+                    // One slot only: no signature inside the one that binds it binds it again.
+                    // [`Sig::standing_twice`] keeps the variables the outermost one binds.
+                    if let (Some(named), Some(&k), Some([_])) = (
+                        &mut walk.named,
+                        walk.open.last(),
+                        scope.names.get(v).map(Vec::as_slice),
+                    ) {
+                        named.push((k, v.clone()));
+                    }
                     names.push(name);
                 }
                 (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
@@ -16323,6 +16332,10 @@ struct Walk {
     next: usize,
     /// For each type of [`Walk::open`], what its end is written by ([`Ty::write_end`]).
     ends: Vec<OpenEnd>,
+    /// On a walk that only counts ([`Sig::standing_twice`]), each place of a variable
+    /// bounded by carriers that the outermost signature binds: the type it stands in, and the
+    /// variable. `None` on a walk that prints, which keeps no such places.
+    named: Option<Vec<(usize, Arc<str>)>>,
 }
 
 /// What the end of a type entered and not yet closed is written by ([`Ty::write_end`]).
@@ -16683,9 +16696,25 @@ struct Shared {
     sigs: HashMap<*const Sig, String>,
     /// Each shared tuple, by its number, with its reference.
     rows: HashMap<NodeId, String>,
+    /// Whether every tuple and function that holds no variable at any depth, and binds none,
+    /// is passed over as if written by reference, with an empty one: on a walk that only
+    /// counts the places of variables ([`Sig::standing_twice`]), where such a part has none.
+    closed: bool,
 }
 
 impl Shared {
+    /// The reference the text writes for the tuple `r`, if it writes one.
+    fn row(&self, r: &Row) -> Option<&str> {
+        (self.rows.get(&r.node()).map(String::as_str))
+            .or_else(|| (self.closed && !r.holds_vars()).then_some(""))
+    }
+
+    /// The reference the text writes for the function `s`, if it writes one.
+    fn sig(&self, s: &Sig) -> Option<&str> {
+        (self.sigs.get(&(s as *const Sig)).map(String::as_str))
+            .or_else(|| (self.closed && s.closed()).then_some(""))
+    }
+
     /// The shared closed parts of the text from `start`, their bodies placed in the table, and
     /// those an earlier print for the table placed ([`Settled`]).
     fn of(start: &Print<'_>, spell: Option<Spell<'_>>) -> Shared {
@@ -16931,12 +16960,12 @@ fn walk_parts<'a>(
         let from = stack.len();
         let root = std::mem::take(&mut first);
         match part {
-            Print::Row(r, at) => match shared.rows.get(&r.node()).filter(|_| !root) {
+            Print::Row(r, at) => match shared.row(r).filter(|_| !root) {
                 Some(name) if r.wraps(at) => out.push_str(&defs::wrapped(name)),
                 Some(name) => out.push_str(name),
                 None => r.parts(at, &mut stack),
             },
-            Print::Sig(s, at) => match shared.sigs.get(&(s as *const Sig)).filter(|_| !root) {
+            Print::Sig(s, at) => match shared.sig(s).filter(|_| !root) {
                 // As [`Sig::parts`] writes it, with no variables to open: a closed part has
                 // no bounds clause, and one left to the end of its union is empty.
                 Some(name) => {
@@ -17056,6 +17085,79 @@ impl fmt::Display for Sig {
 }
 
 impl Sig {
+    /// The variables it binds that stand in two places or more of its text as its Display
+    /// writes it (DESIGN.md sec:diagnostics, "Types in a message"), counted by the first walk
+    /// of the printer itself (`Walk::plan`), so the two never differ: an unbounded variable
+    /// so placed is the one printed by name and not `_`. As the printer counts, a variable
+    /// counts once in each type whose union holds it, inside the functions it holds too; a
+    /// union printed `_` alone (`Absorb`, and the unions `Walk::plan` writes `_`) holds
+    /// none; and what an `else` or a failed test leaves of a variable ([`Narrow`]) is that
+    /// variable. A variable bounded by carriers, which the printer names wherever it stands,
+    /// is counted the same way, over the types outside the unions printed `_`.
+    // Complexity tradeoff: the naive way is a walk of its own over the arrows, which must
+    // agree with the printer's count and did not (a variable inside a held function counted
+    // twice, unions printed `_` and the joins of `else` not seen: plan row
+    // TEST-standing-twice-matches-printer). Used: the printer's first walk and plan, O(n log n)
+    // in the size n of the text, the cost of printing it; the tuples and functions that hold
+    // no variable, which a print may write by reference, are passed over ([`Shared::closed`]),
+    // and the types of the unions printed `_` are marked in one sweep, O(n). A caller that
+    // prints the signature after asking pays the print twice, the same order.
+    pub fn standing_twice(&self) -> HashSet<Arc<str>> {
+        let absorbed = Absorb::sig(self);
+        let s = absorbed.as_ref().unwrap_or(self);
+        let mut scope = Scope::default();
+        let mut walk = Walk {
+            named: Some(Vec::new()),
+            ..Walk::default()
+        };
+        let shared = Shared {
+            closed: true,
+            ..Shared::default()
+        };
+        let start = Print::Sig(s, PrintAt::Any);
+        walk_parts(start, &mut String::new(), &mut scope, &mut walk, &shared);
+        let plan = walk.plan(&mut scope);
+        // The walk opened `s` first, on an empty scope, so its unbounded variables have the
+        // numbers a scope opened on `s` alone gives them ([`Scope::open`]).
+        let mut slots = Scope::default();
+        slots.open(s, false);
+        let mut twice = HashSet::new();
+        for (v, slot) in &slots.names {
+            if let (Some(&VarSlot::Free(k)), Some(plan)) = (slot.last(), &plan)
+                && plan.count[plan.root[k]] >= 2
+            {
+                twice.insert(v.clone());
+            }
+        }
+        // The types inside a union printed `_` alone, which hold no place.
+        let mut gone = vec![false; walk.nodes.len()];
+        if let Some(plan) = &plan {
+            let mut k = 0;
+            while k < walk.nodes.len() {
+                match plan.absorbed[k] {
+                    true => {
+                        let end = walk.nodes[k].end;
+                        gone[k..end].fill(true);
+                        k = end;
+                    }
+                    false => k += 1,
+                }
+            }
+        }
+        let mut count: HashMap<Arc<str>, usize> = HashMap::new();
+        for (k, v) in walk.named.into_iter().flatten() {
+            let carriers = s.bounds.get(&v).is_some_and(|&m| m & OTHER == 0);
+            if !gone[k] && carriers {
+                let c = count.entry(Arc::clone(&v)).or_default();
+                *c += 1;
+                if *c == 2 {
+                    twice.insert(v);
+                }
+            }
+        }
+        twice
+    }
+
     /// How a message names the function of this signature: the prelude word it is, as
     /// `bitReverse`, else its type, as `(int, width: int) -> int`.
     pub fn who(&self) -> String {

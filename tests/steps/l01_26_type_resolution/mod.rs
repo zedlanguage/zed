@@ -40,6 +40,7 @@ mod scaling;
 mod shared_tuples;
 mod signatures;
 mod soundness;
+mod standing_twice;
 mod tuple_keys;
 
 pub(crate) use zed_tests::step_helpers::l01_26_type_resolution::{

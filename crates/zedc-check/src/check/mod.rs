@@ -4637,13 +4637,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// every value (QUESTIONS A92), which is not the type found (plan row
     /// MSG-bounded-param-printed-underscore). A variable with a use of any other kind keeps its
     /// printing: the uses of other kinds are needs on the call, which no type written in the
-    /// signature states. So does one that stands in two places or more ([`standing_twice`]),
-    /// which prints as a type variable, as `a` in `k(positional a) = (ap(a), a)` prints
-    /// `T -> (0, T)` (MAIN-red-2026-11-16b).
-    // Complexity tradeoff: one pass over the needs with a hash map by variable, O(needs), one
-    // walk of `s` for the places of those variables, and one replacement, O(size of `s`), the
-    // order of printing `s`; the naive way, a scan of the needs for each variable, is
-    // O(variables × needs).
+    /// signature states. So does one that stands in two places or more ([`Sig::standing_twice`],
+    /// the printer's own count), which prints as a type variable, as `a` in
+    /// `k(positional a) = (ap(a), a)` prints `T -> (0, T)` (MAIN-red-2026-11-16b).
+    // Complexity tradeoff: one pass over the needs with a hash map by variable, O(needs), the
+    // printer's first walk of `s` for the places of the variables, O(n log n) in the size n of
+    // its text, and one replacement, O(size of `s`), the order of printing `s`; the naive way,
+    // a scan of the needs for each variable, is O(variables × needs). The places were counted
+    // by a walk of their own, O(size of `s`), which did not agree with the printer's count
+    // (plan row TEST-standing-twice-matches-printer).
     fn sig_text(&self, s: &Sig) -> String {
         let s = s.solved_with(&|v| self.stale(v));
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
@@ -4671,7 +4673,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // T)` says the result holds the argument, which the bound in both places would not
         // (DESIGN sec:diagnostics, "Types in a message", the worked example on `k`).
         passed.retain(|_, b| b.is_some());
-        let twice = standing_twice(&s, &passed);
+        let twice = match passed.is_empty() {
+            true => HashSet::new(),
+            false => s.standing_twice(),
+        };
         // A variable bounded by carriers, `for V in int | f64`, takes the values of its type
         // in those carriers; a bound that lets other values in ([`OTHER`]) bounds nothing.
         let binds: Binds = (passed.into_iter())
@@ -12380,62 +12385,6 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
                 .map(Work::Explain),
         );
     }
-}
-
-/// The variables among the keys of `vs` that stand in two places or more of the arrows of
-/// `s`, the printer's count for naming a variable `T` and not `_`: a tuple or payload shape
-/// that holds a variable is written in full at each place it stands, so it is counted at each,
-/// and a variable inside a function `s` holds counts as two, never as one, whatever the count
-/// in it (such a variable is left as it prints).
-// Complexity tradeoff: the naive walk enters a shared tuple once per path, 2^d for one held
-// twice at each of d levels. Here each tuple and shape is entered at most twice, by its number,
-// as `repeated` (zedc-types) does: a third arrival adds no count a second did not, since two
-// is all that is asked. O(size of the arrows), with a hash lookup per part; a function held is
-// read by its kept variable order ([`Sig::vars_order`]), not entered.
-fn standing_twice<B>(s: &Sig, vs: &HashMap<Arc<str>, B>) -> HashSet<Arc<str>> {
-    let mut out = HashSet::new();
-    if vs.is_empty() {
-        return out;
-    }
-    let mut count: HashMap<&Arc<str>, u8> = HashMap::new();
-    let mut walked: HashMap<NodeId, u8> = HashMap::new();
-    let mut add = |v: &Arc<str>, n: u8, out: &mut HashSet<Arc<str>>| {
-        if let Some((k, _)) = vs.get_key_value(v) {
-            let c = count.entry(k).or_default();
-            *c = c.saturating_add(n);
-            if *c >= 2 {
-                out.insert(k.clone());
-            }
-        }
-    };
-    let mut stack: Vec<&Ty> = (s.arrows.iter())
-        .flat_map(|a| a.params.iter().chain([&a.result]))
-        .collect();
-    while let Some(t) = stack.pop() {
-        for v in t.vars.iter() {
-            add(v, 1, &mut out);
-        }
-        for f in t.fns.iter() {
-            for v in f.vars_order() {
-                add(v, 2, &mut out);
-            }
-        }
-        for r in t.tuples.iter() {
-            let k = walked.entry(r.node()).or_default();
-            if *k < 2 {
-                *k += 1;
-                stack.extend(r.iter());
-            }
-        }
-        for shape in t.payloads.values().flatten().flatten() {
-            let k = walked.entry(shape.node()).or_default();
-            if *k < 2 {
-                *k += 1;
-                stack.extend(shape.items.iter().chain(shape.fields.values()));
-            }
-        }
-    }
-    out
 }
 
 /// `items` joined as a list of choices in a sentence: `a`, `a or b`, `a, b or c`.
