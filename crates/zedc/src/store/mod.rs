@@ -9,6 +9,7 @@ pub use zedc_int::int;
 pub use zedc_lattice::affine;
 pub use zedc_lattice::cell;
 pub use zedc_lattice::float;
+pub use zedc_lattice::grade;
 pub use zedc_lattice::interval;
 pub use zedc_lattice::iterate;
 pub use zedc_lattice::landmarks;

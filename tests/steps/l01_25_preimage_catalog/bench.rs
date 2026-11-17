@@ -12,3 +12,4 @@ mod s22;
 mod scaling;
 mod shared;
 mod stops;
+mod strict;

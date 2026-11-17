@@ -47,13 +47,102 @@ impl PartialEq for Const {
     }
 }
 
-/// How a function moves with one argument, in the carrier's order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How a function moves with one argument, the others fixed, in the carrier's order: the
+/// grades of the property record's `monotone(per-arg ↑s/↑/const/↓/↓s)` (DESIGN.md
+/// sec:property_tracking). For `a < b`, ↑s says `f(a) < f(b)`, ↑ `f(a) <= f(b)`, `const`
+/// `f(a) == f(b)`, and ↓ and ↓s the reverse. A function with none of these has no grade, which
+/// the readers write as `Option<Tonicity>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tonicity {
-    /// Non-decreasing.
+    /// Strictly increasing, ↑s.
+    StrictUp,
+    /// Non-decreasing, ↑.
     Up,
-    /// Non-increasing.
+    /// Constant.
+    Const,
+    /// Non-increasing, ↓.
     Down,
+    /// Strictly decreasing, ↓s.
+    StrictDown,
+}
+
+impl Tonicity {
+    /// The grade of `-f` for `f` of this grade: swapping the direction, as a negation or a
+    /// factor below 0 does.
+    pub fn flip(self) -> Tonicity {
+        match self {
+            Tonicity::StrictUp => Tonicity::StrictDown,
+            Tonicity::Up => Tonicity::Down,
+            Tonicity::Const => Tonicity::Const,
+            Tonicity::Down => Tonicity::Up,
+            Tonicity::StrictDown => Tonicity::StrictUp,
+        }
+    }
+
+    /// The grade without its strictness: ↑s is ↑ and ↓s is ↓.
+    pub fn weak(self) -> Tonicity {
+        match self {
+            Tonicity::StrictUp => Tonicity::Up,
+            Tonicity::StrictDown => Tonicity::Down,
+            t => t,
+        }
+    }
+
+    /// Whether the grade is ↑s or ↓s.
+    pub fn is_strict(self) -> bool {
+        matches!(self, Tonicity::StrictUp | Tonicity::StrictDown)
+    }
+
+    /// The direction: 1 for ↑s and ↑, -1 for ↓ and ↓s, 0 for `const`.
+    pub fn sign(self) -> i8 {
+        match self {
+            Tonicity::StrictUp | Tonicity::Up => 1,
+            Tonicity::Const => 0,
+            Tonicity::Down | Tonicity::StrictDown => -1,
+        }
+    }
+
+    /// The grade of `g ∘ f`, `f` of this grade and `g` of grade `outer`: the directions
+    /// multiply, `const` on either side is `const`, and the composite is strict only when both
+    /// stages are (`↑s ∘ ↓s` is ↓s, `↑s ∘ ↑` is ↑). Proof: for `a < b`, `f` moves `f(a)` to
+    /// `f(b)` in its direction (or not at all, under `const`), and `g` carries that order on in
+    /// its own; `<` survives both stages only when each is strict.
+    pub fn then(self, outer: Tonicity) -> Tonicity {
+        let strict = self.is_strict() && outer.is_strict();
+        match self.sign() * outer.sign() {
+            0 => Tonicity::Const,
+            1 if strict => Tonicity::StrictUp,
+            1 => Tonicity::Up,
+            _ if strict => Tonicity::StrictDown,
+            _ => Tonicity::Down,
+        }
+    }
+
+    /// The grade of `f + g`, `f` of this grade and `g` of grade `other`, on `int` or `rat`: a
+    /// `const` term keeps the other's grade; two terms of one direction keep it, strict when
+    /// either is, since `f(a) <= f(b)` and `g(a) < g(b)` give `f(a) + g(a) < f(b) + g(b)`; two
+    /// of opposite directions have no grade (`x + (-x)` is constant, `x + (-2 * x)` falls).
+    pub fn plus(self, other: Tonicity) -> Option<Tonicity> {
+        match (self.sign(), other.sign()) {
+            (0, _) => Some(other),
+            (_, 0) => Some(self),
+            (s, o) if s == o => Some(if self.is_strict() || other.is_strict() {
+                self.strict()
+            } else {
+                self
+            }),
+            _ => None,
+        }
+    }
+
+    /// The strict grade of this one's direction; `const` stays `const`.
+    pub fn strict(self) -> Tonicity {
+        match self.sign() {
+            1 => Tonicity::StrictUp,
+            -1 => Tonicity::StrictDown,
+            _ => Tonicity::Const,
+        }
+    }
 }
 
 /// A law an arrow carries.
@@ -131,11 +220,11 @@ pub const AXIOMS: &[Axiom] = &[
     ax("+", Int, Associative),
     ax("+", Int, Commutative),
     ax("+", Int, Identity(Const::Int(0))),
-    ax("+", Int, Monotone(&[Up, Up])),
+    ax("+", Int, Monotone(&[StrictUp, StrictUp])),
     ax("+", F64, Commutative),
     // -0.0, not 0.0, which fails at -0.0: -0.0 + 0.0 is 0.0.
     ax("+", F64, Identity(Const::F64(-0.0))),
-    ax("-", Int, Monotone(&[Up, Down])),
+    ax("-", Int, Monotone(&[StrictUp, StrictDown])),
     ax("*", Int, Associative),
     ax("*", Int, Commutative),
     ax("*", Int, Identity(Const::Int(1))),
@@ -146,7 +235,7 @@ pub const AXIOMS: &[Axiom] = &[
     ax("*", F64, Identity(Const::F64(1.0))),
     ax("neg", Int, Inverse("neg")),
     ax("neg", Int, Injective),
-    ax("neg", Int, Monotone(&[Down])),
+    ax("neg", Int, Monotone(&[StrictDown])),
     ax("neg", F64, Inverse("neg")),
     ax("neg", F64, Injective),
     // `++`: associative, not commutative.

@@ -61,11 +61,11 @@ fn design() -> Vec<(&'static str, Carrier, Vec<Law>)> {
                 Associative,
                 Commutative,
                 Identity(Const::Int(0)),
-                Monotone(&[Up, Up]),
+                Monotone(&[StrictUp, StrictUp]),
             ],
         ),
         ("+", F64, vec![Commutative, Identity(Const::F64(-0.0))]),
-        ("-", Int, vec![Monotone(&[Up, Down])]),
+        ("-", Int, vec![Monotone(&[StrictUp, StrictDown])]),
         (
             "*",
             Int,
@@ -82,7 +82,7 @@ fn design() -> Vec<(&'static str, Carrier, Vec<Law>)> {
         (
             "neg",
             Int,
-            vec![Inverse("neg"), Injective, Monotone(&[Down])],
+            vec![Inverse("neg"), Injective, Monotone(&[StrictDown])],
         ),
         ("neg", F64, vec![Inverse("neg"), Injective]),
         ("++", String, vec![Associative, Identity(Const::Str(""))]),

@@ -20,11 +20,11 @@ axioms = [
   Axiom(op: "+", carrier: #int, property: #associative),
   Axiom(op: "+", carrier: #int, property: #commutative),
   Axiom(op: "+", carrier: #int, property: #identity(0)),
-  Axiom(op: "+", carrier: #int, property: #monotone([#up, #up])),
+  Axiom(op: "+", carrier: #int, property: #monotone([#strictUp, #strictUp])),
   Axiom(op: "+", carrier: #f64, property: #commutative),
   // -0.0, not 0.0, which fails at -0.0: -0.0 + 0.0 is 0.0.
   Axiom(op: "+", carrier: #f64, property: #identity(-0.0)),
-  Axiom(op: "-", carrier: #int, property: #monotone([#up, #down])),
+  Axiom(op: "-", carrier: #int, property: #monotone([#strictUp, #strictDown])),
   Axiom(op: "*", carrier: #int, property: #associative),
   Axiom(op: "*", carrier: #int, property: #commutative),
   Axiom(op: "*", carrier: #int, property: #identity(1)),
@@ -35,7 +35,7 @@ axioms = [
   Axiom(op: "*", carrier: #f64, property: #identity(1.0)),
   Axiom(op: "neg", carrier: #int, property: #inverse("neg")),
   Axiom(op: "neg", carrier: #int, property: #injective),
-  Axiom(op: "neg", carrier: #int, property: #monotone([#down])),
+  Axiom(op: "neg", carrier: #int, property: #monotone([#strictDown])),
   Axiom(op: "neg", carrier: #f64, property: #inverse("neg")),
   Axiom(op: "neg", carrier: #f64, property: #injective),
   // `++`: associative, not commutative.

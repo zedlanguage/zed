@@ -358,9 +358,14 @@ fn check_on(a: &Axiom, vs: &[Value]) -> Result<usize, String> {
                             run(op, &args.iter().collect::<Vec<_>>()),
                             run(op, &moved.iter().collect::<Vec<_>>()),
                         );
+                        // A strict grade asks for a strict move where the argument moved.
+                        let moved_up = !le(b, &args[i]);
                         let ok = match sign {
-                            Tonicity::Up => le(&fa, &fb),
-                            Tonicity::Down => le(&fb, &fa),
+                            Tonicity::StrictUp if moved_up => !le(&fb, &fa),
+                            Tonicity::StrictDown if moved_up => !le(&fa, &fb),
+                            Tonicity::StrictUp | Tonicity::Up => le(&fa, &fb),
+                            Tonicity::StrictDown | Tonicity::Down => le(&fb, &fa),
+                            Tonicity::Const => le(&fa, &fb) && le(&fb, &fa),
                         };
                         if !ok {
                             return Err(format!(
@@ -453,7 +458,7 @@ fn every_axiom_holds_on_the_harness_instances() {
 #[test]
 fn a_false_claim_of_each_kind_is_refuted() {
     use Carrier::*;
-    use Tonicity::*;
+    use Tonicity::{StrictUp, Up};
     let claim = |op, carrier, law| Axiom { op, carrier, law };
     let controls = [
         claim("+", F64, Law::Associative), // 0.1 + 0.2 + 0.3
@@ -467,6 +472,9 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("+", Int, Law::LeftDistributesOver("*")),
         claim("-", Int, Law::RightDistributesOver("*")),
         claim("-", Int, Law::Monotone(&[Up, Up])),
+        claim("min", Int, Law::Monotone(&[StrictUp, Up])), // min(0, -5) is min(1, -5)
+        claim("max", Int, Law::Monotone(&[StrictUp, StrictUp])), // max(0, 5) is max(1, 5)
+        claim("+", Int, Law::Monotone(&[Tonicity::Const, Up])),
         claim("square", Int, Law::Injective),
         claim("<", Int, Law::Reflexive),
         claim("<=", Int, Law::Irreflexive),
@@ -536,7 +544,13 @@ fn zed_line(a: &Axiom) -> String {
         Law::Monotone(signs) => {
             let s: Vec<&str> = signs
                 .iter()
-                .map(|t| if *t == Tonicity::Up { "#up" } else { "#down" })
+                .map(|t| match t {
+                    Tonicity::StrictUp => "#strictUp",
+                    Tonicity::Up => "#up",
+                    Tonicity::Const => "#const",
+                    Tonicity::Down => "#down",
+                    Tonicity::StrictDown => "#strictDown",
+                })
                 .collect();
             format!("#monotone([{}])", s.join(", "))
         }

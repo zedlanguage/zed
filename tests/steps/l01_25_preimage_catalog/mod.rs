@@ -30,6 +30,7 @@ mod scaling;
 mod scopes;
 mod shared;
 mod stops;
+mod strict;
 mod tonicity;
 mod wide_constants;
 mod wide_ends;
