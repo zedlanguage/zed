@@ -559,7 +559,9 @@ pub(super) fn passed(n: usize) -> String {
 /// parameter holds, bound through that function (FAIL-types-fn-only-bounded-variable).
 pub(super) fn passed_through_fns(n: usize) -> String {
     let sig = |v: &str| -> String {
-        let ps: Vec<String> = (0..n).map(|i| format!("h{i}: (x: {v}{i}) -> {v}{i}")).collect();
+        let ps: Vec<String> = (0..n)
+            .map(|i| format!("h{i}: (x: {v}{i}) -> {v}{i}"))
+            .collect();
         let bs: Vec<String> = (0..n).map(|i| format!("{v}{i} in int | f64")).collect();
         format!("({}) -> int for {}", ps.join(", "), bs.join(", "))
     };
