@@ -409,3 +409,84 @@ fn chosen_literals_give_a_logarithmic_height() {
     let atoms = pick.iter().map(|&i| keys[i].0.clone()).collect();
     check("chosen literals", atoms, |_| true);
 }
+
+/// `distinct_atoms` files the atoms it meets by digest and compares an atom only with those of
+/// its digest, so on atoms that all share one digest its chains carry the whole answer. It must
+/// keep every distinct atom once, in the order first met, as a sorted set of the atoms does; a
+/// filing by digest alone (the control) keeps one. From cross-review XR-xor-shape-rounds-4-6,
+/// round 4 (Codex).
+#[test]
+fn distinct_atoms_keeps_every_atom_of_one_digest() {
+    use crate::types::bdd::{Op, Part};
+    let n = 512;
+    let rows = rows_of_one_digest(n);
+    let parts: Vec<Part<Row>> = rows.iter().cloned().map(Part::literal).collect();
+    let union = parts[1..]
+        .iter()
+        .fold(parts[0].clone(), |u, p| u.zip(p, Op::Or));
+    let (mut seen, mut expected) = (std::collections::BTreeSet::new(), Vec::new());
+    union.atoms(&mut |a| {
+        if seen.insert(a.clone()) {
+            expected.push(a.clone());
+        }
+        true
+    });
+    assert_eq!(expected.len(), n, "distinct rows met");
+    assert_eq!(union.distinct_atoms(), expected);
+    let mut digests = std::collections::BTreeSet::new();
+    let mut by_digest = 0;
+    union.atoms(&mut |a| {
+        by_digest += usize::from(digests.insert(a.digest()));
+        true
+    });
+    assert_eq!(
+        by_digest, 1,
+        "control: filed by digest alone, one row is kept"
+    );
+}
+
+/// Rows compare by their digests first, so rows of one digest form one interval of the order
+/// among rows of other digests: a treap's tied class is a contiguous range of its keys.
+/// Morphisms compare by their guarantees first, so two morphisms of one digest can have one of
+/// another digest between them: a remedy for tied priorities (PERF-set-tied-digest-depth) that
+/// needs tied keys to be contiguous does not hold for every kind of atom. From cross-review
+/// XR-xor-shape-rounds-4-6, round 4 (Gemini).
+#[test]
+fn rows_of_one_digest_are_contiguous_and_morphisms_need_not_be() {
+    use crate::types::Morphism;
+    let tied = rows_of_one_digest(32);
+    let target = tied[0].digest();
+    let apart = (1..=64).map(|a| Row::new(vec![int(a), int(a)]));
+    let mut mixed: Vec<Row> = tied.iter().cloned().chain(apart).collect();
+    mixed.sort();
+    mixed.dedup();
+    let at: Vec<usize> = (0..mixed.len())
+        .filter(|&i| mixed[i].digest() == target)
+        .collect();
+    assert!(at.len() >= 32, "{} rows of the digest", at.len());
+    assert_eq!(
+        at[at.len() - 1] - at[0] + 1,
+        at.len(),
+        "rows of one digest are contiguous"
+    );
+    if crate::address::SHORT {
+        return;
+    }
+    let mut gs = vec![int(10), int(20), int(30)];
+    gs.sort();
+    let m0 = Morphism::new(gs[0].clone(), int(0), int(0));
+    let first = mix(mix(6, gs[2].digest()), int(0).digest());
+    let v = int_of_digest(mix_inv(Some(first), None, m0.digest()));
+    let m2 = Morphism::new(
+        gs[2].clone(),
+        int(0),
+        Type::lit(&Value::Int(v)).expect("a literal"),
+    );
+    assert_eq!(m0.digest(), m2.digest(), "two morphisms of one digest");
+    let m1 = Morphism::new(gs[1].clone(), int(0), int(0));
+    assert_ne!(m1.digest(), m0.digest());
+    assert!(
+        m0 < m1 && m1 < m2,
+        "a morphism of another digest lies between them"
+    );
+}
