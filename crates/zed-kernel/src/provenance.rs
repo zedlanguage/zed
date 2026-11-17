@@ -865,9 +865,9 @@ impl Holds {
                             Change::Add(_, new) | Change::Update { new: (_, new), .. } => Some(new),
                             Change::Remove(..) => None,
                         })),
-                        None => read(&mut f.0.values()),
+                        None => read(&mut f.0.built_map().values()),
                     },
-                    None => read(&mut f.0.values()),
+                    None => read(&mut f.0.built_map().values()),
                 }
                 Record::Family {
                     family: f,
@@ -1003,7 +1003,7 @@ impl<'a> Held<'a> {
             Value::Family(f) if !f.is_empty() && self.seen.insert(Part::Family(f.id())) => {
                 let base = self.base(f);
                 let needs: Vec<&'a Value> = match &base {
-                    None => f.0.values().collect(),
+                    None => f.0.built_map().values().collect(),
                     Some((_, diff)) => diff
                         .iter()
                         .flat_map(|d| match d {
@@ -1051,7 +1051,7 @@ impl<'a> Held<'a> {
         let (tally, was) = match base {
             None => {
                 let mut t = Tally::default();
-                for e in f.0.values() {
+                for e in f.0.built_map().values() {
                     let s = self.read(e);
                     t.enter(&s, &self.nodes);
                 }

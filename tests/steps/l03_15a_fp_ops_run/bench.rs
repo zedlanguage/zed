@@ -553,6 +553,48 @@ fn a_joined_list_as_a_key_builds_no_map() {
     });
 }
 
+/// The k steps `acc = [i] ++ acc` for i from 1 to k, from `acc = [0]`, made here by
+/// `Family::concat`, with `read(&acc)` run after each. The chain costs O(k log k); a read that
+/// builds the joined list's map costs O(i) at step i, so O(k²) in all.
+fn rust_read_at_each_step(k: usize, read: &impl Fn(&Family)) {
+    let list = |x: usize| Family::of([(0, x as i64)]);
+    let mut acc = list(0);
+    for i in 1..=k {
+        acc = list(i).concat(&acc).unwrap();
+        read(&acc);
+    }
+}
+
+/// A union holding the list made by `++` beneath a key, run after each of n `[x] ++ a` (plan row
+/// TEST-list-map-build-callers-complete): beside a key the other side lacks, the list is shared
+/// whole, O(1); under a leaf of the other side, the collision is at the list's first keypath,
+/// read in O(log n). Each is held under 9 times at 8n.
+#[test]
+fn a_union_holding_a_joined_list_builds_no_map() {
+    let at = |k: i64, v: Value| Family::of([(Value::Int(k), v)]);
+    let leaf = at(0, Value::Int(1));
+    let five = at(1, Value::Int(5));
+    for (what, collides) in [
+        ("{0 -> a} ∪ {1 -> 5}", false),
+        ("{0 -> 1} ∪ {0 -> a}", true),
+    ] {
+        let read = |acc: &Family| {
+            let held = at(0, Value::Family(acc.clone()));
+            match collides {
+                false => assert_eq!(held.union(&five).unwrap().len(), 2),
+                true => assert!(leaf.union(&held).is_err()),
+            }
+        };
+        let what = format!("`{what}` after each of n `[x] ++ a`, instructions");
+        let r = ratio(&what, N_CONCAT, 1, |k| rust_read_at_each_step(k, &read));
+        assert!(
+            r < scaling::PREFERRED,
+            "{what}: {r:.2} times at 8n, over {:.2}",
+            scaling::PREFERRED
+        );
+    }
+}
+
 /// `zedc run` of `body(xs)`, `xs` a string-keyed display of n entries `"k0000" -> 0, …`,
 /// printing `want(n)`.
 fn whole_path(name: &str, body: &str, want: impl Fn(usize) -> String + Sync) {

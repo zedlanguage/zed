@@ -2584,7 +2584,7 @@ impl<'t> Machine<'_, 't> {
         }
         fn start<'f, 't>(f: &'f Family, marks: &'f Family) -> Making<'f, 't> {
             Making {
-                entries: f.0.iter(),
+                entries: f.0.built_map().iter(),
                 marks,
                 out: Vec::new(),
                 parts: Vec::new(),

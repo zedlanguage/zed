@@ -1171,15 +1171,15 @@ pub struct Family(pub(crate) Entries, Id, Id);
 
 /// The top-level entries of a [`Family`]: an ordered map, or a range of 64-bit integers kept as
 /// its two ends (plan row RANGE-lazy). A range's map is built the first time a reader needs its
-/// entries one by one, through [`Deref`], and is then shared by every copy of the family; a
-/// change ([`std::ops::DerefMut`]) turns the range into that map first.
+/// entries one by one, through [`Entries::built_map`], and is then shared by every copy of the
+/// family; a change ([`Entries::built_map_mut`]) turns the range into that map first.
 // Complexity tradeoff: the naive range, every entry built when the range is made, costs O(n)
 // time and memory for n entries even when only one is read (`(0 ..< n)[k]`, `k in 0 ..< n`,
 // `.count`). Used: the two ends, O(1) to make; a read, `in`, the count and the first and last
 // entry are answered from the ends in O(1), and the entry beside a key in O(log n) at worst
 // (`Span::beside`). A walk over the entries builds the map once, O(n), as before, and the copies
 // share it. Tradeoffs: an `Arc` and a `OnceLock` per range, and one more test on each map read
-// through `Deref`; a family is 48 bytes either way (`a_value_is_56_bytes`).
+// through `Entries::built_map`; a family is 48 bytes either way (`a_value_is_56_bytes`).
 #[derive(Clone)]
 pub(crate) enum Entries {
     /// The entries, in key order.
@@ -1219,10 +1219,14 @@ impl Default for Entries {
     }
 }
 
-impl Deref for Entries {
-    type Target = btree::Map<Value, Value>;
-
-    fn deref(&self) -> &Self::Target {
+// The map is reached only by these two named methods, not by `Deref`, so that every read which
+// builds the map of a range or of a list made by `++` names it and the compiler finds each one
+// (plan row TEST-list-map-build-callers-complete, COMPLEXITY.md F223): with `Deref`, a method of
+// the map called on `f.0` built it unseen.
+impl Entries {
+    /// The entries as a map: a map's own; a range's or a list's made by `++`, built on the first
+    /// call, O(n), and shared by every copy of the family after (`Span::map`, `Chain::map`).
+    pub(crate) fn built_map(&self) -> &btree::Map<Value, Value> {
         match self {
             Entries::Map(m) => m,
             Entries::Range(s) => s.map(),
@@ -1230,10 +1234,10 @@ impl Deref for Entries {
             Entries::From(_) => walked_unbounded(),
         }
     }
-}
 
-impl std::ops::DerefMut for Entries {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    /// The entries as a map to change: a range or a list made by `++` is first replaced by its
+    /// map ([`Entries::built_map`]).
+    pub(crate) fn built_map_mut(&mut self) -> &mut btree::Map<Value, Value> {
         match self {
             // A copy of a map costs O(1): it shares the nodes `Span::map` built.
             Entries::Range(s) => *self = Entries::Map(s.map().clone()),
@@ -1582,7 +1586,8 @@ mod chain {
     // counts in O(1) or O(log n), and the hash from the count, building no map; `==` and the
     // order read the leaves in order to the first difference (`Chain::values`), building none
     // (plan row TEST-list-concat-no-map-build, COMPLEXITY.md F223). A walk that keeps the
-    // entries or reads them all by key (a print, `keys`, a fold, a change through `DerefMut`)
+    // entries or reads them all by key (a print, `keys`, a fold, a change through
+    // `Entries::built_map_mut`; every such read names `Entries::built_map` or `built_map_mut`)
     // builds the map once, O(n), which the copies share, as a range's (`Span::map`). Tradeoffs:
     // a leaf per list joined, never merged with its neighbors, so a
     // chain of one-entry lists holds a leaf, a one-entry map and O(1) tree nodes per entry; and a
@@ -1770,7 +1775,7 @@ mod chain {
                 match &*t.0 {
                     // A leaf is a map or a range, never made by `++` (`join`); a range's
                     // entries are its own map, built once and kept with it (`Span::map`).
-                    ChainTree::Leaf(f) => self.leaf = Some(f.0.iter()),
+                    ChainTree::Leaf(f) => self.leaf = Some(f.0.built_map().iter()),
                     _ => self.todo.extend(t.parts().rev()),
                 }
             }
@@ -2258,13 +2263,13 @@ impl Family {
     pub fn leaves(&self) -> Vec<(Keypath, Value)> {
         let mut out = Vec::new();
         let mut prefix = Vec::new();
-        let mut level = self.0.iter();
+        let mut level = self.0.built_map().iter();
         let mut above = Vec::new();
         loop {
             match level.next() {
                 Some((k, Value::Family(sub))) if !sub.is_empty() => {
                     prefix.push(k.clone());
-                    above.push(mem::replace(&mut level, sub.0.iter()));
+                    above.push(mem::replace(&mut level, sub.0.built_map().iter()));
                 }
                 Some((k, leaf)) => {
                     prefix.push(k.clone());
@@ -2291,8 +2296,8 @@ impl Family {
         }
         // Copied only when it holds a `-0.0`, which its key does not.
         match k.is_key() {
-            true => self.0.get(k),
-            false => self.0.get(&k.key()),
+            true => self.0.built_map().get(k),
+            false => self.0.built_map().get(&k.key()),
         }
     }
 
@@ -2355,12 +2360,12 @@ impl Family {
 
     /// The top-level entries, in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
-        self.0.iter()
+        self.0.built_map().iter()
     }
 
     /// The top-level keys, in order.
     pub fn keys(&self) -> impl Iterator<Item = &Value> {
-        self.0.keys()
+        self.0.built_map().keys()
     }
 
     /// The union of two families: the leaves of both, where a keypath both write holds the
@@ -2431,12 +2436,12 @@ impl Family {
     pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
         for (k, v) in entries {
             debug_assert!(
-                self.0.get(&k).is_none_or(|old| *old == v),
+                self.0.built_map().get(&k).is_none_or(|old| *old == v),
                 "an entry of the family is replaced by another value"
             );
-            self.0.insert(k, v);
+            self.0.built_map_mut().insert(k, v);
         }
-        if !self.0.is_empty() {
+        if !self.is_empty() {
             self.2 = self.1;
             self.1 = fresh_id();
         }
@@ -2463,7 +2468,7 @@ impl Family {
         COMPARISONS.with(|c| c.shallow.set(true));
         let _shallow = Shallow;
         let mut out = Vec::new();
-        for d in self.0.diff(&other.0) {
+        for d in self.0.built_map().diff(other.0.built_map()) {
             if out.len() >= limit {
                 return None;
             }
@@ -2479,7 +2484,9 @@ impl Family {
     /// exactly.
     pub fn len(&self) -> usize {
         match &self.0 {
-            Entries::Range(s) => usize::try_from(s.size()).unwrap_or_else(|_| self.0.len()),
+            Entries::Range(s) => {
+                usize::try_from(s.size()).unwrap_or_else(|_| self.0.built_map().len())
+            }
             Entries::From(_) => walked_unbounded(),
             Entries::Seq(c) => c.len(),
             Entries::Map(m) => m.len(),
@@ -2633,8 +2640,8 @@ impl HeldFamily {
     /// The entry of the least top-level key, or the greatest when `last`.
     pub fn end(&self, last: bool) -> Option<(&Value, HeldEntry<'_>)> {
         let e = match last {
-            false => self.all.0.get_min(),
-            true => self.all.0.get_max(),
+            false => self.all.0.built_map().get_min(),
+            true => self.all.0.built_map().get_max(),
         };
         e.map(|(k, v)| (k, self.entry(k, v)))
     }
@@ -2643,8 +2650,8 @@ impl HeldFamily {
     /// `after`; `k` need not be a key.
     pub fn beside(&self, k: &Value, after: bool) -> Option<(&Value, HeldEntry<'_>)> {
         let e = match k.is_key() {
-            true => self.all.0.beside(k, after),
-            false => self.all.0.beside(&k.key(), after),
+            true => self.all.0.built_map().beside(k, after),
+            false => self.all.0.built_map().beside(&k.key(), after),
         };
         e.map(|(k, v)| (k, self.entry(k, v)))
     }
@@ -2678,9 +2685,9 @@ impl<'a> Merging<'a> {
         let (big, small) = if small_is_b { (a, b) } else { (b, a) };
         Merging {
             big,
-            left: small.0.iter(),
+            left: small.0.built_map().iter(),
             small_is_b,
-            out: (*big.0).clone(),
+            out: big.0.built_map().clone(),
         }
     }
 }
@@ -2715,7 +2722,7 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
             continue;
         };
         let big = level.big;
-        let Some(g) = big.0.get(k) else {
+        let Some(g) = big.0.built_map().get(k) else {
             level.out.insert(k.clone(), s.clone());
             continue;
         };
@@ -2727,13 +2734,17 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
             }
             (Value::Family(_), _) => return Err(collision(&prefix)),
             (_, Value::Family(y)) => {
-                let mut sub = y;
+                // The least keypath of `y` is read by the first entry of each level, O(log n) on
+                // a list made by `++` and O(1) on a range, open or not: none builds its map
+                // (plan row TEST-list-map-build-callers-complete; `get_min` on the built map was
+                // O(n) there, and stopped on an open range, which is never walked).
+                let mut sub = y.clone();
                 loop {
                     // A leaf of `x` above an empty level of `y` collides at the leaf's keypath.
-                    let Some((k, v)) = sub.0.get_min() else {
+                    let Some((k, v)) = sub.end_entry(false) else {
                         return Err(collision(&prefix));
                     };
-                    prefix.push(k.clone());
+                    prefix.push(k);
                     match v {
                         Value::Family(f) => sub = f,
                         _ => return Err(collision(&prefix)),
@@ -3102,7 +3113,7 @@ fn open<'a>(
             }
             let pairs = match unbuilt {
                 true => Pairs::Sides(Side::of(a), Side::of(b)),
-                false => Pairs::Zip(a.0.zip(&b.0)),
+                false => Pairs::Zip(a.0.built_map().zip(b.0.built_map())),
             };
             maps.push(MapLevel {
                 pairs,
@@ -3141,7 +3152,7 @@ impl<'a> Side<'a> {
     fn of(f: &'a Family) -> Side<'a> {
         match &f.0 {
             Entries::Seq(c) if c.map.get().is_none() => Side::Seq(c.values(), 0),
-            _ => Side::Map(f.0.iter()),
+            _ => Side::Map(f.0.built_map().iter()),
         }
     }
 
@@ -3517,7 +3528,7 @@ fn settle(c: &Comparisons, same: bool) -> bool {
     let mut all = same;
     let pop = || c.pairs.borrow_mut().pop();
     while all && let Some((a, b)) = pop() {
-        all = a.0.diff(&b.0).next().is_none();
+        all = a.0.built_map().diff(b.0.built_map()).next().is_none();
     }
     c.comparing.set(false);
     let left = mem::take(&mut *c.pairs.borrow_mut());
@@ -3770,10 +3781,10 @@ fn show_atom<'a>(a: &'a Atom, todo: &mut Vec<Task<'a>>) {
 
 fn show_family<'a>(fam: &'a Family, todo: &mut Vec<Task<'a>>) {
     // A set, each leaf its own key (`k -> k`), is written by its members.
-    let set = !fam.is_empty() && fam.0.iter().all(|(k, v)| k == v);
+    let set = !fam.is_empty() && fam.iter().all(|(k, v)| k == v);
     todo.push(Task::Text("}"));
     let last = fam.len();
-    for (i, (k, v)) in fam.0.iter().rev().enumerate() {
+    for (i, (k, v)) in fam.0.built_map().iter().rev().enumerate() {
         if !set {
             todo.extend([Task::Show(v), Task::Text(" -> ")]);
         }
@@ -3828,7 +3839,7 @@ fn debug_list<'a>(todo: &mut Vec<Task<'a>>, list: &'a [Value], close: &'static s
 fn debug_family<'a>(fam: &'a Family, todo: &mut Vec<Task<'a>>) {
     todo.push(Task::Text("})"));
     let last = fam.len();
-    for (i, (k, v)) in fam.0.iter().rev().enumerate() {
+    for (i, (k, v)) in fam.0.built_map().iter().rev().enumerate() {
         todo.extend([Task::Debug(v), Task::Text(": "), Task::Debug(k)]);
         if i + 1 < last {
             todo.push(Task::Text(", "));

@@ -426,6 +426,55 @@ fn a_joined_list_as_a_key_builds_no_map() {
     assert_eq!(unflattened(Prim::Get, vec![keyed, flat(3)]), int(3));
 }
 
+/// A union that holds a list made by `++` beneath a key builds no map of that list when it does
+/// not read the list's entries: beside a key the other side lacks, the list is shared whole; under
+/// a leaf of the other side, the collision is at the list's first keypath, read in O(log n) (plan
+/// row TEST-list-map-build-callers-complete). An open range there is read by its first entry too,
+/// not walked.
+#[test]
+fn a_union_holding_a_joined_list_builds_no_map() {
+    use zed_kernel::KernelError;
+    let n = 50;
+    let at = |k: i64, v: Value| Family::of([(int(k), v)]);
+    let unbuilt = |a: &Family, b: &Family| {
+        let before = zed_kernel::value::lists_flattened();
+        let out = a.union(b);
+        assert_eq!(
+            zed_kernel::value::lists_flattened(),
+            before,
+            "{a} ∪ {b} built a map"
+        );
+        out
+    };
+    let both = unbuilt(&at(0, joined(n)), &at(1, int(5))).unwrap();
+    assert_eq!(
+        unflattened(Prim::Count, vec![Value::Family(both.clone())]),
+        int(2)
+    );
+    assert_eq!(
+        unflattened(Prim::Get, vec![Value::Family(both), int(0)]),
+        joined(n)
+    );
+    let collision = |keypath: Vec<Value>| KernelError::Collision { keypath };
+    assert_eq!(
+        unbuilt(&at(0, int(1)), &at(0, joined(n))).unwrap_err(),
+        collision(vec![int(0), int(0)])
+    );
+    let nested = |v: Value| {
+        let one = |v: Value| Family::of([(int(0), v)]);
+        Value::Family(one(v).concat(&one(int(7))).unwrap())
+    };
+    assert_eq!(
+        unbuilt(&at(0, int(1)), &at(0, nested(joined(n)))).unwrap_err(),
+        collision(vec![int(0), int(0), int(0)])
+    );
+    let open = Value::Family(Family::range_from(int(3)));
+    assert_eq!(
+        unbuilt(&at(0, int(1)), &at(0, open)).unwrap_err(),
+        collision(vec![int(0), int(3)])
+    );
+}
+
 /// A walk over every entry builds the map of a list made by `++` once, O(n), which the copies of
 /// the list share: printing it twice builds one map, and its text is the one map's.
 #[test]
