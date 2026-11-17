@@ -529,7 +529,7 @@ pub struct Info {
     /// where two functions the value may hold take the arguments in different places or fill
     /// a parameter left out from different defaults, or one fills it with a default that reads
     /// its other parameters or its declaration's scope; for a curried call, also where they
-    /// name any of their parameters differently (row CALL-curried-placed, [`Ck::record_call`]
+    /// name any of their parameters differently (row CALL-curried-placed, `Ck::record_call`
     /// and `unaligned` in walk.rs). Every other call through a value is
     /// placed by its recorded signature (`calls`) when it is compiled.
     pub placed: HashSet<Span>,
