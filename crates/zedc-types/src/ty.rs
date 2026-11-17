@@ -8114,9 +8114,21 @@ impl<'m, 's> Comparing<'m, 's> {
     /// comparison reads one pair twice, so the fresh refusal is given first and the kept one
     /// second. Either alone gives the right message there; with both taken out the call is
     /// wrongly said not to fit. The refusal of a verdict kept by readings (`fitted_read`) is
-    /// reached by no test: that program, one with a second level of nesting, and one with the
-    /// function as a parameter beside `x: T` reach only the other two
-    /// (TYPES-fits-read-key-refusal). Each costs O(1) more than the verdict it gives.
+    /// reached by `a_refused_comparison_met_again_under_new_names_keeps_its_refusal` there
+    /// (TYPES-fits-read-key-refusal): the pair of `h` parameters is refused one way and fits
+    /// the other, and the reverse comparison of the outer pair reads the two signatures again
+    /// under new names in the refused direction. A pair is met under new names only where its
+    /// types are read again; two arrows of an overload, each with its parameter written out,
+    /// hold separate signatures there, so they do not share a key (a type alias used by both
+    /// was not tried). With that refusal taken out the test, and all 1104 programs of its search,
+    /// give the same answers and messages, for two reasons, each enough there: the reverse
+    /// comparison runs after the comparison around is refused, and [`Self::end_alone`] puts
+    /// that refusal back; and the hit also writes the verdict, refusal and all, into `fitted`,
+    /// whose next meeting of the same names in the attempt refuses it. Kept all the same: a
+    /// verdict without its refusal would be a false decided where the comparison was not, kept
+    /// for the pair around in `fitted` and `fitted_read`, and wrong wherever it is read with
+    /// nothing refused, which no path found yet does. Each costs O(1) more than the verdict it
+    /// gives.
     async fn fits_read(&'m self, v: &Arc<str>, s: &Arc<Sig>, se: &Env, w: &Arc<str>) -> bool {
         let key = (v.clone(), w.clone());
         let (q, qe) = {
