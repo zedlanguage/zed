@@ -115,6 +115,8 @@ mod one_row;
 mod pairs;
 #[cfg(test)]
 mod pick_wide_tests;
+#[cfg(test)]
+mod tie_group_tests;
 // Public and not re-exported here: placing.rs reads `Formula::and`, whose impl is in this file,
 // so a `use` of it here would make an import cycle (S1F-presburger-placing-cycle).
 pub mod placing;
@@ -15234,13 +15236,16 @@ fn splinters(
 /// the tie. For a swap, the swaps of the first tied variable with each other one are those
 /// [`Omega::untie`] checked, as before. For the symmetries [`System::symmetries`] found: the
 /// symmetries of the rows at the tie that also map these rows onto themselves form a group
-/// `K`; the found ones make the whole group of symmetries of the rows (proved at
-/// [`System::symmetries`]: they make the stabilizer of the first tied variable `x` and reach
-/// its whole orbit), so every such symmetry lies in `K` exactly when each found one does.
-/// That group sends `x` only into the tie: a symmetry keeps each variable's fill, color and
-/// set of ranks (the colors after [`System::rekey`] too, since its refinement is canonical),
-/// and the tie holds every variable of the least fill and color in those sets
-/// ([`System::least`]). Whichever generators are found, they make this one group.
+/// `K`, and the found ones make a group `H` that is the same for every choice of first tied
+/// variable and every set of generators found, and turns into `π·H·π⁻¹` under a renaming `π`
+/// (proved at [`System::symmetries`]: `H` is the group the symmetries sending the first tied
+/// variable into the tie make), so `H` lies in `K` exactly when each found one does, under
+/// every naming alike. `H` is the whole group of symmetries of the rows when they send the
+/// first tied variable only into the tie, which needs the ranks that made the tie to be kept
+/// by every symmetry (an assumption at [`System::symmetries`] for the counts of
+/// [`System::shrinking`]); the verdict here does not need it. A swap of the whole tie, and
+/// the swaps of a tie split by [`System::rekey`], make every permutation of the tied
+/// variables, which no naming changes either.
 ///
 /// Complexity tradeoff: the rows are indexed once by the variables the symmetries move,
 /// O(r·w log v) for r rows of w terms, and each symmetry then compares the rows of the
@@ -16489,7 +16494,9 @@ impl System {
     /// [`System::symmetries`] then looks at, and the argument of [`Omega::untie`], see the
     /// same colors. Two variables of one old color can only get distinct colors, and two of
     /// distinct old colors keep their order, so a variable that was not of least fill and
-    /// color among the ranks is still not.
+    /// color among the ranks is still not. Checked under every naming, and against every
+    /// symmetry found by trying all permutations, for every system of a stated family:
+    /// `tie_group_tests`.
     ///
     /// Complexity tradeoff: naive version, refine the rows at each step that ties, O(N log N)
     /// per step: on a cycle of n variables turned one way, which ties at every step once one
@@ -16590,11 +16597,32 @@ impl System {
     /// does and `Stab(x)` sends `z0` to all of `C`) and `Aut` sends `x` to every tied
     /// variable. Both parts are kept when `x` is replaced by its image under a symmetry, or
     /// `z0` by another member of `C` in its orbit, and a renaming of the variables keeps
-    /// them as it keeps the colors, so they hold for every choice when they hold for one. The
-    /// permutations found make `Stab(x)` and send `x` to every tied variable; since `Aut`
-    /// sends `x` only into the tie (the tied variables are those of least fill and color
-    /// among the ranks, which a symmetry keeps), they make all of `Aut`: its size is the
-    /// number of images of `x` times `|Stab(x)|`. [`broken_swap`] needs this.
+    /// them as it keeps the colors, so they hold for every choice when they hold for one.
+    ///
+    /// The group the permutations found make. Write `T` for the tied variables and `S_T` for
+    /// the symmetries `g` of `Aut` with `g(x)` in `T`. Every permutation found is in `S_T`
+    /// (those of the first loop keep `x`, those of the second send it to a tied `y`), so they
+    /// make a group `H` within the group `S_T` makes. Conversely, they make `Stab(x)` (above)
+    /// and hold, for each `y` of `T`, some `r_y` with `r_y(x) = y`, so each `g` of `S_T` is
+    /// `r_y·s`, `y = g(x)`, with `s = r_y⁻¹·g` in `Stab(x)`: `H` holds `S_T`, and `H` is the
+    /// group `S_T` makes. That group does not depend on which tied variable is `x`: for
+    /// another, `x' = r(x)` with `r` in `S_T` (one is in `H` when the answer is not `None`),
+    /// the set for `x'` is `S_T·r⁻¹`; it makes `r⁻¹ = id·r⁻¹` (the identity is in `S_T`), so
+    /// each `s = (s·r⁻¹)·r` of `S_T`, and `S_T` makes each `s·r⁻¹`, since `r` is in `S_T`:
+    /// the two sets make one group. A renaming `π` of the
+    /// variables turns it into `π·H·π⁻¹`. So `H`, unlike the permutations found, is the same
+    /// for every choice and every naming. When `Aut` sends `x` only into `T`, `S_T` is all of
+    /// `Aut` and `H = Aut`, of `|T|·|Stab(x)|` elements. That holds when the ranks that made
+    /// the tie are kept by every symmetry: the fill of [`Sides::fill`] and the colors are
+    /// functions of the rows (and the colors of the variables), but the counts of
+    /// [`System::shrinking`] are renewed only for the variables [`System::refresh`] marks,
+    /// and [`System::shrink`] also reads rows of other variables (`lengths`, the rows held):
+    /// Assumption, not proved (PROOF-shrink-counts-current): the counts are current when
+    /// [`System::least`] reads them, or else differ alike for two variables a symmetry maps
+    /// onto each other. If false, `H` may be smaller than `Aut`, but it is still the group
+    /// `S_T` makes, so [`broken_swap`], which needs only that, gives the same verdict under
+    /// every naming. Checked against all permutations of the variables, for every system of
+    /// a stated family, under every naming: `tie_group_tests`.
     ///
     /// Complexity tradeoff: naive version, refine from each tied variable in turn, one
     /// refinement per tied variable, O(t·N log N) for t tied variables and N vertices, which
@@ -18686,7 +18714,9 @@ impl Omega {
     // loop after the tie to read only the rows and the flags that hold no variable, and each
     // step to be the same under a renaming of the variables (the invariant [`solve`] states).
     // No proof covers every step, and a step added later that reads a variable's index would
-    // break it. Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
+    // break it. The counts of `System::shrinking` are a read that is not of the rows alone:
+    // they are renewed only for the variables `System::refresh` marks, and `System::touch`
+    // marks by the least number of rows, then the least index (PROOF-shrink-counts-current). Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
     // (200 random symmetric systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
     // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an
