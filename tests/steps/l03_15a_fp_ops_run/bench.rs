@@ -223,8 +223,9 @@ fn one(x: usize) -> Value {
 }
 
 /// `(a, b) -> a ++ b` with the body zedc elaborates `a ++ b` to on two lists of `int`. The
-/// chain is built here, not by zedc: zedc does not compile `++` on a fold's accumulator yet
-/// ("`++` on `a`, whose type is generic here").
+/// chain is built here, as `let`s, with no fold around it; the folds zedc compiles since plan
+/// row FP-ops-concat-fold-acc are timed by
+/// [`a_left_fold_building_a_list_by_concatenation_runs_in_n_log_n`] and the test after it.
 fn elaborated_concat() -> Term {
     let unit = elab("a = [0];\nb = [0];\nq = a ++ b;").unwrap_or_else(|e| panic!("{e:?}"));
     let def = |name: &str| unit.defs.iter().find(|d| d.name == name).unwrap();
@@ -291,6 +292,37 @@ fn a_left_nested_chain_of_concatenations_runs_in_n_log_n() {
     concat_chain_ratio(
         false,
         "n elaborated `a ++ [x]`, each on the list made by the one before, instructions",
+    );
+}
+
+/// The term zedc elaborates the fold `q` to, which builds the list of `xs`'s n entries back by
+/// `++` on its accumulator (plan row FP-ops-concat-fold-acc), run at n and 8n and held under
+/// the limit for n log n work: each `++` adds one entry to the shared tree, O(log n), as in
+/// the chains above.
+fn fold_concat_ratio(what: &str, q: &str) {
+    let terms = elaborated(&format!("xs = [0, 1, 2];\nq = {q};"));
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        let want = Family::of((0..k as i64).map(|i| (i, i)));
+        assert_eq!(v, Value::Family(want));
+    };
+    scaling::check(what, N_KERNEL, run);
+    ratio(&format!("{what}, instructions"), N_KERNEL, 1, run);
+}
+
+#[test]
+fn a_left_fold_building_a_list_by_concatenation_runs_in_n_log_n() {
+    fold_concat_ratio(
+        "the elaborated `xs.foldl([], (a, x) -> a ++ [x])` over n entries",
+        "xs.foldl([], (a, x) -> a ++ [x])",
+    );
+}
+
+#[test]
+fn a_right_fold_building_a_list_by_concatenation_runs_in_n_log_n() {
+    fold_concat_ratio(
+        "the elaborated `xs.foldr((x, a) -> [x] ++ a, [])` over n entries",
+        "xs.foldr((x, a) -> [x] ++ a, [])",
     );
 }
 
@@ -783,6 +815,61 @@ fn a_chain_of_n_generic_functions_passing_on_the_string_words_runs_in_linear_tim
     scaling::check(
         "a chain of n generic functions passing a string and a separator to `split`, `concat` \
          and `lines`, whole path",
+        N_CALLS,
+        run,
+    );
+}
+
+/// `++` on a generic function's parameter beside a list, checked at each call by one need
+/// (plan row FP-ops-concat-fold-acc).
+const CONCAT: &str = "app(positional a) = a ++ [1];\n";
+
+#[test]
+fn n_calls_of_a_generic_function_of_concatenation_run_in_linear_time() {
+    // The calls alternate a list and a range, so each call's need is checked on its own type.
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = app([{i}])[0];\n"),
+                _ => format!("x{i} = app(0 ..< {i})[{i}];\n"),
+            })
+            .collect::<String>();
+        format!("{CONCAT}{calls}")
+    });
+    let run = |n: usize| {
+        let i = n - 1;
+        let want = match i % 2 {
+            0 => i.to_string(),
+            _ => "1".to_string(),
+        };
+        assert_eq!(value(&srcs[&n], &format!("x{i}")), want);
+    };
+    scaling::check(
+        "n calls of a generic function of `++`, alternately on a list and a range, whole path",
+        N_CALLS,
+        run,
+    );
+}
+
+#[test]
+fn a_chain_of_n_generic_functions_passing_on_concatenation_runs_in_linear_time() {
+    // `app`'s need waits on `g0`'s parameter, and each `g{i}` passes it on, so it is checked
+    // once at each of the two calls at the chain's top (plan row FP-ops-concat-fold-acc).
+    let srcs = scaling::inputs(N_CALLS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("g{i}(positional a) = g{}(a);\n", i - 1))
+            .collect::<String>();
+        let top = n - 1;
+        format!(
+            "{CONCAT}g0(positional a) = app(a);\n{chain}\
+             a = (g{top}([5])[1], g{top}(0 ..< 2)[2]);\n"
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "a"), "(1, 1)");
+    };
+    scaling::check(
+        "a chain of n generic functions passing a list and a range to `++`, whole path",
         N_CALLS,
         run,
     );

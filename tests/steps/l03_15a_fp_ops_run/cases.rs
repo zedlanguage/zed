@@ -977,20 +977,20 @@ fn split_with_else_on_a_line_of_standard_input_runs() {
     );
 }
 
-/// A built-in word on a parameter whose type is not written is not compiled yet; the message
-/// names the operand by its code and calls its type generic, as the string words do, not a
-/// type parameter, which the program does not write (plan row MSG-generic-operand-wording).
-/// `concat(xs)` was the example until plan row FP-ops-generic-strings compiled it; `++` is not
-/// compiled on such a parameter yet.
+/// A built-in word on a parameter whose type is not written was not compiled; its message named
+/// the operand by its code and called its type generic, not a type parameter, which the program
+/// does not write (plan row MSG-generic-operand-wording). `concat(xs)` was the example until
+/// plan row FP-ops-generic-strings compiled it, and `xs ++ ["a"]` until plan row
+/// FP-ops-concat-fold-acc compiled that: the word is now met at each call, here on `["b"]`.
 #[test]
 fn a_word_on_an_untyped_parameter_names_the_parameter() {
     let src = "f(positional xs) = xs ++ [\"a\"];\nmain(m: MainArgs) {\n  m.stdout <- concat(f([\"b\"]));\n}\n";
     let out = run("fp_ops/generic_levels", src, "", &[]);
-    let want = "`++` on `xs`, whose type is generic here, is part of";
     assert!(
-        out.status != 0 && out.stderr.contains(want) && !out.stderr.contains("type parameter"),
-        "status {}\n{}",
+        out.status == 0 && out.stdout.trim_end() == "ba",
+        "status {}\n{}{}",
         out.status,
+        out.stdout,
         out.stderr
     );
 }
@@ -1670,4 +1670,68 @@ fn a_range_end_is_known_only_where_every_run_gives_it() {
         let (status, said) = ran(&format!("range_end_unknown_{i}"), src);
         assert!(status != 0 && said.contains(nothing), "{src}\n{said}");
     }
+}
+
+/// Step L5.2: `++` on a fold's accumulator, from either side (row FP-ops-concat-fold-acc).
+#[test]
+fn concatenation_on_a_fold_accumulator_builds_the_list() {
+    prints(
+        "concat_fold",
+        &[
+            (
+                "[1, 2, 3].foldl([], (a, x) -> a ++ [x]) == [1, 2, 3]",
+                "true",
+            ),
+            (
+                "[1, 2, 3].foldl([], (a, x) -> [x] ++ a) == [3, 2, 1]",
+                "true",
+            ),
+            (
+                "[1, 2, 3].foldr((x, a) -> [x] ++ a, []) == [1, 2, 3]",
+                "true",
+            ),
+        ],
+    );
+}
+
+/// Step L5.2: `++` on an operand whose type is generic, beside a list, is the list join on
+/// each type the operand is given: an accumulator that starts with entries, a range, the list
+/// printed, and a generic function's parameter, called with a list, a range and `[]` (row
+/// FP-ops-concat-fold-acc). On two generic operands it is the string join, as on two strings.
+/// A string given where a list is joined is rejected at the call.
+#[test]
+fn concatenation_on_a_generic_operand() {
+    prints(
+        "concat_generic",
+        &[
+            ("[1, 2].foldl([0], (a, x) -> a ++ [x]) == [0, 1, 2]", "true"),
+            (
+                "(0 ..< 3).foldl([], (a, x) -> a ++ [x * 2]) == [0, 2, 4]",
+                "true",
+            ),
+            // Printed as the literal `[1, 2, 3]` is.
+            (
+                "[1, 2, 3].foldl([], (a, x) -> a ++ [x])",
+                "{0 -> 1, 1 -> 2, 2 -> 3}",
+            ),
+            ("[1, 2, 3].foldl([], (a, x) -> a ++ [x]).count", "3"),
+            ("[\"a\", \"b\"].foldl(\"\", (a, x) -> a ++ x)", "ab"),
+        ],
+    );
+    let main = |body: &str| format!("main(m: MainArgs) {{\n  m.stdout <- \"{body}\";\n}}\n");
+    let defs = "app(positional a) = a ++ [1];\npre(positional a) = [9] ++ a;\n";
+    let src = format!(
+        "{defs}{}",
+        main("${app([0]) == [0, 1]} ${app(0 ..< 2) == [0, 1, 1]} ${app([]).count} ${pre([1])}")
+    );
+    assert_eq!(
+        ran("concat_generic_fn", &src),
+        (0, "true true 1 {0 -> 9, 1 -> 1}\n".into())
+    );
+    let src = format!("{defs}{}", main("${app(\"s\")}"));
+    let (status, said) = ran("concat_generic_fn_string", &src);
+    assert!(
+        status != 0 && said.contains("`++` joins two lists or two strings"),
+        "{said}"
+    );
 }

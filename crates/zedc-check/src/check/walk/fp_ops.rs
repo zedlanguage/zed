@@ -1173,7 +1173,84 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// known the keys are `0 ..< n + m`, each sure; otherwise the result is `int ->? V`, as a
     /// range is. A string beside a list, or a family whose keys are not ranks, as a `where`
     /// result, is rejected.
-    pub(super) fn list_concat_end(&mut self, x: &Arg<'a>, y: &Arg<'a>, span: Span) -> Ty {
+    ///
+    /// `site` is where the `++` is written, which elaboration builds as a list join on
+    /// success; `None` where `meet` checks a [`NeedKind::Concat`] at `span`, the `++` having
+    /// been recorded where it is written. `need` is `Ck::need`, passed in as at
+    /// [`Self::strings_end`].
+    ///
+    /// Each variable of an operand takes the `++` as `.sum` takes a variable
+    /// (`Ck::level_word`, row FP-ops-concat-fold-acc): a class resolved to a type takes it on
+    /// that type; one not yet resolved records it as a need on its class, met at each call of
+    /// the generic function, and at each application of a lambda such as a fold's, on the
+    /// type the call gives it; a variable with no class, which a written type parameter is,
+    /// is not compiled yet. The rest of the operand takes it as it stands, and the results are
+    /// joined: `++` is checked piece by piece, so the join of the pieces' results holds the
+    /// whole's. A `++` with an operand that may be a family is a list join wherever it is
+    /// met, since a string beside a list is rejected, so it is recorded at `site` with the
+    /// need, before any call shows the variable's type.
+    // Complexity tradeoff: one need or one recursion per variable of each operand, plus one
+    // check of the rest, as at `level_word`; the check itself is O(arrows) per family. The
+    // naive method, refusing a variable (what this did before row FP-ops-concat-fold-acc),
+    // costs nothing but refuses every list built by `++` in a fold. Proof that the recursion
+    // ends: the rest of an operand holds no variable, and a class is resolved to a type that
+    // holds none (the invariant at `Class::resolved`), so each recursive call has one operand
+    // fewer with a variable; `need` records each pair of a class and a use once, before it
+    // checks the use on the values that flowed in (the visited set of P207), as at
+    // `level_word`.
+    pub(super) fn list_concat_end(
+        &mut self,
+        x: &Arg<'a>,
+        y: &Arg<'a>,
+        span: Span,
+        site: Option<Span>,
+        need: NeedFn<'t, 'a>,
+    ) -> Ty {
+        for (side, this) in [x, y].into_iter().enumerate() {
+            if this.ty.vars.is_empty() {
+                continue;
+            }
+            let that = [x, y][1 - side];
+            // The operand `this` with the type `t` in its place, `++` checked on it.
+            let with = |ck: &mut Self, t: Ty| {
+                let mut a = this.clone();
+                a.ty = t;
+                let (a, b) = if side == 0 { (&a, that) } else { (that, &a) };
+                ck.list_concat_end(a, b, span, site, need)
+            };
+            let mut rest = this.ty.clone();
+            rest.vars = VarSet::new();
+            let mut out = match rest.is_empty() {
+                true => Ty::empty(),
+                false => with(self, rest),
+            };
+            for v in this.ty.vars.iter() {
+                let t = match self
+                    .class_root(v)
+                    .map(|r| (r, self.classes[r].resolved.clone()))
+                {
+                    Some((_, Some(t))) => with(self, t),
+                    Some((r, None)) => {
+                        if let Some(s) = site
+                            && !self.trying
+                        {
+                            self.info.list_concats.insert(s);
+                        }
+                        let kind = NeedKind::Concat {
+                            other: that.ty.clone(),
+                            first: side == 0,
+                        };
+                        need(self, r, kind, true, span)
+                    }
+                    None => {
+                        self.generic_operand(this, span);
+                        return Ty::empty();
+                    }
+                };
+                out = out.union(&t);
+            }
+            return out;
+        }
         let word = "`++`";
         let out =
             (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
@@ -1207,13 +1284,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return Ty::empty();
                     }
                     Piece::Dyn => self.any(word, span),
-                    // As at `levels_of`: the program may write no type parameter.
+                    // The variables were taken out above; the arm stays for completeness.
                     Piece::Var(_) => {
-                        let what = match self.operand_text(a.at) {
-                            Some(c) => format!("`++` on `{c}`, whose type is generic here,"),
-                            None => "`++` on a value whose type is generic here".to_string(),
-                        };
-                        self.error(span, zedc_base::rejection::not_yet(&what));
+                        self.generic_operand(a, span);
                         return Ty::empty();
                     }
                     p if p.is_atoms() => {}
@@ -1300,10 +1373,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig.data = true;
         sig.dense = Dense::Ranks;
         sig.note_held();
-        if !self.trying {
-            self.info.list_concats.insert(span);
+        if let Some(s) = site
+            && !self.trying
+        {
+            self.info.list_concats.insert(s);
         }
         out.union(&Ty::func(Arc::new(sig)))
+    }
+
+    /// The error for `++` on the operand `a`, whose type is a variable of no class, as a
+    /// written type parameter's. As at `levels_of`, the program may write no type parameter,
+    /// so the operand's type is called generic.
+    fn generic_operand(&mut self, a: &Arg<'a>, span: Span) {
+        let what = match self.operand_text(a.at) {
+            Some(c) => format!("`++` on `{c}`, whose type is generic here,"),
+            None => "`++` on a value whose type is generic here".to_string(),
+        };
+        self.error(span, zedc_base::rejection::not_yet(&what));
     }
 
     /// `a.zip(b)` (step L5.2; DESIGN.md sec:joins): the equality join on keys,

@@ -5972,7 +5972,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `++` where an operand may be a family joins lists (step L5.2); on two strings it is
         // the operator of `op_sig`.
         if op == BinaryOp::Concat && [&x.ty, &y.ty].iter().any(|t| t.fns.iter().any(|s| s.data)) {
-            return self.list_concat_end(&x, &y, span);
+            return self.list_concat_end(&x, &y, span, Some(span), Self::need);
         }
         // An operand that is a literal without a suffix is generic: it takes the carrier of the
         // other operand, at run time where that is a type variable (step L1.26a). Under `==`
@@ -11991,6 +11991,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let other = self.bound(other, binds);
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
                 self.min_max_tuples(what, &word_sig(word), x, y, [None, None], span)
+            }
+            NeedKind::Concat { other, first } => {
+                // The value's variable stands for `on` in the other operand too, as in `a ++ a`,
+                // as at `Strings`. The `++` was recorded as a list join where it is written
+                // ([`Self::list_concat_end`]), so the check here records nothing.
+                let mut binds = binds.clone();
+                if let Some(v) = n.on.as_var() {
+                    binds.insert(v.clone(), on.clone());
+                }
+                let other = Arg::of(self.bound(other, &mut binds));
+                let on = Arg::of(on);
+                let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
+                self.list_concat_end(x, y, span, None, Self::need)
             }
         };
         self.replaying -= 1;

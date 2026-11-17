@@ -1648,6 +1648,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(first),
             Dbg::Text(" }"),
         ]),
+        NeedKind::Concat { other, first } => parts.extend([
+            Dbg::Text("Concat { other: "),
+            Dbg::Ty(other),
+            Dbg::Text(", first: "),
+            Dbg::Leaf(first),
+            Dbg::Text(" }"),
+        ]),
         k @ (NeedKind::Destructure { .. }
         | NeedKind::Data(..)
         | NeedKind::Payload { .. }
@@ -4222,6 +4229,17 @@ pub enum NeedKind {
         /// The types of the operands.
         tys: Vec<Ty>,
     },
+    /// `a ++ b` with the value as one operand and a value of `other`, which may be a list, as
+    /// the other: the value is the first operand if `first` (step L5.2, DESIGN.md sec:joins,
+    /// ordered concatenation; row FP-ops-concat-fold-acc). It is met as the `++` itself is,
+    /// with the value's type in its place: each family a list, the result the list of the
+    /// first's entries and then the second's, and a string beside a list rejected.
+    Concat {
+        /// The other operand's type.
+        other: Ty,
+        /// Whether the value is the first operand.
+        first: bool,
+    },
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
     /// argument in the domain, or passes on a parameter of its own, whose calls then show them
@@ -4645,6 +4663,10 @@ impl Need {
                     other: f(other),
                     first: *first,
                 },
+                NeedKind::Concat { other, first } => NeedKind::Concat {
+                    other: f(other),
+                    first: *first,
+                },
             },
             result: self.result.as_ref().map(f),
             span: self.span,
@@ -4710,6 +4732,7 @@ impl Need {
             | NeedKind::Narrow(_) => (None, &[], &[]),
             NeedKind::Index(k)
             | NeedKind::Order { other: k, .. }
+            | NeedKind::Concat { other: k, .. }
             | NeedKind::Map { f: k, .. }
             | NeedKind::Group { f: k, .. }
             | NeedKind::Level { f: k, .. }
@@ -4748,6 +4771,7 @@ impl Need {
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
+            | NeedKind::Concat { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 positional, named, ..
@@ -4785,6 +4809,7 @@ impl Need {
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
+            | NeedKind::Concat { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 mut positional,
