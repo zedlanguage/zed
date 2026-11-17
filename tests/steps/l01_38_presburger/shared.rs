@@ -1205,7 +1205,7 @@ fn chains_and_shifted_pairs_of_the_benchmarks_compare_at_small_depths() {
 #[test]
 fn formula_67_of_seed_15455823323744612893_gets_one_set_for_d_however_written() {
     use zedc::store::interval::IntervalSet;
-    use zedc::store::presburger::exact::project_each_exact;
+    use zedc::store::presburger::project_each_exact;
     use zedc::store::presburger::{Refusal, UNFACTORED};
     let f = tiers_formula(15_455_823_323_744_612_893, 67);
     let syms: Vec<Atom> = ["a", "b", "c", "d"].map(|n| Atom::Sym(n.into())).into();

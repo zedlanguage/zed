@@ -620,7 +620,7 @@ pub(super) fn rays(
         }));
         work.read(size + row_terms)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-        let Ok(Some(d)) = super::super::satisfiable(&Formula::and(ask)) else {
+        let Ok(Some(d)) = (work.solver.satisfiable)(&Formula::and(ask)) else {
             continue;
         };
         let g = d.get(s).cloned().unwrap_or_else(|| Int::from(0)).abs();
@@ -641,7 +641,7 @@ pub(super) fn rays(
                 },
                 rel: Rel::Eq,
             }));
-            if let Ok(Some(p)) = super::super::satisfiable(&Formula::and(ask)) {
+            if let Ok(Some(p)) = (work.solver.satisfiable)(&Formula::and(ask)) {
                 let v = p.get(s).cloned().unwrap_or_else(|| Int::from(0));
                 let (lo, hi) = if down {
                     (None, Some(v))
@@ -735,225 +735,10 @@ pub(super) fn holds_at(c: &Con, v: &Int) -> bool {
     }
 }
 
+// The tests are files of their own: they name the solver (`presburger.rs`, the steps of
+// [`Work`]), which calls this module through `exact.rs`, and test modules kept here would
+// make the two import each other (`s_01f_import_graph`, row PRES-cover-wire).
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sym(n: &str) -> Atom {
-        Atom::Sym(n.into())
-    }
-    fn row(t: &[(&str, i64)], c: i64, rel: Rel) -> Con {
-        Con {
-            lin: Lin {
-                terms: t.iter().map(|(n, k)| (sym(n), Int::from(*k))).collect(),
-                constant: Int::from(c),
-            },
-            rel,
-        }
-    }
-    fn work() -> Work {
-        Work {
-            used: 0,
-            limit: 10_000_000,
-        }
-    }
-    /// The values of `s` in `lo..=hi` at some point of `rows` with every other atom in
-    /// `-r..=r`, by enumeration.
-    fn brute(rows: &[Con], s: &str, lo: i64, hi: i64, r: i64) -> Vec<i64> {
-        let mut atoms: BTreeSet<Atom> = BTreeSet::new();
-        for k in rows {
-            atoms.extend(k.lin.terms.keys().cloned());
-        }
-        atoms.remove(&sym(s));
-        let atoms: Vec<Atom> = atoms.into_iter().collect();
-        let mut out = Vec::new();
-        for v in lo..=hi {
-            let mut idx = vec![-r; atoms.len()];
-            loop {
-                let mut m = Model::new();
-                m.insert(sym(s), Int::from(v));
-                for (a, x) in atoms.iter().zip(&idx) {
-                    m.insert(a.clone(), Int::from(*x));
-                }
-                if rows.iter().all(|k| holds_at(k, &value(&k.lin, &m))) {
-                    out.push(v);
-                    break;
-                }
-                let mut i = 0;
-                while i < idx.len() && idx[i] == r {
-                    idx[i] = -r;
-                    i += 1;
-                }
-                if i == idx.len() {
-                    break;
-                }
-                idx[i] += 1;
-            }
-        }
-        out
-    }
-    fn values(set: &IntervalSet, lo: i64, hi: i64) -> Vec<i64> {
-        (lo..=hi).filter(|v| set.contains(*v)).collect()
-    }
-
-    #[test]
-    fn the_pendants_ray_is_one_projection() {
-        // `w == 2a - b`, `a <= -14`, `1 <= b <= 8`: every `w <= -29`.
-        let rows = vec![
-            row(&[("w", 1), ("a", -2), ("b", 1)], 0, Rel::Eq),
-            row(&[("a", -1)], -14, Rel::Ge),
-            row(&[("b", 1)], -1, Rel::Ge),
-            row(&[("b", -1)], 8, Rel::Ge),
-        ];
-        let mut w = work();
-        let (got, tails) = ranges(&pugh(&rows, &sym("w"), &mut w).unwrap(), &mut w).unwrap();
-        assert_eq!(got, IntervalSet::range(End::NegInf, End::from(-29i64)));
-        assert!(tails.is_empty());
-    }
-
-    #[test]
-    fn a_ray_with_holes_is_a_tail_and_a_filled_one_is_not() {
-        // `w == 2a`, `a <= 0`: the even values up to 0, holes without end.
-        let rows = vec![
-            row(&[("w", 1), ("a", -2)], 0, Rel::Eq),
-            row(&[("a", -1)], 0, Rel::Ge),
-        ];
-        let mut w = work();
-        let parts = pugh(&rows, &sym("w"), &mut w).unwrap();
-        let (got, tails) = ranges(&parts, &mut w).unwrap();
-        assert!(got.is_empty());
-        assert_eq!(tails.len(), 1);
-        assert_eq!(
-            (tails[0].step.clone(), tails[0].have.clone()),
-            (Int::from(2), vec![true, false])
-        );
-        // With `w == 2a + b`, `0 <= b <= 1` the holes fill.
-        let rows = vec![
-            row(&[("w", 1), ("a", -2), ("b", -1)], 0, Rel::Eq),
-            row(&[("a", -1)], 0, Rel::Ge),
-            row(&[("b", 1)], 0, Rel::Ge),
-            row(&[("b", -1)], 1, Rel::Ge),
-        ];
-        let parts = pugh(&rows, &sym("w"), &mut w).unwrap();
-        assert_eq!(
-            ranges(&parts, &mut w).unwrap().0,
-            IntervalSet::range(End::NegInf, End::from(1i64))
-        );
-    }
-
-    #[test]
-    fn the_omega_nightmare_has_no_point() {
-        // Pugh 1992: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point.
-        let rows = vec![
-            row(&[("x", 11), ("y", 13)], -27, Rel::Ge),
-            row(&[("x", -11), ("y", -13)], 45, Rel::Ge),
-            row(&[("x", 7), ("y", -9)], 10, Rel::Ge),
-            row(&[("x", -7), ("y", 9)], 4, Rel::Ge),
-        ];
-        let mut w = work();
-        let got = ranges(&pugh(&rows, &sym("x"), &mut w).unwrap(), &mut w)
-            .unwrap()
-            .0;
-        assert!(got.is_empty(), "{got:?}");
-    }
-
-    #[test]
-    fn small_systems_project_to_their_enumerated_values() {
-        // A fixed family of small systems with strides and non-unit bounds, each checked
-        // against enumeration over a box larger than every point's coordinates.
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |n: i64| -> i64 {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % (2 * n as u64 + 1)) as i64 - n
-        };
-        for case in 0..300 {
-            let names = ["s", "x", "y"];
-            let mut rows = Vec::new();
-            // Box every atom to keep enumeration exact.
-            for n in names {
-                rows.push(row(&[(n, 1)], 6, Rel::Ge));
-                rows.push(row(&[(n, -1)], 6, Rel::Ge));
-            }
-            for _ in 0..(1 + case % 3) {
-                let t: Vec<(&str, i64)> = names
-                    .iter()
-                    .map(|n| (*n, next(4)))
-                    .filter(|(_, k)| *k != 0)
-                    .collect();
-                if t.is_empty() {
-                    continue;
-                }
-                let rel = if next(2) == 0 { Rel::Eq } else { Rel::Ge };
-                rows.push(row(&t, next(6), rel));
-            }
-            let mut w = work();
-            let got = ranges(&pugh(&rows, &sym("s"), &mut w).unwrap(), &mut w)
-                .unwrap()
-                .0;
-            assert_eq!(
-                values(&got, -6, 6),
-                brute(&rows, "s", -6, 6, 6),
-                "case {case}: {rows:?}"
-            );
-            assert!(
-                values(&got, -100, -7).is_empty() && values(&got, 7, 100).is_empty(),
-                "case {case}"
-            );
-        }
-    }
-}
-
+mod pendants_rows;
 #[cfg(test)]
-mod pendants_rows {
-    use super::*;
-
-    fn row(t: &[(&str, i64)], c: i64, rel: Rel) -> Con {
-        Con {
-            lin: Lin {
-                terms: t
-                    .iter()
-                    .map(|(n, k)| (Atom::Sym((*n).into()), Int::from(*k)))
-                    .collect(),
-                constant: Int::from(c),
-            },
-            rel,
-        }
-    }
-
-    /// The rows of `exact::tests::an_unbounded_conjunction_needs_one_cell`, projected at once:
-    /// every `w <= -31`, and -29 (-30 needs `a == -14`, `b == 2`, so `z2 >= -8 > -9`).
-    #[test]
-    fn the_whole_pendants_part_is_one_projection() {
-        let rows = vec![
-            row(&[("a", -1)], -14, Rel::Ge),
-            row(&[("b", 1)], -1, Rel::Ge),
-            row(&[("b", -1)], 8, Rel::Ge),
-            row(&[("z2", -1)], -9, Rel::Ge),
-            row(&[("z3", -1)], 2, Rel::Ge),
-            row(&[("a", -2), ("b", -1), ("c", -1), ("z2", 1)], -7, Rel::Ge),
-            row(&[("a", -1), ("b", -2), ("z2", 1)], -2, Rel::Ge),
-            row(&[("a", -1), ("c", -1), ("z3", 1)], -5, Rel::Eq),
-            row(&[("a", 1), ("b", 1), ("c", 1), ("z2", -1)], 6, Rel::Ge),
-            row(&[("z2", -1), ("z3", 1)], -11, Rel::Ge),
-            row(&[("w", -1), ("a", 2), ("b", -1)], 0, Rel::Eq),
-            row(&[("w", -1)], -29, Rel::Ge),
-        ];
-        let mut w = Work {
-            used: 0,
-            limit: 10_000_000,
-        };
-        let parts = pugh(&rows, &Atom::Sym("w".into()), &mut w).unwrap();
-        let (got, tails) = ranges(&parts, &mut w).unwrap();
-        eprintln!("PARTS {parts:?} WORK {}", w.used);
-        assert!(tails.is_empty());
-        assert_eq!(
-            got,
-            IntervalSet::from_pieces(vec![
-                (End::NegInf, End::from(-31i64)),
-                (End::from(-29i64), End::from(-29i64))
-            ])
-        );
-    }
-}
+mod tests;

@@ -5,11 +5,13 @@
 //! `exact/projection.rs`), because all three read it: the solver charges its steps here and
 //! stops when the meter is spent, and the cover asks the solver. Kept in `exact.rs`, the
 //! solver's charge made the solver import the cover and the cover the solver, an import cycle
-//! (row MAIN-red-pugh-land; `s_01f_import_graph`). This module imports nothing of either.
+//! (row MAIN-red-pugh-land; `s_01f_import_graph`). This module imports nothing of either, but
+//! the formula's types: the steps of the solver the cover asks come to it as function values
+//! ([`Solver`]).
 
 use std::cell::Cell;
 
-use super::Refusal;
+use super::{Atom, Con, Formula, Model, Refusal};
 
 /// The work allowed to the cover of one symbol in `exact_each`. A unit is one value or residue
 /// the cover lists, or a hundredth of a constraint, term or row read ([`SOLVER_UNIT`]; each
@@ -54,10 +56,28 @@ thread_local! {
     pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
 }
 
-/// The units of work used and allowed.
+/// The steps of the solver (`presburger.rs`) that the cover asks, handed to it as function
+/// values. Named in `exact.rs`, they made the cover import the solver, which calls the cover
+/// from `project_each`: an import cycle (`s_01f_import_graph`). The solver builds this once
+/// (`presburger::SOLVER`) and gives it to the cover with each call, so the cover imports
+/// only this module and the formula's types (row PRES-cover-wire).
+#[derive(Clone, Copy)]
+pub(super) struct Solver {
+    /// `presburger::satisfiable`.
+    pub(super) satisfiable: fn(&Formula) -> Result<Option<Model>, Refusal>,
+    /// `presburger::eliminated_counted`.
+    pub(super) eliminated_counted: fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>,
+    /// `presburger::eliminated_whole`.
+    pub(super) eliminated_whole: fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>,
+    /// `presburger::point_of`.
+    pub(super) point_of: fn(&[Con], bool) -> Option<Model>,
+}
+
+/// The units of work used and allowed, and the solver the work asks.
 pub(super) struct Work {
     pub(super) used: u64,
     pub(super) limit: u64,
+    pub(super) solver: Solver,
 }
 
 impl Work {
