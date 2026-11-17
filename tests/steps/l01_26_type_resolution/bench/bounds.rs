@@ -8,7 +8,7 @@ use zedc::resolve::resolve;
 use super::super::bounds::{
     bounded_chain, bounded_in_a_payload, bounded_or_free, distinct_bounds_chain,
     free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_lambdas, passed,
-    passed_deep, shared_bounded_chain, wide, wide_lambda,
+    passed_deep, passed_through_fns, shared_bounded_chain, wide, wide_lambda,
 };
 use super::super::info;
 
@@ -84,6 +84,19 @@ fn passing_a_function_of_many_bounded_variables_scales() {
         "a function of n bounded variables passed as one of n",
         12_800,
         passed,
+    );
+}
+
+#[test]
+fn passing_a_function_whose_bounded_variables_only_functions_hold_scales() {
+    // Each variable is bound through its own function parameter (`Cx::through_fn`), a
+    // comparison of that parameter's types; the arrow is taken on the witness of the cover
+    // (`fn_holds_own`). Both are O(size of the function) per parameter, so linear in n.
+    check_scales(
+        "a function of n function parameters, each with its own bounded variable, passed \
+         under other names",
+        3_200,
+        passed_through_fns,
     );
 }
 

@@ -743,3 +743,54 @@ fn a_function_whose_union_parameter_fits_once_its_variable_is_bound_is_accepted(
         assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
     }
 }
+
+/// A bounded variable that only a function parameter holds is bound through that function, so
+/// whether `g` fits `f` does not depend on the variable's name
+/// (FAIL-types-fn-only-bounded-variable). Before, with a bound of several carriers,
+/// `q(g: (h: (x: U) -> U) -> U for U in int | f64) = p(f: g)` was rejected ("`p` does not
+/// take ...") for `p(f: (h: (x: T) -> T) -> T for T in int | f64)`, and accepted with `U`
+/// named `T`; with a plain parameter `y: T` beside `h`, or a bound of one carrier, it was
+/// accepted under either name. The binding chosen is still checked: a function whose result
+/// is `int` where the other's is the variable, and a bound wider than the one `p` takes, are
+/// rejected.
+#[test]
+fn a_bounded_variable_only_a_function_parameter_holds_fits_under_any_name() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let shapes = [
+        "(h: (x: T) -> T) -> T",
+        "(h: (x: T) -> int) -> int",
+        "(h: (x: int) -> T) -> int",
+        "(h: (x: T) -> T) -> int",
+        "(h: (x: int) -> T) -> T",
+        "(h: (x: T) -> int) -> T",
+        "(h: T) -> T",
+        "(h: (T,)) -> int",
+        "(h: (x: T) -> int, y: T) -> int",
+        "(h: (x: T) -> T, y: T) -> T",
+    ];
+    for s in shapes {
+        for bound in ["int | f64", "int"] {
+            let p = format!("{s} for T in {bound}");
+            for q in [p.clone(), p.replace('T', "U")] {
+                let src = format!("p(f: {p}) = 0;\nq(g: {q}) = p(f: g);\n");
+                assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+            }
+            // `g` may take more carriers than `p` gives `f`, not fewer: `p` may call `f` at
+            // `String`, which a `g` of `T in {bound}` does not take.
+            let wide = format!("{s} for U in {bound} | String").replace('T', "U");
+            let src = format!("p(f: {p}) = 0;\nq(g: {wide}) = p(f: g);\n");
+            assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+            let src = format!("p(f: {wide}) = 0;\nq(g: {p}) = p(f: g);\n");
+            assert_eq!(type_errors(&src).len(), 1, "{src}");
+        }
+    }
+    for (f, g) in [
+        ("(h: (x: T) -> T) -> int", "(h: (x: U) -> int) -> int"),
+        ("(h: (x: T) -> int) -> int", "(h: (x: U) -> U) -> int"),
+        ("(h: (x: T) -> int) -> int", "(h: (x: U) -> f64) -> int"),
+    ] {
+        let src =
+            format!("p(f: {f} for T in int | f64) = 0;\nq(g: {g} for U in int | f64) = p(f: g);\n");
+        assert_eq!(type_errors(&src).len(), 1, "{src}");
+    }
+}

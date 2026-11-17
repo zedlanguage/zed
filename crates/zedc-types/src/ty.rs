@@ -8478,6 +8478,20 @@ impl<'m, 's> Comparing<'m, 's> {
         Some(ok)
     }
 
+    /// `b` with each first type of `pairs` within the second ([`Comparing::sub_in`]), binding
+    /// what the second holds, in a frame of its own; `None` at the first that is not, the
+    /// binding then dropped ([`Cx::through_fn`]).
+    fn bound_through(&'m self, pairs: Vec<(Ty, Ty)>, mut b: Binds) -> Deep<'m, Option<Binds>> {
+        self.stack.call(move || async move {
+            for (x, y) in &pairs {
+                if !self.sub_in(x, y, &mut b).await {
+                    return None;
+                }
+            }
+            Some(b)
+        })
+    }
+
     /// Whether each component of `cs` is within the one of `ds` at its place
     /// ([`Comparing::sub_in`]), stopping at the first that is not, in a frame of its own.
     fn components_in(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, bool> {
@@ -12908,12 +12922,24 @@ async fn accepts<'m>(
                     Some((s, se)) => {
                         let mut ok = false;
                         for w in &t.vars {
+                            // A bounded variable of the signature that only functions hold
+                            // is bound through this one first ([`Cx::through_fn`]).
+                            let pairs = c.cx.borrow_mut().through_fn(&s, &se, w, binds);
+                            let tried = match pairs {
+                                Some(pairs) => c.bound_through(pairs, binds.clone()).await,
+                                None => None,
+                            };
                             // A function of `t` that holds a bounded variable `binds` binds
                             // is read at that binding ([`Cx::read_at`]); [`params_within`]
                             // checks that the binding does not change after.
-                            let read = c.cx.borrow_mut().read_at(w, binds);
+                            let read =
+                                c.cx.borrow_mut()
+                                    .read_at(w, tried.as_ref().unwrap_or(binds));
                             let w = read.as_ref().unwrap_or(w);
                             if c.fits_read(v, &s, &se, w).await {
+                                if let Some(tried) = tried {
+                                    *binds = tried;
+                                }
                                 ok = true;
                                 break;
                             }
@@ -13485,6 +13511,63 @@ impl Cx<'_> {
     /// afresh inside the function's comparison and the binding dropped with it ([`accepts`]),
     /// or compared as itself where nothing binds ([`within_as_is`]), so `(h: (y: U) -> int, y:
     /// U) -> int for U in int | f64` did not fit the same type with `T`.
+    /// The pairs of types to compare to bind, through the function read as `w`, the bounded
+    /// own variables of the signature whose arrow `b` binds that `w` holds and `b` does not
+    /// bind yet (FAIL-types-fn-only-bounded-variable): each parameter type of `f`, read by
+    /// `fe`, with `w`'s at its place, and `f`'s result with `w`'s, where `w`'s holds such a
+    /// variable; [`Comparing::bound_through`] compares them on a copy of `b`, and [`accepts`]
+    /// keeps it where `f` then fits `w` read at it ([`Cx::read_at`]). `None` where `w` holds
+    /// no such variable, or the two are not each one arrow of the same number of parameters
+    /// with no variable of their own, whose types would be read here unopened.
+    ///
+    /// Why: [`params_within`] compares a parameter holding such a function after the others,
+    /// so a variable another parameter holds is bound by then; one that only functions hold
+    /// was compared unbound, as itself, so `(h: (x: U) -> int) -> int for U in int | f64` did
+    /// not fit the same type with `T`, nor anything but itself as written (the domain is
+    /// exact, so `(x: U'1) -> int` must be both within and around `(x: T) -> int`).
+    ///
+    /// Proof that this only chooses the instance: the binding is kept only where `f` fits `w`
+    /// read at it, and then checked as every binding the parameters make is: compared again
+    /// at the last binding ([`params_within`]), its bounds ([`bounds_hold`]), the result and
+    /// the instance ([`arrow_fits`]). So a binding that does not fit gives no, never a wrong
+    /// yes. What is given up, as for `bound_through_fn` in walk.rs (row
+    /// FAIL-typevar-fn-only-binding): the binding is the one the types at the same places
+    /// give, not a wider one that would also fit.
+    ///
+    /// Cost: a lookup of the names `w` holds ([`Cx::held_bounded`]), and only where one is
+    /// unbound, a walk of `w`'s types for their variables and a reading of the types paired,
+    /// O(size of the two functions), once for each comparison that meets such a function.
+    fn through_fn(&mut self, f: &Sig, fe: &Env, w: &Arc<str>, b: &Binds) -> Option<Vec<(Ty, Ty)>> {
+        b.bounds.as_ref()?;
+        let (ws, we) = self.fns.get(w)?.clone();
+        let unbound: HashSet<Arc<str>> = (Cx::held_bounded(&ws, &we, b).into_iter())
+            .filter(|(_, r)| b.get(r).is_none())
+            .map(|(v, _)| v)
+            .collect();
+        if unbound.is_empty() || !f.own.is_empty() || !ws.own.is_empty() {
+            return None;
+        }
+        let ([fa], [wa]) = (&f.arrows[..], &ws.arrows[..]) else {
+            return None;
+        };
+        if fa.params.len() != wa.params.len() {
+            return None;
+        }
+        let holds = |t: &Ty| {
+            let mut vs = Vars::default();
+            t.vars_in(&mut vs);
+            vs.order.iter().any(|v| unbound.contains(v))
+        };
+        let mut pairs = Vec::new();
+        let places = fa.params.iter().zip(&wa.params);
+        for (x, y) in places.chain(std::iter::once((&fa.result, &wa.result))) {
+            if holds(y) {
+                pairs.push((self.read(x, fe), self.read(y, &we)));
+            }
+        }
+        Some(pairs)
+    }
+
     fn read_at(&mut self, f: &Arc<str>, b: &Binds) -> Option<Arc<str>> {
         b.bounds.as_ref()?;
         let (sig, env) = self.fns.get(f)?.clone();
@@ -13822,6 +13905,30 @@ fn types_hold_bindable(s: &Sig, ts: &[Ty], cx: &Cx) -> bool {
         s.bounds.contains_key(v)
             || cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok()
             || (!cx.rigid.contains_key(v) && !cx.fns.contains_key(v))
+            || fn_holds_own(s, v, cx)
+    })
+}
+
+/// Whether `f` names a function of [`Cx::fns`] that holds, at any depth, an own variable of `s`
+/// the comparison binds: one its reading reads as a bounded variable of `s` or a free one
+/// ([`Cx::free`]), by the names `s`'s arrows are read with (FAIL-types-fn-only-bounded-variable).
+/// [`Ty::vars_in`] stops at the name of such a function, so without this, an arrow whose
+/// parameter `(h: (x: int) -> T) -> int` holds `T` only there was taken as holding no
+/// variable to bind, and its permission was asked of it as written ([`permitted`]), with `T`
+/// compared as itself: within no `(x: int) -> U'1`, so the signature fitted itself only as
+/// written ([`read_alike`]), not under another name of `T`. Cost: a lookup of each name the
+/// function holds from outside it ([`VarFacts::outer`]), kept with the signature.
+fn fn_holds_own(s: &Sig, f: &Arc<str>, cx: &Cx) -> bool {
+    let Some((sig, env)) = cx.fns.get(f) else {
+        return false;
+    };
+    sig.facts().outer.iter().any(|v| {
+        let r = match env.get(v) {
+            None => v,
+            Some(Read::Rigid(w)) => w,
+            Some(Read::Mask(_) | Read::Bound(_)) => return false,
+        };
+        s.bounds.contains_key(r) || cx.free.binary_search_by(|w| (**w).cmp(r)).is_ok()
     })
 }
 
@@ -14159,6 +14266,13 @@ fn rest_bound(s: &Sig, mut b: Binds, c: &Comparing<'_, '_>) -> Binds {
 fn instances(s: &Sig, sa: &Arrow, cx: &Cx) -> Option<Vec<Arrow>> {
     let mut vs = Vars::default();
     sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    // A variable to bind that a function holds ([`fn_holds_own`]) is not replaced by
+    // [`Ty::subst`], which does not enter functions: the instance would hold it unbound. Such
+    // an arrow passes only on a witness of the cover, whose [`instance_at`] reads the
+    // functions at the binding ([`Cx::fns_at`]).
+    if vs.order.iter().any(|f| fn_holds_own(s, f, cx)) {
+        return None;
+    }
     let mut b = Binds::new();
     let mut several = None;
     for v in vs.order.iter() {
@@ -20924,6 +21038,75 @@ mod tests {
         let want = fits_sig(&s, &q);
         SCAN_ALL.set(false);
         assert!(want, "{q} in {s}: the full search finds no fit");
+    }
+
+    /// FAIL-types-fn-only-bounded-variable: a bounded variable that only a function parameter
+    /// holds is bound through that function ([`Cx::through_fn`]), so the verdict does not
+    /// depend on its name. Before, `(x0: (x0: U) -> int) -> int for U in int | f64` did not fit
+    /// the same type with `T`, either way, and fitted itself only as written ([`read_alike`]).
+    /// The binding so chosen is still checked: a function whose result differs, one whose
+    /// result is the variable where the other's is `int`, and a bound wider than the one
+    /// expected, are not fits; the bound narrower than the one expected is.
+    #[test]
+    fn a_bounded_variable_only_a_function_parameter_holds_fits_under_any_name() {
+        let v = |x: &str| Ty::var(x.into());
+        let int = Ty::carrier(Carrier::Int);
+        let f64 = Ty::carrier(Carrier::F64);
+        let wide = B_MASK | Carrier::Str.bit();
+        // `(x0: (x0: p) -> r) -> o for t in m`, each of `p`, `r` and `o` `t` where `None`.
+        let make = |t: &str, p: Option<&Ty>, r: Option<&Ty>, o: Option<&Ty>, m: u8| {
+            let or_t = |x: Option<&Ty>| x.cloned().unwrap_or_else(|| v(t));
+            let inner = owning(one_param(or_t(p), or_t(r), &[], false), &[], "Z");
+            let mut s = owning(
+                one_param(Ty::func(Arc::new(inner)), or_t(o), &[], true),
+                &[t],
+                t,
+            );
+            s.bounds.insert(t.into(), m);
+            Arc::new(s)
+        };
+        let int = Some(&int);
+        let fits = [
+            (None, int, int),
+            (None, None, None),
+            (None, int, None),
+            (None, None, int),
+            (int, None, int),
+            (int, None, None),
+        ];
+        for (p, r, o) in fits {
+            let s = make("T", p, r, o, B_MASK);
+            let u = make("U", p, r, o, B_MASK);
+            assert!(fits_both(&s, &make("T", p, r, o, B_MASK)), "{s} in itself");
+            assert!(fits_both(&s, &u), "{u} in {s}");
+            assert!(fits_both(&u, &s), "{s} in {u}");
+            assert!(
+                fits_both(&make("T", p, r, o, wide), &u),
+                "{u} in a wider bound"
+            );
+            assert!(
+                !fits_both(&u, &make("T", p, r, o, wide)),
+                "a wider bound in {u}"
+            );
+        }
+        let unfit = [
+            (
+                make("T", None, int, int, B_MASK),
+                make("U", None, Some(&f64), int, B_MASK),
+            ),
+            (
+                make("T", None, None, int, B_MASK),
+                make("U", None, int, int, B_MASK),
+            ),
+            (
+                make("T", None, int, int, B_MASK),
+                make("U", None, None, int, B_MASK),
+            ),
+        ];
+        for (s, q) in unfit {
+            assert!(!fits_both(&s, &q), "{q} in {s}");
+            assert!(!fits_both(&q, &s), "{s} in {q}");
+        }
     }
 
     /// TYPES-fits-read-key-refusal: a refused comparison of two functions that are not alone,

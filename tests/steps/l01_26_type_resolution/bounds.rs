@@ -554,6 +554,18 @@ pub(super) fn passed(n: usize) -> String {
     )
 }
 
+/// A function of `n` parameters, each a function on its own variable bounded by int and f64,
+/// passed where the same type with other names is expected: each variable only a function
+/// parameter holds, bound through that function (FAIL-types-fn-only-bounded-variable).
+pub(super) fn passed_through_fns(n: usize) -> String {
+    let sig = |v: &str| -> String {
+        let ps: Vec<String> = (0..n).map(|i| format!("h{i}: (x: {v}{i}) -> {v}{i}")).collect();
+        let bs: Vec<String> = (0..n).map(|i| format!("{v}{i} in int | f64")).collect();
+        format!("({}) -> int for {}", ps.join(", "), bs.join(", "))
+    };
+    format!("p(g: {}) = 0;\nq(f: {}) = p(g: f);\n", sig("T"), sig("U"))
+}
+
 /// `p` calls its argument on an int; `p_wide` on an int and on an f64.
 const P: &str = "p(g: (x: T) -> T for T in int) = g(x: 1);\n\
                  p_wide(g: (x: T) -> T for T in int | f64) = g(x: 1.5);\n";
@@ -630,11 +642,12 @@ fn a_bounded_variable_in_a_parameter_that_is_a_function_is_checked_at_each_carri
     let p2 = "p2(g: ((x: T) -> T) -> T for T in int | f64) = 0;\n\
               p1(g: ((x: T) -> T) -> T for T in int) = 0;\n";
     let cases = [
-        // Refused for now, though sound to take: `U` occurs only under a function parameter,
-        // where `fits_sig` binds no variable of the outer function (STATUS, TYPE-forms).
+        // `U` occurs only under a function parameter: it is bound through that function, to
+        // the carrier `p2`'s caller picks (FAIL-types-fn-only-bounded-variable; before, it
+        // was refused, as `fits_sig` bound no variable there).
         (
             "q(f: ((x: U) -> U) -> U for U in int | f64) = p2(g: f);\n",
-            1,
+            0,
         ),
         ("q(f: ((x: int) -> int) -> int) = p1(g: f);\n", 0),
         // At f64, `f` would get a function on f64, which it does not take.
