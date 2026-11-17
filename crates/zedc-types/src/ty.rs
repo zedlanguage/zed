@@ -12849,7 +12849,7 @@ impl Cx<'_> {
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
         if !several.is_empty() {
-            for v in repeated(&qas, &several) {
+            for v in repeated(&qas, &several, &cx.fns) {
                 wide.remove(&v);
             }
         }
@@ -13508,12 +13508,25 @@ async fn within_as_is<'m>(x: &Ty, y: &Ty, c: &'m Comparing<'m, '_>) -> bool {
 /// Counted as twice, which only leaves a variable rigid: two members of one union, as in `(T,)
 /// | (T, T)`'s first member and `T | (T,)`, though there the widening is exact.
 ///
+/// A variable a function in the parameters holds, at any depth, is counted as twice too
+/// (FAIL-types-fn-outer-variable-nest): the function's type is not monotone in it, so the
+/// replacement is not the union of the instances. `(h: (y: T) -> int, y: T)` for `T in int |
+/// f64` is `(h: (y: int) -> int, y: int) | (h: (y: f64) -> int, y: f64)`, and widened it was
+/// `(h: (y: int | f64) -> int, y: int | f64)`, whose `h` takes `f64` where the instance at
+/// `int` does not, so the same signature with its variable named `U` did not fit it. Such a
+/// function is a name of [`Cx::fns`] here, kept with the reading of `q` it holds
+/// ([`held_reading`]), where the variable reads as [`Read::Rigid`] of its new name.
+///
 /// Complexity tradeoff: each tuple and payload shape is walked at most twice for each arrow,
 /// so a shared one is not walked once per path; a variable met on a second walk counts again,
 /// and a third arrival adds nothing a variable below it did not reach (it was counted twice
 /// already). O(size of the parameters) per arrow, and only for signatures with such a
 /// variable. A walk per path costs 2^depth on a type that holds each tuple twice.
-fn repeated(qas: &[Arrow], vs: &HashSet<Arc<str>>) -> HashSet<Arc<str>> {
+fn repeated(
+    qas: &[Arrow],
+    vs: &HashSet<Arc<str>>,
+    fns: &BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
+) -> HashSet<Arc<str>> {
     enum Walk<'a> {
         Ty(&'a Ty),
         Row(&'a Row),
@@ -13547,6 +13560,12 @@ fn repeated(qas: &[Arrow], vs: &HashSet<Arc<str>>) -> HashSet<Arc<str>> {
                         if *n == 2 {
                             out.insert(v.clone());
                         }
+                    }
+                    for (_, env) in t.vars.iter().filter_map(|f| fns.get(f)) {
+                        out.extend(env.values().filter_map(|r| match r {
+                            Read::Rigid(w) if vs.contains(w) => Some(w.clone()),
+                            _ => None,
+                        }));
                     }
                     stack.extend(t.tuples.iter().filter(|r| r.open()).map(Walk::Row));
                     stack.extend(t.payload_shapes().filter(|s| s.open).map(Walk::Shape));

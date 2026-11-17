@@ -684,3 +684,25 @@ fn shared_payloads_with_a_variable_a_level_bind_each_once() {
         );
     }
 }
+
+/// With `U := int` (DESIGN.md sec:type_resolution rule 6: a call fixes a bounded variable to
+/// one carrier), `g`'s parameter `({b}, bool) | ({a}, bool)` holds the same values as `f`'s
+/// `({a}, bool) | ({c}, bool)`, so `g` fits. With `for U in int` it was accepted; with
+/// `for U in int | f64` it was answered "`p` does not take ..."
+/// (FAIL-types-bindable-union-param-refused).
+#[test]
+fn a_function_whose_union_parameter_fits_once_its_variable_is_bound_is_accepted() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let a = "((int, int),) | ((int, int, int),)";
+    let b = "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)";
+    let c = "((int, bool) | (int, bool, bool),)";
+    for (slot, g) in [
+        (format!("({a}, bool) | ({c}, bool)"), format!("({b}, bool) | ({a}, bool)")),
+        (format!("({a}, bool) | (int, int)"), format!("({a}, bool) | (U, int)")),
+    ] {
+        let src = format!(
+            "p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in int | f64) = p(f: g);\n"
+        );
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    }
+}
