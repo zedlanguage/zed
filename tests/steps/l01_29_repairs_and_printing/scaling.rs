@@ -463,6 +463,41 @@ fn the_headline_repair_of_a_long_call() {
     }
 }
 
+/// A call of `n` arguments that its `rat` parameters take, `2r` literals and, in the second
+/// half, a name `x` of type `rat`, and one more, the `int` `k`, that it refuses, `y = h(2r,
+/// …, x, …, k)`, its arguments on one line or one per line (row MSG-many-args-steps-square).
+/// Only `k` is offered a repair. Before the row, each argument the call takes was tried in its
+/// other forms, `2` and `2.0` for `2r`, `String(x)` and `f64(x)` for `x`, each trial a
+/// check of the whole call: O(n²), 17.7 s at 800 arguments.
+pub(super) fn taken_beside_one_refused(n: usize, sep: &str) -> String {
+    let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}: rat")).collect();
+    let args = (0..n).map(|i| if i < n / 2 { "2r" } else { "x" });
+    let args: Vec<&str> = args.chain(["k"]).collect();
+    format!(
+        "k = 1;\nx = 1r;\nh({}) = 1;\ny = h({});\n",
+        params.join(", "),
+        args.join(sep)
+    )
+}
+
+pub(super) fn only_the_refused_argument_repaired(src: &str) {
+    let out = rejected(src);
+    assert_eq!(out.matches("repair: ").count(), 1, "{out}");
+    assert!(
+        out.contains("repair: write `rat(k)`; the checker accepts that"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_long_call_taking_all_but_one_argument_repairs_that_one() {
+    for n in [1, 2, 9] {
+        for sep in [", ", ",\n  "] {
+            only_the_refused_argument_repaired(&taken_beside_one_refused(n, sep));
+        }
+    }
+}
+
 /// A call `g(x)` of a function that takes only a `String`, with `x` a union of tuples of every
 /// length from 1 to k, `(int) | (int, int) | …`, about `n` components in all (row
 /// MSG-headline-l01_26). `String(x)` checks, so before it is offered the call is tried with

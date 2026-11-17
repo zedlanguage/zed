@@ -19500,7 +19500,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             ))
         );
         let number_text = ordering && args.iter().flatten().any(|a| reads_as_number(&a.ty));
+        // The parameters of a call whose arguments are checked apart from each other
+        // ([`params_apart`]): an argument its parameter takes is offered no repair, since
+        // writing it otherwise leaves the check of every other argument, and so the
+        // rejection, as it was (MSG-many-args-steps-square). Complexity tradeoff: before,
+        // each such argument was tried in each of its other forms (`2` and `2.0` for `2r`)
+        // or casts, each trial a check of the whole call that builds its message, so a
+        // rejected call of n arguments cost O(n²) (17.7 s at 800 arguments); now one
+        // subtype test per argument, O(n) for the call.
+        let apart = params_apart(sig).then(|| &sig.arrows[0].params);
         for (i, a) in args.iter().enumerate() {
+            if let (Some(params), Some(a)) = (apart, a)
+                && let Some(p) = params.get(i)
+                && self.subtype(&a.ty, p)
+            {
+                continue;
+            }
             // A number literal written without a suffix in an ordering, `2 < "a"`, is offered
             // as text, `"2" < "a"`, where an operation in its place is offered its `String`
             // cast, `String(2 + 13) < "a"`, and under the same rule: not beside a text written

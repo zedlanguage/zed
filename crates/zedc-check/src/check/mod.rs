@@ -771,6 +771,12 @@ impl Lit {
     }
 }
 
+/// One item of the work of [`Ck::derive_work`]: an expression to derive, or a note to show.
+enum DeriveWork {
+    Derive(Span),
+    Show(Note),
+}
+
 /// Which arguments an application needs the values of. Evaluation is neither strict nor lazy
 /// (DESIGN.md sec:non_goals), so an argument with no value, of type `Never`, leaves the call
 /// with no value only where the call needs that argument's value; elsewhere the call has the
@@ -3239,13 +3245,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         to_function: bool,
         out: &mut Vec<Note>,
     ) {
+        let start = spans.iter().map(|&s| DeriveWork::Derive(s)).collect();
+        self.derive_work(start, narrowed, to_function, out);
+    }
+
+    /// [`Ck::derive_walk`] of the work `start`, in order: expressions to derive and notes to
+    /// show among them, each note shown once.
+    fn derive_work(
+        &self,
+        start: Vec<DeriveWork>,
+        narrowed: &HashMap<Span, String>,
+        to_function: bool,
+        out: &mut Vec<Note>,
+    ) {
         if self.trying {
             return;
         }
-        enum Work {
-            Derive(Span),
-            Show(Note),
-        }
+        type Work = DeriveWork;
         // Complexity tradeoff (COMPLEXITY.md F29): a scan of the notes shown before each new
         // one is O(R²) for R notes; the set of the notes shown makes each test O(1) expected,
         // for one copy of each note.
@@ -3255,7 +3271,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut held = HashMap::new();
         // The end of each chain of names the steps have followed ([`Ck::written_at`]).
         let mut written = HashMap::new();
-        let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
+        let mut stack: Vec<Work> = start.into_iter().rev().collect();
         let note = |span: Span, text: String| Work::Show(Note { span, text });
         // The receiver of each class of a lambda parameter given entries, by the class's root
         // now ([`Ck::with_entries`]). Complexity tradeoff: O(E) for E such classes, once per
@@ -6272,15 +6288,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arrow of `sig`, the constraints it failed.
     fn applied(&self, what: &str, sig: &Sig, args: &[Option<Arg>], span: Span) -> Vec<Note> {
         let mut out = Vec::new();
-        for a in args.iter().flatten() {
-            match (&a.lit, a.at) {
-                (Some(l), Some(at)) => out.push(Note {
-                    span: at,
-                    text: literal_note(l.written(), self.text(&a.ty)),
-                }),
-                (None, Some(at)) => self.derive_into(&[at], &mut out),
-                _ => {}
-            }
+        // Complexity tradeoff (MSG-many-args-steps-square): a walk per argument started from
+        // the set of every note shown before it, O(n²) for n arguments (13.7 times the work
+        // for 8 times n); one walk over all the arguments shares that set, O(n) in all. A
+        // literal's note is pushed as it was while a repair is tried, when no walk is made.
+        let work = (args.iter().flatten()).filter_map(|a| match (&a.lit, a.at) {
+            (Some(l), Some(at)) => Some(DeriveWork::Show(Note {
+                span: at,
+                text: literal_note(l.written(), self.text(&a.ty)),
+            })),
+            (None, Some(at)) => Some(DeriveWork::Derive(at)),
+            _ => None,
+        });
+        if self.trying {
+            out.extend(work.filter_map(|w| match w {
+                DeriveWork::Show(n) => Some(n),
+                DeriveWork::Derive(_) => None,
+            }));
+        } else {
+            self.derive_work(work.collect(), &HashMap::new(), false, &mut out);
         }
         for arrow in &sig.arrows {
             let one = Sig {

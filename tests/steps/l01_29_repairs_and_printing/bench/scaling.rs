@@ -165,6 +165,22 @@ fn the_headline_repair_of_a_long_call_scales() {
     });
 }
 
+/// Negative controls, run once and not committed (MSG-many-args-steps-square): with the
+/// repairs of the arguments the call takes tried again, or with the derivation of the call's
+/// error walked anew for each argument, this failed at 13.7 times the work for 8 times n.
+#[test]
+fn a_long_call_taking_all_but_one_argument_scales() {
+    let n = 200;
+    for sep in [", ", ",\n  "] {
+        let srcs = scaling::inputs(n, |k| taken_beside_one_refused(k, sep));
+        scaling::check(
+            "the repairs of a call that takes n arguments and refuses one",
+            n,
+            |k| only_the_refused_argument_repaired(&srcs[&k]),
+        );
+    }
+}
+
 #[test]
 fn a_text_repair_of_many_shapes_scales() {
     let n = 19_000;
