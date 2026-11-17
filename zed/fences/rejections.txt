@@ -27,6 +27,7 @@ Equivalent switch below proof grade without inputs
 `@memoized` on code whose result is not a function of its key
 `memoizationArena` written after `with`
 Memo arena around no `@memoized` code
+Plan assertion `@fused` not met
 Non-exhaustive `match`
 Unreachable `match` arm
 `.fold` on a type that has none
@@ -34,6 +35,8 @@ Unreachable `match` arm
 Positional `.map`, or a name that is not a parameter, on a value that is not a morphism
 Key outside the permission bound
 Operation that always fails
+Insert or delete by key on a level keyed by position
+`splice` on a level with no positions
 Undischarged region assertion
 Read below the domain with no boundary entry
 Boundary item with neither `initial` nor an index

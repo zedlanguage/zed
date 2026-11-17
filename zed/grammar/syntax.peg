@@ -239,7 +239,7 @@ IsPat         = Name? 'is' TypeUnion                                            
 CtorPat       = Name '(' FieldPat % ',' ','? ')'                                   L2
 TuplePat      = '(' Pattern ((',' Pattern)+ ','? | ',') ')'                        L2
 NamePat       = Name                                                               L2
-AtomPattern   = ATOM ('(' (FieldPat % ',' | Pattern % ',') ','? ')')?              L1
+AtomPattern   = ATOM ('(' ((FieldPat % ',' | Pattern % ',') ','?)? ')')?           L1
 FieldPat      = Name ':' Pattern?                                                  L1
 SignedLit     = '-'? (INT | FLOAT | RAT) | STRING | 'true' | 'false'               L2
 

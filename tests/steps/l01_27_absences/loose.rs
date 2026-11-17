@@ -65,6 +65,27 @@ fn a_pattern_with_a_payload_keeps_the_atom_in_the_type() {
 }
 
 #[test]
+fn an_empty_payload_pattern_strips_that_atom_alone() {
+    // DESIGN.md step L1.40d: "`#a` and `#a()` are different types; with `x` either `#a()` or
+    // `#a`, … `x else #a() -> 2` strips `#a()` alone" (plan row ATOM-empty-payload-pattern).
+    let pick = "pick(positional c: bool) = if c { #a() } else { #a };\n";
+    let f = format!("{pick}f(positional c: bool) = pick(c) else #a() -> 2;\n");
+    assert_eq!(sig(&f, "f"), "bool -> 2 | #a");
+    let run = format!("{f}y = f(true);\nz = f(false);\n");
+    assert_eq!(value(&run, "y"), "2");
+    assert_eq!(value(&run, "z"), "#a");
+    // Inside a payload, `#b(#a())` takes `#b(#a())` and passes `#b(#a)` on.
+    let nested = "pick(positional c: bool) = if c { #b(#a()) } else { #b(#a) };\n\
+                  f(positional c: bool) = pick(c) else #b(#a()) -> 2;\n\
+                  y = f(true);\nz = f(false);\n";
+    assert_eq!(value(nested, "y"), "2");
+    assert_eq!(value(nested, "z"), "#b(#a)");
+    // The bare `#a` still takes the atom with any payload or none (step L1.27).
+    let bare = format!("{pick}f(positional c: bool) = pick(c) else #a -> 2;\n");
+    assert_eq!(sig(&bare, "f"), "bool -> 2");
+}
+
+#[test]
 fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
     // `code` is bound from the payload; `#e` stays in the type even where the one payload the
     // value can hold is handled, so `_` still sees a loose failure and rejects it.

@@ -1149,6 +1149,10 @@ pub enum Pattern {
         fields: Vec<(String, Option<Pattern>)>,
         /// Payload components matched by position.
         items: Vec<Pattern>,
+        /// Whether a payload is written, in parentheses: `#e()` has one, the empty tuple, and
+        /// matches only the atom whose payload is the empty tuple, while `#e` has none
+        /// (DESIGN.md sec:grammar, rule AtomPattern).
+        payload: bool,
         /// Its text.
         span: Span,
     },

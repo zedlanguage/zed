@@ -724,10 +724,11 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
             name,
             fields,
             items,
+            payload,
             ..
         } => {
             out.extend([Text("#"), Text(name)]);
-            if fields.is_empty() && items.is_empty() {
+            if fields.is_empty() && items.is_empty() && !*payload {
                 return;
             }
             (&fields[..], &items[..])

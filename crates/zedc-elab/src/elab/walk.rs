@@ -3380,6 +3380,7 @@ impl<'a> Elab<'a> {
                 name,
                 fields,
                 items,
+                payload: false,
                 ..
             }) if fields.is_empty() && items.is_empty() => {
                 Some(Some(KPattern::Is(check::any_payload(name))))

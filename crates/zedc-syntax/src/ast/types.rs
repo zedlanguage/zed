@@ -445,10 +445,13 @@ impl Builder<'_, '_> {
                 items.push(self.pattern(k)?);
             }
         }
+        // `AtomPattern = ATOM ('(' … ')')?`: the node holds more than its one atom token
+        // exactly when the parentheses are written.
         Ok(Pattern::Atom {
             name: name.clone(),
             fields,
             items,
+            payload: node.end > node.start + 1,
             span: self.span(n),
         })
     }

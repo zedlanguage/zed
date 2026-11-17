@@ -3621,8 +3621,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
+                        payload,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => &u(of.span) - &any_payload(name),
+                    }) if fields.is_empty() && items.is_empty() => {
+                        &u(of.span) - &matched_by(name, *payload)
+                    }
                     Some(_) => u(of.span),
                 };
                 (&kept | &d, None)
@@ -3701,8 +3704,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
+                        payload,
                         ..
-                    }) if fields.is_empty() && items.is_empty() => &of - &any_payload(name),
+                    }) if fields.is_empty() && items.is_empty() => {
+                        &of - &matched_by(name, *payload)
+                    }
                     Some(_) => of,
                 };
                 &kept | &o(default.span)
@@ -3960,11 +3966,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 name,
                                 fields,
                                 items,
+                                payload,
                                 ..
                             }),
                         default,
                     } if fields.is_empty() && items.is_empty() => {
-                        let mut parts = vec![(of.span, &want - &any_payload(name))];
+                        let mut parts = vec![(of.span, &want - &matched_by(name, *payload))];
                         if !named_default(default) {
                             parts.push((default.span, want.clone()));
                         }
@@ -12096,6 +12103,38 @@ fn handled(res: &Resolution) -> Handled {
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches.
 pub fn any_payload(name: &str) -> KType {
     KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
+}
+
+/// The atom `#name()`, whose payload is the empty tuple: what the pattern `#name()` matches.
+pub fn empty_payload(name: &str) -> KType {
+    KType::atom_with(name, &KType::tuple(Vec::new()))
+}
+
+/// [`empty_payload`] as a checker type. A [`Ty`] keeps an atom's payloads as shapes in its
+/// `payloads` map beside an any-payload part in its set, and [`Ty::diff`] takes shapes away
+/// only by the shapes the other side lists: so this one lists the shape `()`, and narrowing by
+/// it removes `#name()` from a type that holds `#name()` or `#name`, keeping the other shapes
+/// and the bare atom.
+pub fn empty_payload_ty(name: &str) -> Ty {
+    let mut t = Ty::set(KType::atom_with(name, &KType::top()));
+    t.payloads.insert(
+        name.into(),
+        Some(vec![zedc_types::ty::Shape::new(
+            Vec::new(),
+            Default::default(),
+        )]),
+    );
+    t
+}
+
+/// What the atom pattern `#name` (`payload` false) or `#name()` (true) with no parts
+/// matches: [`any_payload`] or [`empty_payload`].
+fn matched_by(name: &str, payload: bool) -> KType {
+    if payload {
+        empty_payload(name)
+    } else {
+        any_payload(name)
+    }
 }
 
 /// `#ioError(op: String, path: String, why: String)`: a failed read or write, its operation,

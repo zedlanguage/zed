@@ -264,7 +264,7 @@ Expr ::: if p is ({ x: int }) { 1 } else { 0 } ::: (if (p is (( ({ x : int }) ))
 Expr ::: if x is {1, 2} { 1 } else { 0 } ::: (if (x is ({ 1 , 2 })) ({ 1 }) else ({ 0 }))
 Expr ::: match p { #fail(pos:,) -> pos, _ -> 0 } ::: (match p { ((#fail ( (pos :) , )) -> pos) , (_ -> 0) })
 Expr ::: match p { #add(a, b,) -> a + b, _ -> 0 } ::: (match p { ((#add ( a , b , )) -> (a + b)) , (_ -> 0) })
-Expr ::: match f { #syntaxError() -> 0 } ::: ERROR
+Expr ::: match f { #syntaxError() -> 0 } ::: (match f { (#syntaxError ( ) -> 0) })
 Expr ::: match t { Point() -> 0 } ::: ERROR
 Type ::: (A, B,) -> C ::: ((( A , B , )) -> C)
 Type ::: #fail(pos: int,) ::: (#fail ( (pos : int) , ))

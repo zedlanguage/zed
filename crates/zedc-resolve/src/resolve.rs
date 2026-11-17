@@ -3167,10 +3167,13 @@ impl Resolver<'_> {
             } => {
                 let h = match pattern {
                     None => Some(Handle::Loose),
+                    // `#a()` matches only the atom with an empty payload, which no handle
+                    // names; like every pattern with a payload, it gets none.
                     Some(Pattern::Atom {
                         name,
                         fields,
                         items,
+                        payload: false,
                         ..
                     }) if fields.is_empty() && items.is_empty() => Some(Handle::Any(name.clone())),
                     Some(_) => None,

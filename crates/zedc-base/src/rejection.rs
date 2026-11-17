@@ -78,6 +78,8 @@ rows! {
     MemoizedNotAFunction => "`@memoized` on code whose result is not a function of its key",
     MemoArenaAfterWith => "`memoizationArena` written after `with`",
     MemoArenaAroundNothing => "Memo arena around no `@memoized` code",
+    // No diagnostic uses this row yet: plan rows L18.2a and L18.2f emit it.
+    FusedNotMet => "Plan assertion `@fused` not met",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",
@@ -86,6 +88,9 @@ rows! {
         "Positional `.map`, or a name that is not a parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
     AlwaysFails => "Operation that always fails",
+    // No diagnostic uses the next two rows yet: plan row L5.4c emits them.
+    KeyEditOnPositions => "Insert or delete by key on a level keyed by position",
+    SpliceWithoutPositions => "`splice` on a level with no positions",
     UndischargedRegion => "Undischarged region assertion",
     ReadBelowDomain => "Read below the domain with no boundary entry",
     BareBoundary => "Boundary item with neither `initial` nor an index",

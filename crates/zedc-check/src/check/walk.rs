@@ -1349,10 +1349,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                         name,
                         fields,
                         items,
+                        payload,
                         ..
                     }) if fields.is_empty() && items.is_empty() => {
-                        // A bare pattern matches the atom with any payload or none.
-                        let narrow = Narrow::Atom(name.as_str().into());
+                        // A bare pattern matches the atom with any payload or none; `#a()`
+                        // only the atom whose payload is the empty tuple (DESIGN.md step
+                        // L1.40d: `x else #a() -> 2` strips `#a()` alone).
+                        let narrow = match payload {
+                            false => Narrow::Atom(name.as_str().into()),
+                            true => Narrow::Not(super::empty_payload_ty(name)),
+                        };
                         self.narrowed(&v, &narrow, e.span).union(&d)
                     }
                     Some(_) => v.union(&d),

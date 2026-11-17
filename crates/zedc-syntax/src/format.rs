@@ -923,6 +923,7 @@ impl<'a> Formatter<'a> {
                 name,
                 fields,
                 items,
+                payload,
                 ..
             } => {
                 self.put(format!("#{name}"));
@@ -932,6 +933,8 @@ impl<'a> Formatter<'a> {
                 } else if !items.is_empty() {
                     self.put("(");
                     then![stack; Job::Patterns(items), put(")")];
+                } else if *payload {
+                    self.put("()");
                 }
             }
             Pattern::Is { name, ty, .. } => {
