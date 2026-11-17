@@ -10849,8 +10849,14 @@ impl Scope {
             // terms' bounds ([`Scope::inputs_and_lets`], `Tx::invert_read`); the others keep
             // their integers, which meeting with their own would not change. A box with no
             // point empties every input, once, as the scope then becomes one no state reaches.
+            // A box of no input, every name read through a summary of none (`v = -2 * w` with
+            // `w = n - n - 5`, a constant), has no input to empty: the scope is then marked as
+            // one no state reaches (LET-self-difference-exact). Sound for the reason emptying
+            // the inputs is: `let_narrowing` gives `None` only when no point of the box gives
+            // the outcome, and each summary read holds here ([`View::holds`]), so it is the
+            // name's value at every state; with no input the box is one point, every state.
             let (over, lets, _) = self.inputs_and_lets(&free, true);
-            let through = if lets.is_empty() {
+            let through: Domains = if lets.is_empty() {
                 Domains::new()
             } else {
                 let reads: Vec<_> = lets.values().filter_map(|l| l.read.clone()).collect();
@@ -10858,9 +10864,13 @@ impl Scope {
                     Some(narrowed) => narrowed,
                     None => {
                         let vars = reads.iter().flat_map(|r| r.vars().iter());
-                        (over.keys().chain(vars))
+                        let emptied: Domains = (over.keys().chain(vars))
                             .map(|n| (n.clone(), IntervalSet::empty()))
-                            .collect()
+                            .collect();
+                        if emptied.is_empty() {
+                            self.bottom = true;
+                        }
+                        emptied
                     }
                 }
             };
@@ -11034,13 +11044,20 @@ impl Scope {
             let demand = Demand::Ints(self.get(&z).ints().clone());
             #[cfg(feature = "counts")]
             super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
-            let narrowed = match let_narrowing(&t, &over, lets, &demand) {
+            let narrowed: Domains = match let_narrowing(&t, &over, lets, &demand) {
                 Some(narrowed) => narrowed,
                 None => {
                     let vars = reads.iter().flat_map(|r| r.vars().iter());
-                    (over.keys().chain(vars))
+                    let emptied: Domains = (over.keys().chain(vars))
                         .map(|n| (n.clone(), IntervalSet::empty()))
-                        .collect()
+                        .collect();
+                    // No input to empty: the term reads only summaries of no input, and no
+                    // state reaches the scope, as in [`Scope::atom_names`].
+                    if emptied.is_empty() {
+                        self.bottom = true;
+                        return;
+                    }
+                    emptied
                 }
             };
             for (n, d) in &narrowed {

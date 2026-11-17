@@ -481,6 +481,56 @@ fn a_name_bound_by_let_carries_its_summary() {
     }
 }
 
+/// A name less itself is the constant 0, whatever it is bound to, and a test of a name whose
+/// summary reads no input then decides its arms (item LET-self-difference-exact):
+/// `v2 = v0 - v0 - 5` is -5 and `v3 = -2 * v2` is 10 for every `n`, so `v3 != -14` holds for
+/// every `n` and its else arm reads none (seed 3, round 51, of
+/// `random_blocks_of_lets_are_read_exactly`); `v1 = v0 - 0 * v0 - v0` is 0 and `v2` is 5,
+/// so `v2 < -14` reads none (seed 12336431817953721988, round 38); and `v1 = 1 * v0 - v0 -
+/// 0 * v0`, the line of seed 752, round 6, here over a `v0` of our own. The summary of `v2`
+/// was the constant all along; the arm was lost where `v3`'s, read from it by the transfer,
+/// had no input, so the test's box of no point emptied no input and the scope stayed
+/// reachable. The fourth program is that alone; the last two read `v3` through a term of `w`
+/// with no summary (`Scope::through_terms`), which had the same gap.
+#[test]
+fn a_name_less_itself_reads_as_zero() {
+    for (src, want) in [
+        (
+            "ok(positional n: int) = { v0 = -1 * n; v1 = 2 * v0 + v0 + 7; v2 = v0 - v0 - 5; \
+             v3 = -2 * v2; if v3 != -14 { 1 } else { 2 } };",
+            ["true: n [..]", "false: n []"],
+        ),
+        (
+            "ok(positional n: int) = { v0 = -3 * n + -2 * n + 6; v1 = v0 - 0 * v0 - v0; \
+             v2 = -2 * v1 - -5; if v2 < -14 { 1 } else { 2 } };",
+            ["true: n []", "false: n [..]"],
+        ),
+        (
+            "ok(positional n: int) = { v0 = 2 * n + 1; v1 = 1 * v0 - v0 - 0 * v0; \
+             if v1 == 0 { 1 } else { 2 } };",
+            ["true: n [..]", "false: n []"],
+        ),
+        (
+            "ok(positional n: int) = { v0 = -1 * n; v2 = v0 - v0 - 5; v3 = v2 * -2; \
+             if v3 != -14 { 1 } else { 2 } };",
+            ["true: n [..]", "false: n []"],
+        ),
+        (
+            "ok(positional n: int) = { v0 = -1 * n; v2 = v0 - v0 - 5; v3 = v2 * -2; \
+             w = v3 * v3; if w == 7 { 1 } else { 2 } };",
+            ["true: n []", "false: n [..]"],
+        ),
+        (
+            "ok(positional n: int) = { v0 = -1 * n; v2 = v0 - v0 - 5; v3 = v2 * -2; \
+             w = v3 * v3 + 3; if w < 103 { 1 } else { 2 } };",
+            ["true: n []", "false: n [..]"],
+        ),
+    ] {
+        assert_eq!(readings(src, &["n"]), want, "{src}");
+        block_exact_on_window(src).unwrap();
+    }
+}
+
 /// The chain of sums of ramps ([`let_chain`]) reads its answer exactly: only `n = 1` at
 /// `d = 1`, and no `n` from `d = 2`, where before the final test's true arm kept every `n`.
 #[test]
