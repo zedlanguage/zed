@@ -12247,6 +12247,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.list_concat_end(x, y, span, None, Self::need)
             }
         };
+        // An entry read from a family that lies in an argument lies there too, as each entry
+        // of it, where every entry that is no atom has the one type the read gives: then a
+        // function the read gives is rebuilt in that argument by rebuilding every such entry
+        // ([`CallFrame::entries`], [`Coercion::Entries`]).
+        if let (Some(r), NeedKind::Component { .. } | NeedKind::Index(_)) = (&n.result, &n.kind)
+            && entries_alike(&on, &out)
+            && let Some(frame) = self.call_frames.last_mut()
+        {
+            frame.entries(&n.on, r);
+        }
         self.replaying -= 1;
         self.need_chain.pop();
         self.need_args = None;
@@ -18094,7 +18104,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it: an exact use, which passes only keys of the domain, gets what the argument gives.
     ///
     /// Where the need's value is not found in an argument the call shows (a variable that two
-    /// parameters hold, an entry of a family, a default of its own value, the result of
+    /// parameters hold, an entry of a family built in the body or of mixed entries, a default
+    /// of its own value, the result of
     /// calling a parameter),
     /// the program is refused, since the run would call the function outside its domain.
     /// Two rebuildings of one place are joined ([`rebuilt_too`]), since the elaborator
@@ -18117,11 +18128,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// - An operator or a prelude word on numbers or strings: it narrows its operand's class
     ///   to carriers (the same paragraph), so its result is no bare `$v` (`apply(f: x + 0)` is
     ///   refused). A prelude word generic in its element, as `map` and a lookup in a family,
-    ///   gives back an element it was given; the element read is found in no argument,
-    ///   since `place` follows tuple components alone ([`CallFrame::component`]), so a
-    ///   value read from a family is refused (`apply(f: { 1 -> x }[1] else x)`), and a lambda
-    ///   that `map` calls on a family of the argument passes on the argument, which the
-    ///   family holds as given.
+    ///   gives back an element it was given. An entry read from a family that lies at a place
+    ///   of an argument lies at that place's entries ([`CallFrame::entries`]) where every
+    ///   entry that is no atom has the one type read, so the whole family is rebuilt entry by
+    ///   entry ([`Coercion::Entries`], PROOF-family-entry-place at [`entries_alike`]); an
+    ///   entry of a family of mixed entries, or of a family built in the body
+    ///   (`apply(f: { 1 -> x }[1] else x)`), is found in no argument and refused, and a
+    ///   lambda that `map` calls on a family of the argument passes on the argument, which
+    ///   the family holds as given.
     /// - `if` and `else`: `if` gives one arm, each of its own variable, each need checked on
     ///   its own. A test that fails, as `x else d` where `x` is no loose atom or `x is t`
     ///   where it is false, gives the value itself, its type cut down ([`Narrow`], "what a
@@ -18233,7 +18247,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut steps = Vec::new();
         let mut up = path;
         while let Some(t) = up {
-            steps.push((t.i, t.len));
+            steps.push(t.step);
             up = t.up.clone();
         }
         for &at in ats.iter() {
@@ -18302,7 +18316,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn coerce_at(
         &mut self,
         at: Span,
-        steps: &[(usize, usize)],
+        steps: &[PlaceStep],
         c: Coercion,
         name: Option<Arc<str>>,
         on: &Ty,
@@ -25129,12 +25143,16 @@ pub(super) enum Untestable {
 }
 
 /// The rebuilding of a value that rebuilds the place `steps` reach in it (each a component and
-/// its tuple's length, innermost first) as `c` does, and leaves the rest as it is.
-fn wrapped(steps: &[(usize, usize)], c: Coercion) -> Coercion {
-    steps.iter().fold(c, |c, &(i, len)| {
-        let mut cs = vec![None; len];
-        cs[i] = Some(c);
-        Coercion::Tuple(cs)
+/// its tuple's length, or each entry of a family, innermost first) as `c` does, and leaves the
+/// rest as it is.
+fn wrapped(steps: &[PlaceStep], c: Coercion) -> Coercion {
+    steps.iter().fold(c, |c, &step| match step {
+        PlaceStep::Component { i, len } => {
+            let mut cs = vec![None; len];
+            cs[i] = Some(c);
+            Coercion::Tuple(cs)
+        }
+        PlaceStep::Entries => Coercion::Entries(Box::new(c)),
     })
 }
 
@@ -25157,16 +25175,19 @@ fn wrapped(steps: &[(usize, usize)], c: Coercion) -> Coercion {
 ///
 /// O(d + |c|) for d steps: the walk down `d` along `steps`, then the join, which visits the
 /// places of `c` at most once.
-fn rebuilt_too(mut d: Coercion, steps: &[(usize, usize)], c: Coercion) -> Option<Coercion> {
+fn rebuilt_too(mut d: Coercion, steps: &[PlaceStep], c: Coercion) -> Option<Coercion> {
     let mut at = &mut d;
-    for (k, &(i, len)) in steps.iter().enumerate().rev() {
-        let Coercion::Tuple(cs) = at else {
-            return None;
+    for (k, &step) in steps.iter().enumerate().rev() {
+        let slot = match (at, step) {
+            (Coercion::Tuple(cs), PlaceStep::Component { i, len }) if cs.len() == len => &mut cs[i],
+            // `d` rebuilds every entry already: the place is inside each, so the walk goes on
+            // into the one rebuilding of an entry.
+            (Coercion::Entries(inner), PlaceStep::Entries) => {
+                at = inner;
+                continue;
+            }
+            _ => return None,
         };
-        if cs.len() != len {
-            return None;
-        }
-        let slot = &mut cs[i];
         match slot {
             None => {
                 *slot = Some(wrapped(&steps[..k], c));
@@ -25237,6 +25258,7 @@ fn join_coercions(a: &mut Coercion, b: Coercion) -> bool {
                     }
                 }
             }
+            (Coercion::Entries(x), Coercion::Entries(y)) => stack.push((&mut **x, *y)),
             _ => return false,
         }
     }
@@ -25253,6 +25275,54 @@ fn one_tuple(t: &Ty) -> Option<usize> {
         && t.vars.is_empty()
         && !t.dynamic;
     t.tuples.only().filter(|_| alone).map(|r| r.len())
+}
+
+/// Whether `on` is one family and nothing else, of one key and keys of no tuple, whose
+/// entries that are no atom all have one type, the type `out` (a read of an entry of it) has
+/// without its atoms ([`Ck::meet`], which then places `out` at every entry,
+/// [`CallFrame::entries`]).
+///
+/// Proof that the rebuilding [`Coercion::Entries`] of `c` is sound there, where `c` is
+/// [`Ck::coercion`] of `out` at the type wanted (PROOF-family-entry-place). The value read is
+/// an entry of the family, at some key, or a miss, an atom. Each entry is a value of the
+/// result of an arrow of the family's one data signature, so an entry that is no atom is a
+/// value of that result without its atoms, which is `out` without its atoms for every arrow
+/// whose results are not atoms alone (the test below; an arrow of atoms alone gives no entry
+/// that is no atom). `c` is `Some` only where `out` is one function or one tuple alone
+/// ([`Ck::coercion`]: `one` asks for no atom, scalar or payload), so `out` is its own type
+/// without atoms, and `c` rebuilds a value of `out`: every entry that is no atom. An atom
+/// entry is kept as it is, as the elaborator's match on `AnyAtom` keeps it, and a read that
+/// gives an atom gets it unchanged. Each entry rebuilt equals the entry on its domain, so a
+/// use of another entry that needs no test gets the entry's own values, as for a component
+/// ([`rebuilt_too`]). Keys of tuples are left out, and stay refused: a keypath is a tuple of
+/// keys into nested families (DESIGN.md sec:keypaths), and this proof covers the entries one
+/// level down only.
+///
+/// Complexity tradeoff: O(a · |R|) for a arrows of results of size |R|, the comparison of
+/// each result with `out`, once for each read of an entry checked at a call; the naive way,
+/// a test of each entry's value, is O(entries) and needs the values, which the checker does
+/// not have. The rebuilding costs O(entries) at run time, once per argument rebuilt.
+fn entries_alike(on: &Ty, out: &Ty) -> bool {
+    let alone = on.set.is_empty()
+        && on.payloads.is_empty()
+        && on.family.is_empty()
+        && on.tuples.is_empty()
+        && on.vars.is_empty()
+        && !on.dynamic;
+    let Some(s) = on
+        .fns
+        .only()
+        .filter(|s| alone && s.data && s.params.len() == 1)
+    else {
+        return false;
+    };
+    // An arrow whose results are atoms alone holds no entry to rebuild.
+    let (r, none) = (out.without_atoms(), Ty::empty());
+    !s.arrows.is_empty()
+        && s.arrows.iter().all(|a| {
+            let ra = a.result.without_atoms();
+            a.params.len() == 1 && a.params[0].tuples.is_empty() && (ra == r || ra == none)
+        })
 }
 
 /// Whether the printed type `text` writes no literal and no `_`, which a declared type in a

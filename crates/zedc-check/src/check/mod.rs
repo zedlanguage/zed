@@ -161,6 +161,10 @@ pub enum Coercion {
     },
     /// A tuple, each component rebuilt where it has a coercion.
     Tuple(Vec<Option<Coercion>>),
+    /// A family, each entry that is no atom rebuilt as the coercion does, at the same key;
+    /// an atom entry is kept. Put only where every entry that is no atom has the one type the
+    /// coercion was made for (`CallFrame::entries`).
+    Entries(Box<Coercion>),
 }
 
 /// What a call names, for the repairs of a [`Misfit`]: a declared function, a prelude word, or
@@ -2047,8 +2051,9 @@ struct CallFrame<'a> {
     /// The variables that are the whole type of a parameter, as `$1` of `pass(x)`.
     whole: HashSet<Arc<str>>,
     /// For each variable that a use gives as a component of a tuple that is the whole value
-    /// of an argument, or a component of such a component (`p[0]`, `g, n = p`), the
-    /// argument's position and the components taken ([`Self::place`]).
+    /// of an argument, or a component of such a component (`p[0]`, `g, n = p`), or as an
+    /// entry of a family whose entries are one type (`m[1]`, [`Self::entries`]), the
+    /// argument's position and the parts taken ([`Self::place`]).
     parts: HashMap<Arc<str>, (usize, Option<Rc<Taken>>)>,
     /// For each variable that is the whole type of a parameter given a declared function by
     /// name, the uses the callee's needs and result make of it ([`FnUses`],
@@ -2137,7 +2142,20 @@ impl<'a> CallFrame<'a> {
         let (Some((at, up)), Some(v)) = (self.place(of), to.as_var()) else {
             return;
         };
-        let taken = Rc::new(Taken { i, len, up });
+        let step = PlaceStep::Component { i, len };
+        let taken = Rc::new(Taken { step, up });
+        self.parts.insert(v.clone(), (at, Some(taken)));
+    }
+
+    /// Records that a value of `to` is an entry of a family of type `of`, where
+    /// [`Self::place`] finds `of`; the caller ([`Ck::meet`]) has proved that every entry of
+    /// that family that is no atom has `to`'s one type. O(1): the path shares its parent's.
+    fn entries(&mut self, of: &Ty, to: &Ty) {
+        let (Some((at, up)), Some(v)) = (self.place(of), to.as_var()) else {
+            return;
+        };
+        let step = PlaceStep::Entries;
+        let taken = Rc::new(Taken { step, up });
         self.parts.insert(v.clone(), (at, Some(taken)));
     }
 }
@@ -2153,12 +2171,20 @@ struct FnUses {
     given_back: bool,
 }
 
-/// A component taken on the way into an argument ([`CallFrame::place`]): component `i` of a
-/// tuple of `len`, inside the place `up` gives (the argument itself where it is `None`).
+/// A part taken on the way into an argument ([`CallFrame::place`]): `step`, inside the place
+/// `up` gives (the argument itself where it is `None`).
 struct Taken {
-    i: usize,
-    len: usize,
+    step: PlaceStep,
     up: Option<Rc<Taken>>,
+}
+
+/// One step of a path into an argument ([`Taken`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaceStep {
+    /// Component `i` of a tuple of `len` components.
+    Component { i: usize, len: usize },
+    /// Each entry of a family ([`CallFrame::entries`]), rebuilt by [`Coercion::Entries`].
+    Entries,
 }
 
 impl<'a> CallFrame<'a> {

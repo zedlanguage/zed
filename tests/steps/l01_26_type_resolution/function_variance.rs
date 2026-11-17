@@ -1280,20 +1280,80 @@ fn a_function_rebuilt_in_two_ways_at_one_call_gets_both() {
     }
 }
 
-/// A function the generic body takes out of a family argument has no place in the argument
-/// where the call can put a test of its domain, so the pass to the partial slot is refused,
-/// where before the fix the run called `small` with 2.5. Row
-/// MSG-partial-slot-no-place-repair-code: the headline is code. It offers no repair: the
-/// declaration that would place the function, `m: 1 -> (x: int) -> int`, writes the literal
-/// type `1`, which this zedc does not compile, and `m: int -> (x: int) -> int` or
-/// `m: int ->? (x: int) -> int` is refused at the call or at `m[1]`.
+/// Row FAIL-partial-slot-generic-family-entry: a function the generic body takes out of a
+/// family argument (`m[1]`), whose entries that are no atom are all of one type, is rebuilt at
+/// the call by rebuilding every entry of the family (`CallFrame::entries`,
+/// `Coercion::Entries`), so a call through the partial slot misses outside its domain and
+/// calls it inside. Before the fix it was refused as passed "from no argument of the call
+/// where its domain can be tested", soundly but needlessly; before FAIL-partial-slot-generic-pass
+/// the run called `small` with 2.5. The cases: a family, an array, an entry of a family that
+/// is a component of a tuple argument, a component of a tuple entry, two entries of one type,
+/// a family with an atom entry, and an exact call of the entry beside the partial one, which
+/// gets the entry's own values.
 #[test]
-fn a_function_taken_from_a_family_argument_is_refused_for_a_partial_slot() {
-    let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\na = pass(m: { 1 -> small });\n";
+fn a_function_taken_from_a_family_argument_misses_outside_its_domain() {
+    let head = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\nbig(x: int) = x + 10;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n"
+        )
+    };
+    let cases = [
+        (
+            "pass(m) = apply(f: m[1]);\na = pass(m: { 1 -> small });\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(m) = apply(f: m[0]);\na = pass(m: [small]);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(p) = apply(f: p[0][1]);\na = pass(p: ({ 1 -> small }, 0));\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(m) = apply(f: m[1][0]);\na = pass(m: { 1 -> (small, 0) });\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(m) = apply(f: m[2]);\na = pass(m: { 1 -> small, 2 -> big });\n",
+            "6",
+            "13",
+        ),
+        (
+            "pass(m) = apply(f: m[0]) + apply(f: m[1]);\na = pass(m: [small, big]);\n",
+            "12",
+            "17",
+        ),
+        (
+            "pass(m) = apply(f: m[1]) + m[1](x: 3);\na = pass(m: { 1 -> small });\n",
+            "10",
+            "8",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        runs_to(&format!("{}{rest}", head("2.5")), "a", miss);
+        runs_to(&format!("{}{rest}", head("3")), "a", hit);
+    }
+}
+
+/// Row FAIL-partial-slot-generic-family-entry, a neighbor that stays refused: a family whose
+/// entries are functions of two types, so an entry read is one of two functions, and no one
+/// rebuilding fits both. (A family built in the body lies in no argument and stays refused
+/// too: `{ 1 -> x }[1]` in [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`].)
+#[test]
+fn a_function_taken_from_a_family_of_two_function_types_is_refused_for_a_partial_slot() {
+    let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\nwide(x: int | f64) = 1;\na = pass(m: { 1 -> small, 2 -> wide });\n";
     let errors = type_errors(src);
-    let want = "`apply(f: m[1])` passes `(x: int) -> int` as `(x: int | f64) ->? int`, from no \
-                argument of the call where its domain can be tested. [apply(f: m[1])]";
-    assert_eq!(errors, [want], "{src}");
+    let want = "`apply(f: m[1])` is `((x: int) -> int) | ((x: int | f64) -> 1)`, passed as \
+                `(x: int | f64) ->? int`";
+    assert!(
+        errors.len() == 1 && errors[0].starts_with(want),
+        "{src}: {want}\n{errors:#?}"
+    );
 }
 
 /// A family passed to a partial slot is not rebuilt as a function: its lookup of a key it

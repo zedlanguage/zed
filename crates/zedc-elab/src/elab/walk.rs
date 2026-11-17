@@ -2419,7 +2419,8 @@ impl<'a> Elab<'a> {
     /// `v` rebuilt by `c` ([`check::Coercion`]): a function as a lambda that calls it where
     /// its arguments are in its domain and gives `#notFound` elsewhere ([`in_domain`]), its
     /// result rebuilt in turn; a tuple as the tuple of its components, each rebuilt where `c`
-    /// says. Each value is bound to a temporary once and read from it.
+    /// says; a family as the family of its entries, each rebuilt. Each value is bound to a
+    /// temporary once and read from it.
     ///
     /// Cost: O(size of `c`) terms. The nodes of `c` are listed breadth first, so that each
     /// node's children come after it, then built from the last to the first, each from its
@@ -2440,6 +2441,7 @@ impl<'a> Elab<'a> {
             let kids: Vec<Option<&check::Coercion>> = match ns[i].c {
                 check::Coercion::Fn { result, .. } => vec![result.as_deref()],
                 check::Coercion::Tuple(cs) => cs.iter().map(Option::as_ref).collect(),
+                check::Coercion::Entries(c) => vec![Some(&**c)],
             };
             let mut at = Vec::with_capacity(kids.len());
             for k in kids {
@@ -2486,6 +2488,25 @@ impl<'a> Elab<'a> {
                         })
                         .collect();
                     Term::Prim(Prim::Tuple, parts)
+                }
+                // The family over its own keys, each entry rebuilt, an atom entry kept as it
+                // is (the proof PROOF-family-entry-place at `entries_alike`, zedc-check), as
+                // `map` builds a family ([`Elab::map_term`]). O(entries) at run time.
+                check::Coercion::Entries(_) => {
+                    let (k, e) = (self.temp(), self.temp());
+                    let entry = Term::Prim(Prim::Get, vec![x(), Term::Var(k.clone())]);
+                    let kept = Term::Match(
+                        Shared::new(Term::Var(e.clone())),
+                        vec![
+                            (KPattern::AnyAtom, Term::Var(e.clone())),
+                            (KPattern::Wild, by(ns[i].kids[0], Term::Var(e.clone()))),
+                        ],
+                    );
+                    Term::Fam {
+                        domain: Shared::new(x()),
+                        var: k,
+                        body: Shared::new(Term::Let(e, Shared::new(entry), Shared::new(kept))),
+                    }
                 }
             };
             built[i] = Some(t);
