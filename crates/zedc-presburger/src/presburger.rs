@@ -22708,10 +22708,27 @@ fn symbols_by_structure<'a>(rows: &'a [Con], syms: &[&'a Atom]) -> Vec<&'a Atom>
 /// is not given do not hold, so (as elimination over the integers is exact) each leaf gets the
 /// integer points of `rows` read on its symbol, as with [`by_halves`] (bucket elimination on a
 /// tree decomposition: Dechter, "Bucket elimination", 1999; the two passes of a junction tree,
-/// Lauritzen and Spiegelhalter, 1988). An atom [`shadow`] keeps (where its elimination would
-/// add rows) stays in the rows passed on, as in [`by_halves`], and is read as unknown there. The
-/// rows of a class of atoms not asked each reach the places of the whole class, so they are all
-/// put at one node and such an atom is never passed between nodes.
+/// Lauritzen and Spiegelhalter, 1988). The rows of a class of atoms not asked each reach the
+/// places of the whole class, so they are all put at one node and such an atom is never passed
+/// between nodes.
+///
+/// An atom [`shadow`] keeps (where its elimination would add rows, or is not exact) stays in
+/// the rows passed on, as in [`by_halves`], and the leaves still get the points of
+/// [`by_halves`] (PROOF-projected-each-kept-atom). Proof: by [`shadow`]'s contract each step
+/// gives `∃E. R` for its rows `R` and the atoms `E` it removes, kept atoms being free variables
+/// of it like any other. The rows passed up from a subtree hold only atoms of the subtree's
+/// rows, and those passed down to it only atoms of the rows outside it. Going up from `p`, the
+/// step removes only atoms no row outside `p`'s subtree holds; every row of the subtree is in
+/// the step's rows `R1` (at `p`, or in its children's rows), and every other row `R2` is
+/// outside the subtree or was passed from outside it, so `R2` holds no atom of `E`. Going down
+/// to `c`, the same with inside and outside swapped: `R2` is `c`'s own rows and those passed up
+/// from it, and holds only atoms inside `c`, which the step keeps. So at every step
+/// `(∃E. R1) ∧ R2` is `∃E. (R1 ∧ R2)`, and by induction over the steps a leaf's rows are
+/// `rows` with every atom but those it holds bound, kept atoms among the ones it holds. Read on
+/// its symbol (as [`linked_to`] and [`hull_from`] read them), they have the points of `rows`,
+/// as a leaf of [`by_halves`] has, by the same argument; so where both questions answer, the
+/// hulls are equal. A refusal may differ, since the rows asked about differ. Test:
+/// `a_kept_atom_passed_between_halves_gives_the_hulls_of_by_halves`.
 // Complexity tradeoff: the naive version, [`by_halves`], projects at each node all the rows of
 // its parent onto the node's atoms, so every row is handled once per level, O(m log k) rows
 // handled for m rows and k symbols even where the projections stay small: 22921 rows at 40
@@ -30167,6 +30184,92 @@ mod by_halves_against_old {
             with_absent.get(&absent),
             Some(&hull_from(&whole, &absent, &model))
         );
+    }
+
+    /// An atom that [`shadow`] keeps, passed between the two halves of [`projected_each`]
+    /// (PROOF-projected-each-kept-atom): symbols `v0` to `v3`, each in `0..=20`, the chain
+    /// `v2 == v1 + 1`, `v2 + 1 <= v3`, and `v10`, not asked, between `v0` and `v1` by `v0 <=
+    /// 2·v10`, `v1 + 1 <= 2·v10`, `3·v10 <= v0 + 4` and `3·v10 <= v1 + 6`. Its rows are put at
+    /// the node of `v0` and `v1`, the left half. With `v0` gone, `v10` has a lower bound of
+    /// coefficient 2 and an upper bound of coefficient 3 over `v1`, so its elimination is not
+    /// exact and `shadow` keeps it: it is passed down to the leaf of `v1`, and up to the root
+    /// and, `v1` put in from the equality, down into the right half over `v2`, so the rows
+    /// given for `v1` and `v2` hold it (asserted). Each symbol's hull over the projection of
+    /// `projected_each` equals its hull over that of [`by_halves`] and over all the rows, and
+    /// the integer hull listed over the box, with `v10` from its bounds.
+    #[test]
+    fn a_kept_atom_passed_between_halves_gives_the_hulls_of_by_halves() {
+        let k = Lin::constant;
+        let con = |f: Formula| match &f {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!("a row"),
+        };
+        let mut rows: Vec<Con> = Vec::new();
+        for i in 0..4 {
+            rows.push(con(ge(v(i))));
+            rows.push(con(ge(k(20).minus(&v(i)))));
+        }
+        let y = v(10);
+        rows.push(con(eq(v(2).minus(&v(1)).minus(&k(1)))));
+        rows.push(con(ge(v(3).minus(&v(2)).minus(&k(1)))));
+        rows.push(con(ge(y.times(2).minus(&v(0)))));
+        rows.push(con(ge(y.times(2).minus(&v(1)).minus(&k(1)))));
+        rows.push(con(ge(v(0).plus(&k(4)).minus(&y.times(3)))));
+        rows.push(con(ge(v(1).plus(&k(6)).minus(&y.times(3)))));
+        let syms: Vec<Atom> = (0..4).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        let ks: Vec<&Atom> = syms.iter().collect();
+        let kept = Atom::Sym("v10".into());
+        let each = projected_each(&rows, &ks);
+        for i in [1, 2] {
+            let p = each[i].as_ref().expect("a point");
+            assert!(
+                p.iter().any(|c| c.lin.terms.contains_key(&kept)),
+                "{}: {p:?}",
+                syms[i]
+            );
+        }
+        let mut halves: Vec<Option<Vec<Con>>> = vec![None; 4];
+        let keep: Vec<BTreeSet<Atom>> =
+            (syms.iter()).map(|s| BTreeSet::from([s.clone()])).collect();
+        by_halves(rows.clone(), &keep, |i, p| {
+            halves[i] = p;
+            Ok::<_, ()>(Vec::new())
+        })
+        .unwrap();
+        // The integer hull of each symbol, listed: `v10` exists between its bounds.
+        let mut listed = [(i64::MAX, i64::MIN); 4];
+        for a in 0..=20i64 {
+            for b in 0..=20i64 {
+                let lo = (a.max(b + 1) + 1).div_euclid(2);
+                let hi = (a + 4).min(b + 6).div_euclid(3);
+                if lo > hi {
+                    continue;
+                }
+                for c in b + 1..=(b + 1).min(20) {
+                    for d in c + 1..=20 {
+                        for (j, x) in [a, b, c, d].into_iter().enumerate() {
+                            listed[j] = (listed[j].0.min(x), listed[j].1.max(x));
+                        }
+                    }
+                }
+            }
+        }
+        let model = solve(&rows, true).expect("solve").expect("a point");
+        let whole = Formula::and(rows.iter().cloned().map(Formula::Con).collect());
+        let over = |p: &Option<Vec<Con>>, s: &Atom| {
+            let p = p.clone().expect("a point");
+            hull_from(
+                &Formula::and(p.into_iter().map(Formula::Con).collect()),
+                s,
+                &model,
+            )
+        };
+        for (i, s) in syms.iter().enumerate() {
+            let want = Ok(IntervalSet::of(listed[i].0, listed[i].1));
+            assert_eq!(hull_from(&whole, s, &model), want, "{s} over all the rows");
+            assert_eq!(over(&halves[i], s), want, "{s} by halves");
+            assert_eq!(over(&each[i], s), want, "{s} in two passes");
+        }
     }
 
     /// The rows of the case of [`batch_and_single_hulls_are_exact_on_a_chain_of_sums`] over
