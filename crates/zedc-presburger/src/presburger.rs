@@ -15322,8 +15322,8 @@ fn splinters(
 /// variable into the tie make), so `H` lies in `K` exactly when each found one does, under
 /// every naming alike. `H` is the whole group of symmetries of the rows when they send the
 /// first tied variable only into the tie, which needs the ranks that made the tie to be kept
-/// by every symmetry (an assumption at [`System::symmetries`] for the counts of
-/// [`System::shrinking`]); the verdict here does not need it. A swap of the whole tie, and
+/// by every symmetry (proved at [`System::symmetries`], the counts of [`System::shrinking`]
+/// renewed before a tie is read); the verdict here does not need it. A swap of the whole tie, and
 /// the swaps of a tie split by [`System::rekey`], make every permutation of the tied
 /// variables, which no naming changes either.
 ///
@@ -16373,15 +16373,23 @@ impl System {
     /// those rows, made every row added beside a sum of n bounded terms cost O(n)
     /// (`omega::eliminating_the_terms_of_a_long_row_costs_the_row_each_time` took 26.7 times
     /// the instructions from 128 to 1,024), though most systems never reach the stage that
-    /// reads the marks. Which of several such variables is taken marks other variables but
-    /// changes no count.
+    /// reads the marks. Every variable of `a` of fewest rows is kept, not the one of least
+    /// index among them, so that which counts are renewed does not turn on the names
+    /// (PROOF-shrink-counts-current).
+    // Complexity tradeoff: naive version, the one of least index among those of fewest rows,
+    // which made which counts [`System::refresh`] renews depend on the names. Used: all of them,
+    // O(terms of `a`) here as before; [`System::refresh`] reads each row of the kept variables
+    // once per call, so a row of n terms whose variables all have its one row still marks the
+    // n variables once, as before; more is read only where several variables tie for fewest
+    // rows with rows of their own.
     fn touch(&mut self, a: &Coefs) {
-        if let Some(v) = a
-            .iter()
-            .map(|(i, _)| *i)
-            .min_by_key(|i| (self.vars[*i].rows.len(), *i))
-        {
-            self.near.insert(v);
+        let Some(fewest) = a.iter().map(|(i, _)| self.vars[*i].rows.len()).min() else {
+            return;
+        };
+        for (i, _) in a.iter() {
+            if self.vars[*i].rows.len() == fewest {
+                self.near.insert(*i);
+            }
         }
     }
 
@@ -16694,15 +16702,13 @@ impl System {
     /// for every choice and every naming. When `Aut` sends `x` only into `T`, `S_T` is all of
     /// `Aut` and `H = Aut`, of `|T|·|Stab(x)|` elements. That holds when the ranks that made
     /// the tie are kept by every symmetry: the fill of [`Sides::fill`] and the colors are
-    /// functions of the rows (and the colors of the variables), but the counts of
-    /// [`System::shrinking`] are renewed only for the variables [`System::refresh`] marks,
-    /// and [`System::shrink`] also reads rows of other variables (`lengths`, the rows held):
-    /// Assumption, not proved (PROOF-shrink-counts-current): the counts are current when
-    /// [`System::least`] reads them, or else differ alike for two variables a symmetry maps
-    /// onto each other. If false, `H` may be smaller than `Aut`, but it is still the group
-    /// `S_T` makes, so [`broken_swap`], which needs only that, gives the same verdict under
-    /// every naming. Checked against all permutations of the variables, for every system of
-    /// a stated family, under every naming: `tie_group_tests`.
+    /// functions of the rows (and the colors of the variables), and so are the counts of
+    /// [`System::shrinking`] where a tie is read from them: [`System::shrink`] reads only the
+    /// rows held (`lengths`, `opposites`, the rows themselves), none by index, and every count
+    /// is renewed ([`System::refresh_all`]) before [`System::least`] gives such a tie
+    /// (PROOF-shrink-counts-current). A symmetry keeps the rows, so it keeps each count, and
+    /// the ranks that made the tie. Checked against all permutations of the variables, for
+    /// every system of a stated family, under every naming: `tie_group_tests`.
     ///
     /// Complexity tradeoff: naive version, refine from each tied variable in turn, one
     /// refinement per tied variable, O(t·N log N) for t tied variables and N vertices, which
@@ -16965,6 +16971,27 @@ impl System {
             }
             self.vars[j].shrink = f;
         }
+    }
+
+    /// Renews [`System::shrinking`] for every variable a row holds, so that each count is that
+    /// of the rows held now. [`System::refresh`] alone does not ensure it: [`System::shrink`]
+    /// reads `lengths` (the rows held of each length, anywhere), `opposites` and which rows are
+    /// held, and a row added or removed elsewhere marks only the variables [`System::touch`]
+    /// keeps, so a count may be that of earlier rows (PROOF-shrink-counts-current).
+    // Complexity tradeoff: naive version, renew every count at each step, O(v) calls of
+    // `shrink` a step, quadratic over a run. Used: only when [`System::least`] gives a tie,
+    // where [`Omega::untie`] then builds the graph of all the rows (`RowGraph::new`, O(N) for
+    // N terms held) and the calls of `shrink` read each variable's rows, O(N) and the pairs of
+    // each variable's rows, the cost of one renewal of each. Not proved: that a run meets O(1)
+    // such ties; a run that met a tie at each of s steps pays O(s·(N + pairs)), as it pays
+    // `untie`'s cost s times already.
+    fn refresh_all(&mut self) {
+        for (j, v) in self.vars.iter().enumerate() {
+            if !v.rows.is_empty() {
+                self.dirty.insert(j);
+            }
+        }
+        self.refresh();
     }
 
     /// The place of the row of `x[p]` other than the row at `l`, when `x[p]` has exactly
@@ -18128,7 +18155,13 @@ impl Omega {
                     Some(false) => {}
                     None => {
                         self.sys.refresh();
-                        let least = self.sys.least(&[&self.sys.shrinking]);
+                        let mut least = self.sys.least(&[&self.sys.shrinking]);
+                        // A tie is read on counts of the rows held now, so that every symmetry
+                        // of the rows keeps the ranks that made it (`System::symmetries`).
+                        if matches!(least, Some((_, Err(_)))) {
+                            self.sys.refresh_all();
+                            least = self.sys.least(&[&self.sys.shrinking]);
+                        }
                         if let Some((_, Ok(js))) = self.untie(least, |_| true) {
                             for j in js {
                                 let rows = self.sys.eliminate(j, false);
@@ -18794,9 +18827,9 @@ impl Omega {
     // loop after the tie to read only the rows and the flags that hold no variable, and each
     // step to be the same under a renaming of the variables (the invariant [`solve`] states).
     // No proof covers every step, and a step added later that reads a variable's index would
-    // break it. The counts of `System::shrinking` are a read that is not of the rows alone:
-    // they are renewed only for the variables `System::refresh` marks, and `System::touch`
-    // marks by the least number of rows, then the least index (PROOF-shrink-counts-current). Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
+    // break it. The counts of `System::shrinking` are renewed for every variable before a tie
+    // is read from them, and `System::touch` marks every variable of fewest rows, none by
+    // index (PROOF-shrink-counts-current). Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
     // (200 random symmetric systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
     // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an
