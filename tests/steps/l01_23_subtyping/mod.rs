@@ -11,6 +11,7 @@
 
 mod admission;
 mod admission_sweep;
+mod arrow_keys;
 mod bound_paths;
 mod bound_sameness;
 mod cells;

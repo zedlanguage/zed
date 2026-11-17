@@ -6659,6 +6659,49 @@ fn near_pairs<'r, P: Placed + 'r>(
     (0..n).map(&mut sorted).collect()
 }
 
+/// The pairs of a shape of `xs` and a shape of `ys`, payload shapes of one atom name, that may
+/// share a value, in the order of `xs` and, for each, of `ys`: only shapes with as many items
+/// and the same field names share a value (a payload of one item and a field is not one of two
+/// items: the place lemma of PROOF-star-pairs), so they are grouped by those first, and in each
+/// group only the pairs [`near_pairs`] gives are kept. A pair left out shares no value.
+/// [`Ty::meet`] meets these pairs and [`Ty::meets`] tests them.
+// Complexity tradeoff (COMPLEXITY.md F144): the naive way pairs each shape with each, O(l·r)
+// for l and r shapes (60.9 times the bytes at 8 times the shapes in the negative control);
+// grouping in a hash map and filing each group as tuples are filed (F127) gives only the pairs
+// that may share a value, O((l·G + r·H)·w + p) as for rows, at the cost of the group index and
+// of the class keys each shape keeps.
+fn near_shapes<'s>(xs: &'s [Shape], ys: &'s [Shape]) -> Vec<(&'s Shape, &'s Shape)> {
+    let key = |s: &'s Shape| (s.items.len(), s.fields.keys().collect::<Vec<_>>());
+    let mut index: FMap<(usize, Vec<&Arc<str>>), usize> = FMap::default();
+    // Each group's shapes of `xs` and of `ys`.
+    let mut groups: Vec<(Vec<&Shape>, Vec<&Shape>)> = Vec::new();
+    for y in ys {
+        let g = *index.entry(key(y)).or_insert_with(|| {
+            groups.push((Vec::new(), Vec::new()));
+            groups.len() - 1
+        });
+        groups[g].1.push(y);
+    }
+    // For each shape of `xs`, its group and its place in the group.
+    let mut of = Vec::with_capacity(xs.len());
+    for x in xs {
+        of.push(index.get(&key(x)).map(|&g| {
+            groups[g].0.push(x);
+            (g, groups[g].0.len() - 1)
+        }));
+    }
+    let near: Vec<Vec<Vec<usize>>> = (groups.iter())
+        .map(|(left, right)| near_pairs(left, right))
+        .collect();
+    let mut out = Vec::new();
+    for (x, at) in xs.iter().zip(of) {
+        let Some((g, i)) = at else { continue };
+        let right = &groups[g].1;
+        out.extend(near[g][i].iter().map(|&j| (x, right[j])));
+    }
+    out
+}
+
 /// An item of a payload shape as [`Comparing::shape_rest`] splits it: the type, and the
 /// kernel type of its values, which decides.
 type Item = (Ty, KType);
@@ -11268,21 +11311,29 @@ impl Ty {
 
     /// The meet with `t`, as an `is` test narrows: what of `self` is also in `t`.
     pub fn meet(&self, t: &Ty) -> Ty {
-        if !self.meets_parts(t) {
-            return self.meet_rest(t, Vec::new(), BTreeMap::new());
+        if !self.meets_parts(t) && !self.both_fns(t) {
+            return self.meet_rest(t, Vec::new(), BTreeMap::new(), Vec::new());
         }
         let memo = RefCell::default();
         let pairs = Pairs {
             stack: Stack::default(),
             memo: &memo,
         };
-        pairs.stack.run(pairs.meet(self, t))
+        pairs
+            .stack
+            .run(pairs.meet(MeetSide::Lent(self), MeetSide::Lent(t)))
     }
 
     /// Whether its meet with `t` meets parts of the two side by side: when both have tuples,
     /// or both list the payloads of an atom of one name ([`Self::listed_with`]).
     fn meets_parts(&self, t: &Ty) -> bool {
         (!self.tuples.is_empty() && !t.tuples.is_empty()) || self.listed_with(t).next().is_some()
+    }
+
+    /// Whether it and `t` both have functions, whose meet meets their parameter and result
+    /// types ([`Pairs::fns_met`]).
+    fn both_fns(&self, t: &Ty) -> bool {
+        !self.fns.is_empty() && !t.fns.is_empty()
     }
 
     /// The atom names whose payloads both it and `t` list, each with the two lists of shapes,
@@ -11297,14 +11348,16 @@ impl Ty {
         })
     }
 
-    /// [`Self::meet`] with `met`, the meets of the pairs of its tuples and `t`'s, and `shapes`,
+    /// [`Self::meet`] with `met`, the meets of the pairs of its tuples and `t`'s, `shapes`,
     /// for each atom name both list the payloads of ([`Self::listed_with`]), the meets of the
-    /// pairs of their shapes.
+    /// pairs of their shapes, and `fns`, the functions of the meet ([`Pairs::fns_met`]), none
+    /// where one side has none.
     fn meet_rest(
         &self,
         t: &Ty,
         mut met: Vec<Row>,
         mut shapes: BTreeMap<Arc<str>, Vec<Shape>>,
+        fns: Vec<Arc<Sig>>,
     ) -> Ty {
         // A side holding `_` is every value, whatever it holds beside it (A92), so the meet is
         // the other side. Before (FAIL-types-meet-key-arrows-not-within), only `t` was read so;
@@ -11378,54 +11431,10 @@ impl Ty {
                 .zip(first)
                 .filter_map(|(cs, f)| f.then_some(cs)),
         );
-        out.fns = self.fns_met(t).into();
+        out.fns = fns.into();
         out.prune_payloads();
         if !self.vars.is_empty() {
             out = out.union(t);
-        }
-        out
-    }
-
-    /// The functions of its meet with `t`: for each of its functions and each of `t`'s that
-    /// takes the same parameters, their meet ([`Domains::meet`]), or the one function where the
-    /// two are equal. A function of one parameter list and a function of another share no value
-    /// ([`fits_sig`]), so such a pair gives nothing. Before (FAIL-types-meet-function-union),
-    /// its own functions were kept whenever `t` had any, and `(rat -> #b) & ((bool -> ()) |
-    /// String)` was read as `rat -> #b`.
-    // Complexity tradeoff (COMPLEXITY.md F200): `t`'s functions are filed by parameter list in
-    // a hash map, O(m) expected for m functions, and each of the n functions of `self` is paired
-    // with those of its list only, so the cost is O(n + m) plus the pairs made, which are the
-    // meet itself. The naive method compares each of the n·m pairs, O(n·m) also where no two
-    // functions take the same parameters and the meet has no function. What each function's
-    // arrows say of its domain ([`Domains`]) is worked out once for each function, not once for
-    // each pair.
-    fn fns_met(&self, t: &Ty) -> Vec<Arc<Sig>> {
-        if self.fns.is_empty() || t.fns.is_empty() {
-            return Vec::new();
-        }
-        let mut by_params: HashMap<ParamList, Vec<(&Arc<Sig>, Domains)>> = HashMap::new();
-        for q in &t.fns {
-            let entry = (q, Domains::of(q));
-            by_params.entry(q.param_list()).or_default().push(entry);
-        }
-        let mut have = HashSet::new();
-        let mut out = Vec::new();
-        for s in &self.fns {
-            let Some(qs) = by_params.get(&s.param_list()) else {
-                continue;
-            };
-            let ds = Domains::of(s);
-            for (q, dq) in qs {
-                let m = match s == *q {
-                    true => Some(s.clone()),
-                    false => Domains::meet((s, &ds), (q, dq)).map(Arc::new),
-                };
-                if let Some(m) = m
-                    && have.insert(m.clone())
-                {
-                    out.push(m);
-                }
-            }
         }
         out
     }
@@ -11763,12 +11772,26 @@ impl Ty {
     }
 
     /// Whether `self` and `other` may share a value, when that is known without reading their
-    /// tuples, which it is unless each has a tuple of a length the other has and nothing else
-    /// of them meets.
+    /// tuples and payload shapes, which it is unless nothing else of them meets and either each
+    /// has a tuple of a length the other has or both list the payloads of an atom of one name.
+    ///
+    /// An atom name both list is read as [`Ty::meet`] reads it: the set holds that atom with any
+    /// payload only to stand for the listed shapes ([`Ty::meet_rest`] takes it out of the set
+    /// where no pair of shapes meets), so it is taken out of the meet of the two sets here, and
+    /// the shapes decide ([`Pairs::meets`]). Before (FAIL-types-partial-arrow-same-atom-keys),
+    /// the two sets alone decided, and `#t(int)` was read as sharing a value with `#t(bool)`.
     fn meets_here(&self, other: &Ty) -> Option<bool> {
         if !self.closed() || !other.closed() {
             return Some(true);
         }
+        let listed: Vec<KType> = (self.listed_with(other))
+            .map(|(n, ..)| KType::atom_with(n, &KType::top()))
+            .collect();
+        let some_listed = !listed.is_empty();
+        let common = match some_listed {
+            false => &self.set & &other.set,
+            true => &(&self.set & &other.set) - &KType::union_all(listed),
+        };
         // A shape meets the other side's kind-wide part when the kernel finds a common value;
         // a shape with no kernel type may.
         let wide_meets = |a: &Ty, b: &Ty| {
@@ -11778,12 +11801,15 @@ impl Ty {
                     .iter()
                     .any(|cs| cs.kernel().is_none_or(|k| !(&k & &w).is_empty()))
         };
-        if !(&self.set & &other.set).is_empty()
+        if !common.is_empty()
             || wide_meets(self, other)
             || wide_meets(other, self)
             || (!self.fns.is_empty() && !other.fns.is_empty())
         {
             return Some(true);
+        }
+        if some_listed {
+            return None;
         }
         if self.tuples.is_empty() || other.tuples.is_empty() {
             return Some(false);
@@ -11802,7 +11828,10 @@ impl Ty {
 /// answer needs their own tuples is walked in a frame of its own ([`Stack`]), in the order the
 /// recursion took. A pair of nodes shared at many places is walked once: its answer is kept
 /// by the addresses of the two, which stay put while both are borrowed, so a type with `2^n`
-/// paths through `n` tuples costs `O(n)` pairs, not `2^n`.
+/// paths through `n` tuples costs `O(n)` pairs, not `2^n`. The meet keeps it by the places of
+/// the two instead ([`MeetAt`]), since it also meets types that its own frames make and drop,
+/// the parameter and result types of the signatures it meets ([`Domains::meet`]), on the same
+/// stack: a dropped type may pass its address on, never its place.
 ///
 /// Complexity tradeoff: naive version, plain recursion over both types as trees, O(paths),
 /// `2^n` for `n` shared tuples (n = 2,000 did not finish in 60 s), and a stack overflow at
@@ -11815,7 +11844,7 @@ impl Ty {
 struct Pairs<'m, K, V> {
     stack: Stack<'m>,
     /// The answer for each pair walked, by the addresses of the two, both borrowed until the
-    /// walk ends (above); only read by key, never iterated.
+    /// walk ends (above), or by their places; only read by key, never iterated.
     memo: &'m RefCell<HashMap<K, V>>,
 }
 
@@ -11837,10 +11866,41 @@ impl<'m, K: std::hash::Hash + Eq + Copy + 'm, V: Clone + Unpin + 'm> Pairs<'m, K
     }
 }
 
-impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
-    /// [`Ty::meet`] of `a` and `t`, which both hold tuples or both list the payloads of an atom
-    /// of one name ([`Ty::meets_parts`]).
-    async fn meet(&'m self, a: &'m Ty, t: &'m Ty) -> Ty {
+/// A type the walk of [`Ty::meet`] reads, held by the walk itself, so that a frame of its own
+/// may take it whatever made it: a type borrowed for the whole walk; one a frame made, a
+/// parameter or result type of a signature being met ([`Domains::meet`]); or a component of a
+/// row or an item or field of a payload shape, held through the row or shape, which stays put
+/// in it.
+enum MeetSide<'m> {
+    Lent(&'m Ty),
+    Own(Box<Ty>),
+    Row(Row, usize),
+    Item(Shape, usize),
+    Field(Shape, Arc<str>),
+}
+
+impl std::ops::Deref for MeetSide<'_> {
+    type Target = Ty;
+    fn deref(&self) -> &Ty {
+        match self {
+            MeetSide::Lent(t) => t,
+            MeetSide::Own(t) => t,
+            MeetSide::Row(r, i) => &r[*i],
+            MeetSide::Item(s, i) => &s.items[*i],
+            MeetSide::Field(s, n) => &s.fields[n],
+        }
+    }
+}
+
+/// Where a component stands: the number of its row or payload shape ([`NodeId`]), never
+/// another node's, and its place there, the fields counted after the items. A row or shape
+/// never changes once made, so a place names one type for the whole process.
+type MeetAt = (NodeId, usize);
+
+impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
+    /// [`Ty::meet`] of `a` and `t`, in the frame that calls it.
+    async fn meet(&'m self, a: MeetSide<'m>, t: MeetSide<'m>) -> Ty {
+        let (a, t): (&Ty, &Ty) = (&a, &t);
         // A side holding `_` is every value, so the meet is the other side ([`Ty::meet_rest`]).
         if t.dynamic {
             return a.clone();
@@ -11854,55 +11914,37 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
         // are those of meeting every pair of one length.
         for (r, near) in a.tuples.iter().zip(near_pairs(&a.tuples, &t.tuples)) {
             for s in near.into_iter().map(|j| &t.tuples[j]) {
-                if let Some(cs) = self.components(r.iter().zip(s.iter())).await {
+                let pairs = (0..r.len()).map(|i| {
+                    let x = (MeetSide::Row(r.clone(), i), (r.node(), i));
+                    (x, (MeetSide::Row(s.clone(), i), (s.node(), i)))
+                });
+                if let Some(cs) = self.components(pairs).await {
                     met.push(Row::new(cs));
                 }
             }
         }
-        // The payloads of each atom name both list, met the same way: only shapes with as
-        // many items and the same field names share a value, so they are grouped by those
-        // first, and in each group only the pairs [`near_pairs`] gives are met.
-        // Complexity tradeoff (COMPLEXITY.md F144): the naive meet tries each pair of shapes,
-        // O(l·r) for l and r shapes of the name (60.9 times the bytes at 8 times the shapes in
-        // the negative control); grouping in a hash map and filing each group as tuples are
-        // filed (F127) meets only the pairs that may share a value, O((l·G + r·H)·w + p) as
-        // for rows, at the cost of the group index and of the class keys each shape keeps.
+        // The payloads of each atom name both list, met the same way: only the pairs of shapes
+        // that may share a value are met ([`near_shapes`], where the complexity tradeoff is).
+        // Those have as many items and the same field names, so the `j`-th field of each is at
+        // the place after the items and the fields before it.
         let mut shapes = BTreeMap::new();
         for (n, xs, ys) in a.listed_with(t) {
-            let key = |s: &'m Shape| (s.items.len(), s.fields.keys().collect::<Vec<_>>());
-            let mut index: FMap<(usize, Vec<&Arc<str>>), usize> = FMap::default();
-            // Each group's shapes of `xs` and of `ys`.
-            let mut groups: Vec<(Vec<&Shape>, Vec<&Shape>)> = Vec::new();
-            for y in ys {
-                let g = *index.entry(key(y)).or_insert_with(|| {
-                    groups.push((Vec::new(), Vec::new()));
-                    groups.len() - 1
-                });
-                groups[g].1.push(y);
-            }
-            // For each shape of `xs`, its group and its place in the group.
-            let mut of = Vec::with_capacity(xs.len());
-            for x in xs {
-                of.push(index.get(&key(x)).map(|&g| {
-                    groups[g].0.push(x);
-                    (g, groups[g].0.len() - 1)
-                }));
-            }
-            let near: Vec<Vec<Vec<usize>>> = (groups.iter())
-                .map(|(left, right)| near_pairs(left, right))
-                .collect();
             let mut m = Vec::new();
-            for (x, at) in xs.iter().zip(of) {
-                let Some((g, i)) = at else { continue };
-                let right = &groups[g].1;
-                for y in near[g][i].iter().map(|&j| right[j]) {
-                    let named = std::cell::Cell::new(true);
-                    let Some(mut cs) = self.components(x.pairs(y, &named)).await else {
-                        continue;
-                    };
-                    let fields = (x.fields.keys().cloned()).zip(cs.split_off(x.items.len()));
-                    m.push(Shape::new(cs, fields.collect()));
-                }
+            for (x, y) in near_shapes(xs, ys) {
+                let (xn, yn, l) = (x.node(), y.node(), x.items.len());
+                let items = (0..l).map(|i| {
+                    let p = (MeetSide::Item(x.clone(), i), (xn, i));
+                    (p, (MeetSide::Item(y.clone(), i), (yn, i)))
+                });
+                let fields = x.fields.keys().enumerate().map(|(j, k)| {
+                    let p = (MeetSide::Field(x.clone(), k.clone()), (xn, l + j));
+                    (p, (MeetSide::Field(y.clone(), k.clone()), (yn, l + j)))
+                });
+                let Some(mut cs) = self.components(items.chain(fields)).await else {
+                    continue;
+                };
+                let fields = (x.fields.keys().cloned()).zip(cs.split_off(l));
+                m.push(Shape::new(cs, fields.collect()));
             }
             // Complexity tradeoff (COMPLEXITY.md F17): repeated shapes dropped through a hash
             // set, as repeated rows are below.
@@ -11913,20 +11955,28 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
                 .map(|(s, _)| s.clone());
             shapes.insert(n.clone(), m.collect());
         }
-        a.meet_rest(t, met, shapes)
+        // Boxed, so that a walk whose types hold no function, the most, keeps its frames as
+        // small as before: one allocation for each pair of types that both hold functions.
+        let fns = match a.both_fns(t) {
+            false => Vec::new(),
+            true => Box::pin(self.fns_met(a, t)).await,
+        };
+        a.meet_rest(t, met, shapes, fns)
     }
 
-    /// The meets of the pairs of components `pairs`, in order, or none when one is empty: a
-    /// row or a payload with an empty component has no value, whatever the rest meet to.
+    /// The meets of the pairs of components `pairs`, each with its place, in order, or none
+    /// when one is empty: a row or a payload with an empty component has no value, whatever
+    /// the rest meet to. A pair whose meet reads parts of the two, or their functions, is met
+    /// in a frame of its own, once for each pair of places.
     async fn components(
         &'m self,
-        pairs: impl Iterator<Item = (&'m Ty, &'m Ty)>,
+        pairs: impl Iterator<Item = ((MeetSide<'m>, MeetAt), (MeetSide<'m>, MeetAt))>,
     ) -> Option<Vec<Ty>> {
         let mut cs = Vec::new();
-        for (x, y) in pairs {
-            let c = match x.meets_parts(y) {
-                false => x.meet_rest(y, Vec::new(), BTreeMap::new()),
-                true => self.kept((x, y), move || self.meet(x, y)).await,
+        for ((x, px), (y, py)) in pairs {
+            let c = match x.meets_parts(&y) || x.both_fns(&y) {
+                false => x.meet_rest(&y, Vec::new(), BTreeMap::new(), Vec::new()),
+                true => self.kept((px, py), move || self.meet(x, y)).await,
             };
             if c.is_empty() {
                 return None;
@@ -11935,10 +11985,71 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), Ty> {
         }
         Some(cs)
     }
+
+    /// The meet of `a` and `t`, two types a frame made, in a frame of its own where it reads
+    /// parts of the two or their functions, as [`Self::components`] meets a pair.
+    // Complexity tradeoff (COMPLEXITY.md TY-meet-stack): the naive way, which this replaced,
+    // called [`Ty::meet`] anew for each parameter and result type, a new walk with its own memo
+    // on the thread's stack, so functions curried n deep took O(n) of the thread's stack and
+    // overflowed 2 MiB at n = 1,000. Here the two are moved into a frame on the heap, O(1) of
+    // the thread's stack at any depth, at the cost of one boxed frame and the two clones of
+    // `a` and `t` (each an O(1) clone of `Arc`s at its top level); a pair with nothing to walk
+    // takes no frame. The memo is the walk's, so a pair of rows met at two depths is met once.
+    fn alone(&'m self, a: Ty, t: Ty) -> Deep<'m, Ty> {
+        if !a.meets_parts(&t) && !a.both_fns(&t) {
+            return Stack::ready(a.meet_rest(&t, Vec::new(), BTreeMap::new(), Vec::new()));
+        }
+        self.stack.call(move || async move {
+            self.meet(MeetSide::Own(Box::new(a)), MeetSide::Own(Box::new(t)))
+                .await
+        })
+    }
+
+    /// The functions of the meet of `a` and `t`: for each function of `a` and each of `t`'s
+    /// that takes the same parameters, their meet ([`Domains::meet`]), or the one function
+    /// where the two are equal. A function of one parameter list and a function of another
+    /// share no value ([`fits_sig`]), so such a pair gives nothing. Before
+    /// (FAIL-types-meet-function-union), `a`'s own functions were kept whenever `t` had any,
+    /// and `(rat -> #b) & ((bool -> ()) | String)` was read as `rat -> #b`.
+    // Complexity tradeoff (COMPLEXITY.md F200): `t`'s functions are filed by parameter list in
+    // a hash map, O(m) expected for m functions, and each of the n functions of `a` is paired
+    // with those of its list only, so the cost is O(n + m) plus the pairs made, which are the
+    // meet itself. The naive method compares each of the n·m pairs, O(n·m) also where no two
+    // functions take the same parameters and the meet has no function. What each function's
+    // arrows say of its domain ([`Domains`]) is worked out once for each function, not once for
+    // each pair.
+    async fn fns_met(&'m self, a: &Ty, t: &Ty) -> Vec<Arc<Sig>> {
+        let mut by_params: HashMap<ParamList, Vec<(&Arc<Sig>, Domains)>> = HashMap::new();
+        for q in &t.fns {
+            let entry = (q, Domains::of(q));
+            by_params.entry(q.param_list()).or_default().push(entry);
+        }
+        let mut have = HashSet::new();
+        let mut out = Vec::new();
+        for s in &a.fns {
+            let Some(qs) = by_params.get(&s.param_list()) else {
+                continue;
+            };
+            let ds = Domains::of(s);
+            for (q, dq) in qs {
+                let m = match s == *q {
+                    true => Some(s.clone()),
+                    false => Domains::meet(self, (s, &ds), (q, dq)).await.map(Arc::new),
+                };
+                if let Some(m) = m
+                    && have.insert(m.clone())
+                {
+                    out.push(m);
+                }
+            }
+        }
+        out
+    }
 }
 
 impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
-    /// [`Ty::meets`] of `a` and `b`, whose tuples decide it. Only the pairs of tuples that may
+    /// [`Ty::meets`] of `a` and `b`, whose tuples and the payload shapes of the atom names both
+    /// list decide it ([`Ty::meets_here`]). Only the pairs of tuples that may
     /// share a value are compared ([`Near`]), found by key lookup, not every pair of one length.
     /// When each side has one tuple, that one pair is compared, with the same answer.
     async fn meets(&'m self, a: &'m Ty, b: &'m Ty) -> bool {
@@ -11973,20 +12084,44 @@ impl<'m> Pairs<'m, (*const Ty, *const Ty), bool> {
                 .into_iter()
                 .flatten()
                 .chain(every.into_iter().flatten());
-            'pair: for s in near.map(|j| &b.tuples[j]) {
-                for (x, y) in r.iter().zip(s) {
-                    let met = match x.meets_here(y) {
-                        Some(m) => m,
-                        None => self.kept((x, y), move || self.meets(x, y)).await,
-                    };
-                    if !met {
-                        continue 'pair;
-                    }
+            for s in near.map(|j| &b.tuples[j]) {
+                if self.all_meet(r.iter().zip(s)).await {
+                    return true;
                 }
-                return true;
+            }
+        }
+        // The payloads of each atom name both list ([`Ty::meets_here`]): the atoms share a
+        // value exactly when a pair of their payloads does, and only the pairs
+        // [`near_shapes`] gives may (a pair it leaves out shares no value). A payload shares a
+        // value with another of as many items and the same field names exactly when each item
+        // and field does with the one in its place, since the payloads are the products of
+        // their items and fields: a value of each meet, put together, is a payload of both.
+        // This is the reading of [`Ty::meet`], which keeps an atom name where a pair of shapes
+        // meets to a shape with no empty item ([`Pairs::components`]).
+        for (_, xs, ys) in a.listed_with(b) {
+            for (x, y) in near_shapes(xs, ys) {
+                let named = std::cell::Cell::new(true);
+                if self.all_meet(x.pairs(y, &named)).await {
+                    return true;
+                }
             }
         }
         false
+    }
+
+    /// Whether each pair of `pairs`, the components of two tuples or payloads in their places,
+    /// may share a value: then the two do, a value of each pair put together.
+    async fn all_meet(&'m self, pairs: impl Iterator<Item = (&'m Ty, &'m Ty)>) -> bool {
+        for (x, y) in pairs {
+            let met = match x.meets_here(y) {
+                Some(m) => m,
+                None => self.kept((x, y), move || self.meets(x, y)).await,
+            };
+            if !met {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -14197,7 +14332,7 @@ fn piece_keys<'t>(t: &'t Ty, out: &mut Vec<Key<'t>>) -> bool {
 }
 
 /// What the arrows of a signature say of its domain, for its meet with a signature of the same
-/// parameters ([`Ty::fns_met`]). The domain of a function of the signature holds the parameter
+/// parameters ([`Pairs::fns_met`]). The domain of a function of the signature holds the parameter
 /// types of each exact arrow, its guarantee, and lies within those of all its arrows, its
 /// permission (DESIGN.md sec:type_language, "Morphism types carry two domain bounds", as
 /// [`every_arrow_fits`] reads a signature); the arrows of several parameters are read as
@@ -14387,9 +14522,19 @@ impl Domains {
     // kernel comparison of each side's guarantee with the other side's permission
     // ([`Domains::outside`]), and one meet for each parameter type of each partial arrow, O(a)
     // meets of the sizes of the types; each side's guarantee and permission are made once for
-    // each function ([`Ty::fns_met`]). Given up: a guarantee the kernel refuses is not proved
+    // each function ([`Pairs::fns_met`]). Given up: a guarantee the kernel refuses is not proved
     // outside, and the meet is kept (COMPLEXITY.md F222).
-    fn meet((s, ds): (&Sig, &Domains), (q, dq): (&Sig, &Domains)) -> Option<Sig> {
+    ///
+    /// Each parameter and result type is met in a frame of its own on the walk's stack
+    /// ([`Pairs::alone`]), so that the meet of functions curried `n` deep, whose result types
+    /// hold functions in turn, needs no more of the thread's stack at depth `n` than at depth
+    /// one. Before (FAIL-types-meet-curried-is-stack-overflow), each level called [`Ty::meet`]
+    /// again on the thread's stack, and 1,000 curried lambdas overflowed a 2 MiB stack.
+    async fn meet<'m>(
+        pairs: &'m Pairs<'m, (MeetAt, MeetAt), Ty>,
+        (s, ds): (&Sig, &Domains),
+        (q, dq): (&Sig, &Domains),
+    ) -> Option<Sig> {
         if ds.outside(dq) || dq.outside(ds) {
             return None;
         }
@@ -14408,7 +14553,7 @@ impl Domains {
                 // arrow bounds every value it bounded, less narrowly.
                 for (p, u) in a.params.iter_mut().zip(within) {
                     if exact || Domains::plain(p) {
-                        *p = p.meet(u);
+                        *p = pairs.alone(p.clone(), u.clone()).await;
                     }
                 }
             }
@@ -14428,7 +14573,8 @@ impl Domains {
             match at.entry(&a.params) {
                 std::collections::hash_map::Entry::Occupied(e) => {
                     let kept = &mut merged[*e.get()];
-                    kept.result = kept.result.meet(&a.result);
+                    let result = pairs.alone(kept.result.clone(), a.result.clone());
+                    kept.result = result.await;
                     kept.partial &= a.partial;
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
