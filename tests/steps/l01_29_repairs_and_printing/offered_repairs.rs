@@ -334,6 +334,45 @@ fn a_fix_beside_another_rejected_argument_is_kept() {
     assert!(!got.contains("h(1.0, true)"), "{got}");
 }
 
+/// The headline of a fix to an argument of a call written over several lines ends at the
+/// argument: on the line that opens the call, `y = f(k * 0.5,`, on a line with another
+/// argument before it, and on the line that ends the call, `k * 0.5);`, each gives
+/// "Try `rat(k) * 0.5` instead.", without the call's `)` (MSG-try-closing-paren). A `)` in
+/// a string is no bracket. A call on one line keeps the whole line, as
+/// `a_fix_beside_another_rejected_argument_is_kept` shows.
+#[test]
+fn the_headline_of_a_fix_on_a_line_of_a_call_ends_at_the_argument() {
+    let f = "k = 1;\nf(positional a: rat, positional b: rat, positional c: rat, positional d: rat) = 1;\n";
+    let got = offered(&format!("{f}y = f(k * 0.5,\n  2r, k * 0.5,\n  k * 0.5);\n"));
+    assert_eq!(
+        got.matches("Try `rat(k) * 0.5` instead.").count(),
+        3,
+        "{got}"
+    );
+    let g = "k = 1;\ng(positional s: String, positional x: rat) = 1;\n";
+    let got = offered(&format!("{g}y = g(\")\",\n  k * 0.5);\n"));
+    assert_eq!(
+        got.matches("Try `rat(k) * 0.5` instead.").count(),
+        1,
+        "{got}"
+    );
+    let got = offered(&format!("{g}y = g(\"(\", k * 0.5);\n"));
+    assert!(
+        got.contains("Try `y = g(\"(\", rat(k) * 0.5)` instead."),
+        "{got}"
+    );
+    // A line that is a whole statement is kept whole, though a `,` separates the names it
+    // binds; and a line of a list of names that follows a `,` is cut at it.
+    let id = "id(x) = x;\n";
+    let got = offered(&format!("{id}a, b = id(x: (1 / 2, 1));\n"));
+    assert!(
+        got.contains("Try `a, b = id(x: (1r / 2, 1))` instead."),
+        "{got}"
+    );
+    let got = offered(&format!("{g}y = g(\n  \"s\", k * 0.5\n);\n"));
+    assert!(got.contains("Try `rat(k) * 0.5` instead."), "{got}");
+}
+
 /// A call that refuses a literal and another argument too is one error, whose headline
 /// names every argument and whose steps give the literal's own message
 /// (MSG-many-args-one-error): `h(1.0f64, true)` at two `rat` parameters, and

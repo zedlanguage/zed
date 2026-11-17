@@ -8286,6 +8286,12 @@ impl Rewrite {
     /// lie in `source` after the one before it, or where the system refuses the memory. It
     /// costs the length of those lines.
     fn line(&self, source: &str) -> Option<String> {
+        let (start, end) = self.line_bounds(source)?;
+        self.joined(source, start, end)
+    }
+
+    /// The places in `source` where [`Rewrite::line`] starts and ends.
+    fn line_bounds(&self, source: &str) -> Option<(usize, usize)> {
         let first = self.edits.first()?.0;
         let last = self.edits.last()?.0;
         let start = (source.get(..first.start)?.rfind('\n')).map_or(0, |i| i + 1);
@@ -8294,6 +8300,94 @@ impl Rewrite {
             Ok(tokens) => last.end + tokens.last().map_or(0, |t| t.span.end),
             Err(_) => end,
         };
+        Some((start, end))
+    }
+
+    /// The code a headline ends with, "Try `rat(k) * 0.5` instead.": the corrected source
+    /// line ([`Rewrite::line`]) without what lies outside the brackets the line opens and
+    /// closes itself, so that a fix on a line of a construct written over several lines ends
+    /// at its argument. The line `  k * 0.5);` that ends the call `y = f(` gives
+    /// `rat(k) * 0.5`, not `rat(k) * 0.5)` (row MSG-try-closing-paren); the line
+    /// `y = f(a, k * 0.5,` gives `rat(k) * 0.5`. It starts after the last bracket opened
+    /// before the first edit that the line does not close, and ends before the first bracket
+    /// closed after the last edit that the line does not open; within that, where the line is
+    /// part of a list, it is cut too at the nearest `,` around the edits outside every
+    /// bracket. The line is lexed
+    /// as written, so a bracket in a string or a comment is not one; where that fails, as in
+    /// a string the line does not open, the line is kept whole.
+    ///
+    /// Complexity tradeoff: one lex of the line and two passes over its tokens, the first with
+    /// a stack of the brackets open, O(the line), as [`Rewrite::line`] costs. The naive way,
+    /// counting bracket bytes, is O(the line) too but reads a bracket in a string as code.
+    fn headline(&self, source: &str) -> Option<String> {
+        let (start, end) = self.line_bounds(source)?;
+        let (first, last) = (self.edits.first()?.0, self.edits.last()?.0);
+        let Ok(tokens) = lex(source.get(start..end)?) else {
+            return self.joined(source, start, end);
+        };
+        // The brackets still open, by the place after them; the first bracket closed after
+        // the last edit that no bracket of the line opened.
+        let mut open = Vec::new();
+        let mut closed = None;
+        let mut from = start;
+        for t in &tokens {
+            let (s, e) = (start + t.span.start, start + t.span.end);
+            match t.tok {
+                Tok::Op("(" | "[" | "{") => open.push(e),
+                Tok::Op(")" | "]" | "}") if open.pop().is_none() => match s >= last.end {
+                    true => {
+                        closed = Some(s);
+                        break;
+                    }
+                    // Closed before the first edit: the code it closes lies before the line.
+                    false if e <= first.start => from = e,
+                    false => {}
+                },
+                _ => {}
+            }
+        }
+        // The last bracket opened before the first edit that the line leaves open.
+        if let Some(&o) = open.iter().rev().find(|&&o| o <= first.start) {
+            from = from.max(o);
+        }
+        // The line is part of a list another line opens or closes: it leaves a bracket open
+        // or closes one it did not open, ends in a `,`, or follows a `,` or an open bracket.
+        let in_list = from > start
+            || closed.is_some()
+            || matches!(tokens.last().map(|t| &t.tok), Some(Tok::Op(",")))
+            || (source.get(..start)?.trim_end()).ends_with([',', '(', '[', '{']);
+        let mut to = closed.unwrap_or(end);
+        // In a list, the argument ends at the `,`s around it outside the brackets of what is
+        // left: `y = f(a, k * 0.5,` and `  a, k * 0.5,` give `rat(k) * 0.5`. Such a `,`
+        // separates the items of the list. A line that is a whole statement is kept whole,
+        // as `a, b = id(x: (1r / 2, 1))`, whose `,` separates the names it binds, and a line
+        // that opens and closes its brackets itself, `y = min(1.0, 0.5r) + 2.5r`.
+        let mut depth = 0usize;
+        for t in &tokens {
+            let (s, e) = (start + t.span.start, start + t.span.end);
+            if s < from {
+                continue;
+            }
+            if e > to {
+                break;
+            }
+            match t.tok {
+                Tok::Op("(" | "[" | "{") => depth += 1,
+                Tok::Op(")" | "]" | "}") => depth = depth.saturating_sub(1),
+                Tok::Op(",") if in_list && depth == 0 && e <= first.start => from = e,
+                Tok::Op(",") if in_list && depth == 0 && s >= last.end => {
+                    to = s;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        self.joined(source, from, to)
+    }
+
+    /// The code of `source` from `start` to `end` with the edits made, which lie inside it,
+    /// without the whitespace at either end. O(end - start).
+    fn joined(&self, source: &str, start: usize, end: usize) -> Option<String> {
         let mut parts = Vec::with_capacity(2 * self.edits.len() + 1);
         let mut at = start;
         for (s, with) in &self.edits {
@@ -8488,8 +8582,11 @@ impl Msg {
                     Ok(())
                 }));
                 // The headline ends with the first fix, the corrected source line in full,
-                // where it is one line (DESIGN.md sec:diagnostics, "A short headline").
-                let first = lines[0].trim().trim_end_matches([';', ',']);
+                // where it is one line (DESIGN.md sec:diagnostics, "A short headline"), within
+                // the brackets the line opens and closes ([`Rewrite::headline`]).
+                let first = source.and_then(|s| self.fixes[0].headline(s));
+                let first = first.as_deref().unwrap_or(&lines[0]);
+                let first = first.trim().trim_end_matches([';', ',']).trim_end();
                 let text = (!first.contains('\n')).then(|| {
                     let head = self.text.strip_suffix('.').unwrap_or(&self.text);
                     format!("{head}. Try `{first}` instead.")

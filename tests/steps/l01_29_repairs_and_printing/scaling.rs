@@ -298,7 +298,12 @@ pub(super) fn the_carried_fixes_of_the_arguments(src: &str, n: usize) {
         n,
         "{out}"
     );
-    assert_eq!(out.matches("Try `rat(k) * 0.5").count(), n, "{out}");
+    // The headline's repair ends at the argument, without the `)` that closes the call on
+    // the last argument's line (MSG-try-closing-paren) or the `,` after the others.
+    assert_eq!(
+        out.matches("Try `rat(k) * 0.5` instead.").count(),
+        n,
+        "{out}"
 }
 
 #[test]
