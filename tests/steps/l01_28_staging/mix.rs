@@ -76,6 +76,28 @@ fn an_evaluation_error_is_left_to_run() {
     assert!(out(&s, "x\n").starts_with("error: "), "{}", out(&s, "x\n"));
 }
 
+/// Row FAIL-stage-function-value-report: a term whose value is a function, as `id(small)`, is
+/// left to run, and the reason recorded says so; it is not a bug in zedc.
+#[test]
+fn a_definition_whose_value_is_a_function_is_left_to_run_without_a_bug_report() {
+    let src = "small(x: int) = x + 1;\nid(v) = v;\ng = id(v: small);\na = g(x: 2);\n\
+               main(m: MainArgs) {\n  m.stdout <- \"${a}\";\n}\n";
+    let p = zedc::run::load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}: {e}"));
+    let (s, report) = p.stage();
+    let left: Vec<String> = (report.left.iter())
+        .map(|(t, why)| format!("{t}: {why}"))
+        .collect();
+    assert!(
+        left.iter().any(|l| l.starts_with("id(small): ")),
+        "{src}: {left:#?}"
+    );
+    assert!(
+        left.iter().all(|l| !l.contains("bug in zedc")),
+        "{src}: {left:#?}"
+    );
+    assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
+}
+
 #[test]
 fn a_term_whose_form_shows_it_ends_is_built_with_no_fuel() {
     let src = "twice(positional n: int) = n + n;\nbig = twice(twice(twice(3)));\n\

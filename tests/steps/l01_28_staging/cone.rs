@@ -515,7 +515,7 @@ fn mixes_as_written(u: &Unit, calls: &[Term], seed: u64) {
     for t in calls {
         let closed = u.close(t.clone());
         let out = match stage::ends(&closed) {
-            true => zed_kernel::eval(&zedc::interp::prelude(closed)).map_err(|e| e.to_string()),
+            true => zed_kernel::eval(&zedc::interp::prelude(closed)).map_err(left_why),
             false => Err(FORM.to_string()),
         };
         match out {
@@ -538,6 +538,21 @@ fn mixes_as_written(u: &Unit, calls: &[Term], seed: u64) {
     let site = |s: &String| calls.iter().any(|t| s.starts_with(&format!("{t:?}: ")));
     let got: std::collections::BTreeSet<String> = left(&report).into_iter().filter(site).collect();
     assert_eq!(got, want_left, "seed {seed}");
+}
+
+/// The reason a build term whose run as written stops with `e` is left to run: a value that
+/// is or holds a function is said plainly (row FAIL-stage-function-value-report), any other
+/// error is the evaluator's text.
+fn left_why(e: zed_kernel::KernelError) -> String {
+    match e.to_string() {
+        m if m.contains("the program's result is a function") => {
+            "its value is a function, which the build leaves for the run to make".into()
+        }
+        m if m.contains("the program's result holds a function") => {
+            "its value holds a function, which the build leaves for the run to make".into()
+        }
+        m => m,
+    }
 }
 
 fn float(x: f64) -> Term {

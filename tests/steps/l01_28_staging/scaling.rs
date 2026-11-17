@@ -65,6 +65,43 @@ fn mixing_a_chain_of_local_definitions() {
     }
 }
 
+/// `n` definitions whose values are functions, `g{i} = id(v: small)`, each called by `main`.
+pub(super) fn function_values(n: usize) -> String {
+    let mut s = String::from("small(x: int) = x + 1;\nid(v) = v;\n");
+    for i in 0..n {
+        s += &format!("g{i} = id(v: small);\n");
+    }
+    let calls: Vec<String> = (0..n).map(|i| format!("g{i}(x: {i})")).collect();
+    s += &format!(
+        "main(m: MainArgs) {{\n  m.stdout <- \"${{{}}}\";\n}}\n",
+        calls.join(" + ")
+    );
+    s
+}
+
+/// `p`, a loaded [`function_values`]`(n)`, stages with each `id(small)` left to run for the
+/// plain reason that its value is a function (row FAIL-stage-function-value-report).
+pub(super) fn function_values_left(p: &Program) -> Program {
+    let (s, report) = p.stage();
+    let why = "its value is a function, which the build leaves for the run to make";
+    assert!(!report.left.is_empty());
+    for (t, w) in &report.left {
+        assert_eq!(w, why, "{t}");
+    }
+    s
+}
+
+/// 1, 2 and 9 definitions whose values are functions, staged and run (`bench::scaling` times
+/// 300).
+#[test]
+fn definitions_whose_values_are_functions_are_left_to_run() {
+    for n in [1usize, 2, 9] {
+        let s = function_values_left(&load(function_values(n).as_bytes()).unwrap());
+        let want: usize = (0..n).map(|i| i + 1).sum();
+        assert_eq!(out(&s, "x\n"), format!("{want}\n"));
+    }
+}
+
 /// `f` and `n` definitions, each calling it with its own literal.
 pub(super) fn callers(n: usize) -> String {
     let mut s = String::from("f(x: int, y: int) = x + y;\n");

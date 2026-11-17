@@ -1964,6 +1964,27 @@ fn inline(o: Out) -> Term {
 /// Why a build-stage term is left to run when its form does not show that it ends.
 const FORM: &str = "its form does not show that it ends";
 
+/// Why a build-stage term whose run as written stopped with `e` is left to run (row
+/// FAIL-stage-function-value-report). A term whose value is a function, or holds one, as
+/// `id(small)`, is correct: the evaluator gives data alone as a run's result
+/// (`Evaluator::run`), so the term is left for the run to make, and the reason says so. Every
+/// other error is the evaluator's own text, its fault-report wording kept: the term passed the
+/// checker, so a primitive given a function, or a port read in a pure region (no port is bound
+/// in a build run), is a fault of zedc. Not proved: that the checker refuses every term that
+/// gives a primitive a function; the wording follows the checker's contract, which
+/// `KernelError::Type` states. O(1) beside the run.
+fn left_why(e: KernelError) -> String {
+    match e {
+        KernelError::Type(m) if m == "the program's result is a function" => {
+            "its value is a function, which the build leaves for the run to make".into()
+        }
+        KernelError::Type(m) if m == "the program's result holds a function" => {
+            "its value holds a function, which the build leaves for the run to make".into()
+        }
+        e => e.to_string(),
+    }
+}
+
 /// The value of the closed term `t` under the prelude, its calls of the functions of `stubs`
 /// answered by their ports for the run `calls`.
 fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, KernelError> {
@@ -2925,8 +2946,7 @@ impl Mixer {
             if !self.shows_end(t, free) {
                 return Err(FORM.into());
             }
-            return run_with(self.closed(t, &lets, &[]), &[], &Arc::default())
-                .map_err(|e| e.to_string());
+            return run_with(self.closed(t, &lets, &[]), &[], &Arc::default()).map_err(left_why);
         }
         let entries = &self.scope.entries;
         if stubs.iter().any(|&i| entries[i].stub.is_none()) {
@@ -2998,7 +3018,7 @@ impl Mixer {
             reads.expect("each build-stage binding is a literal, lambda, primitive or name");
         let mut ev = Evaluator::new(World::new());
         let out = ev.run_under(t, &self.scope.globals, &reads);
-        out.map_err(|e| e.to_string())
+        out.map_err(left_why)
     }
 
     /// Whether [`ends`] would show that the build-stage term `t`, which reads `free`, ends

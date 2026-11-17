@@ -7,7 +7,8 @@ use zedc::stage::ends;
 
 use crate::scaling::{
     Shape, a_chain_staged, a_deep_unit_colored, a_deep_unit_mixed, callers, chain, deep_unit,
-    every_function_split, many_callees, nested_lets_calling_len, the_values_passed,
+    every_function_split, function_values, function_values_left, many_callees,
+    nested_lets_calling_len, the_values_passed,
 };
 
 /// Checks that staging `chain(n, all)` scales, `what` naming it, with the program loaded
@@ -32,6 +33,16 @@ fn mixing_a_term_that_reads_every_definition_scales() {
         200,
         true,
     );
+}
+
+#[test]
+fn definitions_whose_values_are_functions_are_left_to_run_in_time_that_scales() {
+    // Each is run as written and left, with the reason read off the error in O(1).
+    let n = 300;
+    let progs = scaling::inputs(n, |k| load(function_values(k).as_bytes()).unwrap());
+    scaling::check("n definitions whose values are functions", n, |k| {
+        function_values_left(&progs[&k]);
+    });
 }
 
 #[test]
