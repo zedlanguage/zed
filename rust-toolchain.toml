@@ -1,0 +1,10 @@
+# The Rust toolchain this workspace builds and tests with (BUILD-root-toolchain-pin): the version
+# `rustc -V` reports for the default toolchain on the machine the tests run on today, which is
+# also the version tools/fetch_test_deps.sh fetches for the cross builds. Only rustup reads this
+# file. A machine without rustup builds with whatever rustc is on its PATH, and the full piece
+# s09_release then fails if that is another version. The test machine's rustc is Fedora's build
+# of 1.99.1 (`rustc 1.99.1 (58cf8f9c3 2026-10-13) (Fedora 1.99.1-2.fc44)`, linked to the system
+# LLVM); rustup installs the upstream build of the same version, so the two agree in version and
+# commit but not as binaries.
+[toolchain]
+channel = "1.99.1"
