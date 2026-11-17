@@ -270,11 +270,16 @@ impl<A: Atom> Set<A> {
     }
 }
 
-/// The set split into its literals before `key` and those after; `key` is not in it.
+/// The set split into its literals before `key` and those after; `key`'s atom is not in it, taken
+/// either way.
 fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
     let (mut lefts, mut rights) = (Vec::new(), Vec::new());
     let mut cur = t;
     while let Some(n) = cur {
+        // On the path the split walks anyway, rather than a lookup before it: the tests and
+        // benchmarks are built with debug assertions on (tools/run_tests.sh), and a lookup there
+        // walked this path twice (CMT-set-debug-assert-path-twice).
+        debug_assert!(n.key.0 != key.0, "an atom in both sets is taken alike");
         if n.key < *key {
             lefts.push(n);
             cur = n.right.as_ref();
@@ -746,8 +751,8 @@ pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
         // `hi`'s literal is not in `lo`: a literal's priority is a function of the literal, and
         // a set's root is its highest literal by (priority, literal), so had `lo` held it, `lo`'s
         // root would be at least as high as it, and so be it. So `lo` splits with nothing left
-        // out, and `hi` stays over the two sides.
-        debug_assert!(get(Some(&lo), &hi.key.0).is_none(), "taken alike");
+        // out, and `hi` stays over the two sides. That `lo` holds no literal of `hi`'s atom taken
+        // the other way, a caller's error, is checked by `split`, on the path it walks.
         let (l, r) = split(Some(&lo), &hi.key);
         todo.push(Step::Make(hi.clone()));
         todo.push(Step::Both(hi.right.clone(), r));
