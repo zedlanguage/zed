@@ -10,7 +10,23 @@ fn fixed(q: [u64; 5], r: u64) -> Priorities {
 #[test]
 fn the_field_operations_agree_with_division_by_p() {
     let p = u128::from(P);
-    let edges = [0, 1, 2, 58, 59, 60, P - 2, P - 1, 1 << 32, (1 << 63) + 5];
+    // P - 60 times P - 1 or P - 2 makes the second fold of the product carry
+    // past 2^64: a reduction that folds the high word twice in 64-bit
+    // arithmetic and drops that carry gives a wrong product there, and on no
+    // other pair of this test (found by the cross-review XR-xor-shape-round-7-high).
+    let edges = [
+        0,
+        1,
+        2,
+        58,
+        59,
+        60,
+        P - 60,
+        P - 2,
+        P - 1,
+        1 << 32,
+        (1 << 63) + 5,
+    ];
     let mut z: u64 = 1;
     let mut values: Vec<u64> = edges.to_vec();
     for _ in 0..2000 {
