@@ -414,8 +414,8 @@ pub(super) enum Frame<'a> {
     Remap(Box<remap::RemapF<'a>>),
     /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
     /// the call's span (step L3.2), and the receiver where it is a call of `flatMap`
-    /// ([`Ck::flat_map_receiver`]).
-    MapFn(Ty, Span, bool, Option<&'a Expr>),
+    /// ([`Ck::flat_map_receiver`]), and the span of `x`.
+    MapFn(Ty, Span, bool, Option<&'a Expr>, Span),
     /// `x.group(f)` or, with `true`, `x.rekey(f)`, `f` being checked: `x`'s type, the span of
     /// `x`, and the call's span (step L4.1; `group_end`).
     Group(Ty, Span, Span, bool),
@@ -1203,9 +1203,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     remap::RemapNext::Done(t) => m.ty(t),
                 }
             }
-            Frame::MapFn(x, span, filter, kept) => {
+            Frame::MapFn(x, span, filter, kept, of) => {
                 let f = m.take_arg();
-                let t = self.map_end(&x, f, span, filter, kept);
+                let recv = Some((Rc::from([of]), None));
+                let t = self.map_end(&x, f, span, filter, kept, recv);
                 m.ty(t);
             }
             Frame::Group(x, recv, span, rekey) => {
@@ -1216,7 +1217,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::FlatMap(x, span, kept) => {
                 let f = m.take_arg();
                 let at = f.at.unwrap_or(span);
-                let t = self.map_end(&x, f, span, false, kept);
+                let t = self.map_end(&x, f, span, false, kept, None);
                 let t = self.flat_map_end(t, at);
                 m.ty(t);
             }
@@ -3386,6 +3387,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 at: Some(e.span),
                 expr: Some(e),
                 parts: None,
+                below: None,
                 branches: None,
                 via: None,
             });
@@ -3905,6 +3907,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// `kept` is the receiver where it is a call of `flatMap`, whose lists a refusal of `f`
     /// on them is told of ([`Self::kept_lists`]).
+    ///
+    /// `recv` is where the receiver's value lies in values the program writes: the receiver
+    /// itself, or the arguments of the call being checked that a receiver in a generic body
+    /// is part of ([`CallFrame::place`]), with the parts taken in them. Where a family's
+    /// entries are all of one type ([`entries_alike`]), each entry passed to a declared `f`
+    /// lies at that place's entries, so a function `f` passes to a partial slot is rebuilt
+    /// there, entry by entry (FAIL-partial-slot-generic-lambda-map, PROOF-family-entry-place
+    /// at [`entries_alike`]); else the argument lies nowhere, and such a function is refused.
     fn map_end(
         &mut self,
         x: &Ty,
@@ -3912,6 +3922,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         filter: bool,
         kept: Option<&'a Expr>,
+        recv: Recv,
     ) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let (name, word) = match filter {
@@ -3975,7 +3986,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                             let lists = kept
                                 .filter(|_| Self::all_lists(&entries))
                                 .map(|of| (of, entries.clone()));
-                            let arg = Arg::of(entries);
+                            // Complexity tradeoff: `entries_alike` is O(arrows) in the
+                            // checker, as the union of entries above is; the rebuilding it
+                            // allows is O(entries) at run time, once per receiver rebuilt.
+                            let below = (recv.as_ref()).filter(|_| entries_alike(x, &entries)).map(
+                                |(spans, up)| {
+                                    let step = PlaceStep::Entries;
+                                    (
+                                        spans.clone(),
+                                        Rc::new(Taken {
+                                            step,
+                                            up: up.clone(),
+                                        }),
+                                    )
+                                },
+                            );
+                            let arg = match below {
+                                Some((spans, below)) => Arg {
+                                    via: Some(spans),
+                                    below: Some(below),
+                                    ..Arg::of(entries)
+                                },
+                                None => Arg::of(entries),
+                            };
                             let before = self.errors.len();
                             let w = (self.apply(
                                 Label::Text(given),
@@ -4058,11 +4091,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Piece::Var(v) => {
                     let r = self.class_root(&v);
                     let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                        Some((_, Some(t))) => self.map_end(&t, f.clone(), span, filter, kept),
+                        Some((_, Some(t))) => {
+                            self.map_end(&t, f.clone(), span, filter, kept, recv.clone())
+                        }
                         Some((r, None)) => {
+                            let lambda =
+                                (f.expr).is_some_and(|e| matches!(e.kind, ExprKind::Lambda { .. }));
                             let kind = NeedKind::Map {
                                 f: f.ty.clone(),
                                 filter,
+                                lambda,
                             };
                             self.need(r, kind, true, span)
                         }
@@ -8373,7 +8411,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let word = if name == "map" { "map" } else { "where" };
                         self.entry_param(word, &x.ty, of, f);
                         let kept = Self::flat_map_receiver(of);
-                        m.k(Frame::MapFn(x.ty, span, name == "where", kept));
+                        m.k(Frame::MapFn(x.ty, span, name == "where", kept, of.span));
                         self.word_fn(m, f, first);
                     }
                     _ => {
@@ -12311,9 +12349,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
             NeedKind::Entries => self.word_entries(&on, span),
             NeedKind::SumMethod { site, beside } => self.sum_beside(&on, beside, span, *site),
-            NeedKind::Map { f, filter } => {
+            NeedKind::Map { f, filter, .. } => {
                 let f = Arg::of(self.bound(f, binds));
-                self.map_end(&on, f, span, *filter, None)
+                // The receiver, a value of the body this need came from, lies where the call
+                // being checked places it, if anywhere.
+                let recv = self.call_frames.last().and_then(|frame| {
+                    let (i, up) = frame.place(&n.on)?;
+                    Some((frame.written(i)?, up))
+                });
+                self.map_end(&on, f, span, *filter, None, recv)
             }
             NeedKind::Group { f, recv } => {
                 let f = Arg::of(self.bound(f, binds));
@@ -12469,6 +12513,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         mut defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Vec<Need> {
+        self.lambda_entries_placed(needs, binds);
         let mut left = Vec::new();
         for n in needs {
             // A need on a parameter is checked with the call's arguments, by [`Self::floors_at`].
@@ -12496,6 +12541,47 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         left
+    }
+
+    /// Records, for each `map` or `where` of a generic body on a receiver the call being checked
+    /// places ([`CallFrame::place`]), with a lambda written there, that the lambda's parameter
+    /// lies at the receiver's entries ([`CallFrame::entries`]), where every entry that is no
+    /// atom has one type ([`entries_alike`]); so a function the lambda passes on to a partial
+    /// slot is rebuilt in the receiver, entry by entry (FAIL-partial-slot-generic-lambda-map).
+    /// The lambda is checked before `map` takes it, so the needs of its body come before the
+    /// need of `map`, and the places are recorded before any need is met. The lambda is
+    /// written at the use and called by `map` alone, on the receiver's entries, so its
+    /// parameter's values are those entries and no other; a function value passed to `map`,
+    /// which the body may call elsewhere, records nothing, and its need stays refused.
+    ///
+    /// Complexity tradeoff: O(n) more for n needs, one pass, plus [`entries_alike`]'s
+    /// O(arrows) for each `map` with a lambda; the naive way, looking for the `map` need from
+    /// each need on a variable met with no place, is O(n) for each such need, O(n²) in all.
+    fn lambda_entries_placed(&mut self, needs: &[Need], binds: &mut Binds) {
+        for n in needs {
+            let NeedKind::Map {
+                f, lambda: true, ..
+            } = &n.kind
+            else {
+                continue;
+            };
+            let Some(fs) = only_fn(f) else { continue };
+            let ([a], Some(frame)) = (&fs.arrows[..], self.call_frames.last()) else {
+                continue;
+            };
+            let [p] = &a.params[..] else { continue };
+            if p.as_var().is_none() || frame.place(&n.on).is_none() {
+                continue;
+            }
+            let on = self.bound(&n.on, binds);
+            let Some(s) = on.fns.only() else { continue };
+            let entries = Ty::union_all(s.arrows.iter().map(|a| &a.result));
+            if entries_alike(&on, &entries)
+                && let Some(frame) = self.call_frames.last_mut()
+            {
+                frame.entries(&n.on, p);
+            }
+        }
     }
 
     /// [`Self::replay`] of the one need `n`.
@@ -18302,9 +18388,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   entry that is no atom has the one type read, so the whole family is rebuilt entry by
     ///   entry ([`Coercion::Entries`], PROOF-family-entry-place at [`entries_alike`]); an
     ///   entry of a family of mixed entries, or of a family built in the body
-    ///   (`apply(f: { 1 -> x }[1] else x)`), is found in no argument and refused, and a
-    ///   lambda that `map` calls on a family of the argument passes on the argument, which
-    ///   the family holds as given.
+    ///   (`apply(f: { 1 -> x }[1] else x)`), is found in no argument and refused. A lambda
+    ///   that `map` or `where` calls on a family passes on an entry of it, which lies where
+    ///   an entry read does, by the same proof. Where the receiver's type is known,
+    ///   [`Self::map_end`] calls the function on the entries as one argument placed there,
+    ///   in a frame of its own. In a generic body ([`Self::lambda_entries_placed`]) the
+    ///   lambda is written at the call and `map` alone calls it, on each entry, so a value of
+    ///   its parameter's bare variable is an entry; a function passed in as a value there
+    ///   places nothing. A family of mixed entries places nothing, and the need is refused.
     /// - `if` and `else`: `if` gives one arm, each of its own variable, each need checked on
     ///   its own. A test that fails, as `x else d` where `x` is no loose atom or `x is t`
     ///   where it is false, gives the value itself, its type cut down ([`Narrow`], "what a
@@ -21982,6 +22073,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         let names = sig.params.iter().map(|p| p.name.clone()).collect();
         let mut frame = CallFrame::new(span, &arrow.params, forwarded, via, names, &reads);
+        frame.below = (args.iter().take(frame.via.len()))
+            .map(|a| a.as_ref().and_then(|a| a.below.clone()))
+            .collect();
         // Kept only for a call with needs, which alone can refuse one, as `forwarded` is.
         frame.tys = (args.iter().take(frame.args.len()))
             .map(|a| a.as_ref().map(|a| a.ty.clone()))
@@ -25445,6 +25539,11 @@ fn one_tuple(t: &Ty) -> Option<usize> {
         && !t.dynamic;
     t.tuples.only().filter(|_| alone).map(|r| r.len())
 }
+
+/// Where the receiver of `map` or `where` lies in values the program writes ([`Ck::map_end`]):
+/// the spans of those values, and the parts taken in them to reach the receiver, innermost
+/// first (`None` where it is each whole).
+type Recv = Option<(Rc<[Span]>, Option<Rc<Taken>>)>;
 
 /// Whether `on` is one family and nothing else, of one key and keys of no tuple, whose
 /// entries that are no atom all have one type, the type `out` (a read of an entry of it) has

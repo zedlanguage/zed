@@ -188,6 +188,54 @@ fn functions_passed_by_defaults_else_and_generic_values_to_partial_slots_scale()
     });
 }
 
+/// n functions passed to a partial slot as entries of a family that lies in an argument
+/// (FAIL-partial-slot-generic-family-entry, FAIL-partial-slot-generic-lambda-map): read by key
+/// in a generic body, passed on by a lambda of `map` on a written list, and by a lambda of
+/// `map` in a generic body; and one generic body of n such lambdas on one receiver, called
+/// once. Each read or `map` tests the family's arrows once (`entries_alike`, O(arrows)), each
+/// call replays the callee's needs once after one pass over them
+/// (`Ck::lambda_entries_placed`, O(needs)), and each place rebuilt is one coercion at one
+/// span, so checking and elaborating the whole is linear. Besides its ratio: the program
+/// elaborates at each size. Small instances:
+/// `function_variance::a_function_taken_from_a_family_argument_misses_outside_its_domain` and
+/// `function_variance::a_generic_function_called_from_a_map_lambda_misses_outside_the_domain`.
+#[test]
+fn functions_passed_as_family_entries_to_partial_slots_scale() {
+    let what =
+        "n functions passed as family entries by key, by `map` written and in a generic body";
+    let make = |n: usize| {
+        let mut src = String::from(
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\n\
+             key(m) = apply(f: m[0]);\nh(m) = m.map(g -> pass(x: g))[0];\nmany(m) = 0",
+        );
+        for _ in 0..n {
+            src.push_str(" + m.map(g -> pass(x: g))[0]");
+        }
+        src.push_str(";\n");
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nk{i} = key(m: [s{i}]);\n\
+                 w{i} = [s{i}].map(g -> pass(x: g))[0];\ng{i} = h(m: [s{i}]);\n"
+            ));
+        }
+        src.push_str("c = many(m: [s0]);\n");
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        let last = m - 1;
+        assert!(
+            u.get("c").is_some()
+                && ["k", "w", "g"]
+                    .iter()
+                    .all(|k| u.get(&format!("{k}{last}")).is_some()),
+            "{what} at {m}"
+        );
+    });
+}
+
 /// One generic body with n named calls of its parameter, all with arguments of one type, called
 /// at n places, each with a function of its own of one type (row TEST-call-site-need-key):
 /// each call of the body meets the body's needs for its function, and n calls in the body with

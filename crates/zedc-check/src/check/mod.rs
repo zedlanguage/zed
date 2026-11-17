@@ -825,6 +825,10 @@ struct Arg<'a> {
     /// of `run(g: pass, v: small)` for `run(g, v) = g(x: v)`, or each argument written at the
     /// use in the body, as `small` of `twice(g) = g(x: small)`.
     via: Option<Rc<[Span]>>,
+    /// Where in the values `via` names this argument lies, where it is a part of them and not
+    /// each whole: each entry of the receiver of `map` or `where` that the word passes to its
+    /// function ([`Ck::map_end`]), as `g` of `[small].map(g -> pass(x: g))`.
+    below: Option<Rc<Taken>>,
 }
 
 /// A branch of an `if` of [`Arg::branches`].
@@ -864,6 +868,7 @@ impl<'a> Arg<'a> {
             parts: None,
             branches: None,
             via: None,
+            below: None,
         }
     }
 }
@@ -2046,6 +2051,9 @@ struct CallFrame<'a> {
     /// For each argument the call does not write, as one of a call checked for a need: the
     /// arguments written in the program whose value it is ([`Arg::via`]).
     via: Vec<Option<Rc<[Span]>>>,
+    /// For each argument of [`Self::via`], where in those values it lies ([`Arg::below`]);
+    /// `None` where it is each whole.
+    below: Vec<Option<Rc<Taken>>>,
     /// The type of each argument the call passes, for the repair of a refusal that declares
     /// the parameter at it ([`Ck::no_place`]).
     tys: Vec<Option<Ty>>,
@@ -2102,6 +2110,7 @@ impl<'a> CallFrame<'a> {
         Self {
             args,
             via,
+            below: Vec::new(),
             tys: Vec::new(),
             names,
             by_var,
@@ -2132,11 +2141,14 @@ impl<'a> CallFrame<'a> {
     /// Where in the call's arguments a value of `t` lies, where `t` is a variable: the
     /// argument's position, when `t` is the whole type of that argument's parameter alone,
     /// and the components taken to reach the value from it ([`Self::component`]), innermost
-    /// first. O(1) expected: three lookups.
+    /// first, after those that reach the argument itself in the values written for it
+    /// ([`Self::below`]). O(1) expected: three lookups.
     fn place(&self, t: &Ty) -> Option<(usize, Option<Rc<Taken>>)> {
         let v = t.as_var()?;
         match self.by_var.get(v) {
-            Some(&Some(i)) if self.whole.contains(v) => Some((i, None)),
+            Some(&Some(i)) if self.whole.contains(v) => {
+                Some((i, self.below.get(i).cloned().flatten()))
+            }
             _ => self.parts.get(v).cloned(),
         }
     }

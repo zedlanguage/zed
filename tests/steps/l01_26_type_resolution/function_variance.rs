@@ -1085,8 +1085,7 @@ fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
 /// Row PROOF-generic-body-values-from-args, the cases of the proof where a value of a type
 /// variable does not come from a place in one argument that the call shows: a default that is
 /// a function written in the program, an entry of a family (alone, or with an `else` of the
-/// bare name met before or after it), a lambda inside `map`, and the result of calling a
-/// parameter. Each is refused rather than run without a test of the domain; before the fix of
+/// bare name met before or after it), and the result of calling a parameter. Each is refused rather than run without a test of the domain; before the fix of
 /// FAIL-partial-slot-generic-pass these ran `small` on 2.5. Row
 /// MSG-partial-slot-no-place-repair-code: the headline is code, and ends with the repair as
 /// code where a declaration this zedc compiles repairs it ([`the_repairs_the_no_place_refusal_offers_run`]);
@@ -1118,11 +1117,6 @@ fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
             "pass(x) = apply(f: { 1 -> x }[1] else x) + apply(f: x else x);\na = pass(x: small);\n",
             entry,
             try_x,
-        ),
-        (
-            "pass(x) = apply(f: x);\na = [small].map(g -> pass(x: g))[0];\n",
-            "pass(x: g)",
-            " Try `g: (x: int) -> int` instead.",
         ),
         (
             "pass(x, y) = apply(f: y(x));\na = pass(x: 1, y: n -> small);\n",
@@ -1165,9 +1159,7 @@ fn the_repairs_the_no_place_refusal_offers_run() {
 /// `x` holds no atom, the generic function passed as a value and called there with an
 /// argument of the outer call or one written in its body (once or twice, and through two
 /// calls of one function value). The fifth case of the row, the generic function called from a
-/// lambda inside `map`, stays refused ([`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`]):
-/// the lambda's parameter is checked once for every type the lambda meets, so no one test can
-/// be put at it; row FAIL-partial-slot-generic-lambda-map holds it.
+/// lambda inside `map`, is [`a_generic_function_called_from_a_map_lambda_misses_outside_the_domain`].
 #[test]
 fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() {
     let head = |k: &str| {
@@ -1192,6 +1184,71 @@ fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() 
     for (rest, n) in cases {
         runs_to(&format!("{}{rest}", head("2.5")), "a", &(6 * n).to_string());
         runs_to(&format!("{}{rest}", head("3")), "a", &(4 * n).to_string());
+    }
+}
+
+/// Row FAIL-partial-slot-generic-lambda-map: the generic function `pass`, called from a lambda
+/// that `map` or `where` calls on each entry of a family of functions of one type, passes the
+/// entry on to a partial slot; the entry lies at the receiver's entries, so the receiver is
+/// rebuilt there, entry by entry, and the call misses outside the function's domain and calls
+/// it inside. The receiver may be written there, or be an argument of a generic body. Before
+/// the fix each was refused, soundly but needlessly, as from no argument of the call.
+#[test]
+fn a_generic_function_called_from_a_map_lambda_misses_outside_the_domain() {
+    let head = |k: &str| {
+        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+    };
+    let cases = [
+        (
+            "pass(x) = apply(f: x);\na = [small].map(g -> pass(x: g))[0];\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\na = [small, small].map(g -> pass(x: g))[1];\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\nh(m) = m.map(g -> pass(x: g))[0];\na = h(m: [small]);\n",
+            "6",
+            "4",
+        ),
+        (
+            "pass(x) = apply(f: x);\na = [small].where(g -> pass(x: g) > 5).map(g -> 1)[0] else 0;\n",
+            "1",
+            "0",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        runs_to(&format!("{}{rest}", head("2.5")), "a", miss);
+        runs_to(&format!("{}{rest}", head("3")), "a", hit);
+    }
+}
+
+/// Row FAIL-partial-slot-generic-lambda-map: a family whose entries are functions of two
+/// types is not rebuilt entry by entry, as no one test of a domain fits both; a lambda of
+/// `map` on it that passes its entry on to a partial slot stays refused, written there or as
+/// the receiver of a generic body. A lambda that is not written at `map`, passed in as an
+/// argument, is refused or misses outside the domain, never run on 2.5.
+#[test]
+fn a_map_lambda_over_entries_of_two_function_types_is_refused_for_a_partial_slot() {
+    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\n\
+                apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let refused = [
+        "a = [small, big].map(g -> pass(x: g))[0];\n",
+        "h(m) = m.map(g -> pass(x: g))[0];\na = h(m: [small, big]);\n",
+    ];
+    for rest in refused {
+        let src = format!("{head}{rest}");
+        assert!(
+            !type_errors(&src).is_empty(),
+            "{src}: ran without a test of the domain"
+        );
+    }
+    let src = format!("{head}h(m, k) = m.map(k)[0];\na = h(m: [small], k: g -> pass(x: g));\n");
+    if type_errors(&src).is_empty() {
+        runs_to(&src, "a", "6");
     }
 }
 

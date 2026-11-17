@@ -1540,11 +1540,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Text(" }"),
         ]),
         NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
-        NeedKind::Map { f, filter } => parts.extend([
+        NeedKind::Map { f, filter, lambda } => parts.extend([
             Dbg::Text("Map { f: "),
             Dbg::Ty(f),
             Dbg::Text(", filter: "),
             Dbg::Leaf(filter),
+            Dbg::Text(", lambda: "),
+            Dbg::Leaf(lambda),
             Dbg::Text(" }"),
         ]),
         NeedKind::Group { f, recv } => parts.extend([
@@ -4154,6 +4156,9 @@ pub enum NeedKind {
         f: Ty,
         /// Whether the use is `where`.
         filter: bool,
+        /// Whether `f` is a lambda written at the use, which nothing else calls: its
+        /// parameter's values are then the entries of `v` alone.
+        lambda: bool,
     },
     /// `v.group(f)`, with `f` of type `f` and `v` written at `recv`: the value is a family of
     /// one level, and the use gives the family `group` makes of it (DESIGN.md sec:grouping).
@@ -4581,9 +4586,14 @@ impl Need {
                     site: *site,
                 },
                 NeedKind::Index(k) => NeedKind::Index(f(k)),
-                NeedKind::Map { f: g, filter } => NeedKind::Map {
+                NeedKind::Map {
+                    f: g,
+                    filter,
+                    lambda,
+                } => NeedKind::Map {
                     f: f(g),
                     filter: *filter,
+                    lambda: *lambda,
                 },
                 NeedKind::Group { f: g, recv } => NeedKind::Group {
                     f: f(g),
