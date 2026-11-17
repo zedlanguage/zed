@@ -1202,6 +1202,20 @@ fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// A list's type prints as DESIGN writes it, `[String]`, not as the arrow `int ->? String`,
+/// which says keys may be missing (plan row MSG-list-type-printed-by-arrows). The pieces of
+/// `l.split(",")` are such a list.
+#[test]
+fn a_list_type_prints_as_a_list() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${p.zip([1])}\");\n}\n";
+    let out = run("fp_ops/list_type_print", src, "", &[]);
+    assert!(
+        out.status != 0 && out.stderr.contains("whose type is [String]"),
+        "{}",
+        out.stderr
+    );
+}
+
 /// Where the type of the entries a word gives a lambda parameter is not known, as those of a
 /// parameter of no written type, the note still says where the parameter comes from, with no
 /// type: `_` is the type of every value (A92), and `l` is an entry of `xs` (plan row

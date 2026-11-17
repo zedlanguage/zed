@@ -864,6 +864,34 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
     }
 }
 
+/// A list, the family of the ranks `0 ..< n` with `n` not known, prints `[V]` as DESIGN writes
+/// it (`[T]` is `int[0..<n] -> T`), not as the arrow `int ->? V`, and each text reads back to the
+/// same type in every position: alone, nested, a union member, a tuple component, a key, a
+/// value, a parameter and with a bounds clause (MSG-list-type-printed-by-arrows). A partial
+/// map `int ->? V` read from its arrow is no list: it keeps its arrow.
+#[test]
+fn list_types_print_in_brackets_and_read_back_in_every_position() {
+    for (text, shown) in [
+        ("[String]", "[String]"),
+        ("[[int]]", "[[int]]"),
+        ("[int | String]", "[int | String]"),
+        ("[int] | String", "String | [int]"),
+        ("([int], bool)", "([int], bool)"),
+        ("[int] ->? bool", "[int] ->? bool"),
+        ("int ->? [bool]", "int ->? [bool]"),
+        ("([int]) -> [int]", "[int] -> [int]"),
+        ("(xs: [int], k: int) -> int", "(xs: [int], k: int) -> int"),
+        ("[(int) -> int]", "[int -> int]"),
+        ("[T] for T in int | f64", "[T] for T in int | f64"),
+        ("([T] for T in int | f64, int)", "([T] for T in int | f64, int)"),
+        ("int ->? String", "int ->? String"),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
+    }
+}
+
 /// A function type with a bounds clause needs no parentheses where a comma follows it: as a
 /// tuple component, the one component of `(T,)`, a parameter, positional or named, or a
 /// payload. After a comma a bounds clause goes on only with `Name in`, and no list item is a
