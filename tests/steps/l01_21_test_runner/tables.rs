@@ -133,16 +133,48 @@ fn a_main_row_may_give_the_exit_status() {
     let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
                if (m.stdin[0] else \"\") == \"no\" { 3 } else { 0 }\n}\n\
                test { \"no\" -> (\"x\\n\", \"\", 3), \"yes\" -> (\"x\\n\", \"\", 3), \
-               \"no\" -> (\"x\\n\", \"\", 256) }\n";
+               \"no\" -> (\"x\\n\", \"\", 255) }\n";
     assert_eq!(
         checks(src),
         [
             "5:8: ok",
             "5:32: `\"yes\" -> (\"x\\n\", \"\", 3)` of `main`: the run exits with status 0",
-            "5:57: `\"no\" -> (\"x\\n\", \"\", 256)` of `main`: the expected status of a row of \
-             `main` is an int from 0 to 255, not 256",
+            "5:57: `\"no\" -> (\"x\\n\", \"\", 255)` of `main`: the run exits with status 3",
         ]
     );
+}
+
+#[test]
+fn a_main_row_expecting_a_status_past_255_is_rejected_before_it_runs() {
+    // DESIGN.md: the `status` of a row of `main` is an `int[0..=255]`, the range of `main`'s
+    // result, so a row expecting a status outside it is rejected at compile time (step
+    // L1.19), whether the status is written as a literal or computed.
+    for (status, col) in [("256", 48), ("-1", 48), ("250 + 6", 48)] {
+        let src = format!(
+            "main(m: MainArgs) -> int {{\n  m.stdout <- \"x\";\n  0\n}}\n\
+             test {{ \"\" -> (\"x\\n\", \"\", 0), \"\" -> (\"x\\n\", \"\", {status}) }}\n"
+        );
+        // The lines come in source order: both rows, then the error at the status.
+        let got = checks(&src);
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert_eq!(
+            got[2].lines().next(),
+            Some(
+                format!(
+                    "5:{col}: A row of `main` expects the exit status `{status}`, and an exit \
+                     status is an `int` from 0 to 255."
+                )
+                .as_str()
+            ),
+            "{got:?}"
+        );
+        assert!(
+            got[..2]
+                .iter()
+                .all(|l| l.ends_with("of `main`: not run, since the unit is rejected")),
+            "{got:?}"
+        );
+    }
 }
 
 #[test]

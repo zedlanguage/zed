@@ -1378,12 +1378,15 @@ fn a_read_of_exact_keys_at_a_known_key_has_no_miss() {
             ("(-3 ..< 0)[-2]", "-2"),
             ("(0 ..< 3).zip([7, 8, 9])[1][1]", "8"),
             ("(2 ..< 5).zip(2 ..= 4)[3][1]", "3"),
-            // A key past 64 bits, 2 ^ 70 + 1 written as a literal: `2 ^ 70 + 1` written as an
-            // operation on bare literals is any number kind (row RANGE-read-literal-operation).
+            // A key past 64 bits, written as a literal and as an operation on bare integer
+            // literals, which is read as the `int` it folds to (row
+            // RANGE-read-literal-operation).
             (
                 "(2 ^ 70 ..< 2 ^ 70 + 2)[1180591620717411303425] - 2 ^ 70",
                 "1",
             ),
+            ("(2 ..< 5)[1 + 1]", "2"),
+            ("(2 ^ 70 ..< 2 ^ 70 + 2)[2 ^ 70 + 1] - 2 ^ 70", "1"),
         ],
     );
     saying(
@@ -1412,6 +1415,20 @@ fn a_read_of_exact_keys_at_a_known_key_has_no_miss() {
             main("", "(2 ..< 5)[if m.args.count > 0 { 4 } else { 2 }]"),
             "2\n",
         ),
+        // Row RANGE-read-key-intervals: the ints a test bounds a computed key to, and those
+        // of a ranged parameter, lie in the keys; and the call form reads as the bracket does.
+        (
+            main(
+                "  k = m.args.count + 3;\n",
+                "if k >= 2 && k < 5 { (2 ..< 5)[k] } else { 0 }",
+            ),
+            "3\n",
+        ),
+        (
+            format!("f(k: int[2..=4]) = (2 ..< 5)[k];\n{}", main("", "f(k: 4)")),
+            "4\n",
+        ),
+        (main("", "(2 ..< 5)(3)"), "3\n"),
     ];
     for (i, (src, want)) in accepted.iter().enumerate() {
         assert_eq!(
@@ -1430,10 +1447,72 @@ fn a_read_of_exact_keys_at_a_known_key_has_no_miss() {
             main("", "(2 ..< 5)[if m.args.count > 0 { 5 } else { 2 }]"),
             "String | #outOfBounds",
         ),
+        // A test that bounds the key to ints outside the keys, a parameter whose range is
+        // outside them, and the call form at a key outside them: each is the static error.
+        (
+            main(
+                "  k = m.args.count;\n",
+                "if k >= 5 { (2 ..< 5)[k] } else { 0 }",
+            ),
+            "the map's keys are `int[2..=4]`",
+        ),
+        (
+            format!("f(k: int[5..=9]) = (2 ..< 5)[k];\n{}", main("", "f(k: 6)")),
+            "the map's keys are `int[2..=4]`",
+        ),
+        (main("", "(2 ..< 5)(9)"), "the map's keys are `int[2..=4]`"),
+        // A test that bounds the key to ints on each side of the keys keeps the miss.
+        (
+            main(
+                "  k = m.args.count;\n",
+                "if k >= 3 { (2 ..< 5)[k] } else { 0 }",
+            ),
+            "String | #outOfBounds",
+        ),
+        // An operation on integer literals outside the keys is the static error; one with a
+        // decimal literal runs as the `f64` `2.0`, which is no key, and keeps the miss.
+        (
+            main("", "(2 ..< 5)[2 + 5]"),
+            "the map's keys are `int[2..=4]`",
+        ),
+        (main("", "(2 ..< 5)[1.5 + 0.5]"), "String | #outOfBounds"),
     ];
     for (i, (src, text)) in refused.iter().enumerate() {
         let (status, said) = ran(&format!("range_read_unknown_{i}"), src);
         assert!(status != 0 && said.contains(text), "{src}\n{said}");
+    }
+}
+
+/// Plan row RANGE-param-exact-keys: a range whose exact keys lie in a parameter's key range is
+/// passed, as a range of those keys is a family keyed by them; one with a key outside it is
+/// still rejected, naming the parameter's keys. So is the empty range, which has no key.
+#[test]
+fn a_range_with_exactly_a_parameters_keys_is_passed() {
+    let text = |r: &str| {
+        format!(
+            "f(r: int[2..=4] ->? int) = r(3) else 0;\n\
+             main(m: MainArgs) {{\n  m.stdout <- \"${{f(r: {r})}}\";\n}}\n"
+        )
+    };
+    assert_eq!(
+        ran("param_exact_keys", &text("2 ..< 5")),
+        (0, "3\n".to_string())
+    );
+    assert_eq!(
+        ran("param_inner_keys", &text("3 ..= 4")),
+        (0, "3\n".to_string())
+    );
+    assert_eq!(
+        ran("param_no_keys", &text("5 ..< 2")),
+        (0, "0\n".to_string())
+    );
+    for (i, r) in ["0 ..< 9", "2 ..= 5", "1 ..< 3"].into_iter().enumerate() {
+        let (status, err) = ran(&format!("param_wider_keys_{i}"), &text(r));
+        assert_ne!(status, 0, "{r}: {err}");
+        assert!(
+            err.contains("`f` takes `r` with keys in int[2..=4]"),
+            "{r}: {err}"
+        );
     }
 }
 

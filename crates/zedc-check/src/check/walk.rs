@@ -339,6 +339,8 @@ pub(super) enum Frame<'a> {
     Guarded(&'a Expr, Ty),
     Scope(Box<ScopeF<'a>>),
     Tests(Box<ScopeF<'a>>),
+    /// The status of row `usize` of `main`'s table, the expression given ([`Ck::main_rows`]).
+    MainStatus(Box<ScopeF<'a>>, &'a Function, usize, &'a Expr),
     TestArgs(Box<TestF<'a>>),
     TestWant(Box<TestF<'a>>, Ty),
     /// A binding, with the number of errors before its value is checked.
@@ -1656,6 +1658,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.take();
                 self.tests_step(m, s);
             }
+            Frame::MainStatus(s, f, row, status) => {
+                let a = m.take_arg();
+                self.row_status(status, &a.ty);
+                self.main_rows(m, s, f, row + 1);
+            }
             Frame::TestArgs(s) => self.test_args(m, s),
             Frame::TestWant(s, result) => {
                 let want = m.take_arg();
@@ -2009,12 +2016,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             if f.main.is_some() {
-                continue;
+                return self.main_rows(m, s, f, 0);
             }
             m.k(Frame::Tests(s));
             return self.test_case(m, f, sig, 0);
         }
         self.export(m, s.export);
+    }
+
+    /// The expected exit statuses of the rows of `main`, `f`, from row `row` on, then the
+    /// scope's other tables. A row's value is the standard output, or `(stdout, stderr)`, or
+    /// `(stdout, stderr, status)` (`zedc`'s `rows.rs`); the status is checked here
+    /// ([`Ck::row_status`]), and the rest when the table runs.
+    fn main_rows(&mut self, m: &mut M<'a>, s: Box<ScopeF<'a>>, f: &'a Function, row: usize) {
+        for (i, (_, want)) in f.tests.iter().enumerate().skip(row) {
+            if let ExprKind::Tuple(items) = &want.kind
+                && let [_, _, status] = items.as_slice()
+            {
+                m.k(Frame::MainStatus(s, f, i, status));
+                return m.job(Job::Arg(status, Want::default()));
+            }
+        }
+        self.tests_step(m, s);
     }
 
     fn export(&mut self, m: &mut M<'a>, export: Option<&'a [Expr]>) {
@@ -7624,6 +7647,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // of a trial.
                 let from_outside = !self.trying && self.replaying == 0 && !self.widened.is_empty();
                 let with = from_outside.then(|| self.outside_args(&args)).flatten();
+                // A call of a family with exact keys at one key, `(2 ..< 5)(k)`, is read as
+                // its bracket read `(2 ..< 5)[k]` is ([`Self::exact_key_read`], row
+                // RANGE-read-key-intervals): a key that is never one of the keys is rejected,
+                // and one that always is drops the miss. O(1) beside the read's own cost.
+                let key = match &args[..] {
+                    [Some(x)] if sig.data && sig.keys.is_some() => Some(x.clone()),
+                    _ => None,
+                };
                 let form = Construct::Call(what.as_str().into(), sig.clone());
                 let t = self.as_written(form, args, s.span);
                 match with {
@@ -7631,7 +7662,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None if from_outside => self.tried_at(s.span, Some(t.loose())),
                     None => {}
                 }
-                t
+                match key.map(|x| (self.exact_key_read(&sig, &x), x)) {
+                    Some((Some(false), x)) => {
+                        let at = Some(s.span);
+                        self.key_outside(&sig, &x, at, s.span, false).unwrap_or(t)
+                    }
+                    Some((Some(true), x)) => found_inside(t, &x.ty),
+                    _ => t,
+                }
             }
         };
         m.ty(t);
@@ -8912,6 +8950,48 @@ fn leaf(sum: &Summarized, v: &Arc<str>, q: &Product) -> images::Leaf {
 // and the ints the tests allow an operand. It is written here rather than beside `Arms`, so
 // that `arms.rs` imports none of the checker's own files (step S.1f).
 impl<'a> Ck<'_, 'a> {
+    /// Checks that `e`, of type `t`, the expected exit status of a row of `main`'s table, is
+    /// an `int` from 0 to 255 (DESIGN.md, the `test` row of sec:lexical's notation table: the
+    /// field `status` is an `int[0..=255]`, the range of `main`'s result, so a row expecting a
+    /// status outside it is rejected at compile time like any value outside its field's
+    /// type). Its known value is read where there is one ([`Ck::known`]); else `t` must hold
+    /// ints alone, and those [`Ck::ints_here`] shows it holds lie in the range. Each is a
+    /// sound bound, so a status accepted here is in the range when the row runs; what neither
+    /// shows is refused, as [`Ck::status_in_range`] refuses a result of `main` it cannot show
+    /// in range.
+    pub(super) fn row_status(&mut self, e: &'a Expr, t: &Ty) {
+        let in_byte = |v: &Value| {
+            v.surface_cmp(&Value::Int(0))
+                .is_some_and(|o| o != std::cmp::Ordering::Less)
+                && v.surface_cmp(&Value::Int(255))
+                    .is_some_and(|o| o != std::cmp::Ordering::Greater)
+        };
+        let fits = match self.known(e).value {
+            Some(v) => matches!(v, Value::Int(_)) && in_byte(&v),
+            None => {
+                t.subtype(&Ty::set(KType::int()))
+                    && self.ints_here(e).0.is_subset(&IntervalSet::of(0, 255))
+            }
+        };
+        if fits {
+            return;
+        }
+        let code = self
+            .t
+            .text
+            .map_or("this value", |s| &s[e.span.start..e.span.end]);
+        let message = format!(
+            "A row of `main` expects the exit status `{code}`, and an exit status is an `int` \
+             from 0 to 255."
+        );
+        let menu = [
+            "repair: give a status from 0 to 255, as `0` for success or `1` for a \
+                     failure"
+                .to_string(),
+        ];
+        self.error_offering(e.span, message, menu);
+    }
+
     /// Checks that `e`, of type `t`, an expression whose value is the result of `main`
     /// ([`Ck::main_tails`]), gives an `int` in `0..=255`, the range of an exit status: by the
     /// values its type lists, or by the ints its text and the tests around it show
@@ -14964,6 +15044,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.text(t)
                 ));
                 break;
+            }
+            // A family with exact keys, as `2 ..< 5` (row RANGE-param-exact-keys): its keys
+            // lie in each range on the whole key where its interval does. Proof: by the
+            // invariant of [`Sig::keys`] each key of the family is an int from `low` through
+            // `high`, so where that interval lies in `r` ([`WrittenRange::within`], O(1)) or
+            // is empty, each key lies in `r`. A range on a key component reads the arrows,
+            // since these keys are ints, not tuples.
+            if let Some(keys) = &s.keys
+                && (k.ranges.iter()).all(|(part, r)| part.is_none() && exact_keys_within(keys, r))
+            {
+                continue;
             }
             for arrow in &s.arrows {
                 let Some(key) = arrow.params.first() else {
@@ -23566,29 +23657,59 @@ impl<'a> Ck<'_, 'a> {
     /// sec:type_language, the `m[k]` row: `V` if `k : L`, a static error if `k` is disjoint
     /// from `U`). The key's ints are its value where [`Ck::known`] gives one, whose proof says
     /// it is the key's value at every evaluation, and else the ints its type lists, as a
-    /// literal key's type `7` does; a key of infinitely many ints, as `int`, gives `None`. The
-    /// key's loose atoms are not looked up: they pass through the read
-    /// ([`found_inside`]). Not read: the ints a test or a ranged parameter bounds a computed
-    /// key to ([`Ck::ints_here`]), which would make `r[k]` exact under `if k >= 2 && k < 5`
-    /// too (row RANGE-read-key-intervals).
+    /// literal key's type `7` does. Where those give no answer, as for a key of type `int`, the
+    /// key's ints are the interval set [`Ck::ints_here`] reads, which a test around the read or
+    /// a ranged parameter bounds the key to (row RANGE-read-key-intervals): `(2 ..< 5)[k]` is
+    /// exact under `if k >= 2 && k < 5`, and where `k: int[2..=4]`. Proof that this is sound:
+    /// [`Ck::ints_here`] gives a superset of the ints `x` may be at this point of the walk (its
+    /// own proof); a superset inside the keys puts each int `x` may be inside them, and one
+    /// disjoint from them puts each outside. An empty set, a key of no int here, gives `None`.
+    /// The key's loose atoms are not looked up: they pass through the read ([`found_inside`]).
     // Complexity tradeoff: O(k) for a key type listing k ints, each tested against two ends,
     // and O(1) for a known value; the naive way, the keys listed in the key type and the
     // subtype test of the two types, is O(b - a) for a range `a ..< b` (row RANGE-literal-keys).
+    // The interval read costs one memoized [`Ck::ints_here`] (O(1) table operations per node
+    // read, its own tradeoff) and a subset and a meet test against one interval, O(p) for a set
+    // of p pieces; the naive way, listing the ints of the key's interval, is O(b - a) again.
+    // A key that is an operation on literals is walked once by [`Ck::kept`], O(its size), at
+    // the one read whose key it is.
     fn exact_key_read(&mut self, sig: &Sig, x: &Arg<'a>) -> Option<bool> {
         let keys = sig.keys.as_ref()?;
-        let key = x.ty.without_loose();
+        // A key that is an operation on bare integer literals alone with no `/`, as `1 + 1`
+        // or `2 ^ 70 + 1`, is typed as its class of literals, any number kind, but it is read
+        // as the `int` it folds to (row RANGE-read-literal-operation). Proof: [`Ck::kept`]
+        // gives a type only for such an operation whose class is still generic, and such an
+        // operation is an `int` where nothing gives its class a carrier (DESIGN.md
+        // sec:diagnostics, "A `/` of integer literals": "an operation on literals alone is an
+        // `int` only where nothing at all gives it a carrier"); its class is its own, made by
+        // the operation and used only as this key, and a read gives its key no carrier, so the
+        // key is that `int` at run time (`(2 ..< 5)[1 + 1]` runs to `2`). An operation with a
+        // decimal literal, `1.5 + 0.5`, folds to no `int` here and keeps the miss: it runs as
+        // the `f64` `2.0`, which is no key.
+        let kept = x.expr.and_then(|e| self.kept(e, &x.ty));
+        let key = kept.unwrap_or_else(|| x.ty.without_loose());
         if key.lists_nothing() || !key.subtype(&Ty::carrier(Carrier::Int)) {
             return None;
         }
         let known = x.expr.and_then(|e| self.known(e).value);
-        let ints = match known {
-            Some(v) => vec![v],
-            None => key.set.ints_listed()?,
+        let listed = match known {
+            Some(v) => Some(vec![v]),
+            None => key.set.ints_listed(),
         };
-        let held = ints.iter().filter(|v| keys.holds(v)).count();
-        match held {
-            0 if !ints.is_empty() => Some(false),
-            n if n == ints.len() && n > 0 => Some(true),
+        if let Some(ints) = listed {
+            let held = ints.iter().filter(|v| keys.holds(v)).count();
+            match held {
+                0 if !ints.is_empty() => return Some(false),
+                n if n == ints.len() && n > 0 => return Some(true),
+                _ => {}
+            }
+        }
+        let (ints, _) = self.ints_here(x.expr?);
+        let held = written_ints(keys);
+        match () {
+            _ if ints.is_empty() => None,
+            _ if ints.is_subset(&held) => Some(true),
+            _ if ints.meet(&held).is_empty() => Some(false),
             _ => None,
         }
     }
@@ -23598,10 +23719,22 @@ impl<'a> Ck<'_, 'a> {
 /// program can write: `int[2..=4]`, each end inclusive as a signature prints a range
 /// (DESIGN.md L1.24), and `Never` for none, the empty type's name.
 fn exact_keys_text(k: &WrittenRange) -> String {
-    match (&k.low, &k.high) {
-        (Some(l), Some(h)) if l.surface_cmp(h).is_some_and(|o| o.is_gt()) => "Never".to_string(),
-        _ => k.text.to_string(),
+    match exact_keys_empty(k) {
+        true => "Never".to_string(),
+        false => k.text.to_string(),
     }
+}
+
+/// Whether the exact keys `k` ([`Sig::keys`]) are none: the empty family's `int[0..=-1]`, or
+/// any range whose least int is above its greatest.
+fn exact_keys_empty(k: &WrittenRange) -> bool {
+    matches!((&k.low, &k.high), (Some(l), Some(h)) if l.surface_cmp(h).is_some_and(|o| o.is_gt()))
+}
+
+/// Whether each of the exact keys `k` ([`Sig::keys`]) lies in the range `r`: none does not
+/// lie outside, and else the interval lies in `r`. O(1).
+fn exact_keys_within(k: &WrittenRange, r: &WrittenRange) -> bool {
+    exact_keys_empty(k) || k.within(r)
 }
 
 /// `r`, the entry type of a read of a family at a key each of whose ints is one of its keys

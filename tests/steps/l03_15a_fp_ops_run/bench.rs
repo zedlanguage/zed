@@ -836,6 +836,43 @@ fn reads_of_exact_keys_at_known_keys_check_in_linear_time() {
     );
 }
 
+/// Plan row RANGE-read-key-intervals: checking n functions, the i-th reading `(i ..< i + 3)`
+/// at a key a ranged parameter bounds, at one an `if` bounds, and in the call form, each
+/// declared to give an `int` with no miss, is linear in n. Each read tests the key's interval
+/// set against the range's two ends, O(1) whatever the range's size; listing the keys would
+/// check it in O(n²).
+#[test]
+fn reads_of_exact_keys_at_bounded_keys_check_in_linear_time() {
+    const N_UNIT: usize = 300;
+    let units = scaling::inputs(N_UNIT, |k| {
+        let text: String = (0..k)
+            .map(|i| {
+                let (a, b, c) = (i, i + 2, i + 3);
+                format!(
+                    "rp{i}(k: int[{a}..={b}]) = ({a} ..< {c})[k];\n\
+                     rt{i}(k: int) = if k >= {a} && k < {c} {{ ({a} ..< {c})[k] }} else {{ 0 }};\n\
+                     rc{i}(k: int[{a}..={b}]) = ({a} ..< {c})(k);\n"
+                )
+            })
+            .collect();
+        checked(&text)
+    });
+    // Each function's result is an `int`, with no miss.
+    let run = |k: usize| {
+        let info = units[&k].check();
+        assert!(info.errors.is_empty());
+        assert_eq!(info.sigs.len(), 3 * k);
+        for s in info.sigs.values() {
+            assert!(!s.to_string().contains('#'), "{s}");
+        }
+    };
+    scaling::check(
+        "checking n functions reading `(i ..< i + 3)` at a key a parameter or a test bounds",
+        N_UNIT,
+        run,
+    );
+}
+
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries
 /// takes n + 1 frames, so the frames at 8n are near 8 times those at n.
 #[test]
