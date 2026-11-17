@@ -5,6 +5,21 @@ use zed_tests::scaling;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
 
 #[test]
+fn a_chain_of_gadgets_ties_at_every_step() {
+    // The gadgets are alike, so the counts of the shrinking stage tie again and again, O(n)
+    // ties for n gadgets.
+    // Until PERF-shrink-tie-every-step every count was renewed at each such tie, O(rows) a
+    // step: 58.2 times the instructions and 56.0 times the bytes from 100 to 800 gadgets.
+    // Each count now reads only the rows near its variable: 8.70 times (load about 60).
+    let (small, large) = (gadget_chain(100, 4), gadget_chain(100 * scaling::FACTOR, 4));
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    scaling::check_order("decide on a chain of gadgets", 100, 1, |n| {
+        let f = if n == 100 { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
+#[test]
 fn decide_scales_over_copies_of_a_tie() {
     // Each copy of the five-variable counterexample is refused with a tie.
     scales_over_copies("copies of a tie", &claude5(), 5, 72);

@@ -16188,6 +16188,10 @@ struct System {
     near: BTreeSet<usize>,
     /// The number of rows held of each length.
     lengths: BTreeMap<usize, usize>,
+    /// The sum of [`spread`] over the variables of each row ever added, by place.
+    sums: Vec<u64>,
+    /// The places of the held rows, by that sum ([`System::over_the_rest`]).
+    by_vars: FxHashMap<u64, BTreeSet<usize>>,
     /// The places of the held rows of two terms, by their two variables, the lesser first.
     pairs: HashMap<(usize, usize), BTreeSet<usize>>,
     /// The place of the opposite of each held row whose opposite is held, both ways.
@@ -16228,6 +16232,8 @@ impl System {
             dirty: BTreeSet::new(),
             near: BTreeSet::new(),
             lengths: BTreeMap::new(),
+            sums: Vec::new(),
+            by_vars: FxHashMap::default(),
             pairs: HashMap::new(),
             opposites: BTreeMap::new(),
             one_sided: BTreeSet::new(),
@@ -16273,6 +16279,9 @@ impl System {
         } else {
             let id = self.ids.len();
             self.ids.push(Some(r.a.clone()));
+            let sum = (r.a.iter()).fold(0u64, |s, (i, _)| s.wrapping_add(spread(*i)));
+            self.sums.push(sum);
+            self.by_vars.entry(sum).or_default().insert(id);
             self.count(&r.a, id, true);
             *self.lengths.entry(r.a.len()).or_insert(0) += 1;
             if let [(i, _), (j, _)] = &r.a[..] {
@@ -16364,8 +16373,9 @@ impl System {
     }
 
     /// Marks for [`System::refresh`] the variables whose [`System::shrink`] the row `a`, just
-    /// added or removed, can change besides its own: whether a row written is held already. A
-    /// row the elimination of `x[j]` writes holds only variables of the rows of `x[j]`, so
+    /// added or removed, can change besides its own: whether a row written, or a row over the
+    /// variables of a row of `x[j]` other than `x[j]` ([`System::over_the_rest`]), is held
+    /// already. Each such row holds only variables of the rows of `x[j]`, so
     /// `x[j]` shares a row with each variable of `a`, and with the one of fewest rows in
     /// particular. That variable is kept, and [`System::refresh`] marks the variables of its
     /// rows as they are held then: `x[j]` still shares one of them with it, or that row was
@@ -16474,6 +16484,13 @@ impl System {
         }
         if let Some(o) = self.opposites.remove(&id) {
             self.opposites.remove(&o);
+        }
+        let sum = self.sums[id];
+        if let Some(ids) = self.by_vars.get_mut(&sum) {
+            ids.remove(&id);
+            if ids.is_empty() {
+                self.by_vars.remove(&sum);
+            }
         }
         if let Some(n) = self.lengths.get_mut(&a.len()) {
             *n -= 1;
@@ -16704,9 +16721,8 @@ impl System {
     /// the tie are kept by every symmetry: the fill of [`Sides::fill`] and the colors are
     /// functions of the rows (and the colors of the variables), and so are the counts of
     /// [`System::shrinking`] where a tie is read from them: [`System::shrink`] reads only the
-    /// rows held (`lengths`, `opposites`, the rows themselves), none by index, and every count
-    /// is renewed ([`System::refresh_all`]) before [`System::least`] gives such a tie
-    /// (PROOF-shrink-counts-current). A symmetry keeps the rows, so it keeps each count, and
+    /// rows held (`opposites`, the rows themselves), none by index, and every count is that of
+    /// the rows held when [`System::least`] gives such a tie ([`System::shrink`] states why). A symmetry keeps the rows, so it keeps each count, and
     /// the ranks that made the tie. Checked against all permutations of the variables, for
     /// every system of a stated family, under every naming: `tie_group_tests`.
     ///
@@ -16835,6 +16851,23 @@ impl System {
         Some(if upper { held.k.clone() } else { -&held.k })
     }
 
+    /// Whether a held row has as its variables those of the row at place `id` other than
+    /// `x[j]`: the only rows the row at `id`, combined with a bound of `x[j]`, can write that
+    /// are held already. Found by the sum of [`spread`] over those variables in
+    /// [`System::by_vars`], O(1) expected, and checked term by term, O(t) for t terms, only
+    /// for the rows of that sum.
+    fn over_the_rest(&self, id: usize, j: usize) -> bool {
+        let a = self.ids[id].as_ref().expect("a row held");
+        let want = self.sums[id].wrapping_sub(spread(j));
+        let rest = || a.iter().map(|(i, _)| *i).filter(|i| *i != j);
+        self.by_vars.get(&want).is_some_and(|ids| {
+            ids.iter().any(|c| {
+                let b = self.ids[*c].as_ref().expect("a row held");
+                b.len() + 1 == a.len() && b.iter().map(|(i, _)| *i).eq(rest())
+            })
+        })
+    }
+
     /// The terms the real shadow of `x[j]` writes less the terms it removes, the rows written
     /// counted as [`System::add`] keeps them: a row of no term (two opposite rows, or rows
     /// whose other terms cancel), a row held already, and a row written twice add nothing.
@@ -16854,11 +16887,34 @@ impl System {
     /// counts are needed; the size of the system plays no part. Rows of a bounded number of
     /// variables each, as in `q1_local::sliding_windows_of_four_are_decided`, give z = O(1)
     /// per count and O(1) counts per step. A complete solution would keep, per pair of rows,
-    /// whether it writes a new row, renewed as rows come and go. Given up besides: the bound
-    /// from the lengths of the rows (`apart`) and the count of a bound with another row take
-    /// two pairs that write one row as two rows, so such a variable can be left out, and a
-    /// system decided only through it is refused (`Refusal::Growth`); no answer is wrong,
-    /// since every elimination taken is exact. COMPLEXITY.md row Q1-LOCAL.
+    /// whether it writes a new row, renewed as rows come and go. The count is exact: a bound
+    /// with another row is counted without writing a row only when no other pair writes a
+    /// row over the same variables, and written and compared otherwise.
+    ///
+    /// What the count reads: the rows of `x[j]` and their opposites, and whether rows over
+    /// the variables of those rows other than `x[j]` are held ([`System::over_the_rest`],
+    /// and the rows written). Each of these changes only by adding or removing a row of
+    /// `x[j]`, which [`System::count`] marks, or a row whose variables all lie in a row of
+    /// `x[j]`, which [`System::touch`] marks through its variable of fewest rows; so after
+    /// each [`System::refresh`] every count is that of the rows held then (checked at every
+    /// step in the tests of this crate, [`System::stale`]). COMPLEXITY.md rows Q1-LOCAL and
+    /// PERF-shrink-tie-every-step.
+    // Complexity tradeoff: naive version (until PERF-shrink-tie-every-step), a bound with
+    // another row of t terms was counted as t - 1 unless some held row anywhere had t - 1
+    // terms, and a pair of rows whose lengths differ by more than any held length was
+    // counted from the lengths (`apart`). Both read `lengths`, which every row added or
+    // removed anywhere changes, so the counts went stale and each tie of [`System::least`]
+    // renewed all of them (`refresh_all`), O(N + pairs) for N terms held; at a tie every
+    // step (`names::a_chain_of_gadgets_ties_at_every_step`) that made a run quadratic, 58.2
+    // times the instructions for 8 times the size. Used: the bound with a row asks only
+    // whether a row over the row's other variables is held, O(1) expected and O(t) to
+    // check, through `by_vars`, kept at O(t) per row added or removed, and whether another
+    // pair of this count writes a row over those variables, by the sums of `spread`, sorted,
+    // O(p log p) for p such pairs; the pairs `apart` counted are combined, as any other
+    // pair, at the cost stated above. The old count also took two pairs that write one row
+    // as two rows when it skipped writing, leaving variables out (seed_1446_case_7 decided
+    // `[1, 4]` only because a held row of t - 1 terms elsewhere made it write); the sums
+    // make the skip exact.
     fn shrink(&self, j: usize) -> Option<isize> {
         // Constants do not change the terms of a row written, so the rows are taken at 0.
         let with: Vec<(usize, Row)> = self.vars[j]
@@ -16872,66 +16928,77 @@ impl System {
         let removed: usize = with.iter().map(|(_, r)| r.a.len()).sum();
         let (lowers, uppers): (Vec<_>, Vec<_>) =
             with.iter().partition(|(_, r)| r.at(j).is_positive());
-        // A pair of rows of s and t terms writes a row of at least g = |s - t| terms: `x[j]`
-        // leaves both, and at most the other terms of the shorter cancel. Such a row is held
-        // already only if a held row without `x[j]` has g terms or more, so the pairs with g
-        // above the longest of those, `beyond`, write at least g terms each, unless two of
-        // them write one row. Their sum, from the sorted lengths, shows a long row's
-        // elimination growing without writing a row of it.
-        let mut own: BTreeMap<usize, usize> = BTreeMap::new();
-        for (_, r) in &with {
-            *own.entry(r.a.len()).or_insert(0) += 1;
-        }
-        // Whether a row of `t` terms without `x[j]` is held.
-        let elsewhere = |t: usize| {
-            self.lengths
-                .get(&t)
-                .is_some_and(|n| own.get(&t).is_none_or(|m| n > m))
-        };
-        let beyond = self
-            .lengths
-            .iter()
-            .rev()
-            .find(|(t, n)| own.get(t).is_none_or(|m| *n > m))
-            .map_or(0, |(t, _)| *t);
-        let length = |side: &[&(usize, Row)]| side.iter().map(|(_, r)| r.a.len()).collect();
-        if apart(length(&lowers), length(&uppers), beyond) > removed {
-            return None;
-        }
+        // The rows written by combining, and the sums of [`spread`] over their variables.
         let mut new: BTreeSet<Coefs> = BTreeSet::new();
+        let mut over: FxHashSet<u64> = FxHashSet::default();
+        // The terms of the row `lo` and `hi` write if it is new, else 0.
+        let write = |lo: &Row, hi: &Row, new: &mut BTreeSet<Coefs>, over: &mut FxHashSet<u64>| {
+            match combine(lo, hi, j, false).normal(false) {
+                Norm::Row(r) if !self.rows.contains_key(&r.a) => {
+                    let t = r.a.len();
+                    let sum = (r.a.iter()).fold(0u64, |s, (i, _)| s.wrapping_add(spread(*i)));
+                    over.insert(sum);
+                    if new.insert(r.a) { t } else { 0 }
+                }
+                _ => 0,
+            }
+        };
+        // A bound with a row of t terms, no held row being over the row's other variables:
+        // the sum of `spread` over those variables, the place of the row, the pair, and t - 1.
+        let mut bounds: Vec<(u64, usize, &Row, &Row, usize)> = Vec::new();
         let mut written = 0;
         for (l, lo) in &lowers {
             for (h, hi) in &uppers {
-                // Two opposite rows write a constant, and a bound `x[j] >= c` or `x[j] <= c`
-                // with a row of t terms writes that row without `x[j]`: t - 1 terms, new when
-                // no held row has t - 1 terms. Both are known without writing the row, which
-                // keeps a long row shared by many variables from being written for each.
-                // Such a row is not compared with the rows written, so two of them equal
-                // count twice; that can only leave the variable out.
+                // Two opposite rows write a constant, known without writing it.
                 if self.opposites.get(l) == Some(h) {
                     continue;
                 }
-                let other = match (lo.a.len(), hi.a.len()) {
-                    (1, t) | (t, 1) => Some(t - 1).filter(|t| !elsewhere(*t)),
+                let bound = match (lo.a.len(), hi.a.len()) {
+                    (1, t) => Some((*h, t - 1)),
+                    (t, 1) => Some((*l, t - 1)),
                     _ => None,
-                };
-                let t = match other {
-                    Some(t) => t,
-                    None => match combine(lo, hi, j, false).normal(false) {
-                        Norm::Row(r) if !self.rows.contains_key(&r.a) => {
-                            let t = r.a.len();
-                            if !new.insert(r.a) {
-                                continue;
-                            }
-                            t
-                        }
-                        _ => continue,
-                    },
-                };
-                written += t;
+                }
+                .filter(|(id, _)| !self.over_the_rest(*id, j));
+                match bound {
+                    Some((id, t)) => {
+                        let sum = self.sums[id].wrapping_sub(spread(j));
+                        bounds.push((sum, id, lo, hi, t));
+                    }
+                    None => written += write(lo, hi, &mut new, &mut over),
+                }
                 if written > removed {
                     return None;
                 }
+            }
+        }
+        // A bound with a row writes that row without `x[j]`, of t - 1 terms, not held (by
+        // `over_the_rest`). Rows over different variables differ, so it is new and counted
+        // without writing it when no other row written has the sum of its variables. The two
+        // rows of an equality, `r` and its opposite, with the two bounds, write `R` and `-R`
+        // for the terms `R` of `r` other than `x[j]` (each divided by the same divisor of its
+        // terms), which differ since `R` has a term; so they too are counted without writing
+        // them, which keeps a long equality shared by many variables, as the sum of
+        // `q1_local::growth_of_offsets_laid_end_to_end`, from being written once per variable.
+        // The other pairs of a sum shared are written and compared, as any other pair. Two
+        // sums that agree for different variables only make rows be written.
+        bounds.sort_unstable_by_key(|b| b.0);
+        for same in bounds.chunk_by(|a, b| a.0 == b.0) {
+            let sum = &same[0].0;
+            match same {
+                [(.., t)] if !over.contains(sum) => written += t,
+                [(_, a, .., s), (_, b, .., t)]
+                    if self.opposites.get(a) == Some(b) && !over.contains(sum) =>
+                {
+                    written += s + t
+                }
+                _ => {
+                    for (_, _, lo, hi, _) in same {
+                        written += write(lo, hi, &mut new, &mut over);
+                    }
+                }
+            }
+            if written > removed {
+                return None;
             }
         }
         Some(written as isize - removed as isize)
@@ -16960,40 +17027,46 @@ impl System {
             if let Some(f) = v.shrink {
                 self.shrinking.remove(&(f, v.key, j));
             }
-            let s = &v.sides;
-            let f = if s.lo > 0 && s.hi > 0 && !s.inexact() {
-                self.shrink(j).filter(|f| *f <= 0)
-            } else {
-                None
-            };
+            let f = self.fresh(j);
             if let Some(f) = f {
-                self.shrinking.insert((f, v.key, j));
+                self.shrinking.insert((f, self.vars[j].key, j));
             }
             self.vars[j].shrink = f;
         }
     }
 
-    /// Renews [`System::shrinking`] for every variable a row holds, so that each count is that
-    /// of the rows held now. [`System::refresh`] alone does not ensure it: [`System::shrink`]
-    /// reads `lengths` (the rows held of each length, anywhere), `opposites` and which rows are
-    /// held, and a row added or removed elsewhere marks only the variables [`System::touch`]
-    /// keeps, so a count may be that of earlier rows (PROOF-shrink-counts-current).
-    // Complexity tradeoff: naive version, renew every count at each step, O(v) calls of
-    // `shrink` a step, quadratic over a run. Used: only when [`System::least`] gives a tie,
-    // where [`Omega::untie`] then builds the graph of all the rows (`RowGraph::new`, O(N) for
-    // N terms held) and the calls of `shrink` read each variable's rows, O(N) and the pairs of
-    // each variable's rows, the cost of one renewal of each. Not proved: that a run meets O(1)
-    // such ties; a run that met a tie at each of s steps pays O(s·(N + pairs)), as it pays
-    // `untie`'s cost s times already.
-    fn refresh_all(&mut self) {
-        for (j, v) in self.vars.iter().enumerate() {
-            if !v.rows.is_empty() {
-                self.dirty.insert(j);
-            }
+    /// The entry of `x[j]` in [`System::shrinking`] for the rows held now.
+    fn fresh(&self, j: usize) -> Option<isize> {
+        let s = &self.vars[j].sides;
+        if s.lo > 0 && s.hi > 0 && !s.inexact() {
+            self.shrink(j).filter(|f| *f <= 0)
+        } else {
+            None
         }
-        self.refresh();
     }
 
+    /// The variables whose entry in [`System::shrinking`] is not that of the rows held now. Empty
+    /// after each [`System::refresh`] ([`System::shrink`] states why); in the tests of this
+    /// crate, checked each time the Omega test reads the counts, before [`System::least`].
+    #[cfg(test)]
+    fn stale(&self) -> Vec<usize> {
+        let entries: BTreeSet<Rank> = (0..self.vars.len())
+            .filter_map(|j| Some((self.fresh(j)?, self.vars[j].key, j)))
+            .collect();
+        (0..self.vars.len())
+            .filter(|&j| self.vars[j].shrink != self.fresh(j))
+            .chain((entries.symmetric_difference(&self.shrinking)).map(|r| r.2))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The ties of [`System::least`] met, on this thread, where [`System::stale`] was checked.
+    static TIES_CHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl System {
     /// The place of the row of `x[p]` other than the row at `l`, when `x[p]` has exactly
     /// these two rows, one on each side, its coefficient in the other is a unit, and neither
     /// row has an opposite held (an equality kept as two rows is left to the loop).
@@ -17107,24 +17180,15 @@ impl System {
     }
 }
 
-/// The sum of `|s - t|` over the lengths `s` of `lowers` and `t` of `uppers` that differ by
-/// more than `beyond`, from the sorted lengths with prefix sums: O(d log d) for d rows.
-fn apart(lowers: Vec<usize>, mut hi: Vec<usize>, beyond: usize) -> usize {
-    hi.sort_unstable();
-    let mut below = vec![0; hi.len() + 1];
-    for (i, t) in hi.iter().enumerate() {
-        below[i + 1] = below[i] + t;
-    }
-    let total = below[hi.len()];
-    lowers
-        .into_iter()
-        .map(|s| {
-            // The uppers shorter than `s - beyond`, and those longer than `s + beyond`.
-            let m = hi.partition_point(|t| t + beyond < s);
-            let p = hi.partition_point(|t| *t <= s + beyond);
-            (m * s - below[m]) + (total - below[p] - (hi.len() - p) * s)
-        })
-        .sum()
+/// A fixed spread of the bits of a variable's place (the finalizer of SplitMix64), so that the
+/// sums of two different sets of variables rarely agree. Two sets that agree are told apart by
+/// their terms ([`System::over_the_rest`]), so the sums decide only how long a lookup takes,
+/// never its result.
+fn spread(i: usize) -> u64 {
+    let mut z = (i as u64).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// Whether the inequalities have no rational point once each row is normalized, which keeps
@@ -18155,13 +18219,15 @@ impl Omega {
                     Some(false) => {}
                     None => {
                         self.sys.refresh();
-                        let mut least = self.sys.least(&[&self.sys.shrinking]);
-                        // A tie is read on counts of the rows held now, so that every symmetry
-                        // of the rows keeps the ranks that made it (`System::symmetries`).
-                        if matches!(least, Some((_, Err(_)))) {
-                            self.sys.refresh_all();
-                            least = self.sys.least(&[&self.sys.shrinking]);
+                        #[cfg(test)]
+                        {
+                            let stale = self.sys.stale();
+                            assert!(stale.is_empty(), "counts not current for {stale:?}");
+                            if matches!(self.sys.least(&[&self.sys.shrinking]), Some((_, Err(_)))) {
+                                TIES_CHECKED.with(|c| c.set(c.get() + 1));
+                            }
                         }
+                        let least = self.sys.least(&[&self.sys.shrinking]);
                         if let Some((_, Ok(js))) = self.untie(least, |_| true) {
                             for j in js {
                                 let rows = self.sys.eliminate(j, false);
@@ -18827,9 +18893,9 @@ impl Omega {
     // loop after the tie to read only the rows and the flags that hold no variable, and each
     // step to be the same under a renaming of the variables (the invariant [`solve`] states).
     // No proof covers every step, and a step added later that reads a variable's index would
-    // break it. The counts of `System::shrinking` are renewed for every variable before a tie
-    // is read from them, and `System::touch` marks every variable of fewest rows, none by
-    // index (PROOF-shrink-counts-current). Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
+    // break it. The counts of `System::shrinking` are those of the rows held when a tie is
+    // read from them (`System::shrink` states why), and `System::touch` marks every variable
+    // of fewest rows, none by index. Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
     // (200 random symmetric systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
     // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an

@@ -544,6 +544,11 @@ fn reorderings(
         let all = rows.len() + 2 * n;
         let f = named(&rows, half, &plain, &(0..all).collect::<Vec<_>>());
         let a = decide(&f);
+        // Each answer given is checked against enumeration of the box, so a count of
+        // refusals that falls shows the systems newly decided are decided right.
+        if let Ok(b) = &a {
+            assert_eq!(*b, enumerate(&rows, n, half), "{f}");
+        }
         refused += usize::from(a.is_err());
         let mut drawn: Vec<Arc<str>> = Vec::new();
         while drawn.len() < n {
@@ -618,7 +623,7 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
 
 #[test]
 fn small_coefficients_over_four_variables_are_refused_81_times_in_300() {
-    // The first 300 systems of the 3000 in `bench::oracle` (838 refused there).
+    // The first 300 systems of the 3000 in `bench::oracle` (837 refused there).
     assert_eq!(refusals_at(0x38_40, 300, 4, 4, small_coefficients), 81);
 }
 

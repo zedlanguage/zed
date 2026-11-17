@@ -149,10 +149,14 @@ fn the_census_of_fresh_seed_3() {
 
 #[test]
 fn the_census_of_fresh_seed_4() {
+    // 1378 with a point and 416 refused with one until PERF-shrink-tie-every-step, whose count
+    // of the rows an elimination writes is exact where it took two pairs that write one row as
+    // two rows: it decides one more system with a point, and `census` checks its answer and
+    // model against enumeration of the box.
     let c = fresh_census(0x5eed_0004, 2000);
     assert_eq!(
         counts(&c),
-        (1378, 60, g(416, 125, 21), vec![(3, 1), (4, 17), (5, 107)]),
+        (1379, 60, g(415, 125, 21), vec![(3, 1), (4, 17), (5, 107)]),
         "{c:?}"
     );
 }

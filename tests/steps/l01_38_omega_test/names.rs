@@ -1759,6 +1759,35 @@ pub(super) fn star(n: usize) -> Formula {
     Formula::and(fs)
 }
 
+/// `n` gadgets in a chain: links `w0..wn` and, for gadget `i`, `x{i}_0..x{i}_{m-1}`, each in
+/// `[0, 10]`, with `1 <= w_i - w_{i+1} + Σ x{i}_j <= 3`. The gadgets are alike, so the
+/// shrinking stage of the Omega test ties again and again: 15 ties for the 31 variables of 6
+/// gadgets (`tie_group_tests::counts_read_at_a_tie_are_those_of_the_rows_held` in
+/// zedc-presburger), O(n) ties for n gadgets (PERF-shrink-tie-every-step).
+pub(super) fn gadget_chain(n: usize, m: usize) -> Formula {
+    let v = |s: String| -> Lin { Lin::atom(Atom::Sym(s.into())) };
+    let k = Lin::constant;
+    let mut fs = Vec::new();
+    let bound = |x: &Lin, fs: &mut Vec<Formula>| {
+        fs.push(Formula::Con(Con::ge(x, &k(0))));
+        fs.push(Formula::Con(Con::ge(&k(10), x)));
+    };
+    for i in 0..=n {
+        bound(&v(format!("w{i}")), &mut fs);
+    }
+    for i in 0..n {
+        let mut sum = v(format!("w{i}")).plus(&v(format!("w{}", i + 1)).times(-1));
+        for j in 0..m {
+            let x = v(format!("x{i}_{j}"));
+            bound(&x, &mut fs);
+            sum = sum.plus(&x);
+        }
+        fs.push(Formula::Con(Con::ge(&sum, &k(1))));
+        fs.push(Formula::Con(Con::ge(&k(3), &sum)));
+    }
+    Formula::and(fs)
+}
+
 /// `x` and `y` each in `[-6, -1]` or in `[1, 6]`, and `x == at || y == at`, the atoms named
 /// `names`. With `at` zero it is the question of exactness of `if x == 0 { true } else { x ==
 /// x - y }` read as `||` (`zedc_preimage`, seed 3178640468583431682 round 104, plan row

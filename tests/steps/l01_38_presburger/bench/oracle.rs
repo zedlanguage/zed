@@ -32,7 +32,7 @@ fn the_12000_rows_of_three_terms_of_seed_0x383b_tight_at_a_corner_match_enumerat
 }
 
 #[test]
-fn small_coefficients_over_four_variables_are_refused_838_times_in_3000() {
+fn small_coefficients_over_four_variables_are_refused_837_times_in_3000() {
     // The refusals, measured with the row test of the box stage (Q1-ROWBOX) and `live3`: 896;
     // 839 since Q1-LOCAL, whose exact eliminations counted by the rows they write
     // (`System::shrink`) decide 57 more. 838 since 5a5084526 (FAIL-abs-hull-rows-tie), which
@@ -40,8 +40,11 @@ fn small_coefficients_over_four_variables_are_refused_838_times_in_3000() {
     // (counted from 0), refused with Growth before, `4·v0 - 2·v1 + 2·v2 + 2·v3 + 18 >= 0` and
     // `-2·v0 + 3·v1 - 7·v2 - 7·v3 - 7 >= 0` in the box, the same under a swap of v2 and v3,
     // with the point (0, 0, 0, -1). All 3000 gave one answer under every naming and row order
-    // (`reorderings` with its comparison, run once, 23.5 s).
-    assert_eq!(refusals_at(0x38_40, 3000, 4, 4, small_coefficients), 838);
+    // (`reorderings` with its comparison, run once, 23.5 s). 837 since
+    // PERF-shrink-tie-every-step, whose count of the rows an elimination writes is exact
+    // where it took two pairs that write one row as two rows: it decides one more, and
+    // `reorderings` checks every answer given against enumeration of the box.
+    assert_eq!(refusals_at(0x38_40, 3000, 4, 4, small_coefficients), 837);
 }
 
 #[test]

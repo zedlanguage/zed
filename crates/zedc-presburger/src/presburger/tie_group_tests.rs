@@ -496,3 +496,96 @@ fn rows_of_three_on_five_variables() {
     assert_eq!(seen.classes, 34);
     assert!(seen.answered > 0);
 }
+
+/// A chain of `n` gadgets: links `w_0..w_n` and, for gadget `i`, `x_i0..x_i3`, each variable in
+/// `[0, 10]`, with `1 <= w_i - w_{i+1} + Σ x_ij <= 3`. The gadgets are alike, so the counts of
+/// [`System::shrinking`] tie again and again as the chain is eliminated (the scaling benchmark
+/// `bench::names::a_chain_of_gadgets_ties_at_every_step` runs the same family). At every read
+/// of the counts the Omega test checks them against fresh ones ([`System::stale`]); this test
+/// runs it and requires that ties were met there (row PERF-shrink-tie-every-step, from
+/// PROOF-shrink-counts-current).
+#[test]
+fn counts_read_at_a_tie_are_those_of_the_rows_held() {
+    let (n, m) = (6, 4);
+    let vars = n + 1 + n * m;
+    let x = |i: usize, j: usize| n + 1 + i * m + j;
+    let row = |a: Vec<(usize, i64)>, k: i64| {
+        let a: Vec<Term> = a.into_iter().map(|(v, c)| (v, Int::from(c))).collect();
+        (
+            Row {
+                a: a.into(),
+                k: Int::from(k),
+            },
+            Rel::Ge,
+        )
+    };
+    let mut base = Vec::new();
+    for v in 0..vars {
+        base.push(row(vec![(v, 1)], 0));
+        base.push(row(vec![(v, -1)], 10));
+    }
+    for i in 0..n {
+        let mut a = vec![(i, 1), (i + 1, -1)];
+        a.extend((0..m).map(|j| (x(i, j), 1)));
+        base.push(row(a.clone(), -1));
+        base.push(row(a.iter().map(|&(v, c)| (v, -c)).collect(), 3));
+    }
+    let keys = vec![0; vars];
+    let before = TIES_CHECKED.with(std::cell::Cell::get);
+    let answer = search(vars, &base, &keys, false, &|i| format!("v{i}"));
+    let ties = TIES_CHECKED.with(std::cell::Cell::get) - before;
+    assert!(matches!(answer, Ok(Some(_))), "{answer:?}");
+    eprintln!("{ties} ties met over {vars} variables");
+    assert!(ties >= n, "{ties} ties met");
+}
+
+/// Random small systems: 7 variables in `[-3, 3]` and 8 rows of two to four terms, coefficients
+/// in `{-2, -1, 1, 2}`. Rows over subsets of other rows' variables are common here, the case
+/// [`System::touch`] marks; each run checks the counts at every read ([`System::stale`]).
+#[test]
+fn counts_read_are_those_of_the_rows_held_on_random_systems() {
+    let mut s: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = |below: u64| {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s % below
+    };
+    let vars = 7;
+    let before = TIES_CHECKED.with(std::cell::Cell::get);
+    for _ in 0..2000 {
+        let mut base: Vec<(Row, Rel)> = Vec::new();
+        for v in 0..vars {
+            for c in [1, -1] {
+                let a: Vec<Term> = vec![(v, Int::from(c))];
+                base.push((
+                    Row {
+                        a: a.into(),
+                        k: Int::from(3),
+                    },
+                    Rel::Ge,
+                ));
+            }
+        }
+        for _ in 0..8 {
+            let len = 2 + next(3) as usize;
+            let mut vs: Vec<usize> = Vec::new();
+            while vs.len() < len {
+                let v = next(vars as u64) as usize;
+                if !vs.contains(&v) {
+                    vs.push(v);
+                }
+            }
+            vs.sort_unstable();
+            let a: Vec<Term> = (vs.iter())
+                .map(|&v| (v, Int::from([-2, -1, 1, 2][next(4) as usize])))
+                .collect();
+            let k = Int::from(next(5) as i64 - 2);
+            base.push((Row { a: a.into(), k }, Rel::Ge));
+        }
+        let _ = search(vars, &base, &vec![0; vars], false, &|i| format!("v{i}"));
+    }
+    let ties = TIES_CHECKED.with(std::cell::Cell::get) - before;
+    eprintln!("{ties} ties met");
+    assert!(ties > 0);
+}
