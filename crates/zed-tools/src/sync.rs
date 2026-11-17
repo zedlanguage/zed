@@ -17,7 +17,9 @@
 //! - `zed/fences/kernel-rules.txt`: the names no message prints (sec:diagnostics);
 //! - `zed/fences/canon-serial.md`: the tables of step M0.7's serialization, each node's tag and
 //!   its fields in order, and each primitive's code, which
-//!   `m0_07_canonicalization::serial_text` serializes by.
+//!   `m0_07_canonicalization::serial_text` serializes by;
+//! - `zed/synced-from`: the spec commit the copies were written from ([`STAMP`]), not written
+//!   or compared with `--check`.
 //!
 //! It then runs the checks that read the spec's prose, which this repository does not hold:
 //! the prelude laws against `docs/mathlib-study.md`, the build modes and the kinds of build
@@ -219,7 +221,7 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
     let root = &spec.root;
     let (design_path, examples_path) = (spec.design.clone(), format!("{root}/EXAMPLES.md"));
     let design = read_text(&design_path)?;
-    let copies = vec![
+    let mut copies = vec![
         (
             format!("{zed}/fences/design.md"),
             render(&design_path, spec)?,
@@ -262,7 +264,54 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
             serial_tables(&design),
         ),
     ];
+    if !check {
+        // The stamp is not a copy, so --check does not compare it: a copy is current or not
+        // whatever commit it was written from.
+        copies.push((format!("{zed}/{STAMP}"), format!("{}\n", spec_commit(root))));
+    }
     refresh(copies, check, out)
+}
+
+/// The file under `zed/` that names the spec commit the copies were last written from
+/// (MERGE-spec-lag-by-pin), read by /home/luke/Work/wt/merge-push.sh to list the spec commits
+/// not yet synced.
+pub const STAMP: &str = "synced-from";
+
+/// The line [`STAMP`] holds for the spec checkout at `root`: its HEAD commit, followed by
+/// ` with uncommitted changes` when DESIGN.md or EXAMPLES.md differ from it there, or `unknown`
+/// when `root` is not the top of a git checkout (a test's spec, or a copy of the files alone,
+/// whose enclosing repository is not the spec's) or git fails.
+pub fn spec_commit(root: &str) -> String {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let top = git(&["rev-parse", "--show-toplevel"]).map(std::path::PathBuf::from);
+    let here = std::fs::canonicalize(root).ok();
+    let (Some(top), Some(here)) = (top, here) else {
+        return "unknown".into();
+    };
+    if std::fs::canonicalize(top).ok() != Some(here) {
+        return "unknown".into();
+    }
+    let (Some(head), Some(changed)) = (
+        git(&["rev-parse", "HEAD"]),
+        git(&["status", "--porcelain", "--", "DESIGN.md", "EXAMPLES.md"]),
+    ) else {
+        return "unknown".into();
+    };
+    if changed.is_empty() {
+        head
+    } else {
+        format!("{head} with uncommitted changes")
+    }
 }
 
 /// Writes each copy `(dest, want)` whose file does not already hold `want`, or with `check` only

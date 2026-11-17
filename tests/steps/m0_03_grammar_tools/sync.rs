@@ -175,6 +175,72 @@ fn a_word_named_again_in_a_note_is_listed_once() {
     );
 }
 
+/// `sync` writes the spec commit the copies come from to `zed/synced-from`
+/// (MERGE-spec-lag-by-pin): `unknown` for a spec directory that is not the top of a git checkout
+/// (this one lies under build/, inside zed-impl's own checkout, whose commit is not the spec's),
+/// the HEAD commit for a clean checkout, and that commit marked when DESIGN.md has uncommitted
+/// changes. `--check` neither writes nor compares the stamp.
+#[test]
+fn sync_writes_the_spec_commit_it_copied_from() {
+    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
+    let dir = spec_dir("sync_stamp", &design(&body), &fence(DOUBLE));
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let zed = zed_dir("sync_stamp_zed");
+    let stamp = || fs::read_to_string(zed.at(sync::STAMP)).unwrap();
+    let run = |check| {
+        let mut out = String::new();
+        (sync::sync_into(&spec, &zed.root(), check, &mut out), out)
+    };
+    let (outcome, out) = run(true);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(!out.contains("synced-from"), "{out}");
+    assert!(
+        !std::path::Path::new(&zed.at(sync::STAMP)).exists(),
+        "--check writes no stamp"
+    );
+    let (outcome, out) = run(false);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert_eq!(stamp(), "unknown\n");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-C", &dir.root(), "-c", "user.name=test"])
+            .args([
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "DESIGN.md", "EXAMPLES.md"]);
+    git(&["commit", "-q", "-m", "spec"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    let (outcome, out) = run(false);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert!(out.contains("synced-from is written"), "{out}");
+    assert_eq!(stamp(), format!("{head}\n"));
+    let (outcome, out) = run(true);
+    assert_eq!(
+        outcome,
+        Ok(true),
+        "the stamp is not a copy --check compares: {out}"
+    );
+    fs::write(
+        dir.at("DESIGN.md"),
+        design(&format!("{body}\nA new line.\n")),
+    )
+    .unwrap();
+    assert_eq!(
+        sync::spec_commit(&dir.root()),
+        format!("{head} with uncommitted changes")
+    );
+}
+
 /// The spec checkout `sync` reads: the one directory it is given, else `ZED_SPEC_DIR`; `--check`
 /// is no directory, and two directories or none is a usage error.
 #[test]
