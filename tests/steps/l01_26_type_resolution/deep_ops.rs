@@ -501,8 +501,8 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
     let c = "((int, bool) | (int, bool, bool),)";
     // The refusals bound `U` by `int | f64`: a bound of one carrier is read as that carrier
     // (FAIL-fn-domain-bindable-variable), which leaves no variable for the bucket. The
-    // acceptances bound it by `int`: with `int | f64` they are answered "does not take", which
-    // is FAIL-types-bindable-union-param-refused.
+    // acceptance holds at both bounds: with `int | f64` the cover binds no `U`, and the
+    // instance at `U := int` is within `f`'s parameter (FAIL-types-bindable-union-param-refused).
     let program = |slot: &str, g: &str, bound: &str| {
         format!(
             "p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in {bound}) = p(f: g);\n"
@@ -525,14 +525,17 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
         assert_eq!(errs.len(), 1, "{g}: {errs:?}");
         assert!(refusal.iter().all(|r| errs[0].contains(r)), "{g}: {errs:?}");
     }
-    assert_eq!(
-        type_errors(&program(
-            &format!("({a}, bool) | ({c}, bool)"),
-            &format!("({b}, bool) | ({a}, bool)"),
-            "int"
-        )),
-        Vec::<String>::new()
-    );
+    for bound in ["int", "int | f64"] {
+        assert_eq!(
+            type_errors(&program(
+                &format!("({a}, bool) | ({c}, bool)"),
+                &format!("({b}, bool) | ({a}, bool)"),
+                bound
+            )),
+            Vec::<String>::new(),
+            "{bound}"
+        );
+    }
     // The control: with no shape refused, the parameter fits (`(U, int)` is `(int, int)`).
     assert_eq!(
         type_errors(&program(
@@ -697,8 +700,14 @@ fn a_function_whose_union_parameter_fits_once_its_variable_is_bound_is_accepted(
     let b = "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)";
     let c = "((int, bool) | (int, bool, bool),)";
     for (slot, g) in [
-        (format!("({a}, bool) | ({c}, bool)"), format!("({b}, bool) | ({a}, bool)")),
-        (format!("({a}, bool) | (int, int)"), format!("({a}, bool) | (U, int)")),
+        (
+            format!("({a}, bool) | ({c}, bool)"),
+            format!("({b}, bool) | ({a}, bool)"),
+        ),
+        (
+            format!("({a}, bool) | (int, int)"),
+            format!("({a}, bool) | (U, int)"),
+        ),
     ] {
         let src = format!(
             "p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in int | f64) = p(f: g);\n"

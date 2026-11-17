@@ -13254,6 +13254,91 @@ async fn instance_within<'m>(
         .values()
         .any(|&m| m.count_ones() > 1 || m & OTHER != 0);
     let b = rest_bound(s, b.clone(), c);
+    let tries = unbound_carriers(s, sa, &b, &c.cx.borrow());
+    let mut found = false;
+    for b in &tries {
+        if instance_at(s, sa, qa, b, c).await {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return false;
+    }
+    let mut cx = c.cx.borrow_mut();
+    if several && cx.unchosen.is_none() {
+        cx.witnessed.insert(sa.params.clone());
+    }
+    true
+}
+
+/// The bindings at which [`instance_within`] tries the arrow `sa` of `s`, `b` the binding of
+/// its cover with [`rest_bound`] applied: `b` alone, or, where `b` leaves exactly one variable
+/// of `sa`'s parameters bounded by several carriers unbound, `b` with that variable bound to
+/// each least instance of it ([`instances`]: each carrier of its bound, and `Never` where the
+/// bound takes values of no carrier).
+///
+/// Proof that each is an instance of the cover, so an instance found within `q` among them is
+/// a witness as [`instance_within`] requires. The cover found `qa`'s parameters within `sa`'s
+/// with the variable `v` unbound, so no piece was held by `v` ([`accepts`] holds a piece by a
+/// variable it does not bind only where the piece is that variable or a rigid one, and `q`
+/// holds neither of `s`'s own variables); so they are within `sa`'s parameters with `v` read
+/// as `Never`. Outside function types a type is monotone in its variables, so they are within
+/// those with `v` bound to any type, each carrier among them. The result does not hold `v`
+/// (required below), so the result compared is the same, and [`bounds_hold`] reads nothing of
+/// an unbound variable. A call fixes `v` to one carrier (rule 6 of sec:type_resolution), so
+/// these are the instances a call may give `v`. Required, else `b` alone is tried, as before:
+/// no function among the parameters and result, where a type is not monotone in `v`; the
+/// result does not hold `v`; and one such variable only, as [`instances`] tries one.
+///
+/// FAIL-types-bindable-union-param-refused: the cover of `(x: (A, bool) | (C, bool))` by
+/// `(x: (C | ((int, U) | (int, U, U),), bool) | (A, bool)) for U in int | f64` binds nothing,
+/// and with `U` unbound the instance was within no parameter of `q`, so the program was
+/// answered "`p` does not take ...".
+///
+/// Complexity tradeoff: naive, every combination of the carriers of the unbound variables,
+/// `6^v`; used: one variable, at most 7 tries of [`instance_at`], each a comparison of the
+/// arrow's parameters, and a walk of the parameters and result for their variables.
+fn unbound_carriers(s: &Sig, sa: &Arrow, b: &Binds, cx: &Cx) -> Vec<Binds> {
+    let mut vs = Vars::default();
+    sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    let mut rs = Vars::default();
+    sa.result.vars_in(&mut rs);
+    let in_fn = (vs.order.iter())
+        .chain(rs.order.iter())
+        .any(|v| cx.fns.contains_key(v));
+    let open: Vec<(&Arc<str>, u8)> = (vs.order.iter())
+        .filter(|v| b.get(*v).is_none())
+        .filter_map(|v| s.bounds.get(v).map(|&m| (v, m)))
+        .collect();
+    match open[..] {
+        [(v, m)] if !in_fn && !rs.order.iter().any(|r| r == v) => {
+            let mut least: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
+            if m & OTHER != 0 {
+                least.push(Ty::empty());
+            }
+            least
+                .into_iter()
+                .map(|t| {
+                    let mut b = b.clone();
+                    b.insert(v.clone(), t);
+                    b
+                })
+                .collect()
+        }
+        _ => vec![b.clone()],
+    }
+}
+
+/// Whether the instance of the arrow `sa` of `s` at `b` is within `qa`'s parameters, or takes
+/// only keys some arrow of `q` takes ([`within_q`]) ([`instance_within`]).
+async fn instance_at<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    b: &Binds,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     let wide = c.cx.borrow().wide.clone();
     // The instance holds the variables of `q` its cover bound the variables of `s` to, and
     // these are widened as on `q`'s side: for each instance `σ` of `q`, the instance of `sa`
@@ -13263,20 +13348,11 @@ async fn instance_within<'m>(
     // instances of `y` ([`Cx::wide`], [`repeated`]). Compared as variables of their own, the
     // `X0` of `(X0,) | (X1,)`, bound by `X0 in int` and read as rigid, was not within the
     // `int` its own variable was widened to on `q`'s side.
-    let params: Vec<Ty> = sa.params.iter().map(|x| x.subst(&b).subst(&wide)).collect();
-    let mut alone = true;
+    let params: Vec<Ty> = sa.params.iter().map(|x| x.subst(b).subst(&wide)).collect();
     for (x, y) in params.iter().zip(&qa.params) {
         if !within_as_is(x, &y.subst(&wide), c).await {
-            alone = false;
-            break;
+            return within_q(params, sa, s.params.len(), c).await;
         }
-    }
-    if !alone && !within_q(params, sa, s.params.len(), c).await {
-        return false;
-    }
-    let mut cx = c.cx.borrow_mut();
-    if several && cx.unchosen.is_none() {
-        cx.witnessed.insert(sa.params.clone());
     }
     true
 }
@@ -14741,6 +14817,96 @@ impl Domains {
         g.subtype_verdict(p) == Verdict::Inhabited
     }
 
+    /// Whether a value of the guarantee of `s` is proved outside the permission of `q`, two
+    /// signatures of the same parameters, by the kind of a value at one parameter: a function
+    /// where no arrow of `q` takes one there, or data where each arrow of `q` takes only
+    /// functions there. [`Domains::outside`] asks the kernel, which has no kernel type for a
+    /// parameter type holding a function ([`Ty::exact_kernel`]), so `((_ -> ()) -> _) & (rat
+    /// -> f64)` was kept as an overload, not `Never` (FAIL-types-meet-fn-param-domains).
+    ///
+    /// Proof. Let `a` be an exact arrow of `s` and `j` a parameter where `a`'s type holds a
+    /// value `w` ([`Domains::witness`]) of one kind, and each other parameter type of `a` holds
+    /// some value ([`Domains::witness`] of either kind). A tuple of those values, `w` at `j`, is
+    /// in `a`'s parameter types, so in the domain of every function of `s` (its guarantee); the
+    /// witnesses hold no variable, so this holds at every instance of `s`'s variables. It is in
+    /// the permission of `q` only if some arrow of `q` takes `w` at `j`. Where `w` is a
+    /// function: a parameter type takes a function only through a function or family of its
+    /// own, a variable, the unknown, or a morphism in its set, which [`KType::function_part`]
+    /// finds (it finds every part that may hold one); a type with none takes no function.
+    /// Where `w` is data (a scalar, an atom or a tuple of data): a type whose set the kernel
+    /// proves empty ([`KType::is_empty`], whose yes is a proof) and which has no tuple,
+    /// variable or unknown takes only functions, and no function is data. So no domain is
+    /// within `q`'s permission and holds `s`'s guarantee, and no function is of both.
+    // Complexity tradeoff: naive, each exact arrow of `s` against each arrow of `q`, O(a^2)
+    // pairs. Used: what each parameter of `q` takes is read once over its arrows, O(a) walks of
+    // the parameter types ([`KType::function_part`] is linear in a type), then each exact
+    // arrow of `s` once, with one kernel verdict on the data of each of its parameter types,
+    // O(a) verdicts, only where some parameter of `q` takes no function or only functions.
+    // Given up: a function type whose arrows are not one exact arrow or all partial is not
+    // proved inhabited ([`Domains::inhabited_fn`]), and a parameter type of `q` holding a tuple
+    // part that may hold a function is read as taking functions.
+    fn kinds_apart(s: &Sig, q: &Sig) -> bool {
+        let n = q.params.len();
+        let open = |t: &Ty| !t.vars.is_empty() || t.dynamic;
+        let no_fn: Vec<bool> = (0..n)
+            .map(|j| {
+                (q.arrows.iter()).all(|a| {
+                    let t = &a.params[j];
+                    t.fns.is_empty() && !open(t) && t.set.function_part().is_none()
+                })
+            })
+            .collect();
+        let no_data: Vec<bool> = (0..n)
+            .map(|j| {
+                (q.arrows.iter()).all(|a| {
+                    let t = &a.params[j];
+                    t.tuples.is_empty() && !open(t) && t.set.is_empty()
+                })
+            })
+            .collect();
+        if !no_fn.iter().chain(&no_data).any(|&b| b) {
+            return false;
+        }
+        (s.arrows.iter().filter(|a| !a.partial)).any(|a| {
+            let ws: Vec<(bool, bool)> = a.params.iter().map(Domains::witness).collect();
+            ws.iter().all(|&(f, d)| f || d)
+                && (ws.iter().enumerate()).any(|(j, &(f, d))| (f && no_fn[j]) || (d && no_data[j]))
+        })
+    }
+
+    /// Whether `t` is proved to hold a function, and whether it is proved to hold data, each
+    /// with no variable: a function of a signature of its own with no variable that
+    /// [`Domains::inhabited_fn`] proves inhabited; a value of its data the kernel builds
+    /// ([`Verdict::Inhabited`] on [`Ty::exact_data`], which leaves out its functions, variables
+    /// and unknown), where its set holds no morphism or tuple part that may hold one
+    /// ([`KType::function_part`]), so that the value built is data.
+    fn witness(t: &Ty) -> (bool, bool) {
+        let f = (t.fns.iter()).any(|g| !g.data && g.bits().is_empty() && Domains::inhabited_fn(g));
+        let d = t.set.function_part().is_none()
+            && t.exact_data()
+                .is_some_and(|k| k.verdict() == Verdict::Inhabited);
+        (f, d)
+    }
+
+    /// Whether the function type `g` is proved to hold a function: where each arrow is partial,
+    /// the function of no key, whose domain is empty, so within each permission, and which
+    /// has no value to bound; where it has one arrow, exact, `P -> R`, and `R` holds a value
+    /// `r` (the unknown, or one the kernel builds), the function giving `r` at each key of
+    /// `P`. Other signatures are not claimed: arrows of overlapping domains may bound one key
+    /// by results that share no value.
+    fn inhabited_fn(g: &Sig) -> bool {
+        let r = |t: &Ty| {
+            t.dynamic
+                || t.exact_kernel()
+                    .is_some_and(|k| k.verdict() == Verdict::Inhabited)
+        };
+        match g.arrows.as_slice() {
+            [] => false,
+            [a] if !a.partial => r(&a.result),
+            arrows => arrows.iter().all(|a| a.partial),
+        }
+    }
+
     /// The meet of `s` and `q`, two signatures of the same parameters with what their arrows
     /// say of their domains: none where it is proved empty, two exact arrows over different
     /// domains among them (DESIGN.md sec:type_language, "two exact arrows over different
@@ -14783,7 +14949,11 @@ impl Domains {
         (s, ds): (&Sig, &Domains),
         (q, dq): (&Sig, &Domains),
     ) -> Option<Sig> {
-        if ds.outside(dq) || dq.outside(ds) {
+        if ds.outside(dq)
+            || dq.outside(ds)
+            || Domains::kinds_apart(s, q)
+            || Domains::kinds_apart(q, s)
+        {
             return None;
         }
         let mut m = s.clone();

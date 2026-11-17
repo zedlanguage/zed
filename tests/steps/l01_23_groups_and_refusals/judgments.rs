@@ -2282,8 +2282,14 @@ fn an_exact_and_a_partial_arrow_over_never_are_one_type() {
     for v in ["int", "(rat, f64)", "Never"] {
         let exact = parse_type(&format!("Never -> {v}")).unwrap();
         let partial = parse_type(&format!("Never ->? {v}")).unwrap();
-        assert!(exact.subtype(&partial), "`Never -> {v}` is not within `Never ->? {v}`");
-        assert!(partial.subtype(&exact), "`Never ->? {v}` is not within `Never -> {v}`");
+        assert!(
+            exact.subtype(&partial),
+            "`Never -> {v}` is not within `Never ->? {v}`"
+        );
+        assert!(
+            partial.subtype(&exact),
+            "`Never ->? {v}` is not within `Never -> {v}`"
+        );
     }
 }
 
@@ -2297,12 +2303,32 @@ fn a_meet_of_functions_over_a_function_domain_and_another_domain_is_empty() {
     for text in [
         "((_ -> ()) -> _) & ((rat -> f64) | ())",
         "((_ -> ()) -> _) & ((rat .. (rat | #a) -> f64) | ())",
+        // Data the one side's domain holds, where the other takes only functions. (`&` of two
+        // arrows writes an overload; `| ()` makes it a meet.)
+        "((_ -> ()) ->? _) & ((rat -> f64) | ())",
+        // A partial arrow's function type holds the function of no key.
+        "((#a ->? Never) -> _) & ((rat ->? f64) | ())",
     ] {
         let t = parse_type(text).unwrap();
         assert!(t.is_empty(), "`{text}` reads as `{t}`, not `Never`");
     }
+    // Two partial arrows share the function of no key, so their meet is not empty; nor is the
+    // meet of an exact and a partial arrow over one function domain.
+    for text in [
+        "((_ -> ()) ->? _) & ((rat ->? f64) | ())",
+        "((#a -> ()) -> _) & (((#a -> ()) ->? f64) | ())",
+    ] {
+        let t = parse_type(text).unwrap();
+        assert!(!t.is_empty(), "`{text}` reads as `Never`");
+    }
     // The meet of a function with a union holding it is that function.
     let text = "((_ -> ()) -> _) & (((_ -> ()) -> _) | (rat -> f64))";
-    let (t, want) = (parse_type(text).unwrap(), parse_type("(_ -> ()) -> _").unwrap());
-    assert!(t.subtype(&want) && want.subtype(&t), "`{text}` reads as `{t}`");
+    let (t, want) = (
+        parse_type(text).unwrap(),
+        parse_type("(_ -> ()) -> _").unwrap(),
+    );
+    assert!(
+        t.subtype(&want) && want.subtype(&t),
+        "`{text}` reads as `{t}`"
+    );
 }

@@ -743,9 +743,10 @@ fn kernel_generated_arrow(rng: &mut Rng, depth: usize) -> (Built, bool) {
         // holds `a`, as a program's `L .. U` must: where `a` is not within it, the meet is
         // empty, which the kernel cannot always show (`a` a payload holding a function), and
         // the reader refuses the text. An `a` that holds a function is not drawn: the reader
-        // keeps both arrows of a meet of functions over such parameters, `((_ -> ()) -> _) &
-        // ((rat -> f64) | ())` read as an overload and not as `Never`
-        // (FAIL-types-meet-fn-param-domains).
+        // proves a meet of functions empty by the kinds of their parameters (a function where
+        // the other side takes none: `((_ -> ()) -> _) & ((rat -> f64) | ())` is `Never`), but
+        // keeps both arrows where both sides take functions of different domains, as `((int ->
+        // rat) ->? _) & ((String -> bool) -> int)` (FAIL-types-meet-fn-fn-domains).
         9 if at.contains("->") => return leaf(rng),
         9 => arrow(
             &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(&a.t | &v.t, b.t.clone()),
