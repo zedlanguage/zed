@@ -11510,6 +11510,32 @@ fn strings_rank() -> Ty {
     Ty::func(Arc::new(sig))
 }
 
+/// The word `w` in code quotes, where it is a method built in to the checker
+/// ([`Ck::member_end`]) that reads the entries of a family: these are refused on a function,
+/// which has no entries. `rekey` is left out, since it is refused whatever it is given.
+fn entry_word(w: &str) -> Option<&'static str> {
+    Some(match w {
+        "map" => "`map`",
+        "where" => "`where`",
+        "foldl" => "`foldl`",
+        "foldr" => "`foldr`",
+        "flatMap" => "`flatMap`",
+        "group" => "`group`",
+        "count" => "`count`",
+        "first" => "`first`",
+        "last" => "`last`",
+        "reduce" => "`reduce`",
+        "scan" => "`scan`",
+        "chunkBy" => "`chunkBy`",
+        "any" => "`any`",
+        "all" => "`all`",
+        "find" => "`find`",
+        "zip" => "`zip`",
+        "sum" => "`sum`",
+        _ => return None,
+    })
+}
+
 /// The primitive of the bit word `w`, if it is one (step L1.39a).
 fn bit_prim(w: &str) -> Option<Prim> {
     zedc_base::interp::prim(w).filter(|&p| zed_kernel::bits::is_bit_word(p))
@@ -11669,16 +11695,17 @@ pub(super) struct ParamKeys {
     /// The ranges written on its key: on the whole key (`None`) or on its tuple component at
     /// the index.
     pub ranges: Vec<(Option<usize>, WrittenRange)>,
-    /// Whether a remap reads it, so that each call must pass a family.
-    pub remapped: bool,
+    /// What reads its entries, a remap or a word such as `map` ([`KeyUse::family`]), so that
+    /// each call must pass a family; the first met.
+    pub family: Option<Arc<str>>,
 }
 
 impl ParamKeys {
-    /// The need each call of its function meets, if it has a range or a remap reads it.
+    /// The need each call of its function meets, if it has a range or its entries are read.
     pub fn need(&self) -> Option<KeyUse> {
-        (!self.ranges.is_empty() || self.remapped).then(|| KeyUse {
+        (!self.ranges.is_empty() || self.family.is_some()).then(|| KeyUse {
             ranges: self.ranges.clone(),
-            family: self.remapped,
+            family: self.family.clone(),
         })
     }
 
@@ -12007,7 +12034,7 @@ impl<'a> Ck<'_, 'a> {
             id,
             ParamKeys {
                 ranges,
-                remapped: false,
+                family: None,
             },
         );
     }

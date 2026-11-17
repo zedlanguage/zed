@@ -1492,12 +1492,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let word = "`zip`";
         let example = "[1, 2].zip([3, 4])";
-        let out =
-            (self.passing(&x.ty, word, span, x.at)).union(&self.passing(&y.ty, word, span, y.at));
-        let Some(a) = self.levels_of(&x.ty, word, example, x.at.unwrap_or(span), x.at) else {
+        // A parameter declared a partial map is read as a family (`Ck::read_as_family`).
+        let (xf, yf) = (
+            self.read_as_family(x.expr, &x.ty, word),
+            self.read_as_family(y.expr, &y.ty, word),
+        );
+        let (xt, yt) = (xf.as_ref().unwrap_or(&x.ty), yf.as_ref().unwrap_or(&y.ty));
+        let out = (self.passing(xt, word, span, x.at)).union(&self.passing(yt, word, span, y.at));
+        let Some(a) = self.levels_of(xt, word, example, x.at.unwrap_or(span), x.at) else {
             return Ty::empty();
         };
-        let Some(b) = self.levels_of(&y.ty, word, example, y.at.unwrap_or(span), y.at) else {
+        let Some(b) = self.levels_of(yt, word, example, y.at.unwrap_or(span), y.at) else {
             return Ty::empty();
         };
         if a.is_empty() || b.is_empty() {

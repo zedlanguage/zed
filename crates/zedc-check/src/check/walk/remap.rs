@@ -206,11 +206,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // it, and each call of the function must then pass a family ([`KeyUse`]'s `family`,
         // checked by `keys_at`). Any other value of such a type has no call to check.
         let keyed = self.keyed_param(of);
-        let declared_map = |sig: &Sig| {
-            keyed.is_some()
-                && sig.arrows.iter().all(|a| a.partial && a.params.len() == 1)
-                && matches!(&sig.params[..], [p] if p.positional)
-        };
+        let declared_map = |sig: &Sig| keyed.is_some() && declared_map_sig(sig);
         let mut out = Vec::with_capacity(n + 1);
         let mut cur = t.clone();
         for depth in 0..n {
@@ -251,7 +247,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && fams.iter().any(|g| !g.data)
                 && let Some(k) = self.param_keys.get_mut(&id)
             {
-                k.remapped = true;
+                k.family.get_or_insert_with(|| "a remap".into());
             }
             let keys = fams
                 .iter()
@@ -436,6 +432,52 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => None,
         }
+    }
+
+    /// `t`, the type of `e`, as `word` reads it, a word that reads the entries of a family
+    /// (`map`, `zip`, `><`, …), named in code quotes. Where `e` names a parameter declared a
+    /// partial map of one key, `m: K ->? V` (FAIL-declared-partial-param-entries), the
+    /// function of that type is read as a family whose entries are its values: DESIGN.md
+    /// sec:failure takes `total(positional m: File ->? int) = m >< (+)`. The type admits a
+    /// function too, so the parameter is marked as a remap marks it ([`ParamKeys::family`]),
+    /// and each call of its function must then pass a family ([`KeyUse::family`], checked by
+    /// `keys_at`); a call that passes a function is refused there. `None` where `t` is read
+    /// as it is.
+    ///
+    /// Proof that the family read here stores what a family the call passes stores: the
+    /// declared arrow is partial over the key type `K` with value type `V`
+    /// ([`Arrow::partial_of`]), so its keys are no more than `K`'s and its entries are values
+    /// of `V`, a stored `#notFound` among them where `V` holds it ([`super::super::family_values`]
+    /// reads `V`, not the lookup's `V | #notFound`). A family passed fits the parameter only
+    /// where its keys lie in `K` and its values in `V`, which is what each word reads.
+    // Complexity tradeoff: one lookup of the name's binder, O(1) expected, and one pass over
+    // the functions of `t`, O(|t.fns|), copying only the declared signature (one, the
+    // parameter's own type); the naive alternative, declaring every `K ->? V` parameter a
+    // family, would also refuse a function passed to a parameter whose entries no word reads.
+    pub(in crate::check) fn read_as_family(
+        &mut self,
+        e: Option<&Expr>,
+        t: &Ty,
+        word: &str,
+    ) -> Option<Ty> {
+        let id = self.keyed_param(e?)?;
+        if !(t.fns.iter()).any(|s| !s.data && declared_map_sig(s)) {
+            return None;
+        }
+        if let Some(k) = self.param_keys.get_mut(&id) {
+            k.family.get_or_insert_with(|| word.into());
+        }
+        let mut out = t.clone();
+        out.fns = (t.fns.iter())
+            .filter(|s| s.data || !declared_map_sig(s))
+            .cloned()
+            .collect();
+        for s in t.fns.iter().filter(|s| !s.data && declared_map_sig(s)) {
+            let mut fam = Sig::unwrap_to_change(s.clone());
+            fam.data = true;
+            out = out.union(&Ty::func(Arc::new(fam)));
+        }
+        Some(out)
     }
 
     /// The key under which the remap `e` is paired with remaps alike ([`AlikeSite::Remap`],
@@ -1158,6 +1200,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `Ck::group_of`, checks it (plan row FAIL-group-key-function).
         family(w, family(keys, values))
     }
+}
+
+/// Whether `sig` is the type a parameter declared a partial map of one key, `m: K ->? V`,
+/// is given ([`Ck::param_keys`]): one positional parameter, and each arrow partial over one
+/// key. A family has the same shape; the caller asks only of a function, `!sig.data`.
+fn declared_map_sig(sig: &Sig) -> bool {
+    sig.arrows.iter().all(|a| a.partial && a.params.len() == 1)
+        && matches!(&sig.params[..], [p] if p.positional)
 }
 
 /// A family `keys ->? values` that guarantees no key: its one arrow's result holds

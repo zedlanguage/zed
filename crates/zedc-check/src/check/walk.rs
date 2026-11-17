@@ -444,8 +444,8 @@ pub(super) enum Frame<'a> {
     /// `x.chunkBy(f)`, waiting for `f`: `x`'s type and the call's span (step L5.3;
     /// `chunk_by_end`).
     ChunkBy(Ty, Span),
-    /// `m >< op`, waiting for `m`: the operator and the span of the reduction.
-    Reduce(Reducer, Span),
+    /// `m >< op`, waiting for `m`: the operator, `m` and the span of the reduction.
+    Reduce(Reducer, &'a Expr, Span),
     /// `m >< f`, `f` not an operator section, waiting for `f`: `m`, the span of the reduction
     /// and `f`'s (`reduce_by`).
     ReduceBy(&'a Expr, Span, Span),
@@ -1278,8 +1278,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.level_word(&x, LevelWord::ChunkBy, f, span, span);
                 m.ty(t);
             }
-            Frame::Reduce(op, span) => {
+            Frame::Reduce(op, of, span) => {
                 let x = m.take_ty();
+                let x = self.read_as_family(Some(of), &x, "`><`").unwrap_or(x);
                 let t = self.reduce_end(op, &x, span, span);
                 m.ty(t);
             }
@@ -1287,7 +1288,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_ty();
                 match self.reduce_by(&f, span, at, FoldForm::Infix) {
                     Some(r) => {
-                        m.k(Frame::Reduce(r, span));
+                        m.k(Frame::Reduce(r, of, span));
                         m.job(Job::Expr(of));
                     }
                     None => m.ty(Ty::empty()),
@@ -3676,7 +3677,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.receivers.insert(e.span, of.span);
                 match f.kind {
                     ExprKind::Section(op, _) => {
-                        m.k(Frame::Reduce(Reducer::Op(op), e.span));
+                        m.k(Frame::Reduce(Reducer::Op(op), of, e.span));
                         m.job(Job::Expr(of));
                     }
                     _ => {
@@ -8697,6 +8698,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             let atoms = x.ty.loose_ty();
             x = Arg::of(x.ty.without_loose());
             m.k(Frame::Member2(atoms));
+        }
+        // A built-in word that reads the entries of a family reads a parameter declared a
+        // partial map as one (FAIL-declared-partial-param-entries, `Ck::read_as_family`).
+        if !matches!(self.t.res.uses.get(&member), Some(Ref::Bound(_)))
+            && let Some(word) = entry_word(name)
+            && let Some(t) = self.read_as_family(Some(of), &x.ty, word)
+        {
+            x.ty = t;
         }
         match self.t.res.uses.get(&member) {
             Some(Ref::Bound(ids)) if ids.len() == 1 => {
@@ -15582,10 +15591,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 inferred.push((j, r));
             }
             // A parameter declared a partial map takes only maps whose keys lie in the
-            // ranges on its key, and only a family where a remap reads it (RANGE-keys).
+            // ranges on its key, and only a family where a remap or a word that reads entries
+            // reads it (RANGE-keys, FAIL-declared-partial-param-entries).
             //
-            // Proof that each remap that reads the parameter has run by now, so that `remapped`
-            // is final (row TEST-range-keys-mutual-recursion): a remap reads `m` only inside
+            // Proof that each remap or word that reads the parameter has run by now, so that
+            // `family` is final (row TEST-range-keys-mutual-recursion): it reads `m` only inside
             // `m`'s scope, the function's defaults, `given` clauses and body, a lambda or a
             // function declared in the body included. `infer` puts the entry in `param_keys`
             // before any of these jobs is pushed, and this frame (`Frame::InferEnd`) is pushed
@@ -15979,11 +15989,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             shown.join(" and ")
         };
-        let takes = match (k.ranges.is_empty(), k.family) {
-            (true, _) => format!("{what} takes `{p}` as a family, which a remap reads"),
-            (false, false) => format!("{what} takes `{p}` with {}", ranges()),
-            (false, true) => format!(
-                "{what} takes `{p}` as a family, which a remap reads, with {}",
+        // A need has a range or a reader ([`ParamKeys::need`]), so no range means a reader.
+        let takes = match (k.ranges.is_empty(), &k.family) {
+            (_, None) => format!("{what} takes `{p}` with {}", ranges()),
+            (true, Some(by)) => format!("{what} takes `{p}` as a family, which {by} reads"),
+            (false, Some(by)) => format!(
+                "{what} takes `{p}` as a family, which {by} reads, with {}",
                 ranges()
             ),
         };
@@ -16022,7 +16033,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(id) = self.keyed_param(e)
         {
             let own = self.param_keys.get_mut(&id).expect("a keyed parameter");
-            own.remapped |= k.family;
+            if own.family.is_none() {
+                own.family.clone_from(&k.family);
+            }
             let wider: Vec<String> = (k.ranges.iter())
                 .filter(|(part, r)| {
                     !(own.ranges.iter())
@@ -16090,9 +16103,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if why.is_some() {
                 break;
             }
-            if k.family && !s.data {
+            if k.family.is_some() && !s.data {
                 why = Some(format!(
-                    "it is {}, a function, which has no entries to rearrange",
+                    "it is {}, a function, which has no entries",
                     self.text(t)
                 ));
                 break;
@@ -16156,7 +16169,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             span: at,
             text: match k.ranges.is_empty() {
                 true => format!("repair: pass a family as `{p}`"),
-                false if k.family => format!("repair: pass a family with {}", ranges()),
+                false if k.family.is_some() => {
+                    format!("repair: pass a family with {}", ranges())
+                }
                 false => format!("repair: pass a map with {}", ranges()),
             },
         });

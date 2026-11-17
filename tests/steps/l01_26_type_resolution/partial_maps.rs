@@ -413,3 +413,61 @@ fn many_and_deep_bounded_maps_are_looked_up_and_printed() {
         "type Part1 = int | String;\n(m: int .. Part1 -> int .. Part1 -> bool, k: int) -> bool"
     );
 }
+
+/// The words that read the entries of a family, `map`, `zip` and `><`, take a parameter
+/// declared a partial map: DESIGN.md sec:failure ("All or the failures") takes
+/// `total(positional m: File ->? int) = m >< (+)` as a valid function. Before
+/// (FAIL-declared-partial-param-entries) each was refused as reading a value with no entries.
+#[test]
+fn the_words_that_read_entries_take_a_declared_partial_map() {
+    for src in [
+        "total(positional m: String ->? int) = m >< (+);",
+        "f(positional m: String ->? int) = m.map(x -> (x, 1));",
+        "f(positional m: String ->? int) = m.zip(m);",
+        "f(positional m: String ->? int | #notFound) = m.map(x -> (x, 1));",
+        "f(positional m: String ->? int | #notFound) = m.zip(m);",
+        "f(positional m: String ->? int) = (m.sum, m.count, m.foldl(0, (a, x) -> a + x));",
+        "f(positional m: int ->? int) = m.any(x -> x > 0);",
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    }
+}
+
+/// The words run on the family passed: `zedc run` and the built executable print the same.
+#[test]
+fn the_words_that_read_entries_run_on_a_declared_partial_map_both_ways() {
+    use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
+    let program = "total(positional m: String ->? int) = m >< (+);\n\
+                   twice(positional m: String ->? int) = m.map(x -> x * 2);\n\
+                   pairs(positional m: String ->? int) = m.zip(m).map(p -> p[0] + p[1]);\n\
+                   main(a: MainArgs) {\n    \
+                   m = { \"a\" -> 2, \"b\" -> 3 };\n    \
+                   a.stdout <- \"${total(m)} ${total(twice(m))} ${pairs(m).sum}\";\n}\n";
+    // 2 + 3; 4 + 6; (2 + 2) + (3 + 3).
+    let want = "5 10 10\n";
+    let d = dir("l01_26_type_resolution/declared_partial_entries");
+    let src = d.join("declared_partial_entries.zed");
+    std::fs::write(&src, program).unwrap();
+    let ran = interpreter(&src, &[], &[]);
+    assert_eq!((ran.stderr.as_str(), ran.status), ("", 0));
+    assert_eq!(ran.stdout, want, "zedc run");
+    let exe = d.join("declared_partial_entries");
+    built(&src, &exe);
+    let ran = executable(&exe, &[], &[]);
+    assert_eq!((ran.stderr.as_str(), ran.status), ("", 0));
+    assert_eq!(ran.stdout, want, "the executable");
+}
+
+/// A function of the declared type has no entries, so a call that passes one where a word
+/// reads the entries is refused, as a remap's is (`keys_at`), and the message names the word.
+#[test]
+fn a_function_passed_where_a_word_reads_the_entries_is_refused() {
+    let src = "total(positional m: String ->? int) = m >< (+);\n\
+               g(positional k: String) = 1;\n\
+               x = total(g);\n\
+               y = total({ \"a\" -> 1 });\n";
+    assert_eq!(
+        type_errors(src),
+        ["`total` takes `m` as a family, which `><` reads: `g` may not be one. [g]"]
+    );
+}
