@@ -3107,15 +3107,19 @@ fn forest_edges(relation: &Conjuncts, name: &str) -> Vec<(Arc<Formula>, bool, Ed
 /// its head. An edge between components ranked in its direction needs nothing; one against
 /// that order reorders the components or merges those on a cycle it closes ([`reorder`]); one
 /// within a component is put in by a search of that component alone. `Ok(Some(u))` when an
-/// edge closes a cycle of negative weight, and `Err` when the search reads a name `pot` lacks,
-/// an edge of negative reduced weight, an edge against the order, or a cycle negative only
-/// with the gaps; `pot` is then to be dropped.
+/// edge closes a cycle of negative weight without the gaps, and `Err` when the search reads a
+/// name `pot` lacks, an edge of negative reduced weight, an edge against the order, or when
+/// the edge closes cycles negative with the gaps and none negative without them; `pot` is then
+/// to be dropped. With `which` false the caller reads `Ok(Some(_))` and `Err` alike
+/// ([`Scope::raise`]), and a cycle negative only with the gaps found gives `Err` without
+/// asking whether another is negative without them ([`negative_without_gaps`]).
 fn put_in(
     relation: &Conjuncts,
     t: BlockId,
     added: &BTreeSet<Arc<Formula>>,
     pending: &[(Arc<Formula>, bool, Edge)],
     pot: &mut Potential,
+    which: bool,
 ) -> Result<Option<Arc<str>>, Fall> {
     // A name the potential lacks may take a value from an edge added only when every edge
     // at it was added: those are put in after.
@@ -3224,22 +3228,53 @@ fn put_in(
             // only orders the searches of shortest paths; a cycle of weight 0 may be found by
             // either side, through other edges, which are then tied. COMPLEXITY.md row
             // FAIL-one-case-hole-chain-scaling.
-            // Assumption, not proved (ASSUME-documented): that the side that ends first never
-            // changes an answer. The two sides leave different potentials, and where a cycle of
-            // weight 0 is found they may tie different edges in `pot.tied`, which `pair_weight`
-            // reads. The argument is that the potential only orders the searches of shortest
-            // paths and that every edge tied lies on a cycle of weight 0 either way. Evidence:
-            // the tests of the preimage groups pass; no test runs both sides on one input
-            // and compares the answers. If false, an answer depends on the side that ended
-            // first: a wrong bound would be unsound, a coarser one precision only.
+            // Proof that the side that ends first changes no answer (item
+            // PROOF-put-in-repair-direction). Invariant (I): `pot` holds at every edge of the
+            // forest not `waiting`, each reduced pair weight `(0, 0)` or more; every name at
+            // such an edge has a value (`new_name` refuses one that would not), and the order
+            // of the components goes along every such edge ([`reorder`]). Under (I) no `Err`
+            // of a side fires before it ends or finds a cycle.
+            // (a) Ends: a side's moves are least reduced distances (Dijkstra, the reduced
+            // weights being `(0, 0)` or more), so either side ended leaves a potential at which
+            // every edge holds, (I) again. The two potentials differ, but no answer reads one:
+            // the bounds of shortest paths do not depend on it ([`Scope::bound_pass`]), and the
+            // ends of a tree with holes are exact by either of the searches [`holes::hull`]
+            // picks with it.
+            // (b) Cycles: each side finds a cycle exactly when one through the edge has a pair
+            // weight below `(0, 0)`, the same condition for both. One whose first part is 0
+            // ties its edges, at least one of them not tied before, as its weight is `(0, -j)`
+            // for its `j` edges not tied; so the rounds end. The sides may tie different such
+            // cycles (the test below prints 10 and 11 cycles tied for one seed), but `tied`
+            // only changes second parts, which no answer reads, only the order of a search.
+            // After the last tie, both sides end, or both find a cycle negative in its first
+            // part, so with the gaps.
+            // (c) Which of those a side finds first depends on the side. A cycle negative
+            // without the gaps empties the scope (no integer point meets a cycle of
+            // difference constraints of negative weight); one negative only with them sends
+            // the tree to the projection block by block. So the outcome is decided by whether
+            // any cycle through the edge is negative without the gaps
+            // ([`negative_without_gaps`], exact), the same for both sides.
+            // Tests: `l01_39_scope_relations::linked::either_side_of_the_repair_of_the_potential_gives_the_same_answers`
+            // (each side alone and both in step, each step checked against the projection from
+            // scratch) and `…::an_edge_on_two_negative_cycles_empties_the_scope_whichever_side_finds_one`
+            // (case (c), where until 2026-11-17 the forward side fell back and the backward
+            // side emptied the scope). An `Err` that fires because (I) fails sends the tree to
+            // the projection block by block, which is sound.
             let mut sides = [
                 Repair::new(true, v, u, gamma.clone()),
                 Repair::new(false, u, v, gamma),
             ];
-            let mut turn = 0;
+            #[cfg(feature = "counts")]
+            let alone = super::preimage::counts::PUT_IN_SIDE
+                .get()
+                .map(|fw| usize::from(!fw));
+            #[cfg(not(feature = "counts"))]
+            let alone: Option<usize> = None;
+            let mut turn = alone.unwrap_or(0);
             let ended = loop {
                 match sides[turn].step(relation, t, &waiting, pot, cu)? {
-                    Step::Going => turn = 1 - turn,
+                    Step::Going if alone.is_none() => turn = 1 - turn,
+                    Step::Going => {}
                     Step::Ended => break turn,
                     Step::Cycle(s, h, gx) => {
                         let side = &sides[turn];
@@ -3250,7 +3285,25 @@ fn put_in(
                             for at in side.path(&s) {
                                 weight = &weight + &pot.gap_of(&at.0);
                             }
-                            return if weight < Int::ZERO {
+                            // The cycle found may be negative only with the gaps where another
+                            // through the edge is negative without them, and which of the two
+                            // a side reaches first depends on the side: so when the one found
+                            // is not, all are asked of ([`negative_without_gaps`]), unless
+                            // the caller reads both kinds alike.
+                            if weight >= Int::ZERO && !which {
+                                return Err(Fall::Potential);
+                            }
+                            let empty = weight < Int::ZERO
+                                || negative_without_gaps(relation, t, &waiting, pot, cu, e)?;
+                            #[cfg(feature = "counts")]
+                            if which {
+                                super::preimage::counts::NEGATIVE_CYCLES.set({
+                                    let mut c = super::preimage::counts::NEGATIVE_CYCLES.get();
+                                    c[usize::from(!empty)] += 1;
+                                    c
+                                });
+                            }
+                            return if empty {
                                 Ok(Some(u.clone()))
                             } else {
                                 Err(Fall::Potential)
@@ -3263,6 +3316,9 @@ fn put_in(
                         for k in tie {
                             pot.tied.insert(k);
                         }
+                        #[cfg(feature = "counts")]
+                        super::preimage::counts::ZERO_CYCLES_TIED
+                            .set(super::preimage::counts::ZERO_CYCLES_TIED.get() + 1);
                         continue 'round;
                     }
                 }
@@ -3275,6 +3331,86 @@ fn put_in(
         pot.link(u, v);
     }
     Ok(None)
+}
+
+/// Whether the edge `e`, from `u` to `v` in component `cu` of the potential `pot` of tree `t`,
+/// closes a cycle whose weight without the gaps is below zero, the edges `waiting` not yet in:
+/// one that empties the scope whatever the gaps. A search forward from `v` over the weights
+/// without the gaps, reduced by the first parts of `pot` (Dijkstra), whose least distance `d`
+/// to `u` gives the least such cycle, `d + p(u) + k - p(v)` for the edge's weight `k`.
+///
+/// Proof that the search is exact. `pot` holds at every edge of the component read, as the
+/// sides of [`put_in`] keep their new values apart: each reduced pair weight is `(0, 0)` or
+/// more, so its first part `p(x) + k - g(y) - p(y)` is 0 or more, with `g(y)` the gap of the
+/// edge's head, and a gap is the length of a run of integers left out, 0 or more
+/// ([`hole_gap`]); so each reduced weight without the gaps, `p(x) + k - p(y)`, is 0 or more,
+/// and Dijkstra's search gives least distances. A path's reduced weight is its weight plus
+/// `p(v) - p(u)`, so the least cycle through `e` is as stated. Every cycle through `e` lies
+/// in `cu`, as for [`Repair`], so edges to other components are not followed. An edge whose
+/// reduced weight is below zero, or a name with no value, is `Err`, as for [`Repair::step`].
+///
+/// Complexity tradeoff: naive version, the cycle the side of [`put_in`] found decides, O(1),
+/// but which cycle that is depends on the side: one negative only with the gaps sends the tree
+/// to the projection block by block, one negative without them empties the scope, and a
+/// refused projection then keeps a box (test
+/// `l01_39_scope_relations::linked::an_edge_on_two_negative_cycles_empties_the_scope_whichever_side_finds_one`).
+/// Used: this search, only once the cycle found is negative only with the gaps and only for
+/// [`Scope::repair`] (`which` of [`put_in`]), O(m log n) for the `m` edges at the `n` names
+/// of the component, more than the side read when it ended early; it stops at the first
+/// distance past the bound. What follows bounds it: `true` empties the scope, once; `false`
+/// sends the tree to [`Scope::reseed`], which reads every conjunct of the tree, a superset of
+/// the component's edges, O(m log m) before its solver; so the order of a projection is
+/// unchanged. COMPLEXITY.md row PROOF-put-in-repair-direction.
+fn negative_without_gaps(
+    relation: &Conjuncts,
+    t: BlockId,
+    waiting: &BTreeSet<(Arc<Formula>, bool)>,
+    pot: &Potential,
+    cu: u64,
+    e: &Edge,
+) -> Result<bool, Fall> {
+    let (Some(u), Some(v)) = (&e.from, &e.to) else {
+        return Ok(false);
+    };
+    let at = |n: &Arc<str>| pot.at.get(n).map(|p| p.0.clone()).ok_or(Fall::Potential);
+    // Negative when the least reduced distance from `v` to `u` is below `p(v) - p(u) - k`.
+    let bound = &(&at(v)? - &at(u)?) - &e.weight;
+    let mut dist: BTreeMap<Arc<str>, Int> = BTreeMap::from([(v.clone(), Int::ZERO)]);
+    let mut done: BTreeSet<Arc<str>> = BTreeSet::new();
+    let mut heap = BinaryHeap::from([Reverse((Int::ZERO, v.clone()))]);
+    while let Some(Reverse((d, s))) = heap.pop() {
+        if d >= bound {
+            return Ok(false);
+        }
+        if s == *u {
+            return Ok(true);
+        }
+        if dist.get(&s) != Some(&d) || !done.insert(s.clone()) {
+            continue;
+        }
+        let ps = at(&s)?;
+        for (h, hb, f) in tree_edges(relation, t, &s) {
+            let (Some(from), Some(to)) = (&f.from, &f.to) else {
+                continue;
+            };
+            if *from != s || done.contains(to) || waiting.contains(&(h, hb)) {
+                continue;
+            }
+            if pot.comp_of(to)? != cu {
+                continue;
+            }
+            let r = &(&ps + &f.weight) - &at(to)?;
+            if r < Int::ZERO {
+                return Err(Fall::Potential);
+            }
+            let dx = &d + &r;
+            if dist.get(to).is_none_or(|c| dx < *c) {
+                dist.insert(to.clone(), dx.clone());
+                heap.push(Reverse((dx, to.clone())));
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// One side of the search of [`put_in`] within a component, after an edge from `u` to `v` of
@@ -12152,7 +12288,7 @@ impl Scope {
                 pending.push((g.clone(), true, e));
             }
         }
-        let found = put_in(relation, t, added, &pending, &mut pot)?;
+        let found = put_in(relation, t, added, &pending, &mut pot, true)?;
         if found.is_none() {
             self.potential = pot;
         }
@@ -12193,7 +12329,7 @@ impl Scope {
             .into_iter()
             .filter(|(_, _, e)| e.from.as_ref() == Some(x) && e.to.is_some())
             .collect();
-        if let Ok(None) = put_in(relation, t, &BTreeSet::new(), &out, &mut pot) {
+        if let Ok(None) = put_in(relation, t, &BTreeSet::new(), &out, &mut pot, false) {
             self.potential = pot;
             return true;
         }

@@ -11525,6 +11525,31 @@ pub mod counts {
         pub(crate) static TERM_READS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static EVALUATIONS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static PARTS_PROJECTED: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static PUT_IN_SIDE: Cell<Option<bool>> = const { Cell::new(None) };
+        pub(crate) static ZERO_CYCLES_TIED: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static NEGATIVE_CYCLES: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
+    }
+
+    /// The cycles of negative weight `product::put_in` found on this thread since it started:
+    /// those negative without the gaps, whose scope is empty, and those negative only with
+    /// them, whose tree is then projected block by block.
+    pub fn negative_cycles() -> [u64; 2] {
+        NEGATIVE_CYCLES.get()
+    }
+
+    /// Makes the repair of the potential within a component (`product::put_in`) on this
+    /// thread run one side alone, forward from the edge's head with `Some(true)` and backward
+    /// from its tail with `Some(false)`, or both in step, as always without this feature, with
+    /// `None`: for the test that each side gives the same answers
+    /// (PROOF-put-in-repair-direction).
+    pub fn set_put_in_side(side: Option<bool>) {
+        PUT_IN_SIDE.set(side);
+    }
+
+    /// The cycles of weight 0 whose edges `product::put_in` tied on this thread since it
+    /// started.
+    pub fn zero_cycles_tied() -> u64 {
+        ZERO_CYCLES_TIED.get()
     }
 
     /// The nodes `LetPa::sum` has entered on this thread since it started.

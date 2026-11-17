@@ -1388,7 +1388,19 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
     // negation or an `if` joined, assumed in one order and in the other: each step's
     // intervals are those the projection block by block finds from scratch
     // (`Scope::forget_projections`), which never uses the potential.
-    let (mut r, seed) = Rng::fresh("shortest paths block by block");
+    let (_, seed) = Rng::fresh("shortest paths block by block");
+    let met = random_ladders(seed);
+    // Over 10 seeds: moved 75 to 134, empty 12 to 26. A kind the 20 ladders missed is met by
+    // the ladder built for it, so no count of ladders is relied on
+    // (PROOF-test-coverage-constructive; until 2026-11-15 the counts were held above 30 and 4).
+    eprintln!("seed {seed}: moved, empty, holes {met:?}");
+    ladder_kinds_met(&met[..2]);
+}
+
+/// The 20 random ladders of `seed` of the test above, each checked by [`ladder_checked`]: the
+/// counts of [`LADDER_KINDS`] over them.
+fn random_ladders(seed: u64) -> [usize; 3] {
+    let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut met = [0usize; 3];
     for case in 0..20 {
@@ -1412,11 +1424,86 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
             *n += x;
         }
     }
-    // Over 10 seeds: moved 75 to 134, empty 12 to 26. A kind the 20 ladders missed is met by
-    // the ladder built for it, so no count of ladders is relied on
-    // (PROOF-test-coverage-constructive; until 2026-11-15 the counts were held above 30 and 4).
-    eprintln!("seed {seed}: moved, empty, holes {met:?}");
-    ladder_kinds_met(&met[..2]);
+    met
+}
+
+#[test]
+fn an_edge_on_two_negative_cycles_empties_the_scope_whichever_side_finds_one() {
+    // Item PROOF-put-in-repair-direction. `x2` has the holes 0 and 1 within -2..=4, so the
+    // edges into it are lowered by the gap 2. The last test, `x0 - x1 >= 3`, closes two
+    // cycles: through `x2`, of weight 0 without the gap and -2 with it, and through `x3`, of
+    // weight -4. The search forward from `x1` reaches the first, the one backward from `x0`
+    // the second (found by a search over the weights of such a square). Until the repair
+    // asked whether any cycle is negative without the gaps, the forward side fell back to the
+    // projection block by block, and the backward side emptied the scope; both answers were
+    // empty here, as that projection is exact on this tree, but a refused projection would
+    // have kept a box where the other side found none.
+    use zedc::store::preimage::counts::{negative_cycles, set_put_in_side};
+    let p = Premises::new();
+    let ns = named(4, "x");
+    let tests = [
+        prim(Prim::Ne, var("x2"), int(0)),
+        prim(Prim::Ne, var("x2"), int(1)),
+        ge("x1", "x2", 0),
+        ge("x2", "x0", -3),
+        ge("x1", "x3", 1),
+        ge("x3", "x0", 0),
+        ge("x0", "x1", 3),
+    ];
+    let mut runs = Vec::new();
+    for side in [Some(true), Some(false), None] {
+        set_put_in_side(side);
+        let mut s = ints(&ns);
+        for n in &ns {
+            s = s.assume(&prim(Prim::Ge, var(n), int(-2)), true, &p);
+            s = s.assume(&prim(Prim::Le, var(n), int(4)), true, &p);
+        }
+        let before = negative_cycles();
+        for t in &tests {
+            s = s.assume(t, true, &p);
+        }
+        let after = negative_cycles();
+        let cycles = [after[0] - before[0], after[1] - before[1]];
+        runs.push((side, cycles, intervals(&s, &ns)));
+    }
+    set_put_in_side(None);
+    for run in &runs {
+        assert_eq!((run.1, &run.2), ([1, 0], &None), "{runs:?}");
+    }
+}
+
+#[test]
+fn either_side_of_the_repair_of_the_potential_gives_the_same_answers() {
+    // Item PROOF-put-in-repair-direction. The repair of the potential (`product::put_in`)
+    // runs a search forward from the edge's head and one backward from its tail in step and
+    // takes the first to end. Here the random ladders and the sums-between ladders of one
+    // seed run with the forward side alone, the backward side alone, and both in step. Every
+    // step of each run is checked against the projection block by block from scratch, which
+    // never reads the potential, so the three give the same answers; the steps that moved an
+    // interval, emptied the scope or left a hole are counted the same. A cycle negative with
+    // the gaps empties the scope or sends its tree to the projection block by block whichever
+    // side found it, so the counts of each outcome agree too. The cycles of weight 0 tied may
+    // differ, as the sides may tie different cycles; they are printed.
+    use zedc::store::preimage::counts::{negative_cycles, set_put_in_side, zero_cycles_tied};
+    let (_, seed) = Rng::fresh("either side of the repair");
+    let mut runs = Vec::new();
+    for side in [Some(true), Some(false), None] {
+        set_put_in_side(side);
+        let (tied, cycles) = (zero_cycles_tied(), negative_cycles());
+        let met = (random_ladders(seed), sums_between(seed));
+        let after = negative_cycles();
+        let cycles = [after[0] - cycles[0], after[1] - cycles[1]];
+        runs.push((side, met, zero_cycles_tied() - tied, cycles));
+    }
+    set_put_in_side(None);
+    eprintln!("seed {seed}: side, kinds met, cycles of weight 0 tied, negative cycles {runs:?}");
+    for run in &runs[1..] {
+        assert_eq!(
+            (run.1, run.3),
+            (runs[0].1, runs[0].3),
+            "seed {seed}: {runs:?}"
+        );
+    }
 }
 
 /// The kinds of step a run of ladders means to meet, in the order [`ladder_checked`] counts
