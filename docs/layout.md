@@ -64,7 +64,9 @@ benches/              the crossover benchmarks (the `zed-benches` crate): each t
                       methods either side of a threshold where the code changes method at a
                       size and sets the threshold; run by hand on each target platform, not tests
 docs/                 documentation of the implementation
-tools/                run_tests.sh and fetch_test_deps.sh
+tools/                scripts that build, test and merge: run_tests.sh, fetch_test_deps.sh,
+                      merge_check.sh, plan_merge.sh (the git merge driver of plan_dag.md),
+                      bench_limit.sh and others, each with its test_*.sh; dagview/, the viewer of the plan's graph
 build/                every generated file; ignored by git
 STATUS.md             progress and handoff notes
 ZED_PORT_GAPS.md      what the Rust relies on that Zed lacks; each step adds to it
