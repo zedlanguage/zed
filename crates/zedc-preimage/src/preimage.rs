@@ -3715,15 +3715,34 @@ struct Memo {
 /// which holds `((p) -> a)(…)`, read again within the lambda of `p` stops at that call
 /// (FAIL-preimage-stop-entry-seed). A read that entered no lambda stops at the same calls on
 /// every stack that holds the one it began on.
-// Complexity tradeoff: the exact test is whether a lambda the read entered is on the stack
-// above where it began, which needs the set of lambdas each entry's read entered: O(l) memory
-// per entry and O(l) per read, for the l lambdas of the term. Used: whether it entered one,
-// O(1) per entry and per read; such an entry is read again on a higher stack, as the memo
-// before ST-formula-k2-rec read every entry of the first kind, so no read costs more than it
-// did there. Tradeoff: an entry whose read entered only lambdas that are not on the higher
-// stack is read again, though it would give the same. Tests:
+///
+/// Proof that the second kind may be reused on every stack (PREIMAGE-entry-higher-stack). Its
+/// read stopped at no place below `base`, its height when it began, so it read nothing of the
+/// stack below `base`, and above `base` the stack held only the lambdas the read entered
+/// itself: its value is what the same read gives on the empty stack, which
+/// `tests::recheck` compares. Every read is sound whatever the stack, since a stop
+/// (`StopKind::Recursion`) gives a value that covers the call; so the entry is sound on any
+/// stack. On a higher stack that holds a lambda the read entered, reading again would stop at
+/// that call where the entry did not, so the reuse reports one stop fewer and its answer can
+/// be finer, not wrong: `a = l(y <= 2, 1)` with `l = (p, c) -> if c <= 0 { p } else { x <=
+/// 1 }`, read first, gives `a && l(a, 0)` exactly `x <= 1`, while `l(a, 0) && a`, which reads
+/// `a` first within the lambda of `l`, stops there. Reading `a` again within that lambda, so
+/// that both orders give the coarser answer, was tried and made 57 of the 231 l01_38
+/// `one_scope` bench pieces run past 60 s (`the_questions_of_a_chain_of_tests_scale`: 5.1 s
+/// and ratio 8.18 at load 63 with the reuse, over 26 s without it at load 41): on a chain of
+/// calls the stack grows at every link, so each such entry was read again at every height.
+// Complexity tradeoff: for the first kind, the exact test is whether a lambda the read
+// entered is on the stack above where it began, which needs the set of lambdas each entry's
+// read entered: O(l) memory per entry and O(l) per read, for the l lambdas of the term. Used:
+// whether it entered one, O(1) per entry and per read; such an entry is read again on a
+// higher stack, as the memo before ST-formula-k2-rec read every entry of the first kind, so
+// no read costs more than it did there. Tradeoff: an entry whose read entered only lambdas
+// that are not on the higher stack is read again, though it would give the same. The second
+// kind is reused on every stack, O(1), by the proof above; reading it again on a higher stack
+// costs a read per height on a chain of calls (the bench above). Tests:
 // `entries_made_below_a_stop_give_what_reading_the_term_again_gives` and its seed
-// 17213863407132117863; `l01_25_preimage_catalog`'s bounds on `rereads`.
+// 17213863407132117863; `an_entry_that_stopped_nowhere_is_reused_within_a_lambda_it_entered`;
+// `l01_25_preimage_catalog`'s bounds on `rereads`.
 type Entry<V> = (V, usize, usize);
 
 /// Removes an entry of the first kind of [`Entry`] from its table, unless the table holds
@@ -6110,18 +6129,9 @@ impl<'m, 't> Walk<'m, 't> {
                 }));
             }
             let m = &mut tx.run.memo;
-            // Assumption, not proved (ASSUME-documented): an entry whose read stopped nowhere
-            // below `base` (the second kind of [`Entry`]) is kept with `high = usize::MAX`, so
-            // `cached` reuses it on every stack, higher ones too, even when its read entered a
-            // lambda. On a higher stack that holds such a lambda, reading the term again would
-            // stop at its call (`StopKind::Recursion`) where the entry did not; only the first
-            // kind gets the height test (FAIL-preimage-stop-entry-seed). The random programs of
-            // `entries_made_below_a_stop_give_what_reading_the_term_again_gives` pass, but
-            // `tests::recheck` reads such an entry again on the empty stack, not on the stack
-            // it is reused on, so they do not test this. If false: a Recursion stop goes
-            // unreported and the answer is finer than reading again gives, so the stops depend
-            // on reading order; the value stays that of reading the call through (inferred:
-            // precision and determinism, not a wrong value).
+            // An entry whose read stopped nowhere below `base` (the second kind of [`Entry`]) is
+            // reused on every stack, higher ones too, even when its read entered a lambda: its
+            // value is sound and at least as fine there as reading again (proof at [`Entry`]).
             if cut >= base {
                 table(m).insert(k, (v.clone(), usize::MAX, usize::MAX));
             } else if none_held() {
@@ -7137,20 +7147,16 @@ impl<'m, 't> Walk<'m, 't> {
     // read, each term scanned once per scope, and a stop lost where the first scan stopped at
     // a lambda the later one is not reading. Used: the memo's held entries ([`Entry`]), O(1)
     // per read; a term whose scan stopped below where it began is scanned again once each time
-    // the stack drops below that place, as every other memo table's entries are. Tradeoff: an
-    // entry that holds everywhere is not scanned again on a higher stack, where it might reach
-    // a lambda read since and stop there, the limit [`Entry`] states for every table. Tests:
+    // the stack drops below that place, as every other memo table's entries are. A scan that
+    // stopped nowhere below where it began is kept for every stack, higher ones too: scanning
+    // again there could stop at the call of a lambda it entered, but the value read of the
+    // same term reuses its entry and so does not stop there either (proof at [`Entry`],
+    // PREIMAGE-entry-higher-stack), and the stops inside that lambda were reported by the
+    // first scan. Tests:
     // `a_term_scanned_within_a_call_it_makes_is_scanned_again_below_it`,
     // `a_summary_scanned_below_a_stop_is_scanned_again_without_it`,
+    // `an_entry_that_stopped_nowhere_is_reused_within_a_lambda_it_entered`,
     // `l01_25_preimage_catalog::bench::stops::scans_below_a_stop_are_linear`.
-    // Assumption, not proved (ASSUME-documented): the tradeoff above takes a scan entry that
-    // holds everywhere as enough on a higher stack. [`Entry`] does not state this limit; it
-    // says that kind "holds wherever it is reached". A scan has no value, so the only loss is
-    // a `StopKind::Recursion` stop that a scan again on the higher stack would report at the
-    // call of a lambda the first scan entered; the stops inside that lambda were reported by
-    // the first scan. The three tests above check scans on a lower stack only. If false: a
-    // Recursion stop goes unreported and the stops reported depend on reading order (a
-    // missing report, not a wrong preimage). See the comment in `Walk::made`.
     fn scan(&'m self, t: Tid, env: Eid) -> Deep<'m, ()> {
         self.cached(|m| &mut m.scan, (t, env), move || self.scan_at(t, env))
     }
@@ -11643,9 +11649,45 @@ enum Leaf {
 }
 
 /// Bounds over every class on the magnitudes of the summaries' leaves, `a * var + b` with
-/// `|var| <= x`, after the affine maps whose multipliers multiply to at most `mul`. While
-/// the values `a * x + b` and the maps lie in `i64`, no step in any class leaves `i64`, so
-/// that each class's summary is the one its own run computes ([`Walk::pa`]).
+/// `|var| <= x`, after the affine maps whose multipliers multiply to at most `mul`. A
+/// [`ByClass`] whose bound does not hold (values or `mul` past `i64::MAX`) is given up, and
+/// each class is read by its own run ([`Walk::by_class`]).
+///
+/// What each [`ByClass`] operation keeps (PROOF-by-class-clamp-bound), for every class `i`,
+/// writing `S_i` for the summary [`ByClass::get`] gives in class `i`:
+///
+/// - (E) `S_i` is the summary of the term in class `i`, as an exact function of the input,
+///   for every class read: all of them, or with `on` those of its ranges, the others holding
+///   a placeholder ([`cls_unread`]) that [`ByClass::choose`] does not take ([`Walk::by_class_on`]).
+///   Each leaf is a [`Pa`] of unbounded [`Int`]s, mapped exactly ([`Pa::affine`],
+///   [`Pa::clamp`], [`Pa::plus`]); each map held in the tree (the `tag`s, a [`Leaf::Base`]'s
+///   map, `shift`) is composed with checked `i128` arithmetic ([`compose`], `checked_add`),
+///   and an overflow gives `None`, the summary given up. [`ByClass::affine`] maps every
+///   class; [`ByClass::choose`] copies each class's path from one arm ([`cls_splice`] composes
+///   the maps above the nodes it opens); [`ByClass::clamp`] clamps each leaf after applying
+///   every map above it ([`cls_clamp`]), so the class's summary is clamped. No reader narrows
+///   a coefficient or a value to a machine word: the only narrowings in this module are of
+///   the domain's ends ([`input`], [`in_range`]), of remainders, and of the modulus.
+/// - (V) `|S_i(u)| <= a * x + b` for every input `u` with `|u| <= x`: [`Bound::of`] reads `a`
+///   and `b` of a line and the bounds of the values ([`Tag::vals`]) of a treap's root, each
+///   at least the magnitude of every value; an affine map `(m, d)` turns `v` into
+///   `m * v + d`, of magnitude at most `|m| * |v| + |d|`, the bound [`ByClass::affine`]
+///   writes; [`ByClass::choose`] and an `if` take the larger of two bounds, each class's
+///   summary being one arm's; and after [`ByClass::clamp`] every leaf is the class's whole
+///   summary, read by [`Bound::of`].
+/// - (M) every map from the root to a leaf, `shift` and a [`Leaf::Base`]'s map included,
+///   has a multiplier of magnitude at most `mul`: [`ByClass::affine`] multiplies both by
+///   `|m|`; [`ByClass::choose`] and an `if` take the larger; [`ByClass::clamp`] leaves only
+///   maps `(1, 0)`, no `shift` and no base, so `mul = 1` holds.
+///
+/// Only (E) bears on the answers: a summary given is exact, whatever the bound, and the
+/// bound decides only when it is given up. So the bound rebuilt after a clamp, which forgets
+/// the multipliers folded into the leaves, cannot make an answer wrong; by (V) and (M) it
+/// is still a bound on the values and maps of the tree. A leaf's piece may hold a
+/// coefficient past `i64` whose values are small (`2^100 * x` on the piece `0..=0` after a
+/// hundred doublings each clamped): (V) counts values and not coefficients, and by (E) the
+/// coefficient is exact. The limit at `i64` is a size limit left from when summaries were
+/// machine words; row PRE-class-int replaces it with `Int` bounds.
 #[derive(Clone, Copy)]
 struct Bound {
     a: u128,
@@ -11829,31 +11871,11 @@ impl ByClass {
         // which may double its term (`2 * t`) grows as `2^k` while the clamps keep the values
         // small. Kept that way, the bound passed `i64` near `k = 320` and every enclosing
         // `if` was read by its guard and arms, in time exponential in the depth (item
-        // PREIMAGE-chain-cliff). Each step before the clamp was checked against the bound
-        // when it was made, so the leaves now are all that a later step reads.
-        //
-        // Assumption, not proved (ASSUME-documented): once the clamp has applied every map of
-        // the tree to its leaf (`cls_clamp` leaves only maps `(1, 0)`, and drops `shift` and
-        // `base`), whether a later step leaves `i64` in some class depends only on the clamped
-        // leaves, so `mul` starts again at 1 and `a`, `b` are those of `Bound::of` on each leaf.
-        // The multipliers applied before are not gone: they are folded into the leaves, and a
-        // piece of a leaf can hold a coefficient and a constant past `i64` that cancel on its
-        // inputs (values within the clamp), which `Bound::of` does not count, since it reads
-        // only the piece values of a `Piecewise` leaf. The code needs this: the bound kept from
-        // before the clamp refused every chain that doubles and clamps past `k = 320`
-        // (PREIMAGE-chain-cliff). Evidence: `a_summary_clamped_after_each_doubling_keeps_its_bound`
-        // (100 rounds of doubling and clamping to [-3, 3]; every class of 3 and every input in
-        // [-6, 6] equal to the steps run one by one); the remainder tests of
-        // `l01_25_preimage_catalog::s22`, checked against the interpreter, which make about
-        // 1,400 clamps whose new bound is lower than the old one (counted once with a
-        // temporary counter, 2026-11-14); `chains_are_read_exactly_on_both_sides_of_the_cliff`
-        // checks only that the answer is exact. The summary's arithmetic is exact (`Int`
-        // leaves, `compose` checked), so a coefficient past `i64` alone gives no wrong value;
-        // what is not proved is that no reader of a summary after a clamp narrows such a
-        // coefficient to `i64`. If one does, a class's summary differs from the one its own run
-        // computes ([`Walk::pa`]), the property [`Bound`] exists to keep, and a preimage read
-        // through it can gain or lose inputs while marked exact: unsound. If none does, a
-        // false assumption costs nothing worse than an answer the own run would have refused.
+        // PREIMAGE-chain-cliff). Proof that this is sound, at [`Bound`]: the summaries are
+        // exact whatever the bound (E), and the bound rebuilt here still bounds every class's
+        // values (V) and maps (M), since the clamp folds every map into its leaf. Tests:
+        // `a_summary_clamped_after_each_doubling_keeps_its_bound`,
+        // `a_tree_clamped_then_mapped_past_the_bound_before_the_clamp_stays_exact`.
         let mut bound = Bound {
             a: 0,
             b: 0,
@@ -16116,6 +16138,97 @@ mod tests {
         }
     }
 
+    /// A tree whose classes differ (`3x + 1` in classes 1 and 2 of 4, `-2x` in the others,
+    /// maps above a shared base) is clamped, mapped by `2^40 * v + 7`, clamped, mapped by
+    /// `2^40 * v`, which takes the bound kept from before the first clamp past `i64` (its
+    /// `mul` would be `3 * 2^80`), clamped again, then mapped by `-2^30 * v + 1` and clamped
+    /// ten times. After each step every class's summary equals the steps run one by one on
+    /// each input in `[-6, 6]`, so the preimage of every demand is the exact one, and the
+    /// bound holds every value, (E) and (V) at [`Bound`] (PROOF-by-class-clamp-bound).
+    #[test]
+    fn a_tree_clamped_then_mapped_past_the_bound_before_the_clamp_stays_exact() {
+        enum Step {
+            Map(i128, i128),
+            Min(i64),
+            Max(i64),
+        }
+        let dom = IntervalSet::of(-6, 6);
+        let x: Arc<str> = "x".into();
+        let line = Pa::Linear {
+            var: x.clone(),
+            a: Int::ONE,
+            b: Int::ZERO,
+        };
+        let bound = Bound {
+            a: 1,
+            b: 0,
+            x: 6,
+            mul: 1,
+        };
+        let base = ByClass::based(line, Some(x), bound, 4).expect("x in [-6, 6]");
+        let yes = base.affine((3, 1)).expect("3x + 1 lies in i64");
+        let no = base.affine((-2, 0)).expect("-2x lies in i64");
+        let mut c = ByClass::choose(&yes, &no, &[(1, 2)]).expect("both arms read x");
+        let mut want: Vec<Vec<i128>> = (0..4)
+            .map(|class| {
+                (-6..=6_i128)
+                    .map(|u| {
+                        if (1..=2).contains(&class) {
+                            3 * u + 1
+                        } else {
+                            -2 * u
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut steps = vec![
+            Step::Min(5),
+            Step::Map(1 << 40, 7),
+            Step::Max(-9),
+            Step::Min(9),
+            Step::Map(1 << 40, 0),
+            Step::Min(4),
+            Step::Max(-4),
+        ];
+        for _ in 0..10 {
+            steps.extend([Step::Map(-(1 << 30), 1), Step::Min(2), Step::Max(-2)]);
+        }
+        for (k, step) in steps.iter().enumerate() {
+            let (next, f): (_, Box<dyn Fn(i128) -> i128>) = match *step {
+                Step::Map(m, d) => (c.affine((m, d)), Box::new(move |v| m * v + d)),
+                Step::Min(b) => (
+                    c.clamp(true, b, &dom, None),
+                    Box::new(move |v| v.min(b.into())),
+                ),
+                Step::Max(b) => (
+                    c.clamp(false, b, &dom, None),
+                    Box::new(move |v| v.max(b.into())),
+                ),
+            };
+            c = next.unwrap_or_else(|| panic!("step {k}: the summary is refused"));
+            let most = c.bound.a * c.bound.x + c.bound.b;
+            for (class, vals) in want.iter_mut().enumerate() {
+                let pieces = pa_pieces(&c.get(class).expect("a summary in each class"));
+                for (u, v) in (-6..=6_i64).zip(vals.iter_mut()) {
+                    *v = f(*v);
+                    let at = End::of(u);
+                    let (_, a, b) = (pieces.iter())
+                        .find(|(span, ..)| {
+                            span.as_ref().is_none_or(|(lo, hi)| *lo <= at && at <= *hi)
+                        })
+                        .unwrap_or_else(|| panic!("step {k}, class {class}: a piece at {u}"));
+                    let got = (&(a * &Int::from(u)) + b).to_i128();
+                    assert_eq!(got, Some(*v), "step {k}, class {class}, x = {u}");
+                    assert!(
+                        v.unsigned_abs() <= most,
+                        "step {k}, class {class}, x = {u}: {v} past the bound {most}"
+                    );
+                }
+            }
+        }
+    }
+
     /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||
     /// (let n0 = min(x, 3) - min(x, -3) in let n1 = stage(n0) in ... n_k == -7)`, with
     /// `ym = if y mod 2 != 1 {-1} else {-1}` and `stage(n) = if n < 2 {-1} else {(if n != -4
@@ -16703,6 +16816,45 @@ mod tests {
             assert_eq!(
                 shown,
                 "x [-6..=6] y [-6..=6] stops 1; x [3..=6] y [-6..=6] stops 1"
+            );
+        }
+
+        /// `let l = (p, c) -> if c <= 0 { p } else { x <= 1 } in let a = l(y <= 2, 1) in
+        /// first && second`, with `a` and `l(a, 0)` as `first` and `second` in either order:
+        /// `a`'s read enters the lambda of `l` and stops nowhere, and `l(a, 0)` reads `a`
+        /// within that lambda (PREIMAGE-entry-higher-stack).
+        fn entered_then_higher(a_first: bool) -> Term {
+            let l = lam(
+                &["p", "c"],
+                if_(prim(Le, v("c"), int(0)), v("p"), prim(Le, v("x"), int(1))),
+            );
+            let a = app(v("l"), vec![prim(Le, v("y"), int(2)), int(1)]);
+            let call = app(v("l"), vec![v("a"), int(0)]);
+            let body = if a_first {
+                prim(And, v("a"), call)
+            } else {
+                prim(And, call, v("a"))
+            };
+            let_("l", l, let_("a", a, body))
+        }
+
+        /// [`entered_then_higher`]: both orders mean `x <= 1`. Read first, `a` stops nowhere
+        /// and is reused within the lambda of `l`, where reading it again would stop at its
+        /// call of `l` (`StopKind::Recursion`), so that order gives the exact answer; with
+        /// `l(a, 0)` first, `a` is first read within that lambda and stops there, so its false
+        /// set is all of `x`. Both are sound; the first is finer (proof at [`Entry`]). Reading
+        /// `a` again on the higher stack, to give one answer, was tried and blew up the l01_38
+        /// `one_scope` benches (PREIMAGE-entry-higher-stack).
+        #[test]
+        fn an_entry_that_stopped_nowhere_is_reused_within_a_lambda_it_entered() {
+            let (_, _, _, first) = run(&entered_then_higher(true));
+            let (_, _, _, second) = run(&entered_then_higher(false));
+            assert_eq!(
+                (first.as_str(), second.as_str()),
+                (
+                    "x [-6..=1] y [-6..=6] exact stops 1; x [2..=6] y [-6..=6] exact stops 1",
+                    "x [-6..=1] y [-6..=6] stops 1; x [-6..=6] y [-6..=6] stops 1"
+                )
             );
         }
 
