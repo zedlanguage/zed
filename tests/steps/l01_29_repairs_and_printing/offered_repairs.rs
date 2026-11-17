@@ -378,8 +378,9 @@ fn the_headline_of_a_fix_on_a_line_of_a_call_ends_at_the_argument() {
 /// (MSG-many-args-one-error): `h(1.0f64, true)` at two `rat` parameters, and
 /// `h(1.0f64, 2.5f64, true)` at three, the literals' steps in the order of the text. Before,
 /// the literals were a second error, which said again that `1.0f64` is never a `rat`. A
-/// literal after the argument refused, `2.5f64` in `h(1.0f64, true, 2.5f64)`, has no step:
-/// the check of the call stops at `true` (follow-up MSG-one-error-later-literals).
+/// literal after the argument refused, `2.5f64` in `h(1.0f64, true, 2.5f64)`, has its step
+/// too: the check of the call reads the literals after `true` (MSG-one-error-later-literals;
+/// before, it stopped there and gave the `1.0f64` alone).
 #[test]
 fn a_call_that_refuses_a_literal_and_another_argument_is_one_error() {
     let h2 = "h(positional a: rat, positional b: rat) = 1;\n";
@@ -393,6 +394,16 @@ fn a_call_that_refuses_a_literal_and_another_argument_is_one_error() {
         (
             format!("{h3}y = h(1.0f64, 2.5f64, true);"),
             "`h` does not take (1.0f64, 2.5f64, true): no arrow of `h` takes these types.",
+            &["1.0f64", "2.5f64"][..],
+        ),
+        (
+            format!("{h3}y = h(1.0f64, true, 2.5f64);"),
+            "`h` does not take (1.0f64, true, 2.5f64): no arrow of `h` takes these types.",
+            &["1.0f64", "2.5f64"][..],
+        ),
+        (
+            format!("{h3}y = h(true, 1.0f64, 2.5f64);"),
+            "`h` does not take (true, 1.0f64, 2.5f64): no arrow of `h` takes these types.",
             &["1.0f64", "2.5f64"][..],
         ),
     ] {

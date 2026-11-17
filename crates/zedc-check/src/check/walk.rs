@@ -22244,7 +22244,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             binds.insert(v.clone(), bound);
         }
-        for (i, a) in args.iter().enumerate() {
+        // The first argument refused, by its index, and the application's message. The
+        // arguments after it are read only for literals they cannot take, so that the one
+        // error lists every refused literal of the call, `h(1.0f64, true, 2.5f64)` both the
+        // `1.0f64` and the `2.5f64` (row MSG-one-error-later-literals).
+        let mut refused: Option<(usize, String)> = None;
+        'args: for (i, a) in args.iter().enumerate() {
             let Some(a) = a else {
                 continue;
             };
@@ -22255,7 +22260,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             let generic = match p.as_var().is_some() {
                 true => match self.generic_parts(a, what, span) {
                     Ok(t) => t,
-                    Err(()) => return fail(self),
+                    Err(()) => {
+                        refused = Some((i, self.rejected(what, args)));
+                        break 'args;
+                    }
                 },
                 false => None,
             };
@@ -22281,7 +22289,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 };
                 if !ok {
-                    return fail(self);
+                    refused = Some((i, self.rejected(what, args)));
+                    break 'args;
                 }
                 continue;
             }
@@ -22311,7 +22320,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         Cow::Owned(t)
                     }
                     Some(Err((v, c))) => {
-                        return Err(self.unread_call(what, args, a, &v, c, false));
+                        refused = Some((i, self.unread_call(what, args, a, &v, c, false)));
+                        break 'args;
                     }
                     None => Cow::Borrowed(&a.ty),
                 },
@@ -22319,7 +22329,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             if a.lit.is_some() {
                 if !self.sub(&ty, p, &mut binds) {
                     let why = ty.refused(p);
-                    return Err(self.rejected_because(what, args, &why));
+                    refused = Some((i, self.rejected_because(what, args, &why)));
+                    break 'args;
                 }
                 continue;
             }
@@ -22372,9 +22383,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         _ => piece,
                     };
-                    return Err(self.rejected_at(what, args, Some((i, &piece, p))));
+                    refused = Some((i, self.rejected_at(what, args, Some((i, &piece, p)))));
+                    break 'args;
                 }
             }
+        }
+        if let Some((i, message)) = refused {
+            // The later literals at parameters that are no class of the function around, as
+            // the loop reads them: [`adopted`] changes nothing, so a literal it accepts leaves
+            // no trace. Complexity tradeoff: one more pass over the arguments after the
+            // first refused, O(a), as the loop costs; stopping there, as before, cost O(i)
+            // but left the later refused literals unreported.
+            for (j, a) in args.iter().enumerate().skip(i + 1) {
+                let Some(a) = a.as_ref().filter(|a| a.lit.is_some() && !grouped[j]) else {
+                    continue;
+                };
+                let p = &arrow.params[j];
+                if self.class_of_ty(p).is_some() || p.as_var().is_some() {
+                    continue;
+                }
+                if let Err(r) = adopted(a, p, self.rough) {
+                    self.lit_refused.push(r);
+                }
+            }
+            return Err(message);
         }
         // The variables of the parameters of a function the call gives, which only its calls
         // bind: the needs on them are its own. The function may be the result, or held at any
