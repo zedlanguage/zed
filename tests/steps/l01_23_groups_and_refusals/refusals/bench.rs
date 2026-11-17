@@ -571,9 +571,9 @@ case_benches! {
 // The cases of `r7_round6_probe_cases_are_decided_in_their_size`, one test each
 // (TEST-bench-move-l0123, author P169). R7: the round-6 probe cases no other scaling test reads.
 // `r6twowide` and `r6threeun` are outside the chains' class and quadratic on the base search as
-// well, so they are not here; `r6two` and `r6twoun` are in
-// `r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size`, deferred to plan row
-// SUB-r6two-bytes in wt/scratch/deferred-tests/SUB-r6two-bytes.rs.
+// well, so they are not here; `r6two` and `r6twoun` are `r7_round6_probe_r6two` and
+// `r7_round6_probe_r6twoun` below, sized by their clauses over a fixed set of variables
+// (SUB-r6two-bytes).
 case_benches! {
     probe;
     r7_round6_probe_r6parity: "r6parity", Verdict::Inhabited, 8 -> 4096, "222739773" at "29.78";
@@ -1471,4 +1471,50 @@ fn every_random_prefix_chain_agrees_with_the_oracle() {
     for chain in PREFIX_CHAIN_SEEDS {
         check_random_prefix_chain(chain, &format!("_prc{chain}"), "every seed");
     }
+}
+
+/// The probe case `r6two` (`kind` 0) or `r6twoun` (`kind` 1) of `n` and `8n` clauses over the
+/// variables `r6_two_clauses` gives `8n`, both sizes: SUB-r6two-bytes. The probe case takes
+/// `isqrt(n) + 2` variables and writes each clause as a row of all of them, so its type has
+/// `k + n(k + 1)` places: 44 at n 8 and 714 at 64, 16.2 times, and the 15.9 to 16.0 times the
+/// instructions and bytes measured there (2026-11-17, before this test) are linear in the
+/// places, not in n. With `k` fixed the places grow by under 8 times, and the ratio measures
+/// the search in the size of its input.
+fn two_clauses_scale(kind: u8, n: usize, want: Verdict) {
+    let k = (8.0 * n as f64).sqrt() as usize + 2;
+    big(|| {
+        let (s_runs, l_runs) = scaling::Meter::new().runs();
+        let copies = |c: usize, runs: usize| -> Vec<Type> {
+            (0..runs)
+                .map(|i| {
+                    let (k, cls) = r6_two_clauses_over(k, c, kind);
+                    assert_eq!(cls.len(), c, "{c} clauses over {k} variables");
+                    r5_sat_type(k, &cls, &format!("_r6two{kind}_{c}_{i}"))
+                })
+                .collect()
+        };
+        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        scaling::check(&format!("r6two kind {kind}, {k} variables"), n, |c| {
+            Type::forget_emptiness();
+            let t = if c == n {
+                &small[si.fetch_add(1, Relaxed)]
+            } else {
+                &large[li.fetch_add(1, Relaxed)]
+            };
+            assert_eq!(t.verdict(), want, "kind {kind} at {c}");
+        });
+    });
+}
+
+/// `r6two`, satisfiable, at 16 and 128 clauses over 13 variables ([`two_clauses_scale`]).
+#[test]
+fn r7_round6_probe_r6two() {
+    two_clauses_scale(0, 16, Verdict::Inhabited);
+}
+
+/// `r6twoun`, unsatisfiable, at 16 and 128 clauses over 13 variables ([`two_clauses_scale`]).
+#[test]
+fn r7_round6_probe_r6twoun() {
+    two_clauses_scale(1, 16, Verdict::Empty);
 }

@@ -4719,7 +4719,12 @@ fn r5_remainder_boundary(n: usize, in_remainder: bool, tag: &str) -> Type {
 /// (unsatisfiable, two atoms per root); for `kind` 2 it is `!x_1 | !x_2 | !x_3`
 /// (unsatisfiable, one root with three atoms, outside the 2-SAT `Empty`).
 fn r6_two_clauses(n: usize, kind: u8) -> (usize, Vec<Vec<(usize, bool)>>) {
-    let k = (n as f64).sqrt() as usize + 2;
+    r6_two_clauses_over((n as f64).sqrt() as usize + 2, n, kind)
+}
+
+/// [`r6_two_clauses`] over `k` variables, 3 or more: `n` clauses for `n` from `k + 1` to
+/// `3k(k - 1)/2` (every clause the fill draws; the cycle's and `x_1 | x_2` are among them).
+fn r6_two_clauses_over(k: usize, n: usize, kind: u8) -> (usize, Vec<Vec<(usize, bool)>>) {
     let mut cls: Vec<Vec<(usize, bool)>> = (1..=k)
         .map(|i| vec![(i, true), (i % k + 1, false)])
         .collect();
