@@ -599,7 +599,11 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run() {
 // n = 8000 the larger size, K = 12,800,000, was past it. So the sizes are 5000 and 40,000,
 // K = 1,000,000 and 8,000,000: 10.0 times the instructions for both the checking and `zedc run`
 // (2026-11-13), under the limit but over 9, as O(n log^2 n) gives 8 * (log 8n / log n)^2, about
-// 10.5 at 1.6M bits.
+// 10.5 at 1.6M bits. Under gdb (2026-11-17, bench-ratios) the checking prints 3^K + 1 in decimal
+// once per size (`num::fast::to_decimal` from `types::lit_text`), in the message that rejects
+// `main` (`Ck::exit_status`, `Ck::show`), which must write the type; no other print or repeated
+// conversion runs. That one O(n log^2 n) conversion (COMPLEXITY.md K81) is the part above
+// n log n, owned by plan row RADIX-nlog2-10_5.
 
 /// Besides its ratio: the check ends. Small instance, through `zedc run`:
 /// `scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power`.

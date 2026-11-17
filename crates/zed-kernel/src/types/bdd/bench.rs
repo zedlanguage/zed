@@ -162,19 +162,32 @@ fn list_of_alternating_literals_scales() {
 }
 
 #[test]
-fn joining_chains_to_lists_scales() {
+fn list_built_a_literal_at_a_time_scales() {
     // `((x_0 | x_1) & !x_2 | x_3) & !x_4 …` built a literal at a time, each new literal last
     // in the order of the atoms: the diagram the chain rule built had up to `k` nodes on
     // the `k`-th atom, `O(m²)` in all, and built them all again at each literal (the
     // negative control in STATUS.md, CHAIN-zip-size). A list takes each literal into its
-    // first block, or a block of its own, in `O(log m)`. Two chains with half their atoms
-    // in common are joined a literal of the shorter at a time. Small instances:
+    // first block, or a block of its own, in `O(log m)`. Small instances:
     // `chains_built_a_literal_at_a_time_stay_lists`.
     let n = 1 << 11;
     // The work follows paths of the list's treap of cells, whose shape the run's draw of
-    // priorities gives; it is summed over `SHAPES` offsets of the atoms.
+    // priorities gives; it is summed over `4 * SHAPES` offsets of the atoms. Each literal
+    // goes in last in the order, so its work is the treap's right spine, and the spines of
+    // one build share their top nodes: the work of one shape varies by about 3% at 2048 and
+    // at 16,384 literals alike, so a larger size does not narrow the ratio's spread, and
+    // more shapes do. Over the 16 draws of `ZED_TREAP_SEED` 0 to 15 (2026-11-17,
+    // BENCH-list-literal-draw-spread), the n log n prediction being 8 ln(16384)/ln(2048) =
+    // 10.18 (COMPLEXITY.md K122):
+    // - over `SHAPES` offsets the ratio read 9.63 to 10.53, mean 10.18, standard deviation
+    //   0.25, with seed 13 over the limit of 10.5;
+    // - at 4096 and 32,768 literals, over `SHAPES` offsets, it read 9.73 to 10.59, mean 10.04
+    //   (prediction 10.00), seed 13 again over the limit;
+    // - over `4 * SHAPES` offsets it read 10.03 to 10.28, mean 10.15, standard deviation 0.07,
+    //   with 1.75G and 17.8G instructions at seed 0.
+    // This check is a test of its own so that its four times the work keeps the chains' checks
+    // (`joining_chains_to_lists_scales`) and it each within the time a benchmark piece has.
     let lits = scaling::inputs(n, |m| {
-        (0..SHAPES)
+        (0..4 * SHAPES)
             .map(|j| {
                 let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
                 xs.sort();
@@ -185,14 +198,6 @@ fn joining_chains_to_lists_scales() {
                 lits
             })
             .collect::<Vec<_>>()
-    });
-    let chains = scaling::inputs(n, |m| {
-        let chain = |from: u64| {
-            (from..from + m as u64).fold(Part::leaf(false), |f, k| {
-                f.zip(&Part::literal(atom(k)), Op::Or)
-            })
-        };
-        (chain(0), chain(m as u64 / 2))
     });
     scaling::check("a list built a literal at a time, by literals", n, |m| {
         for xs in &lits[&m] {
@@ -206,11 +211,31 @@ fn joining_chains_to_lists_scales() {
             assert!(matches!(f, Part::Bdd(_)), "{f:?}");
         }
     });
+}
+
+#[test]
+fn joining_chains_to_lists_scales() {
+    // Chains built a literal at a time, each new literal last in the order of the atoms (the
+    // list of `list_built_a_literal_at_a_time_scales` with one connective), and two chains
+    // with half their atoms in common joined a literal of the shorter at a time. Small
+    // instances: `chains_built_a_literal_at_a_time_stay_lists`.
+    let n = 1 << 11;
+    let chains = scaling::inputs(n, |m| {
+        let chain = |from: u64| {
+            (from..from + m as u64).fold(Part::leaf(false), |f, k| {
+                f.zip(&Part::literal(atom(k)), Op::Or)
+            })
+        };
+        (chain(0), chain(m as u64 / 2))
+    });
     // A chain grown a literal at a time stays a chain, so both operands of each step are
     // chains; listing the long one too at each step took `O(m²)` (59 s for the forced atoms
     // of a chain of 32768 literals).
     // Each literal goes into the chain's one block, so the work follows the right spine of
-    // the block's treap; it is summed over `SHAPES` offsets of the atoms.
+    // the block's treap; it is summed over `SHAPES` offsets of the atoms. Over the 16 draws
+    // of `ZED_TREAP_SEED` 0 to 15 the two chains read 9.11 to 10.32 (2026-11-17,
+    // BENCH-list-literal-draw-spread), under the limit at every draw; over `4 * SHAPES`
+    // offsets, 9.33 to 9.89.
     let shapes = scaling::inputs(n, |m| {
         (0..SHAPES)
             .map(|j| {
