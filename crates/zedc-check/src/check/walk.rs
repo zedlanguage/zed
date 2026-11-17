@@ -4611,9 +4611,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A remap whose source is only classes not yet resolved (and misses) records nothing
         // here: all it records, its plan's witness and what its key expressions record, is
         // written by the checks of its needs. So a later remap alike may leave its needs to
-        // the first's ([`Self::share_alike`]) and take the first's witness entries when the
-        // check ends ([`Self::settle_calls`]); its own key expressions are then never checked,
-        // as those of a generic function no call instantiates are not.
+        // the first's ([`Self::share_alike`]) and take the first's witness entries, and what
+        // the first's key expressions and folds record, when the check ends
+        // ([`Self::settle_calls`], [`Ck::finish`]); its own key expressions are then checked
+        // only where the first's fail ([`Self::replay`]).
         if only_misses
             && self.replaying == 0
             && let Some(key) = self.remap_alike(e)
@@ -8275,7 +8276,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // Each remap whose need [`Ck::share_alike`] left out ([`Ck::alike_remaps`]) takes the
         // witness entries of the remap whose need it kept, which that need's checks wrote; the
-        // rest of its plan is read from its text and is the same ([`Self::remap_alone`]). A
+        // rest of its plan is read from its text and is the same ([`Self::remap_alone`]);
+        // what its folds and keys that compute record follows below the witness. A
         // kept remap may itself be left out by the signature of a function around, so each
         // goes to the end of its chain of pairs, as a fold does in [`Ck::finish`]: O(p·d) for
         // p pairs and chains d long, d at most the depth of nested functions; `seen` ends a
@@ -8297,6 +8299,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && let Some(b) = self.info.remaps.get_mut(&l)
             {
                 add_witness(b, &a);
+            }
+            // A key that computes, or a level folded by `><`, records at its own spans when
+            // checked ([`Self::remap_alike`]): the left-out remap takes those of the kept one,
+            // at the same level, a fold as a fold left out does ([`Ck::alike_folds`]), the
+            // rest of a key by [`Ck::finish`] ([`Ck::alike_keys`]). Both remaps made a need
+            // ([`Self::remap_need`]), so both are in `remap_exprs`. O(levels) per pair.
+            let (Some(&le), Some(&fe)) = (self.remap_exprs.get(&l), self.remap_exprs.get(&at))
+            else {
+                continue;
+            };
+            let (
+                ExprKind::Remap {
+                    levels: Some(ls), ..
+                },
+                ExprKind::Remap {
+                    levels: Some(fs), ..
+                },
+            ) = (&le.kind, &fe.kind)
+            else {
+                continue;
+            };
+            for (lv, fv) in ls.iter().zip(fs) {
+                if lv.reduce.is_some() {
+                    self.alike_folds.push((lv.span, fv.span));
+                }
+                if let (Some(lk), Some(fk)) = (&lv.key, &fv.key)
+                    && !matches!(fk.kind, ExprKind::Name(_))
+                {
+                    self.alike_keys.push((fk.span, lk.span.start));
+                }
             }
         }
     }
@@ -11977,8 +12009,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// steps, and the two needs give one type at each call: the two result variables are one
     /// at every call. What L would record at its site at calls, [`Ck::settle_calls`] and
     /// [`Ck::finish`] copy from F's (`alike_brackets`, `alike_folds`, and for a remap
-    /// `alike_remaps`, its witness entries; a remap is paired only where [`Self::remap_alike`]
-    /// finds its keys all binders, so it records nothing at spans of its own); a level word
+    /// `alike_remaps`, its witness entries, and through `alike_folds` and `alike_keys` what
+    /// its folded levels and its keys that compute record; a remap is paired only where
+    /// [`Self::remap_alike`] finds keys of one text over the same binders); a level word
     /// records nothing at its site but a scan's fold, which records no identity
     /// ([`FoldForm::records_identity`]). Where F fails at a call, [`Self::replay`] replays each
     /// left-out need of its group, so each use keeps its own error and notes; a bracket first

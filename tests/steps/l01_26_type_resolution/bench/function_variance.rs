@@ -394,6 +394,20 @@ fn one_body_remapping_its_parameter_n_times_called_n_times_scales() {
     many_uses_alike_scale("(t as (k -> v) into (v -> k)).count");
 }
 
+/// A remap whose new key computes (FAIL-remap-computed-key-need-site-product) at
+/// [`many_uses_alike_scale`].
+#[test]
+fn one_body_remapping_its_parameter_to_a_computed_key_n_times_called_n_times_scales() {
+    many_uses_alike_scale("(t as (k -> v) into (k + 1 -> v)).count");
+}
+
+/// A remap whose new keys compute and whose last level folds by `><`
+/// (FAIL-remap-computed-key-need-site-product) at [`many_uses_alike_scale`].
+#[test]
+fn one_body_remapping_its_parameter_to_a_folded_computed_key_n_times_called_n_times_scales() {
+    many_uses_alike_scale("(t as (k -> v) into (k mod 2 -> k * 2 >< (+) -> v)).count");
+}
+
 /// One generic body with n brackets `t[0]` alike whose results resolve differently, called at
 /// n places (row TEST-component-site-need-key). The brackets cycle through four forms: passed
 /// to `drop`, which takes any value (a type variable with no bound), passed to a parameter of

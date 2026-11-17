@@ -499,6 +499,172 @@ fn uses_alike_in_one_body_run() {
     );
 }
 
+/// The value of `name` in `src` from the reference evaluator, which native code agrees with.
+fn value_of(src: &str, name: &str) -> String {
+    use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+    use zed_tests::step_helpers::l01_36_cranelift::{kernel, native};
+    let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let t = with_prelude(
+        u.get(name)
+            .unwrap_or_else(|| panic!("no definition `{name}`")),
+    );
+    let k = kernel(&t).map(|v| v.to_string());
+    let n = native(&t).map(|o| o.value.to_string());
+    assert_eq!(k, n, "reference evaluator against native code: {src}");
+    k.unwrap_or_else(|e| panic!("{src}: {e:?}"))
+}
+
+/// What the checker records at each span inside `src[at..at + len]`, by its distance from
+/// `at`: the adopted values, the carriers followed, the witnesses, the quotients of `*`, and
+/// the warnings; each as text, sorted.
+fn records_in(info: &zedc::check::Info, at: usize, len: usize) -> Vec<String> {
+    let inside = |s: &zedc::lex::Span| s.start >= at && s.end <= at + len;
+    let rel = |s: &zedc::lex::Span| (s.start - at, s.end - at);
+    let mut out: Vec<String> = Vec::new();
+    out.extend(
+        (info.adopt.iter())
+            .filter(|(s, _)| inside(s))
+            .map(|(s, v)| format!("adopt {:?} {v:?}", rel(s))),
+    );
+    out.extend(
+        (info.follows.iter())
+            .filter(|(s, _)| inside(s))
+            .map(|(s, v)| format!("follows {:?} {v:?}", rel(s))),
+    );
+    out.extend(
+        (info.witness.iter())
+            .filter(|(s, _)| inside(s))
+            .map(|(s, v)| format!("witness {:?} {v:?}", rel(s))),
+    );
+    out.extend(
+        (info.quotients.iter())
+            .filter(|(s, _)| inside(s))
+            .map(|(s, v)| format!("quotient {:?} {v}", rel(s))),
+    );
+    out.extend(
+        (info.warnings.iter())
+            .filter(|e| inside(&e.span))
+            .map(|e| format!("warning {:?} {}", rel(&e.span), e.message)),
+    );
+    out.sort_unstable();
+    out
+}
+
+/// Remaps whose key computes from the remap's own binders (`k + 1`, `v * 2`), folded levels
+/// `><` among them, written alike in one generic body are one use of the parameter, checked
+/// once at each call (row FAIL-remap-computed-key-need-site-product). Each still runs as it
+/// would alone, at `int` and at `f64`, and has at its own key the records it would have had
+/// alone: those of the same remap in a body that holds only it.
+#[test]
+fn remaps_alike_with_computed_keys_run_and_record_as_each_alone() {
+    // Literals in keys meet `k`, an `int` at every call, or `v` at `int` only: a key such as
+    // `v * 2`, or a value `v / 2`, with `v` an `f64` fails at run time with one remap and
+    // one call (row FAIL-remap-key-literal-f64). A folded level is checked at one carrier per
+    // program: a fold whose empty level folds to one identity at `int` and another at `f64`
+    // is not compiled yet at two carriers.
+    let two = ["t: [1, 2, 3]", "t: [0.5, 1.5, 2.5]"];
+    let ints = ["t: [1, 2, 3]", "t: [4, 5, 6, 7]"];
+    let floats = ["t: [0.5, 1.5, 2.5]", "t: [4.0]"];
+    let cases = [
+        ("(t as (k -> v) into (k + 1 -> v))", two),
+        ("(t as (k -> v) into (k * 3 - 1 -> v))", two),
+        ("(t as (k -> v) into (k mod 2 -> k >< (+) -> v))", ints),
+        ("(t as (k -> v) into (k mod 2 -> k >< (+) -> v))", floats),
+        ("(t as (k -> v) into (-k + 10 -> k * 2 >< (*) -> v))", ints),
+        (
+            "(t as (k -> v) into (-k + 10 -> k * 2 >< (*) -> v))",
+            floats,
+        ),
+        (
+            "(t as (k -> v) into (v * 2 -> k))",
+            ["t: [1, 2, 3]", "t: [4, 5]"],
+        ),
+        (
+            "(t as (k -> v) into (k div 2 -> k + 1 >< (+) -> v))",
+            floats,
+        ),
+    ];
+    for (r, args) in cases {
+        let many = format!(
+            "many(t) = ({r}, {r});\na = (many({}), many({}));\n",
+            args[0], args[1]
+        );
+        let one = format!(
+            "one(t) = {r};\na = ((one({0}), one({0})), (one({1}), one({1})));\n",
+            args[0], args[1]
+        );
+        let want = value_of(&one, "a");
+        assert_eq!(value_of(&many, "a"), want, "{many}");
+        let (mi, _) = super::info(&many);
+        let (oi, _) = super::info(&one);
+        assert_eq!(mi.errors.len(), 0, "{many}: {:?}", mi.errors);
+        let alone = records_in(&oi, one.find(r).expect("the remap is in `one`"), r.len());
+        let first = many.find(r).expect("the remap is in `many`");
+        let second = first + r.len() + 2;
+        assert_eq!(&many[second..second + r.len()], r);
+        assert_eq!(
+            records_in(&mi, first, r.len()),
+            alone,
+            "the first remap of {many}"
+        );
+        assert_eq!(
+            records_in(&mi, second, r.len()),
+            alone,
+            "the second remap of {many}"
+        );
+    }
+}
+
+/// A key that computes and is refused at a call is refused at each remap written alike, each
+/// at its own span, with the message it has alone (`k div 2` folds two entries to one key).
+#[test]
+fn remaps_alike_with_a_refused_computed_key_each_report() {
+    let r = "(t as (k -> v) into (k div 2 -> v))";
+    let many = format!("many(t) = ({r}, {r});\na = many(t: [1, 2, 3]);\n");
+    let one = format!("one(t) = {r};\na = one(t: [1, 2, 3]);\n");
+    let (mi, _) = super::info(&many);
+    let (oi, _) = super::info(&one);
+    assert_eq!(oi.errors.len(), 1, "{one}: {:?}", oi.errors);
+    let at = one.find(r).expect("the remap is in `one`");
+    let rel = |s: &zedc::lex::Span, base: usize| (s.start - base, s.end - base);
+    let want = (rel(&oi.errors[0].span, at), oi.errors[0].message.clone());
+    let first = many.find(r).expect("the remap is in `many`");
+    let second = first + r.len() + 2;
+    let mut got: Vec<_> = (mi.errors.iter())
+        .map(|e| {
+            let base = if e.span.start >= second {
+                second
+            } else {
+                first
+            };
+            (base, rel(&e.span, base), e.message.clone())
+        })
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            (first, want.0, want.1.clone()),
+            (second, want.0, want.1.clone())
+        ],
+        "{many}"
+    );
+}
+
+/// A computed key that reads a name bound outside the remap is not paired, since a test around
+/// one remap may narrow that name and not the other: each is checked on its own, and runs.
+#[test]
+fn remaps_reading_an_outer_name_in_their_key_run() {
+    let r = "(t as (k -> v) into (k + j -> k -> v))";
+    let many = format!(
+        "many(t, j) = ({r}, if j > 0 {{ {r} }} else {{ {r} }});\na = (many(t: [1, 2], j: 1), many(t: [0.5], j: 0));\n"
+    );
+    let one = format!(
+        "one(t, j) = {r};\na = ((one(t: [1, 2], j: 1), one(t: [1, 2], j: 1)), (one(t: [0.5], j: 0), one(t: [0.5], j: 0)));\n"
+    );
+    assert_eq!(value_of(&many, "a"), value_of(&one, "a"), "{many}");
+}
+
 /// A fold written twice alike in one generic body, which two calls run at carriers whose empty
 /// levels fold to different identities, is split at both: each call folds each of the two to
 /// the identity of its own carrier, `#empty` at `int` and `-inf` at `f64` (DESIGN.md

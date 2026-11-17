@@ -1952,6 +1952,12 @@ struct Ck<'t, 'a> {
     /// need it kept: [`Ck::settle_calls`] gives the first the witness entries of the second's
     /// plan ([`Info::remaps`]). Undone with a trial, as [`Ck::alike_calls`] is.
     alike_remaps: Vec<(Span, Span)>,
+    /// For each key expression that computes of a remap of [`Self::alike_remaps`], the
+    /// span of the kept remap's key expression at that level, with where the left-out one's
+    /// starts: [`Ck::finish`] gives the left-out key what the kept key's checks recorded, each
+    /// span moved by the distance between the two starts. Filled by [`Ck::settle_calls`],
+    /// after the walk, so no trial undoes it.
+    alike_keys: Vec<(Span, usize)>,
     /// Each call whose result holds a function with needs, or which leaves parameters open:
     /// a function passed to it may be called after it returns
     /// ([`Info::escaping_calls`]).
@@ -2511,6 +2517,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike_brackets: Vec::new(),
             alike_folds: Vec::new(),
             alike_remaps: Vec::new(),
+            alike_keys: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
             folds: BTreeMap::new(),
@@ -5458,6 +5465,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .map(|(k, t)| (k, self.shown(&self.solved(&t))))
             .collect();
+        self.copy_alike_keys();
         // A test whose `||` alternatives limit each other's ranges in a loop is rejected, not
         // warned of (DESIGN.md L1.39): one error at each such test, for its `true` outcome
         // when both outcomes narrow, which `Refused`'s order puts last at a place.
@@ -5506,6 +5514,84 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())
             .map(|((span, r), kept)| refused_warning(span, &r, &kept))
             .collect();
+    }
+
+    /// Gives each key that computes of a remap whose need a signature left out
+    /// ([`Self::alike_keys`]) what the checks of the kept remap's key recorded at their spans:
+    /// each entry of [`Info::adopt`], [`Info::follows`], [`Info::witness`] and
+    /// [`Info::quotients`], and each question left undecided ([`Self::refused_at`], a warning
+    /// once the walk is done), at a span inside the kept key, is given at that span moved to
+    /// the left-out key. The two keys have one text ([`Ck::remap_alike`]), so a span the same
+    /// distance from each start is the same part of each; their checks go through the same
+    /// steps (the proof at `remap_alike`), so what the left-out key would have recorded at
+    /// its spans is what the kept key recorded at its own. An entry the left-out key already
+    /// has, from the walk of the body or from [`Ck::replay`] where the kept need failed, is
+    /// kept; a `*`'s quotient is true only where both are, as for a `*` checked twice.
+    ///
+    /// Why these tables and no other: a key that computes is names of the remap's binders,
+    /// number literals and arithmetic ([`Ck::remap_alike`]), so it holds no call, bracket,
+    /// fold, remap, `++` or `.sum`, the uses the other span tables of [`Info`] record. A
+    /// literal records its adopted value, the carrier it follows and its witness; a `*`
+    /// records its quotient. Errors are not copied: a check that errs at the kept key fails
+    /// its need, and the left-out remap is then checked at its own spans ([`Ck::replay`]);
+    /// [`Info::reported_literals`] is read off the errors. Of the checker's own records,
+    /// [`Self::eq_sides`] is written only at `==` and `!=`, which a key here does not hold, and
+    /// [`Self::lit_written`] holds errors; `rat_fact` reads the text and records nothing. A
+    /// folded level's records go by [`Self::alike_folds`].
+    // Complexity tradeoff: one pass over each of the five tables, each entry looked up among
+    // the kept keys by its start in a sorted map, O(E log p) for E entries and p kept keys,
+    // plus one insert per copy. The naive way, scanning every pair for each entry, is
+    // O(E·p). The kept keys of two remaps never overlap, since a key that computes holds no
+    // remap, so the key whose start is the last at or before an entry's is the only one
+    // that may hold it.
+    fn copy_alike_keys(&mut self) {
+        if self.alike_keys.is_empty() {
+            return;
+        }
+        // The kept keys by their start: the end, and the start of each key left out for it.
+        let mut keys: BTreeMap<usize, (usize, Vec<usize>)> = BTreeMap::new();
+        for (f, l) in std::mem::take(&mut self.alike_keys) {
+            let at = keys.entry(f.start).or_insert_with(|| (f.end, Vec::new()));
+            at.1.push(l);
+        }
+        let moved = |s: &Span| -> Vec<Span> {
+            match keys.range(..=s.start).next_back() {
+                Some((&start, (end, ls))) if s.end <= *end => (ls.iter())
+                    .map(|&l| Span {
+                        start: l + (s.start - start),
+                        end: l + (s.end - start),
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        fn copy<V: Clone>(map: &mut HashMap<Span, V>, moved: &impl Fn(&Span) -> Vec<Span>) {
+            let copies: Vec<(Span, V)> = (map.iter())
+                .flat_map(|(s, v)| moved(s).into_iter().map(move |m| (m, v.clone())))
+                .collect();
+            for (s, v) in copies {
+                map.entry(s).or_insert(v);
+            }
+        }
+        copy(&mut self.info.adopt, &moved);
+        copy(&mut self.info.follows, &moved);
+        copy(&mut self.info.witness, &moved);
+        let quotients: Vec<(Span, bool)> = (self.info.quotients.iter())
+            .flat_map(|(s, &q)| moved(s).into_iter().map(move |m| (m, q)))
+            .collect();
+        for (s, q) in quotients {
+            *self.info.quotients.entry(s).or_insert(q) &= q;
+        }
+        let refused: Vec<((Span, Refused), Kept)> = (self.refused_at.iter())
+            .flat_map(|((s, r), k)| {
+                moved(s)
+                    .into_iter()
+                    .map(move |m| ((m, r.clone()), k.clone()))
+            })
+            .collect();
+        for (at, k) in refused {
+            self.refused_at.entry(at).or_insert(k);
+        }
     }
 
     /// [`Self::finished`] on `s` settled, which is `s` itself when it holds no class variable.
@@ -6995,11 +7081,11 @@ struct Mark {
 /// its receiver's type, the word and its function's type ([`NeedKind::Level`]); a fold by
 /// its receiver's type, its operator and form ([`NeedKind::Reduce`]) or the families summed
 /// beside it ([`NeedKind::SumMethod`]). A scan and a fold also keep the receiver as written,
-/// which their messages quote ([`Ck::fold_subject`]). A remap whose every level's key is a
-/// binder of its own `as` pattern or `_`, with no `><` ([`NeedKind::Remap`]), by the pattern
-/// alone: the number of binders, the binder each level reads (`None` for `_`), and the
-/// parameter declared a partial map its source names, whose written key ranges the check
-/// reads ([`Ck::remap_alike`]). Two uses whose keys are one once each class is written as its
+/// which their messages quote ([`Ck::fold_subject`]). A remap whose every level's key is
+/// `_`, a binder of its own `as` pattern, or arithmetic on those binders and literals
+/// ([`NeedKind::Remap`]), by its pattern: the number of binders, each level's key
+/// ([`RemapKeyAlike`]) and `><` operator, and the parameter declared a partial map its source
+/// names, whose written key ranges the check reads ([`Ck::remap_alike`]). Two uses whose keys are one once each class is written as its
 /// root ([`AlikeSite::map_tys`]) make one need on each class of the receiver but for the site
 /// ([`Ck::share_alike`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -7008,7 +7094,20 @@ pub(super) enum AlikeSite {
     Level(Ty, LevelWord, Ty, String),
     Reduce(Ty, Reducer, FoldForm, String),
     Sum(Ty, Ty, String),
-    Remap(usize, Vec<Option<usize>>, Option<usize>),
+    Remap(usize, Vec<(RemapKeyAlike, Option<BinaryOp>)>, Option<usize>),
+}
+
+/// The key of one level of a remap's `into` pattern in [`AlikeSite::Remap`].
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum RemapKeyAlike {
+    /// `_`.
+    Wild,
+    /// A binder of the remap's own `as` pattern, by its place there.
+    Binder(usize),
+    /// A key that computes from the remap's own binders and literals, as `k + 1`: its text,
+    /// and the place in the `as` pattern of the binder each name in it reads, in the order of
+    /// the text.
+    Computed(String, Vec<usize>),
 }
 
 impl AlikeSite {

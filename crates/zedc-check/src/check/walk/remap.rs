@@ -481,18 +481,30 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The key under which the remap `e` is paired with remaps alike ([`AlikeSite::Remap`],
-    /// [`Ck::share_alike`]), where every level of its `into` pattern is `_` or a name bound by
-    /// its own `as` pattern and no level is folded; `None` otherwise, and the remap is paired
-    /// with none.
+    /// [`Ck::share_alike`]), where the key of every level of its `into` pattern is `_`, a name
+    /// bound by its own `as` pattern, or arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `^`,
+    /// unary `-`) on such names and number literals, as `k + 1`, and a level may be folded by
+    /// `><`; `None` otherwise, and the remap is paired with none.
     ///
-    /// Why the pattern alone decides the check of the remap at a source type: a key that is a
-    /// binder takes that binder's type, which is the source's key or value type at the
-    /// binder's place ([`Self::remap_source`]); the layout, the witness ([`Self::injective`]
-    /// reads which binder each key is, and through [`Self::key_span`] the declared ranges of a
-    /// parameter the source names) and the rank ([`Self::remap_rank`], the number of binders)
-    /// read nothing else of the text. A key that computes (`k + 1`) or a folded level would
-    /// also record at the spans of its own expressions (operators, literals, `><`'s fold),
-    /// which a remap left out would lack; so it is paired with none.
+    /// Why the key decides the check of the remap at a source type: a key that is a binder
+    /// takes that binder's type, which is the source's key or value type at the binder's place
+    /// ([`Self::remap_source`]); the layout, the witness ([`Self::injective`] reads which binder
+    /// each key is, and through [`Self::key_span`] the declared ranges of a parameter the source
+    /// names) and the rank ([`Self::remap_rank`], the number of binders) read nothing else of
+    /// the text. A key that computes is checked from its text, and the key holds that text
+    /// and which binder each name in it reads: two remaps with one key have key expressions of
+    /// one text, so of one shape, whose names read binders of the same places, so of the same
+    /// types. They read no other name: a name bound outside the remap may be narrowed by a
+    /// test around one remap and not the other (`if j > 0`), and its value is read in the
+    /// scope ([`Self::ints_here`]), so a key that reads one is paired with none. The binders
+    /// themselves are bound by the remap, where no test of the program narrows them, and the
+    /// tests in force where the need is checked are those of the call, one for both. So the
+    /// two key expressions go through the same steps at each check, recording at spans the
+    /// same distance from their key's start, and erring alike. A level's `><` is an operator
+    /// section ([`Self::remap_layout`]), kept in the key. What a computed key or a folded
+    /// level records, the remap left out takes from the kept one's spans when the check ends
+    /// ([`Ck::settle_calls`], [`Ck::finish`]); where the kept one errs, [`Self::replay`] checks
+    /// the left-out one at its own spans.
     pub(in crate::check) fn remap_alike(&self, e: &Expr) -> Option<AlikeSite> {
         let ExprKind::Remap {
             of,
@@ -508,20 +520,58 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Target::Wild => None,
             })
             .collect();
-        let read = |l: &RemapLevel| -> Option<Option<usize>> {
-            if l.reduce.is_some() {
-                return None;
-            }
-            let Some(k) = &l.key else {
-                return Some(None);
+        // The place of the binder the name at `span` reads, if it reads one of this remap's.
+        let binder = |span: &Span| match self.t.res.uses.get(span) {
+            Some(Ref::Bound(b)) if b.len() == 1 => ids.get(&b[0]).copied(),
+            _ => None,
+        };
+        let read = |l: &RemapLevel| -> Option<(RemapKeyAlike, Option<BinaryOp>)> {
+            let fold = match l.reduce.as_ref().map(|r| &r.kind) {
+                None => None,
+                Some(ExprKind::Section(op, _)) => Some(*op),
+                Some(_) => return None,
             };
-            let ExprKind::Name(_) = &k.kind else {
-                return None;
+            let key = match &l.key {
+                None => RemapKeyAlike::Wild,
+                Some(k) if matches!(k.kind, ExprKind::Name(_)) => {
+                    RemapKeyAlike::Binder(binder(&k.span)?)
+                }
+                Some(k) => {
+                    // The names of `k` in the order of the text, each a binder of this remap;
+                    // an explicit stack, right operand pushed first.
+                    // Complexity tradeoff: one walk of the key, O(s) for a key of s nodes, and
+                    // its text copied into the pairing key, hashed in O(s). Keying by text is
+                    // what lets a left-out key take the kept key's records by a shift of
+                    // spans; a key by structure alone (operators and binder places, literals
+                    // compared by value) would pair `k+1` with `k + 1`, whose spans differ
+                    // inside, for no gain in cost.
+                    let mut places = Vec::new();
+                    let mut todo = vec![k];
+                    while let Some(x) = todo.pop() {
+                        match &x.kind {
+                            ExprKind::Name(_) => places.push(binder(&x.span)?),
+                            ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) => {}
+                            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(&**a),
+                            ExprKind::Binary(
+                                BinaryOp::Add
+                                | BinaryOp::Sub
+                                | BinaryOp::Mul
+                                | BinaryOp::Div
+                                | BinaryOp::IntDiv
+                                | BinaryOp::Mod
+                                | BinaryOp::Pow,
+                                a,
+                                b,
+                            ) => todo.extend([&**b, &**a]),
+                            _ => return None,
+                        }
+                    }
+                    // Without the program's text, two keys cannot be told apart: no pairing.
+                    let text = self.t.text?.get(k.span.start..k.span.end)?;
+                    RemapKeyAlike::Computed(text.to_string(), places)
+                }
             };
-            match self.t.res.uses.get(&k.span) {
-                Some(Ref::Bound(b)) if b.len() == 1 => ids.get(&b[0]).map(|&i| Some(i)),
-                _ => None,
-            }
+            Some((key, fold))
         };
         let keys = levels.iter().map(read).collect::<Option<Vec<_>>>()?;
         Some(AlikeSite::Remap(binders.len(), keys, self.keyed_param(of)))
