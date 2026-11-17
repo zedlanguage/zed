@@ -45,7 +45,8 @@ fn rejected() -> Vec<String> {
         chain(4, &|i| ["#none", "\"x\"", "7", "11"][i].to_string()),
         chain(64, &|i| format!("#a{i}")),
         chain(64, &mixed),
-        "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(f64(b) ^ (2^64)));\n}\n".into(),
+        "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(f64(b) ^ (2^64)));\n}\n"
+            .into(),
     ]
 }
 

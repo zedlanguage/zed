@@ -228,8 +228,16 @@ fn casts_between_number_kinds() {
         (Prim::CastRat, Value::float(f64::NAN), Some(atom("invalid"))),
         (Prim::CastRat, rat(-1, 3), Some(rat(-1, 3))),
         (Prim::CastF64, int(two53), Some(Value::float(two53 as f64))),
-        (Prim::CastF64, int(two53 + 1), Some(Value::float(two53 as f64))),
-        (Prim::CastF64, int(two53 + 3), Some(Value::float(two53 as f64 + 4.0))),
+        (
+            Prim::CastF64,
+            int(two53 + 1),
+            Some(Value::float(two53 as f64)),
+        ),
+        (
+            Prim::CastF64,
+            int(two53 + 3),
+            Some(Value::float(two53 as f64 + 4.0)),
+        ),
         (
             Prim::CastF64,
             int(-two53 - 2),
@@ -238,8 +246,16 @@ fn casts_between_number_kinds() {
         (Prim::CastF64, rat(1, 4), Some(Value::float(0.25))),
         (Prim::CastF64, rat(1, 3), Some(Value::float(1.0 / 3.0))),
         (Prim::CastF64, rat(-1, 3), Some(Value::float(-1.0 / 3.0))),
-        (Prim::CastF64, two_1024.clone(), Some(Value::float(f64::INFINITY))),
-        (Prim::CastF64, big(-(BigInt::from(1) << 1024u32)), Some(Value::float(f64::NEG_INFINITY))),
+        (
+            Prim::CastF64,
+            two_1024.clone(),
+            Some(Value::float(f64::INFINITY)),
+        ),
+        (
+            Prim::CastF64,
+            big(-(BigInt::from(1) << 1024u32)),
+            Some(Value::float(f64::NEG_INFINITY)),
+        ),
         (Prim::CastF64, Value::float(-2.5), Some(Value::float(-2.5))),
         (
             Prim::CastF64,
@@ -256,10 +272,18 @@ fn casts_between_number_kinds() {
             int(1 << 24),
             Some(Value::float32(16_777_216.0)),
         ),
-        (Prim::CastF32, int((1 << 24) + 1), Some(Value::float32(16_777_216.0))),
+        (
+            Prim::CastF32,
+            int((1 << 24) + 1),
+            Some(Value::float32(16_777_216.0)),
+        ),
         (Prim::CastF32, Value::float(0.5), Some(Value::float32(0.5))),
         (Prim::CastF32, Value::float(0.1), Some(Value::float32(0.1))),
-        (Prim::CastF32, Value::float(1e300), Some(Value::float32(f32::INFINITY))),
+        (
+            Prim::CastF32,
+            Value::float(1e300),
+            Some(Value::float32(f32::INFINITY)),
+        ),
         (
             Prim::CastF32,
             Value::float(f64::NEG_INFINITY),
@@ -293,8 +317,16 @@ fn casts_between_number_kinds() {
             Value::float(f64::from(f32::from_bits(1))),
             Some(Value::float32(f32::from_bits(1))),
         ),
-        (Prim::CastF32, Value::float(1e-46), Some(Value::float32(0.0))),
-        (Prim::CastF32, Value::float(-1e-46), Some(Value::float32(-0.0))),
+        (
+            Prim::CastF32,
+            Value::float(1e-46),
+            Some(Value::float32(0.0)),
+        ),
+        (
+            Prim::CastF32,
+            Value::float(-1e-46),
+            Some(Value::float32(-0.0)),
+        ),
         // The largest `f32` is exact; the next `f64` above it rounds back to it, as IEEE 754
         // rounds below `f32::MAX + ulp/2`; that midpoint, a tie, rounds to the even side,
         // the infinity, at either sign.

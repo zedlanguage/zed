@@ -231,6 +231,16 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("divide by a value that can be other than 0, such as a parameter `d: int`: `x div d`"),
     ),
     (
+        Row::NoIntEquals,
+        "",
+        "f(positional x: f64) = round(x);\n",
+        "f(positional x: f64) = int(x);\n",
+        "1:24",
+        Some(
+            "test at run time, `r: f64 = trunc(x); if x.isFinite() && x == r { int(x) } else { … }`",
+        ),
+    ),
+    (
         Row::KeyOutsideBound,
         "",
         "f(m: #a -> int) = m[#a];\n",

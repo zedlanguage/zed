@@ -28,10 +28,19 @@ fn a_cast_of_an_int_to_a_float_format_gives_no_atom_bounded_or_not() {
     for (c, test) in [
         // Within ±2^53, where `f64(n)` is exact, both bounds included.
         ("f64", "n >= 0 && n <= 100".to_string()),
-        ("f64", "n >= -9007199254740992 && n <= 9007199254740992".to_string()),
+        (
+            "f64",
+            "n >= -9007199254740992 && n <= 9007199254740992".to_string(),
+        ),
         // One past either bound, where it may round.
-        ("f64", "n >= -9007199254740993 && n <= 9007199254740992".to_string()),
-        ("f64", "n >= -9007199254740992 && n <= 9007199254740993".to_string()),
+        (
+            "f64",
+            "n >= -9007199254740993 && n <= 9007199254740992".to_string(),
+        ),
+        (
+            "f64",
+            "n >= -9007199254740992 && n <= 9007199254740993".to_string(),
+        ),
         // At the largest finite float, one past it, and bounded on one side only.
         ("f64", format!("n >= -{f64_max} && n <= {f64_max}")),
         ("f64", format!("n >= 0 && n <= {}", &f64_max + 1)),
@@ -64,12 +73,21 @@ fn a_cast_to_a_float_format_gives_no_atom_but_invalid_from_a_text() {
         ),
         // A text is read correctly rounded, past the range to an infinity; one that is not a
         // number is `#invalid`.
-        ("f(positional s: String) = f64(s);", "String -> f64 | #invalid"),
-        ("f(positional s: String) = f32(s);", "String -> f32 | #invalid"),
+        (
+            "f(positional s: String) = f64(s);",
+            "String -> f64 | #invalid",
+        ),
+        (
+            "f(positional s: String) = f32(s);",
+            "String -> f32 | #invalid",
+        ),
         // `rat` of an infinity or the NaN is `#invalid`.
         ("f(positional x: f64) = rat(x);", "f64 -> rat | #invalid"),
         // A code point lies in 0 ..= 1114111; its own atom passes the cast.
-        ("f(s: String) = f64(codePoint(s));", "(s: String) -> f64 | #notScalar"),
+        (
+            "f(s: String) = f64(codePoint(s));",
+            "(s: String) -> f64 | #notScalar",
+        ),
     ] {
         assert!(type_errors(src).is_empty(), "{src}");
         assert_eq!(sig(src, "f"), want, "{src}");
@@ -219,6 +237,21 @@ pub(super) fn cast_of_a_power(k: usize) -> String {
     format!("f(x: int) = f64(1e{k}r);\n")
 }
 
+/// `n` casts to `int` that the checker does not prove whole, each rejected with the menu of
+/// the six rounding calls: of a parameter `f64` where `i` is even, of the constant
+/// `(2i + 1)r/2r` where `i` is odd.
+pub(super) fn int_casts_not_whole(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!("h{i}(positional x: f64) = int(x);\n")
+            } else {
+                format!("k{i} = int({}r/2r);\n", 2 * i + 1)
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn many_casts_under_tests_are_accepted() {
     // A small instance of the benchmarks `bench::exact_casts::many_bounded_casts_scale`,
@@ -243,6 +276,19 @@ fn many_bounded_comparisons_are_one_rejection_each() {
     assert_eq!(errors.len(), 3, "{errors:?}");
     assert!(
         errors.iter().all(|e| e.contains("y == f64(n)")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn int_casts_not_proved_whole_are_one_rejection_each() {
+    // A small instance of the benchmark `bench::exact_casts::many_int_casts_not_whole_scale`.
+    let errors = type_errors(&int_casts_not_whole(4));
+    assert_eq!(errors.len(), 4, "{errors:?}");
+    assert!(
+        errors
+            .iter()
+            .all(|e| e.starts_with("No `int` equals the value: ") && e.contains("Try `round(")),
         "{errors:?}"
     );
 }

@@ -223,7 +223,10 @@ fn a_cast_of_a_division_names_the_literal() {
     assert_eq!(
         checked("f() = f64(1 / 10);\n"),
         pairs(&[
-            ("f() = f64(1r / 10);", "the literal is then exactly 1, a rat"),
+            (
+                "f() = f64(1r / 10);",
+                "the literal is then exactly 1, a rat"
+            ),
             ("f() = f64(1.0f64 / 10);", "the literal is then the f64 1.0"),
         ])
     );

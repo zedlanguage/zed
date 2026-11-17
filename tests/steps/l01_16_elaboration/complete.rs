@@ -394,13 +394,15 @@ fn a_cast_from_a_string_reads_what_the_design_lists() {
         ("x = rat(\"0.5\");", "1r/2r"),
         ("x = f64(\"-0\");", "-0.0"),
         ("x = f64(\"1e-400\");", "0.0"),
+        // A number past the format's largest value is its infinity, carrying `overflow()` and
+        // no atom (sec:corner_cases "Casts are domain proofs"; author P361).
+        ("x = f64(\"1e400\");", "inf"),
     ]);
     // A cast that can only fail is rejected where it stands.
     for (text, cast, operand, atom) in [
         ("x = int(\"+5\");", "int", "\"+5\"", "#invalid"),
         ("x = int(\"٤٢\");", "int", "\"٤٢\"", "#invalid"),
         ("x = rat(\"1/0\");", "rat", "\"1/0\"", "#invalid"),
-        ("x = f64(\"1e400\");", "f64", "\"1e400\"", "#overflow"),
         ("x = f64(\"infinity\");", "f64", "\"infinity\"", "#invalid"),
     ] {
         let at = &text[4..text.len() - 1];

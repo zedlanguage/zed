@@ -124,15 +124,21 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 // coefficient, and a value far past the range is settled from its size.
                 (Prim::CastF32, _) => match r.to_f32() {
                     Ok(f) => Value::float32(f),
-                    Err(LiteralRounding::Infinite) => Value::float32(with_sign(f32::INFINITY, r.is_negative())),
-                    Err(LiteralRounding::Zero) => Value::float32(with_sign(0.0f32, r.is_negative())),
+                    Err(LiteralRounding::Infinite) => {
+                        Value::float32(with_sign(f32::INFINITY, r.is_negative()))
+                    }
+                    Err(LiteralRounding::Zero) => {
+                        Value::float32(with_sign(0.0f32, r.is_negative()))
+                    }
                     Err(LiteralRounding::TooLarge(e)) => {
                         return Err(KernelError::RoundTooLarge { to: "f32", need: e });
                     }
                 },
                 _ => match r.to_f64() {
                     Ok(f) => Value::float(f),
-                    Err(LiteralRounding::Infinite) => Value::float(with_sign(f64::INFINITY, r.is_negative())),
+                    Err(LiteralRounding::Infinite) => {
+                        Value::float(with_sign(f64::INFINITY, r.is_negative()))
+                    }
                     Err(LiteralRounding::Zero) => Value::float(with_sign(0.0f64, r.is_negative())),
                     Err(LiteralRounding::TooLarge(e)) => {
                         return Err(KernelError::RoundTooLarge { to: "f64", need: e });

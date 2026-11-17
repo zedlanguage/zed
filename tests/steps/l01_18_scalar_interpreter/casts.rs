@@ -33,25 +33,44 @@ fn a_float_to_int_must_be_whole() {
     // An infinity or the NaN is not whole either.
     assert!(!errors("x = int(1.0f64 / 0.0);\n").is_empty());
     assert!(!errors("x = int(0.0f64 / 0.0);\n").is_empty());
-    assert_eq!(x("int(rat(6) / rat(2))"), "3");
+    // A constant the checker lists: an operation on `rat` literals alone.
+    assert_eq!(x("int(6r/2r)"), "3");
     // A number the checker does not prove whole is a compile error whose menu is the six
-    // rounding functions (DESIGN.md sec:facets and step L1.18), whatever value it holds.
-    for (written, value) in [("7r/2r", "3.5"), ("rat(7) / rat(2)", "3.5"), ("2.5f64", "2.5")] {
+    // rounding functions (DESIGN.md sec:facets and step L1.18), whatever value it holds. A
+    // constant's menu names the value each fix gives, `k is 4`; a call the checker does not list
+    // yet (step L1.39) names the type, `k is int`.
+    for (written, value) in [("7r/2r", "4"), ("rat(7) / rat(2)", "int"), ("2.5f64", "2")] {
         let got = errors(&format!("k = int({written});\n"));
+        assert_eq!(got.len(), 1, "{got:?}");
+        let msg = &got[0];
         assert_eq!(
-            got,
-            [format!(
-                "No `int` equals the value: `int({written})`. Try `round({written})` instead. \
-                 [int({written})]"
-            )],
-            "{value}"
+            msg.lines().next(),
+            Some(
+                format!(
+                    "No `int` equals the value: `int({written})`. Try `round({written})` instead."
+                )
+                .as_str()
+            ),
+            "{msg}"
         );
+        assert!(msg.contains(&format!("k = round({written});")), "{msg}");
+        assert!(msg.contains(&format!("k is {value}")), "{msg}");
+        assert!(msg.ends_with(&format!(" [int({written})]")), "{msg}");
     }
+    // A parameter's menu names each fix's type: a NaN or an infinity has no whole number.
     let got = errors("f(x: f64) = int(x);\n");
+    assert_eq!(got.len(), 1, "{got:?}");
+    let msg = &got[0];
     assert_eq!(
-        got,
-        ["No `int` equals the value: `int(x)`. Try `round(x)` instead. [int(x)]"]
+        msg.lines().next(),
+        Some("No `int` equals the value: `int(x)`. Try `round(x)` instead."),
+        "{msg}"
     );
+    assert!(
+        msg.contains("f(x: f64) = round(x);                 round(x) is int | #NaN | #overflow"),
+        "{msg}"
+    );
+    assert!(msg.ends_with(" [int(x)]"), "{msg}");
 }
 
 #[test]
@@ -126,10 +145,16 @@ fn a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity() {
     assert_eq!(x("f64(2^1024)"), "inf");
     assert_eq!(x("f64(-(2^1024))"), "-inf");
     // Rats beyond it, with and without a binary form, and just inside it.
-    assert_eq!(x(&format!("f64(rat({max}) + 1r/2r)")), "1.7976931348623157e308");
+    assert_eq!(
+        x(&format!("f64(rat({max}) + 1r/2r)")),
+        "1.7976931348623157e308"
+    );
     assert_eq!(x("f64(rat(10^400) / 3r)"), "inf");
     assert_eq!(x("f64(rat(3)^700)"), "inf");
-    assert_eq!(x(&format!("f64(rat({max}) - 1r/2r)")), "1.7976931348623157e308");
+    assert_eq!(
+        x(&format!("f64(rat({max}) - 1r/2r)")),
+        "1.7976931348623157e308"
+    );
     assert_eq!(x("f64(1r / rat(3)^700)"), "0.0");
     // `f32`: its largest is `(2^24 - 1) * 2^104`, from an int, a rat or an `f64`.
     let max32 = "(2^24 - 1) * 2^104";
@@ -137,7 +162,11 @@ fn a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity() {
     assert_eq!(x(&format!("f32({max32} + 1)")), "3.4028235e38f32");
     assert_eq!(x(&format!("f32({max32} - 1)")), "3.4028235e38f32");
     assert_eq!(x("f32(rat(2^128))"), "inff32");
-    assert_eq!(x(&format!("f32({max32} + 2^103)")), "inff32", "the midpoint, a tie, to even");
+    assert_eq!(
+        x(&format!("f32({max32} + 2^103)")),
+        "inff32",
+        "the midpoint, a tie, to even"
+    );
     assert_eq!(x(&format!("f32({max32} + 2^103 - 1)")), "3.4028235e38f32");
     assert_eq!(x("f32(real(1.0e39f64))"), "inff32");
     assert_eq!(x("f32(real(-1.0e39f64))"), "-inff32");
@@ -147,7 +176,7 @@ fn a_number_beyond_the_largest_float_rounds_to_it_or_to_infinity() {
     assert_eq!(x("String(f32(real(1.0e308f64 * 10.0f64)))"), "\"inf\"");
     assert_eq!(x("rat(real(1.0e308f64 * 10.0f64))"), "#invalid");
     // `int` and `rat` have no largest value.
-    assert_eq!(x("int(rat(2^2000)) == 2^2000"), "true");
+    assert_eq!(x("round(rat(2^2000)) == 2^2000"), "true");
     assert_eq!(x("rat(2^2000) == rat(2^2000)"), "true");
 }
 

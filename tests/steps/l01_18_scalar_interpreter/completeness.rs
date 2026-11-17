@@ -123,9 +123,15 @@ fn int_and_rat_of_a_float_that_is_no_number_are_invalid() {
         "real(-1.0f64 / 0.0)",
         "real(0.0f64 / 0.0)",
     ] {
-        assert!(!errors(&format!("{PASS}x = int({e});\n")).is_empty(), "int({e})");
+        assert!(
+            !errors(&format!("{PASS}x = int({e});\n")).is_empty(),
+            "int({e})"
+        );
         assert_eq!(x(&format!("rat({e})")), "#invalid", "rat({e})");
-        assert!(!errors(&format!("{PASS}x = int(f32({e}));\n")).is_empty(), "int(f32({e}))");
+        assert!(
+            !errors(&format!("{PASS}x = int(f32({e}));\n")).is_empty(),
+            "int(f32({e}))"
+        );
         assert_eq!(x(&format!("rat(f32({e}))")), "#invalid", "rat(f32({e}))");
     }
     assert!(!errors("x = int(1.0f64 / 0.0);\n").is_empty());

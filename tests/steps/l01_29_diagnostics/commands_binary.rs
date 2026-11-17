@@ -676,34 +676,36 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
         format!(
             "{}:{}",
             f.display(),
-            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(f64(b) ^ (2^64)) : String | #inexact`. Try `m.stdout <- (String(f64(b) ^ (2^64))) else "";` instead.
-  [1]  3:15: this call of `String` gives String | #inexact
-       3 |   m.stdout <- String(f64(b) ^ (2^64));
-         |               ^^^^^^^^^^^^^^^^^^^^^^^ [1, 14, 15, 16]
-         |                      ^^^^^^ [3]  ^^ [13]
-         |                      ^^^^^^^^^^^^^^^ [2]
-         |                          ^ [4] ^ [12]
-         |                               ^^^^^^ [11]
-  [2]  3:22: this `^` gives f64 | #inexact
-  [3]  3:22: this call of `f64` gives f64 | #inexact
-  [4]  3:26: `b` is int here
-  [5]  2:7: `b` is defined as this expression, int
+            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(f64(b) ^ (2^64))) : String | #invalid`. Try `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";` instead.
+  [1]  3:15: this call of `String` gives String | #invalid
+       3 |   m.stdout <- String(rat(f64(b) ^ (2^64)));
+         |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 15, 16, 17]
+         |                          ^^^^^^ [4]  ^^ [14]
+         |                          ^^^^^^^^^^^^^^^ [3]
+         |                              ^ [5] ^ [13]
+         |                                   ^^^^^^ [12]
+         |                      ^------------------^ [2]
+  [2]  3:22: this call of `rat` gives rat | #invalid
+  [3]  3:26: this `^` gives f64
+  [4]  3:26: this call of `f64` gives f64
+  [5]  3:30: `b` is int here
+  [6]  2:7: `b` is defined as this expression, int
        2 |   b = 2^64 + 13;
-         |       ^ [8]  ^^ [10]
-         |       ^^^^ [7]
-         |       ^^^^^^^^^ [5, 6]
-         |         ^^ [9]
-  [6]  2:7: this `+` gives int
-  [7]  2:7: this `^` gives int
-  [8]  2:7: this literal, 2, is 2
-  [9]  2:9: this literal, 64, is 64
-  [10] 2:14: this literal, 13, is 13
-  [11] 3:31: this `^` gives 2^64
-  [12] 3:32: this literal, 2, is 2
-  [13] 3:34: this literal, 64, is 64
-  [14] 3:15: the port `m.stdout` writes each value pushed to it as one line of text
-  [15] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(f64(b) ^ (2^64))) else "";`
-  [16] 3:15: repair: handle each atom of the value with `match`, giving the line to write for it
+         |       ^ [9]  ^^ [11]
+         |       ^^^^ [8]
+         |       ^^^^^^^^^ [6, 7]
+         |         ^^ [10]
+  [7]  2:7: this `+` gives int
+  [8]  2:7: this `^` gives int
+  [9]  2:7: this literal, 2, is 2
+  [10] 2:9: this literal, 64, is 64
+  [11] 2:14: this literal, 13, is 13
+  [12] 3:35: this `^` gives 2^64
+  [13] 3:36: this literal, 2, is 2
+  [14] 3:38: this literal, 64, is 64
+  [15] 3:15: the port `m.stdout` writes each value pushed to it as one line of text
+  [16] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";`
+  [17] 3:15: repair: handle each atom of the value with `match`, giving the line to write for it
 "#
         )
     );

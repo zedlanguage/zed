@@ -1,8 +1,9 @@
 // layer L1
 // Output fixed by DESIGN.md (at 843be85) line 1813: "A `rat` is kept reduced with a positive
 // denominator and printed `1r/3r`; `/` by `0r` is `#divByZero`"; line 1817: `rat(s)` reads what
-// `Utf8String` writes (`3r`, `-1r/3r`) or the same without the `r`s, and `f64` of a `rat` "is the
-// float equal to it or `#inexact`".
+// `Utf8String` writes (`3r`, `-1r/3r`) or the same without the `r`s. `f64` of a `rat` is the
+// nearest float, ties to even (DESIGN sec:corner_cases "Casts are domain proofs", step L1.18,
+// author P355), so `f64(third)` is 0.3333333333333333 and its `else` is never taken.
 main(m: MainArgs) {
   d = rat(trim(m.stdin[0] else "")) else 1r;
   third = 1r / 3r;

@@ -89,7 +89,7 @@ fn casts_from_f32() {
     assert_eq!(x("int(4.0f32)"), "4");
     assert_eq!(x("rat(0.75f32)"), "3r/4r");
     assert_eq!(x("round(f32(text(\"2.5\")))"), "2");
-    assert_eq!(x("int(f32(text(\"inf\")))"), "#invalid");
+    assert_eq!(x("round(f32(text(\"inf\")))"), "#overflow");
 }
 
 #[test]

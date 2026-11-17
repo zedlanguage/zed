@@ -7898,6 +7898,55 @@ fn run(p: Prim, v: &Value) -> Option<Value> {
     kernel_folded(p, vec![v.clone()])
 }
 
+/// The value of the cast `p`, `CastF64` or `CastF32`, of the int or `rat` `v`, where the format
+/// holds a number equal to `v`; `None` where the cast rounds. Since step L1.18 a cast to a float
+/// format rounds to nearest with no atom, so the result is cast back to `rat`, which is exact,
+/// and compared with `v`: an infinity gives `#invalid` there and is never equal.
+// Complexity tradeoff: naive, test the denominator for a power of two and the numerator's width
+// against the format's, then round; this rounds once and casts back, O(the format's width) past
+// the cast, the same order, and the kernel's rounding stays the one rule both use.
+fn float_exact(p: Prim, v: &Value) -> Option<Value> {
+    let f = run(p, v).filter(|f| !matches!(f, Value::Atom(_)))?;
+    let back = run(Prim::CastRat, &f)?;
+    (as_rat(&back)? == as_rat(v)?).then_some(f)
+}
+
+/// Whether the numeric cast `w`, `int`, `f64` or `f32`, gives back the number `v` itself: `int`
+/// of a whole finite number, a float format of a number it holds exactly ([`float_exact`]),
+/// `f32` of an `f64` that is an `f32` (an infinity or the NaN among them), a float format of a
+/// text that it reads as a finite number or that spells an infinity. Any other value passes
+/// the cast as it is. O(one cast and its inverse).
+fn value_kept(w: &str, v: &Value) -> bool {
+    let whole = |f: f64| f.is_finite() && f.fract() == 0.0;
+    match (w, v) {
+        ("int", Value::Rat(r)) => r.is_integer(),
+        ("int", Value::Float(f)) => whole(f.get()),
+        ("int", Value::Float32(f)) => whole(f64::from(f.get())),
+        ("f64", Value::Int(_) | Value::Big(_) | Value::Rat(_)) => {
+            float_exact(Prim::CastF64, v).is_some()
+        }
+        ("f32", Value::Int(_) | Value::Big(_) | Value::Rat(_)) => {
+            float_exact(Prim::CastF32, v).is_some()
+        }
+        ("f32", Value::Float(f)) => f.get().is_nan() || f64::from(f.get() as f32) == f.get(),
+        // A text is read correctly rounded, as its digits say; one past the format's largest
+        // value, `"1e999"`, is the infinity with `overflow()`, which no infinity's text is.
+        ("f64" | "f32", Value::Str(s)) => {
+            let p = if w == "f64" {
+                Prim::CastF64
+            } else {
+                Prim::CastF32
+            };
+            match run(p, v) {
+                Some(Value::Float(f)) if f.get().is_infinite() => s.flat().contains("inf"),
+                Some(Value::Float32(f)) if f.get().is_infinite() => s.flat().contains("inf"),
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
 /// The literal value `v`, under `-` when `neg`.
 fn neg_value(v: &Value, neg: bool) -> Value {
     match neg {
@@ -7957,8 +8006,8 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     let v = exact.and_then(|exact| match c {
         Carrier::Int => run(Prim::CastInt, &exact),
         Carrier::Rat => Some(exact),
-        Carrier::F64 => run(Prim::CastF64, &exact),
-        Carrier::F32 => run(Prim::CastF32, &exact),
+        Carrier::F64 => float_exact(Prim::CastF64, &exact),
+        Carrier::F32 => float_exact(Prim::CastF32, &exact),
         _ => None,
     });
     match v {
@@ -8891,9 +8940,9 @@ fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
     let v = match (lit_carrier(&l.value), c) {
         (own, c) if own == c => l.value.clone(),
         (Carrier::F64, Carrier::Rat) => Value::rat(Rat::decimal(lit_digits(l)).ok()??),
-        (Carrier::Int, Carrier::F64) => run(Prim::CastF64, &l.value)?,
+        (Carrier::Int, Carrier::F64) => float_exact(Prim::CastF64, &l.value)?,
         (Carrier::F64, Carrier::F32) => Value::float32(literal_f32(lit_digits(l)).ok()?),
-        (Carrier::Int, Carrier::F32) => run(Prim::CastF32, &l.value)?,
+        (Carrier::Int, Carrier::F32) => float_exact(Prim::CastF32, &l.value)?,
         (Carrier::Int, Carrier::Rat) => run(Prim::CastRat, &l.value)?,
         _ => return None,
     };
@@ -9795,16 +9844,14 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 // result back, O(the format's width); the naive test, reading the digits once per format,
 // costs the same up to that factor of two. It runs only on a literal already rejected.
 fn unsuffixed_exact(l: &Lit, held: &[Carrier]) -> Option<(Carrier, Value)> {
-    let digits = Rat::decimal(lit_digits(l)).ok()??;
-    let exact = Value::rat(digits.clone());
+    let exact = Value::rat(Rat::decimal(lit_digits(l)).ok()??);
     held.iter().find_map(|&c| {
         let v = match c {
-            Carrier::F64 => run(Prim::CastF64, &exact)?,
-            Carrier::F32 => run(Prim::CastF32, &exact)?,
+            Carrier::F64 => float_exact(Prim::CastF64, &exact)?,
+            Carrier::F32 => float_exact(Prim::CastF32, &exact)?,
             _ => return None,
         };
-        let back = run(Prim::CastRat, &v)?;
-        (as_rat(&back).as_ref() == Some(&digits)).then(|| (c, neg_value(&v, l.neg())))
+        Some((c, neg_value(&v, l.neg())))
     })
 }
 
@@ -11159,7 +11206,9 @@ fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, Option<String>, Str
         if carrier == Carrier::Int && point {
             continue;
         }
-        let Some(x) = run(prim, &v).filter(|x| !matches!(x, Value::Atom(_))) else {
+        // A cast to `f64` rounds with no atom (step L1.18), so the value must be kept.
+        let kept = |x: &Value| !matches!(x, Value::Atom(_)) && value_kept(carrier.name(), &v);
+        let Some(x) = run(prim, &v).filter(kept) else {
             continue;
         };
         let text = quoting(

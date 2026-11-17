@@ -7899,8 +7899,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// proofs"). Nothing else reads the class, so it takes `int` when its function ends anyway
     /// ([`Ck::lits_take`]). Until then it keeps the float formats among its carriers, and at
     /// `f64` `2^2000` is the infinity, of which `rat` is `#invalid` and `int` is not proved
-    /// whole, so the class is taken at `int` now, and `int(2^64 + 13)` is accepted. A name bound to such an operation, `b` with `b = 2^64 + 13`, is an `int`
-    /// already, fixed where it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are:
+    /// whole, so the class is taken at `int` now, and `int(2^64 + 13)` is accepted. A name
+    /// bound to such an operation, `b` with `b = 2^64 + 13`, is an `int` already, fixed where
+    /// it is bound (QUESTIONS A63, [`Self::fix_bound`]). Left as they are:
     /// a class that holds a bare decimal literal, or a `/`, as `rat(1 / 2)`, which no use took
     /// `int` from but its own operation, and which is rejected for want of a carrier when its
     /// function ends; and a class of a parameter (`binder`) or merged with one (not
@@ -7957,12 +7958,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             WordOperand::Values(vs, _) => Some(vs.clone()),
             WordOperand::Type(t) => t.kernel()?.values_listed(),
         });
-        let whole = |v: &Value| match v {
-            Value::Rat(r) => r.is_integer(),
-            Value::Float(f) => f.get().is_finite() && f.get().fract() == 0.0,
-            Value::Float32(f) => f.get().is_finite() && f.get().fract() == 0.0,
-            _ => true,
-        };
+        let whole = |v: &Value| value_kept("int", v);
         if listed.as_ref().is_some_and(|vs| vs.iter().all(whole)) {
             return;
         }
@@ -9962,9 +9958,10 @@ fn read_at(t: &Ty, c: Carrier) -> Option<Result<Ty, Value>> {
     let mut unread = None;
     for v in &vs {
         let r = match v {
-            Value::Int(_) | Value::Big(_) => {
-                Some(run(cast, v)?).filter(|r| !matches!(r, Value::Atom(_)))
-            }
+            // At a float format, a cast rounds with no atom (step L1.18): the integer is read
+            // only where the format holds it exactly ([`float_exact`]).
+            Value::Int(_) | Value::Big(_) if matches!(cast, Prim::CastRat) => Some(run(cast, v)?),
+            Value::Int(_) | Value::Big(_) => float_exact(cast, v),
             // At `rat`: a decimal a call gives is the `f64` it was read as.
             Value::Float(_) => None,
             _ => return None,
@@ -15384,10 +15381,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and is no class of literals, which a test does not narrow, a test of it, of a name
     /// bound in the body or of a new name that holds it ([`fresh`]); and last on floats, which
     /// take a negative exponent, with an int literal base or exponent written as a float
-    /// literal, or with a base parameter declared a float. No repair casts an int to a float: `f64(k)` rounds
-    /// above 2^53 in magnitude. Without the program's text, the test in words. Each repair on a
-    /// `rat` or a float comes with the operand it rewrites, the base 0 or the exponent 1, and
-    /// the carrier it writes there, which [`Self::power_swapped`] checks.
+    /// literal, or with a base parameter declared a float. No repair casts an int to a float:
+    /// `f64(k)` rounds above 2^53 in magnitude. Without the program's text, the test in words.
+    /// Each repair on a `rat` or a float comes with the operand it rewrites, the base 0 or the
+    /// exponent 1, and the carrier it writes there, which [`Self::power_swapped`] checks.
     fn power_repairs(&self, p: &PowerUse) -> Vec<(Repair, Option<(usize, Carrier)>)> {
         let (test, span) = (p.test, p.at);
         let words = || match test {
@@ -20449,6 +20446,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `String(g(c))` is rejected there too, as `String(0.5)` is. Complexity tradeoff: one
     /// application of a word of at most five arrows to one argument, the cost of checking the
     /// call as written, for each of the four words at each rejected application.
+    ///
+    /// A numeric cast that may change a number `held` holds is `None` too ([`Self::cast_loses`]):
+    /// since step L1.18 a cast to a float format rounds with no atom, so the atoms of its result
+    /// no longer show the loss, and a repair never narrows a type (DESIGN.md sec:diagnostics).
     pub(super) fn wrapped(
         &mut self,
         w: &'static str,
@@ -20460,7 +20461,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             ty: held.clone(),
             ..a.clone()
         };
+        if self.cast_loses(w, &arg) {
+            return None;
+        }
         self.tried(|ck| ck.word_end(w, arg, at))
+    }
+
+    /// Whether the numeric cast `w` may give a number other than the one its operand `a`
+    /// holds: of the values `a`'s type lists, one the cast changes ([`value_kept`]); of a type
+    /// that lists none, a carrier it holds that the cast does not keep ([`keeps_values`]), an
+    /// `int` kept by `f64` where the checker proves it within ±2^53 ([`Self::exact_in_f64`]).
+    /// `rat` keeps every number and `String` is not a numeric cast, so neither loses one.
+    // Complexity tradeoff: naive, run the cast on every value of the type, unbounded for an
+    // `int`. Used: one run of the cast and its inverse per listed value, the values the type
+    // already lists, else four carrier tests and at most one interval proof of the operand's
+    // ints, the cost of [`Self::ints_of`] on its expression.
+    fn cast_loses(&mut self, w: &str, a: &Arg<'a>) -> bool {
+        if !matches!(w, "int" | "f64" | "f32") {
+            return false;
+        }
+        if let Some(vs) = a.ty.kernel().and_then(|k| k.values_listed()) {
+            return !vs.iter().all(|v| value_kept(w, v));
+        }
+        let holds = |c: Carrier| !(&a.ty.set & &c.ty()).lists_nothing();
+        let exact = holds(Carrier::Int) && self.exact_in_f64(a);
+        [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
+            .into_iter()
+            .any(|c| holds(c) && !keeps_values(w, &Ty::carrier(c), exact))
     }
 
     /// The literal that the cast `w` gives on the literal argument `a` at `at`, of type `held`,
@@ -20481,7 +20508,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn literal_repair(&mut self, w: &str, a: &Arg<'a>, held: &Ty, at: Span) -> Option<Literal<'a>> {
         let [v] = held.kernel()?.values_listed()?.try_into().ok()?;
         let x = run(zedc_base::interp::prim(w)?, &v)?;
-        if matches!(x, Value::Atom(_)) {
+        // A cast to a float format rounds with no atom (step L1.18): a value it does not
+        // keep has no literal that says the same as the cast ([`value_kept`]).
+        if matches!(x, Value::Atom(_)) || !value_kept(w, &v) {
             return None;
         }
         // The value's own text, not `self.text`, which writes a value as the program spells
@@ -21466,8 +21495,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let int = l.bare && matches!(l.value, Value::Int(_) | Value::Big(_));
                 int.then(|| neg_value(&l.value, l.neg()))
             })?;
+            // A cast to a float format rounds with no atom (step L1.18), so a value it does
+            // not keep is no literal of the cast ([`value_kept`]).
             let x = run(zedc_base::interp::prim(c)?, &v)?;
-            (!matches!(x, Value::Atom(_))).then(|| Ty::lit(&x))
+            (!matches!(x, Value::Atom(_)) && value_kept(c, &v)).then(|| Ty::lit(&x))
         });
         let sides = [a, b];
         let mut fixes = [Vec::new(), Vec::new()];
@@ -24777,7 +24808,10 @@ impl WordOperand {
 fn decimal_of(v: &Value) -> String {
     if let Value::Rat(r) = v
         && let Ok(f) = r.to_f64()
-        && run(Prim::CastRat, &Value::float(f)).and_then(|b| as_rat(&b)).as_ref() == Some(&**r)
+        && run(Prim::CastRat, &Value::float(f))
+            .and_then(|b| as_rat(&b))
+            .as_ref()
+            == Some(&**r)
     {
         return Value::float(f).to_string();
     }

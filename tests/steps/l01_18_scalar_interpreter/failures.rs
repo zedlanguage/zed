@@ -44,7 +44,7 @@ fn a_merge_flattens_and_else_replaces_it() {
 #[test]
 fn an_atom_compared_with_equals_is_data() {
     assert_eq!(x("int(text(\"x\")) == int(text(\"y\"))"), "true");
-    assert_eq!(x("int(text(\"x\")) != int(real(2.5f64))"), "true");
+    assert_eq!(x("int(text(\"x\")) != round(real(1.0f64 / 0.0))"), "true");
 }
 
 #[test]

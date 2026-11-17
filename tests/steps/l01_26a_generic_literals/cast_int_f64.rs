@@ -116,29 +116,21 @@ fn a_cast_of_a_parameter_keeps_only_the_atoms_it_may_give() {
 #[test]
 fn the_menu_of_an_int_cast_not_proved_whole_offers_each_rounding_and_each_checks() {
     use super::fixes::fixes;
-    for (lit, want) in [
-        (
-            "7r/2r",
-            [("round", "", "4"), ("round", ", ties: #away", "4")],
-        ),
-        (
-            "2.5f64",
-            [("round", "", "2"), ("round", ", ties: #away", "3")],
-        ),
-    ] {
+    // Each word, its `ties:` argument, and the value it gives on 3.5 and on 2.5.
+    let words = [
+        ("round", "", ["4", "2"]),
+        ("round", ", ties: #away", ["4", "3"]),
+        ("floor", "", ["3", "2"]),
+        ("ceil", "", ["4", "3"]),
+        ("trunc", "", ["3", "2"]),
+        ("awayFromZero", "", ["4", "3"]),
+    ];
+    for (i, lit) in ["7r/2r", "2.5f64"].into_iter().enumerate() {
         let src = format!("k = int({lit});\n");
         let got = fixes(&src);
-        let mut expected: Vec<(String, String)> = want
-            .iter()
-            .map(|(w, ties, v)| (format!("k = {w}({lit}{ties});"), v.to_string()))
+        let expected: Vec<(String, &str)> = (words.iter())
+            .map(|(w, ties, v)| (format!("k = {w}({lit}{ties});"), v[i]))
             .collect();
-        expected.extend(
-            [("floor", "3"), ("ceil", "4"), ("trunc", "3")]
-                .iter()
-                .map(|(w, v)| (format!("k = {w}({lit});"), v.to_string())),
-        );
-        let away = if lit == "7r/2r" { "4" } else { "3" };
-        expected.push((format!("k = awayFromZero({lit});"), away.to_string()));
         assert_eq!(got.len(), expected.len(), "{src}: {got:?}");
         for ((line, holds), (want_line, v)) in got.iter().zip(&expected) {
             assert_eq!(line, want_line, "{src}");

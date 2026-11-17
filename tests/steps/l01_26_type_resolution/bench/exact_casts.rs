@@ -2,7 +2,7 @@ use zed_tests::scaling;
 
 use super::super::exact_casts::{
     arms_of_casts, bounded_casts, bounded_comparisons, cast_of_a_power, casts_in_range,
-    casts_of_literals,
+    casts_of_literals, int_casts_not_whole,
 };
 use super::super::scaling::resolved;
 
@@ -48,6 +48,23 @@ fn many_casts_of_ints_in_range_scale() {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
+}
+
+/// Besides its ratio: one rejection per cast. Small instance:
+/// `exact_casts::int_casts_not_proved_whole_are_one_rejection_each`.
+#[test]
+fn many_int_casts_not_whole_scale() {
+    // n casts to `int` not proved whole, half of a parameter and half of a constant, each
+    // rejected with its six rounding fixes, each fix checked by one trial of its word.
+    let units = resolved(200, int_casts_not_whole);
+    scaling::check(
+        "n int casts not proved whole, each with its menu",
+        200,
+        |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), n, "{:?}", info.errors);
+        },
+    );
 }
 
 #[test]
