@@ -1250,6 +1250,41 @@ fn concat_on_a_generic_lambda_parameter_notes_what_it_is() {
     assert!(out.stderr.contains(want), "{}", out.stderr);
 }
 
+/// `flatMap` keeps each list its function gives as a level (DESIGN.md sec:grouping, "`flatMap`
+/// on `K -> V0` with body `V0 -> Seq(V)` yields `K -> rank -> V`"), which a reader from Scala or
+/// Haskell does not expect (DOCS-TODO 198): a word after it whose function would take the
+/// entries of those lists is told so, and `map` is given the repair as code, which runs (plan
+/// row MSG-flatmap-kept-level-repair).
+#[test]
+fn a_function_after_flat_map_that_takes_the_lists_entries_is_told_of_the_level() {
+    saying(
+        "flat_map_level_note",
+        &[
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(w -> w + 1)",
+                "`flatMap` keeps each list",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(w -> w + 1)",
+                "repair: write `[[1, 2], [3]].flatMap(p -> p).map(w -> w.map(v -> v + 1))`",
+            ),
+            (
+                "[[1, 2], [3]].flatMap(p -> p).where(w -> w > 1).count",
+                "`flatMap` keeps each list",
+            ),
+            // The inner parameter takes a name the body does not write.
+            (
+                "[[1, 2], [3]].flatMap(p -> p).map(v -> v + 1)",
+                "repair: write `[[1, 2], [3]].flatMap(p -> p).map(v -> v.map(u -> u + 1))`",
+            ),
+        ],
+    );
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"${[[1, 2], [3]].flatMap(p -> p).map(w -> \
+               w.map(v -> v + 1)).count}\";\n}\n";
+    let out = run("fp_ops/flat_map_level_repair_runs", src, "", &[]);
+    assert!(out.status == 0, "{}", out.stderr);
+}
+
 /// The folds' and ends' misuses, each named in the program's own words.
 #[test]
 fn a_misused_fold_or_end_is_rejected_in_plain_words() {

@@ -413,14 +413,15 @@ pub(super) enum Frame<'a> {
     /// A remap, its source or a level being checked (DESIGN.md sec:remap_law).
     Remap(Box<remap::RemapF<'a>>),
     /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
-    /// the call's span (step L3.2).
-    MapFn(Ty, Span, bool),
+    /// the call's span (step L3.2), and the receiver where it is a call of `flatMap`
+    /// ([`Ck::flat_map_receiver`]).
+    MapFn(Ty, Span, bool, Option<&'a Expr>),
     /// `x.group(f)` or, with `true`, `x.rekey(f)`, `f` being checked: `x`'s type, the span of
     /// `x`, and the call's span (step L4.1; `group_end`).
     Group(Ty, Span, Span, bool),
     /// `x.flatMap(f)`, `f` being checked: `x`'s type and the call's span (step L4.1;
-    /// `flat_map_end`).
-    FlatMap(Ty, Span),
+    /// `flat_map_end`), and the receiver where it is a call of `flatMap` too.
+    FlatMap(Ty, Span, Option<&'a Expr>),
     /// `x.foldl(init, f)` or, with `true`, `x.foldr(f, init)`, waiting for `init`: `x`'s type,
     /// `f`, and the call's span (step L3.3; `fold_dir_end`).
     FoldInit(Ty, &'a Expr, Span, bool),
@@ -1202,9 +1203,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     remap::RemapNext::Done(t) => m.ty(t),
                 }
             }
-            Frame::MapFn(x, span, filter) => {
+            Frame::MapFn(x, span, filter, kept) => {
                 let f = m.take_arg();
-                let t = self.map_end(&x, f, span, filter);
+                let t = self.map_end(&x, f, span, filter, kept);
                 m.ty(t);
             }
             Frame::Group(x, recv, span, rekey) => {
@@ -1212,10 +1213,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.group_of(&x, recv, f, span, rekey);
                 m.ty(t);
             }
-            Frame::FlatMap(x, span) => {
+            Frame::FlatMap(x, span, kept) => {
                 let f = m.take_arg();
                 let at = f.at.unwrap_or(span);
-                let t = self.map_end(&x, f, span, false);
+                let t = self.map_end(&x, f, span, false, kept);
                 let t = self.flat_map_end(t, at);
                 m.ty(t);
             }
@@ -3755,6 +3756,136 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(Ty::func(Arc::new(sig)));
     }
 
+    /// The receiver `of` of `map`, `where` or `flatMap` where it is a call of `flatMap`, as
+    /// `xs.flatMap(p -> p)` in `xs.flatMap(p -> p).map(w -> w + 1)`.
+    fn flat_map_receiver(of: &'a Expr) -> Option<&'a Expr> {
+        let ExprKind::Call { callee, .. } = &of.kind else {
+            return None;
+        };
+        matches!(&callee.kind, ExprKind::Member { name, .. } if name == "flatMap").then_some(of)
+    }
+
+    /// Whether `entries` holds at least one family and each is a list, keyed by the ranks
+    /// `0`, `1`, … ([`Dense::Ranks`]).
+    // Complexity tradeoff: one scan of the pieces, O(pieces), made only where the receiver is
+    // a call of `flatMap`.
+    fn all_lists(entries: &Ty) -> bool {
+        let pieces = entries.pieces();
+        let list =
+            |p: &Piece| matches!(p, Piece::Fn(s) if s.data && matches!(s.dense, Dense::Ranks));
+        !pieces.is_empty() && pieces.iter().all(list)
+    }
+
+    /// Adds to the error at `at` in [`Ck::errors`], a refusal of the function `f` of `fsig`,
+    /// given to `map` or `where` (`filter`) on `entries`, the lists the call of `flatMap` `of`
+    /// keeps, a note that `flatMap` keeps each list its function gives as one entry, so that
+    /// `f` is given one list (DESIGN.md sec:grouping, "`flatMap` on `K -> V0` with body
+    /// `V0 -> Seq(V)` yields `K -> rank -> V`"; DOCS-TODO 198; plan row
+    /// MSG-flatmap-kept-level-repair). It is added only where `f` takes the entries of those
+    /// lists, tried as [`Self::try_outside`] tries a call, with the state restored after: a
+    /// refusal of those too has another cause. For `map` with a lambda of one parameter `w`,
+    /// the repair maps each list ([`Self::map_each_list`]).
+    // Complexity tradeoff: one more application of `f`, made only on a refusal after
+    // `flatMap`; checking every `map` after `flatMap` this way would cost one per call site.
+    #[allow(clippy::too_many_arguments)]
+    fn kept_lists(
+        &mut self,
+        of: &'a Expr,
+        f: &Arg<'a>,
+        fsig: &Sig,
+        entries: &Ty,
+        filter: bool,
+        at: usize,
+        span: Span,
+    ) {
+        let inner = (entries.pieces().iter())
+            .filter_map(|p| match p {
+                Piece::Fn(s) => Some(Self::family_entries(s)),
+                _ => None,
+            })
+            .fold(Ty::empty(), |out, t| out.union(&t));
+        let what = if filter { "`where`" } else { "`map`" };
+        let applied = self.applied.take();
+        let saved = self.mark();
+        self.trying = true;
+        self.apply(
+            Label::Text(what),
+            fsig,
+            vec![Some(Arg::of(inner))],
+            false,
+            span,
+        );
+        let takes = self.errors.len() == saved.errors;
+        self.trying = false;
+        self.undo(&saved);
+        self.applied = applied;
+        if !takes {
+            return;
+        }
+        let one = match f.expr.map(|e| &e.kind) {
+            Some(ExprKind::Lambda { params, body }) if params.len() == 1 => {
+                Some((&params[0], &**body))
+            }
+            _ => None,
+        };
+        let at_f = f.at.unwrap_or(span);
+        let given = match one {
+            Some((p, _)) => format!("so `{}` is one list", p.name),
+            None => "so the function is given one list at a time".to_string(),
+        };
+        let mut notes = vec![Note {
+            span: at_f,
+            text: format!("`flatMap` keeps each list its function gives as one entry, {given}"),
+        }];
+        if let Some((p, body)) = one.filter(|_| !filter)
+            && let Some(r) = self.map_each_list(of, p, body)
+        {
+            notes.push(Note {
+                span: at_f,
+                text: format!("repair: write `{r}`"),
+            });
+        }
+        self.errors[at].notes.extend(notes);
+    }
+
+    /// The repair of `of.map(w -> body)`, `of` a call of `flatMap`, that maps each list it
+    /// keeps: `of.map(w -> w.map(v -> body'))`, `body'` being `body` with each read of the
+    /// parameter `p` (`w`) a read of `v`, a name `body` does not write. `None` where `of` or
+    /// `body` takes more than one line.
+    // Complexity tradeoff: the reads in `body` are one range query of the unit's name uses,
+    // O(log U + r) for the r names `body` writes, and the text is written once, O(|body|);
+    // made only for a refusal's repair.
+    fn map_each_list(&self, of: &Expr, p: &Param, body: &Expr) -> Option<String> {
+        let recv = self.operand_text(Some(of.span))?;
+        let text = self.code(Some(body.span))?;
+        if text.contains('\n') {
+            return None;
+        }
+        let (lo, hi) = (body.span.start, body.span.end);
+        let names: Vec<(Span, &Ref)> = (self.t.res.uses)
+            .range(Span { start: lo, end: lo }..Span { start: hi, end: hi })
+            .map(|(s, r)| (*s, r))
+            .collect();
+        let written: HashSet<&str> = names
+            .iter()
+            .filter_map(|(s, _)| self.code(Some(*s)))
+            .collect();
+        let fresh = ["v", "u", "y", "z"].into_iter().map(String::from);
+        let v = (fresh.chain((1..).map(|i| format!("v{i}"))))
+            .find(|c| *c != p.name && !written.contains(c.as_str()))?;
+        let binders = &self.t.res.binders;
+        let reads_p = |r: &Ref| matches!(r, Ref::Bound(ids) if ids.iter().any(|&id| binders[id].span == p.span));
+        let (mut out, mut last) = (String::new(), lo);
+        for (s, _) in names.iter().filter(|(_, r)| reads_p(r)) {
+            out.push_str(&text[last - lo..s.start - lo]);
+            out.push_str(&v);
+            last = s.end;
+        }
+        out.push_str(&text[last - lo..]);
+        let w = &p.name;
+        Some(format!("{recv}.map({w} -> {w}.map({v} -> {out}))"))
+    }
+
     /// `x.map(f)`, with `x` of type `x` and `f` checked: each family `x` may be, with the
     /// same keys, and each entry `f` applied to it (step L3.2, DESIGN.md sec:type_language,
     /// the `map` row: "the guarantee and the permission ride through unchanged"). Each arrow
@@ -3766,7 +3897,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// each family's keys and entries, any key of which may now be missing, so each arrow's
     /// result gains `#notFound` and the family is no longer dense (DESIGN.md sec:type_language,
     /// the `where` row: the guarantee becomes empty, the permission rides through).
-    fn map_end(&mut self, x: &Ty, f: Arg<'a>, span: Span, filter: bool) -> Ty {
+    ///
+    /// `kept` is the receiver where it is a call of `flatMap`, whose lists a refusal of `f`
+    /// on them is told of ([`Self::kept_lists`]).
+    fn map_end(
+        &mut self,
+        x: &Ty,
+        f: Arg<'a>,
+        span: Span,
+        filter: bool,
+        kept: Option<&'a Expr>,
+    ) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let (name, word) = match filter {
             true => ("where", "`where`"),
@@ -3825,9 +3966,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let w = match (entries.lists_nothing(), &fsig, f_class) {
                         (true, ..) => Ty::empty(),
                         (false, Some(fsig), _) => {
+                            // The lists a call of `flatMap` keeps, copied only then.
+                            let lists = kept
+                                .filter(|_| Self::all_lists(&entries))
+                                .map(|of| (of, entries.clone()));
                             let arg = Arg::of(entries);
-                            self.apply(Label::Text(given), fsig, vec![Some(arg)], false, span)
-                                .0
+                            let before = self.errors.len();
+                            let w = (self.apply(
+                                Label::Text(given),
+                                fsig,
+                                vec![Some(arg)],
+                                false,
+                                span,
+                            ))
+                            .0;
+                            if let Some((of, entries)) = lists
+                                && self.errors.len() > before
+                            {
+                                self.kept_lists(of, &f, fsig, &entries, filter, before, span);
+                            }
+                            w
                         }
                         (false, None, k) => {
                             let k = k.expect("a class, as checked above");
@@ -3895,7 +4053,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Piece::Var(v) => {
                     let r = self.class_root(&v);
                     let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                        Some((_, Some(t))) => self.map_end(&t, f.clone(), span, filter),
+                        Some((_, Some(t))) => self.map_end(&t, f.clone(), span, filter, kept),
                         Some((r, None)) => {
                             let kind = NeedKind::Map {
                                 f: f.ty.clone(),
@@ -8209,7 +8367,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let first = self.lambda_entries(&x.ty, f, span);
                         let word = if name == "map" { "map" } else { "where" };
                         self.entry_param(word, &x.ty, of, f);
-                        m.k(Frame::MapFn(x.ty, span, name == "where"));
+                        let kept = Self::flat_map_receiver(of);
+                        m.k(Frame::MapFn(x.ty, span, name == "where", kept));
                         self.word_fn(m, f, first);
                     }
                     _ => {
@@ -8256,7 +8415,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ([f], [], false) => {
                         let first = self.lambda_entries(&x.ty, f, span);
                         self.entry_param("flatMap", &x.ty, of, f);
-                        m.k(Frame::FlatMap(x.ty, span));
+                        m.k(Frame::FlatMap(x.ty, span, Self::flat_map_receiver(of)));
                         self.word_fn(m, f, first);
                     }
                     _ => {
@@ -12149,7 +12308,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::SumMethod { site, beside } => self.sum_beside(&on, beside, span, *site),
             NeedKind::Map { f, filter } => {
                 let f = Arg::of(self.bound(f, binds));
-                self.map_end(&on, f, span, *filter)
+                self.map_end(&on, f, span, *filter, None)
             }
             NeedKind::Group { f, recv } => {
                 let f = Arg::of(self.bound(f, binds));
