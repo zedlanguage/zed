@@ -631,9 +631,23 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // If neither gives an answer and some row had both unit terms bounded to less than a period,
     // a last run takes the previous choice by `Atom` order (as Codex did in round 7, R7-CODEX-2):
     // without it the 5,000-formula enumeration test refused 70 formulas instead of 11. Each of
-    // the at most three runs is exact; only the last reads names, and only when the others refuse.
-    // Not proved, and false where two rows or more tie: then the first two runs try two of the
+    // the at most three runs is exact; the last reads names, and only when the others refuse.
+    // Where two rows or more tie, the first two runs also turn on the names: they try two of the
     // readings and the names choose which two (see step 3 of `solve_modular_whole`).
+    // So whether `f` is answered here or left to the general path can turn on the names, but the
+    // answer, when there is one, cannot (PROOF-modular-tied-rows-names). Proof: a reading of a
+    // remainder row `±x ± r + c_q·q + k == 0` takes one of its two unit terms as `r`, and its
+    // equality, with coefficient 1 or -1 there, defines that term by the others; putting the
+    // definition in every other row gives a formula with the same points, read on the other
+    // atoms, whichever term it defines. Every reading of every row is such a substitution, so
+    // each run decides a formula with the points of `f`, exactly where it answers (the contract
+    // of `solve_modular_whole`, checked against enumeration by
+    // `one_scope::one_variable_modular_formulas_match_enumeration`). Two runs that answer thus
+    // give one verdict, that of `f`: `Some(None)` only when `f` has no point, `Some(Some(_))`
+    // only with a point of it. Test:
+    // `solve_names_tests::solve_modular_never_gives_two_verdicts_on_tied_remainder_rows`.
+    // Which formulas are refused under which names is the name independence of U4 in
+    // docs/handoff/PERF-negated-chain-unsolved.md, owned by row PERF-negated-chain-unsolved.
     let mut tied = 0;
     let mut both_bounded = false;
     let found = match solve_modular_whole(f, want_model, false, false, &mut tied, &mut both_bounded)

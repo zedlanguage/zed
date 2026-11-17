@@ -368,6 +368,61 @@ fn two_tied_remainder_rows_are_answered_alike_under_every_naming() {
     }
 }
 
+/// PROOF-modular-tied-rows-names: on two and three tied remainder rows, with names drawn at
+/// random and those of `u`, `v` and `w` in each of their orders, [`modular::solve_modular`] and [`decide`]
+/// never give two verdicts: each run of `solve_modular` is exact, so a point or an empty answer
+/// is the formula's own, whichever readings the names choose. Whether `solve_modular` answers
+/// at all may turn on the names (PERF-negated-chain-unsolved, U4); this test asserts only what
+/// holds under every naming.
+#[test]
+fn solve_modular_never_gives_two_verdicts_on_tied_remainder_rows() {
+    let mut rng = Rng(crate::seed::seed(
+        "solve_modular_never_gives_two_verdicts_on_tied_remainder_rows",
+    ));
+    let mut answered = 0;
+    for (m, pairs, triangle) in [
+        (3, 0, false),
+        (4, 0, true),
+        (5, 2, false),
+        (1000, 7, false),
+        (1000, 0, true),
+        (1000, 8, true),
+    ] {
+        let (n, rows) = tied_remainders(m, [-(m + 200), -(m + 201), -(m + 202)], pairs, triangle);
+        let mut verdicts = BTreeSet::new();
+        for perm in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            for _ in 0..4 {
+                let mut name = names(&mut rng, n);
+                let drawn = name[..3].to_vec();
+                for (i, &p) in perm.iter().enumerate() {
+                    name[i] = drawn[p].clone();
+                }
+                let f = Formula::and(cons(&rows, &name).into_iter().map(Formula::Con).collect());
+                if let Some(found) = modular::solve_modular(&f, false) {
+                    answered += 1;
+                    verdicts.insert(found.is_some());
+                }
+                if let Ok(v) = decide(&f) {
+                    verdicts.insert(v);
+                }
+            }
+        }
+        assert!(
+            verdicts.len() <= 1,
+            "m {m}, {pairs} pairs, triangle {triangle}: both verdicts"
+        );
+    }
+    // The modular solver answered some of them, so its verdicts were compared.
+    assert!(answered > 0);
+}
+
 #[test]
 fn solve_answers_every_renaming_and_order_of_rows_alike() {
     let seed = crate::seed::seed("solve_answers_every_renaming_and_order_of_rows_alike");
