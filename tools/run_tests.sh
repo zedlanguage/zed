@@ -2,7 +2,7 @@
 # Runs the tests in pieces, one test binary, step folder, module or slow test each, each under a
 # limit of 20 s (more under load, below), and prints a line per piece as it ends. Usage, from a
 # checkout's root:
-#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [jobs]
+#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [jobs]
 #   tools/run_tests.sh --short-clone-remove
 # A run is of the correctness tests or, with --bench, of the benchmarks alone (TEST-bench-split,
 # author P169). A benchmark is a test whose path holds `bench::`: it lies in a module `bench`,
@@ -48,6 +48,18 @@
 # or a module is selected only with its binary's group, as <group>::<path>: a part of the pattern
 # (an alternative at its top level) that selects no binary stops the run with an error naming it.
 # A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
+# --trace <dir> runs each piece under strace, recording the file system calls of the piece and of
+# every process it starts (open, stat, access, exec, readlink, directory listings and the rest of
+# strace's %file class), and writes <dir>/<piece>.reads, the paths those calls named, one per
+# line, relative to the checkout and sorted, those outside the checkout left out; `.` is the
+# checkout's root, and `*` stands for every file, written when a call named the checkout's .git or
+# a relative path with no directory strace could name (its cwd is not shown). <dir>/groups lists each piece with its group
+# and step folder. tools/merge_check.sh --record uses these to tell which pieces a change since
+# a passing check could affect (MERGE-push-race). The overhead, measured 2026-11-16 on the 384
+# pieces of l01_26_type_resolution and short-l01_37a_short_addresses at 8 jobs and load 38 to 51:
+# the pieces' times summed to 40.4 to 52.1 s traced against 28.5 to 34.6 s plain, about 40 ms more
+# a piece (strace stops the piece at each file call, and loading its libraries makes hundreds);
+# the wall times, 19 to 39 s traced and 11 to 38 s plain, differed by less than their noise.
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
 # checkouts together. A piece's limit is max(20, 20 × load / cores) s: a load above the number of
 # cores raises the limit of the pieces that start under it in proportion. It was 60 s until
@@ -67,7 +79,7 @@
 # to a counter all threads share, and with tests beside each other the instruction counter read
 # up to 5% high (TEST-cov-scaling-noise). The short-addresses pieces are not built for coverage.
 args=$*
-features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov=
+features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -102,9 +114,17 @@ while [ $# -gt 0 ]; do
       cov=$2
       shift
       ;;
+    --trace)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--trace needs a directory for the read lists"
+        exit 2
+      fi
+      trace=$2
+      shift
+      ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--short-clone-remove] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [jobs])"
       exit 2
       ;;
   esac
@@ -153,6 +173,11 @@ if [ -n "$cov" ]; then
   export CARGO_TARGET_DIR=$root/build/cov
   export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage"
   export LLVM_PROFILE_FILE=$cov/other-%p.profraw
+fi
+if [ -n "$trace" ]; then
+  [[ $trace == /* ]] || trace=$root/$trace
+  mkdir -p "$trace" || exit 1
+  command -v strace >/dev/null || { echo "--trace needs strace"; exit 2; }
 fi
 # The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
 # so distinct values collide; its pieces check that every place that compares by address
@@ -347,16 +372,19 @@ select_pieces() {
     echo "piece; run tools/run_tests.sh --list without --only to write it again."
     exit 1
   fi
+  [ -z "$trace" ] || : >"$trace/groups"
   while read -r k group step name dir bin args; do
     [ "$k" = "$run_kind" ] || continue
     [ "$k" = test ] || args="${args:+$args }--nocapture"
     { selected "$group" "$name" || selected "$step" "$name"; } || continue
     if [ -z "$each_test" ]; then
+      [ -z "$trace" ] || echo "$name $group $step" >>"$trace/groups"
       echo "$name $dir $bin${args:+ $args}"
       continue
     fi
     list_binary "$bin"
     for t in $(piece_tests "$bin" $args); do
+      [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
       echo "${name%%::*}::$t $dir $bin --exact $t"
     done
   done <"$1" >"$out/pieces"
@@ -880,7 +908,38 @@ export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_thres
 # run also checks that the output does not depend on it. ZED_TREAP_SEED, when set, is kept.
 [ "$run_kind" = test ] || export ZED_TREAP_SEED=${ZED_TREAP_SEED:-0}
 cores=$(nproc)
-export root out slots slot_dir cores run_kind cov
+export root out slots slot_dir cores run_kind cov trace
+# Prints the paths the strace output $1 (strace -f -y -e trace=%file,getdents64) names under the
+# checkout, relative to it, sorted: for a call of the *at family each path after a directory
+# strace decoded (`AT_FDCWD</dir>, "path"`, or `3</dir>, ""` for the directory itself), joined to
+# it unless absolute; for a directory listing its directory; for any other call (execve, access,
+# chdir...) its first path, which must be absolute, as strace does not show the cwd a relative
+# one would be resolved against. A relative one of those, and the checkout's .git (a test that
+# runs git reads the files through the object store, and its answers change with each commit),
+# are printed as `*`: the piece may have read anything. The checkout's root itself is `.`.
+# Paths are normalized without following symbolic links, so a/../b is b.
+trace_reads() {
+  awk -v root="$root" '
+    / <\.\.\. [a-z_0-9]+ resumed>/ { next }
+    match($0, /^[0-9]+ +([a-z_0-9]+)\(/, m) {
+      call = m[1]; rest = substr($0, RSTART + RLENGTH)
+      if (call == "getdents64" || call == "getdents") {
+        if (match(rest, /^[0-9]+<([^>]*)>/, d)) print d[1]
+        next
+      }
+      if (call ~ /at2?$/ || call == "statx") {
+        while (match(rest, /<([^>]*)>, "([^"]*)"/, a)) {
+          p = a[2]
+          print (p == "" ? a[1] : p ~ /^\// ? p : a[1] "/" p)
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        next
+      }
+      # A relative path here is printed as root/.git, which the last step prints as `*`.
+      if (match(rest, /^"([^"]*)"/, q) && q[1] != "") print (q[1] ~ /^\// ? q[1] : root "/.git")
+    }' "$1" | sort -u | xargs -r -d '\n' realpath -m -s --relative-to="$root" -- |
+    awk '/^\.git(\/|$)/ { print "*"; next } !/^\.\.(\/|$)/' | sort -u
+}
 take_slot() {
   exec 5>"$slot_dir/queue"
   flock 5
@@ -919,10 +978,19 @@ piece() {
   else
     bound=("$root/tools/bench_limit.sh" "$limit" "$out/slot-$slot.limit")
   fi
+  # --trace: strace stops a process only at the calls it traces (--seccomp-bpf), and its output
+  # goes to a file of the slot, emptied once read, like $scratch.
+  tracer=()
+  [ -z "$trace" ] || tracer=(strace -f -qq --seccomp-bpf --kill-on-exit -y -e signal=none
+    -e trace=%file,getdents64 -o "$out/slot-$slot.strace")
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    "${bound[@]}" "$@" >"$scratch" 2>&1)
+    "${bound[@]}" "${tracer[@]}" "$@" >"$scratch" 2>&1)
   rc=$?
+  if [ -n "$trace" ]; then
+    trace_reads "$out/slot-$slot.strace" >"$trace/${name//\//_}.reads"
+    : >"$out/slot-$slot.strace"
+  fi
   ms=$((($(date +%s%N) - start) / 1000000))
   if [ "$run_kind" != test ]; then
     raised=
@@ -941,7 +1009,7 @@ piece() {
   : >"$scratch"
   [ "$rc" = 0 ]
 }
-export -f take_slot piece
+export -f take_slot piece trace_reads
 # A test that builds executables (zed_native::link) keeps each one and links it again only when
 # an input of its link changed (crates/zed-native/src/link.rs, `kept`). The runtime archive is
 # one of those inputs, and Cargo builds it again after any change to zed-native or a crate under
