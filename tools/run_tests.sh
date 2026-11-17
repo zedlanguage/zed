@@ -759,6 +759,16 @@ split="
   l25_08_mutate l25_08_mutate::scaling
   m0_12_refusal_census
 "
+# Tests of a crate's unit-test binary named here, as <binary name without its hash>::<test>,
+# run as a piece of their own (`--exact`), and the binary's other tests as one piece that skips
+# them. zedc_preimage took 20.9 s whole at load 53 and 34.6 s at load 97, where its other 76
+# tests take 5.7 s at load 89: its seed test of summaries read again takes 11 to 14 s alone at
+# load 19 to 60, nearly all of it round 1 (PERF-preimage-seed-7776978274844439420-round1), so a
+# piece started at low load ran past its limit of 20 s once the load rose
+# (TEST-lib-pieces-near-limit, 2026-11-17).
+alone="
+  zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
+"
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
 # a name, so it is a piece only when every test matching the filter lies in the module; otherwise
@@ -813,7 +823,14 @@ step_pieces() {
         zedc_*-*)
           c=crates/${n%-*}
           c=${c//_/-}
-          if [ -d "$c" ]; then echo "$n $c $p"; else echo "$n tests $p"; fi
+          [ -d "$c" ] || c=tests
+          skips=
+          for t in $alone; do
+            [ "${t%%::*}" = "$g" ] || continue
+            echo "$t $c $p --exact ${t#*::}"
+            skips="$skips --skip ${t#*::}"
+          done
+          echo "$n $c $p$skips"
           ;;
         zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;

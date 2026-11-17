@@ -110,15 +110,25 @@ fn comparing_equal_lists_built_on_two_threads_scales() {
     // the lists no longer build, met its last atom `2^m` times when compared `hi` then
     // `lo`.) Small instances: `equal_lists_built_on_two_threads_compare_equal`.
     let n = 1 << 15;
-    let on_a_thread = |m: usize| {
-        std::thread::spawn(move || paired_literals(m))
-            .join()
-            .unwrap()
-    };
-    let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, (on_a_thread(m), on_a_thread(m))))
-        .collect();
+    // The four lists are built at once, each on a thread of its own: one after another, the
+    // building held every stack sample of the first 32 s of a 38 s run at load 68
+    // (TIME-pieces-under-cap-high-load). Each is still built alone on its thread, so the two of
+    // a size share no node, and the runs measured are those of before.
+    let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = std::thread::scope(|s| {
+        let threads: Vec<_> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| {
+                (
+                    m,
+                    s.spawn(move || paired_literals(m)),
+                    s.spawn(move || paired_literals(m)),
+                )
+            })
+            .collect();
+        (threads.into_iter())
+            .map(|(m, a, b)| (m, (a.join().unwrap(), b.join().unwrap())))
+            .collect()
+    });
     scaling::check(
         "comparing equal lists built on two threads, by literals",
         n,
@@ -540,23 +550,37 @@ fn restricting_lists_that_share_a_tail_scales() {
     // with `m / 4` lists on each tail, so `8m` lists in all as over `SHAPES` tails of `m`
     // lists, where the ratio of the bytes ran from 8.6 to 10.5 by the run's draw
     // (PERF-set-digest-shape-free); memoized by list it is still `8m²`.
+    //
+    // The `4 * SHAPES` tails are built on a thread each, before any run is measured: building
+    // them held 12 of 20 stack samples taken a second apart, and built one after another the
+    // test took 29 to 43 s at load 62 to 68, near the limit run_tests.sh sets at that load; on
+    // threads, 26 s at load 73 (TIME-pieces-under-cap-high-load). The kernel's tables are
+    // shared by threads, as the tests that run at once share them; the runs measured are those
+    // of before, and their instructions and bytes did not change.
     let lists = scaling::inputs(n, |m| {
-        (0..4 * SHAPES)
-            .map(|j| {
-                let o = j * SHAPE_STRIDE;
-                let tail = blocks(o + 8000, m);
-                let Bdd::List(_, v) = &tail else {
-                    unreachable!("a list of blocks has a cell")
-                };
-                let heads: Vec<Bdd<Row>> = (0..m as u64 / 4)
-                    .map(|i| {
-                        let head = (!*v, Some(pair_block(o + 30000 + 2 * i)));
-                        Bdd::assemble(vec![head], &tail)
+        std::thread::scope(|s| {
+            let built: Vec<_> = (0..4 * SHAPES)
+                .map(|j| {
+                    s.spawn(move || {
+                        let o = j * SHAPE_STRIDE;
+                        let tail = blocks(o + 8000, m);
+                        let Bdd::List(_, v) = &tail else {
+                            unreachable!("a list of blocks has a cell")
+                        };
+                        let heads: Vec<Bdd<Row>> = (0..m as u64 / 4)
+                            .map(|i| {
+                                let head = (!*v, Some(pair_block(o + 30000 + 2 * i)));
+                                Bdd::assemble(vec![head], &tail)
+                            })
+                            .collect();
+                        (atom(o + 8000 + 2 * (m as u64 - 1)), heads)
                     })
-                    .collect();
-                (atom(o + 8000 + 2 * (m as u64 - 1)), heads)
-            })
-            .collect::<Vec<_>>()
+                })
+                .collect();
+            (built.into_iter())
+                .map(|t| t.join().expect("a tail and its lists"))
+                .collect::<Vec<_>>()
+        })
     });
     scaling::check("lists sharing a tail of m blocks, restricted", n, |m| {
         for (last, heads) in &lists[&m] {
@@ -576,24 +600,49 @@ fn a_long_meet_joined_to_short_meets_scales() {
     // half of them with the complement of one of its literals, each a choice then. Listing
     // both chains at each join took `O(m)` a join; the longer is now only looked up.
     let n = 1 << 14;
+    // The inputs are built, and dropped after the check, on `THREADS` threads: one after
+    // another, building them held the first 9 s and dropping them the last 8 s of a 42 s run at
+    // load 89, by stack samples taken every 1.5 s (TIME-pieces-under-cap-high-load). The runs
+    // measured are those of before; which thread built or drops an input changes no count.
+    const THREADS: u64 = 16;
     let parts = scaling::inputs(n, |m| {
-        let long = Part::Bdd(meet(40000, m));
         // The short meets' own atoms come after the long meet's: from 50000 they ran into the
         // long meet's atoms at `m` past 10,000, and a meet of two of its literals is implied by
         // it, so their union is that meet (`Bdd::absorbed`, CANON-list-absorb).
         let own = 40000 + m as u64;
-        let short: Vec<Part<Row>> = (0..m as u64)
-            .map(|i| match i % 2 {
-                0 => Part::Bdd(meet(own + 2 * i, 2)),
-                _ => Part::Bdd(meet(own + 2 * i, 1).and_literal((atom(40000 + i), false))),
-            })
-            .collect();
-        (long, short)
+        let short_meet = move |i: u64| match i % 2 {
+            0 => Part::Bdd(meet(own + 2 * i, 2)),
+            _ => Part::Bdd(meet(own + 2 * i, 1).and_literal((atom(40000 + i), false))),
+        };
+        std::thread::scope(|s| {
+            let long = s.spawn(move || Part::Bdd(meet_at_once(40000, m)));
+            let m = m as u64;
+            let chunks: Vec<_> = (0..THREADS)
+                .map(|j| {
+                    let range = j * m / THREADS..(j + 1) * m / THREADS;
+                    s.spawn(move || range.map(short_meet).collect::<Vec<_>>())
+                })
+                .collect();
+            let short: Vec<Part<Row>> = (chunks.into_iter())
+                .flat_map(|t| t.join().expect("short meets"))
+                .collect();
+            (long.join().expect("the long meet"), short)
+        })
     });
     scaling::check("a meet of m literals joined to m meets of two", n, |m| {
         let (long, short) = &parts[&m];
         for s in short {
             assert!(matches!(long.zip(s, Op::Or), Part::Expr(_)));
+        }
+    });
+    std::thread::scope(|s| {
+        for (_, (long, mut short)) in parts {
+            s.spawn(move || drop(long));
+            let chunk = short.len().div_ceil(THREADS as usize).max(1);
+            while !short.is_empty() {
+                let rest = short.split_off(short.len().saturating_sub(chunk));
+                s.spawn(move || drop(rest));
+            }
         }
     });
 }

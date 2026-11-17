@@ -1030,6 +1030,22 @@ pub(super) fn meet(base: u64, m: usize) -> Bdd<Row> {
     })
 }
 
+/// [`meet`] built as its one block at once: the block of the literals `x_k` not taken, of value
+/// `false`, before `true`. `O(m)` after the sort, against `O(m log m)` literal by literal; for
+/// the inputs of benchmarks (TIME-pieces-under-cap-high-load).
+pub(super) fn meet_at_once(base: u64, m: usize) -> Bdd<Row> {
+    let mut keys: Vec<_> = (0..m as u64).map(|k| (atom(base + k), false)).collect();
+    keys.sort();
+    Bdd::assemble(vec![(false, set::from_sorted(keys))], &Bdd::Leaf(true))
+}
+
+#[test]
+fn a_meet_built_at_once_is_the_meet_built_literal_by_literal() {
+    for m in 0..40 {
+        assert_eq!(meet_at_once(700, m).id(), meet(700, m).id(), "m = {m}");
+    }
+}
+
 /// The walks on expressions and diagrams nested `depth` deep: union rows, eval, eval3, the
 /// atoms, the forced atoms, restrict and settle, each on the input whose answer is known.
 pub(super) fn the_walks_over_parts_hold(depth: usize) {

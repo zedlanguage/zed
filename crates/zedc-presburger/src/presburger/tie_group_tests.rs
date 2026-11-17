@@ -24,6 +24,8 @@
 use super::*;
 use std::collections::HashSet;
 
+mod bench;
+
 /// A permutation of the variables, as the image of each.
 type Perm = Vec<usize>;
 
@@ -430,99 +432,57 @@ fn pair_kinds(which: &[usize]) -> Vec<Vec<KindRow>> {
     which.iter().map(|&w| all[w].clone()).collect()
 }
 
-/// Every system of two to four variables whose pairs each hold one of the seven kinds above.
+/// Every system of two and three variables whose pairs each hold one of the seven kinds above.
+/// Four variables, 24 namings of each of thousands of classes, is a benchmark
+/// (`bench::pairs_of_seven_kinds_on_four_variables`).
 #[test]
-fn pairs_of_seven_kinds_on_up_to_four_variables() {
-    for n in 2..=4 {
+fn pairs_of_seven_kinds_on_two_and_three_variables() {
+    for n in 2..=3 {
         let seen = check(&Family::new(n, 2, pair_kinds(&[0, 1, 2, 3, 4, 5, 6])));
         eprintln!("{n} variables: {seen:?}");
         assert!(seen.answered > 0 && seen.refused > 0);
     }
 }
 
-/// Every system of five variables whose pairs each hold no row, `x[i] >= x[j]` or
-/// `x[j] >= x[i]` (the oriented graphs), and every one whose pairs each hold no row or
-/// `x[i] + x[j] >= 1` (the graphs).
+/// Every system of five variables whose pairs each hold no row or `x[i] + x[j] >= 1`: the
+/// graphs. The oriented graphs on five variables, and the families on six, are benchmarks.
 #[test]
-fn oriented_graphs_and_graphs_on_five_variables() {
-    // The numbers of classes are those of the oriented graphs and of the graphs on five
-    // vertices (OEIS A001174 and A000088), which shows the enumeration misses none.
-    for (kinds, classes) in [(&[0, 1, 2][..], 582), (&[0, 3], 34)] {
-        let seen = check(&Family::new(5, 2, pair_kinds(kinds)));
-        eprintln!("kinds {kinds:?}: {seen:?}");
-        assert_eq!(seen.classes, classes);
-        assert!(seen.answered_with_cell > 0);
-    }
-}
-
-/// Every system of five variables whose pairs each hold no row, `x[i] >= x[j]`, `x[j] >=
-/// x[i]` or `x[i] + x[j] >= 1`, in eight pieces (9,608 classes, 1,152,960 namings).
-fn arcs_and_sums_on_five_variables(part: usize) {
-    let seen = check_part(&Family::new(5, 2, pair_kinds(&[0, 1, 2, 3])), part, 8);
+fn graphs_on_five_variables() {
+    let seen = check(&Family::new(5, 2, pair_kinds(&[0, 3])));
     eprintln!("{seen:?}");
-    assert!(seen.answered_with_cell > 0);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_0() {
-    arcs_and_sums_on_five_variables(0);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_1() {
-    arcs_and_sums_on_five_variables(1);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_2() {
-    arcs_and_sums_on_five_variables(2);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_3() {
-    arcs_and_sums_on_five_variables(3);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_4() {
-    arcs_and_sums_on_five_variables(4);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_5() {
-    arcs_and_sums_on_five_variables(5);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_6() {
-    arcs_and_sums_on_five_variables(6);
-}
-
-#[test]
-fn arcs_and_sums_on_five_variables_7() {
-    arcs_and_sums_on_five_variables(7);
-}
-
-/// Every system of six variables whose pairs each hold no row or `x[i] + x[j] >= 1`: the
-/// graphs, among them three disjoint pairs, which fixing two variables does not tell apart.
-#[test]
-fn graphs_on_six_variables() {
-    let seen = check(&Family::new(6, 2, pair_kinds(&[0, 3])));
-    eprintln!("{seen:?}");
-    // The number of graphs on six vertices (OEIS A000088).
-    assert_eq!(seen.classes, 156);
+    // The number of graphs on five vertices (OEIS A000088), which shows the enumeration misses
+    // none.
+    assert_eq!(seen.classes, 34);
     assert!(seen.answered_with_cell > 0 && seen.refused_symmetric > 0);
 }
 
-/// Every system of six variables whose pairs each hold `x[i] >= x[j]` or the reverse: the
-/// tournaments.
+/// Every system of five variables whose pairs each hold `x[i] >= x[j]` or the reverse: the
+/// tournaments, whose groups have odd order, so no symmetry swaps two variables.
 #[test]
-fn tournaments_on_six_variables() {
-    let seen = check(&Family::new(6, 2, pair_kinds(&[1, 2])));
+fn tournaments_on_five_variables() {
+    let seen = check(&Family::new(5, 2, pair_kinds(&[1, 2])));
     eprintln!("{seen:?}");
-    // The number of tournaments on six vertices (OEIS A000568).
-    assert_eq!(seen.classes, 56);
-    assert!(seen.answered_with_cell > 0);
+    // The number of tournaments on five vertices (OEIS A000568).
+    assert_eq!(seen.classes, 12);
+    assert!(seen.answered > 0);
+}
+
+/// The system of six variables whose pairs `(0, 1)`, `(2, 3)` and `(4, 5)` each hold
+/// `x[i] + x[j] >= 1` and whose other pairs hold no row: three disjoint pairs, which fixing two
+/// variables does not tell apart, the case `bench::graphs_on_six_variables` was written for.
+/// [`System::symmetries`] refuses a color whose variables `Aut` does send one to another;
+/// checked here under all 720 namings.
+#[test]
+fn three_disjoint_pairs_on_six_variables() {
+    let family = Family::new(6, 2, pair_kinds(&[0, 3]));
+    let enc: Vec<u8> = (family.slots.iter())
+        .map(|s| u8::from(matches!(s[..], [0, 1] | [2, 3] | [4, 5])))
+        .collect();
+    let mut seen = Seen::default();
+    check_class(&family, &enc, &mut seen);
+    eprintln!("{seen:?}");
+    assert_eq!(seen.namings, 720);
+    assert!(seen.refused_symmetric > 0);
 }
 
 /// Every system of five variables whose triples each hold no row or `x[i] + x[j] + x[k] >=

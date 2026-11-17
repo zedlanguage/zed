@@ -379,11 +379,29 @@ fn a_program_can_write_many_rows_of_one_digest() {
     assert_eq!((height, tied), (n, n));
 }
 
+/// Literals chosen against the fixed hash the priority was before, `mix(mix(13, digest),
+/// taken)`: among the numbers below `2^16`, the longest run, in key order, whose old priorities
+/// rise (about `2 sqrt(2^16)`, 512), which that hash made a path of over 400 nodes, far past
+/// the bound (`c` above 30). The same choice among `2^20` numbers (about 2,000 literals)
+/// is `bench::chosen_literals_among_a_million_numbers` (FAIL-unit-pieces-time: 6 s alone).
 #[test]
 fn chosen_literals_give_a_logarithmic_height() {
-    let mut keys: Vec<Key<Row>> = (0..1 << 20)
-        .map(|i| (Row::new(vec![int(i)]), true))
-        .collect();
+    chosen_literals(1 << 16, 400);
+}
+
+mod bench {
+    /// [`super::chosen_literals_give_a_logarithmic_height`] among `2^20` numbers.
+    #[test]
+    fn chosen_literals_among_a_million_numbers() {
+        super::chosen_literals(1 << 20, 1000);
+    }
+}
+
+/// The literals among the numbers below `n` chosen against the old fixed hash (the longest
+/// run whose old priorities rise, found by patience sorting in O(n log n)), at least `least` of
+/// them, checked against the bound.
+fn chosen_literals(n: usize, least: usize) {
+    let mut keys: Vec<Key<Row>> = (0..n).map(|i| (Row::new(vec![int(i)]), true)).collect();
     keys.sort();
     let fixed = |k: &Key<Row>| mix(mix(13, Atom::digest(&k.0)), u64::from(k.1));
     let p: Vec<u64> = keys.iter().map(fixed).collect();
@@ -405,7 +423,7 @@ fn chosen_literals_give_a_logarithmic_height() {
     {
         pick.push(prev[i]);
     }
-    assert!(pick.len() > 1000, "{} literals chosen", pick.len());
+    assert!(pick.len() > least, "{} literals chosen", pick.len());
     let atoms = pick.iter().map(|&i| keys[i].0.clone()).collect();
     check("chosen literals", atoms, |_| true);
 }
