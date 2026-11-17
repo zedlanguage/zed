@@ -243,7 +243,7 @@ fn functions_passed_as_family_entries_to_partial_slots_scale() {
 /// the whole is linear; keyed with it, as at commit 69526a75a, they were n needs at each of
 /// the n calls, n·n in all (ratio 44 at 8n). Besides its ratio: the program elaborates at each
 /// size. Small instances: `function_variance::named_calls_with_arguments_alike_run` and
-/// `function_variance::the_earlier_call_is_the_first_in_the_text`.
+/// `function_variance::a_generic_curried_call_runs_in_any_order_of_the_text`.
 #[test]
 fn many_calls_of_a_body_with_many_named_calls_scale() {
     let what = "one generic body with n named calls of its parameter, called at n places";
@@ -454,6 +454,39 @@ fn placing_p_named_arguments_in_the_function_called_scales() {
             rs.join(", "),
             xs.join(", "),
             args.join(", ")
+        );
+        with_prelude(elab(&src).unwrap().get("a").unwrap())
+    };
+    let n = 40;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        assert_eq!(kernel(&inputs[&m]).map(|v| v.to_string()), Ok("1".into()));
+    });
+}
+
+/// A curried call through the value of
+/// [`placing_p_named_arguments_in_the_function_called_scales`], giving one argument by name and
+/// leaving p - 1 out, then a call of its result with those p - 1 by name, run 200 times (row
+/// CALL-curried-placed): the function held places the given and the left-out arguments by a
+/// merge of sorted lists, O(p), and the result places the second call's by its own sorted
+/// list, O(p), so the run is linear in p. Small instance:
+/// `function_variance::a_curried_call_through_functions_differing_in_places_runs`.
+#[test]
+fn a_curried_call_placing_p_named_arguments_scales() {
+    use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
+    use zed_tests::step_helpers::l01_36_cranelift::kernel;
+    let what = "200 curried calls leaving p - 1 named arguments out, each result called by name";
+    let make = |p: usize| {
+        let ps: Vec<String> = (0..p).map(|i| format!("x{i}: int")).collect();
+        let rs: Vec<String> = (0..p).rev().map(|i| format!("x{i}: int")).collect();
+        let rest: Vec<String> = (1..p).map(|i| format!("x{i}: n")).collect();
+        let xs: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let src = format!(
+            "f({}) = x0 - x1;\ng({}) = x1 - x0 + 1;\npick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\nxs = [{}];\na = xs.map(n -> h(x0: n, ...)({}))[199];\n",
+            ps.join(", "),
+            rs.join(", "),
+            xs.join(", "),
+            rest.join(", ")
         );
         with_prelude(elab(&src).unwrap().get("a").unwrap())
     };

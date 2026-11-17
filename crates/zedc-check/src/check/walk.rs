@@ -637,44 +637,40 @@ impl<'s> CallShape<'s> {
     }
 }
 
-/// Why one call, built by the signature `r`, does not call a function of signature `t` right.
-enum Unaligned {
-    /// The two take different numbers of parameters.
-    Count,
-    /// The argument of this name goes to a different place in each.
-    Place(Arc<str>),
-    /// The call leaves out the parameter of this name, by position when the flag is set, and
-    /// the two fill it with different defaults.
-    Default(Arc<str>, bool),
-}
-
 /// Whether a call of the shape `shape`, which elaboration builds by `r` (the arguments placed
 /// by `r`'s parameter list, each parameter left out filled with `r`'s default, then one
-/// application of the value to the list), calls a function of signature `t` as `t` takes it,
-/// and if not, why ([`Unaligned`]). It does when the two have as many parameters, each named
-/// argument goes to the same place in both, and each parameter the call leaves out has the
-/// same default in both, the same parameter of the same function: a saturated call leaves no
-/// parameter to the function, so the default filled is the one that runs. A curried call
-/// leaves them to the lambda it gives, whose own calls fill them by its type. A name one of the
-/// two lacks, and a parameter left out with no default, are each an error of the call's check
-/// against that function, and are not repeated here.
+/// application of the value to the list), fails to call a function of signature `t` as `t`
+/// takes it. It calls it right when the two have as many parameters, each named argument goes
+/// to the same place in both, and each parameter the call leaves out has the same default in
+/// both, the same parameter of the same function: a saturated call leaves no parameter to the
+/// function, so the default filled is the one that runs. A curried call gives a lambda of the
+/// parameters left out, in `r`'s order, whose own calls are built by the type of the curried
+/// call's result, the union of what each function leaves out ([`Ck::partial`]); so it calls
+/// `t` right only when every parameter has the same name in the same place in both, and those
+/// left out the same default. Where it does not, the function held places the call
+/// ([`Ck::place_at`]; row CALL-curried-placed). A name one of the two lacks, and a parameter
+/// left out with no default, are each an error of the call's check against that function.
 ///
 /// Two functions of one value at one call are compared by the first; the conditions are
 /// equalities, so each function that agrees with the first agrees with every other.
 ///
 /// Complexity tradeoff: a map from name to place for each signature, O(p + a) for p parameters
 /// and a arguments; a search of the parameter list for each argument's name would be O(p·a).
-/// Defaults are compared by the declaration they belong to, not by their text, so two
-/// functions whose defaults are written alike, as `y: int = 1` in both, are refused too: two
-/// texts may read different names in their scopes, and proving them equal would be a
-/// comparison of the values they give, which the checker does not make.
-fn unaligned(r: &Sig, t: &Sig, shape: &CallShape) -> Option<Unaligned> {
+/// A curried call compares the names place by place, O(p). Defaults are compared by the
+/// declaration they belong to, not by their text, so two functions whose defaults are written
+/// alike, as `y: int = 1` in both, are placed too: two texts may read different names in their
+/// scopes, and proving them equal would be a comparison of the values they give, which the
+/// checker does not make.
+fn unaligned(r: &Sig, t: &Sig, shape: &CallShape) -> bool {
     if std::ptr::eq(r, t) {
-        return None;
+        return false;
     }
     let n = r.params.len();
     if n != t.params.len() {
-        return Some(Unaligned::Count);
+        return true;
+    }
+    if shape.curry && (r.params.iter().zip(&t.params)).any(|(a, b)| a.name != b.name) {
+        return true;
     }
     let places = |s: &Sig| -> HashMap<Arc<str>, usize> {
         (s.params.iter().enumerate())
@@ -688,21 +684,24 @@ fn unaligned(r: &Sig, t: &Sig, shape: &CallShape) -> Option<Unaligned> {
     }
     for &name in &shape.named {
         match (at_r.get(name), at_t.get(name)) {
-            (Some(a), Some(b)) if a != b => return Some(Unaligned::Place(name.into())),
+            (Some(a), Some(b)) if a != b => return true,
             (Some(&a), _) => filled[a] = true,
             _ => {}
         }
     }
-    if shape.curry {
-        return None;
-    }
-    (0..n).filter(|&j| !filled[j]).find_map(|j| {
+    (0..n).filter(|&j| !filled[j]).any(|j| {
         let (a, b) = (&r.params[j], &t.params[j]);
-        match (a.default, b.default) {
-            (Some(x), Some(y)) if x != y => Some(Unaligned::Default(a.name.clone(), a.positional)),
-            _ => None,
-        }
+        matches!((a.default, b.default), (Some(x), Some(y)) if x != y)
     })
+}
+
+/// Whether the function a value holds places a call of the shape `shape` (`Info::placed`),
+/// where elaboration would build it by `r` and the value may hold a function of signature
+/// `t`: the call does not call `t` right ([`unaligned`]), or leaves out a parameter of `t`
+/// whose default reads a name ([`open_left_out`]). `t` may be `r`, for the second.
+/// Complexity: O(p + a), as each of the two.
+fn callee_places(r: &Sig, t: &Sig, shape: &CallShape) -> bool {
+    unaligned(r, t, shape) || open_left_out(t, shape)
 }
 
 /// Whether a call of the shape `shape` leaves out a parameter of `s` whose default reads a
@@ -8052,22 +8051,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         let class = pieces.iter().any(|p| self.class_of(p).is_some());
         // Elaboration builds the call once, by the one signature recorded for it, where every
         // function the value may be takes the arguments in that signature's places
-        // ([`unaligned`]) and no default it fills reads a name; otherwise the function the
-        // value holds places them when the call runs (`Info::placed`). A curried call through
-        // such a value is still refused: its lambda's parameters are those of one signature.
+        // ([`unaligned`]) and no default it leaves out reads a name; otherwise the function the
+        // value holds places them when the call runs (`Info::placed`), a curried call's result
+        // too (row CALL-curried-placed). Complexity: O(v·(p + a)) for v functions in the value.
         let call = f.fns.first().cloned();
         if let Some(first) = &call {
             let shape = CallShape::of(receiver.is_some(), &args, curry);
-            for g in f.fns.iter().skip(1) {
-                if let Some(why) = unaligned(first, g, &shape) {
-                    match curry {
-                        true => self.unaligned_call(&what, first, g, why, false, None, span),
-                        false => self.place_at(site),
-                    }
-                    break;
-                }
-            }
-            if !curry && f.fns.iter().any(|g| open_left_out(g, &shape)) {
+            if f.fns.iter().any(|g| callee_places(first, g, &shape)) {
                 self.place_at(site);
             }
         }
@@ -8221,43 +8211,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Records `sig` as the signature by which elaboration builds the call written at `site`
     /// (row FAIL-elab-named-call-generic-param). A need met at a call of a generic function
     /// records it at the generic body's call, which elaboration builds once for every call of
-    /// the function, so each function met there after the first must take the arguments in
-    /// the first one's places ([`unaligned`]); one that does not is refused at the call that
-    /// passes it. [`Self::put`] drops a replay's writes, so this one is logged directly, as
-    /// [`Self::coerce_forwarded`] logs its, and a trial that is undone undoes it.
-    ///
-    /// Which call is "the first" is the order of the text, not the order the checker meets
-    /// the calls in, which follows what each definition uses: each recording is kept
-    /// ([`Ck::call_records`]) and [`Self::settle_calls`] compares them when the check ends.
-    /// The error found here, against the one met first, is raised all the same, so that a
-    /// trial sees that its call fails, and dropped then ([`Found::unordered`]): whether any
-    /// two disagree does not depend on the order, as [`unaligned`] tests equalities.
+    /// the function, so where a function met there after the first does not take the
+    /// arguments in the first one's places, or leaves out a default that reads a name
+    /// ([`callee_places`]), the function held places the call ([`Self::place_at`]), a curried
+    /// one too (row CALL-curried-placed). [`Self::put`] drops a replay's writes, so this one is
+    /// logged directly, as [`Self::coerce_forwarded`] logs its, and a trial that is undone
+    /// undoes it. The test is of equalities, so whether a call is placed does not depend on
+    /// the order the checker meets the calls in.
     fn record_call(&mut self, s: &CallValueF<'a>, site: Span, sig: Arc<Sig>) {
-        self.call_records.push(CallRecord {
-            site,
-            at: s.span,
-            direct: self.replaying == 0,
-            sig: sig.clone(),
-            what: s.what.clone(),
-            receiver: s.receiver.is_some(),
-            args: s.args.clone(),
-            curry: s.curry,
-        });
         if self.replaying == 0 {
             self.put(Undo::Call(site, Some(sig)));
             return;
         }
         if let Some(had) = self.info.calls.get(&site).cloned() {
             let shape = CallShape::of(s.receiver.is_some(), &s.args, s.curry);
-            if !s.curry {
-                if unaligned(&had, &sig, &shape).is_some() || open_left_out(&sig, &shape) {
-                    self.place_at(Some(site));
-                }
-                return;
-            }
-            if let Some(why) = unaligned(&had, &sig, &shape) {
-                self.unaligned_call(&s.what, &had, &sig, why, true, None, s.span);
-                (self.errors.last_mut().expect("the error just raised")).unordered = true;
+            if callee_places(&had, &sig, &shape) {
+                self.place_at(Some(site));
             }
             return;
         }
@@ -8265,89 +8234,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.log.push(undo);
     }
 
-    /// The error of a call at `span` of `w`, which may be a function of signature `r` or one
-    /// of signature `t`, which one built call cannot both call right, for the reason `why`.
-    /// With `earlier`, `w` is `t` at this call of a generic function and `r` at an earlier
-    /// one, and the call through `w` is the one in the generic body; without it, `w`'s own
-    /// type is a union of the two. A note points at the earlier call `first`, if given.
-    #[allow(clippy::too_many_arguments)]
-    fn unaligned_call(
-        &mut self,
-        w: &str,
-        r: &Sig,
-        t: &Sig,
-        why: Unaligned,
-        earlier: bool,
-        first: Option<Span>,
-        span: Span,
-    ) {
-        let w = callee(w);
-        let (a, b) = (self.sig_text(r), self.sig_text(t));
-        // Defaults are not part of a type's text, so two functions that differ only in them
-        // print alike; the message then says "two functions" of that one type.
-        let subject = match (earlier, a == b) {
-            (false, false) => {
-                format!("{w} here may be a function of type `{a}` or one of type `{b}`")
-            }
-            (false, true) => format!("{w} here may be either of two functions of type `{a}`"),
-            (true, false) => format!(
-                "{w} here is a function of type `{b}`, and at an earlier call one of type `{a}`; \
-                 the call through {w} is built once for both functions"
-            ),
-            (true, true) => format!(
-                "{w} here is a function of type `{a}` other than the one an earlier call \
-                 passes; the call through {w} is built once for both functions"
-            ),
-        };
-        let reorder = "repair: give the functions passed as this value the same parameters, \
-                       in the same order"
-            .to_string();
-        let (reason, repair) = match why {
-            Unaligned::Count => ("which take different numbers of parameters".into(), reorder),
-            Unaligned::Place(n) => (
-                format!("which have the parameter `{n}` in different places"),
-                reorder,
-            ),
-            Unaligned::Default(n, positional) => (
-                format!("whose defaults for `{n}`, which this call leaves out, differ"),
-                match positional {
-                    true => format!("repair: pass `{n}` in this call, by position"),
-                    false => format!("repair: pass `{n}` in this call, as `{n}: …`"),
-                },
-            ),
-        };
-        let message = format!(
-            "{subject}, {reason}. {}",
-            zedc_base::rejection::not_yet("One call through a value that may be either function")
-        );
-        let mut notes = self.derive(&[span]);
-        if let Some(at) = first {
-            notes.push(Note {
-                span: at,
-                text: format!("the earlier call, where {w} is a function of type `{a}`"),
-            });
-        }
-        notes.push(Note { span, text: repair });
-        self.error_with(span, message, notes);
-    }
-
     /// Settles the signatures recorded at calls through values once the walk is done. Each
     /// call alike to an earlier one in its class ([`Ck::alike_calls`]) gets the signature
     /// recorded there, if it has none of its own, and each bracket whose need a signature left
-    /// out ([`Ck::alike_brackets`]) gets the meaning recorded at the kept one, O(1) each. Then the
-    /// signatures recorded at each call
-    /// of a generic body are compared in the order of the text ([`Ck::call_records`]): the
-    /// reference is one the walk met at the call itself, or else the one found at the call of
-    /// the generic function first in the text; each other one that [`unaligned`] parts from
-    /// it is refused at its call, with a note at the reference's call. These replace the
-    /// errors the walk found in its own order ([`Found::unordered`]); one is refused where
-    /// the walk refused one, since the test is of equalities.
+    /// out ([`Ck::alike_brackets`]) gets the meaning recorded at the kept one, O(1) each.
     ///
-    /// Complexity tradeoff: one pass over the recorded signatures, grouped by call, O(k log k)
-    /// for k recordings, sorted for an order that does not depend on hashing; the calls alike
-    /// get their signatures by a walk over the pairs from each call that has one, each call
-    /// set once, O(p) for p pairs. Naive version: compare every two recordings of a call,
-    /// O(k²), to name each disagreeing pair; the equalities make one reference enough.
+    /// Complexity tradeoff: the calls alike get their signatures by a walk over the pairs from
+    /// each call that has one, each call set once, O(p) for p pairs.
     pub(super) fn settle_calls(&mut self) {
         let pairs = std::mem::take(&mut self.alike_calls);
         let mut later: HashMap<Span, Vec<Span>> = HashMap::new();
@@ -8404,48 +8297,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && let Some(b) = self.info.remaps.get_mut(&l)
             {
                 add_witness(b, &a);
-            }
-        }
-        // No call refused in the walk's order means every recording agrees with the first met
-        // at its call, and so with each other: nothing to refuse in the text's order.
-        if !self.errors.iter().any(|e| e.unordered) {
-            self.call_records.clear();
-            return;
-        }
-        self.errors.retain(|e| !e.unordered);
-        let records = std::mem::take(&mut self.call_records);
-        let mut by_site: HashMap<Span, Vec<usize>> = HashMap::new();
-        for (i, c) in records.iter().enumerate() {
-            by_site.entry(c.site).or_default().push(i);
-        }
-        let mut sites: Vec<(Span, Vec<usize>)> = by_site.into_iter().collect();
-        sites.sort_unstable_by_key(|(site, _)| *site);
-        for (_, ids) in sites {
-            // The first recorded among the direct ones, else the first in the text; `ids` is
-            // in the order recorded, so a tie keeps the first recorded.
-            let reference = (ids.iter().copied())
-                .find(|&i| records[i].direct)
-                .unwrap_or_else(|| {
-                    (ids.iter().copied())
-                        .min_by_key(|&i| records[i].at)
-                        .expect("a call with a record")
-                });
-            let r = &records[reference];
-            let mut seen: HashSet<(Span, *const Sig)> = HashSet::new();
-            for &i in &ids {
-                let t = &records[i];
-                if t.direct || i == reference || !seen.insert((t.at, Arc::as_ptr(&t.sig))) {
-                    continue;
-                }
-                let shape = CallShape::of(t.receiver, &t.args, t.curry);
-                // A call not curried was placed by the function when recorded (`record_call`).
-                if !t.curry {
-                    continue;
-                }
-                if let Some(why) = unaligned(&r.sig, &t.sig, &shape) {
-                    let first = (!r.direct).then_some(r.at);
-                    self.unaligned_call(&t.what, &r.sig, &t.sig, why, true, first, t.at);
-                }
             }
         }
     }
@@ -19234,9 +19085,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   through a test of its own domain, which changes no call inside it, so a use that
     ///   needs no test gets the function's own values. Any other argument gets no place.
     ///   A use that names its arguments takes the parameter order and defaults of the
-    ///   function the need meets ([`Self::record_call`]), and two functions that take the
-    ///   arguments in different places at one use are refused ([`unaligned`]), so no
-    ///   argument is passed to another parameter than the one it names.
+    ///   function the need meets ([`Self::record_call`]), and where two functions take the
+    ///   arguments in different places at one use, the function held places them
+    ///   ([`callee_places`]), so no argument is passed to another parameter than the one it
+    ///   names.
     /// - The result of calling a parameter (`y(x)`): a variable that no parameter holds, so
     ///   `place` finds nothing and the program is refused.
     /// - A port read: its value has the port's declared type (DESIGN.md sec:ports), never a

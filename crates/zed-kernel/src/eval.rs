@@ -1976,11 +1976,39 @@ impl<'t> Machine<'_, 't> {
             Value::Int(i) => usize::try_from(*i).ok(),
             _ => None,
         };
-        let [k, Value::Tuple(names), Value::Tuple(at)] = lit.as_slice() else {
-            return bad();
+        // `opt`, when the shape has it, gives each sorted name the index of a flag among the
+        // flags that follow the arguments, or -1: a name whose flag is true is left out, and
+        // the function called fills its parameter with its own default. The fill of a
+        // curried call's result passes it, which forwards the parameters its own call left out
+        // (row CALL-curried-placed).
+        let (k, names, at, opt) = match lit.as_slice() {
+            [k, Value::Tuple(names), Value::Tuple(at)] => (k, names, at, None),
+            [k, Value::Tuple(names), Value::Tuple(at), Value::Tuple(opt)] => {
+                (k, names, at, Some(opt.as_slice()))
+            }
+            _ => return bad(),
         };
         let (Some(k), names, at) = (int(k), names.as_slice(), at.as_slice()) else {
             return bad();
+        };
+        let mut given = given;
+        let flags = match opt {
+            None => Vec::new(),
+            Some(opt) => {
+                let q = opt
+                    .iter()
+                    .filter(|o| matches!(o, Value::Int(i) if *i >= 0))
+                    .count();
+                if opt.len() != names.len() || given.len() < q {
+                    return bad();
+                }
+                given.split_off(given.len() - q)
+            }
+        };
+        // Whether the name at `i` among the sorted names is left out by its flag.
+        let left_out = |i: usize| match opt.and_then(|o| o.get(i)).and_then(int) {
+            Some(x) => matches!(flags.get(x), Some(V::Data(Value::Bool(true)))),
+            None => false,
         };
         let placed = match &f {
             V::Closure(c) => c.placed.clone(),
@@ -1988,8 +2016,21 @@ impl<'t> Machine<'_, 't> {
         };
         let Some(placed) = placed else {
             // A function value with no list, a lambda or a primitive, takes its arguments by
-            // position, and a function of one parameter its one argument in either form.
-            if names.is_empty() || given.len() == 1 {
+            // position, and a function of one parameter its one argument in either form; an
+            // argument left out by its flag is not passed.
+            if opt.is_some() {
+                let mut dropped = vec![false; given.len()];
+                for i in (0..names.len()).filter(|&i| left_out(i)) {
+                    match at.get(i).and_then(int).and_then(|a| dropped.get_mut(k + a)) {
+                        Some(d) => *d = true,
+                        None => return bad(),
+                    }
+                }
+                given = (given.into_iter().zip(dropped))
+                    .filter_map(|(v, d)| (!d).then_some(v))
+                    .collect();
+            }
+            if names.iter().enumerate().all(|(i, _)| left_out(i)) || given.len() == 1 {
                 return self.apply(&f, given);
             }
             return type_err(
@@ -2026,6 +2067,10 @@ impl<'t> Machine<'_, 't> {
         slots.resize(n, None);
         let (mut i, mut j) = (0, 0);
         while let Some(name) = names.get(i) {
+            if left_out(i) {
+                i += 1;
+                continue;
+            }
             let Some(q) = pnames.get(j) else {
                 return type_err(format!("the function called has no parameter {name}"));
             };

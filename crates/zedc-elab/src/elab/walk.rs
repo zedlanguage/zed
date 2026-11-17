@@ -10,7 +10,7 @@
 
 mod fp_ops;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::sync::Arc;
 
@@ -179,8 +179,8 @@ enum Frame<'a> {
     /// A call through a value of no known signature: the value and the receiver.
     ValueArgs(Term, Option<Term>),
     /// A call through a value that the function called places ([`Elab::placed_call`]): the
-    /// value, the receiver and the call's shape.
-    PlacedArgs(Term, Option<Term>, Box<Value>),
+    /// value, the receiver, and the call's shape with, for a curried call, its result's list.
+    PlacedArgs(Term, Option<Term>, Box<Placing>),
     Fill(Box<FillF<'a>>),
     ValueDefault(Box<FillF<'a>>),
     DeclDefault(Box<FillF<'a>>),
@@ -348,6 +348,73 @@ struct Member<'a> {
     call: Call<'a>,
     /// Whether `x` is a literal, a value with no fields, so `.f` can only be a call.
     literal: bool,
+}
+
+/// The literals of a call that the function called places ([`Elab::placed_call`]): the call's
+/// `shape`, as [`Prim::CallNamed`] reads it, and for a curried call `curried`, its result's
+/// parameter list `(table, m, q)`: the table [`Prim::Place`] reads, the number `m` of named
+/// parameters the call leaves out, and the number `q` of those with a default.
+pub(super) struct Placing {
+    shape: Value,
+    curried: Option<(Value, usize, usize)>,
+}
+
+/// The [`Placing`] of a call with `k` arguments by position, a receiver counted, the named
+/// arguments `named` in the order written, and for a curried call `left`, the named
+/// parameters it leaves out in the order of the function's list, each with whether it has a
+/// default. The arguments the call passes are those written, then one for each of `left`,
+/// then one flag for each of `left` with a default ([`Elab::placed_call`]).
+// Complexity tradeoff: the names are sorted here, once per call written, O((a + l) log (a + l))
+// for a named arguments and l left out, so that each run of the call merges them with the
+// function's sorted names in O(p + a + l), where a search of the parameter list for each name
+// at each run costs O(p·(a + l)).
+fn placing(k: usize, named: &[&str], left: Option<&[(&str, bool)]>) -> Placing {
+    let given = named.len();
+    let mut q = 0;
+    let mut names: Vec<(Value, i64, i64)> = (named.iter().enumerate())
+        .map(|(i, n)| (Value::str(n), i as i64, -1))
+        .collect();
+    for (i, &(n, defaulted)) in left.unwrap_or_default().iter().enumerate() {
+        let flag = match defaulted {
+            true => {
+                q += 1;
+                q - 1
+            }
+            false => -1,
+        };
+        names.push((Value::str(n), (given + i) as i64, flag));
+    }
+    names.sort_unstable();
+    let (mut sorted, mut at, mut opt) = (Vec::new(), Vec::new(), Vec::new());
+    for (n, i, flag) in names {
+        sorted.push(n);
+        at.push(Value::Int(i));
+        opt.push(Value::Int(flag));
+    }
+    let mut shape = vec![Value::Int(k as i64), Value::tuple(sorted), Value::tuple(at)];
+    if q > 0 {
+        shape.push(Value::tuple(opt));
+    }
+    let curried = left.map(|left| {
+        let mut own: Vec<(Value, usize)> = (left.iter().enumerate())
+            .map(|(i, &(n, _))| (Value::str(n), i))
+            .collect();
+        own.sort_unstable();
+        let (own, places): (Vec<Value>, Vec<Value>) = (own.into_iter())
+            .map(|(n, i)| (n, Value::Int(i as i64)))
+            .unzip();
+        let table = Value::tuple(vec![
+            Value::Int(left.len() as i64),
+            Value::tuple(own),
+            Value::tuple(places),
+            Value::tuple(left.iter().map(|&(_, d)| Value::Bool(d)).collect()),
+        ]);
+        (table, left.len(), q as usize)
+    });
+    Placing {
+        shape: Value::tuple(shape),
+        curried,
+    }
 }
 
 /// What a call's arguments fill.
@@ -1594,8 +1661,13 @@ impl<'a> Elab<'a> {
             m.seq(call.positional.iter().collect(), false);
             return;
         };
-        if info.placed.contains(&call.span) {
-            return self.placed_call(m, f, receiver, call);
+        // A curried call's result may reach a call that the function called places, in a unit
+        // with one, so it carries its own list there (row CALL-curried-placed). The function
+        // it calls has a list too: a declared function used as a value has one in such a unit
+        // ([`Self::placed_value`]), and so does a curried call's result; a lambda's parameters
+        // are positional, so no curried call names them, and a prelude word gives no names.
+        if info.placed.contains(&call.span) || (call.curry && !info.placed.is_empty()) {
+            return self.placed_call(m, f, receiver, call, sig);
         }
         self.call_with(m, Callee::Value(f, sig), receiver, call);
     }
@@ -1607,27 +1679,103 @@ impl<'a> Elab<'a> {
     /// that order. `shape` is `(k, names, at)`: the number of positional arguments, the
     /// receiver counted, the names sorted, and the index among the named arguments of each
     /// sorted name, as [`Prim::CallNamed`] reads it.
-    // Complexity tradeoff: the names are sorted here, once per call written, O(a log a) for a
-    // named arguments, so that each run of the call merges them with the function's sorted
-    // names in O(p + a), where a search of the parameter list for each name at each run costs
-    // O(p·a).
-    fn placed_call(&mut self, m: &mut M<'a>, f: Term, receiver: Option<Term>, call: Call<'a>) {
+    ///
+    /// A curried call (`...`) gives the function of the named parameters that the function
+    /// held leaves out, with that function's defaults (row CALL-curried-placed): those of
+    /// `sig`, the signature the checker records for the call, that it does not fill, in `sig`'s
+    /// order, `l…`. Its value is `place(table, l… -> callNamed(shape, f, args…, l…))`, its own
+    /// list `table` naming the `l…`, so that a call of it is placed by its names too. Where
+    /// some of the `l…` have a default, it is `place(table, l… -> fill(l…, false…), fill)`
+    /// with `fill(l…, d…) = callNamed(shape, f, args…, l…, d…)`: `shape`'s `opt` gives each
+    /// defaulted `l` its flag `d`, so that a call of the result that leaves `l` out leaves it
+    /// out of the call of `f` too, which fills it with its own default.
+    ///
+    /// Why the function held fills them, and not the result: every function the value may hold
+    /// takes the names the result takes (the checker checks each), but each may fill a name
+    /// left out with its own default, or take more parameters that the call leaves out; the
+    /// names alone, passed on, say which. `sig` gives only which names the result takes, the
+    /// same for every such function, and which have a default (a call of the result leaving
+    /// out one with none in `sig` is refused, as it is for the function of `sig`).
+    // Complexity tradeoff: the names given are a set, O(a) to build, so finding those left out
+    // is O(p), where a search of the call's names for each parameter is O(p·a); [`placing`]
+    // sorts the names once per call written.
+    fn placed_call(
+        &mut self,
+        m: &mut M<'a>,
+        f: Term,
+        receiver: Option<Term>,
+        call: Call<'a>,
+        sig: &Sig,
+    ) {
         let k = usize::from(receiver.is_some()) + call.positional.len();
-        let mut names: Vec<(Value, usize)> = (call.named.iter().enumerate())
-            .map(|(i, (n, _))| (Value::str(n), i))
-            .collect();
-        names.sort_unstable();
-        let (names, at): (Vec<Value>, Vec<Value>) = (names.into_iter())
-            .map(|(n, i)| (n, Value::Int(i as i64)))
-            .unzip();
-        let shape = Value::tuple(vec![
-            Value::Int(k as i64),
-            Value::tuple(names),
-            Value::tuple(at),
-        ]);
-        m.k(Frame::PlacedArgs(f, receiver, Box::new(shape)));
+        let named: Vec<&str> = call.named.iter().map(|(n, _)| n.as_str()).collect();
+        // The parameters left out, each with whether it has a default.
+        let left: Option<Vec<(&str, bool)>> = call.curry.then(|| {
+            let given: HashSet<&str> = named.iter().copied().collect();
+            (sig.params.iter().skip(k))
+                .filter(|p| !given.contains(&*p.name))
+                .map(|p| (&*p.name, p.default.is_some()))
+                .collect()
+        });
+        let placing = placing(k, &named, left.as_deref());
+        m.k(Frame::PlacedArgs(f, receiver, Box::new(placing)));
         let args = (call.positional.iter()).chain(call.named.iter().map(|(_, e)| e));
         m.seq(args.collect(), false);
+    }
+
+    /// The term of a call [`Self::placed_call`] began, once its arguments `ts` are
+    /// elaborated: `callNamed(shape, f, receiver?, ts…)`, or for a curried call its result.
+    // Complexity: O(a + l) terms for a arguments and l parameters left out.
+    fn placed_args(
+        &mut self,
+        f: Term,
+        receiver: Option<Term>,
+        placing: Placing,
+        ts: Vec<Term>,
+    ) -> Term {
+        let Placing { shape, curried } = placing;
+        let mut args = vec![Term::Lit(shape)];
+        let Some((table, l, q)) = curried else {
+            args.push(f);
+            args.extend(receiver);
+            args.extend(ts);
+            return Term::Prim(Prim::CallNamed, args);
+        };
+        // The function value is bound once, outside the result's lambda, as the curried call
+        // through `Callee::Value` binds it.
+        let fv = self.temp();
+        let ls: Vec<Arc<str>> = (0..l).map(|_| self.temp()).collect();
+        let ds: Vec<Arc<str>> = (0..q).map(|_| self.temp()).collect();
+        let var = |x: &Arc<str>| Term::Var(x.clone());
+        args.push(Term::Var(fv.clone()));
+        args.extend(receiver);
+        args.extend(ts);
+        args.extend(ls.iter().map(var));
+        args.extend(ds.iter().map(var));
+        let call = Term::Prim(Prim::CallNamed, args);
+        let table = Term::Lit(table);
+        let result = match q {
+            0 => Term::Prim(Prim::Place, vec![table, Term::Lam(ls, Shared::new(call))]),
+            _ => {
+                let fill = self.temp();
+                let mut pass: Vec<Term> = ls.iter().map(var).collect();
+                pass.extend((0..q).map(|_| Term::Lit(Value::Bool(false))));
+                let own = Term::App(Shared::new(Term::Var(fill.clone())), pass);
+                let mut params = ls.clone();
+                params.extend(ds);
+                let place = Term::Prim(
+                    Prim::Place,
+                    vec![
+                        table,
+                        Term::Lam(ls, Shared::new(own)),
+                        Term::Var(fill.clone()),
+                    ],
+                );
+                let fill_lam = Term::Lam(params, Shared::new(call));
+                Term::Let(fill, Shared::new(fill_lam), Shared::new(place))
+            }
+        };
+        Term::Let(fv, Shared::new(f), Shared::new(result))
     }
 
     /// The value of the declared function `id` with its parameter list, `place(table, f)` or
@@ -1823,9 +1971,49 @@ impl<'a> Elab<'a> {
                 callee,
                 slots,
                 missing,
+                next,
                 ..
             } = *ff;
             let t = match callee {
+                // In a unit with a call that the function called places, the result may reach
+                // one, so it carries its own list as the curried call through a value that its
+                // function places does ([`Self::placed_call`]): the function's placed value
+                // ([`Self::place_term`]) called by `callNamed` (row CALL-curried-placed).
+                // `next` arguments came by position, a receiver counted; every parameter after
+                // them is given by name or left out, the curry having refused a positional one
+                // left out. O(p + a log a) more, once per call written; none while a default
+                // is not yet built, as `placed_value` (inside the default itself).
+                Callee::Declared(id, f) => {
+                    let callee = self.fref(id, span);
+                    let placed = match self.info.placed.is_empty() {
+                        true => None,
+                        false => self.place_term(id, f, (*callee).clone()),
+                    };
+                    match placed {
+                        Some(fv) => {
+                            let named: Vec<&str> = (next..n)
+                                .filter(|&j| slots[j].is_some())
+                                .map(|j| f.params[j].name.as_str())
+                                .collect();
+                            let left: Vec<(&str, bool)> = (missing.iter())
+                                .map(|&j| {
+                                    let p = &f.params[j];
+                                    (p.name.as_str(), p.default.is_some())
+                                })
+                                .collect();
+                            let placing = placing(next, &named, Some(&left));
+                            let ts = slots.into_iter().flatten().collect();
+                            self.placed_args(fv, None, placing, ts)
+                        }
+                        None => {
+                            let params =
+                                missing.iter().map(|&j| self.kname(&f.params[j])).collect();
+                            let call = Term::App(callee, self.param_vars(f));
+                            let body = self.supplied(f, slots, call);
+                            Term::Lam(params, Shared::new(body))
+                        }
+                    }
+                }
                 Callee::Value(f, _) => {
                     // The function value is bound once, outside the lambda.
                     let fv = self.temp();
@@ -1846,12 +2034,6 @@ impl<'a> Elab<'a> {
                         Shared::new(f),
                         Shared::new(Term::Lam(temps, Shared::new(call))),
                     )
-                }
-                Callee::Declared(id, f) => {
-                    let params = missing.iter().map(|&j| self.kname(&f.params[j])).collect();
-                    let callee = self.fref(id, span);
-                    let body = self.supplied(f, slots, Term::App(callee, self.param_vars(f)));
-                    Term::Lam(params, Shared::new(body))
                 }
             };
             m.give(Some(t));
@@ -3044,13 +3226,8 @@ impl<'a> Elab<'a> {
                 });
                 m.give(t);
             }
-            Frame::PlacedArgs(f, receiver, shape) => {
-                let t = all(m.got()).map(|ts| {
-                    let mut args = vec![Term::Lit(*shape), f];
-                    args.extend(receiver);
-                    args.extend(ts);
-                    Term::Prim(Prim::CallNamed, args)
-                });
+            Frame::PlacedArgs(f, receiver, placing) => {
+                let t = all(m.got()).map(|ts| self.placed_args(f, receiver, *placing, ts));
                 m.give(t);
             }
             Frame::Fill(mut ff) => {

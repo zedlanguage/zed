@@ -231,45 +231,134 @@ fn a_call_through_a_value_fills_a_default_that_reads_a_parameter_or_a_held_name(
     );
 }
 
-/// A curried call (`...`) through a value is built by one signature still: its lambda's
-/// parameters are those of one function. Where the functions the value may be take the
-/// parameters in different places, the checker refuses it as not compiled yet, with a repair.
+/// A function with a default that reads a parameter, used as a value inside its own cycle and
+/// called through it with that default left out, is recursion, and "Before step L6.4 the
+/// recursion is rejected as recursion" (DESIGN.md sec:checking_in_zed, the example "Mutual
+/// recursion"): the checker refuses each program as recursion, before the elaborator
+/// would build the value's defaults (`Elab::placed_value`). From step L6.4 they run, to 8, 8
+/// and 4 (row CALL-placed-value-recursive, its programs carried into row SCHED-scc-unit).
 #[test]
-fn a_curried_call_one_signature_cannot_place_for_every_function_is_refused() {
+fn a_function_used_as_a_value_in_its_own_cycle_is_refused_as_recursion() {
+    let not_yet = "which is recursion: this version of zedc does not compile it yet.";
+    let apply = "apply(k, v: int) = k(x: v);\n";
+    let g1 = "g(x: int, y: int = x) = if x > 3 { x + y } else { apply(k: g, v: x + 1) };";
+    assert_eq!(
+        type_errors(&format!("{g1}\n{apply}a = apply(k: g, v: 1);\n")),
+        [format!(
+            "`g` is defined in terms of itself, {not_yet} [{g1}]"
+        )]
+    );
+    let g2 = "g(x: int, y: int = x) = if x > 3 { x + y } else { h(v: x + 1) };";
+    assert_eq!(
+        type_errors(&format!(
+            "{g2}\nh(v: int) = apply(k: g, v: v);\n{apply}a = h(v: 1);\n"
+        )),
+        [format!(
+            "`g`, `h` are defined in terms of each other, {not_yet} [{g2}]"
+        )]
+    );
+    let f3 = "f(x: int, y: int = x) = if x > 3 { x } else { apply(k: f, v: x + 1) + apply(k: g, v: 0) };";
+    assert_eq!(
+        type_errors(&format!(
+            "g(x: int, y: int = x) = x + y;\n{f3}\n{apply}a = f(x: 1);\n"
+        )),
+        [format!(
+            "`f` is defined in terms of itself, {not_yet} [{f3}]"
+        )]
+    );
+}
+
+/// A curried call (`...`) through a value is the function of the named parameters that the
+/// function held leaves out, with that function's defaults (DESIGN.md sec:values_morphisms,
+/// "The function called places the arguments"; row CALL-curried-placed): where the functions
+/// the value may be take the parameters in different places, the curried call and the calls of
+/// its result give what the calls by the functions' names give.
+#[test]
+fn a_curried_call_through_functions_differing_in_places_runs() {
     let reordered = "f(a: int, b: int) = a - b;\ng(b: int, a: int) = a * 10 + b;\n";
-    let cases = [
-        // A union with the parameters in different orders.
-        (
-            format!(
-                "{reordered}pick(c: bool) = if c {{ f }} else {{ g }};\nh = pick(c: false);\np = h(a: 5, ...);\na = p(b: 2);\n"
-            ),
-            "which have the parameter `a` in different places",
-            "give the functions passed as this value the same parameters, in the same order",
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    runs_to(
+        &format!("{reordered}{pick}p = h(a: 5, ...);\na = p(b: 2);\n"),
+        "a",
+        "52",
+    );
+    runs_to(
+        &format!("{reordered}call(k) = k(a: 5, ...)(b: 2);\na = call(k: f) * 100 + call(k: g);\n"),
+        "a",
+        "352",
+    );
+    // The parameters left out lie in different places, though the one given does not.
+    runs_to(
+        "f(a: int, b: int, c: int) = a * 100 + b * 10 + c;\ng(a: int, c: int, b: int) = a + b * 1000 + c * 10000;\npick(c: bool) = if c { f } else { g };\nh = pick(c: false);\np = h(a: 1, ...);\na = p(c: 3, b: 2);\n",
+        "a",
+        "32001",
+    );
+    // The functions take different numbers of parameters: `g` fills `c` with its default.
+    runs_to(
+        &format!(
+            "f(a: int, b: int) = a - b;\ng(b: int, a: int, c: int = 7) = a * 10 + b + c * 100;\n{pick}p = h(a: 5, ...);\na = p(b: 2);\n"
         ),
-        // The same two functions passed at two calls of a generic function.
-        (
-            format!(
-                "{reordered}call(k) = k(a: 5, ...)(b: 2);\na = call(k: f) * 100 + call(k: g);\n"
-            ),
-            "and at an earlier call one of type `(a: int, b: int) -> int`",
-            "give the functions passed as this value the same parameters, in the same order",
-        ),
-    ];
-    for (src, reason, repair) in &cases {
-        let src = src.as_str();
-        let errors = type_errors(src);
-        assert_eq!(errors.len(), 1, "{src}: {errors:?}");
-        assert!(errors[0].contains(reason), "{src}: {errors:?}");
-        assert!(
-            errors[0].contains("does not compile it yet"),
-            "{src}: {errors:?}"
-        );
-        let (info, _) = super::info(src);
-        assert!(
-            (info.errors[0].notes.iter()).any(|n| n.text == format!("repair: {repair}")),
-            "{src}: {:?}",
-            info.errors[0].notes
-        );
+        "a",
+        "752",
+    );
+}
+
+/// The function a curried call through a value gives keeps the defaults of the function held:
+/// a call of it that leaves a parameter out gets that function's default, one that reads an
+/// earlier parameter or differs between the functions the value may be too (row
+/// CALL-curried-placed).
+#[test]
+fn a_curried_call_through_a_value_keeps_the_held_function_s_defaults() {
+    let defaults = "f(x: int, y: int = 1) = x + y;\ng(x: int, y: int = 2) = x * y;\n";
+    let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
+    runs_to(
+        &format!("{defaults}{pick}p = h(x: 3, ...);\na = p() * 100 + p(y: 5);\n"),
+        "a",
+        "615",
+    );
+    runs_to(
+        &format!("{defaults}cur(k) = k(x: 3, ...)();\na = cur(k: f) * 100 + cur(k: g);\n"),
+        "a",
+        "406",
+    );
+    let reads_x = "g(x: int, y: int = x) = x + y;\n";
+    runs_to(
+        &format!("{reads_x}k = g;\np = k(x: 3, ...);\na = p() * 100 + p(y: 1);\n"),
+        "a",
+        "604",
+    );
+    runs_to(
+        &format!("{reads_x}cur(k) = k(x: 3, ...);\na = cur(k: g)();\n"),
+        "a",
+        "6",
+    );
+}
+
+/// The function a curried call gives, through a declared function or through a value whose
+/// functions take the arguments alike, may itself reach a call that its function places,
+/// beside one that takes the parameters left out in another order; it carries its own list
+/// there, with the defaults of the function it calls (row CALL-curried-placed). Before, it was
+/// a lambda with no list, and the run stopped: "a function value without a parameter list was
+/// called with named arguments".
+#[test]
+fn a_curried_call_s_result_reaches_a_call_its_function_places() {
+    let fg = "f(a: int, b: int, c: int) = a * 100 + b * 10 + c;\ng(c: int, b: int, a: int) = a + b * 1000 + c * 10000;\n";
+    let declared = "pick(k: bool) = if k { f(a: 1, ...) } else { g(a: 1, ...) };\n";
+    let through =
+        "app(k) = k(a: 1, ...);\npick(k: bool) = if k { app(k: f) } else { g(a: 1, ...) };\n";
+    for (pick, k, want) in [
+        (declared, "false", "32001"),
+        (declared, "true", "123"),
+        (through, "true", "123"),
+        (through, "false", "32001"),
+    ] {
+        let src = format!("{fg}{pick}h = pick(k: {k});\na = h(c: 3, b: 2);\n");
+        runs_to(&src, "a", want);
+    }
+    let defaults = "f(a: int, b: int, c: int = 4) = a * 100 + b * 10 + c;\ng(c: int = 5, b: int, a: int) = a + b * 1000 + c * 10000;\n";
+    for (k, want) in [("false", "52001"), ("true", "124")] {
+        let src = format!("{defaults}{declared}h = pick(k: {k});\na = h(b: 2);\n");
+        runs_to(&src, "a", want);
     }
 }
 
@@ -302,93 +391,56 @@ fn named_calls_with_arguments_alike_run() {
     );
 }
 
-/// The call of a generic function that passes a function its body's curried call cannot be
-/// built for is the one later in the text than the first call; the message names the first
-/// call's type, and a note points at that call. The order the checker meets the calls in, which
-/// follows what each definition uses and not the text, does not change which call is refused
-/// (row TEST-call-site-need-key). Each program gives the same answer checked alone, after the
-/// others, and after the others in reverse order. (A call not curried runs for every function:
-/// [`a_call_through_functions_differing_in_places_or_defaults_runs`].)
+/// A generic function whose body makes a curried call through its parameter runs for every
+/// function its calls pass, whatever places each takes the parameters in, and whatever order
+/// the checker meets the calls in, which follows what each definition uses and not the text
+/// (rows TEST-call-site-need-key, CALL-curried-placed). Each program gives the same answer
+/// checked alone, after the others, and after the others in reverse order.
 #[test]
-fn the_earlier_call_is_the_first_in_the_text() {
+fn a_generic_curried_call_runs_in_any_order_of_the_text() {
     let head = "f(a: int, b: int) = a - b;\nf2(a: int, b: int) = a + b;\ng(b: int, a: int) = a * 10 + b;\ncall(k) = k(a: 5, ...)(b: 2);\n";
-    let ab = "(a: int, b: int) -> int";
-    let ba = "(b: int, a: int) -> int";
-    // The rest of the program; the calls refused; the type and the call the message names.
-    let cases: [(&str, &[&str], &str, &str); 8] = [
+    // The rest of the program, a name it defines, and that name's value: `call(k: f)` is 3,
+    // `call(k: f2)` 7 and `call(k: g)` 52.
+    let cases: [(&str, &str, &str); 8] = [
         (
             "x = call(k: f);\ny = call(k: g);\nz = call(k: f2);\n",
-            &["call(k: g)"],
-            ab,
-            "call(k: f)",
+            "y",
+            "52",
         ),
         (
             "x = call(k: g);\ny = call(k: f);\nz = call(k: f2);\n",
-            &["call(k: f)", "call(k: f2)"],
-            ba,
-            "call(k: g)",
+            "z",
+            "7",
         ),
+        ("y = x + call(k: g);\nx = call(k: f);\n", "y", "55"),
+        ("x = call(k: f);\ny = x + call(k: g);\n", "y", "55"),
         (
-            "y = x + call(k: g);\nx = call(k: f);\n",
-            &["call(k: f)"],
-            ba,
-            "call(k: g)",
+            "v() = u() + call(k: f);\nu() = call(k: g);\nw = v();\n",
+            "w",
+            "55",
         ),
-        (
-            "x = call(k: f);\ny = x + call(k: g);\n",
-            &["call(k: g)"],
-            ab,
-            "call(k: f)",
-        ),
-        (
-            "v() = u() + call(k: f);\nu() = call(k: g);\n",
-            &["call(k: g)"],
-            ab,
-            "call(k: f)",
-        ),
-        (
-            "a = call(k: g) * 100 + call(k: f);\n",
-            &["call(k: f)"],
-            ba,
-            "call(k: g)",
-        ),
+        ("a = call(k: g) * 100 + call(k: f);\n", "a", "5203"),
         (
             "z = y + call(k: f2);\ny = x + call(k: g);\nx = call(k: f);\n",
-            &["call(k: g)"],
-            ab,
-            "call(k: f2)",
+            "z",
+            "62",
         ),
         (
             "z = y + call(k: g);\ny = x + call(k: f2);\nx = call(k: f);\n",
-            &["call(k: f2)", "call(k: f)"],
-            ba,
-            "call(k: g)",
+            "z",
+            "62",
         ),
     ];
     let srcs: Vec<String> = cases.iter().map(|c| format!("{head}{}", c.0)).collect();
-    for (src, (_, refused, ty, first)) in srcs.iter().zip(&cases) {
-        let (info, _) = super::info(src);
-        let at = |start: usize, end: usize| &src[start..end];
-        let mut got: Vec<&str> = (info.errors.iter())
-            .map(|e| at(e.span.start, e.span.end))
-            .collect();
-        got.sort_unstable();
-        let mut want = refused.to_vec();
-        want.sort_unstable();
-        assert_eq!(got, want, "{src}: {:?}", info.errors);
-        for e in &info.errors {
-            let named = format!("and at an earlier call one of type `{ty}`");
-            assert!(e.message.contains(&named), "{src}: {}", e.message);
-            assert!(
-                (e.notes.iter()).any(|n| at(n.span.start, n.span.end) == *first
-                    && n.text
-                        == format!("the earlier call, where `k` is a function of type `{ty}`")),
-                "{src}: {:?}",
-                e.notes
-            );
-        }
+    for (src, (_, name, want)) in srcs.iter().zip(&cases) {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        runs_to(src, name, want);
     }
-    let answer = |src: &str| zedc::run::load(src.as_bytes()).err();
+    // A program to run needs a `main`.
+    let answer = |src: &str| {
+        let src = format!("{src}main(m: MainArgs) {{ m.stdout <- \"hello\"; }}\n");
+        zedc::run::load(src.as_bytes()).err()
+    };
     let alone: Vec<Option<String>> = (srcs.iter().cloned())
         .map(|src| std::thread::spawn(move || answer(&src)).join().unwrap())
         .collect();
@@ -397,7 +449,7 @@ fn the_earlier_call_is_the_first_in_the_text() {
     reversed.reverse();
     assert_eq!(alone, batch, "alone, then in a batch");
     assert_eq!(alone, reversed, "alone, then in a reversed batch");
-    assert!(alone.iter().all(Option::is_some));
+    assert!(alone.iter().all(Option::is_none), "{alone:?}");
 }
 
 /// Brackets, level words, scans, folds `><` and `.sum` written alike in one generic body are
@@ -2252,20 +2304,15 @@ fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
 #[test]
 fn a_parameter_with_a_bound_is_printed_with_its_bound() {
     let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
-    // A curried call, which one signature builds for both functions (a call not curried is
-    // placed by each function, and runs).
+    // A curried call through two functions of different parameter lists was refused with a
+    // message that printed both types; the function held now places it, and it runs (row
+    // CALL-curried-placed): `small` called with 2.5 gives 6 through the partial slot, so
+    // `twice(g: pass1)` is 6 and `twice(g: pass2)` is 6 + 1.
     let twice = format!(
         "{head}pass1(x, z: int = 0) = apply(f: x) + z;\npass2(x, y: int = 1, z: int = 0) = apply(f: x) + y + z;\ntwice(g) = g(x: small, ...)(z: 0);\na = twice(g: pass1) + twice(g: pass2);\n"
     );
-    let errors = type_errors(&twice);
-    let built = errors
-        .iter()
-        .find(|e| e.contains("the call through `g` is built once for both functions"))
-        .unwrap_or_else(|| panic!("{twice}: {errors:#?}"));
-    assert!(!built.contains("(x: _"), "{twice}: {built}");
-    let want = "`g` here is a function of type `(x: (x: int | f64) ->? int, y: int, z: int) -> int`, \
-                and at an earlier call one of type `(x: (x: int | f64) ->? int, z: int) -> int`";
-    assert!(built.contains(want), "{twice}: {built}");
+    assert_eq!(type_errors(&twice), Vec::<String>::new(), "{twice}");
+    runs_to(&twice, "a", "13");
 
     let pick = format!(
         "{head}pick(k: int) = if k > 1 {{ small }} else {{ big }};\ng = pick(k: 2);\na = pass(x: g);\n"

@@ -528,7 +528,9 @@ pub struct Info {
     /// (DESIGN.md sec:values_morphisms, "The function called places the arguments"): those
     /// where two functions the value may hold take the arguments in different places or fill
     /// a parameter left out from different defaults, or one fills it with a default that reads
-    /// its other parameters or its declaration's scope. Every other call through a value is
+    /// its other parameters or its declaration's scope; for a curried call, also where they
+    /// name any of their parameters differently (row CALL-curried-placed, [`Ck::record_call`]
+    /// and `unaligned` in walk.rs). Every other call through a value is
     /// placed by its recorded signature (`calls`) when it is compiled.
     pub placed: HashSet<Span>,
     /// The fit of each function argument that needs one, by its span.
@@ -1946,10 +1948,6 @@ struct Ck<'t, 'a> {
     /// need it kept: [`Ck::settle_calls`] gives the first the witness entries of the second's
     /// plan ([`Info::remaps`]). Undone with a trial, as [`Ck::alike_calls`] is.
     alike_remaps: Vec<(Span, Span)>,
-    /// Each signature recorded at a call through a value ([`Ck::record_call`]), in the order
-    /// recorded; undone with a trial. [`Ck::settle_calls`] compares those of each call in the
-    /// order of the text.
-    call_records: Vec<CallRecord<'a>>,
     /// Each call whose result holds a function with needs, or which leaves parameters open:
     /// a function passed to it may be called after it returns
     /// ([`Info::escaping_calls`]).
@@ -2509,7 +2507,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike_brackets: Vec::new(),
             alike_folds: Vec::new(),
             alike_remaps: Vec::new(),
-            call_records: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
             folds: BTreeMap::new(),
@@ -3060,7 +3057,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes,
             also: Vec::new(),
             lits: Vec::new(),
-            unordered: false,
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
@@ -6988,7 +6984,6 @@ struct Mark {
     alike_brackets: usize,
     alike_folds: usize,
     alike_remaps: usize,
-    call_records: usize,
 }
 
 /// The key of [`Ck::alike_sites`]: a bracket `v[x]` by its receiver's type, its component and
@@ -7023,21 +7018,6 @@ impl AlikeSite {
             AlikeSite::Remap(..) => self.clone(),
         }
     }
-}
-
-/// A signature recorded at a call through a value ([`Ck::record_call`]): the call in the text
-/// it is recorded at, `site`; the call it was found at, `at`, the site itself where the walk
-/// met the function there (`direct`), else the call of a generic function whose need the
-/// site's call is; and the call's callee and arguments, which give its shape (`CallShape`).
-pub(super) struct CallRecord<'a> {
-    site: Span,
-    at: Span,
-    direct: bool,
-    sig: Arc<Sig>,
-    what: Rc<str>,
-    receiver: bool,
-    args: Rc<Args<'a>>,
-    curry: bool,
 }
 
 /// The use `kind` without the call in the text it stands for, if it is a call need: the key
@@ -7239,7 +7219,6 @@ impl Ck<'_, '_> {
             alike_brackets: self.alike_brackets.len(),
             alike_folds: self.alike_folds.len(),
             alike_remaps: self.alike_remaps.len(),
-            call_records: self.call_records.len(),
         }
     }
 
@@ -7258,7 +7237,6 @@ impl Ck<'_, '_> {
         self.alike_brackets.truncate(m.alike_brackets);
         self.alike_folds.truncate(m.alike_folds);
         self.alike_remaps.truncate(m.alike_remaps);
-        self.call_records.truncate(m.call_records);
     }
 }
 
@@ -8483,11 +8461,6 @@ struct Found {
     /// part of a value ([`Ck::reject_lits`], [`Info::reported_literals`]); empty for an error
     /// that reports only what lies in its span.
     lits: Vec<Span>,
-    /// Whether it refuses a call of a generic function whose function the body's call cannot
-    /// be built for, found in the order the checker meets the calls: raised then, so a trial
-    /// sees it, and found again in the order of the text by [`Ck::settle_calls`], which
-    /// drops this one.
-    unordered: bool,
 }
 
 impl Found {
@@ -13979,7 +13952,6 @@ mod tests {
             alike_brackets: 0,
             alike_folds: 0,
             alike_remaps: 0,
-            call_records: 0,
         });
         assert!(ck.info.passes.is_empty());
     }

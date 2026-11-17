@@ -227,14 +227,19 @@ pub enum Prim {
     /// computes each such default in order in the declaration's scope and calls `f`. A
     /// positional call of the result is a call of `f`; [`Prim::CallNamed`] reads the list.
     /// Elaboration makes one only in a unit with a call through a value whose functions
-    /// place its arguments differently (plan row CALL-callee-places).
+    /// place its arguments differently (plan row CALL-callee-places), and as the result of a
+    /// curried call through a value that its function places (plan row CALL-curried-placed).
     Place,
     /// `callNamed(shape, f, args…)`: the call of the function value `f` with its arguments as
     /// written, the positional ones first, then the named ones in the order written. `shape`
     /// is a literal: the tuple `(k, names, at)` of the number of positional arguments, the
     /// names of the named ones sorted, and for each sorted name the index of its argument
     /// among the named ones. `f`'s list from [`Prim::Place`] places them, and its `fill`
-    /// fills the parameters left out.
+    /// fills the parameters left out. `shape` may be `(k, names, at, opt)`, the call then
+    /// `callNamed(shape, f, args…, flags…)`: for each sorted name, `opt` holds the index of
+    /// its flag among `flags`, or -1, and a name whose flag is true is left out, as if the
+    /// call did not write it. The fill of a curried call's result passes these, so that `f`
+    /// fills each parameter the result's own call leaves out (plan row CALL-curried-placed).
     CallNamed,
 }
 
