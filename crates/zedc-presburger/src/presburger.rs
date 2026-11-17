@@ -11120,6 +11120,8 @@ fn shadow_logged<'a>(
             if let Some(log) = log.as_deref_mut() {
                 log.push((x.clone(), taken.clone()));
             }
+            #[cfg(test)]
+            eliminated_most(taken.len(), taken.len() - 1);
             let at = (taken.iter().enumerate())
                 .filter(|(_, c)| c.rel == Rel::Eq && c.lin.terms[&x].is_unit())
                 .min_by_key(|(_, c)| c.lin.terms.len())
@@ -11197,6 +11199,8 @@ fn shadow_logged<'a>(
                 taken.push(c);
             }
         }
+        #[cfg(test)]
+        eliminated_most(taken.len(), lows.len() * highs.len());
         if let Some(log) = log.as_deref_mut() {
             log.push((x.clone(), taken));
         }
@@ -11205,6 +11209,22 @@ fn shadow_logged<'a>(
         }
     }
     Some(live.into_iter().flatten().collect())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The most rows one elimination of [`shadow_logged`] has taken out on this thread, and
+    /// with them the most pairs it has combined (rows put in, for an equality), each the
+    /// greatest seen; a test reads and clears it to bound the work of one elimination.
+    static ELIMINATED_MOST: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+fn eliminated_most(rows: usize, pairs: usize) {
+    ELIMINATED_MOST.with(|m| {
+        let (r, p) = m.get();
+        m.set((r.max(rows), p.max(pairs)));
+    });
 }
 
 /// Runs `leaf` on each item `0..keep.len()` in order, giving it the rows of the system `rows`
@@ -30568,6 +30588,31 @@ mod by_halves_against_old {
                     };
                     assert_eq!(h, want, "{s}, n = {n}, chain = {chain}");
                 }
+            }
+        }
+    }
+
+    /// The most rows one elimination of [`shadow_logged`] takes out, and the most pairs it
+    /// combines, while the chained pipeline is projected, every symbol asked or the first
+    /// credit alone (as `bench::omega::project_each_on_a_chained_pipeline_scales` asks), are
+    /// at most 4 each, at 16 and at 128 stages (PROOF-dead2-shadow-constant; the proof at that
+    /// benchmark): the work of an elimination does not grow with n.
+    #[test]
+    fn dead2_eliminations_read_as_many_rows_at_every_length() {
+        for first in [false, true] {
+            for n in [16, 128] {
+                let (f, mut syms) = dead2(n, true);
+                if first {
+                    syms.truncate(2);
+                    syms.remove(0);
+                }
+                ELIMINATED_MOST.with(|m| m.set((0, 0)));
+                project_each(&f, &syms).expect("answered");
+                let (rows, pairs) = ELIMINATED_MOST.with(Cell::get);
+                assert!(
+                    rows <= 4 && pairs <= 4,
+                    "n = {n}: {rows} rows, {pairs} pairs"
+                );
             }
         }
     }

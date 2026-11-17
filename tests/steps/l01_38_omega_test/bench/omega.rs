@@ -212,9 +212,21 @@ fn independent_stages_scale() {
 /// items and the rows that link them, O(w) rows; the ranges of one depth cover the k items
 /// once, so each depth projects O(k) rows, and there are ⌈log₂ k⌉ depths: O(k log k) rows
 /// projected in all. Each projection is linear in its rows: `linked_to` visits each row and
-/// atom once, and `shadow` eliminates each chain atom once, every row having at most three
-/// terms with coefficients ±1, so each elimination reads and makes O(1) rows (it makes no more
-/// than it takes out) and each hash lookup is O(1) expected. Measured, the rows projected go
+/// atom once, and `shadow` eliminates each chain atom once, reading and making O(1) rows, and
+/// each hash lookup is O(1) expected. The O(1) rows (PROOF-dead2-shadow-constant): the rows
+/// are bounds of one atom and chain rows `y[j] - y[i] + c >= 0` between two states, every
+/// coefficient ±1. Invariant: each state `y` left holds at most one bound of each sign
+/// (`shadow` keeps the tighter of two rows on one form) and at most two chain rows, one to
+/// the nearest state left on each side, with `y` of sign +1 toward the earlier stage and -1
+/// toward the later; a credit holds only its bounds. Eliminating `y[k]` pairs its at most two
+/// lower bounds (its own and the chain row to the earlier state) with its at most two upper
+/// bounds, at most 4 pairs, each making a bound of a neighbor (kept or dropped by the tighter)
+/// or the one chain row between the two neighbors, which is again of that shape, so the
+/// invariant holds after it; a credit's elimination makes a row without atoms. So each
+/// elimination reads at most 4 rows and makes at most 4, at every n. Tested by the probe of
+/// `presburger::by_halves_against_old::dead2_eliminations_read_as_many_rows_at_every_length`
+/// (in the crate, which counts the most rows taken and pairs made by one elimination): (4, 4) at
+/// 16 and at 128 stages, every symbol asked or the first credit alone. Measured, the rows projected go
 /// from 16,761 to 179,120 (10.69 times) and the instructions 9.6 times (857 M → 8.26 G).
 #[test]
 fn project_each_on_a_chained_pipeline_scales() {
