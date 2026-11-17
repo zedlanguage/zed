@@ -1,5 +1,5 @@
 //! Step S.7b, row CLIF-shim: the Cranelift shim `zed-clif`. Its C functions are called from Rust
-//! by the test target `s07b_clif_shim_calls` of the package `zed-clif` (`calls.rs` here), since
+//! by the test target `s_07b_clif_shim_calls` of the package `zed-clif` (`calls.rs` here), since
 //! this package forbids `unsafe`; this one checks the shim's Cranelift version: pinned exactly,
 //! the same as zed-native's, and the only Cranelift version in Cargo.lock.
 

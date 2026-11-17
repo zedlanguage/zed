@@ -17,11 +17,11 @@ crate-type = ["rlib", "staticlib"]
 # the step's other tests; it is a target of this package because it calls `unsafe` functions,
 # which the package of the step tests, zed-tests, forbids.
 [[test]]
-name = "s07b_clif_shim_calls"
-path = "../../tests/steps/s07b_clif_shim/calls.rs"
+name = "s_07b_clif_shim_calls"
+path = "../../tests/steps/s_07b_clif_shim/calls.rs"
 
 # The Cranelift version of zed-native, pinned exactly here and by Cargo.lock (row CLIF-shim);
-# the test s07b_clif_shim::versions checks the two agree.
+# the test s_07b_clif_shim::versions checks the two agree.
 [dependencies]
 cranelift-codegen = "=0.137.1"
 cranelift-module = "=0.137.1"

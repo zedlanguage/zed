@@ -454,8 +454,8 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   image readers, the error text and a release for each handle, image and error, each catching a
   panic at its entry. A function's constants and jump tables are bytes of its code, since
   Cranelift reports no separate read-only data. Not yet called by the compiler (row JIT-zed).
-  Tests `s07b_clif_shim_calls` (package `zed-clif`, every function through its C interface) and
-  `s07b_clif_shim` (the version); COMPLEXITY.md CLIF-shim.
+  Tests `s_07b_clif_shim_calls` (package `zed-clif`, every function through its C interface) and
+  `s_07b_clif_shim` (the version); COMPLEXITY.md CLIF-shim.
 - Complexity audit (2026-10-30, DESIGN.md Part G, "Every algorithm is of low complexity") (the caps and budgets named here were removed later by docs/thresholds.md, replacements 3, 4, 8 and 9):
   every finding is listed in COMPLEXITY.md with its state. Fixed so far: the preimage transfer
   (exponential in `let` depth and guard nesting, now one computation per term and scope) and

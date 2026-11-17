@@ -262,14 +262,14 @@ path = "steps/m0_11_prelude_axioms_and_limits/mod.rs"
 name = "m0_12_refusal_census"
 path = "steps/m0_12_refusal_census/mod.rs"
 [[test]]
-name = "s07b_clif_shim"
-path = "steps/s07b_clif_shim/mod.rs"
-[[test]]
 name = "s_01_port_catalog"
 path = "steps/s_01_port_catalog/mod.rs"
 [[test]]
 name = "s_01f_import_graph"
 path = "steps/s_01f_import_graph/mod.rs"
+[[test]]
+name = "s_07b_clif_shim"
+path = "steps/s_07b_clif_shim/mod.rs"
 # END step targets
 
 # The tests that need tools outside the Rust toolchain; tools/run_tests.sh --full runs them.

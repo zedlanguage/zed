@@ -1,8 +1,8 @@
-# s07b_clif_shim: completeness (step S.7b)
+# s_07b_clif_shim: completeness (step S.7b)
 
 Row CLIF-shim. The code under test is `crates/zed-clif/src/lib.rs`, the Cranelift shim: its C
 functions, each called from Rust through an `extern "C"` block with opaque handles, as a C caller
-calls them. Those tests are the target `s07b_clif_shim_calls` of the package `zed-clif`
+calls them. Those tests are the target `s_07b_clif_shim_calls` of the package `zed-clif`
 (`calls.rs`), since the step tests' package `zed-tests` forbids `unsafe`; `mod.rs` is this
 folder's `zed-tests` target and checks the Cranelift version. Expected results are from DESIGN
 step S.7b (the shim's interface) and the row's list of cases.

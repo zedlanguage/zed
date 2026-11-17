@@ -370,7 +370,7 @@ fn generate(target: &ZedClifTarget, text: &str, symbols: &[&str]) -> Result<ZedC
     // allocate them again for each. Both are O(size of the text) for parsing plus, per function,
     // Cranelift's verifier and compiler on it, which this crate does not bound: their cost per
     // function is Cranelift's (not proved linear in the size of a function: register allocation
-    // and the e-graph pass are Cranelift's own; the scaling test of `s07b_clif_shim_calls`
+    // and the e-graph pass are Cranelift's own; the scaling test of `s_07b_clif_shim_calls`
     // measures the number of functions at one size). Names are resolved per relocation by an
     // index into `symbols`, O(1) each, against O(symbols) for a search by name.
     if let Some((line, words)) = preamble_line(text) {
