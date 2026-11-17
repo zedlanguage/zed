@@ -18,8 +18,8 @@
 //! - `zed/fences/canon-serial.md`: the tables of step M0.7's serialization, each node's tag and
 //!   its fields in order, and each primitive's code, which
 //!   `m0_07_canonicalization::serial_text` serializes by;
-//! - `zed/synced-from`: the spec commit the copies were written from ([`STAMP`]), not written
-//!   or compared with `--check`.
+//! - `zed/synced-from`: the spec commit the copies were written from ([`STAMP`]), and that of
+//!   each copy held back with `--hold COPY`, not written or compared with `--check`.
 //!
 //! It then runs the checks that read the spec's prose, which this repository does not hold:
 //! the prelude laws against `docs/mathlib-study.md`, the build modes and the kinds of build
@@ -40,26 +40,45 @@ use crate::{Outcome, impl_root, say};
 /// The variable that names the spec checkout when no directory is given.
 pub const VAR: &str = "ZED_SPEC_DIR";
 
-/// The spec checkout the tool reads: the directory among `args` (all but `--check`), or else
-/// `var`, the value of [`VAR`].
+/// The usage line.
+const USAGE: &str = "usage: sync [SPEC_DIR] [--check] [--hold COPY]...";
+
+/// The spec checkout the tool reads: the directory among `args` (all but `--check` and each
+/// `--hold COPY`), or else `var`, the value of [`VAR`].
 pub fn spec_dir(args: &[String], var: Option<String>) -> Result<String, String> {
-    let mut dirs = args.iter().filter(|a| *a != "--check");
+    let (_, rest) = held(args)?;
+    let mut dirs = rest.into_iter().filter(|a| *a != "--check");
     match (dirs.next(), dirs.next()) {
         (Some(dir), None) => Ok(dir.clone()),
         (None, None) => var
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| format!("usage: sync [SPEC_DIR] [--check], or set {VAR}")),
-        _ => Err("usage: sync [SPEC_DIR] [--check]".into()),
+            .ok_or_else(|| format!("{USAGE}, or set {VAR}")),
+        _ => Err(USAGE.into()),
     }
+}
+
+/// The copies `args` hold back, each named by `--hold COPY`, and the other arguments.
+fn held(args: &[String]) -> Result<(Vec<String>, Vec<&String>), String> {
+    let (mut hold, mut rest) = (Vec::new(), Vec::new());
+    let mut args = args.iter();
+    while let Some(a) = args.next() {
+        if a == "--hold" {
+            hold.push(args.next().ok_or(USAGE)?.clone());
+        } else {
+            rest.push(a);
+        }
+    }
+    Ok((hold, rest))
 }
 
 /// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
     let check = args.iter().any(|a| a == "--check");
     let dir = spec_dir(args, std::env::var(VAR).ok())?;
+    let (hold, _) = held(args)?;
     let spec = Spec::open(&dir)?;
     let root = impl_root();
-    let copies_ok = sync_into(&spec, &format!("{root}/zed"), check, out)?;
+    let copies_ok = sync_holding(&spec, &format!("{root}/zed"), check, &hold, out)?;
     let design = read_text(&spec.design)?;
     let page = read_text(&format!("{root}/docs/mathlib-study.md"))?;
     let mut checks_ok = true;
@@ -218,10 +237,85 @@ fn lines_of(lines: &[String]) -> String {
 /// Brings the grammar and fixtures under `zed` up to `spec`, or with `check` only names each
 /// file that is out of date.
 pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outcome {
+    sync_holding(spec, zed, check, &[], out)
+}
+
+/// [`sync_into`], holding back the copies named in `hold` (by file name, as `syntax.peg`): a held
+/// copy that is out of date is not written, and [`STAMP`] keeps the commit it was written from
+/// on a line of its own (SYNC-held-files-stamp), so that `--check` and merge-push's report of
+/// the lag give its own lag, not that of the other copies.
+pub fn sync_holding(
+    spec: &Spec,
+    zed: &str,
+    check: bool,
+    hold: &[String],
+    out: &mut String,
+) -> Outcome {
+    let copies = copies(spec, zed)?;
+    if let Some(h) = hold
+        .iter()
+        .find(|h| !copies.iter().any(|(dest, _)| base_name(dest) == h.as_str()))
+    {
+        return Err(format!(
+            "--hold {h}: no copy of the spec is named so; {USAGE}"
+        ));
+    }
+    let stamp_path = format!("{zed}/{STAMP}");
+    let old = read_text(&stamp_path).ok();
+    let mut stale = false;
+    let mut kept = String::new();
+    for (dest, want) in copies {
+        if read_text(&dest).ok().as_ref() == Some(&want) {
+            continue;
+        }
+        let name = base_name(&dest);
+        let own = old.as_deref().and_then(|s| own_commit(s, name));
+        if check {
+            stale = true;
+            match own {
+                Some(from) => say!(out, "{name} is out of date, copied from zed {from}"),
+                None => say!(out, "{name} is out of date"),
+            }
+        } else if hold.iter().any(|h| h == name) {
+            // A held copy that was current at the last sync was written from the commit that
+            // sync names on its first line.
+            let from = own
+                .or_else(|| old.as_deref().and_then(|s| s.lines().next()))
+                .unwrap_or("unknown");
+            say!(out, "{name} is held, copied from zed {from}");
+            writeln!(kept, "{name} {from}").expect("writing to a String");
+        } else {
+            say!(out, "{name} is written");
+            std::fs::write(&dest, want).map_err(|e| format!("{dest}: {e}"))?;
+        }
+    }
+    if !check {
+        // The stamp is not a copy, so --check does not compare it: a copy is current or not
+        // whatever commit it was written from.
+        let want = format!("{}\n{kept}", spec_commit(&spec.root));
+        if old.as_ref() != Some(&want) {
+            say!(out, "{STAMP} is written");
+            std::fs::write(&stamp_path, want).map_err(|e| format!("{stamp_path}: {e}"))?;
+        }
+    }
+    Ok(!(stale && check))
+}
+
+/// The commit the stamp text `stamp` names for the copy `name` on a line of its own, which it
+/// has when the copy was held back from a later sync.
+fn own_commit<'a>(stamp: &'a str, name: &str) -> Option<&'a str> {
+    stamp
+        .lines()
+        .skip(1)
+        .find_map(|l| l.strip_prefix(name)?.strip_prefix(' '))
+}
+
+/// Each copy under `zed` with the text `spec` gives it.
+fn copies(spec: &Spec, zed: &str) -> Result<Vec<(String, String)>, String> {
     let root = &spec.root;
     let (design_path, examples_path) = (spec.design.clone(), format!("{root}/EXAMPLES.md"));
     let design = read_text(&design_path)?;
-    let mut copies = vec![
+    Ok(vec![
         (
             format!("{zed}/fences/design.md"),
             render(&design_path, spec)?,
@@ -263,18 +357,14 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
             format!("{zed}/fences/canon-serial.md"),
             serial_tables(&design),
         ),
-    ];
-    if !check {
-        // The stamp is not a copy, so --check does not compare it: a copy is current or not
-        // whatever commit it was written from.
-        copies.push((format!("{zed}/{STAMP}"), format!("{}\n", spec_commit(root))));
-    }
-    refresh(copies, check, out)
+    ])
 }
 
 /// The file under `zed/` that names the spec commit the copies were last written from
 /// (MERGE-spec-lag-by-pin), read by /home/luke/Work/wt/merge-push.sh to list the spec commits
-/// not yet synced.
+/// not yet synced. Its first line is that commit ([`spec_commit`]); each copy held back
+/// ([`sync_holding`]) that is out of date has a further line, its name, a space and the commit
+/// it was written from.
 pub const STAMP: &str = "synced-from";
 
 /// The line [`STAMP`] holds for the spec checkout at `root`: its HEAD commit, followed by
@@ -312,22 +402,4 @@ pub fn spec_commit(root: &str) -> String {
     } else {
         format!("{head} with uncommitted changes")
     }
-}
-
-/// Writes each copy `(dest, want)` whose file does not already hold `want`, or with `check` only
-/// names it; fails with `check` if any is out of date.
-fn refresh(copies: Vec<(String, String)>, check: bool, out: &mut String) -> Outcome {
-    let mut stale = false;
-    for (dest, want) in copies {
-        if read_text(&dest).ok().as_ref() == Some(&want) {
-            continue;
-        }
-        stale = true;
-        let state = if check { "out of date" } else { "written" };
-        say!(out, "{} is {state}", base_name(&dest));
-        if !check {
-            std::fs::write(&dest, want).map_err(|e| format!("{dest}: {e}"))?;
-        }
-    }
-    Ok(!(stale && check))
 }

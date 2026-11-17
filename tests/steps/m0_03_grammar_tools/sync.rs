@@ -241,8 +241,100 @@ fn sync_writes_the_spec_commit_it_copied_from() {
     );
 }
 
+/// A copy held back with `--hold` keeps, in `zed/synced-from`, the commit it was written from
+/// while the first line moves on (SYNC-held-files-stamp): the stamp named only the last sync's
+/// commit, so merge-push counted a held copy's lag from there and missed the commits before it.
+/// `--check` names a held copy's own commit; the line goes once the copy is written, and a
+/// held copy that is current needs none.
+#[test]
+fn a_held_copy_keeps_its_own_commit_in_the_stamp() {
+    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
+    let dir = spec_dir("sync_held", &design(&body), &fence(DOUBLE));
+    let zed = zed_dir("sync_held_zed");
+    let stamp = || fs::read_to_string(zed.at(sync::STAMP)).unwrap();
+    let run = |check, hold: &[&str]| {
+        let spec = Spec::open(&dir.root()).expect("the spec reads");
+        let hold: Vec<String> = hold.iter().map(|h| h.to_string()).collect();
+        let mut out = String::new();
+        (
+            sync::sync_holding(&spec, &zed.root(), check, &hold, &mut out),
+            out,
+        )
+    };
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-C", &dir.root(), "-c", "user.name=test"])
+            .args([
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let commit = |text: &str| {
+        fs::write(dir.at("DESIGN.md"), design(text)).unwrap();
+        git(&["add", "DESIGN.md", "EXAMPLES.md"]);
+        git(&["commit", "-q", "-m", "spec"]);
+        git(&["rev-parse", "HEAD"])
+    };
+    git(&["init", "-q"]);
+    let first = commit(&body);
+    assert_eq!(run(false, &[]).0, Ok(true));
+    assert_eq!(run(false, &["design.md"]).0, Ok(true));
+    assert_eq!(
+        stamp(),
+        format!("{first}\n"),
+        "a current held copy needs no line"
+    );
+
+    let body = format!("{}\n{body}", fence("triple(x: int) -> int = x * 3;"));
+    let second = commit(&body);
+    let (outcome, out) = run(false, &["design.md"]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert!(
+        out.contains(&format!("design.md is held, copied from zed {first}")),
+        "{out}"
+    );
+    assert_eq!(stamp(), format!("{second}\ndesign.md {first}\n"));
+    let (outcome, out) = run(true, &[]);
+    assert_eq!(outcome, Ok(false));
+    assert_eq!(
+        out,
+        format!("design.md is out of date, copied from zed {first}\n")
+    );
+
+    let body = format!("{}\n{body}", fence("half(x: int) -> int = x / 2;"));
+    let third = commit(&body);
+    assert_eq!(run(false, &["design.md"]).0, Ok(true));
+    assert_eq!(
+        stamp(),
+        format!("{third}\ndesign.md {first}\n"),
+        "a later sync that still holds the copy keeps its commit"
+    );
+
+    let (outcome, out) = run(false, &[]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert!(out.contains("design.md is written"), "{out}");
+    assert_eq!(stamp(), format!("{third}\n"));
+    assert_eq!(run(true, &[]).0, Ok(true));
+
+    let (outcome, _) = run(false, &["design.txt"]);
+    assert!(
+        outcome
+            .as_ref()
+            .is_err_and(|e| e.contains("--hold design.txt")),
+        "{outcome:?}"
+    );
+}
+
 /// The spec checkout `sync` reads: the one directory it is given, else `ZED_SPEC_DIR`; `--check`
-/// is no directory, and two directories or none is a usage error.
+/// and `--hold COPY` are no directory, and two directories or none, or `--hold` with no copy, is
+/// a usage error.
 #[test]
 fn sync_reads_the_directory_it_is_given_or_else_the_variable() {
     let args = |a: &[&str]| -> Vec<String> { a.iter().map(|s| s.to_string()).collect() };
@@ -259,6 +351,12 @@ fn sync_reads_the_directory_it_is_given_or_else_the_variable() {
     assert!(sync::spec_dir(&args(&[]), None).is_err());
     assert!(sync::spec_dir(&args(&[]), Some(String::new())).is_err());
     assert!(sync::spec_dir(&args(&["/a", "/b"]), var()).is_err());
+    assert_eq!(
+        sync::spec_dir(&args(&["--hold", "syntax.peg", "/a", "--hold", "x"]), None),
+        Ok("/a".into()),
+        "a held copy's name is no directory"
+    );
+    assert!(sync::spec_dir(&args(&["/a", "--hold"]), None).is_err());
 }
 
 /// The prelude laws `sync` checks DESIGN.md for: named where step L15.7 builds them and where its
