@@ -221,7 +221,8 @@ const NOT_MODES: &[&str] = &[
     "2-forms",
     "zed",
     "main",
-    "search", //
+    "search",
+    "which", //
     // A build of a program, a command or a toolchain, and not a kind of build: a corpus
     // program's build, the native engine's beside the interpreter, the class of the test builds
     // the bullet lists, a pinned toolchain's, builds that are reproducible, the CLI command.
