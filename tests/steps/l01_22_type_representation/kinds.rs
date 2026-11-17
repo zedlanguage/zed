@@ -2054,10 +2054,48 @@ fn a_function_as_a_tuple_of_one_component_in_a_refused_bucket_prints_as_its_type
     );
 }
 
-// `a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name` is out while
-// FAIL-types-fn-in-tuple-bound-variable-refused is open: with `V in int` its program is
-// accepted (a bound of one carrier is read as that carrier, FAIL-fn-domain-bindable-variable),
-// and with `V in int | f64` it is wrongly answered "does not take", in every form tried.
+#[test]
+fn a_function_in_a_refused_bucket_prints_the_rigid_variable_it_holds_by_name() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // `V` of `f`'s type is rigid in the outer comparison; the function in the tuple that holds
+    // it is read as the comparison reads `f`'s type, and prints `V`. Before
+    // FAIL-types-fn-in-tuple-bound-variable-refused, these programs were answered "`p` does
+    // not take ...", which says they are wrong: `g`'s `k` is `f`'s `k` once `W` is bound to
+    // `V` (DESIGN.md sec:type_resolution rule 6), and the same program without the function in
+    // the tuples is answered "could not decide", as this is now. A domain is exact (DESIGN.md
+    // sec:type_language), so `f`'s `k` also takes the tuples of `g`'s first shape
+    // (FAIL-types-fn-param-exact-domain).
+    let h = "(y: int) -> int";
+    for (fv, fw) in [
+        ("(y: V) -> int", "(y: W) -> int"),
+        ("(y: int) -> V", "(y: int) -> W"),
+    ] {
+        let shapes = format!(
+            "((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, W, {fw}) | (int, W, W, {fw}),)"
+        );
+        let src = format!(
+            "p(f: (k: (x: ((int, bool, {h}) | (int, bool, bool, {h}),) | ((int, V, {fv}),) \
+             | ((int, V, V, {fv}),)) -> int) -> int for V in int | f64) = 0;\n\
+             q(g: (k: (x: {shapes}) -> int for W in int | f64) -> int) = p(f: g);\n"
+        );
+        let clause = bucket_refused(
+            &format!("((int, V, {fv}),)"),
+            &format!("((int, V, V, {fv}),)"),
+            &shapes,
+            "`V` is the type variable of `for V in int | f64`, and `W` is the type variable of \
+             `for W in int | f64`",
+            false,
+        );
+        assert_eq!(
+            type_errors(&src),
+            vec![format!(
+                "The checker could not decide whether `p` takes ((k: (x: {shapes}) -> int for W in int | f64) -> int), so it is not proved \
+                 wrong.{clause}"
+            )],
+            "{src}"
+        );
+    }
+}
 
 #[test]
 fn a_rigid_variable_of_an_outer_comparison_and_an_own_variable_of_the_same_name_print_apart() {

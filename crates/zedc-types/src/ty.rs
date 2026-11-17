@@ -19725,6 +19725,41 @@ mod tests {
         assert!(vs.contains("T'1") && !vs.contains("T"), "{read}");
     }
 
+    /// TEST-types-repeated-fn-held-variable: a bounded variable of `q` that a function among
+    /// the parameters holds is left rigid by [`repeated`], so [`Cx::wide`] does not widen it,
+    /// though it stands once outside functions or not at all: a function type is not monotone
+    /// in the variable, so the widening is not the union of the instances
+    /// (`(h: (y: T) -> int, y: T)` widened would take `(h: (y: int | f64) -> int, y: int |
+    /// f64)`). Control: the variable alone, once and outside functions, is widened. The
+    /// function is read as [`Cx::read`] reads `q`, `V` read as the rigid `V'1`. No program
+    /// reaches the difference yet: every cover of such an arrow that the probe of 576 pairs
+    /// tried was refused before [`instance_at`] reads the widening
+    /// (FAIL-types-generic-fn-param-renamed-refused).
+    #[test]
+    fn a_variable_a_parameter_function_holds_is_not_widened() {
+        let int = Ty::carrier(Carrier::Int);
+        let held = Arrow::exact(vec![Ty::var("V".into())], int.clone());
+        let h = Ty::func(Arc::new(sig(vec![held], 1, false)));
+        let mut cx = Cx::default();
+        let mut env = Env::new();
+        env.insert("V".into(), Read::Rigid("V'1".into()));
+        let h = cx.read(&h, &env);
+        let y = Ty::var("V'1".into());
+        let vs: HashSet<Arc<str>> = ["V'1".into()].into_iter().collect();
+        for params in [
+            vec![h.clone()],
+            vec![h.clone(), y.clone()],
+            vec![int.clone(), h],
+        ] {
+            let a = Arrow::exact(params, int.clone());
+            let rigid = repeated(std::slice::from_ref(&a), &vs, &cx.fns);
+            assert!(rigid.contains("V'1"), "{a:?}: {rigid:?}");
+        }
+        let a = Arrow::exact(vec![y, int.clone()], int);
+        let rigid = repeated(std::slice::from_ref(&a), &vs, &cx.fns);
+        assert!(rigid.is_empty(), "{a:?}: {rigid:?}");
+    }
+
     /// An overload with a bounded variable fits where one of its arrows is expected
     /// (FAIL-types-overload-bounded-tuple): `(x0: (B,) | (U,)) -> (B,)` for `B in int | f64`,
     /// with `(x0: String) -> String` beside it. The arrow of `q` is read with `B` under a new
