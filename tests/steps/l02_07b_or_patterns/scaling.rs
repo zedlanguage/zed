@@ -84,6 +84,15 @@ pub(super) fn bare(n: usize) -> String {
     format!("f(v) = match v {{ {} -> 0, _ -> 1 }};\n", alts.join(" | "))
 }
 
+/// `f(r) = r else #c0 -> 0 else #c1 -> 1 … else #a0 | #a1 | … -> 0;`, an or-pattern of `n`
+/// alternatives as an `else` tail's pattern, after `n` other tails, which the parser refuses
+/// with the `match` the tail stands for; its operand runs back over the `n` tails.
+pub(super) fn after_else(n: usize) -> String {
+    let tails: String = (0..n).map(|i| format!(" else #c{i} -> {i}")).collect();
+    let alts: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+    format!("f(r) = r{tails} else {} -> 0;\n", alts.join(" | "))
+}
+
 /// `f(v) = match v { (#a0(x0) | #a1(x1) | …) -> 0, _ -> 1 };`, `n` alternatives, each binding a
 /// name of its own: one error naming `n` names, with both repairs.
 pub(super) fn differ(n: usize) -> String {
@@ -105,6 +114,13 @@ fn each_form_is_built_formatted_and_resolved_at_small_sizes() {
         }
         let e = refuse(&bare(n + 1));
         assert_eq!(e.row, Some(Row::BareOperatorPattern), "{e}");
+        let e = refuse(&after_else(n));
+        assert_eq!(e.row, None, "{e}");
+        assert!(
+            e.message
+                .starts_with("An `else` tail takes one atom pattern"),
+            "{e}"
+        );
         let d = differ(n + 1);
         assert_eq!(pass(&parsed(d)), 1);
     }

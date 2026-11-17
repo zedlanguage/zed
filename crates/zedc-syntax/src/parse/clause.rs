@@ -332,7 +332,8 @@ impl Toks<'_, '_> {
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
 /// sentinel value, at or after a reserved word written where a name stands, at the removed
 /// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
-/// of an `initial` statement, or at a union, intersection or difference written bare as a key,
+/// of an `initial` statement, at a pattern built with an operator written bare, at an or-pattern
+/// as an `else` tail's pattern, or at a union, intersection or difference written bare as a key,
 /// or at `<-` or `=` in a condition.
 /// The scans run over the statement, its block, its line or the type, and each check of a word
 /// or a repair is one more parse: linear in the unit, on the error path only.
@@ -344,6 +345,8 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| carry_word(t, far))
         // Before `bare_key`, which would read `#a | #b -> 1` in an arm as a bare key.
         .or_else(|| bare_pattern(t, far))
+        // Also before `bare_key`, which would read `r else #a | #b -> 0` as a bare key.
+        .or_else(|| else_or_pattern(t, far))
         .or_else(|| bare_key(t, far))
         .or_else(|| push_or_less(t, far))
         .or_else(|| push_target(t, far))
@@ -1649,6 +1652,161 @@ fn bare_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     Some(Clause {
         row: Some(Row::BareOperatorPattern),
         message: format!("`{pattern}` is {what}; write it in parentheses. Try `{repair}` instead."),
+        span,
+        notes: vec![(span, format!("repair: `{repair}`"))],
+    })
+}
+
+/// The [`Clause`] for an or-pattern as the pattern of an `else` tail, bare, `r else #a | #b -> 0`,
+/// or in parentheses, `r else (#a | #b) -> 0`: the tail takes one atom pattern (`ElseTail` in
+/// DESIGN.md sec:grammar; zed/grammar/cases.txt refuses `x else (#a | #b) -> d`), so the parse
+/// stops at the `|`. The repair is the `match` the tail stands for, `e else P -> d` being
+/// `match e { P -> d, x -> x }` (the desugaring of `ElseTail`, sec:grammar): exact, where a
+/// chain of tails, `r else #a -> 0 else #b -> 0`, would also send a value `#b` of `d` to the
+/// second tail. The operand `e` runs back from the `else`, at its depth, over the operators that
+/// bind tighter than `else` and over the `else` tails before it, to a `=`, `,`, `;`, `<-`, an
+/// unmatched opening bracket, or an arrow that ends no `else` tail's pattern (a lambda's, an
+/// arm's); a keyword that begins a form, as `match` or `if`, gives no clause, since the form's
+/// extent is not found by this scan. The head is parenthesized only where it does not parse
+/// bare. No row: the plain syntax error is made precise, as for the other clauses with none.
+/// Each scan runs over the statement, and the repair is one or two more parses: linear in the
+/// unit, on the error path only.
+fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    if t.t(far) != "|" {
+        return None;
+    }
+    let n = t.tokens.len();
+    // Back from the `|` to its `else`, through at most the one `(` right after the `else`.
+    let (mut i, mut d) = (far, 0);
+    loop {
+        let p = t.t(i.checked_sub(1)?);
+        if p == "else" && d <= 0 {
+            break;
+        }
+        if d == 0 && matches!(p, "," | ";" | "=" | "->") {
+            return None;
+        }
+        d -= depth(p);
+        if d < -1 || d == -1 && p != "(" {
+            return None;
+        }
+        i -= 1;
+    }
+    let e = i - 1;
+    let wrapped = d == -1;
+    if wrapped && t.t(e + 1) != "(" {
+        // `else #p(#a | #b, x) -> 0`: the `(` is a payload's, whose clause is `bare_pattern`'s.
+        return None;
+    }
+    let first = if wrapped { e + 2 } else { e + 1 };
+    // On from the `|` to the pattern's last token and the `->` after it.
+    let (mut j, mut d) = (far, 0);
+    let arrow = loop {
+        if j >= n {
+            return None;
+        }
+        let x = t.t(j);
+        if wrapped && d == 0 && x == ")" {
+            if t.t(j + 1) != "->" {
+                return None;
+            }
+            break j + 1;
+        }
+        if !wrapped && d == 0 && x == "->" {
+            break j;
+        }
+        if d == 0 && matches!(x, "," | ";" | "=") || d + depth(x) < 0 {
+            return None;
+        }
+        d += depth(x);
+        j += 1;
+    };
+    let last = if wrapped { arrow - 2 } else { arrow - 1 };
+    // On from the `->` to the end of the tail's value: a later `else` tail is not part of it.
+    let (mut end, mut d) = (arrow + 1, 0);
+    while end < n {
+        let x = t.t(end);
+        if d == 0 && matches!(x, "," | ";" | "else") || d + depth(x) < 0 {
+            break;
+        }
+        d += depth(x);
+        end += 1;
+    }
+    let end = end.checked_sub(1)?;
+    if end <= arrow {
+        return None;
+    }
+    // Whether the `->` at `a` ends an `else` tail's atom pattern, `else #c -> ` or
+    // `else #p(x) -> `.
+    let tail_arrow = |a: usize| {
+        let mut k = a;
+        if k > 0 && t.t(k - 1) == ")" {
+            let mut d = 0;
+            loop {
+                k -= 1;
+                d -= depth(t.t(k));
+                if d == 0 || k == 0 {
+                    break;
+                }
+            }
+        }
+        k >= 2 && t.t(k - 1).starts_with('#') && t.t(k - 2) == "else"
+    };
+    // The keywords an operand may hold: the operators, the literals and `else`.
+    let inner = |w: &str| {
+        matches!(
+            w,
+            "as" | "into"
+                | "in"
+                | "not"
+                | "is"
+                | "with"
+                | "without"
+                | "div"
+                | "mod"
+                | "true"
+                | "false"
+                | "this"
+                | "else"
+        )
+    };
+    // Back from the `else` to the operand's first token.
+    let (mut start, mut d) = (e, 0);
+    while start > 0 {
+        let p = t.t(start - 1);
+        if d == 0 && matches!(p, "=" | "," | ";" | "<-") || d - depth(p) < 0 {
+            break;
+        }
+        if d == 0 && p == "->" && !tail_arrow(start - 1) {
+            break;
+        }
+        if d == 0 && t.toks[start - 1].0 == Kind::Keyword && !inner(p) {
+            return None;
+        }
+        d -= depth(p);
+        start -= 1;
+    }
+    if start == e {
+        return None;
+    }
+    let text = |a: usize, b: usize| &t.text[a..b];
+    let operand = text(t.span(start).start, t.span(e - 1).end);
+    let (ps, pe) = (t.span(first).start, t.span(last).end);
+    let pattern = text(ps, pe);
+    let value = text(t.span(arrow + 1).start, t.span(end).end);
+    let repair = [
+        format!("match {operand} {{ ({pattern}) -> {value}, x -> x }}"),
+        format!("match ({operand}) {{ ({pattern}) -> {value}, x -> x }}"),
+    ]
+    .into_iter()
+    .find(|r| t.parses(start, end, r))?;
+    let span = Span { start: ps, end: pe };
+    Some(Clause {
+        row: None,
+        message: format!(
+            "An `else` tail takes one atom pattern, and `{pattern}` is an or-pattern. Try \
+             `{repair}` instead."
+        ),
         span,
         notes: vec![(span, format!("repair: `{repair}`"))],
     })
