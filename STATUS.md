@@ -2595,8 +2595,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| BUILD-root-toolchain-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
 | FAIL-linear-question-tuple-callee-per-caller | running | 2026-11-17 03:19 | started in wt/trees/need-site2 at dfad7eff5 |
 | FAIL-remap-computed-key-need-site-product | running | 2026-11-17 03:19 | started in wt/trees/need-site2 at dfad7eff5 |
+| MERGE-full-by-dependency | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
+| MERGE-spec-lag-by-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
 | SPEC-cast-inexact-taint | running | 2026-11-17 02:28 | author P354, P355, P359, P361: float failures are static facts; #NaN only under @fpstrict; casts round with inexact(); int(x) needs a proved whole number; no QU |
 | TONIC-strict | impl attempt 1 | 2026-11-17 03:19 | started; worktree wt/trees/tonic-strict at 6f5080476; load 2.95 7.95 16.21 |
 | XR-map-chain-rounds-7-9 | running | 2026-11-16 22:42 | author P342: micro-proof cross-review rounds 7-9; worktree /home/luke/Work/wt/trees/xr-chain2 |
