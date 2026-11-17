@@ -695,14 +695,12 @@ fn marks_are_cut_from_sets_of_all_atoms() {
 
 #[test]
 fn functions_unlike_on_both_sides_at_one_place_are_refused() {
-    // Three functions of `t`, equal to none of the expected type's, each meet all three of its
-    // at one place, 9 pairs for 6 functions: which fits which is not compared (COMPLEXITY.md
-    // F124), and the clause says so. A domain is exact (DESIGN.md sec:type_language), so each
-    // function of `t` fits the expected function of its own domain by its narrower result
-    // (FAIL-types-fn-param-exact-domain).
+    // Three functions of `t`, equal to none of the expected type's and of one domain, each
+    // meet all three of its at one place, 9 pairs for 6 functions: which fits which is not
+    // compared (COMPLEXITY.md F124), and the clause says so.
     let (t, u) = (
-        ty("((int) -> 1, 1) | ((String) -> 1, 2) | ((f64) -> 1, 3)"),
-        ty("((int) -> int, int) | ((String) -> int, int) | ((f64) -> int, int)"),
+        ty("((int) -> 1, 1) | ((int) -> 2, 2) | ((int) -> 3, 3)"),
+        ty("((int) -> 1 | 2, int) | ((int) -> 2 | 3, int) | ((int) -> 1 | 3, int)"),
     );
     assert!(!t.subtype(&u));
     assert!(
@@ -710,6 +708,16 @@ fn functions_unlike_on_both_sides_at_one_place_are_refused() {
         "{}",
         t.refused(&u)
     );
+    // Of three domains, they are split by domain and each part is compared alone
+    // (PERF-types-loose-pairing-dense; refused before). A domain is exact (DESIGN.md
+    // sec:type_language), so each function of `t` fits the expected function of its own
+    // domain by its narrower result (FAIL-types-fn-param-exact-domain).
+    let (t, u) = (
+        ty("((int) -> 1, 1) | ((String) -> 1, 2) | ((f64) -> 1, 3)"),
+        ty("((int) -> int, int) | ((String) -> int, int) | ((f64) -> int, int)"),
+    );
+    assert!(t.subtype(&u));
+    assert_eq!(t.refused(&u), "");
     // One function on either side is compared with each on the other.
     for (member, whole) in [
         (

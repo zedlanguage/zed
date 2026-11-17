@@ -2934,6 +2934,21 @@ impl Type {
         }
     }
 
+    /// A hash of the set it denotes, where its parts list booleans, numbers and strings and
+    /// nothing else; None where they may list an atom, tuple, struct or morphism. Two such
+    /// types that denote one set hash alike: their parts are a set of booleans and, for each
+    /// base type, a finite set of literals or the complement of one (`Lits`), every other
+    /// part its default (`Parts::scalars_only`), and the digest is made from those alone
+    /// (`Parts::hashes`, each `Lits` by `cofinite` and the sum of its literals' hashes). A
+    /// set has one such form, since each base type is infinite, except `f64` and `f32`, where a
+    /// set could also be listed as the complement of the rest; one of the two lists then holds
+    /// 2^31 literals or more, which no program text writes. Equal hashes do not prove equal
+    /// sets. A recursive node is read through its unfolding. O(1) after the unfolding.
+    pub fn scalars_digest(&self) -> Option<u64> {
+        let p = self.p();
+        p.scalars_only().then_some(p.digest)
+    }
+
     /// Whether it may hold an atom, read from its parts: false only when it holds none.
     pub fn may_hold_atoms(&self) -> bool {
         !self.p().atoms.is_default()

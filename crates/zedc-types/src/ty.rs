@@ -10382,25 +10382,65 @@ fn met_at<'a, P: Addressed>(
 /// every pair at the spot compared, O(n^2); used: the nodes filed by their keys ([`Near`],
 /// expected O((l·G + r·H)·w) for groups `G`, `H` of widths `w`, a few in a written union) and at
 /// most as many pairs read as functions, O(n) comparisons of functions.
+///
+/// Since PERF-types-loose-pairing-dense, where every function at the spot has a domain key
+/// ([`domain_key`]), the functions are split by it and the near pairs are found within each
+/// part only, against one count of pairs for the whole spot. A function fits only one of
+/// the same key, so a pair of two keys is one [`Comparing::form_verdict`] would compare and
+/// find unfit, holding no mark: the forms, and so the verdict, are those of every near pair
+/// compared, and direction 2 of PROOF-star-pairs holds as before (COMPLEXITY.md F124, "Parts
+/// by domain"). `((i) -> 1, i)` against `((i) -> int, int)` for `i` in `0 ..< n`, every tuple
+/// meeting every other, was refused at a cost of `n^2` near pairs read up to the count; split,
+/// each part holds one function a side, and the spot is decided with `n` comparisons. What is
+/// still refused: functions of one key whose tuples meet more pairs than there are functions,
+/// as three of `(int) -> ...` a side, each tuple meeting the three of the other side, the
+/// containment join above; and a spot where some function has no key, which is not split. The
+/// count is shared, not one per part, so a spot whose near pairs were no more than its
+/// functions is never refused for the split. Cost: a key for each
+/// function at the spot, the union of its arrows' parameter types, and one [`Groups`] for
+/// each part, the parts' nodes as many as the functions at the spot.
 fn star_pairs<P: Placed>(
     left: &[(&P, &[Arc<Sig>])],
     right: &[(&P, &[Arc<Sig>])],
 ) -> Option<Vec<(Arc<Sig>, Arc<Sig>)>> {
-    let most: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
+    let mut budget: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    match by_domain(left, right) {
+        None => near_fn_pairs(left, right, &mut budget, &mut seen, &mut out)?,
+        Some(parts) => {
+            fn slices<'a, P>(side: &'a [(&'a P, Vec<Arc<Sig>>)]) -> Vec<(&'a P, &'a [Arc<Sig>])> {
+                side.iter().map(|(p, fs)| (*p, &fs[..])).collect()
+            }
+            for (l, r) in &parts {
+                near_fn_pairs(&slices(l), &slices(r), &mut budget, &mut seen, &mut out)?;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// The pairs of functions of [`star_pairs`] between `left` and `right`, put in `out`, each
+/// once by `seen`; None as soon as they come to more than `budget`, which they use up.
+fn near_fn_pairs<P: Placed>(
+    left: &[(&P, &[Arc<Sig>])],
+    right: &[(&P, &[Arc<Sig>])],
+    budget: &mut usize,
+    seen: &mut HashSet<(Arc<Sig>, Arc<Sig>)>,
+    out: &mut Vec<(Arc<Sig>, Arc<Sig>)>,
+) -> Option<()> {
+    if left.is_empty() || right.is_empty() {
+        return Some(());
+    }
     let groups = Groups::new(left.iter().map(|(p, _)| *p), right.iter().map(|(p, _)| *p));
     let mut near = Near::new(&groups);
-    let (mut edges, mut pairs) = (Vec::new(), 0);
+    let mut edges = Vec::new();
     for (l, (_, fs)) in left.iter().enumerate() {
         for r in near.of(l) {
-            pairs += fs.len() * right[r].1.len();
-            if pairs > most {
-                return None;
-            }
+            *budget = budget.checked_sub(fs.len() * right[r].1.len())?;
             edges.push((l, r));
         }
     }
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
     for (l, r) in edges {
         for f in left[l].1 {
             for g in right[r].1 {
@@ -10410,7 +10450,108 @@ fn star_pairs<P: Placed>(
             }
         }
     }
-    Some(out)
+    Some(())
+}
+
+/// One part of a spot split by [`domain_key`]: its nodes of each side, each with its functions
+/// of the part's key.
+type DomainPart<'a, P> = (Vec<(&'a P, Vec<Arc<Sig>>)>, Vec<(&'a P, Vec<Arc<Sig>>)>);
+
+/// The nodes of `left` and `right` split by the [`domain_key`] of their functions, the parts in
+/// the order their keys first appear, left before right; each node is in the part of each key
+/// its functions have, with those functions. A key of `right` alone makes no part, as its
+/// functions meet none of `left`. None where some function has no key.
+fn by_domain<'a, P>(
+    left: &[(&'a P, &[Arc<Sig>])],
+    right: &[(&'a P, &[Arc<Sig>])],
+) -> Option<Vec<DomainPart<'a, P>>> {
+    let mut index: HashMap<DomainKey, usize> = HashMap::new();
+    let mut parts: Vec<DomainPart<'a, P>> = Vec::new();
+    for (side, nodes) in [(0, left), (1, right)] {
+        for (p, fs) in nodes {
+            // The parts this node joins, each once, with its entry's place in that part: a
+            // hash lookup a function, not a search of the parts joined, which is quadratic in
+            // the functions of a node of many keys.
+            let mut joined: HashMap<usize, usize> = HashMap::new();
+            for f in fs.iter() {
+                let key = domain_key(f)?;
+                let k = match (index.get(&key), side) {
+                    (Some(&k), _) => k,
+                    (None, 0) => {
+                        index.insert(key, parts.len());
+                        parts.push((Vec::new(), Vec::new()));
+                        parts.len() - 1
+                    }
+                    (None, _) => continue,
+                };
+                let at = match side {
+                    0 => &mut parts[k].0,
+                    _ => &mut parts[k].1,
+                };
+                let e = *joined.entry(k).or_insert_with(|| {
+                    at.push((*p, Vec::new()));
+                    at.len() - 1
+                });
+                at[e].1.push(f.clone());
+            }
+        }
+    }
+    Some(parts)
+}
+
+/// What fitting proves equal of two functions ([`domain_key`]): a hash of the domain, and the
+/// one parameter's kind and, where it is passed by name, its name.
+type DomainKey = (u64, bool, Option<Arc<str>>);
+
+/// A key of the function `s` that is equal for two functions of which one fits the other, where
+/// `s` has one parameter, holds no variable, needs nothing, is not a family, and has exact
+/// arrows only, each of whose parameter types lists booleans, numbers and strings only; None
+/// for any other function.
+///
+/// Why one fitting the other gives equal keys: the domain of such a function is the union of
+/// its arrows' parameter types (each arrow exact, guaranteeing and permitting its keys, and
+/// the arrows an intersection), and a plain `K -> V` is exact, so one fits another only with
+/// the same domain (DESIGN.md sec:type_language, "Morphism types carry two domain bounds";
+/// FAIL-types-fn-param-exact-domain). [`fits_in`] decides so: its permission, exact at one
+/// parameter ([`permitted`], [`every_arrow_fits`]), is false where `s` takes a key `q` does not,
+/// and its cover ([`cover`]) false where `q` takes one `s` does not; its first test,
+/// [`fits_in`]'s equal signatures, gives equal keys; and `same_params` there asks the same
+/// kind and, by name, the same name. Equal domains hash alike ([`KType::scalars_digest`]). A
+/// collision of two hashes only puts two domains in one part, which is then compared as
+/// before. A function of no arrows has no key: it is not of the empty domain.
+///
+/// Complexity tradeoff: the union of the arrows' parameter types, made only where there are
+/// two or more, O(size of the signature) once for each function at a spot split, the cost of
+/// reading the signature; a key kept with the signature would save it where one function is
+/// at many spots, which no test measured.
+fn domain_key(s: &Sig) -> Option<DomainKey> {
+    let [p] = &s.params[..] else { return None };
+    if s.arrows.is_empty()
+        || s.data
+        || !s.needs.is_empty()
+        || !s.bounds.is_empty()
+        || !s.holds_no_variable()
+    {
+        return None;
+    }
+    let mut sets = Vec::with_capacity(s.arrows.len());
+    for a in &s.arrows {
+        let [t] = &a.params[..] else { return None };
+        if a.partial || t.dynamic || !t.vars.is_empty() || !t.tuples.is_empty() || !t.fns.is_empty()
+        {
+            return None;
+        }
+        sets.push(&t.set);
+    }
+    let digest = match &sets[..] {
+        [one] => one.scalars_digest()?,
+        _ => KType::union_all(sets.into_iter().cloned()).scalars_digest()?,
+    };
+    Some((
+        digest,
+        p.positional,
+        (!p.positional).then(|| p.name.clone()),
+    ))
 }
 
 /// The pairs of functions to compare at each spot whose pairs of nodes that may share a value

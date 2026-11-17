@@ -272,6 +272,41 @@ fn functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time() {
     );
 }
 
+/// `n` rows of functions at one place whose rows all meet, `((i) -> 1, i)` against
+/// `((i) -> int, int)`, decided in time linear in `n` (PERF-types-loose-pairing-dense,
+/// COMPLEXITY.md F124, "Parts by domain"): `n^2` pairs of rows meet, but a function fits only
+/// one of its own domain, so the functions are split by domain and each part holds one row a
+/// side. Before, the spot was refused after counting the near pairs past the functions, which
+/// cost 41.7 M instructions at n = 20 and 2,522 M at n = 160, 60.5 times; with every pair
+/// compared it would be `n^2` comparisons. The right side with one domain changed is a definite
+/// no. Small instance: `functions_at_one_place_whose_tuples_all_meet_are_decided`.
+#[test]
+fn functions_at_one_place_whose_rows_all_meet_are_split_by_domain_in_linear_time() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let sides = |m: usize| {
+        let left: Vec<String> = (0..m).map(|i| format!("(({i}) -> 1, {i})")).collect();
+        let right = |last: usize| -> Vec<String> {
+            (0..m)
+                .map(|i| format!("(({}) -> int, int)", if i + 1 == m { last } else { i }))
+                .collect()
+        };
+        let parse = |rows: Vec<String>| parse_type(&rows.join(" | ")).expect("a union of tuples");
+        (parse(left), parse(right(m - 1)), parse(right(m)))
+    };
+    let n = 256;
+    let pairs = scaling::inputs(n, sides);
+    scaling::check(
+        "n rows of functions at one place, every row meeting every other, split by domain",
+        n,
+        |m| {
+            let (a, yes, no): &(Ty, Ty, Ty) = &pairs[&m];
+            assert!(a.subtype(yes) && a.refused(yes).is_empty());
+            assert!(!a.subtype(no) && a.refused(no).is_empty());
+        },
+    );
+}
+
 /// The forms of a union of `n` rows, each with its own set of every atom nested beside a
 /// function, cut the marks from each nested set once (FAIL-forms-nested-marks): linear in `n`.
 #[test]

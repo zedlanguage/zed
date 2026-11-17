@@ -2318,6 +2318,81 @@ fn functions_at_one_place_whose_tuples_meet_two_each_are_decided() {
     }
 }
 
+/// Three functions on each side at one place, each tuple meeting all three of the other side:
+/// 9 near pairs for 6 functions. A domain is exact (DESIGN.md sec:type_language), so a function
+/// fits only one of the same domain, and of the same parameter name where it is passed by name;
+/// the functions are split by domain and each part is paired alone
+/// (PERF-types-loose-pairing-dense; the spot was refused). The expected answers are by hand:
+/// each function on the left fits the one on the right of its domain by its narrower result,
+/// and where one domain or name on the right is changed, the left function of that domain fits
+/// none. Three functions a side of one domain are not split, and stay refused (COMPLEXITY.md
+/// F124).
+#[test]
+fn functions_at_one_place_whose_tuples_all_meet_are_decided() {
+    use zedc::check::read::parse_type;
+    let left = "((int -> 1), int) | ((String -> 1), int) | ((f64 -> 1), int)";
+    let named = "(((x: int) -> 1), int) | (((y: int) -> 1), int) | (((z: int) -> 1), int)";
+    for (left, right, holds) in [
+        (
+            left,
+            "((int -> int), int) | ((String -> int), int) | ((f64 -> int), int)",
+            true,
+        ),
+        (
+            left,
+            "((int -> int), int) | ((String -> int), int) | ((bool -> int), int)",
+            false,
+        ),
+        // A result not within: the domains pair, the fit fails.
+        (
+            left,
+            "((int -> int), int) | ((String -> int), int) | ((f64 -> 2), int)",
+            false,
+        ),
+        // Literal domains, and a domain that is a union.
+        (
+            "((1 -> 1), int) | ((2 -> 1), int) | (((3 | 4) -> 1), int)",
+            "((1 -> int), int) | (((4 | 3) -> int), int) | ((2 -> int), int)",
+            true,
+        ),
+        (
+            "((1 -> 1), int) | ((2 -> 1), int) | (((3 | 4) -> 1), int)",
+            "((1 -> int), int) | ((3 -> int), int) | ((2 -> int), int)",
+            false,
+        ),
+        // One domain written in two ways: `int | 1` is `int`, and two arrows on `int` and on
+        // `String` take `int | String`, as one arrow on it does.
+        (
+            "(((int | 1) -> 1), int) | (((int -> 1) & (String -> 1)), int) | ((f64 -> 1), int)",
+            "((f64 -> int), int) | (((String | int) -> int), int) | ((int -> int), int)",
+            true,
+        ),
+        (
+            named,
+            "(((x: int) -> int), int) | (((y: int) -> int), int) | (((z: int) -> int), int)",
+            true,
+        ),
+        (
+            named,
+            "(((x: int) -> int), int) | (((y: int) -> int), int) | (((w: int) -> int), int)",
+            false,
+        ),
+    ] {
+        let a = parse_type(left).unwrap();
+        let b = parse_type(right).unwrap();
+        assert_eq!(a.refused(&b), "", "{left} <: {right}");
+        assert_eq!(a.subtype(&b), holds, "{left} <: {right}");
+    }
+    let a = parse_type("((int -> 1), 1) | ((int -> 2), 2) | ((int -> 3), 3)").unwrap();
+    let b = parse_type("((int -> 1 | 2), int) | ((int -> 2 | 3), int) | ((int -> 1 | 3), int)")
+        .unwrap();
+    assert!(
+        a.refused(&b).contains("because two or more functions"),
+        "{}",
+        a.refused(&b)
+    );
+}
+
 /// `Never -> v` (guarantee and permission `Never`) and `Never ->? v` (permission `Never`, no
 /// guarantee) hold the same one function, the one of empty domain (DESIGN.md
 /// sec:type_language, "Morphism types carry two domain bounds"), so each is within the other
