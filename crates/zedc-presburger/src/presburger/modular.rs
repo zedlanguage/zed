@@ -663,7 +663,7 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 /// Complexity tradeoff: naive, try every reading of the t tied rows, 2^t runs, each exact, so
 /// a point is found whenever one reading has one; used, at most two runs, O(n log n) each for
 /// n terms, as before, and no point when t >= 2. Given up: a point that only a reading the two
-/// runs do not try would find; [`solve`] then answers by the Omega test alone (a refusal where
+/// runs do not try would find; `solve` then answers by the Omega test alone (a refusal where
 /// it refused). Test: `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`.
 pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
     let (mut tied, mut both_bounded) = (0, false);
