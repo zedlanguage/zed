@@ -39,7 +39,25 @@ fn stdout(program: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-fn target_runs_c_and_stops_in_gdb(arch: &str, port: &str) {
+/// The emulator, waiting for the debugger on a port, and the debugger, run together in a network
+/// namespace of their own (FLAKY-full-s00-01-tools-load). On the shared loopback the port was
+/// fixed, 41301 or 41302, so two runs of this piece at once (two worktrees' merge checks) took
+/// one port: the second emulator failed to bind it and its debugger reached the first's, which
+/// reset it ("Connection reset by peer", once in 25 runs at load 129, 2026-11-17). The debugger
+/// retries a refused connection until the emulator listens, with no time limit of its own
+/// (`connect-timeout unlimited`; the default gave up after 15 s), so how soon the emulator
+/// starts does not matter either.
+const GDB_SCRIPT: &str = r#"
+ip link set lo up
+"qemu-$1" -L "$2" -g 1234 "$3" >/dev/null &
+gdb -q -batch -ex 'set tcp connect-timeout unlimited' -ex "set sysroot $2" \
+  -ex 'target remote 127.0.0.1:1234' -ex 'break work' -ex continue -ex bt -ex kill "$3"
+status=$?
+wait
+exit $status
+"#;
+
+fn target_runs_c_and_stops_in_gdb(arch: &str) {
     let dir = scratch(arch);
     let (src, bin) = (dir.join("p.c"), dir.join("p"));
     std::fs::write(&src, C_PROGRAM).unwrap();
@@ -58,32 +76,10 @@ fn target_runs_c_and_stops_in_gdb(arch: &str, port: &str) {
     };
     assert!(!run(other, &["-L", libs, bin]).status.success());
 
-    let mut server = Command::new(&qemu)
-        .args(["-L", libs, "-g", port, bin])
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    let remote = format!("target remote 127.0.0.1:{port}");
-    let sysroot = format!("set sysroot {libs}");
     let gdb = stdout(
-        "gdb",
-        &[
-            "-q",
-            "-batch",
-            "-ex",
-            &sysroot,
-            "-ex",
-            &remote,
-            "-ex",
-            "break work",
-            "-ex",
-            "continue",
-        ]
-        .into_iter()
-        .chain(["-ex", "bt", "-ex", "kill", bin])
-        .collect::<Vec<_>>(),
+        "unshare",
+        &["-Urn", "sh", "-c", GDB_SCRIPT, "sh", arch, libs, bin],
     );
-    server.wait().unwrap();
     assert!(
         gdb.contains("Breakpoint 1, work"),
         "no stop at the breakpoint: {gdb}"
@@ -92,12 +88,12 @@ fn target_runs_c_and_stops_in_gdb(arch: &str, port: &str) {
 
 #[test]
 fn aarch64_c_runs_under_qemu_and_gdb() {
-    target_runs_c_and_stops_in_gdb("aarch64", "41301");
+    target_runs_c_and_stops_in_gdb("aarch64");
 }
 
 #[test]
 fn riscv64_c_runs_under_qemu_and_gdb() {
-    target_runs_c_and_stops_in_gdb("riscv64", "41302");
+    target_runs_c_and_stops_in_gdb("riscv64");
 }
 
 #[test]
