@@ -475,9 +475,9 @@ fn brackets_alike_give_the_errors_of_one_bracket_in_any_order() {
 /// body, the type shown now, with the set of its bounds equal to the set of the bounds in the
 /// type shown at commit 7322e2a94, before the sharing, which each row also records. What does
 /// change: two result variables that the sharing makes one show as one (`(U, V)` became
-/// `(U, U)`; a variable seen once shows as `_`, so `(_, _)` became `(T, T)`), and fewer
-/// variables that the type does not hold are listed after `for` (row
-/// MSG-type-vars-printed-unused).
+/// `(U, U)`; a variable seen once shows as `_`, so `(_, _)` became `(T, T)`), and no variable
+/// that the type does not hold is listed after `for` (row MSG-type-vars-printed-unused), so
+/// the bounds compared are those of the variables each text writes.
 #[test]
 fn uses_alike_keep_the_bounds_of_the_signature() {
     let shown = [
@@ -499,7 +499,7 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
         (
             "(fu(x: t[0]), fu(x: t[0]))",
             "(t: _) -> (0, 0) for U in int | f64, V in int | f64",
-            "(t: _) -> (0, 0) for U in int | f64",
+            "(t: _) -> (0, 0)",
         ),
         (
             "(t[0], t[0] + 1, t[0], t[0] + 1)",
@@ -511,8 +511,7 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
             "(t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1, t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1)",
             "(t: _) -> (_, int, 0, V, _, int, 0, T5) for T6 in int | f64, \
              V in int | f32 | f64 | rat, T7 in int | f64, T5 in int | f32 | f64 | rat",
-            "(t: _) -> (T, int, 0, V, T, int, 0, V) for W in int | f64, \
-             V in int | f32 | f64 | rat",
+            "(t: _) -> (T, int, 0, V, T, int, 0, V) for V in int | f32 | f64 | rat",
         ),
         (
             "0 + t[0] + t[0]",
@@ -528,11 +527,16 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
             "(t: _) -> (U, U, U) for U in int | f32 | f64 | rat",
         ),
     ];
-    // The bounds after `for`, as a set.
+    // The bounds after `for` of the variables written before it, as a set.
     let bounds = |t: &str| -> std::collections::BTreeSet<String> {
-        (t.split_once(" for ").into_iter())
-            .flat_map(|(_, b)| b.split(", "))
-            .map(|v| v.split_once(" in ").expect("`X in B`").1.to_string())
+        let Some((arrows, clause)) = t.split_once(" for ") else {
+            return Default::default();
+        };
+        let words = arrows.split(|c: char| !c.is_ascii_alphanumeric());
+        (clause.split(", "))
+            .map(|v| v.split_once(" in ").expect("`X in B`"))
+            .filter(|(v, _)| words.clone().any(|w| w == *v))
+            .map(|(_, b)| b.to_string())
             .collect()
     };
     let lead = "the type the checker found for `many` is `";

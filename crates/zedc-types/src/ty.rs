@@ -15971,6 +15971,18 @@ struct Scope {
     /// the names the clauses inside it have written so far ([`Print::Opens`]): its own clause
     /// bounds all of its members, so it may take none of them.
     unions: Vec<HashSet<Arc<str>>>,
+    /// The printed names of the bounded variables open now that the text has written
+    /// ([`Ty::write_vars`]), so that a bounds clause, written after its arrows, binds only the
+    /// variables its text uses: a bound the needs of a body made for a variable the arrows do
+    /// not hold, as `_ -> f64 for T5 in f32 | f64 | rat`, is not type syntax a user would write
+    /// (plan row MSG-type-vars-printed-unused). A name is taken out when a signature opens it,
+    /// and no signature inside it takes it while it is open ([`Scope::printed`]), so a name in
+    /// the set was written inside the signature that bounds it now.
+    // Complexity tradeoff: naive, each clause's variables looked for in its arrows at any
+    // depth, O(size of the arrows) per signature, O(n·d) for n parts under d nested
+    // signatures; used, one hash insert per variable written and one lookup per bound, O(size
+    // of the text) in all. A `RefCell`, as [`Ty::write_vars`] reads the scope shared.
+    written: RefCell<HashSet<Arc<str>>>,
 }
 
 /// How a variable a signature binds is printed ([`Scope`]).
@@ -16038,6 +16050,7 @@ impl Scope {
             }
             self.printed.insert(name.clone());
             self.bound.insert(name.clone());
+            self.written.get_mut().remove(&name);
             self.names
                 .entry(v.clone())
                 .or_default()
@@ -16378,6 +16391,7 @@ impl Ty {
                     if let Some((_, _, written)) = scope.given.get(name) {
                         written.set(true);
                     }
+                    scope.written.borrow_mut().insert(name.clone());
                     // One slot only: no signature inside the one that binds it binds it again.
                     // [`Sig::standing_twice`] keeps the variables the outermost one binds.
                     if let (Some(named), Some(&k), Some([_])) = (
@@ -16743,8 +16757,13 @@ enum Print<'a> {
     Set(KType, TextPlace, bool),
     /// ` | ` before a member of the union being written, but its first.
     Sep,
-    /// The bounds clause of a signature, which closes the variables it opened.
-    Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
+    /// Where the text of a signature begins that stands where only a bounds clause needs a pair
+    /// ([`Sig::wraps`]): its [`Print::Bounds`] writes the pair if it writes a bound.
+    Begin,
+    /// The bounds clause of a signature, with only the variables its text wrote
+    /// ([`Scope::written`]), which closes the variables it opened; and whether its text began
+    /// at a [`Print::Begin`], to be parenthesized if the clause is written.
+    Bounds(&'a Sig, Vec<(Arc<str>, u8)>, bool),
     /// The start of a union that leaves a bounds clause to its end ([`Scope::unions`]).
     Opens,
     /// One bounds clause for the member signatures of a union that left theirs to its end
@@ -17184,6 +17203,9 @@ fn walk_parts<'a>(
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
     let mut first = true;
+    // Where each signature begins whose pair its bounds clause decides ([`Print::Begin`]),
+    // innermost last.
+    let mut begins = Vec::new();
     while let Some(part) = stack.pop() {
         let from = stack.len();
         let root = std::mem::take(&mut first);
@@ -17236,12 +17258,21 @@ fn walk_parts<'a>(
                 kernel.apart.push(apart);
             }
             Print::Sep => walk.sep(out),
-            Print::Bounds(s, bounds) => {
-                for (i, (v, m)) in bounds.iter().enumerate() {
+            Print::Begin => begins.push(out.len()),
+            Print::Bounds(s, bounds, begun) => {
+                let written = scope.written.get_mut();
+                let used = bounds.iter().filter(|(v, _)| written.contains(v));
+                for (i, (v, m)) in used.enumerate() {
                     out.push_str(if i == 0 { " for " } else { ", " });
                     out.push_str(v);
                     out.push_str(" in ");
                     out.push_str(&mask_text(*m));
+                }
+                // The `(` goes in with the kernel sets, as a union's does ([`Kernel::opens`]).
+                let at = begun.then(|| begins.pop().expect("pushed by Print::Begin"));
+                if let Some(at) = at.filter(|_| bounds.iter().any(|(v, _)| written.contains(v))) {
+                    kernel.opens.push(at);
+                    out.push(')');
                 }
                 scope.close(s);
             }
@@ -17249,7 +17280,9 @@ fn walk_parts<'a>(
                 let sigs = t.fns.iter().filter(|s| s.hoists());
                 let own = scope.hoisted.len() - sigs.clone().count();
                 let mut first = true;
-                for (v, m) in scope.hoisted.drain(own..).flatten() {
+                let written = scope.written.get_mut();
+                let hoisted = scope.hoisted.drain(own..).flatten();
+                for (v, m) in hoisted.filter(|(v, _)| written.contains(v)) {
                     out.push_str(if first { " for " } else { ", " });
                     first = false;
                     out.push_str(&v);
@@ -17410,9 +17443,14 @@ impl Sig {
         let several = morphism.is_none() && self.arrows.len() != 1;
         let hoisted = at == PrintAt::Member && several;
         let bounds = scope.open(self, hoisted);
-        let wrap = Sig::wraps(at, several, !bounds.is_empty());
+        // Where only a bounds clause needs the pair, the clause decides it once the arrows are
+        // written, as it binds only the variables they write ([`Scope::written`]).
+        let wrap = Sig::wraps(at, several, false);
+        let begun = !wrap && !bounds.is_empty() && Sig::wraps(at, several, true);
         if wrap {
             parts.push(Print::Text("("));
+        } else if begun {
+            parts.push(Print::Begin);
         }
         if let Some(m) = morphism {
             m.parts(parts);
@@ -17466,7 +17504,7 @@ impl Sig {
         }
         match hoisted {
             true => scope.hoisted.push(bounds),
-            false => parts.push(Print::Bounds(self, bounds)),
+            false => parts.push(Print::Bounds(self, bounds, begun)),
         }
         if wrap {
             parts.push(Print::Text(")"));
@@ -17580,7 +17618,7 @@ impl Sig {
         parts.push(Print::Ty(key, PrintAt::Key));
         parts.push(Print::Text(" ->? "));
         parts.push(Print::Ty(key, PrintAt::Result));
-        parts.push(Print::Bounds(self, bounds));
+        parts.push(Print::Bounds(self, bounds, false));
     }
 }
 

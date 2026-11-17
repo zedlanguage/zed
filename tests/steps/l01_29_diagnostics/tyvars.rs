@@ -383,3 +383,69 @@ fn naming_many_variables_that_each_stand_twice() {
         variables_that_each_stand_twice_named(&sig(&each_twice(n), "f"), n);
     }
 }
+
+/// Every variable a `for` clause of `found` binds is used before the `for`.
+fn for_vars_used(found: &str) {
+    let Some((arrow, bounds)) = found.split_once(" for ") else {
+        return;
+    };
+    for bound in bounds.split(", ") {
+        let var = bound.split(" in ").next().expect("a bound names its variable");
+        assert!(
+            arrow
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|w| w == var),
+            "`{found}` binds {var}, which it does not use"
+        );
+    }
+}
+
+/// A signature that bounds a variable its arrows do not hold prints no clause for it, and
+/// where only the clause needed a pair, as an arrow's result, no pair either (author P191);
+/// a variable it uses keeps its clause and the pair (plan row MSG-type-vars-printed-unused).
+#[test]
+fn a_bound_of_no_variable_the_text_writes_is_not_printed() {
+    let bounded = parse_type("(T) -> T for T in int | f64").unwrap().fns[0].bounds.clone();
+    // `int -> int`, bounding the `T` it does not hold.
+    let unused = |s: &str| {
+        let mut s = (*parse_type(s).unwrap().fns[0]).clone();
+        s.bounds = bounded.clone();
+        s
+    };
+    let text = unused("(int) -> int").to_string();
+    assert_eq!(text, "int -> int");
+    writes_back(&text);
+    let mut outer = unused("(int) -> int");
+    outer.arrows[0].result = Ty::func(Arc::new(unused("(int) -> int")));
+    let text = outer.to_string();
+    assert_eq!(text, "int -> int -> int");
+    writes_back(&text);
+    // The used one keeps both, under a fresh name, as the outer `T` is open around it.
+    let mut outer = unused("(int) -> int");
+    outer.arrows[0].result = parse_type("(T) -> T for T in int | f64").unwrap();
+    let text = outer.to_string();
+    assert_eq!(text, "int -> (U -> U for U in int | f64)");
+    writes_back(&text);
+}
+
+/// A printed type's `for` clause binds only the variables the type uses: a bound the body's
+/// needs made for a variable the arrows lost is not shown, as it is not type syntax a user
+/// would write (plan row MSG-type-vars-printed-unused).
+#[test]
+fn a_found_type_binds_only_the_variables_it_uses() {
+    for (decl, call) in [
+        ("h(positional t) = t[0] ++ t[1];", r#""${h(("a", 2))}""#),
+        (
+            "h(positional p) = if p[1] is int { p[1] } else { 0 };",
+            r#""${h((1, "a"))}""#,
+        ),
+        (
+            "h(positional p) {\n  a, b, c = p;\n  return if sum(p) < 2.5 { sum(p) } else { 2.5 };\n}",
+            r#""${h("s")}""#,
+        ),
+    ] {
+        let found = declared(&format!("{decl}\nr = {call};"));
+        eprintln!("{found}");
+        for_vars_used(&found);
+    }
+}
