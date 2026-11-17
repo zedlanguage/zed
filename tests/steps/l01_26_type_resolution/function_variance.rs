@@ -336,6 +336,223 @@ fn the_earlier_call_is_the_first_in_the_text() {
     assert!(alone.iter().all(Option::is_some));
 }
 
+/// Brackets, level words, scans, folds `><` and `.sum` written alike in one generic body are
+/// one use of the parameter, checked once at each call of the body, recorded at the first
+/// written; each still has the meaning and the fold its own need would have given it (row
+/// TEST-component-site-need-key), at a tuple and a list, at two calls.
+#[test]
+fn uses_alike_in_one_body_run() {
+    runs_to(
+        "many(t) = t[0] * 10 + t[0];\na = many(t: (3, 4)) * 1000 + many(t: (5, \"x\"));\n",
+        "a",
+        "33055",
+    );
+    for (word, want) in [
+        ("t.count", "33"),
+        ("t.sum", "66"),
+        ("(t >< (+))", "66"),
+        ("t.scan((+)).count", "33"),
+    ] {
+        runs_to(
+            &format!("many(t) = {word} * 10 + {word};\na = many(t: [1, 2, 3]);\n"),
+            "a",
+            want,
+        );
+    }
+    // Uses alike but for their component or their receiver are not one use.
+    runs_to(
+        "many(t) = t[0] * 10 + t[1] + t[0] * 100;\na = many(t: (3, 4));\n",
+        "a",
+        "334",
+    );
+    runs_to(
+        "many(t, s) = t.sum * 100 + s.sum * 10 + t.sum;\na = many(t: [1, 2], s: [3, 4]);\n",
+        "a",
+        "373",
+    );
+    runs_to(
+        "many(t, s) = t.scan((+)).count * 100 + s.scan((+)).count * 10 + t.scan((+)).count;\na = many(t: [1, 2], s: [3]);\n",
+        "a",
+        "212",
+    );
+    // Two calls, at `int` and at `f64`.
+    runs_to(
+        "many(t) = (t >< (+)) * 10 + (t >< (+));\na = (many(t: [1, 2]), many(t: [0.5, 1.5]));\n",
+        "a",
+        "(33, 22.0)",
+    );
+}
+
+/// A fold written twice alike in one generic body, which two calls run at carriers whose empty
+/// levels fold to different identities, is split at both: each call folds each of the two to
+/// the identity of its own carrier, `#empty` at `int` and `-inf` at `f64` (DESIGN.md
+/// sec:reduction, "Identity as data"; row TEST-component-site-need-key).
+#[test]
+fn a_fold_alike_to_one_split_by_its_calls_is_split_too() {
+    let levels = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
+                  m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";
+    runs_to(
+        &format!(
+            "{levels}two(positional xs) = (xs >< max, xs >< max);\na = (two(mi[\"a\"]), two(m[\"a\"]));\n"
+        ),
+        "a",
+        "((#empty, #empty), (-inf, -inf))",
+    );
+    runs_to(
+        &format!(
+            "{levels}two(positional xs) = (xs >< max, xs >< max);\na = (two(m[\"b\"]), two(mi[\"b\"]), two(m[\"a\"]));\n"
+        ),
+        "a",
+        "((5.0, 5.0), (5, 5), (-inf, -inf))",
+    );
+}
+
+/// A body whose brackets alike read a component the argument lacks gives at each call that
+/// passes too short a tuple the error a body with one such bracket gives, once for each
+/// bracket, each with its note at its own bracket, as each would give without the others;
+/// whatever the order of the calls in the text and in the checker's walk, checked alone, after
+/// the others, and after the others in reverse order (row TEST-component-site-need-key).
+#[test]
+fn brackets_alike_give_the_errors_of_one_bracket_in_any_order() {
+    let calls = [
+        "x = many(t: (1, 2));\ny = many(t: (1, 2, 3));\nz = many(t: (4,));\n",
+        "z = many(t: (4,));\ny = many(t: (1, 2, 3));\nx = many(t: (1, 2));\n",
+        "y = x + many(t: (1, 2, 3));\nx = many(t: (1, 2)) + z;\nz = many(t: (4,));\n",
+        "v() = u() + many(t: (4,));\nu() = many(t: (1, 2));\nw = many(t: (1, 2, 3)) + v();\n",
+    ];
+    // Each error: the call it is at, its message, and where its notes are in the body's line.
+    let errors = |body: &str, src: &str| -> Vec<(String, String, Vec<usize>)> {
+        let (info, _) = super::info(src);
+        let mut got: Vec<(String, String, Vec<usize>)> = (info.errors.iter())
+            .map(|e| {
+                let notes = (e.notes.iter())
+                    .map(|n| n.span.start)
+                    .filter(|&s| s < body.len())
+                    .collect();
+                let at = src[e.span.start..e.span.end].to_string();
+                (at, e.message.clone(), notes)
+            })
+            .collect();
+        got.sort();
+        got
+    };
+    let mut srcs = Vec::new();
+    for rest in calls {
+        let (one_body, body) = (
+            "many(t) = t[2];\n",
+            "many(t) = t[2] * 10 + t[2] * 100 + t[2];\n",
+        );
+        let one = errors(one_body, &format!("{one_body}{rest}"));
+        let at: Vec<&str> = one.iter().map(|(s, _, _)| s.as_str()).collect();
+        assert_eq!(at, ["many(t: (1, 2))", "many(t: (4,))"], "{rest}: {one:?}");
+        // The note at the bracket (at 10 in the one-bracket body), and the one at the
+        // definition (at 0).
+        assert!(one.iter().all(|(_, _, n)| n == &[10, 0]), "{one:?}");
+        let mut want: Vec<(String, String, Vec<usize>)> = (one.iter())
+            .flat_map(|(at, m, _)| {
+                (body.match_indices("t[2]")).map(|(b, _)| (at.clone(), m.clone(), vec![b, 0]))
+            })
+            .collect();
+        want.sort();
+        let alike = format!("{body}{rest}");
+        assert_eq!(errors(body, &alike), want, "{alike}");
+        srcs.push(alike);
+    }
+    let answer = |src: &str| zedc::run::load(src.as_bytes()).err();
+    let alone: Vec<Option<String>> = (srcs.iter().cloned())
+        .map(|src| std::thread::spawn(move || answer(&src)).join().unwrap())
+        .collect();
+    let batch: Vec<Option<String>> = srcs.iter().map(|src| answer(src)).collect();
+    let mut reversed: Vec<Option<String>> = srcs.iter().rev().map(|src| answer(src)).collect();
+    reversed.reverse();
+    assert_eq!(alone, batch, "alone, then in a batch");
+    assert_eq!(alone, reversed, "alone, then in a reversed batch");
+    assert!(alone.iter().all(Option::is_some));
+}
+
+/// The bounds of a type variable in the signature a body is shown with do not change where
+/// uses alike share one need (`Ck::share_alike`, row TEST-component-site-need-key): for each
+/// body, the type shown now, with the set of its bounds equal to the set of the bounds in the
+/// type shown at commit 7322e2a94, before the sharing, which each row also records. What does
+/// change: two result variables that the sharing makes one show as one (`(U, V)` became
+/// `(U, U)`; a variable seen once shows as `_`, so `(_, _)` became `(T, T)`), and fewer
+/// variables that the type does not hold are listed after `for` (row
+/// MSG-type-vars-printed-unused).
+#[test]
+fn uses_alike_keep_the_bounds_of_the_signature() {
+    let shown = [
+        // A bracket left free, twice.
+        ("(t[0], t[0])", "(t: _) -> (_, _)", "(t: _) -> (T, T)"),
+        // Added to 1: a variable bounded to the numbers.
+        (
+            "(t[0] + 1, t[0] + 1)",
+            "(t: _) -> (U, V) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat",
+            "(t: _) -> (U, U) for U in int | f32 | f64 | rat",
+        ),
+        // Resolved to `int` in the body.
+        (
+            "(fi(x: t[0]), fi(x: t[0]))",
+            "(t: _) -> (int, int)",
+            "(t: _) -> (int, int)",
+        ),
+        // Resolved to `int | f64`, a type the signature does not show.
+        (
+            "(fu(x: t[0]), fu(x: t[0]))",
+            "(t: _) -> (0, 0) for U in int | f64, V in int | f64",
+            "(t: _) -> (0, 0) for U in int | f64",
+        ),
+        (
+            "(t[0], t[0] + 1, t[0], t[0] + 1)",
+            "(t: _) -> (_, V, _, T5) for V in int | f32 | f64 | rat, T5 in int | f32 | f64 | rat",
+            "(t: _) -> (T, V, T, V) for V in int | f32 | f64 | rat",
+        ),
+        // The four forms, twice.
+        (
+            "(t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1, t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1)",
+            "(t: _) -> (_, int, 0, V, _, int, 0, T5) for T6 in int | f64, \
+             V in int | f32 | f64 | rat, T7 in int | f64, T5 in int | f32 | f64 | rat",
+            "(t: _) -> (T, int, 0, V, T, int, 0, V) for W in int | f64, \
+             V in int | f32 | f64 | rat",
+        ),
+        (
+            "0 + t[0] + t[0]",
+            "(t: _) -> U for U in int | f32 | f64 | rat",
+            "(t: _) -> U for U in int | f32 | f64 | rat",
+        ),
+        ("(t.count, t.count)", "(t: _) -> (_, _)", "(t: _) -> (T, T)"),
+        // Three uses of different kinds on one bracket's result.
+        (
+            "(t[0] - 1, -t[0], t[0] + 1)",
+            "(t: _) -> (U, V, W) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat, \
+             W in int | f32 | f64 | rat",
+            "(t: _) -> (U, U, U) for U in int | f32 | f64 | rat",
+        ),
+    ];
+    // The bounds after `for`, as a set.
+    let bounds = |t: &str| -> std::collections::BTreeSet<String> {
+        (t.split_once(" for ").into_iter())
+            .flat_map(|(_, b)| b.split(", "))
+            .map(|v| v.split_once(" in ").expect("`X in B`").1.to_string())
+            .collect()
+    };
+    let lead = "the type the checker found for `many` is `";
+    for (body, before, now) in shown {
+        assert_eq!(bounds(before), bounds(now), "{body}");
+        // A call each body refuses, whose notes show where `many` is declared.
+        let src = format!(
+            "fi(x: int) = x;\nfu(x: int | f64) = 0;\nmany(t) = {body};\n\
+             c0(y: int) = many(t: (\"a\", 0));\nc1(y: int) = many(t: 5);\n"
+        );
+        let (info, _) = super::info(&src);
+        let got: std::collections::BTreeSet<&str> = (info.errors.iter())
+            .flat_map(|e| e.notes.iter())
+            .filter_map(|n| n.text.split_once(lead))
+            .map(|(_, t)| t.strip_suffix('`').expect("ends with `"))
+            .collect();
+        assert_eq!(got, [now].into(), "{src}");
+    }
+}
+
 /// A call through a partial slot of a value outside the domain of the function passed misses
 /// with `#notFound`, which the caller handles (DESIGN.md sec:type_language, "Morphism types
 /// carry two domain bounds": a key in `U` only yields `V | #notFound`); within the domain the

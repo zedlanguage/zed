@@ -4639,6 +4639,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 true => self.passing(x, self.fold_word(FoldForm::Sum, site), span, None),
                 false => self.sum_method(&rest, span, site),
             };
+            let rest_atoms = rest.without_loose().pieces().iter().all(|p| p.is_atoms());
+            let key = |ck: &Self| AlikeSite::Sum(x.clone(), beside.clone(), ck.fold_subject(site));
+            self.alike_fold(x, key, rest_atoms, span, site);
             for v in x.vars.iter() {
                 let r = self.class_root(v);
                 let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
@@ -4722,6 +4725,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         site: Span,
     ) -> Ty {
         if !x.vars.is_empty() {
+            // Where the walk meets the word itself, it is paired with the first word alike
+            // ([`Self::alike_seen`]). Only a scan reads its site, whose fold records nothing
+            // there ([`FoldForm::records_identity`]) and quotes the receiver as written in its
+            // messages, which the key then holds.
+            if span == site && !self.trying {
+                let subject = match word {
+                    LevelWord::Scan(_) => self.fold_subject(site),
+                    _ => String::new(),
+                };
+                self.alike_seen(
+                    AlikeSite::Level(x.clone(), word, f.ty.clone(), subject),
+                    span,
+                );
+            }
             let mut rest = x.clone();
             rest.vars = VarSet::new();
             let mut out = match rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
@@ -4944,6 +4961,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             } else {
                 self.fold_level(op, &rest, span, site, form)
             };
+            let rest_atoms = rest.pieces().into_iter().all(|p| p.is_atoms());
+            let key = |ck: &Self| AlikeSite::Reduce(x.clone(), op, form, ck.fold_subject(site));
+            self.alike_fold(x, key, rest_atoms, span, site);
             for v in x.vars.iter() {
                 let r = self.class_root(v);
                 let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
@@ -7307,7 +7327,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Settles the signatures recorded at calls through values once the walk is done. Each
     /// call alike to an earlier one in its class ([`Ck::alike_calls`]) gets the signature
-    /// recorded there, if it has none of its own. Then the signatures recorded at each call
+    /// recorded there, if it has none of its own, and each bracket whose need a signature left
+    /// out ([`Ck::alike_brackets`]) gets the meaning recorded at the kept one, O(1) each. Then the
+    /// signatures recorded at each call
     /// of a generic body are compared in the order of the text ([`Ck::call_records`]): the
     /// reference is one the walk met at the call itself, or else the one found at the call of
     /// the generic function first in the text; each other one that [`unaligned`] parts from
@@ -7341,6 +7363,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     at.insert(sig.clone());
                     ready.push(l);
                 }
+            }
+        }
+        // Each bracket whose need [`Ck::share_alike`] left out ([`Ck::alike_brackets`]) takes the
+        // meaning recorded at the bracket whose need it kept, which that need's checks wrote.
+        // Each pair names a kept bracket, never one left out, so one pass sets each, O(p) for
+        // p pairs.
+        for (l, f) in std::mem::take(&mut self.alike_brackets) {
+            if let Some(&n) = self.info.brackets.get(&f) {
+                self.info.brackets.insert(l, n);
             }
         }
         // No call refused in the walk's order means every recording agrees with the first met
@@ -10842,7 +10873,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.check_on(n, t, n.span, None);
         }
         needs.sort_by_key(|(n, _)| *n);
-        sig.needs = needs.into_iter().map(|(_, n)| n).collect();
+        let (kept, merged) = self.share_alike(needs.into_iter().map(|(_, n)| n).collect());
+        sig.needs = kept;
         // Only the classes listed for this level are replaced here, not every class `sig`
         // holds. A type variable keeps its class's name `$k` until `finish`, so a function
         // around does not rewrite the signatures inside it at each depth (CHK-curried);
@@ -10868,6 +10900,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .resolved
                 .clone()
                 .expect("resolved");
+            // A type that holds a result class `share_alike` joined to another holds the
+            // other's variable, since `deep` is replaced in one pass.
+            let t = match merged.is_empty() {
+                true => t,
+                false => t.replace(&merged),
+            };
             if t.as_var() == Some(&v) {
                 continue;
             }
@@ -10876,6 +10914,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => deep.insert(v, t),
             };
         }
+        deep.extend(merged.iter().map(|(v, t)| (v.clone(), t.clone())));
         let mut sig = sig.replace(&deep).replace_outside(&outside);
         // The classes of this level that are type variables, named in order of appearance.
         // The names it holds, inside the functions it holds too, are taken; the facts of
@@ -10924,6 +10963,247 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.close_type_vars(level);
         self.level -= 1;
         Arc::new(sig)
+    }
+
+    /// The needs `needs` of a function that ends, in the order its body met them, less the
+    /// need of each use alike to an earlier one ([`Ck::alike_sites`]) where the two can share
+    /// one in the signature; with the binds that join their results' type variables, which
+    /// [`Self::generalize`] puts in the signature.
+    ///
+    /// In the body each use keeps its own need and its own result class: sharing happens only
+    /// here. A later need L is left out for an earlier need F kept, the first of its group,
+    /// where:
+    /// - both stand on one class (L's after the joins made here before it), with kinds equal
+    ///   but for the site, and the keys the walk recorded at their sites ([`Self::alike_seen`])
+    ///   are one once each class in them is written as its root, after the joins made here
+    ///   before L; so the two uses are alike in all their sites are read for, and a use on
+    ///   the results of uses joined (`t.scan(f).count`) is paired as they are;
+    /// - the kind holds no variable but the class's own and the result's, so the binds that
+    ///   needs between F and L make at a call cannot change what L is checked with;
+    /// - either both give nothing, or both give a class that is still unresolved, a type
+    ///   variable of this function (its root resolved to its own variable `$r`, at this
+    ///   level), and the two classes' bounds are equal: `classes[a].mask ==
+    ///   classes[b].mask`. The two classes are then linked, one under the other, and the
+    ///   child's variable is replaced by the root's. The bound is part of a group's key, so
+    ///   uses whose results are bounded differently form one group for each bound (at most
+    ///   the 2^7 masks, [`EVERY`]), not one need each;
+    /// - or both give one type with no variable ([`Self::fixed_result`]): a class of this
+    ///   level resolved to it in the body (`0 + t[0]` makes the result `int`), or the type
+    ///   itself. The two needs are then written alike in the signature but for the site, and
+    ///   no class is linked; the type is part of the key, so uses whose results have
+    ///   different types form one group for each type.
+    ///
+    /// Why merging there cannot change a printed bound: [`Self::generalize`] prints the bound
+    /// of a type variable from its class's mask alone (`sig.bounds`), and the class kept has
+    /// the mask both had; no other class changes. What can change is the count of variables
+    /// printed, where both results reach the signature's parameters or result. Results of a
+    /// type with no variable link nothing and print no variable.
+    ///
+    /// Why the signature means what it meant: at each call F and L are checked on the type
+    /// the call binds their class to, with one kind, after the same checks of that class, in
+    /// the body (a class checks all its uses on each type that flows in, in one order) and at
+    /// each call (`meet`): a check reads the site only to record at it and to read back what
+    /// it recorded there before (as [`Self::bracket_meaning`] does), and to quote the use as
+    /// written, which the pairing's key holds. So the two sites' records go through the same
+    /// steps, and the two needs give one type at each call: the two result variables are one
+    /// at every call. What L would record at its site at calls, [`Ck::settle_calls`] and
+    /// [`Ck::finish`] copy from F's (`alike_brackets`, `alike_folds`); a level word records
+    /// nothing at its site but a scan's fold, which records no identity
+    /// ([`FoldForm::records_identity`]). Where F fails at a call, [`Self::replay`] replays each
+    /// left-out need of its group, so each use keeps its own error and notes.
+    ///
+    /// Complexity tradeoff: a bracket `t[0]` written n times in a generic body called at c
+    /// places was n needs in the signature, each met at each call, O(n·c); the later ones
+    /// alike are now left out, so the calls meet one, O(n + c) in all, plus O(m) at a call
+    /// for a group of m where its need fails there, paid only when an error is reported. Here
+    /// one hash of each need's kind and of its use's key with roots, and two lookups, O(n)
+    /// for n needs of bounded size.
+    fn share_alike(&mut self, needs: Vec<Need>) -> (Vec<Need>, Binds) {
+        if self.alike_sites.is_empty() {
+            return (needs, Binds::new());
+        }
+        let mut kept: Vec<Need> = Vec::with_capacity(needs.len());
+        let mut members: Vec<Vec<(Span, Span)>> = Vec::with_capacity(needs.len());
+        // What a need's result is, as needs are grouped by it.
+        #[derive(PartialEq, Eq, Hash)]
+        enum Gives {
+            Nothing,
+            Var(u8),
+            Fixed(Ty),
+        }
+        let mut heads: HashMap<(Ty, NeedKind, Gives), usize> = HashMap::new();
+        // The first site met for each key written with roots, in the order of `needs`.
+        let mut firsts: HashMap<AlikeSite, Span> = HashMap::new();
+        let mut linked: Vec<usize> = Vec::new();
+        for n in needs {
+            let Some(site) = n.site() else {
+                kept.push(n);
+                members.push(Vec::new());
+                continue;
+            };
+            let on = (n.on.as_var().and_then(|v| class_id(v)))
+                .filter(|&k| k < self.classes.len())
+                .map(|k| Ty::var(format!("${}", self.find(k)).into()));
+            // The use's key with each class written as its root, so that a use on the result
+            // of a use joined here before (`t.scan(f).count` after `t.scan(f)`) is paired too.
+            let first = match self.alike_sites.get(&site) {
+                Some(key) => {
+                    let key = key.map_tys(|t| self.with_roots(t));
+                    *firsts.entry(key).or_insert(site)
+                }
+                None => site,
+            };
+            let mut key = n.clone();
+            if let Some(s) = key.site_mut() {
+                *s = first;
+            }
+            // What the result is, part of the key: the bound of an unresolved class, so that
+            // uses whose results are bounded differently form a group for each bound, or the
+            // type with no variable the class has, so that uses whose results have different
+            // types form a group for each type. A use whose result is neither, or whose kind
+            // holds another variable, joins no group.
+            let bound = match &n.result {
+                None => Some(Gives::Nothing),
+                Some(t) => match self.own_result(t) {
+                    Some(r) => Some(Gives::Var(self.classes[r].mask)),
+                    None => self.fixed_result(t).map(Gives::Fixed),
+                },
+            };
+            let Some(bound) = bound.filter(|_| self.kind_closed(&n)) else {
+                kept.push(n);
+                members.push(Vec::new());
+                continue;
+            };
+            let key = (on.unwrap_or_else(|| n.on.clone()), key.kind, bound);
+            match heads.get(&key) {
+                Some(&i)
+                    if kept[i].site() != Some(site)
+                        && self.join_results(&kept[i], &n, &mut linked) =>
+                {
+                    let first = kept[i].site().expect("a head has a site");
+                    match n.kind {
+                        NeedKind::Component { .. } => self.alike_brackets.push((site, first)),
+                        NeedKind::Reduce(..) | NeedKind::SumMethod { .. } => {
+                            self.alike_folds.push((site, first))
+                        }
+                        _ => {}
+                    }
+                    members[i].push((n.span, site));
+                    continue;
+                }
+                Some(_) => {}
+                None => {
+                    heads.insert(key, kept.len());
+                }
+            }
+            kept.push(n);
+            members.push(Vec::new());
+        }
+        for (n, m) in kept.iter_mut().zip(members) {
+            if !m.is_empty() {
+                n.alike = n.alike.iter().copied().chain(m).collect();
+            }
+        }
+        // Each linked class to its root, found once all links are made, so that no bind
+        // leads to a variable another replaces.
+        let merged = (linked.into_iter())
+            .map(|k| {
+                let r = self.find(k);
+                (Arc::from(format!("${k}")), Ty::var(format!("${r}").into()))
+            })
+            .collect();
+        (kept, merged)
+    }
+
+    /// `t` with each class variable written as its root's, as [`Self::share_alike`] compares
+    /// the keys of uses. `t` itself where every class in it is a root.
+    fn with_roots(&self, t: &Ty) -> Ty {
+        let binds: Binds = (t.var_facts().classes.iter())
+            .filter_map(|v| {
+                let k = class_id(v).filter(|&k| k < self.classes.len())?;
+                let r = self.find(k);
+                (r != k).then(|| (v.clone(), Ty::var(format!("${r}").into())))
+            })
+            .collect();
+        match binds.is_empty() {
+            true => t.clone(),
+            false => t.replace(&binds),
+        }
+    }
+
+    /// Whether the kind of `n` holds no variable but that of its class and its result
+    /// ([`Self::share_alike`]).
+    fn kind_closed(&self, n: &Need) -> bool {
+        let mut vars = Vars::default();
+        n.vars_in(&mut vars);
+        let own = |v: &Arc<str>| {
+            n.on.as_var() == Some(v) || n.result.as_ref().and_then(Ty::as_var) == Some(v)
+        };
+        vars.order.iter().all(own)
+    }
+
+    /// The root of the class of `t`, a need's result, where it is a type variable of the
+    /// function that ends: a class not yet resolved (its root resolved to its own variable
+    /// `$r`) at this level ([`Self::share_alike`]).
+    fn own_result(&self, t: &Ty) -> Option<usize> {
+        let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+        let r = self.find(k);
+        let c = &self.classes[r];
+        let var = c.resolved.as_ref().and_then(Ty::as_var);
+        (c.level == self.level && var.is_some_and(|v| class_id(v) == Some(r))).then_some(r)
+    }
+
+    /// The type of `t`, a need's result, where `t` is a type with no variable
+    /// ([`is_solved`]), or a class of this level resolved to one ([`Self::share_alike`]).
+    /// [`Self::generalize`] writes that type for the class's variable in the signature
+    /// (`outside`), and where a variable is left it is read as its type ([`Self::open`]), so
+    /// two needs alike whose results have one such type are one need at every call.
+    fn fixed_result(&self, t: &Ty) -> Option<Ty> {
+        if is_solved(t) {
+            return Some(t.clone());
+        }
+        let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+        let c = &self.classes[self.find(k)];
+        let r = c.resolved.as_ref()?;
+        (c.level == self.level && is_solved(r)).then(|| r.clone())
+    }
+
+    /// Whether the results of `head` and `n`, two needs alike ([`Self::share_alike`]), can be
+    /// one: both none; both one type with no variable ([`Self::fixed_result`]); or both an
+    /// unresolved class of this level with equal bounds, which are then linked, the child
+    /// pushed on `linked`.
+    fn join_results(&mut self, head: &Need, n: &Need, linked: &mut Vec<usize>) -> bool {
+        let (a, b) = match (&head.result, &n.result) {
+            (None, None) => return true,
+            (Some(a), Some(b)) => (a, b),
+            _ => return false,
+        };
+        let (Some(a), Some(b)) = (self.own_result(a), self.own_result(b)) else {
+            // Both a type with no variable, one type: the two needs are written alike in the
+            // signature, and no class is linked.
+            let fixed = self.fixed_result(a);
+            return fixed.is_some() && fixed == self.fixed_result(b);
+        };
+        if a == b {
+            return true;
+        }
+        // The equality test whose truth keeps every printed bound ([`Self::share_alike`]).
+        if self.classes[a].mask != self.classes[b].mask {
+            return false;
+        }
+        self.touch(a);
+        self.touch(b);
+        let (root, child) = match self.classes[a].rank < self.classes[b].rank {
+            true => (b, a),
+            false => (a, b),
+        };
+        if self.classes[a].rank == self.classes[b].rank {
+            self.classes[root].rank += 1;
+        }
+        self.classes[child].parent = root;
+        self.classes[root].size += self.classes[child].size;
+        linked.push(child);
+        true
     }
 
     /// Joins each class of the function of `level` with what a test of it gave
@@ -11222,6 +11502,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             kind,
             result: result.clone(),
             span,
+            alike: Arc::from([]),
         };
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
@@ -11272,6 +11553,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             kind: kind.clone(),
             result: result.clone(),
             span,
+            alike: Arc::from([]),
         };
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
@@ -11659,107 +11941,121 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             let from = self.errors.len();
-            let on = self.bound(&n.on, binds);
-            let shape = self.bound(&on, &mut Binds::new());
-            let got = match self.open.iter_mut().find(|o| o.span == n.span) {
-                _ if on.dynamic => {
-                    self.any(&format!("{what}, which needs this of its argument,"), span);
-                    Ty::empty()
+            self.replay_one(what, n, binds, span);
+            // A need that fails here replays each use alike that its signature left out for
+            // it ([`Self::share_alike`]), so each use keeps its own error and notes: O(m) more
+            // checks for a group of m, on the error path only.
+            if self.errors.len() > from {
+                for &(at, site) in n.alike.iter() {
+                    self.replay_one(what, &n.alike_at(at, site), binds, span);
                 }
-                Some(o) if o.shape == shape => {
-                    o.used = true;
-                    o.result.clone()
-                }
-                Some(o) => {
-                    let t = o.shape.clone();
-                    let (on, t) = (self.text(&on), self.text(&t));
-                    let menu = [
-                        "repair: declare the types of the function's parameters, so that the call \
+            }
+        }
+        left
+    }
+
+    /// [`Self::replay`] of the one need `n`.
+    fn replay_one(&mut self, what: &str, n: &Need, binds: &mut Binds, span: Span) {
+        let from = self.errors.len();
+        let on = self.bound(&n.on, binds);
+        let shape = self.bound(&on, &mut Binds::new());
+        let got = match self.open.iter_mut().find(|o| o.span == n.span) {
+            _ if on.dynamic => {
+                self.any(&format!("{what}, which needs this of its argument,"), span);
+                Ty::empty()
+            }
+            Some(o) if o.shape == shape => {
+                o.used = true;
+                o.result.clone()
+            }
+            Some(o) => {
+                let t = o.shape.clone();
+                let (on, t) = (self.text(&on), self.text(&t));
+                let menu = [
+                    "repair: declare the types of the function's parameters, so that the call \
                          inside it is checked at those types"
-                            .to_string(),
-                    ];
-                    self.error_offering(
-                        span,
-                        format!(
-                            "{what} needs this of its argument again inside its own check, on \
+                        .to_string(),
+                ];
+                self.error_offering(
+                    span,
+                    format!(
+                        "{what} needs this of its argument again inside its own check, on \
                              {on} where it was {t}: checking it there would need the same check \
                              at a larger type again, without end, so the checker stops here"
-                        ),
-                        menu,
-                    );
-                    Ty::empty()
-                }
-                None => {
-                    // `meet` gives `binds` back as they were, so the second run starts from
-                    // the same ones.
-                    let errors = self.errors.len();
-                    self.open.push(Open {
-                        span: n.span,
-                        shape,
-                        result: Ty::empty(),
-                        used: false,
-                    });
-                    let passing = self.need_passed.len();
-                    let mut got = self.meet(n, &on, binds, span);
-                    let used = self.open.last().is_some_and(|o| o.used);
-                    if used && !got.is_empty() {
-                        self.errors.truncate(errors);
-                        self.need_passed.truncate(passing);
-                        let o = self.open.last_mut().expect("the need just pushed");
-                        o.result = got.clone();
-                        let first = got;
-                        got = self.meet(n, &on, binds, span);
-                        if !self.subtype(&got, &first) {
-                            let why = got.refused(&first);
-                            let (got, first) = (self.text(&got), self.text(&first));
-                            let menu = [
-                                "repair: declare the result type of the function, so that its \
+                    ),
+                    menu,
+                );
+                Ty::empty()
+            }
+            None => {
+                // `meet` gives `binds` back as they were, so the second run starts from
+                // the same ones.
+                let errors = self.errors.len();
+                self.open.push(Open {
+                    span: n.span,
+                    shape,
+                    result: Ty::empty(),
+                    used: false,
+                });
+                let passing = self.need_passed.len();
+                let mut got = self.meet(n, &on, binds, span);
+                let used = self.open.last().is_some_and(|o| o.used);
+                if used && !got.is_empty() {
+                    self.errors.truncate(errors);
+                    self.need_passed.truncate(passing);
+                    let o = self.open.last_mut().expect("the need just pushed");
+                    o.result = got.clone();
+                    let first = got;
+                    got = self.meet(n, &on, binds, span);
+                    if !self.subtype(&got, &first) {
+                        let why = got.refused(&first);
+                        let (got, first) = (self.text(&got), self.text(&first));
+                        let menu = [
+                            "repair: declare the result type of the function, so that its \
                                  body is checked against it"
-                                    .to_string(),
-                            ];
-                            self.error_offering(
-                                span,
-                                format!(
-                                    "{what} needs this of its argument again inside its own \
+                                .to_string(),
+                        ];
+                        self.error_offering(
+                            span,
+                            format!(
+                                "{what} needs this of its argument again inside its own \
                                      check, and the result is not settled: it gives {got} \
                                      where the use inside gave {first}, so the use has no one \
                                      result the checker can find{why}"
-                                ),
-                                menu,
-                            );
-                        }
+                            ),
+                            menu,
+                        );
                     }
-                    self.open.pop();
-                    got
                 }
-            };
-            // What the use gives is within its result: a variable there joins it, as for an
-            // argument, and one it leaves unbound gives nothing.
-            if let Some(r) = &n.result {
-                if !self.gives_within(&got, r, binds, what, span) {
-                    let why = got.refused(r);
-                    let (got, r) = (self.text(&got), self.text(r));
-                    let menu = [format!(
-                        "repair: change the argument, so that {what} gives a value of {r} here"
-                    )];
-                    self.error_offering(
-                        span,
-                        format!(
-                            "{what} gives {got} here, which is not {r}: the use requires a value \
-                             of {r}{why}"
-                        ),
-                        menu,
-                    );
-                }
-                for v in &r.vars {
-                    binds.or_insert_with(v.clone(), Ty::empty);
-                }
+                self.open.pop();
+                got
             }
-            self.also(from, n.span, |_| {
-                format!("{what} needs this of its argument here")
-            });
+        };
+        // What the use gives is within its result: a variable there joins it, as for an
+        // argument, and one it leaves unbound gives nothing.
+        if let Some(r) = &n.result {
+            if !self.gives_within(&got, r, binds, what, span) {
+                let why = got.refused(r);
+                let (got, r) = (self.text(&got), self.text(r));
+                let menu = [format!(
+                    "repair: change the argument, so that {what} gives a value of {r} here"
+                )];
+                self.error_offering(
+                    span,
+                    format!(
+                        "{what} gives {got} here, which is not {r}: the use requires a value \
+                             of {r}{why}"
+                    ),
+                    menu,
+                );
+            }
+            for v in &r.vars {
+                binds.or_insert_with(v.clone(), Ty::empty);
+            }
         }
-        left
+        self.also(from, n.span, |_| {
+            format!("{what} needs this of its argument here")
+        });
     }
 
     /// Whether what a use gave in a replay, `got`, lies within the use's result `r`, binding
@@ -13387,6 +13683,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         },
                         result: None,
                         span,
+                        alike: Arc::from([]),
                     };
                     self.floor_on(id, need);
                 }
@@ -13869,6 +14166,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                     result: None,
                     span,
+                    alike: Arc::from([]),
                 },
             ),
             None => self.no_int_vars(t, &d, e.span),
@@ -14167,6 +14465,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                     result: None,
                     span: at,
+                    alike: Arc::from([]),
                 });
             }
             // A parameter declared with a range takes only the ints in it: each call shows
@@ -14191,6 +14490,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                     result: None,
                     span,
+                    alike: Arc::from([]),
                 });
             }
         }
@@ -14437,6 +14737,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             },
                             result: None,
                             span: n.span,
+                            alike: Arc::from([]),
                         };
                         self.floor_on(id, need);
                     }
@@ -14606,6 +14907,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                     result: None,
                     span: use_at.0,
+                    alike: Arc::from([]),
                 };
                 self.floor_on(id, need);
             }
@@ -16114,6 +16416,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             result: None,
             span,
+            alike: Arc::from([]),
         });
         self.bit_curries.insert(span, (w, p, given.into()));
         Ty::func(Arc::new(rest))
@@ -16600,6 +16903,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut out = self.passing(v, "an index", span, of);
         let shown = x.ty.to_string();
+        // Where the walk meets the bracket itself, it is paired with the first bracket alike
+        // ([`Self::alike_seen`]), if each class among `v`'s pieces took it as a need.
+        let alike = (site.is_none() && !self.trying && !v.vars.is_empty())
+            .then(|| AlikeSite::Component(v.clone(), i, x.ty.clone(), of.is_some()));
+        let mut all_needs = true;
         for p in v.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => {
@@ -16635,6 +16943,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 },
                 Piece::Var(_) if self.carriers_only(&p) => {
+                    all_needs = false;
                     let t = self.show(&p.ty());
                     self.not_indexable(&shown, &t, span);
                 }
@@ -16649,7 +16958,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out = out.union(&r);
                 }
                 Piece::Dyn => self.any(&format!("`[{shown}]`"), span),
-                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                Piece::Var(_) => {
+                    all_needs = false;
+                    out = out.union(&Ty::dynamic());
+                }
                 p if p.is_atoms() => {}
                 p => {
                     let t = self.text(&p.ty());
@@ -16657,7 +16969,59 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        if let Some(key) = alike
+            && all_needs
+        {
+            self.alike_seen(key, span);
+        }
         out
+    }
+
+    /// Records `key` for the use the walk meets at `span` ([`Ck::alike_sites`]), the first
+    /// key met there. It changes nothing in the body, where each use keeps its own need and
+    /// the class of its result: only [`Self::share_alike`] reads it, when the function ends,
+    /// and pairs two uses whose keys are one once each class is written as its root. The key
+    /// holds all a use's site is read for (its receiver's type, its component, word,
+    /// operator and form, and for a fold or scan the receiver as written), so two uses alike
+    /// have needs of one kind but for the site on each class of the receiver. O(1) for each
+    /// use.
+    fn alike_seen(&mut self, key: AlikeSite, span: Span) {
+        if self.trying {
+            return;
+        }
+        if let Entry::Vacant(e) = self.alike_sites.entry(span) {
+            e.insert(key);
+            self.alike_log.push(span);
+        }
+    }
+
+    /// Pairs the fold written at `site` with the first alike ([`Self::alike_seen`]), if the
+    /// walk is at the fold itself (`span` is `site`) and is not trying, and the fold records
+    /// all it records through its needs: what `x` holds beside its variables is atoms
+    /// (`rest_atoms`), which fold nothing, and every variable of `x` has a class not yet
+    /// resolved, which takes the need. Its own site then records nothing in the walk, and
+    /// only its needs' checks write [`Ck::folds`] and [`Ck::fold_uses`] at it, which
+    /// [`Ck::finish`] reads; so where [`Self::share_alike`] leaves its need out of the
+    /// signature, `finish` gives it what it decides for the use whose need stays.
+    fn alike_fold(
+        &mut self,
+        x: &Ty,
+        key: impl FnOnce(&Self) -> AlikeSite,
+        rest_atoms: bool,
+        span: Span,
+        site: Span,
+    ) {
+        if span != site || self.trying || !rest_atoms {
+            return;
+        }
+        let open = (x.vars.iter()).all(|v| {
+            self.class_root(v)
+                .is_some_and(|r| self.classes[r].resolved.is_none())
+        });
+        if open {
+            let key = key(self);
+            self.alike_seen(key, site);
+        }
     }
 
     /// The error of `v[x]` at `span`, `x` the literal shown as `shown`, of a value of the type
@@ -24851,6 +25215,7 @@ mod tests {
             },
             result: None,
             span: e.span,
+            alike: Arc::from([]),
         };
         assert!(ck.remap_goes_on(&need, &int_family(int)));
         assert!(!refused_without_end(&ck));

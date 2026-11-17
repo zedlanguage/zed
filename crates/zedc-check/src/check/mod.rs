@@ -1785,6 +1785,21 @@ struct Ck<'t, 'a> {
     /// replays record the signature at the first call only; [`Ck::settle_calls`] gives it to
     /// the second. Undone with a trial, whose classes may hold what the walk's do not.
     alike_calls: Vec<(Span, Span)>,
+    /// The key ([`AlikeSite`]) of each bracket, level word or fold the walk met by its site
+    /// ([`Ck::alike_seen`]), which [`Ck::share_alike`] reads to pair the uses alike. Undone
+    /// with a trial through [`Ck::alike_log`].
+    alike_sites: HashMap<Span, AlikeSite>,
+    /// The keys of [`Ck::alike_sites`] in the order inserted, so that a trial undoes its own.
+    alike_log: Vec<Span>,
+    /// Each bracket whose need a signature left out ([`Ck::share_alike`]), with the bracket
+    /// whose need it kept: [`Ck::settle_calls`] gives the first the meaning recorded at the
+    /// second ([`Info::brackets`]). Undone with a trial, as [`Ck::alike_calls`] is.
+    alike_brackets: Vec<(Span, Span)>,
+    /// Each fold whose need a signature left out ([`Ck::share_alike`]), with the fold whose
+    /// need it kept: [`Ck::finish`] gives the first what it decides for the second
+    /// ([`Info::reduce`], [`Info::split_folds`], [`Info::fold_calls`], [`Info::fold_reads`],
+    /// the error of a fold it cannot split). Undone with a trial, as [`Ck::alike_calls`] is.
+    alike_folds: Vec<(Span, Span)>,
     /// Each signature recorded at a call through a value ([`Ck::record_call`]), in the order
     /// recorded; undone with a trial. [`Ck::settle_calls`] compares those of each call in the
     /// order of the text.
@@ -2286,6 +2301,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             fold_uses: HashSet::new(),
             same_use: Vec::new(),
             alike_calls: Vec::new(),
+            alike_sites: HashMap::new(),
+            alike_log: Vec::new(),
+            alike_brackets: Vec::new(),
+            alike_folds: Vec::new(),
             call_records: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
@@ -4842,7 +4861,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         // body elaboration chooses; a check of a value that flowed into a class
         // (`check_on`) or of a fold outside any call has none, so no body could be chosen
         // for it.
+        // The folds whose needs a signature left out for an alike one's ([`Ck::share_alike`]),
+        // by the fold whose need it kept, which take what is decided for it below: O(1) for
+        // each, and O(c) for each where c calls split it. What a left-out fold recorded itself,
+        // in the body only, is dropped: it is what the kept fold recorded there, renamed
+        // (the proof at `share_alike`), and the kept fold's records hold the calls' checks too.
+        // A kept fold may itself be left out by the signature of a function around (whose
+        // needs carry the sites of the calls' needs), so each left-out fold goes to the end of
+        // its chain of pairs, whose records are kept: O(p·d) for p pairs and chains d long, d
+        // at most the depth of nested functions; `seen` ends a cycle, which no pairing makes
+        // (inferred: a signature keeps the first need of each group).
+        let pairs: HashMap<Span, Span> =
+            std::mem::take(&mut self.alike_folds).into_iter().collect();
+        let mut later_folds: HashMap<Span, Vec<Span>> = HashMap::new();
+        for (&later, &first) in &pairs {
+            let (mut at, mut seen) = (first, HashSet::from([later]));
+            while let Some(&next) = pairs.get(&at)
+                && seen.insert(at)
+            {
+                at = next;
+            }
+            later_folds.entry(at).or_default().push(later);
+        }
+        for later in later_folds.values_mut() {
+            later.sort_unstable();
+            later.dedup();
+            for l in later.iter() {
+                self.folds.remove(l);
+            }
+        }
         for (span, seen) in std::mem::take(&mut self.folds) {
+            let later = later_folds.get(&span).cloned().unwrap_or_default();
             let FoldChecks {
                 mut carriers,
                 mut by_call,
@@ -4865,6 +4914,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             match carriers.as_slice() {
                 [(Some(_), Some(v))] => {
+                    for &l in &later {
+                        self.info.reduce.insert(l, v.clone());
+                    }
                     self.info.reduce.insert(span, v.clone());
                     continue;
                 }
@@ -4901,30 +4953,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 unfolded.dedup();
                 for &call in &unfolded {
                     if !by_call.contains_key(&Some(call)) {
-                        self.info
-                            .fold_calls
-                            .entry(call)
-                            .or_default()
-                            .push((span, None));
+                        let at = self.info.fold_calls.entry(call).or_default();
+                        at.push((span, None));
+                        at.extend(later.iter().map(|&l| (l, None)));
                     }
                 }
                 for (call, cs) in by_call {
                     let call = call.expect("each check was made at a call");
                     let v = cs.into_iter().next().and_then(|(_, v)| v);
-                    self.info
-                        .fold_calls
-                        .entry(call)
-                        .or_default()
-                        .push((span, v));
+                    let at = self.info.fold_calls.entry(call).or_default();
+                    at.extend(later.iter().map(|&l| (l, v.clone())));
+                    at.push((span, v));
+                }
+                for &l in &later {
+                    self.info.split_folds.insert(l, what.clone());
                 }
                 self.info.split_folds.insert(span, what);
                 continue;
             }
-            self.error_offering(
-                span,
-                zedc_base::rejection::not_yet(&what),
-                ["repair: write the function once for each of these types".to_string()],
-            );
+            for at in std::iter::once(span).chain(later) {
+                self.error_offering(
+                    at,
+                    zedc_base::rejection::not_yet(&what),
+                    ["repair: write the function once for each of these types".to_string()],
+                );
+            }
         }
         // Each call's folds by span, which elaboration searches (`fkernel`), O(k log k) for
         // a call of k folds; each fold is pushed once per call, since `self.folds` holds each
@@ -4946,10 +4999,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !split.contains_key(&site) {
                 continue;
             }
-            for &later in repeats.get(&u).into_iter().flatten() {
-                reads.insert((call, site, later));
+            // A fold whose need [`Ck::share_alike`] left out for this one's has the same uses,
+            // its own site in place of this one's, which its need's span would have been.
+            let alike = (later_folds.get(&site).into_iter().flatten())
+                .map(|&l| (l, if u == site { l } else { u }));
+            for (site, u) in std::iter::once((site, u)).chain(alike) {
+                for &later in repeats.get(&u).into_iter().flatten() {
+                    reads.insert((call, site, later));
+                }
+                reads.insert((call, site, u));
             }
-            reads.insert((call, site, u));
         }
         self.info.fold_reads = reads;
         self.info.escaping_calls = (std::mem::take(&mut self.escapes).into_iter())
@@ -4977,6 +5036,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             && self.info.split_folds.contains_key(&site)
                         {
                             sites.push(site);
+                            // The folds alike to it, whose needs are its need.
+                            sites.extend(later_folds.get(&site).into_iter().flatten());
                         }
                         // A function held in a tuple, at any depth, is searched as one held
                         // alone (REDUCE-generic-identity-values, form 3): `(f(y), f)` holds `f`.
@@ -6587,7 +6648,38 @@ struct Mark {
     errors: usize,
     top_parts: usize,
     alike_calls: usize,
+    alike_log: usize,
+    alike_brackets: usize,
+    alike_folds: usize,
     call_records: usize,
+}
+
+/// The key of [`Ck::alike_sites`]: a bracket `v[x]` by its receiver's type, its component and
+/// key ([`NeedKind::Component`]) and whether it counts its own meaning (`of`); a level word by
+/// its receiver's type, the word and its function's type ([`NeedKind::Level`]); a fold by
+/// its receiver's type, its operator and form ([`NeedKind::Reduce`]) or the families summed
+/// beside it ([`NeedKind::SumMethod`]). A scan and a fold also keep the receiver as written,
+/// which their messages quote ([`Ck::fold_subject`]). Two uses whose keys are one once each
+/// class is written as its root ([`AlikeSite::map_tys`]) make one need on each class of the
+/// receiver but for the site ([`Ck::share_alike`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum AlikeSite {
+    Component(Ty, Option<usize>, Ty, bool),
+    Level(Ty, LevelWord, Ty, String),
+    Reduce(Ty, Reducer, FoldForm, String),
+    Sum(Ty, Ty, String),
+}
+
+impl AlikeSite {
+    /// The key with `f` applied to each type it holds.
+    pub(super) fn map_tys(&self, f: impl Fn(&Ty) -> Ty) -> AlikeSite {
+        match self {
+            AlikeSite::Component(v, i, x, of) => AlikeSite::Component(f(v), *i, f(x), *of),
+            AlikeSite::Level(x, w, g, s) => AlikeSite::Level(f(x), *w, f(g), s.clone()),
+            AlikeSite::Reduce(x, op, form, s) => AlikeSite::Reduce(f(x), *op, *form, s.clone()),
+            AlikeSite::Sum(x, beside, s) => AlikeSite::Sum(f(x), f(beside), s.clone()),
+        }
+    }
 }
 
 /// A signature recorded at a call through a value ([`Ck::record_call`]): the call in the text
@@ -6800,6 +6892,9 @@ impl Ck<'_, '_> {
             errors: self.errors.len(),
             top_parts: self.top_parts.len(),
             alike_calls: self.alike_calls.len(),
+            alike_log: self.alike_log.len(),
+            alike_brackets: self.alike_brackets.len(),
+            alike_folds: self.alike_folds.len(),
             call_records: self.call_records.len(),
         }
     }
@@ -6813,6 +6908,11 @@ impl Ck<'_, '_> {
         self.errors.truncate(m.errors);
         self.top_parts.truncate(m.top_parts);
         self.alike_calls.truncate(m.alike_calls);
+        for site in self.alike_log.drain(m.alike_log..) {
+            self.alike_sites.remove(&site);
+        }
+        self.alike_brackets.truncate(m.alike_brackets);
+        self.alike_folds.truncate(m.alike_folds);
         self.call_records.truncate(m.call_records);
     }
 }
@@ -13073,6 +13173,9 @@ mod tests {
             errors: 0,
             top_parts: 0,
             alike_calls: 0,
+            alike_log: 0,
+            alike_brackets: 0,
+            alike_folds: 0,
             call_records: 0,
         });
         assert!(ck.info.passes.is_empty());

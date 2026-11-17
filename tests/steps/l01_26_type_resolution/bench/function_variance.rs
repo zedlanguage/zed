@@ -220,6 +220,37 @@ fn many_calls_of_a_body_with_many_named_calls_scale() {
     });
 }
 
+/// One generic body indexing its parameter n times, `many(t) = 0 + t[0] + ... + t[0]`, called
+/// at n places, each with a tuple of its own (row FAIL-component-need-site-product): the n
+/// brackets alike are one need on the parameter's class, recorded at the first bracket, met
+/// once at each call, and each later bracket takes the first's meaning once when the check
+/// ends (`Ck::share_alike`, row TEST-component-site-need-key), so the whole is linear; with
+/// the bracket's site in the need's key, as at commit 4b9fda6f9, they were n needs met at each
+/// of the n calls, n·n in all (ratio 42.24 at 8n). Besides its ratio: the program elaborates
+/// at each size. Small instances: `function_variance::uses_alike_in_one_body_run` and
+/// `function_variance::brackets_alike_give_the_errors_of_one_bracket_in_any_order`.
+#[test]
+fn one_body_indexing_its_parameter_n_times_called_n_times_scales() {
+    let what = "one generic body with n indexings of its parameter, called at n places";
+    let make = |n: usize| {
+        let mut src = String::from("many(t) = 0");
+        for _ in 0..n {
+            src.push_str(" + t[0]");
+        }
+        src.push_str(";\n");
+        for i in 0..n {
+            src.push_str(&format!("c{i}(y: int) = many(t: (y, {i}));\n"));
+        }
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
+    });
+}
+
 /// n functions, each with a parameter declared with a range and each passed to an exact slot
 /// whose parameter type is wider (MSG-fn-domain-wider-repair, part 2): each is refused once,
 /// with the narrower-domain message, after one trial of the fit without its range needs, so
@@ -247,5 +278,101 @@ fn many_narrower_range_domains_at_exact_slots_scale() {
             errors.iter().all(|e| e.contains("its domain is narrower")),
             "{what} at {m}"
         );
+    });
+}
+
+/// One generic body with n uses `u` alike of its parameter, `many(t) = 0 + u + ... + u`, called
+/// at n places, each with a list of `int` of its own (row TEST-component-site-need-key): the
+/// uses alike are one need on the parameter's class, recorded at the first written, met once
+/// at each call, and each later use takes what the first's need decided once when the check
+/// ends (`Ck::alike_fold`, `Ck::share_alike`), so the whole is linear; with a need for each
+/// use, as at commit 4b9fda6f9, they were n needs met at each of the n calls, n·n in all
+/// (ratios 44 to 48 at 8n). Besides its ratio: the program elaborates at each size.
+fn many_uses_alike_scale(u: &str) {
+    let what = format!("one generic body with n uses `{u}` of its parameter, called at n places");
+    let u = u.to_string();
+    let make = move |n: usize| {
+        let mut src = String::from("many(t) = 0");
+        for _ in 0..n {
+            src.push_str(&format!(" + {u}"));
+        }
+        src.push_str(";\n");
+        for i in 0..n {
+            src.push_str(&format!("c{i}(y: int) = many(t: [y, {i}]);\n"));
+        }
+        src
+    };
+    let n = 100;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(&what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
+    });
+}
+
+/// A level word, `.count` (`NeedKind::Level`), at [`many_uses_alike_scale`]. Small instance:
+/// `function_variance::uses_alike_in_one_body_run`.
+#[test]
+fn one_body_counting_its_parameter_n_times_called_n_times_scales() {
+    many_uses_alike_scale("t.count");
+}
+
+/// A scan, `.scan((+))` (`NeedKind::Level`, whose key holds the receiver as written), at
+/// [`many_uses_alike_scale`]. Small instance: `function_variance::uses_alike_in_one_body_run`.
+#[test]
+fn one_body_scanning_its_parameter_n_times_called_n_times_scales() {
+    many_uses_alike_scale("t.scan((+)).count");
+}
+
+/// A fold `><` (`NeedKind::Reduce`) at [`many_uses_alike_scale`]. Small instances:
+/// `function_variance::uses_alike_in_one_body_run` and
+/// `function_variance::a_fold_alike_to_one_split_by_its_calls_is_split_too`.
+#[test]
+fn one_body_folding_its_parameter_n_times_called_n_times_scales() {
+    many_uses_alike_scale("(t >< (+))");
+}
+
+/// `.sum` (`NeedKind::SumMethod`) at [`many_uses_alike_scale`]. Small instance:
+/// `function_variance::uses_alike_in_one_body_run`.
+#[test]
+fn one_body_summing_its_parameter_n_times_called_n_times_scales() {
+    many_uses_alike_scale("t.sum");
+}
+
+/// One generic body with n brackets `t[0]` alike whose results resolve differently, called at
+/// n places (row TEST-component-site-need-key). The brackets cycle through four forms: passed
+/// to `drop`, which takes any value (a type variable with no bound), passed to a parameter of
+/// type `int` (resolved to `int`), passed to one of type `int | f64` (resolved to that type),
+/// and added to `1` and passed to `drop` (a type variable bounded to the numbers).
+/// `Ck::share_alike` groups the brackets by what their results are, so each form keeps one
+/// need of its own, four in all, met at each call, and the whole stays linear. The body is a
+/// sum so that its result type keeps one size: a tuple of the n brackets would give each call
+/// a result type of n components, n·n in all whatever the needs do (ratio 43.5 with the tuple
+/// of n plain brackets). Besides its ratio: the program elaborates at each size.
+#[test]
+fn one_body_indexing_its_parameter_n_times_with_results_resolved_differently_scales() {
+    let what = "one generic body with n indexings resolved four ways, called at n places";
+    let make = |n: usize| {
+        let mut src =
+            String::from("fi(x: int) = x;\nfu(x: int | f64) = 0;\ndrop(x) = 0;\nmany(t) = 0");
+        for i in 0..n {
+            src.push_str(match i % 4 {
+                0 => " + drop(x: t[0])",
+                1 => " + fi(x: t[0])",
+                2 => " + fu(x: t[0])",
+                _ => " + drop(x: t[0] + 1)",
+            });
+        }
+        src.push_str(";\n");
+        for i in 0..n {
+            src.push_str(&format!("c{i}(y: int) = many(t: (y, {i}));\n"));
+        }
+        src
+    };
+    let n = 100;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
     });
 }

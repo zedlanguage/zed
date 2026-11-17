@@ -3863,6 +3863,10 @@ pub struct Need {
     pub result: Option<Ty>,
     /// The use in the body.
     pub span: Span,
+    /// The later uses alike to this one that the signature left out, each with its span and
+    /// site, which the checker replays only where this need fails at a call, so that each
+    /// keeps its own error ([`Need::alike_at`]); empty for most needs.
+    pub alike: Arc<[(Span, Span)]>,
 }
 
 /// The operator a fold `m >< op` folds by (DESIGN.md sec:reduction): an operator section, as
@@ -4644,7 +4648,43 @@ impl Need {
             },
             result: self.result.as_ref().map(f),
             span: self.span,
+            alike: self.alike.clone(),
         }
+    }
+
+    /// The site its kind records at ([`Need::site_mut`]).
+    pub fn site(&self) -> Option<Span> {
+        match self.kind {
+            NeedKind::Component { site, .. }
+            | NeedKind::Level { site, .. }
+            | NeedKind::Reduce(_, site, _)
+            | NeedKind::SumMethod { site, .. } => Some(site),
+            _ => None,
+        }
+    }
+
+    /// The site its kind records at, for the kinds that hold one apart from the use: a
+    /// bracket, a level word, a fold and `.sum`.
+    pub fn site_mut(&mut self) -> Option<&mut Span> {
+        match &mut self.kind {
+            NeedKind::Component { site, .. }
+            | NeedKind::Level { site, .. }
+            | NeedKind::Reduce(_, site, _)
+            | NeedKind::SumMethod { site, .. } => Some(site),
+            _ => None,
+        }
+    }
+
+    /// The use alike to it at `span`, with site `site`, which the signature left out
+    /// ([`Need::alike`]): it with that span and site, and no uses alike of its own.
+    pub fn alike_at(&self, span: Span, site: Span) -> Need {
+        let mut n = self.clone();
+        n.span = span;
+        if let Some(s) = n.site_mut() {
+            *s = site;
+        }
+        n.alike = Arc::from([]);
+        n
     }
 
     /// Every variable in it, in order of first appearance.
@@ -20149,6 +20189,7 @@ mod tests {
             kind: NeedKind::Index(int()),
             result: None,
             span: Span { start: 0, end: 1 },
+            alike: Arc::from([]),
         };
         // `n` functions, each returning the one below; the one at depth `at` has needs.
         let nest = |n: usize, at: usize| {

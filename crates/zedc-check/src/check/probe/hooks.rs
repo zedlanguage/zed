@@ -288,6 +288,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             kind: key.0.clone(),
             result: None,
             span,
+            alike: std::sync::Arc::from([]),
         };
         let mut vars = Vars::default();
         need.vars_in(&mut vars);
