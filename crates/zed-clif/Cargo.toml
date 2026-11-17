@@ -38,6 +38,12 @@ rustix.workspace = true
 stacker.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
+# Cranelift's dependencies with the features the other packages give them in the workspace
+# build, so that `run_tests.sh --only zed_clif` builds this package's unit tests as that build
+# does; without these its check refuses the build.
+hashbrown = { version = "0.17.1", features = ["allocator-api2", "default", "default-hasher", "equivalent", "inline-more", "raw-entry"] }
+indexmap = { version = "2.14.2", default-features = false, features = ["std"] }
+rustc-hash = { version = "2.1.3", features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 perf-event2.workspace = true
