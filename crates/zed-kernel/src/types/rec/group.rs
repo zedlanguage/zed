@@ -251,6 +251,7 @@ impl Group {
                 }
             });
             if let Some(e) = bad {
+                // `bad` is set only inside the walk's `if let Expr::Ref(_, args) = e`, to `e`.
                 let Expr::Ref(j, _) = e else {
                     unreachable!("only a recursive occurrence is kept as the bad one")
                 };

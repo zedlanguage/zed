@@ -4611,6 +4611,9 @@ async fn part_boxes<'m>(
                             (Some(k), None) | (None, Some(k)) => {
                                 (found[&k].boxes.clone(), Made::Same(k))
                             }
+                            // The second pass reads only operands the first found to have boxes,
+                            // and the first gives an `|` or `&` boxes only when one operand has
+                            // them; each operand read is read before its `Combine`, popped later.
                             (None, None) => unreachable!("the first pass found boxes"),
                         }
                     }

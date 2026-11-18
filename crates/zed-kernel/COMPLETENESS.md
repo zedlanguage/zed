@@ -147,10 +147,18 @@ Failure branches of tests and benchmarks, run only when a test fails, so not to 
 `#[cfg(test)]` module); `empty/tests.rs` 522, 528, 710; `rec/group.rs` 871;
 `rec/unfold/tests.rs` 49; `types/tests.rs` 1075.
 
-Still open among the guards, each with what would settle it: `empty.rs` `system`'s `Not` arm
-(admission refuses a recursive occurrence under `!`, rec/group.rs; to confirm, that an `Env` is
-built only from an admitted group); `print.rs` `put` "a text of class Of is one node" (a list's
-text can take `first[0].class`, which may be `Class::Of`; to confirm, that such a text is then
-that one node's segment); `empty.rs` `Rep::key`, the value-shape read, `pair_picks`, the
-exclusive-or component and the two-operand arm; `print.rs` 908 and 2052; `rec/group.rs` 253;
-`types.rs` 4614.
+Third round (cover2, 2026-11-18), proofs written at the site: `empty/sweep.rs` `walk`
+rechecked (each `walked` entry is written once, the path last link first, so an `Item` is
+written only after the entry it leads to, also when `pick` gives up part way); `empty.rs`
+`system`'s `Not` arm (`Group::new`, the one maker of a group and its `Env`, rejects a recursive
+`!` found by `flipped`, which visits every node), `Rep::key` (both callers answer `Of` and
+`Closure` first), the value-shape read (`local` never answers an `Of`), the two-operand arm,
+`pair_picks` (`extract` reaches it only where `pair` gave the answer, so both leaves exist) and
+the exclusive-or component (`Choices::index` makes a component only with a cell); `print.rs`
+`put` (a text of class `Of` is made only by `Printer::node`; a list's text takes
+`first[0].class` only where it is that item alone) and `folded` (`meet_of_literals` holds only of
+lists and meets of its own); `rec/group.rs` `regular`; `types.rs` `part_boxes` (the second pass
+reads only operands the first found to have boxes).
+
+`print.rs` `write_out`'s entry (old 2083-2096) is its parenthesizing branch, not a guard: still
+open, it needs a root printed apart whose class its place does not admit.

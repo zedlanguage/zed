@@ -2637,6 +2637,8 @@ impl Rep {
                 len: len.clone(),
             },
             Rep::Struct => ValueKey::Struct,
+            // Its two callers, `stored_class` and `Search::class`, answer `Of` and `Closure` in
+            // the arms above the one that calls `key`.
             Rep::Of { .. } | Rep::Closure(_) => unreachable!("a value with no key"),
         }
     }
@@ -10735,6 +10737,10 @@ impl<'m> Searching<'m> {
                     Closure(Morphism, &'u Part<Morphism>),
                 }
                 let up = u.p();
+                // `v` is `local`'s answer, which is never `Of` (it returns `v` only when not
+                // `Of`, else a value it shows from a rep its loop took that is not `Of`), and a
+                // `Value` returned above; `shown` is only pushed to (`show`) while the search
+                // runs, so `shown[v]` is still that rep.
                 let shape = match &self.s().shown[v] {
                     Rep::Value(_) => unreachable!("a value was read above"),
                     Rep::Of { .. } => unreachable!("a value of another search was read in above"),
@@ -11254,6 +11260,8 @@ impl Choices<'_> {
                                     leaf: None,
                                 }
                             }
+                            // `y` is `None` only for `Form::Not` (the match on `form` above sets it
+                            // from `b` for `Or` and `And`), and the first arm takes `Not`.
                             (_, None) => unreachable!("an `or` and an `and` have two operands"),
                         }
                     }
@@ -11377,6 +11385,12 @@ impl Choices<'_> {
         picks: &mut [Option<Choice>],
     ) {
         let shared = shared_on(&x.on, &y.on);
+        // `extract` is called only when `f`'s `sat` is `Some(true)`, and goes down only into
+        // nodes whose wanted value is known to be had (`!` swaps `sat` and `valid`; the operand
+        // picked passes `gives`; apart operands of an `&` true have `and3` `Some(true)`). Here
+        // the node is an `&` wanted true or an `|` wanted false, not apart, and not one every
+        // choice gives; in `read` its `sat` (`&`) or `valid` (`|`) is then known only from
+        // `pair`, which answers `None` when either leaf is missing.
         let (Some(lx), Some(ly)) = (x.leaf, y.leaf) else {
             unreachable!("a meet found inhabited is of two lists or exclusive ors")
         };
@@ -11486,6 +11500,9 @@ impl Choices<'_> {
                             picks[j] = Some(o);
                             need ^= true;
                         }
+                        // `Choices::index` makes a component only where it pushes a cell into
+                        // one of its `by_parity` lists, so when `by_parity[0]` is empty
+                        // `by_parity[1]` is not and `odd` is `Some`.
                         (None, None) => unreachable!("a component of an exclusive or has a cell"),
                     }
                 }
@@ -14807,6 +14824,10 @@ fn system(env: &Arc<Env>) -> System {
                             None
                         }
                         rec::Shape::Not(_) => {
+                            // Only a recursive part gets here (the first arm takes the rest).
+                            // `Group::new`, the one maker of a group and so of its `Env`,
+                            // rejects a group whose `flipped` finds a recursive `Not`, and
+                            // `flipped` visits every node of every body.
                             unreachable!(
                                 "admission keeps a recursive occurrence out of a complement"
                             )

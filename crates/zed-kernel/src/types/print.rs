@@ -301,6 +301,11 @@ fn put(segs: &mut Vec<Seg>, t: Text, at: At) {
     match t.class {
         Class::Of(_) => match t.segs.into_iter().next() {
             Some(Seg::Node(i, _)) => segs.push(Seg::Node(i, at)),
+            // A text of class `Of` is made only by `Printer::node`, one `Seg::Node`; `group`
+            // and `joined` pass a single item on unchanged; and a list's text takes
+            // `first[0].class` only in the cases of its `class` table where the text written
+            // is that one item put at `At::Any` with nothing before or after it (a block
+            // with no text adds nothing and leaves `at` as it was).
             _ => unreachable!("a text of class Of is one node"),
         },
         c if at.admits(c) => segs.extend(t.segs),
@@ -905,6 +910,9 @@ impl Printer<'_> {
             match q.view() {
                 Ok(_) => ms.extend(q.forced().0),
                 Err(Form::And(x, y)) => stack.extend([x.clone(), y.clone()]),
+                // `meet_of_literals(p)` held: it is `true` of a node only when the node is a
+                // list or an `&` both of whose operands it holds of, and `false` of any other
+                // form, so every node reached from `p` is a list or an `&`.
                 Err(_) => unreachable!("a meet of morphism types holds only meets and lists"),
             }
         }
