@@ -1895,8 +1895,9 @@ enum Lengths {
 /// rule by shares (`shares`) decides most; when the negated classes hold more than all the
 /// lengths by their shares, the lengths are split on one prime `r` of their periods into the
 /// classes modulo `q0 * r`, `q0` the power of `r` the classes of `all` fix, and each class is
-/// decided by shares: some length is left when one class has one, and none when no class has.
-/// Classes no negated class tells apart are one class. The primes are tried in order, each
+/// decided by shares, a class shares refuses split again on `r` (`split_on`): some length is
+/// left when one class has one, and none when no class has. Classes no negated class tells
+/// apart are one class. The primes are tried in order, each
 /// split on its own, so the work is polynomial in the classes; what no single split decides is
 /// refused. The lengths of lists of integers whose length is not 0 modulo 2 or 3, nor 1 or 5
 /// modulo 6, are none: the even ones are 0 modulo 2, and the odd ones are 0, 1 or 2 modulo 3.
@@ -1922,57 +1923,89 @@ fn residue_classes(all: &[(u64, u64)], none: &[(u64, u64)]) -> (Lengths, Vec<(u6
         .collect();
     let mut split = all.to_vec();
     for r in primes {
-        // The power of `r` the classes of `all` fix, and the residue there.
-        let (q0, at0) = all
-            .iter()
-            .filter_map(|&(period, at)| {
-                let q = prime_powers(period).into_iter().find(|&(p, _)| p == r)?.1;
-                Some((q, at % q))
-            })
-            .max()
-            .unwrap_or((1, 0));
-        let Some(q) = q0.checked_mul(r) else {
-            continue;
-        };
-        // The classes modulo `q` some negated class meets alone, and one other when they are
-        // not all of them.
-        let mut tried: BTreeSet<u64> = none
-            .iter()
-            .filter(|&&(period, at)| {
-                let power = prime_powers(period)
-                    .into_iter()
-                    .find(|&(p, _)| p == r)
-                    .map_or(1, |(_, power)| power);
-                power >= q && at % q0 == at0
-            })
-            .map(|&(_, at)| at % q)
-            .collect();
-        if (tried.len() as u64) < r {
-            let free = (0..r)
-                .map(|i| at0 + i * q0)
-                .find(|b| !tried.contains(b))
-                .expect("a class is not tried");
-            tried.insert(free);
-        }
-        let mut all_none = true;
-        for b in tried {
-            split.push((q, b));
-            let l = shares(&split, none);
-            split.pop();
-            match l {
-                Lengths::Some => {
-                    split.push((q, b));
-                    return (Lengths::Some, split);
-                }
-                Lengths::None => {}
-                Lengths::Refused => all_none = false,
-            }
-        }
-        if all_none {
-            return (Lengths::None, Vec::new());
+        match split_on(r, &mut split, none) {
+            Lengths::Some => return (Lengths::Some, split),
+            Lengths::None => return (Lengths::None, Vec::new()),
+            Lengths::Refused => {}
         }
     }
     (Lengths::Refused, Vec::new())
+}
+
+/// Splits the lengths of `split` on the prime `r` into the classes modulo `q0 * r`, `q0` the
+/// power of `r` the classes of `split` fix, and decides each class by shares; a class shares
+/// refuses is split again on `r`, one level down, until no negated class has a finer power of
+/// `r` to tell its classes apart. `Some` leaves the class that has a length pushed on `split`;
+/// otherwise `split` is as it was. Lists whose length is in none of 0 modulo 2, 1 and 3 modulo
+/// 4, 7 modulo 12 and 0 modulo 3 need two levels: modulo 2 the odd class is refused by shares
+/// (1/2 + 1/2 + 1/6 over it), and modulo 4 each odd class is one negated class
+/// (FAIL-periodic-lists-13375960689).
+///
+/// Complexity tradeoff: the naive split goes straight to the largest power of `r` among the
+/// periods and decides each of its classes, as many as that power over `q0`, which is
+/// exponential in the digits of the periods. Here only the classes some negated class meets
+/// alone are tried, and one other that stands for the rest at its level, so the classes tried
+/// are the nodes of the `r`-adic tree of the negated classes' residues plus one free child per
+/// node: O(|none| · e) nodes, `e` the largest exponent of `r`, each one call of `shares`, which
+/// is O(|split| · |none|). The former split went down one level only, the same cost per level,
+/// and refused what needs two.
+fn split_on(r: u64, split: &mut Vec<(u64, u64)>, none: &[(u64, u64)]) -> Lengths {
+    // The power of `r` the classes of `split` fix, and the residue there.
+    let (q0, at0) = split
+        .iter()
+        .filter_map(|&(period, at)| {
+            let q = prime_powers(period).into_iter().find(|&(p, _)| p == r)?.1;
+            Some((q, at % q))
+        })
+        .max()
+        .unwrap_or((1, 0));
+    let Some(q) = q0.checked_mul(r) else {
+        return Lengths::Refused;
+    };
+    // The classes modulo `q` some negated class meets alone, and one other when they are not
+    // all of them. When no negated class meets one alone, no class differs from another by
+    // shares, and each is as refused as the lengths of `split`.
+    let mut tried: BTreeSet<u64> = none
+        .iter()
+        .filter(|&&(period, at)| {
+            let power = prime_powers(period)
+                .into_iter()
+                .find(|&(p, _)| p == r)
+                .map_or(1, |(_, power)| power);
+            power >= q && at % q0 == at0
+        })
+        .map(|&(_, at)| at % q)
+        .collect();
+    if tried.is_empty() {
+        return Lengths::Refused;
+    }
+    if (tried.len() as u64) < r {
+        let free = (0..r)
+            .map(|i| at0 + i * q0)
+            .find(|b| !tried.contains(b))
+            .expect("a class is not tried");
+        tried.insert(free);
+    }
+    let mut all_none = true;
+    for b in tried {
+        split.push((q, b));
+        let l = match shares(split, none) {
+            Lengths::Refused => split_on(r, split, none),
+            l => l,
+        };
+        if l == Lengths::Some {
+            return Lengths::Some;
+        }
+        split.pop();
+        if l == Lengths::Refused {
+            all_none = false;
+        }
+    }
+    if all_none {
+        Lengths::None
+    } else {
+        Lengths::Refused
+    }
 }
 
 /// A class of lengths on the primes where it is finer than the lengths of `all`: (index of the

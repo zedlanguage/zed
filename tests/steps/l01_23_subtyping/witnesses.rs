@@ -117,6 +117,16 @@ fn periodic_lists_agree_with_their_lengths_at_a_seed_that_missed_a_length() {
     periodic_lists(&mut Rng::new(seed), &format!("ZED_TEST_SEED={seed}"));
 }
 
+/// Seed 13375960689831104485 drew lists whose length is in none of 7 modulo 12, 0 modulo 2, 1
+/// and 3 modulo 4 and 0 modulo 3: empty, but a split on 2 must go down to classes modulo 4 to
+/// show it, and the split went down one level only, so the kernel refused with Residues
+/// (FAIL-periodic-lists-13375960689).
+#[test]
+fn periodic_lists_agree_with_their_lengths_at_seed_13375960689831104485() {
+    let seed = 13_375_960_689_831_104_485;
+    periodic_lists(&mut Rng::new(seed), &format!("ZED_TEST_SEED={seed}"));
+}
+
 /// 300 random Boolean combinations of `period` types, alone or paired with an integer, each
 /// checked by `check_lengths`; gives how many had each verdict.
 fn periodic_lists(r: &mut Rng, run: &str) -> BTreeMap<String, usize> {
