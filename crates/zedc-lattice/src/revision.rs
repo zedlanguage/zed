@@ -638,17 +638,9 @@ pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congr
     } else if *m == Num::ONE {
         x.clone()
     } else {
-        x.lift1(|(lo, hi)| {
-            let up = |e: &End| match e {
-                Fin(v) => Fin(v + &(residue - v).rem_euclid(m)),
-                e => e.clone(),
-            };
-            let down = |e: &End| match e {
-                Fin(v) => Fin(v - &(v - residue).rem_euclid(m)),
-                e => e.clone(),
-            };
-            vec![(up(lo), down(hi))]
-        })
+        // `O(d log p)` for a set that differs in `d` paths from one reduced against this class
+        // before, not `O(p)` (CHECK-literal-union-spaced, part 2; the tradeoff at the method).
+        x.in_class(m, residue)
     };
     let c = match x.bounds() {
         None => Congruence::Bottom,

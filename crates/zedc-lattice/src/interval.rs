@@ -185,6 +185,9 @@ struct Node {
     /// The count of integers in the subtree's pieces, `None` when one end is infinite: set by
     /// the first [`members`] that asks for it.
     members: OnceLock<Option<Num>>,
+    /// A modulus `m > 1` and residue `r` such that every finite end of the subtree's pieces is
+    /// `r` modulo `m`: set by the first [`in_class`] that finds it so.
+    in_class: OnceLock<(Num, Num)>,
     /// The hash of the subtree's pieces in order: `Σ h_i · R^(count - 1 - i)` modulo `P`.
     hash: u64,
     /// `R^count` modulo `P`.
@@ -288,6 +291,7 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         last,
         gap: OnceLock::new(),
         members: OnceLock::new(),
+        in_class: OnceLock::new(),
         hash,
         pow,
     })
@@ -325,6 +329,45 @@ fn members(n: &Node) -> &Option<Num> {
         }
         Some(c)
     })
+}
+
+/// `t` with each piece's lower end raised and upper end lowered to the nearest integer that is
+/// `r` modulo `m`, for `m > 1`, and the pieces left empty dropped: [`IntervalSet::in_class`].
+/// A subtree that already has every end in the class is returned shared, and is marked so
+/// ([`Node::in_class`]), so that a later call on a set sharing it passes it by in `O(1)`.
+///
+/// The result is a valid tree: a piece only shrinks, so the gaps between pieces only widen,
+/// and the order of the pieces is kept; a dropped piece's neighbors are joined by [`concat()`].
+fn in_class(t: &Link, m: &Num, r: &Num) -> Link {
+    let n = t.as_ref()?;
+    if n.in_class.get().is_some_and(|(a, b)| a == m && b == r) {
+        return t.clone();
+    }
+    let (left, right) = (in_class(&n.left, m, r), in_class(&n.right, m, r));
+    let up = |e: &End| match e {
+        Fin(v) => Fin(v + &(r - v).rem_euclid(m)),
+        e => e.clone(),
+    };
+    let down = |e: &End| match e {
+        Fin(v) => Fin(v - &(v - r).rem_euclid(m)),
+        e => e.clone(),
+    };
+    let piece = (up(&n.piece.0), down(&n.piece.1));
+    let shared = |a: &Link, b: &Link| match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    };
+    if piece == n.piece && shared(&left, &n.left) && shared(&right, &n.right) {
+        // A modulus seen first keeps the mark; another is checked by the walk each time.
+        _ = n.in_class.set((m.clone(), r.clone()));
+        return t.clone();
+    }
+    if piece.0 > piece.1 {
+        concat(left, right)
+    } else {
+        Some(join(left, keyed(piece), right))
+    }
 }
 
 /// The children and the piece of `n`, moved out when `n` is not shared and cloned when it is.
@@ -1323,6 +1366,22 @@ impl IntervalSet {
         IntervalSet::from_normal(self.pieces().rev().map(|(lo, hi)| (-hi, -lo)).collect())
     }
 
+    /// The members that are `r` modulo `m`, for `m > 1`, as an interval: each piece's ends
+    /// moved inward to the nearest such integers, and the pieces left with none dropped.
+    // Complexity tradeoff (CHECK-literal-union-spaced, part 2): naive version, `lift1` over
+    // every piece and the set built again, `O(p)` for `p` pieces each time; `k` tests on a
+    // callee of `k` literals 3 apart reduce a set of about `k` pieces against `0 mod 3` in each
+    // test's scope, `O(k^2)` in all. Used: a walk that passes by a subtree marked as already in
+    // the class and returns it shared, so a set that differs from a reduced one in `d` paths
+    // costs `O(d log p)`, and the result keeps the input's tree where nothing moved. Cost: one
+    // `OnceLock` of two numbers a node; a subtree asked about a second class is walked each
+    // time, `O(p)` as before.
+    pub fn in_class(&self, m: &Num, r: &Num) -> Self {
+        IntervalSet {
+            root: in_class(&self.root, m, r),
+        }
+    }
+
     /// The image of each piece under `f`, joined.
     pub fn lift1(&self, f: impl Fn(&(End, End)) -> Vec<(End, End)>) -> Self {
         IntervalSet::from_pieces(self.pieces().flat_map(f).collect())
@@ -2083,6 +2142,53 @@ mod tests {
         let mut rng = Rng(seed | 1);
         for (rounds, most, w) in [(1000, 6, 12), (40, 60, 200)] {
             operations_agree(&mut rng, rounds, most, w);
+        }
+    }
+
+    /// `in_class` gives what moving each piece's ends inward and building the set again gives,
+    /// as a valid tree, on fresh sets, on sets that share subtrees marked by an earlier call,
+    /// and for a second class asked of marked subtrees; a set already in its class comes back
+    /// shared.
+    #[test]
+    fn in_class_agrees_with_rounding_each_piece() {
+        let mut rng = Rng(0x6b38_1c2d_0e5f_7a91);
+        let w = 40;
+        for _ in 0..2000 {
+            let (a, b) = (random_set(&mut rng, 30, w), random_set(&mut rng, 30, w));
+            let m = Num::from(rng.int(2, 5) as u64);
+            let r = Num::from(rng.int(0, 4) as u64);
+            let want = |x: &IntervalSet, m: &Num, r: &Num| {
+                x.lift1(|(lo, hi)| {
+                    let up = |e: &End| match e {
+                        Fin(v) => Fin(v + &(r - v).rem_euclid(m)),
+                        e => e.clone(),
+                    };
+                    let down = |e: &End| match e {
+                        Fin(v) => Fin(v - &(v - r).rem_euclid(m)),
+                        e => e.clone(),
+                    };
+                    vec![(up(lo), down(hi))]
+                })
+            };
+            let check = |x: &IntervalSet, m: &Num, r: &Num| {
+                let got = x.in_class(m, r);
+                let w0 = want(x, m, r);
+                // Rounding moves an end by less than `m <= 5`, so `w + 8` holds every end.
+                agrees(&got, &members(&w0, w + 8), w + 8);
+                assert!(got.in_class(m, r).same_tree(&got), "{got} in {r} mod {m}");
+                got
+            };
+            let ra = check(&a, &m, &r);
+            // Sets sharing `a`'s and `ra`'s marked subtrees, as a narrowing makes them.
+            check(&a.meet(&b), &m, &r);
+            check(&ra.meet(&b), &m, &r);
+            check(&ra.minus(&b), &m, &r);
+            check(&a.join(&b), &m, &r);
+            // Another class asked of subtrees marked for the first.
+            let m2 = Num::from(rng.int(2, 5) as u64);
+            let r2 = Num::from(rng.int(0, 4) as u64);
+            check(&ra, &m2, &r2);
+            check(&ra.meet(&b), &m2, &r2);
         }
     }
 

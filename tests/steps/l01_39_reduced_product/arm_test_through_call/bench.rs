@@ -126,6 +126,23 @@ fn tests_on_a_callee_of_k_literal_arms_scale() {
     });
 }
 
+/// As [`tests_on_a_callee_of_k_literal_arms_scale`], with the callee's literals 3 apart
+/// ([`spaced_tests`]), so that the interval of its result is `k + 1` pieces rather than one,
+/// and each test's narrowing cuts a set of many members against an interval of many pieces.
+#[test]
+fn tests_on_a_callee_of_k_spaced_literal_arms_scale() {
+    let k = 64;
+    let (mut rng, seed) = Rng::fresh("tests_on_a_callee_of_k_spaced_literal_arms_scale");
+    let src = spaced_tests(&mut rng, k, 3, 0);
+    assert!(check(&src).is_none(), "seed {seed}: rejected\n{src}");
+    let src = spaced_tests(&mut rng, k, 3, 1);
+    assert!(check(&src).is_some(), "seed {seed}: accepted\n{src}");
+    let srcs = scaling::inputs(k, |n| spaced_tests(&mut Rng::new(seed ^ n as u64), n, 3, 0));
+    scaling::check("k tests on a callee of k literal arms 3 apart", k, |n| {
+        _ = check(&srcs[&n]);
+    });
+}
+
 /// The union of `k` literals that `k` nested arms give costs `O(k log k)` to type
 /// (CHECK-literal-union-cost).
 #[test]
