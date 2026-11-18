@@ -231,6 +231,16 @@ rows! {
     GenericInstance => "Instance of a generic definition that fails to type",
     UnboundedHistory => "Demanded history of a loop whose step count has no proven bound",
     HistoryBoundForm => "Bound on a history keyed by step number, or an overflow policy on a history bound",
+    // No diagnostic uses the next eight rows yet: plan rows L7.3l (port policies), L7.14 (derived
+    // queue sizes and carried state) and L7.3m (`::batches`) emit them.
+    PolicyOffPort => "Overflow policy on a value that is not a port",
+    BoundBelowDerivedSize => "Bound below the derived size",
+    QueueSizeOpen => "Queue whose size the domains leave open",
+    TwoPortPolicies => "Two policies on one port",
+    PolicyKindRefuses => "Overflow policy a port kind does not take",
+    UnpausableSourceNoPolicy => "Source that cannot pause read with no overflow policy",
+    CarriedGrowthUnbounded => "Carried collection whose growth has no proved bound",
+    BatchesOnOutput => "`::batches` on an output port",
     // No diagnostic uses the next two rows yet: plan row L18.2c emits them.
     StackOverBound => "Stack depth over `@stack(bytes: b)`",
     StackOverflow => "Stack overflow in a run",
