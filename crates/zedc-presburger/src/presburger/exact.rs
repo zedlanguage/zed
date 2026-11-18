@@ -2319,7 +2319,7 @@ fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSe
                 Rel::Ge => (None, Some(c0.div_floor(&-k))),
                 Rel::Eq => {
                     let v = (-c0).div_floor(k);
-                    if &(k * &v) != &-c0 {
+                    if k * &v != -c0 {
                         return Ok(Some(nothing(rows)));
                     }
                     (Some(v.clone()), Some(v))
