@@ -144,6 +144,53 @@ pub struct ProductDomains {
     pub ty: Entry<Type>,
     /// The binding time.
     pub time: Entry<Time>,
+    /// Whether [`Product::reduce_domains`] is known to change nothing here.
+    settled: Settled,
+}
+
+/// Whether a product's reduction between its own domains ([`Product::reduce_domains`]) is
+/// known to change nothing: set when a reduction returns `false`, cleared by every
+/// [`DerefMut`](std::ops::DerefMut) of the product. Copied with the domains, and ignored by
+/// equality and printing, since it says only what the domains already decide.
+///
+/// Why it is sound: `reduce_domains` reads the product alone and changes it only through
+/// `Entry::meet`, which writes nothing when it returns `false` (the element is kept and no
+/// premise added). So a reduction that returns `false` left the domains as they were, and
+/// another reduction of the same domains computes the same meets and again returns `false`.
+/// The domains behind the `Arc` change only through `DerefMut`, which clears the flag, so the
+/// flag is never set over domains that a reduction would change. It is atomic so that it can
+/// be set through a product shared with other scopes or threads (`&self`); it orders nothing,
+/// since the domains it describes are not written while shared (`Arc::make_mut` copies them
+/// first), so `Relaxed` suffices: a thread that misses a `true` only reduces again.
+#[derive(Default)]
+struct Settled(std::sync::atomic::AtomicBool);
+
+impl Settled {
+    fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn set(&self, v: bool) {
+        self.0.store(v, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clone for Settled {
+    fn clone(&self) -> Settled {
+        Settled(std::sync::atomic::AtomicBool::new(self.get()))
+    }
+}
+
+impl PartialEq for Settled {
+    fn eq(&self, _: &Settled) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Settled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get())
+    }
 }
 
 impl std::ops::Deref for Product {
@@ -154,9 +201,12 @@ impl std::ops::Deref for Product {
 }
 
 impl std::ops::DerefMut for Product {
-    /// The domains, copied first when another product shares them.
+    /// The domains, copied first when another product shares them; no longer known to be
+    /// settled (`Settled`).
     fn deref_mut(&mut self) -> &mut ProductDomains {
-        Arc::make_mut(&mut self.0)
+        let d = Arc::make_mut(&mut self.0);
+        d.settled.set(false);
+        d
     }
 }
 
@@ -196,6 +246,7 @@ impl Product {
             cell: Cell::top(),
             ty: Entry::new(Type::top()),
             time: Entry::new(Time::Run),
+            settled: Settled::default(),
         }))
     }
 
@@ -234,6 +285,7 @@ impl Product {
             cell: Cell::literal(v),
             ty: Entry::new(Type::lit(v).unwrap_or_else(Type::top)),
             time: Entry::new(Time::Build),
+            settled: Settled::default(),
         }))
     }
 
@@ -350,7 +402,43 @@ impl Product {
 
     /// The reductions between this product's own domains, once each; whether one changed a
     /// domain. Each change is a meet, so the product only descends.
+    ///
+    /// Complexity tradeoff (CHECK-literal-union-cost): naive version, every call reduces,
+    /// which relists the type's literals and the finite set, O(k) or more for k listed values,
+    /// and copies domains another product shares (`Arc::make_mut`) even when nothing
+    /// changes; a callee whose result lists k literals, tested in k arms, rebinds that
+    /// product in each arm's scope and paid O(k) per arm, O(k²) in all. Used: a product whose
+    /// last reduction changed nothing and that was not written since is known settled
+    /// ([`Settled`], proved there), and its reduction returns `false` at once, O(1), copying
+    /// nothing. Cost: one atomic flag per product, cleared by each write. Test:
+    /// `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
     fn reduce_domains(&mut self) -> bool {
+        if self.settled.get() {
+            return false;
+        }
+        // Domains another product shares are copied by the first write of the reduction
+        // (`Arc::make_mut`), so the flag set below would reach the copy alone, and each
+        // later copy of the shared product (a binding read again in each test's scope) would
+        // reduce again. Holding the shared domains costs no extra copy, since they are copied
+        // anyway, and lets the flag be set on them too: unchanged, they are the same domains,
+        // and the product takes them back, so it stays pointer-equal to the products that
+        // share them.
+        let shared = (Arc::strong_count(&self.0) > 1).then(|| self.0.clone());
+        let changed = self.reduce_domains_now();
+        if !changed {
+            match shared {
+                Some(d) => {
+                    d.settled.set(true);
+                    self.0 = d;
+                }
+                None => self.settled.set(true),
+            }
+        }
+        changed
+    }
+
+    /// [`Product::reduce_domains`] made, whether or not the product is settled.
+    fn reduce_domains_now(&mut self) -> bool {
         let prem = self.premises();
         let int = Type::int();
         let (x, c) = reduce_congruence(self.ints(), &self.cell.congruence.element);

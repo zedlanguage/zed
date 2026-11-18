@@ -439,6 +439,40 @@ fn flag_checked(start: &Product, at: &str) -> bool {
     flagged != *start
 }
 
+/// A product whose reduction changed nothing is known settled and not reduced again
+/// (CHECK-literal-union-cost), but a write to it, or to a copy that shares its domains, undoes
+/// that: the copy written is reduced again, and the product it was copied from keeps its
+/// domains and stays settled.
+#[test]
+fn a_settled_product_written_again_is_reduced_again() {
+    let lit = |n: i64| Type::lit(&Value::Int(n)).unwrap();
+    let mut settled = Product::of_type(Type::union_all([lit(1), lit(2), lit(3)]));
+    while settled.reduce_domains_once() {}
+    assert!(!settled.reduce_domains_once());
+    let mut written = settled.clone();
+    written.cell.ints.element =
+        Bounds::ints(IntervalSet::from_pieces(vec![(End::of(2), End::of(5))]));
+    assert!(written.reduce_domains_once(), "{written:?}");
+    while written.reduce_domains_once() {}
+    assert_eq!(written.ty.element, Type::union_all([lit(2), lit(3)]));
+    assert_eq!(
+        written.cell.finite.element,
+        FiniteSet::Set(BTreeSet::from([Value::Int(2), Value::Int(3)]))
+    );
+    assert_eq!(
+        settled.ty.element,
+        Type::union_all([lit(1), lit(2), lit(3)])
+    );
+    assert!(!settled.reduce_domains_once());
+    // Written in place, with no copy sharing its domains.
+    let mut alone = written;
+    alone.cell.ints.element =
+        Bounds::ints(IntervalSet::from_pieces(vec![(End::of(3), End::of(3))]));
+    assert!(alone.reduce_domains_once(), "{alone:?}");
+    while alone.reduce_domains_once() {}
+    assert_eq!(alone.ty.element, lit(3));
+}
+
 /// The random products [`the_change_flag_matches_a_comparison`] reduces in a run.
 const PRODUCTS: usize = 4_000;
 

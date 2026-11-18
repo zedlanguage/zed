@@ -2185,6 +2185,9 @@ struct Ck<'t, 'a> {
     /// The span of the text a message being written is about, whose own literals it prints as
     /// they are written there ([`Self::near`]).
     near: std::cell::Cell<Option<Span>>,
+    /// Each type read at a carrier so far, by the type's scalars and the carrier, with what
+    /// the read gave ([`Ck::read_at_once`]).
+    carrier_reads: std::cell::RefCell<HashMap<(KType, Carrier), Option<Result<Ty, Value>>>>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
@@ -2577,6 +2580,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             spelled: HashMap::new(),
             mixed: HashSet::new(),
             near: std::cell::Cell::new(None),
+            carrier_reads: std::cell::RefCell::new(HashMap::new()),
         }
     }
 

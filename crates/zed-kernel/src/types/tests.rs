@@ -961,3 +961,65 @@ fn ints_listed_are_the_ints_the_type_holds() {
     }
     assert!(listed > 1000 && cofinite > 1000, "{listed} {cofinite}");
 }
+
+/// `lists_values_of(b)` says what listing the meet with base type `b` says, that it lists one
+/// value or more (CHECK-literal-union-cost), for types made by `|`, `&`, `-` and `!` from
+/// literals and whole base types of each base, tuples and atoms.
+#[test]
+fn lists_values_of_agrees_with_listing_the_meet() {
+    let lit = |v: Value| Type::lit(&v).expect("a literal");
+    let half = Rat::decimal("0.5").expect("given").unwrap();
+    let bases = [
+        Type::bool(),
+        Type::int(),
+        Type::rat(),
+        Type::f64(),
+        Type::string(),
+        Type::f32(),
+    ];
+    let mut seed = crate::seed::seed("lists_values_of_agrees_with_listing_the_meet") | 1;
+    let mut below = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let piece = |below: &mut dyn FnMut(u64) -> u64| match below(12) {
+        0 => lit(Value::Int(below(3) as i64)),
+        1 => lit(Value::rat(half.clone())),
+        2 => lit(Value::float([0.5, 1.0][below(2) as usize])),
+        3 => lit(Value::float32(0.5)),
+        4 => lit(Value::str(["x", "y"][below(2) as usize])),
+        5 => lit(Value::Bool(below(2) == 0)),
+        6 => bases[below(6) as usize].clone(),
+        7 => Type::tuple(vec![lit(Value::Int(1))]),
+        8 => Type::atom("a"),
+        _ => Type::empty(),
+    };
+    let (mut yes, mut no) = (0, 0);
+    for _ in 0..5_000 {
+        let mut t = piece(&mut below);
+        for _ in 0..below(4) {
+            let p = piece(&mut below);
+            t = match below(4) {
+                0 => &t | &p,
+                1 => &t & &p,
+                2 => &t - &p,
+                _ => !&t,
+            };
+        }
+        for (b, base) in bases.iter().enumerate() {
+            let want = (&t & base).values_listed().is_some_and(|vs| !vs.is_empty());
+            assert_eq!(t.lists_values_of(b), want, "{t} at base {b}");
+            let part = &t & base;
+            let unlisted = !part.is_empty() && part.values_listed().is_none();
+            assert_eq!(t.holds_unlisted_values_of(b), unlisted, "{t} at base {b}");
+            if want {
+                yes += 1;
+            } else {
+                no += 1;
+            }
+        }
+    }
+    assert!(yes > 1000 && no > 1000, "{yes} {no}");
+}

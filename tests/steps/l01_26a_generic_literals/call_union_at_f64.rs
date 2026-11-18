@@ -138,6 +138,46 @@ fn a_power_with_no_exact_f64_is_named_as_a_power() {
 }
 
 #[test]
+fn one_call_type_read_at_several_carriers_gives_each_its_own_read() {
+    // CHECK-literal-union-cost: the read of a type at a carrier is made once and kept, keyed
+    // by the type and the carrier. The same type `1 | 16777217` is read at `f64`, where
+    // 2^24 + 1 is exact, at `f32`, where it is not, and at `rat`, in every order, and each
+    // read at `f32` is refused at its own site, the second as the first.
+    let defs = "g(positional c: bool) = if c { 16777217 } else { 1 };\n\
+                h64(positional z: f64) = z;\nh32(positional z: f32) = z;\n\
+                hr(positional z: rat) = z;\n";
+    let uses = [
+        "a(positional b: bool) = h64(g(b));\n",
+        "c(positional b: bool) = h32(g(b));\n",
+        "d(positional b: bool) = hr(g(b));\n",
+        "e(positional b: bool) = h32(g(b)) + 1.0f32;\n",
+    ];
+    let refused = [
+        "No `f32` equals 16777217, which `g(b)` may give. [h32(g(b))]",
+        "No `f32` equals 16777217, which `g(b)` may give. [h32(g(b))]",
+    ];
+    let reads = "t64 = h64(g(true));\nt = hr(g(true));\nf = hr(g(false));\n";
+    for order in [[0, 1, 2, 3], [1, 0, 3, 2], [2, 3, 1, 0], [3, 2, 0, 1]] {
+        let src = format!("{defs}{}{reads}", order.map(|i| uses[i]).concat());
+        assert_eq!(type_errors(&src), refused, "{order:?}");
+        assert_eq!(sig(&src, "a"), "bool -> f64", "{order:?}");
+        assert_eq!(sig(&src, "d"), "bool -> rat", "{order:?}");
+    }
+    // The values, of a program with the two reads that are accepted, in both orders, and the
+    // reads at `f64` and `rat` of the module's own names after them.
+    for order in [[0, 2], [2, 0]] {
+        let src = format!("{defs}{}{reads}", order.map(|i| uses[i]).concat());
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{order:?}");
+        assert_eq!(value(&src, "t64"), "16777217.0", "{order:?}");
+        assert_eq!(
+            (value(&src, "t").as_str(), value(&src, "f").as_str()),
+            ("16777217r", "1r"),
+            "{order:?}"
+        );
+    }
+}
+
+#[test]
 fn a_member_that_is_no_number_is_still_refused() {
     // The value no arrow takes is named in place of the type (MSG-call-union-headline).
     assert_eq!(

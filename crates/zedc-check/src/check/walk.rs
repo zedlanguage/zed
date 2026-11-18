@@ -9959,43 +9959,70 @@ pub(super) fn branch_lits<'e>(
     Some(out.into())
 }
 
-/// A value of type `t` read at the parameter `p` where `p` holds numbers of one carrier, `f64`
-/// or `rat`, and `t` lists each of its values outside that carrier, as `1 | 2` or `1 | f64`
-/// at `f64` ([`listed_outside`]): `t` with each listed value read at the carrier, and the
-/// carrier. With `g(positional c: bool) = if c { 2 } else { 1 }`, of type `(bool) -> 1 | 2`,
-/// `g(c)` at an `f64` parameter is `2.0 | 1.0` (L1.26a: "each keeps its own value and is
-/// fixed where the result is used", and "`z: f64 = g(c)` read both branches at `f64`"); with
-/// `g(positional c: bool, positional x: f64) = if c { x } else { 1 }`, of type `(bool, f64)
-/// -> 1 | f64`, `g(c, x)` there is `f64` (sec:type_resolution, rule 3: "each value keeps its
-/// own carrier, the literal `1` taking its carrier where the result is used"). An integer
-/// value is read at `f64`, `f32` or `rat` where it is exactly one, and a decimal one only at `f64`,
-/// which its value at run time already is: read at `rat` it would be the `f64`'s value, not
-/// the decimal's. `None` where `t` is not read so, which leaves it to the check every
-/// argument has: a part outside the carrier that is not a list of values, as the `int` of
-/// `int | f64`, has no value to read. `Some(Err((v, c)))` where every value outside the
-/// carrier is a number but `v` is not read at `c`: an integer with no exact value at `c`, as
-/// a lone integer literal there has none (sec:diagnostics: "an integer literal takes a
-/// carrier only where that carrier holds it exactly"), or a decimal at `rat`. Only the
-/// argument [`Ck::readable`] finds is read so: a name, `y` after `y = g(c)`, is not, since
-/// its value is fixed where it is bound ("bound to a name alone"). A decimal at `rat` that literals
-/// written as branches of an `if` give is adopted there ([`Ck::read_adopting`]).
-// Complexity tradeoff: O(v log v) for the `v` values the type lists outside the carrier, each
-// cast once and the singletons joined in pairs (`Ty::union_all`); the listing itself costs
-// the size of the type ([`KType::values_listed`]). The naive form, the type `1 | 2` tested
-// against `f64`, rejects the call, since an `int` value is no `f64`. Joining the singletons
-// one at a time instead copies the union so far at each, O(v²) element copies;
-// `lit_branch_ops::scaling` does not catch that form (8.1 times for 8 times the size), since
-// checking the `g` that gives the values costs far more per value (COMPLEXITY.md F164).
-pub(super) fn read_ty(t: &Ty, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>> {
-    let c = read_carrier(p)?;
-    Some(read_at(t, c)?.map(|t| (t, c)).map_err(|v| (v, c)))
+impl Ck<'_, '_> {
+    /// A value of type `t` read at the parameter `p` where `p` holds numbers of one carrier, `f64`
+    /// or `rat`, and `t` lists each of its values outside that carrier, as `1 | 2` or `1 | f64`
+    /// at `f64` ([`listed_outside`]): `t` with each listed value read at the carrier, and the
+    /// carrier. With `g(positional c: bool) = if c { 2 } else { 1 }`, of type `(bool) -> 1 | 2`,
+    /// `g(c)` at an `f64` parameter is `2.0 | 1.0` (L1.26a: "each keeps its own value and is
+    /// fixed where the result is used", and "`z: f64 = g(c)` read both branches at `f64`"); with
+    /// `g(positional c: bool, positional x: f64) = if c { x } else { 1 }`, of type `(bool, f64)
+    /// -> 1 | f64`, `g(c, x)` there is `f64` (sec:type_resolution, rule 3: "each value keeps its
+    /// own carrier, the literal `1` taking its carrier where the result is used"). An integer
+    /// value is read at `f64`, `f32` or `rat` where it is exactly one, and a decimal one only at `f64`,
+    /// which its value at run time already is: read at `rat` it would be the `f64`'s value, not
+    /// the decimal's. `None` where `t` is not read so, which leaves it to the check every
+    /// argument has: a part outside the carrier that is not a list of values, as the `int` of
+    /// `int | f64`, has no value to read. `Some(Err((v, c)))` where every value outside the
+    /// carrier is a number but `v` is not read at `c`: an integer with no exact value at `c`, as
+    /// a lone integer literal there has none (sec:diagnostics: "an integer literal takes a
+    /// carrier only where that carrier holds it exactly"), or a decimal at `rat`. Only the
+    /// argument [`Ck::readable`] finds is read so: a name, `y` after `y = g(c)`, is not, since
+    /// its value is fixed where it is bound ("bound to a name alone"). A decimal at `rat` that literals
+    /// written as branches of an `if` give is adopted there ([`Ck::read_adopting`]).
+    // Complexity tradeoff: O(v log v) for the `v` values the type lists outside the carrier, each
+    // cast once and the singletons joined in pairs (`Ty::union_all`); the listing itself costs
+    // the size of the type ([`KType::values_listed`]). The naive form, the type `1 | 2` tested
+    // against `f64`, rejects the call, since an `int` value is no `f64`. Joining the singletons
+    // one at a time instead copies the union so far at each, O(v²) element copies;
+    // `lit_branch_ops::scaling` does not catch that form (8.1 times for 8 times the size), since
+    // checking the `g` that gives the values costs far more per value (COMPLEXITY.md F164).
+    fn read_ty(&self, t: &Ty, p: &Ty) -> Option<Result<(Ty, Carrier), (Value, Carrier)>> {
+        let c = read_carrier(p)?;
+        Some(self.read_at_once(t, c)?.map(|t| (t, c)).map_err(|v| (v, c)))
+    }
+
+    /// [`read_at`] of `t` at `c`, made once for each type and carrier and kept
+    /// ([`Ck::carrier_reads`]): the read depends on the scalars of `t` and on `c` alone, where `t`
+    /// holds values alone ([`values_alone`]), and is `None` otherwise.
+    // Complexity tradeoff (COMPLEXITY.md C67): the naive form, [`read_at`] at each argument read,
+    // casts each of the `v` values the type lists and joins the results, O(v log v) for every
+    // read; each operator application reads its argument at every arrow of another carrier, so
+    // `k` tests `f(x) > c` on a call `f(x)` of `k` listed values cost O(k² log k) (41 times the
+    // instructions at 8 times `k`, CHECK-literal-union-cost). Used: one read per type and
+    // carrier, then a hash lookup, O(1) for a type that is the same node as the one read (the
+    // type's digest is kept, and equal nodes compare at once), O(v) for an equal type made
+    // apart, which `Type`'s order reads in full. Memory: each type read and its result, kept
+    // for the whole check.
+    fn read_at_once(&self, t: &Ty, c: Carrier) -> Option<Result<Ty, Value>> {
+        if !values_alone(t) {
+            return None;
+        }
+        let key = (t.set.clone(), c);
+        if let Some(r) = self.carrier_reads.borrow().get(&key) {
+            return r.clone();
+        }
+        let r = read_at(t, c);
+        self.carrier_reads.borrow_mut().insert(key, r.clone());
+        r
+    }
 }
 
 /// An argument read at a carrier ([`Ck::read_arg`]): its type read there, the carrier and the
 /// literals adopted at it, or the value no value of the carrier equals and the carrier.
 type ReadArg = Result<(Ty, Carrier, Adoptions), (Value, Carrier)>;
 
-/// The carrier [`read_ty`] reads at, where `p` holds numbers of one carrier, `f64`, `f32` or `rat`,
+/// The carrier [`Ck::read_ty`] reads at, where `p` holds numbers of one carrier, `f64`, `f32` or `rat`,
 /// and no type variable or `_`.
 fn read_carrier(p: &Ty) -> Option<Carrier> {
     if p.dynamic || !p.vars.is_empty() {
@@ -10029,22 +10056,18 @@ fn listed_outside(t: &Ty, c: Carrier) -> Option<Vec<Value>> {
 
 /// Whether `t` lists a number: one or more values of some numeric carrier, each listed, as
 /// `1 | f64` lists `1` and `int | f64` lists none.
+// Complexity tradeoff (CHECK-literal-union-cost): read from the type's parts, O(1), not by
+// listing `t.set & c.ty()`, O(k) for k literals (`KType::lists_values_of`).
 fn lists_a_number(t: &Ty) -> bool {
-    [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
+    Carrier::NUMBERS
         .into_iter()
-        .any(|c| {
-            (&t.set & &c.ty())
-                .values_listed()
-                .is_some_and(|vs| !vs.is_empty())
-        })
+        .any(|c| t.set.lists_values_of(c.base()))
 }
 
 /// Whether `t` lists an `int`, as `1 | f64` and `1 | 2` do and `int` and `1r` do not: the
 /// values [`read_at`] converts.
 fn lists_an_int(t: &Ty) -> bool {
-    (&t.set & &Carrier::Int.ty())
-        .values_listed()
-        .is_some_and(|vs| !vs.is_empty())
+    t.set.lists_values_of(Carrier::Int.base())
 }
 
 /// The numeric carriers of which `t` holds a part whole, not as a list of values: `f64` for
@@ -10052,10 +10075,10 @@ fn lists_an_int(t: &Ty) -> bool {
 fn whole_carriers(t: &Ty) -> impl Iterator<Item = Carrier> + '_ {
     [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
         .into_iter()
-        .filter(|c| {
-            let part = &t.set & &c.ty();
-            !part.is_empty() && part.values_listed().is_none()
-        })
+        // Complexity tradeoff (CHECK-literal-union-cost): read from the type's parts, O(1), not
+        // by meeting and listing `t.set & c.ty()`, O(k) for k literals
+        // (`KType::holds_unlisted_values_of`).
+        .filter(|c| t.set.holds_unlisted_values_of(c.base()))
 }
 
 /// The parts of the [`values_alone`] type `t` that arrows may take apart, as [`Ck::fewest`] splits
@@ -10099,7 +10122,7 @@ fn call_values(a: &Arg) -> Option<Vec<Value>> {
     t.set.values_listed().filter(|vs| !vs.is_empty())
 }
 
-/// The type `t` read at the carrier `c`, `f64`, `f32` or `rat`, as [`read_ty`] says: `t` with each
+/// The type `t` read at the carrier `c`, `f64`, `f32` or `rat`, as [`Ck::read_ty`] says: `t` with each
 /// value it lists outside `c` read at `c`, `Err(v)` with the first value `v` not read at `c`,
 /// or `None` where `t` lists no value outside `c` ([`listed_outside`]) or one of them is no
 /// number.
@@ -25872,7 +25895,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether the argument `a` is one whose listed values are read at a carrier where it is
-    /// used ([`read_ty`]): a call, as `g(c)`, or an `if` that is no `if` of literals alone
+    /// used ([`Self::read_ty`]): a call, as `g(c)`, or an `if` that is no `if` of literals alone
     /// ([`Arg::branches`]) and each branch of which, at any depth, is a call, a literal, an
     /// operation on literals alone, or a value whose type lists no `int`, as `x: f64` in
     /// `if c { x } else { 1 }`, which is `1 | f64` (sec:type_resolution, rule 3: "the literal
@@ -25992,7 +26015,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The argument `a` read at the parameter `p` where [`Self::readable`] finds it is read
-    /// at a carrier: [`read_ty`] of its type, with the adoptions of [`Self::read_adopting`].
+    /// at a carrier: [`Self::read_ty`] of its type, with the adoptions of [`Self::read_adopting`].
     pub(super) fn read_arg(&self, a: &Arg, p: &Ty) -> Option<ReadArg> {
         // The cheap tests first: every operator application with an argument of no literal
         // asks, and few such arguments list a number. Complexity tradeoff (COMPLEXITY.md
@@ -26005,7 +26028,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if p.dynamic || !p.vars.is_empty() || !self.readable(a) || !lists_a_number(&a.ty) {
             return None;
         }
-        Some(match read_ty(&a.ty, p)? {
+        Some(match self.read_ty(&a.ty, p)? {
             Ok((t, c)) => Ok((t, c, Adoptions::new())),
             Err((v, c)) => (self.adopting(a, &v, c).map(|(t, ads)| (t, c, ads))).ok_or((v, c)),
         })
@@ -26024,7 +26047,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         a: &Arg,
         c: Carrier,
     ) -> Option<Result<(Ty, Adoptions), Value>> {
-        Some(match read_at(&a.ty, c)? {
+        Some(match self.read_at_once(&a.ty, c)? {
             Ok(t) => Ok((t, Adoptions::new())),
             Err(v) => self.adopting(a, &v, c).ok_or(v),
         })

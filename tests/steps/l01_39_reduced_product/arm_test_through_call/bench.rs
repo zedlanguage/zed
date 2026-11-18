@@ -70,6 +70,46 @@ fn literal_body(k: usize) -> String {
     f
 }
 
+/// The callee of [`literal_body`] and `k` tests `f(x) > c` at random `c` in `0..k`, each of
+/// whose arms reads `x - c - past`. On `0..k - 1`, `f(x)` is `x + 1`, so the test holds exactly
+/// for `x >= c`, and the read is not negative where the test narrows `x` exactly when `past` is
+/// 0.
+fn literal_tests(rng: &mut Rng, k: usize, past: i64) -> String {
+    let tests: Vec<String> = (0..k)
+        .map(|_| {
+            let c = rng.int(0, k as i64 - 1);
+            format!(
+                "(if f(x) > {c} {{ popCount(x - {}) }} else {{ 0 }})",
+                c + past
+            )
+        })
+        .collect();
+    format!(
+        "f(positional x: int) = {};\ng(positional x: int) = {};\n",
+        literal_body(k),
+        tests.join(" + ")
+    )
+}
+
+/// `k` tests on a callee whose result is a union of `k + 1` literals cost `O(k log k)`
+/// together (CHECK-literal-union-cost): each test narrows the union to the literals above `c`,
+/// about `k / 2` of them, which must share the callee's set rather than copy it. Each size has
+/// its own random tests, from a seed new each run; the verdicts are checked at the smaller
+/// size.
+#[test]
+fn tests_on_a_callee_of_k_literal_arms_scale() {
+    let k = 64;
+    let (mut rng, seed) = Rng::fresh("tests_on_a_callee_of_k_literal_arms_scale");
+    let src = literal_tests(&mut rng, k, 0);
+    assert!(check(&src).is_none(), "seed {seed}: rejected\n{src}");
+    let src = literal_tests(&mut rng, k, 1);
+    assert!(check(&src).is_some(), "seed {seed}: accepted\n{src}");
+    let srcs = scaling::inputs(k, |n| literal_tests(&mut Rng::new(seed ^ n as u64), n, 0));
+    scaling::check("k tests on a callee of k literal arms", k, |n| {
+        _ = check(&srcs[&n]);
+    });
+}
+
 /// The union of `k` literals that `k` nested arms give costs `O(k log k)` to type
 /// (CHECK-literal-union-cost).
 #[test]

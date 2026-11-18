@@ -2949,6 +2949,54 @@ impl Type {
         p.scalars_only().then_some(p.digest)
     }
 
+    /// Whether its values of the base type `base`, in the order of [`Split::bases`] (`bool`,
+    /// `int`, `rat`, `f64`, `String`, `f32`), are one or more, each listed: what
+    /// `(self & base type).values_listed()` giving a nonempty list says, read from the parts
+    /// in O(1) with no type met and no value listed. The meet keeps the base's part of
+    /// `self` alone, `Lits` or the booleans, and such a type is listed exactly when that part
+    /// is not `cofinite`; the booleans are always a list.
+    ///
+    /// Complexity tradeoff (CHECK-literal-union-cost): naive version, the meet and the list,
+    /// O(k) for k literals of the base, made for each numeric base at each argument of each
+    /// call the checker reads at a carrier, so a call site of a callee that lists k literals,
+    /// read in each of k arms, cost O(k²). Used: the parts read, O(1). Test:
+    /// `types::tests::lists_values_of_agrees_with_listing_the_meet`.
+    pub fn lists_values_of(&self, base: usize) -> bool {
+        let p = self.p();
+        let l = match base {
+            0 => return p.bools != 0,
+            1 => &p.ints,
+            2 => &p.rats,
+            3 => &p.floats,
+            4 => &p.strings,
+            5 => &p.f32s,
+            _ => return false,
+        };
+        !l.cofinite && !l.values.is_empty()
+    }
+
+    /// Whether it holds values of the base type `base` (order as in [`KType::lists_values_of`])
+    /// that are not a list: what `(self & base type)` being nonempty with no
+    /// `values_listed()` says, read from the parts in O(1). That is the base's `Lits` being
+    /// `cofinite`, the complement of finitely many values in an infinite set, or one too large
+    /// to list; the booleans are always a list.
+    ///
+    /// Complexity tradeoff (CHECK-literal-union-cost): naive version, the meet, its emptiness
+    /// and the list, O(k) for k literals, made for each numeric carrier of each argument the
+    /// checker splits (`whole_carriers` in zedc-check); used: the flag read, O(1). Test:
+    /// `types::tests::lists_values_of_agrees_with_listing_the_meet`.
+    pub fn holds_unlisted_values_of(&self, base: usize) -> bool {
+        let p = self.p();
+        match base {
+            1 => p.ints.cofinite,
+            2 => p.rats.cofinite,
+            3 => p.floats.cofinite,
+            4 => p.strings.cofinite,
+            5 => p.f32s.cofinite,
+            _ => false,
+        }
+    }
+
     /// Whether it may hold an atom, read from its parts: false only when it holds none.
     pub fn may_hold_atoms(&self) -> bool {
         !self.p().atoms.is_default()
