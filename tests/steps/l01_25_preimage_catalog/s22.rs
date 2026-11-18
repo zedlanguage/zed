@@ -3317,6 +3317,33 @@ boxes_at_modulus_tests! {
     remainder_cases_cut_at_their_neighbors_at_modulus_7_seed_3 7 3 2339,
 }
 
+/// Row PRES-cover-refusals-moduli, the shapes `two moduli of one input` and `remainders of two
+/// inputs`: at moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13 over `x` and `y` in
+/// `[-60, 60]`, the exact cover answers wherever the solver alone answers, with a box of `x`
+/// inside the solver's. Before `direct` kept disjunctions as blocks of rows (2026-11-18), 26
+/// of these were refused past the work limit (`Refusal::Questions`), the worst at 44 M units
+/// with no limit. The other three shapes still have 24 refused cases (the row stays open;
+/// /home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs).
+#[test]
+fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7() {
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    for m in [5, 7] {
+        for seed in 1..=3 {
+            for shape in ["remainders of two inputs", "two moduli of one input"] {
+                for k in [1, 2, 5, 13] {
+                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+                    let alone = solver_alone(|| preimage(&t, &ds, &d));
+                    let covered = preimage(&t, &ds, &d);
+                    if alone.refusal.is_none() {
+                        assert_eq!(covered.refusal, None, "{t}");
+                        assert!(covered.domains["x"].is_subset(&alone.domains["x"]), "{t}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
 /// [`select_remainder_chain`], spread over `[-100, 99]`.
 fn spread_constant(j: i64) -> i64 {

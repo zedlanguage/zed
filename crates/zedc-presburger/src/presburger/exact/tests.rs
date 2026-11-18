@@ -524,17 +524,27 @@ fn splitting_a_shared_conjunction_reads_it_once() {
     assert!(parts.iter().all(|p| p.size == 1));
 }
 
-/// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, the
-/// solver's work for its questions included and that of its fast path left out (`tried`:
-/// `direct` reads the rows of `evens` and fails, a projected disjunction grouped with the
-/// bound on `z`), it answers with the exact set (the even values); allowed one unit
+/// [`evens`] with a second disjunction on `z`, `z <= 2k or y <= -1`, which holds wherever
+/// `evens` does, so that `direct` declines it: two disjunctions tied through `z` in one group
+/// (since PRES-cover-refusals-moduli `direct` answers `evens` itself, one disjunction with the
+/// bound on `z`).
+fn evens_tied(k: i64) -> Formula {
+    Formula::and(vec![
+        evens(k),
+        Formula::or(vec![ge(&[("z", -1)], 2 * k), ge(&[("y", -1)], -1)]),
+    ])
+}
+
+/// The work limit on both sides: allowed exactly the work the cover of [`evens_tied`] takes,
+/// the solver's work for its questions included and that of its fast path left out (`tried`:
+/// `direct` reads the rows and fails, two disjunctions grouped through `z`), it answers with the exact set (the even values); allowed one unit
 /// less, it refuses ([`Refusal::Questions`]) and never answers with the solver's set, which
 /// has values with no point (PRES-pugh-work-budget). The work is counted, so a second run
 /// uses the same. Before `tried` had an allowance of its own, the failed fast path was
 /// charged to the limit, and the cover was refused at the limit its loop needs.
 #[test]
 fn the_work_limit_is_met_alike_on_both_sides() {
-    let f = evens(20);
+    let f = evens_tied(20);
     let want =
         IntervalSet::from_pieces((0..=20).map(|v| (End::of(2 * v), End::of(2 * v))).collect());
     EXACT_WORK.set(0);
@@ -1071,7 +1081,9 @@ fn fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing() {
     let mut zero = 0;
     EXACT_WORK.set(0);
     FAST_WORK.set(0);
-    let skipped = tried(&mut zero, SOLVER, |w| direct(&f, &a("x"), w));
+    let skipped = tried(&mut zero, SOLVER, |w| {
+        direct(&f, &a("x"), &IntervalSet::top(), w)
+    });
     assert!(skipped.is_none());
     assert_eq!(FAST_WORK.replace(0), 0);
     assert_eq!(EXACT_WORK.replace(0), 0);

@@ -544,7 +544,9 @@ fn has_points(
             continue;
         }
         if p.factors.is_empty()
-            && let Some(set) = tried(&mut fast, work.solver, |w| direct(f, &none, w))
+            && let Some(set) = tried(&mut fast, work.solver, |w| {
+                direct(f, &none, &IntervalSet::top(), w)
+            })
         {
             if set.is_empty() {
                 return Ok(false);
@@ -594,9 +596,12 @@ fn cover(
     }
     // The exact projection read from the structure of `f`, with no question (`direct`). It lies
     // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
-    // another part has no point, and then every answer is made empty (`exact_each`).
+    // another part has no point, and then every answer is made empty (`exact_each`). So it may
+    // be met with the hull of `h` where that helps a block end (`block_set`).
     if factors.is_empty()
-        && let Some(set) = tried(&mut { work.limit }, work.solver, |w| direct(f, s, w))
+        && let Some(set) = tried(&mut { work.limit }, work.solver, |w| {
+            direct(f, s, &within, w)
+        })
     {
         return Ok((set, false));
     }
@@ -1092,11 +1097,15 @@ fn ray_from(
 
 /// A part of `f` as [`direct`] reads it: a conjunction of constraints not yet projected, so
 /// that a conjunction above it can project it with the constraints beside it; or the exact
-/// projection of the part onto the symbol, with the atoms other than the symbol it reads.
+/// projection of the part onto the symbol, with the atoms other than the symbol it reads; or a
+/// disjunction of conjunctions of constraints not yet projected (`Alts`, each block one
+/// disjunct), so that a conjunction above it can project each block with the constraints beside
+/// it (PRES-cover-refusals-moduli).
 #[derive(Clone)]
 enum Part {
     Rows(Vec<Con>),
     Set(IntervalSet, HashSet<Atom>),
+    Alts(Vec<Vec<Con>>),
 }
 
 /// `run`, a fast path, given what is left of `fast`, the fast paths' own allowance (a quarter
@@ -1172,7 +1181,27 @@ fn tried<T>(
 // constraint read is charged as the cover charges one. Not exact for a conjunction that ties a
 // disjunction to other parts through a shared atom (`y == x + 1 and (x <= 3 or x >= 10)`), nor
 // where a stride stops the elimination; those go to the cover (safe path, P246).
-fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>, Refusal> {
+//
+// PRES-cover-refusals-moduli (2026-11-18): the remainder chains of `s22` at moduli 5 and 7 give
+// `R ∧ D ∧ (B1 ∨ ... ∨ Bk)`, rows `R` tied to the disjunction through the chain's quotient and
+// remainder atoms, with `D` over `s` alone; the steps above returned `None` there, and the cover
+// asked 9 to 40 questions of the whole formula, about 1.9 M units each (refused past the limit
+// in 50 of 120 cases; 44 M units for the worst, whose answer is 44 values of a period of 14).
+// Now a disjunction of blocks of rows is kept as blocks (`Part::Alts`), and a group of rows `R`
+// with one such disjunction projects as the union of the projections of `R ∧ Bi` (exact, as
+// above: a value has a point of `R ∧ (B1 ∨ ... ∨ Bk)` exactly when it has one of some `R ∧ Bi`),
+// and a block whose elimination stops at a stride is projected by Pugh's exact projection
+// ([`block_set`]). Naive alternative: the disjunctive normal form of the whole formula, a
+// product over its disjunctions; here only a group with one disjunction is distributed, k
+// copies of `R` for k blocks, which is the size of that group's normal form, every row of
+// them charged, so the cost is O(k |R|) row reads plus the projections, under the allowance of
+// `tried`; a group with two disjunctions is not distributed (`None`, the cover is asked).
+fn direct(
+    f: &Formula,
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<IntervalSet>, Refusal> {
     enum Go<'a> {
         Read(&'a Formula, bool),
         Join(&'a Formula, bool),
@@ -1201,8 +1230,12 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
         match step {
             Go::Read(g, pos) => {
                 if let Some(v) = Id::of(g).and_then(|k| memo.get(&(k, pos))) {
-                    if let Part::Rows(rows) = v {
-                        work.read(rows.len() as u64)?;
+                    match v {
+                        Part::Rows(rows) => work.read(rows.len() as u64)?,
+                        Part::Alts(blocks) => {
+                            work.read(blocks.iter().map(|b| b.len() as u64).sum())?
+                        }
+                        Part::Set(..) => {}
                     }
                     values.push(v.clone());
                     continue;
@@ -1213,16 +1246,11 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
                         values.push(match (pos, c.rel) {
                             (true, _) => Part::Rows(vec![c.clone()]),
                             (false, Rel::Ge) => Part::Rows(vec![negated(c, &Int::from(-1))]),
-                            (false, Rel::Eq) => {
-                                let mut set = IntervalSet::empty();
-                                for v in [Int::from(-1), Int::from(1)] {
-                                    let Some(p) = projected(&[negated(c, &v)], s, work)? else {
-                                        return Ok(None);
-                                    };
-                                    set = set.join(&p);
-                                }
-                                Part::Set(set, others(std::slice::from_ref(c), s))
-                            }
+                            // `t != 0` is `t <= -1 or t >= 1`, two blocks.
+                            (false, Rel::Eq) => Part::Alts(vec![
+                                vec![negated(c, &Int::from(-1))],
+                                vec![negated(c, &Int::from(1))],
+                            ]),
                         });
                     }
                     Formula::Not(h) => stack.push(Go::Read(h, !pos)),
@@ -1238,9 +1266,9 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
                 };
                 let parts = values.split_off(values.len() - gs.len());
                 let v = if matches!(g, Formula::And(_)) == pos {
-                    met(parts, s, work)?
+                    met(parts, s, within, work)?
                 } else {
-                    joined_parts(parts, s, work)?
+                    joined_parts(parts, s, within, work)?
                 };
                 let Some(v) = v else {
                     return Ok(None);
@@ -1254,10 +1282,7 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
             }
         }
     }
-    match values.pop().expect("the part of `f`") {
-        Part::Rows(rows) => projected(&rows, s, work),
-        Part::Set(set, _) => Ok(Some(set)),
-    }
+    Ok(as_set(values.pop().expect("the part of `f`"), s, within, work)?.map(|(set, _)| set))
 }
 
 /// What [`read_once`] gives: whether `f` has a point, and its projection onto each atom.
@@ -1620,24 +1645,116 @@ fn others(rows: &[Con], s: &Atom) -> HashSet<Atom> {
         .collect()
 }
 
-/// A part of [`direct`] as a set: rows projected.
+/// The values of `s` at which the conjunction `rows` has a point, `within` the set `s` is known
+/// to lie in (the hull of the solver's set, or every value): [`projected`] where its
+/// elimination is exact; else, where `s` is read by `rows` and so the elimination stopped at a
+/// stride of another atom, Pugh's exact projection ([`projection::pugh`], a union of stride
+/// sets) of `rows` with the ends of `within` added as rows, its values listed. `None` where
+/// neither gives a set of ranges (a stride with no end).
+///
+/// Why the ends may be added: every value of `s` with a point of the formula lies in the
+/// solver's set (`exact_each`), so in its hull, and the projection of `rows ∧ within` is that of
+/// `rows` met with `within`. Where `rows` is a disjunct of a part of a split formula whose other
+/// part has no point, the answer is made empty by `exact_each` anyway.
+fn block_set(
+    rows: &[Con],
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<IntervalSet>, Refusal> {
+    if let Some(set) = projected(rows, s, work)? {
+        return Ok(Some(set));
+    }
+    if !rows.iter().any(|c| c.lin.terms.contains_key(s)) {
+        return Ok(None);
+    }
+    let mut bounded_rows = rows.to_vec();
+    if let Some((lo, hi)) = within.bounds() {
+        let ends = [(lo, Int::from(1)), (hi, Int::from(-1))];
+        for (end, sign) in ends {
+            if let End::Fin(v) = end {
+                // `s - lo >= 0`, `hi - s >= 0`.
+                let lin = Lin {
+                    terms: [(s.clone(), sign.clone())].into_iter().collect(),
+                    constant: -&(&sign * &Int::from(v)),
+                };
+                bounded_rows.push(Con { lin, rel: Rel::Ge });
+            }
+        }
+    }
+    let parts = projection::pugh(&bounded_rows, s, within, work)?;
+    let mut pieces: Vec<(End, End)> = Vec::new();
+    for p in parts {
+        if p.step == Int::from(1) {
+            let lo = p.lo.as_ref().map_or(End::NegInf, fin);
+            let hi = p.hi.as_ref().map_or(End::PosInf, fin);
+            pieces.push((lo, hi));
+            continue;
+        }
+        let (Some(lo), Some(hi)) = (&p.lo, &p.hi) else {
+            return Ok(None);
+        };
+        // Each value listed charged [`LISTED`], as `projection::listed` charges its own.
+        let mut v = lo + &(&p.res - lo).mod_floor(&p.step);
+        while &v <= hi {
+            work.charge(super::meter::LISTED)?;
+            pieces.push((fin(&v), fin(&v)));
+            v = &v + &p.step;
+        }
+    }
+    work.charge(PIECE.saturating_mul(pieces.len() as u64 + 1))?;
+    Ok(Some(IntervalSet::from_pieces(pieces)))
+}
+
+/// A part of [`direct`] as a set: rows projected; a disjunction of blocks, the union of their
+/// projections.
 fn as_set(
     p: Part,
     s: &Atom,
+    within: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<(IntervalSet, HashSet<Atom>)>, Refusal> {
     Ok(match p {
         Part::Set(set, atoms) => Some((set, atoms)),
-        Part::Rows(rows) => projected(&rows, s, work)?.map(|set| (set, others(&rows, s))),
+        Part::Rows(rows) => block_set(&rows, s, within, work)?.map(|set| (set, others(&rows, s))),
+        Part::Alts(blocks) => {
+            let mut set = IntervalSet::empty();
+            let mut atoms = HashSet::new();
+            for b in &blocks {
+                let Some(p) = block_set(b, s, within, work)? else {
+                    return Ok(None);
+                };
+                set = set.join(&p);
+                atoms.extend(others(b, s));
+            }
+            Some((set, atoms))
+        }
     })
 }
 
-/// The union of disjuncts for [`direct`]: the union of their projections.
-fn joined_parts(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refusal> {
+/// The union of disjuncts for [`direct`]: where every disjunct is rows or blocks of rows, the
+/// blocks, unprojected; else the union of their projections.
+fn joined_parts(
+    parts: Vec<Part>,
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<Part>, Refusal> {
+    if parts.iter().all(|p| !matches!(p, Part::Set(..))) {
+        let mut blocks: Vec<Vec<Con>> = Vec::new();
+        for p in parts {
+            match p {
+                Part::Rows(rows) => blocks.push(rows),
+                Part::Alts(more) => blocks.extend(more),
+                Part::Set(..) => unreachable!("no set among the parts"),
+            }
+        }
+        return Ok(Some(Part::Alts(blocks)));
+    }
     let mut set = IntervalSet::empty();
     let mut atoms: HashSet<Atom> = HashSet::new();
     for p in parts {
-        let Some((p, more)) = as_set(p, s, work)? else {
+        let Some((p, more)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
         set = set.join(&p);
@@ -1651,8 +1768,15 @@ fn joined_parts(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Pa
 }
 
 /// The meet of conjuncts for [`direct`]: rows alone stay rows; else the groups that share no
-/// atom but `s`, each projected, met.
-fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refusal> {
+/// atom but `s`, each projected, met. A group of rows `R` (possibly none) and one disjunction
+/// of blocks `B1 ∨ ... ∨ Bk` projects as the union of the projections of `R ∧ Bi`; where it is
+/// the only group, it stays the blocks `R ∧ Bi`, unprojected, for a conjunction above it.
+fn met(
+    parts: Vec<Part>,
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<Part>, Refusal> {
     if parts.iter().all(|p| matches!(p, Part::Rows(_))) {
         let mut all: Vec<Con> = Vec::new();
         for p in parts {
@@ -1668,14 +1792,22 @@ fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refu
     // The items: each row, then each projected part, joined through the atoms they read.
     let mut rows: Vec<Con> = Vec::new();
     let mut sets: Vec<(IntervalSet, HashSet<Atom>)> = Vec::new();
+    // Each disjunction of blocks, with the atoms other than `s` its blocks read, an item of its
+    // own after the sets.
+    let mut alts: Vec<(Vec<Vec<Con>>, HashSet<Atom>)> = Vec::new();
     for p in parts {
         match p {
             Part::Rows(r) => rows.extend(r),
             Part::Set(set, atoms) => sets.push((set, atoms)),
+            Part::Alts(blocks) => {
+                let atoms = blocks.iter().flat_map(|b| others(b, s)).collect();
+                alts.push((blocks, atoms));
+            }
         }
     }
     let r0 = rows.len();
-    let n = r0 + sets.len();
+    let a0 = r0 + sets.len();
+    let n = a0 + alts.len();
     let mut parent: Vec<usize> = (0..n).collect();
     fn root(p: &mut [usize], mut i: usize) -> usize {
         while p[i] != i {
@@ -1690,6 +1822,10 @@ fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refu
         .chain(
             (sets.iter().enumerate())
                 .flat_map(|(j, (_, atoms))| atoms.iter().map(move |a| (r0 + j, a))),
+        )
+        .chain(
+            (alts.iter().enumerate())
+                .flat_map(|(j, (_, atoms))| atoms.iter().map(move |a| (a0 + j, a))),
         );
     let mut read = 0u64;
     for (i, a) in items {
@@ -1705,29 +1841,60 @@ fn met(parts: Vec<Part>, s: &Atom, work: &mut Work) -> Result<Option<Part>, Refu
     }
     work.read(read)?;
     // Ordered, so that the work charged before a group not shown exact is the same on every run.
-    let mut groups: BTreeMap<usize, (Vec<Con>, Vec<usize>)> = BTreeMap::new();
+    type Group = (Vec<Con>, Vec<usize>, Vec<usize>);
+    let mut groups: BTreeMap<usize, Group> = BTreeMap::new();
     for (i, k) in rows.iter().enumerate() {
         let r = root(&mut parent, i);
         groups.entry(r).or_default().0.push(k.clone());
     }
     for j in 0..sets.len() {
-        let r = root(&mut parent, rows.len() + j);
+        let r = root(&mut parent, r0 + j);
         groups.entry(r).or_default().1.push(j);
     }
+    for j in 0..alts.len() {
+        let r = root(&mut parent, a0 + j);
+        groups.entry(r).or_default().2.push(j);
+    }
+    // `R ∧ Bi` for each block `Bi`, every row copied charged.
+    let distribute = |group: &[Con], blocks: &[Vec<Con>], work: &mut Work| {
+        let mut out = Vec::with_capacity(blocks.len());
+        for b in blocks {
+            work.read((group.len() + b.len()) as u64)?;
+            let mut block = group.to_vec();
+            block.extend(b.iter().cloned());
+            out.push(block);
+        }
+        Ok::<_, Refusal>(out)
+    };
+    if groups.len() == 1 && sets.is_empty() && alts.len() == 1 {
+        let (group, _, _) = groups.into_values().next().expect("one group");
+        let (blocks, _) = alts.pop().expect("one disjunction");
+        return Ok(Some(Part::Alts(distribute(&group, &blocks, work)?)));
+    }
     let mut set = IntervalSet::range(End::NegInf, End::PosInf);
-    for (group, held) in groups.values() {
-        let p = match (group.is_empty(), held.as_slice()) {
-            (false, []) => match projected(group, s, work)? {
+    for (group, held, ors) in groups.values() {
+        let p = match (group.is_empty(), held.as_slice(), ors.as_slice()) {
+            (false, [], []) => match block_set(group, s, within, work)? {
                 Some(p) => p,
                 None => return Ok(None),
             },
-            (true, [j]) => sets[*j].0.clone(),
+            (true, [j], []) => sets[*j].0.clone(),
+            (_, [], [j]) => {
+                let blocks = distribute(group, &alts[*j].0, work)?;
+                match as_set(Part::Alts(blocks), s, within, work)? {
+                    Some((p, _)) => p,
+                    None => return Ok(None),
+                }
+            }
             _ => return Ok(None),
         };
         set = set.meet(&p);
     }
     let mut atoms = others(&rows, s);
     for (_, more) in sets {
+        atoms.extend(more);
+    }
+    for (_, more) in alts {
         atoms.extend(more);
     }
     Ok(Some(Part::Set(set, atoms)))
