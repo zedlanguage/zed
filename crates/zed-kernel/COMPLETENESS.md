@@ -255,9 +255,13 @@ directly on an `Or` cycle with one way out and fails without the test (the `Or` 
 one counted child). For an `And` parent the test in the walk is redundant: a cut child already
 makes it dead in the first pass.
 
-Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,
-and the cascade after it; no draw reaches it, and no proof yet: it needs an exit node true in
-the least fixed point of `bounds` and false in its last pass). The second least fixed point of
+`bes.rs` `delete_cascade` 645-689 (numbered at 847a31d3e: the kill of a tuple cycle with no
+seed, and the cascade after it) is reached by the test
+`a_tuple_cycle_dies_when_its_last_seed_does`, which calls `delete_cascade` directly and checks
+it against the game: no system drawn for `decide` makes the cascade kill a node, and no proof
+that `decide` never does was found (it would need an exit node true in the least fixed point of
+`bounds` and false in its last pass). With the kill on a cycle's last seed removed it fails
+(node `a`); with the count-down of a parent's need removed it fails (node `e`). The second least fixed point of
 the one-`Mor` step is closed: the 40,000 draws never reach it, a search of about 3.6 million
 draws (4 to 43 nodes, few `Mor` nodes) found 20-node systems that do, and one is the test
 `one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point`; with the second pass

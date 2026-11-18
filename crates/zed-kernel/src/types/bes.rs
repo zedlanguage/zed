@@ -1096,7 +1096,9 @@ pub fn decide(raw: &Bes) -> Decision {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Bes, Edges, Kind, Scratch, Stamp, components, decide, gfp};
+    use super::{
+        Answer, Bes, Edges, Kind, Scratch, Stamp, components, decide, delete_cascade, gfp,
+    };
 
     /// After 2^32 - 1 advances the marks are cleared: a node marked under the first stamp is
     /// seen fresh again under the stamp of the same number (item TEST-types-unreached-paths;
@@ -1233,6 +1235,37 @@ mod tests {
         gfp(&g, &sub, true, false, true, &mut sc);
         assert!(sc.cur[p as usize], "p reads x, which holds");
         assert!(!sc.cur[w as usize], "w's one edge is cut");
+    }
+
+    /// The cascade of `delete_cascade`, called directly: no system drawn for `decide` makes it
+    /// kill a node (every tuple cycle of the `u_set`s drawn has a seed). The `Or` cycle `c, d`
+    /// has no way out and dies at the start; the `Or` cycle `a, b` has one seed, `a`'s edge to
+    /// `c`, and dies when `c` does; `e`'s one child in `u_set` is `a`, so it dies after it. The
+    /// game agrees that no node is inhabited.
+    #[test]
+    fn a_tuple_cycle_dies_when_its_last_seed_does() {
+        let mut g = Bes::new();
+        let [a, b, c, d, e] = [(); 5].map(|_| g.add(Kind::Bot, vec![]));
+        let x = g.add(Kind::Bot, vec![]);
+        g.set(a, Kind::Or, vec![b, c]);
+        g.set(b, Kind::Or, vec![a]);
+        g.set(c, Kind::Or, vec![d]);
+        g.set(d, Kind::Or, vec![c]);
+        g.set(e, Kind::Or, vec![a, x]);
+        g.seal();
+        let mut sc = Scratch::new(g.len());
+        delete_cascade(
+            &g,
+            &[a, b, c, d, e],
+            &[vec![c, d], vec![a, b], vec![e]],
+            &mut sc,
+        );
+        let want = by_the_game(&g);
+        for v in [a, b, c, d, e] {
+            let v = v as usize;
+            assert_eq!(sc.lo[v], want[v], "lo of node {v}");
+            assert_eq!(sc.hi[v], want[v], "hi of node {v}");
+        }
     }
 
     /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.
