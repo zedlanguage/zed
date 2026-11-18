@@ -2621,12 +2621,11 @@ fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
         "the reading stopped at {pass}, before {allowed}"
     );
     // The fast paths of the covers (`direct`) have nothing left after it, so the fast work of
-    // the symbols is the reading's, k limits and the one charge that passed them, and the
-    // forward certificate's, which has a limit of its own for each of a symbol's at most two
-    // covers (`cover`): at most `2·k·L` more.
+    // the symbols is the reading's: k limits and the one charge that passed them. The forward
+    // certificates run first on the same allowance (`exact_each`), so their work is within it.
     assert!(
-        fast <= pass + 2 * allowed,
-        "the fast work {fast} passes the reading's {pass} and 2 * {allowed}"
+        fast <= pass,
+        "the fast work {fast} passes the reading's {pass} (k * limit = {allowed})"
     );
     // Each loop has a limit of its own, as with no reading: at most two meters a symbol (over
     // the reduced formula, then the part), each passing its limit by one stopping charge.
@@ -2815,6 +2814,77 @@ fn guards_renamed_and_shuffled_are_certified_alike() {
         assert_eq!(got, Ok(IntervalSet::of(5, 12)));
         assert_eq!(asked, 0);
     }
+}
+
+/// A certificate that declines late leaves the reading and the fast paths only what is left of
+/// the symbol's limit (`exact_each`): the counter at k = 16 given the set `[4, 12]`, one value
+/// wider than its projection, so the certificate reads the whole chain and declines at the
+/// piece. With the limit between the certificate's work and that plus the reading's, the fast
+/// work of the call (less `reduced`'s, outside the symbol's limit) is the certificate's and the
+/// reading's on what it left, within the limit but for the reading's one stopping charge.
+/// Negative control: the certificate's work and the fast work with it off pass that, so the
+/// reading had the whole limit there and would pass the limit had nothing been taken.
+#[test]
+fn a_certificate_that_declines_late_leaves_the_rest_only_what_is_left() {
+    let f = guards_f(16, 12, false, true);
+    let h = IntervalSet::of(4, 12);
+    assert_eq!(project(&f, "i"), IntervalSet::of(5, 12));
+    type Run<'a> = &'a dyn Fn(&mut Work) -> Result<bool, Refusal>;
+    let alone = |run: Run, allowance: u64| {
+        EXACT_WORK.set(0);
+        let mut left = allowance;
+        let answered = tried(&mut left, SOLVER, |w| Ok(run(w)?.then_some(())));
+        (answered.is_some(), EXACT_WORK.replace(0))
+    };
+    let certificate = |w: &mut Work| Ok(guarded::forward(&f, &a("i"), &h, w)?.is_some());
+    let reading = |w: &mut Work| Ok(read_once(&f, w)?.is_some());
+    let (certified, spent) = alone(&certificate, u64::MAX);
+    assert!(
+        !certified,
+        "the certificate answered a set wider than the projection"
+    );
+    let (_, read) = alone(&reading, u64::MAX);
+    assert!(spent > 0 && read > 0, "certificate {spent}, reading {read}");
+    let limit = spent + read / 2;
+    let (read_answered, read_left) = alone(&reading, limit - spent);
+    assert!(
+        !read_answered,
+        "the reading answered within {}",
+        limit - spent
+    );
+    let i = a("i");
+    let kept: HashSet<&Atom> = [&i].into_iter().collect();
+    EXACT_WORK.set(0);
+    tried(&mut { limit }, SOLVER, |w| {
+        reduced(&f, &|s| kept.contains(s), w)
+    });
+    let reduce = EXACT_WORK.replace(0);
+    let run = |off: bool| {
+        EXACT_LIMIT_SET.set(Some(limit));
+        GUARDED_OFF.set(off);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(&f, &[a("i")], (vec![Ok(h.clone())], vec![]), SOLVER);
+        GUARDED_OFF.set(false);
+        EXACT_LIMIT_SET.set(None);
+        EXACT_WORK.set(0);
+        (got.sets, FAST_WORK.replace(0) - reduce)
+    };
+    let (on, fast_on) = run(false);
+    let (off, fast_off) = run(true);
+    println!(
+        "limit {limit}: certificate {spent}, reading alone {read}, reading on what is left \
+         {read_left}, reduced {reduce}; fast work on {fast_on}, off {fast_off}"
+    );
+    assert_eq!(on, off);
+    assert!(
+        fast_on <= spent + read_left,
+        "the fast work {fast_on} passes the certificate's {spent} and the reading's {read_left}"
+    );
+    assert!(
+        spent + fast_off > fast_on && spent + fast_off > limit,
+        "control: {spent} + {fast_off} is within the limit {limit}"
+    );
 }
 
 fn certify(f: &Formula, s: &str, h: &IntervalSet) -> Option<IntervalSet> {

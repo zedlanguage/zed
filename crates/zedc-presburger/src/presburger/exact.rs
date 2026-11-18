@@ -205,28 +205,60 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // reading of the part stands in for their covers alone, and a part with none is not read
     // (no answer reads its reading).
     let mut asked: Vec<u64> = vec![0; parts.len()];
+    let mut members: Vec<Vec<(&Atom, &IntervalSet)>> = vec![Vec::new(); parts.len()];
     for (s, got) in &sorted {
-        if got.is_ok()
+        if let Ok(h) = got
             && let Some(i) = part_of.get(s).copied().or((!many).then_some(0))
         {
             asked[i] += 1;
+            members[i].push((*s, h));
         }
     }
-    // The reading of each part and the work it used of its allowance.
-    let once: Vec<(Option<ReadOnce>, u64)> = (parts.iter().zip(&asked))
-        .map(|(p, &k)| {
-            if !p.factors.is_empty() || k == 0 {
-                return (None, 0);
+    // The forward certificate of each symbol (`guarded::forward`), then the reading of the
+    // part, both on the part's one allowance of `k·L`, and the work they used of it. The
+    // certificate answers `h` itself where every value of it is shown to have a point by
+    // definitions taken in order from `s`, with no question; such a symbol is neither read
+    // nor covered. Where it declines, its work stays spent: the reading, then the fast paths of
+    // the covers (`charge`, below), get only what is left, so the bound below is unchanged.
+    // A symbol the certificate answers needs no reading, and where it answers every symbol of
+    // the part the reading does not run.
+    // Complexity tradeoff: the certificate is O(r·t) for r conjuncts of t terms, then O(r·t) for
+    // each of the P pieces of `h`, with no question; the loop of the cover asks at least one
+    // question a value where each value is its own cell (guards-beyond: one for each value of
+    // `i`, each a run of the solver on the whole formula, O(v·r·t) or more for v values), and on
+    // the chain of absolute values the reading alone spent 2,971,100 of 3,100,000 units at 1,100
+    // levels, all of them at 8,800, against the certificate's 70,512 and 563,312. Where it
+    // declines, its work, at most the part's allowance, is taken from the reading and the
+    // fast paths, never from the loops (PRES-cover-bench-guards-beyond, -chains-abs).
+    let mut certified: HashMap<&Atom, IntervalSet> = HashMap::new();
+    let mut once: Vec<(Option<ReadOnce>, u64)> = Vec::with_capacity(parts.len());
+    for ((p, &k), mine) in parts.iter().zip(&asked).zip(&members) {
+        if !p.factors.is_empty() || k == 0 {
+            once.push((None, 0));
+            continue;
+        }
+        let allowed = limit.saturating_mul(k);
+        let mut left = allowed;
+        let mut open = k;
+        if !GUARDED_OFF.get() {
+            for &(s, h) in mine {
+                if let Some(set) = tried(&mut left, solver, |w| guarded::forward(&p.f, s, h, w)) {
+                    certified.insert(s, set);
+                    open -= 1;
+                }
             }
-            let allowed = limit.saturating_mul(k);
-            let mut left = allowed;
-            let got = tried(&mut left, solver, |w| read_once(&p.f, w));
-            (got, allowed - left)
-        })
-        .collect();
+        }
+        let got = if open > 0 {
+            tried(&mut left, solver, |w| read_once(&p.f, w))
+        } else {
+            None
+        };
+        once.push((got, allowed - left));
+    }
     // Where the reading gives up, the fast path of each symbol's cover ([`direct`], in
     // [`cover`]) has what the reading left of that symbol's limit: the reading is a fast path
-    // done for the part's symbols together, in place of their `direct`s. Its work `w` is at
+    // done for the part's symbols together, in place of their `direct`s. Its work `w`, with
+    // that of the certificates before it (above), is at
     // most `k·L` for the part's k symbols and limit L (`tried` takes from the allowance at most
     // what it holds) and is charged evenly: in the order of `Atom`, the j-th symbol (from 0) is
     // charged `w / k`, plus 1 where `j < w % k`. The charges sum to exactly `w`, since `w % k`
@@ -237,9 +269,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // reduced formula, then over the part), so the fast work of the part is at most
     // `w + 2·(k·L - w) <= 2·k·L`, and its loops (`cells_cover`) at most two limits each, `2·k·L`,
     // as with no reading: in all `4·k·L`, the bound of the covers alone. Before, the reading
-    // came on top of that, up to `5·k·L`. The forward certificate of each cover ([`cover`]) has
-    // an allowance of its own, `L` for each of a symbol's at most two covers, so with it the
-    // bound is `6·k·L`; it is apart from `direct`'s, which the reading may have spent whole. Every meter may pass its limit by its one stopping
+    // came on top of that, up to `5·k·L`. Every meter may pass its limit by its one stopping
     // charge, as before; `reduced` and `has_points` (one limit for the call each) are outside
     // the symbols' limits, with or without the reading. A fast path with nothing left does not
     // run (`tried`), and its symbol is covered by the loop as with `direct` off: every answer
@@ -287,6 +317,11 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                 let fast = limit - charge(i, nth[i]);
                 nth[i] += 1;
                 let p = &parts[i];
+                // `h` is not empty here (above), and each of its values has a point of the part.
+                if let Some(set) = certified.remove(s) {
+                    shown[i] = true;
+                    return Ok(Classed::plain(set));
+                }
                 if let (Some((has, sets)), _) = &once[i] {
                     shown[i] |= *has;
                     return Ok(Classed::plain(match (sets.get(s), has) {
@@ -688,25 +723,6 @@ fn cover(
         && let Some(set) = tried(&mut fast, work.solver, |w| direct(f, s, &h.hull(), w))
     {
         return Ok((set, false));
-    } // The forward certificate (`guarded::forward`): `h` itself, where every value of it is shown
-    // to have a point by definitions taken in order from `s`, with no question. It runs on an
-    // allowance of its own, the loop's limit (`tried`), never on the loop's work: a decline
-    // leaves the loop's work, its limit and `points` as they were, so the loop below runs as
-    // without it. Not on what `direct` leaves: on the chain of absolute values the part's
-    // reading (`read_once`) spends 2,971,100 of 3,100,000 units at 1,100 levels and all of them
-    // at 8,800, `direct` the rest, and the certificate, 70,512 and 563,312 units there, would
-    // never run (traced in `exact_each`, PRES-cover-bench-chains-abs).
-    // Complexity tradeoff: the reading is O(r·t) for r conjuncts of t terms, then O(r·t) for each
-    // of the P pieces of `h`, with no question; the loop below asks at least one question a
-    // value where each value is its own cell (guards-beyond: one for each value of `i`, each a
-    // run of the solver on the whole formula, O(v·r·t) or more for v values). Where it declines,
-    // its work is spent for nothing, at most one limit for each cover (`exact_each`'s bound).
-    let mut own = work.limit;
-    if factors.is_empty()
-        && !GUARDED_OFF.get()
-        && let Some(set) = tried(&mut own, work.solver, |w| guarded::forward(f, s, h, w))
-    {
-        return Ok((Classed::plain(set), false));
     }
     let (set, kept) = cells_cover(f, s, h, size, factors, points, work)?;
     Ok((Classed::plain(set), kept))
@@ -3121,7 +3137,6 @@ fn factors(f: &Formula) -> HashSet<Atom> {
     out
 }
 
-<<<<<<< HEAD
 /// The answers of [`exact_each`] read off a smaller formula, where two or more atoms of `f`
 /// have the same coefficient in every constraint (the same column), or `None` where none do,
 /// or where the smaller formula's answers are not all exact.
