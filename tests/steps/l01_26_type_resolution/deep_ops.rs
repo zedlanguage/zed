@@ -788,9 +788,66 @@ fn a_bounded_variable_only_a_function_parameter_holds_fits_under_any_name() {
         ("(h: (x: T) -> T) -> int", "(h: (x: U) -> int) -> int"),
         ("(h: (x: T) -> int) -> int", "(h: (x: U) -> U) -> int"),
         ("(h: (x: T) -> int) -> int", "(h: (x: U) -> f64) -> int"),
+        // Functions of different numbers of parameters bind nothing through each other.
+        (
+            "(h: (x: T) -> int) -> int",
+            "(h: (x: U, y: U) -> int) -> int",
+        ),
+        (
+            "(h: (x: T, y: T) -> int) -> int",
+            "(h: (x: U) -> int) -> int",
+        ),
     ] {
         let src =
             format!("p(f: {f} for T in int | f64) = 0;\nq(g: {g} for U in int | f64) = p(f: g);\n");
         assert_eq!(type_errors(&src).len(), 1, "{src}");
+    }
+}
+
+/// A bounded variable that only a function parameter of several arrows holds binds through
+/// that function arrow by arrow, in written order, as through one of one arrow
+/// (FAIL-types-fn-arrows-bounded-variable: `((x: U) -> int) & ((x: bool) -> int)` did not fit
+/// the same type written with `T`). The binding is still checked: a bound wider than `p`'s, or
+/// a result that differs, is refused.
+#[test]
+fn a_bounded_variable_only_a_function_of_several_arrows_holds_fits_under_any_name() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let src = |f: &str, g: &str, bound: &str| {
+        format!("p(f: {f} for T in int | f64) = 0;\nq(g: {g} for U in {bound}) = p(f: g);\n")
+    };
+    for shape in [
+        "(h: ((x: T) -> int) & ((x: bool) -> int)) -> int",
+        "(h: ((x: T) -> T) & ((x: bool) -> bool)) -> int",
+        "(h: ((x: bool) -> int) & ((x: T) -> T)) -> T",
+        "(h: ((x: T, y: int) -> int) & ((x: bool, y: int) -> int)) -> int",
+    ] {
+        let g = shape.replace('T', "U");
+        for bound in ["int | f64", "int | f64 | String"] {
+            let s = src(shape, &g, bound);
+            assert_eq!(type_errors(&s), Vec::<String>::new(), "{s}");
+        }
+        // `p` may call `f` at `String`, which a `g` of `U in int | f64` does not take.
+        let wide = shape.replace('T', "U");
+        let s = format!(
+            "p(f: {wide} for U in int | f64 | String) = 0;\nq(g: {shape} for T in int | f64) = p(f: g);\n"
+        );
+        assert_eq!(type_errors(&s).len(), 1, "{s}");
+    }
+    for (f, g) in [
+        (
+            "(h: ((x: T) -> int) & ((x: bool) -> int)) -> int",
+            "(h: ((x: U) -> f64) & ((x: bool) -> int)) -> int",
+        ),
+        (
+            "(h: ((x: T) -> int) & ((x: bool) -> int)) -> int",
+            "(h: (x: U) -> int) -> int",
+        ),
+        (
+            "(h: (x: T) -> int) -> int",
+            "(h: ((x: U) -> int) & ((x: bool) -> int)) -> int",
+        ),
+    ] {
+        let s = src(f, g, "int | f64");
+        assert_eq!(type_errors(&s).len(), 1, "{s}");
     }
 }

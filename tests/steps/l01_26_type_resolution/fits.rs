@@ -94,6 +94,76 @@ fn a_lambdas_result_must_fit() {
     );
 }
 
+/// A lambda in a slot whose type is a union holding one function type, or several of which only
+/// one has parameters the lambda's names fit, is fitted to that function type, as in a slot of
+/// that type alone (FAIL-check-lambda-into-fn-union: before, it was checked alone, with
+/// positional parameters, and refused as "`p` does not take (int -> int)").
+#[test]
+fn a_lambda_in_a_union_slot_is_fitted_to_the_function_type_its_parameters_fit() {
+    for slot in [
+        "((x: int) -> int) | String",
+        "((x: int) -> int) | (int, int)",
+        "((x: int) -> int) | ((s: String) -> int)",
+        "((s: String) -> int) | ((x: int) -> int) | #none",
+    ] {
+        for lambda in ["(x: int) -> x", "x -> x + 1"] {
+            let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
+            assert_eq!(type_errors(&p), Vec::<String>::new(), "{p}");
+        }
+    }
+    // Two parameters, among function types of one and of two, taken by name in the other
+    // order: the fit records the order, as in a slot of that function type alone.
+    let p =
+        "p(h: ((x: int) -> int) | ((b: int, a: int) -> int)) = 0;\nq = p(h: (a, b) -> a - b);\n";
+    assert_eq!(type_errors(p), Vec::<String>::new(), "{p}");
+    assert_eq!(
+        fits(p),
+        [Fit::Lambda {
+            order: vec![Some(1), Some(0)],
+            extra: vec![]
+        }]
+    );
+    // Fitted, the lambda's parameter and result are checked against that function type.
+    assert_eq!(
+        type_errors("p(h: ((x: int) -> int) | String) = 0;\nq = p(h: (x: String) -> 0);\n"),
+        [
+            "the lambda's parameter `x` is String, and `(x: int) -> int` passes int: the lambda is \
+             called as a function of type `(x: int) -> int` is, so each parameter must take every \
+             value passed to it. [x: String]"
+        ]
+    );
+    assert_eq!(
+        type_errors(
+            "p(h: ((x: int) -> int) | ((s: String) -> int)) = 0;\nq = p(h: (s: String) -> s);\n"
+        ),
+        [
+            "the lambda returns String, and `(s: String) -> int` returns int: the lambda is passed \
+             where a function of type `(s: String) -> int` is expected, so its result must be \
+             int. [s]"
+        ]
+    );
+}
+
+/// Where the lambda's names fit none of the function types, or several, it is checked alone,
+/// with positional parameters, and no function type of the slot takes it
+/// (FAIL-check-lambda-fn-union-same-names files choosing among several by written types).
+#[test]
+fn a_lambda_whose_names_fit_no_one_function_type_of_a_union_is_refused() {
+    for (slot, lambda) in [
+        ("((x: int) -> int) | ((s: String) -> int)", "(y: int) -> y"),
+        ("((x: int) -> int) | ((x: String) -> int)", "(x: int) -> x"),
+    ] {
+        let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
+        assert_eq!(
+            type_errors(&p),
+            [format!(
+                "`p` does not take (int -> int): no arrow of `p` takes these types. [p(h: {lambda})]"
+            )],
+            "{p}"
+        );
+    }
+}
+
 /// A slot written as an intersection of function types expects one function with an arrow for
 /// each (DESIGN.md sec:type_language, "Relation to semantic subtyping" (2)): a generic `neg`
 /// has both, and `half`, on `int` alone, has one.

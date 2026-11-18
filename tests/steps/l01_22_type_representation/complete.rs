@@ -190,6 +190,40 @@ fn a_bounds_error_and_a_port_error_both_stand_in_written_order() {
     assert_eq!(errs[1], port("Lines"));
 }
 
+/// The kernel has no list type (LIST-type-written), so `is` against `[T]` is refused, wherever
+/// the list type stands; inside a bound of `L .. U -> V` it is refused there too, since the
+/// check of the guarantee against the permission cannot run on it (TEST-types-unreached-paths:
+/// the `Array` arm of `kernel_form`).
+#[test]
+fn is_rejects_a_list_type_and_a_bound_holding_one() {
+    let list = "a test against a list type `[T]` is part of the Zed language, and this version \
+                of zedc does not compile it yet. Write the program without it, with the forms \
+                this zedc compiles.";
+    let bound = "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
+                 language, and this version of zedc does not compile it yet. Write the function \
+                 type without `..`, as `(…) -> …`.";
+    for (written, want) in [
+        ("[int]", vec![format!("{list} [[int]]")]),
+        ("int | [f64]", vec![format!("{list} [[f64]]")]),
+        ("([int], int)", vec![format!("{list} [[int]]")]),
+        (
+            "([int] .. int -> int)",
+            vec![format!("{bound} [[int]]"), format!("{list} [[int]]")],
+        ),
+        (
+            "(int .. [int] -> int)",
+            vec![format!("{bound} [[int]]"), format!("{list} [[int]]")],
+        ),
+    ] {
+        assert_eq!(
+            elab(&format!("f(x) = x is {written};")).unwrap_err(),
+            want,
+            "{written}"
+        );
+        assert_eq!(denotes(written), None, "{written}");
+    }
+}
+
 /// A bounded function type admits some functions and not others, so `is` rejects it (L1.22);
 /// the error names each bounded variable, which no run-time test can choose a carrier for.
 #[test]

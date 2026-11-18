@@ -229,25 +229,71 @@ impl Cond<'_> {
 type Held<'a> = Option<(bool, Saved<'a>)>;
 
 /// What the type expected where an expression is checked says about it: the one function
-/// type it is, if it is one, the one numeric carrier it holds, if it holds one, and the type
-/// itself where it holds a partial function type at some place ([`Ck::coercion`]). Only these
-/// decide how the expression is checked, so a frame keeps them and not the type.
+/// type it holds, if it holds one beside values that are not functions ([`one_fn`]), the one
+/// numeric carrier it holds, if it holds one, and the type itself where it holds a partial
+/// function type at some place ([`Ck::coercion`]). Only these decide how the expression is
+/// checked, so a frame keeps them and not the type.
 #[derive(Default)]
 pub(super) struct Want {
     fun: Option<Arc<Sig>>,
+    /// The function types of the type expected, where it holds two or more and no type
+    /// variable or unknown: a lambda is fitted to the one whose parameters its own match
+    /// ([`lambda_takes`]), where only one does.
+    funs: Option<ty::Members<Arc<Sig>>>,
     num: Option<Carrier>,
     guard: Option<Ty>,
 }
 
 impl Want {
-    /// Cost: one walk of `t`'s functions, results and components ([`holds_fn`]).
+    /// Cost: one walk of `t`'s functions, results and components ([`holds_fn`]); the
+    /// function types are kept as a shared copy, O(1).
     fn of(t: &Ty) -> Want {
         Want {
-            fun: only_fn(t),
+            fun: one_fn(t),
+            funs: (t.fns.len() > 1 && t.vars.is_empty() && !t.dynamic).then(|| t.fns.clone()),
             num: t.numeric_carrier(),
             guard: holds_fn(t, &|s| s.arrows.iter().any(|a| a.partial)).then(|| t.clone()),
         }
     }
+}
+
+/// The one function type `t` holds, where `t` holds one and its other members are scalars,
+/// atoms or tuples: a lambda or a declared function, a value of no such member, can stand
+/// only for that function type, so it is fitted to it as to `t` itself
+/// (FAIL-check-lambda-into-fn-union: `p(h: ((x: int) -> int) | Utf8String)` refused
+/// `p(h: (x: int) -> x)`, whose lambda, fitted to nothing, took positional parameters).
+/// `None` where `t` holds a type variable or the unknown, either of which a function may
+/// stand for, or two function types, where which one the value is fitted to is not fixed.
+fn one_fn(t: &Ty) -> Option<Arc<Sig>> {
+    match (t.fns.only(), t.vars.is_empty() && !t.dynamic) {
+        (Some(s), true) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Whether a lambda of parameters `params` can be fitted to `e`'s parameters as
+/// [`Ck::fit_lambda`] fits it: one parameter at least for each that `e` passes by position,
+/// and each of the rest named as a parameter `e` passes by name, a different one each, or
+/// given a default. The parameter types are not compared: the fit compares them. Cost:
+/// O(p + q) for the two lists, with a set of the names taken.
+fn lambda_takes(params: &[Param], e: &Sig) -> bool {
+    let pos = e.params.iter().filter(|q| q.positional).count();
+    if params.len() < pos {
+        return false;
+    }
+    let mut named: HashMap<&str, bool> = (e.params.iter())
+        .filter(|q| !q.positional)
+        .map(|q| (&*q.name, false))
+        .collect();
+    params[pos..]
+        .iter()
+        .all(|p| match named.get_mut(p.name.as_str()) {
+            Some(taken @ false) => {
+                *taken = true;
+                true
+            }
+            _ => p.default.is_some(),
+        })
 }
 
 pub(super) enum Job<'a> {
@@ -3621,6 +3667,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn expr_at(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
         if let (Some(_), ExprKind::Section(_, lambda)) = (&want.fun, &e.kind) {
             return self.expr_at(m, lambda, want);
+        }
+        // Of several function types, the one whose parameters the lambda's match, where only
+        // one does: `(x: int) -> x` where `((x: int) -> int) | ((s: Utf8String) -> int)` is
+        // wanted (FAIL-check-lambda-into-fn-union). Where none or several do, the lambda is
+        // checked alone, as before. Cost: O(p + q) for each of the k function types.
+        if let (Some(funs), ExprKind::Lambda { params, body }) = (&want.funs, &e.kind) {
+            let mut fits = funs.iter().filter(|s| lambda_takes(params, s));
+            if let (Some(sig), None) = (fits.next(), fits.next()) {
+                return self.fit_lambda(m, params, body, sig.clone(), e.span);
+            }
         }
         if let Some(sig) = want.fun {
             if let ExprKind::Lambda { params, body } = &e.kind {

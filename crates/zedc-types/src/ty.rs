@@ -13791,8 +13791,9 @@ impl Cx<'_> {
     /// `fe`, with `w`'s at its place, and `f`'s result with `w`'s, where `w`'s holds such a
     /// variable; [`Comparing::bound_through`] compares them on a copy of `b`, and [`accepts`]
     /// keeps it where `f` then fits `w` read at it ([`Cx::read_at`]). `None` where `w` holds
-    /// no such variable, or the two are not each one arrow of the same number of parameters
-    /// with no variable of their own, whose types would be read here unopened.
+    /// no such variable, or the two do not have the same number of arrows, each of the same
+    /// number of parameters as the other's arrow at its place, with no variable of their
+    /// own, whose types would be read here unopened.
     ///
     /// Why: [`params_within`] compares a parameter holding such a function after the others,
     /// so a variable another parameter holds is bound by then; one that only functions hold
@@ -13821,10 +13822,14 @@ impl Cx<'_> {
         if unbound.is_empty() || !f.own.is_empty() || !ws.own.is_empty() {
             return None;
         }
-        let ([fa], [wa]) = (&f.arrows[..], &ws.arrows[..]) else {
-            return None;
-        };
-        if fa.params.len() != wa.params.len() {
+        // Arrows are paired in written order: `((x: T) -> int) & ((x: bool) -> int)` with the
+        // same type written with `U` (FAIL-types-fn-arrows-bounded-variable: with one arrow
+        // only, it was refused). A pairing the two do not share binds a variable to what the
+        // other arrow has at that place, and the check after (the proof above) refuses it, so
+        // the order chooses only which instance is tried, never a yes.
+        if f.arrows.len() != ws.arrows.len()
+            || (f.arrows.iter().zip(&ws.arrows)).any(|(a, b)| a.params.len() != b.params.len())
+        {
             return None;
         }
         let holds = |t: &Ty| {
@@ -13833,10 +13838,12 @@ impl Cx<'_> {
             vs.order.iter().any(|v| unbound.contains(v))
         };
         let mut pairs = Vec::new();
-        let places = fa.params.iter().zip(&wa.params);
-        for (x, y) in places.chain(std::iter::once((&fa.result, &wa.result))) {
-            if holds(y) {
-                pairs.push((self.read(x, fe), self.read(y, &we)));
+        for (fa, wa) in f.arrows.iter().zip(&ws.arrows) {
+            let places = fa.params.iter().zip(&wa.params);
+            for (x, y) in places.chain(std::iter::once((&fa.result, &wa.result))) {
+                if holds(y) {
+                    pairs.push((self.read(x, fe), self.read(y, &we)));
+                }
             }
         }
         Some(pairs)
