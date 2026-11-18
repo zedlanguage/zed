@@ -2682,7 +2682,7 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
                 .then(|| SlackIndex::of(&base.cons, &Near::default(), &stage))
                 .flatten();
             let kernels = stage_kernels(&base, &stage);
-            for (ds, kernel) in stage.into_iter().zip(kernels) {
+            for (ds, kernel) in stage.drain(..).zip(kernels) {
                 let n = ds.len();
                 // Each disjunct not shown empty, and whether it is shown to have a point.
                 let (mut live, shown): (Vec<Rc<Parts>>, Vec<bool>) = (ds.into_iter())
@@ -2733,7 +2733,6 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
             }
             // Rows added to the base are solved again in the next round.
             changed |= !alone.is_empty();
-            stage = Vec::new();
             for d in &alone {
                 d.cons.iter().for_each(|c| {
                     base.meet(c.clone());
@@ -24365,8 +24364,8 @@ fn forest_component_domains(
             raise_to(lo, -&kk);
         }
     };
-    for u in 0..n0 {
-        for (v, w) in &g.out[u] {
+    for (u, out) in g.out[..n0].iter().enumerate() {
+        for (v, w) in out {
             let v = *v;
             match (u, v) {
                 (0, v) => {
@@ -33731,10 +33730,10 @@ mod sweep_against_pick_tests {
             let total: i128 = ws.iter().sum();
             for target in 0..=total {
                 let plan = sweep_row_unbounded(row(), Int::from(target), true);
-                for loc in 0..k {
+                for (loc, hits) in plan.hit_table[..k].iter().enumerate() {
                     let gm = if loc == gmax1 { gmax2 } else { gmax1 };
                     let skipped = gm <= usize::from(loc == 0);
-                    for a in 0..2 {
+                    for (a, hit) in hits[..2].iter().enumerate() {
                         let mut q = Parts::default();
                         q.cons.push(Con::eq(&sum, &Lin::constant(target)));
                         for i in (0..k).filter(|&i| i != loc) {
@@ -33743,7 +33742,7 @@ mod sweep_against_pick_tests {
                         q.put(&arm(loc, a));
                         let fast = pick_by(&q, true, true).is_ok();
                         let slow = pick_by(&q, true, false).is_ok();
-                        let swept = !matches!(plan.hit_table[loc][a], HitKind::None);
+                        let swept = !matches!(hit, HitKind::None);
                         if swept != fast || swept != slow {
                             wrong.push(format!(
                                 "names {names:?}, weights {ws:?}, high arms {highs:?}, target {target}, loc {loc}, arm {a}: sweep {swept}, fast {fast}, slow {slow}"

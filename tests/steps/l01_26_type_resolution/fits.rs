@@ -174,16 +174,15 @@ fn a_lambda_whose_names_fit_several_function_types_of_a_union_is_chosen_by_its_w
 /// positional parameters, and no function type of the slot takes it.
 #[test]
 fn a_lambda_whose_names_fit_no_one_function_type_of_a_union_is_refused() {
-    for (slot, lambda) in [("((x: int) -> int) | ((s: String) -> int)", "(y: int) -> y")] {
-        let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
-        assert_eq!(
-            type_errors(&p),
-            [format!(
-                "`p` does not take (int -> int): no arrow of `p` takes these types. [p(h: {lambda})]"
-            )],
-            "{p}"
-        );
-    }
+    let (slot, lambda) = ("((x: int) -> int) | ((s: String) -> int)", "(y: int) -> y");
+    let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
+    assert_eq!(
+        type_errors(&p),
+        [format!(
+            "`p` does not take (int -> int): no arrow of `p` takes these types. [p(h: {lambda})]"
+        )],
+        "{p}"
+    );
 }
 
 /// A slot written as an intersection of function types expects one function with an arrow for

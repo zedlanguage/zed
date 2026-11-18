@@ -1,10 +1,13 @@
 # Every generated file goes under build/, which git ignores (see docs/layout.md).
 [build]
 target-dir = "build/cargo"
-# The compiler's front end on several threads (BUILD-parallel-frontend; nightly only, see
-# rust-toolchain.toml). /home/luke/Work/wt/zrun sets RUSTFLAGS, which replaces this list, so it
-# passes the same flags itself; keep the two the same.
-rustflags = ["-Zunstable-options", "--jobs-frontend=8"]
+# The compiler's front end on one thread for every agent build (author P399; BUILD-parallel-frontend,
+# nightly only, see rust-toolchain.toml); 8 only for a whole-suite clean build by the author's
+# order, passed in RUSTFLAGS. Measured 2026-11-18 (test build, cold): 2:14 at 1 thread, 2:14 at 2,
+# 2:00 at 4, 1:56 at 8; a one-line incremental change no faster at any count.
+# /home/luke/Work/wt/zrun sets RUSTFLAGS, which replaces this list, so it passes the same flags
+# itself; keep the two the same.
+rustflags = ["-Zunstable-options", "--jobs-frontend=1"]
 
 [unstable]
 # Cargo 1.100 and later put each unit in a directory of its own, build/<package>/<hash>/, with no

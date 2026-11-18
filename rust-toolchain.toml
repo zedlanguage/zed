@@ -2,7 +2,8 @@
 # BUILD-parallel-frontend): one dated nightly, installed by rustup, which reads this file in this
 # directory and every directory below it. A nightly because its compiler runs the front end on
 # several threads (`-Zunstable-options --jobs-frontend=N` in .cargo/config.toml and zrun), which
-# no stable release does yet (author P389, P393, P395). Dated, so that every machine builds with
+# no stable release does yet (author P389, P393, P395). Agent builds use 1 thread (P399); 8 only
+# for a whole-suite clean build by the author's order (timings in .cargo/config.toml). Dated, so that every machine builds with
 # the same compiler: `rustc 1.102.0-nightly (59cbdee2e 2026-11-17)`, from the dist date
 # 2026-11-18. tools/fetch_test_deps.sh fetches the same build for the cross builds and the test
 # image, and the full piece s09_release checks all three agree. A new pin: change the date here

@@ -1772,7 +1772,8 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   `rust-toolchain.toml` and installed by rustup, edition 2024 (BUILD-parallel-frontend, author
   P389, P393, P395; until 2026-11-18 Fedora's and then the upstream rustc 1.99.1). A nightly
   for its parallel front end, `-Zunstable-options --jobs-frontend=N`, set in
-  `.cargo/config.toml` and in zrun. CI (turned off) installs stable, but its rustup reads
+  `.cargo/config.toml` and in zrun: 1 thread for agent builds (P399), 8 only for a whole-suite
+  clean build by the author's order, passed in RUSTFLAGS. CI (turned off) installs stable, but its rustup reads
   `rust-toolchain.toml` and installs the pin; a stable rustc refuses the `-Z` flag. Cargo keeps
   the old layout of its build directory (`[unstable] build-dir-new-layout = false`), which the
   build tools read; BUILD-new-layout moves them to the new one.

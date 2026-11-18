@@ -605,17 +605,14 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
     // A bare literal takes the carrier of its use (L1.26a), so `bump` is generic.
     assert!(
         want.0
-            .iter().any(|i| i == "bump: (x: T) -> T for T in int | f32 | f64 | rat"),
+            .iter()
+            .any(|i| i == "bump: (x: T) -> T for T in int | f32 | f64 | rat"),
         "{:?}",
         want.0
     );
     assert!(want.0.iter().any(|i| i == "shout: (s: String) -> String"));
     assert!(want.0.iter().any(|i| i == "total = int"), "{:?}", want.0);
-    assert!(
-        want.0.iter().any(|i| i == "loud = String"),
-        "{:?}",
-        want.0
-    );
+    assert!(want.0.iter().any(|i| i == "loud = String"), "{:?}", want.0);
     let mut moves: Vec<Vec<usize>> = vec![(0..n).rev().collect()];
     moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
     for old in moves {

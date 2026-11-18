@@ -209,7 +209,10 @@ fn a_local_definition_is_computed_where_it_is_read() {
     let main = term(&s, "main");
     assert!(main.contains("42"), "{main}");
     assert!(!main.contains('k') && !main.contains("inc"), "{main}");
-    assert!(report.unread.iter().any(|i: &String| i == "inc"), "{report:?}");
+    assert!(
+        report.unread.iter().any(|i: &String| i == "inc"),
+        "{report:?}"
+    );
     assert_eq!(out(&s, "8\n"), "50\n");
     assert_eq!(out(&s, "8\n"), out(&p, "8\n"));
 }

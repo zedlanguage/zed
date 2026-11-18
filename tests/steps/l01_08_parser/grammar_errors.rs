@@ -94,7 +94,10 @@ fn the_engine_reads_a_grammar_over_characters() {
     assert_eq!(run("Word", "_").0, Some(1));
     let (end, far, expected) = run("Word", "9a");
     assert_eq!((end, far), (None, 0));
-    assert!(expected.iter().any(|i: &String| i == "Class"), "{expected:?}");
+    assert!(
+        expected.iter().any(|i: &String| i == "Class"),
+        "{expected:?}"
+    );
     let (end, far, expected) = run("All", "xyz");
     assert_eq!((end, far), (Some(3), 3));
     assert!(
