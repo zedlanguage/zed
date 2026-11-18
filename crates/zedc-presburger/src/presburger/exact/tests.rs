@@ -1801,7 +1801,11 @@ fn the_else_arm_of_a_chain_of_accounts_is_read_once() {
     assert!(has);
     assert_eq!(sets[&a("x0")], IntervalSet::range(End::NegInf, End::of(-1)));
     for n in ["y0", "x1"] {
-        assert_eq!(sets[&a(n)], IntervalSet::range(End::NegInf, End::PosInf), "{n}");
+        assert_eq!(
+            sets[&a(n)],
+            IntervalSet::range(End::NegInf, End::PosInf),
+            "{n}"
+        );
     }
 }
 
@@ -1816,6 +1820,10 @@ fn an_atom_in_two_blocks_is_not_read_once() {
     assert!(read_once_answers(&f).is_none());
     assert_eq!(project(&f, "x"), IntervalSet::single(0));
     for n in ["y", "z"] {
-        assert_eq!(project(&f, n), IntervalSet::range(End::NegInf, End::PosInf), "{n}");
+        assert_eq!(
+            project(&f, n),
+            IntervalSet::range(End::NegInf, End::PosInf),
+            "{n}"
+        );
     }
 }
