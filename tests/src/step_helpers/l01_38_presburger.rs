@@ -74,7 +74,7 @@ pub fn bool_term(rng: &mut Rng, d: u32) -> Term {
     }
 }
 
-/// `f()` with the solver's answer as it is, without the exact cover (`exact::EXACT_OFF`): for
+/// `f()` with the solver's answer as it is, without the exact cover (`meter::EXACT_OFF`): for
 /// the tests of the solver's own hull, which the cover would make exact or refuse.
 pub fn solver_alone<T>(f: impl FnOnce() -> T) -> T {
     EXACT_OFF.set(true);

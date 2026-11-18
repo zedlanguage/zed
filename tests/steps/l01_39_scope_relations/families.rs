@@ -1621,37 +1621,36 @@ fn wide_against_the_oracle() {
 /// For each even seed `2i` of the audit, `AUDIT_EVEN[i]`: how many of its 9 records give every
 /// name the oracle's least and greatest values, and how many give the oracle's facts in full.
 /// The sums over seeds 0..32, 32..64, 64..96 and 96..128 were (134, 110), (128, 114),
-/// (130, 116) and (136, 119) when the review recorded them. The whole-block projection after a
-/// move that leaves a hole (`project_block`, PRES-pugh-xr-land, 2026-11-16) raised seeds 4, 26,
-/// 40 and 64 and lowered none, each record checked by `check_sound` (without it they give the
-/// recorded counts again); the sums are now (138, 110), (129, 114), (132, 118) and
-/// (136, 119). With the exact cover on the path of `project_each` (branch `wt/pugh-xr`, row
-/// PRES-cover-wire) 13 seeds rise: (138, 128), (132, 119), (132, 123) and (136, 121).
+/// (130, 116) and (136, 119) when the review recorded them. The exact cover (PRES-pugh-xr) and
+/// the whole-block projection after a move that leaves a hole raised 13 seeds and lowered none
+/// (2026-11-16): seeds 2, 4, 10, 16, 18, 22, 26, 36, 40, 46, 64, 66 and 98, each record checked
+/// by `check_sound` and every odd seed too; the sums are now (138, 128), (132, 119), (132, 123)
+/// and (136, 121).
 const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
-    (9, 7),
-    (9, 3),
+    (9, 9),
+    (8, 3),
     (9, 9),
     (9, 9),
-    (9, 4),
+    (9, 9),
     (9, 9),
     (7, 7),
-    (9, 8),
-    (8, 3),
+    (9, 9),
     (8, 8),
-    (8, 1),
+    (8, 8),
+    (9, 6),
     (9, 9),
     (8, 6),
     (9, 9),
     (9, 9),
     (9, 4),
     (6, 6),
-    (6, 6),
+    (9, 9),
     (9, 9),
     (8, 0),
     (9, 9),
     (6, 6),
-    (9, 7),
+    (9, 9),
     (7, 7),
     (6, 6),
     (9, 9),
@@ -1661,7 +1660,7 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
     (8, 8),
-    (9, 4),
+    (9, 9),
     (8, 8),
     (9, 7),
     (9, 9),
@@ -1677,7 +1676,7 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (6, 6),
     (9, 9),
-    (9, 7),
+    (9, 9),
     (9, 9),
     (9, 9),
     (9, 9),
@@ -1704,7 +1703,7 @@ fn audit_seeds_against_the_oracle() {
         .chunks(16)
         .map(|c| c.iter().fold((0, 0), |s, e| (s.0 + e.0, s.1 + e.1)))
         .collect();
-    assert_eq!(sums, [(138, 110), (129, 114), (132, 118), (136, 119)]);
+    assert_eq!(sums, [(138, 128), (132, 119), (132, 123), (136, 121)]);
     let (mut rng, run) = zed_tests::instances::Rng::fresh("audit seeds");
     let seed = rng.below(128) as u64;
     let r = audit(seed..seed + 1);
@@ -1725,9 +1724,7 @@ fn audit_seeds_against_the_oracle() {
 /// y its exact set {-8, -5, -2, 1, 4, 7} in one step, where the box gives [-8, 7] and then
 /// narrows it again; with one move of y the block of seven parts was never projected whole,
 /// and a stayed [-8, 8] where the whole block gives [-8, 2]: 6 records of 9. A move that
-/// leaves a hole now asks for the whole block too (`project_block`). While `project_each` asks
-/// the solver alone (row PRES-cover-wire) seed 126 gives (9, 6) with or without that rule; the
-/// seeds 4, 26, 40 and 64 of [`AUDIT_EVEN`] test it there.
+/// leaves a hole now asks for the whole block too (`project_block`).
 #[test]
 fn audit_seed_126_keeps_its_exact_ends() {
     let r = audit(126..127);
@@ -1849,14 +1846,20 @@ fn scales(name: &str, n: usize, power: u32) {
 
 #[test]
 fn two_eq_case_against_the_oracle() {
-    // A lost bound, kept as it is: in the part `a <= 2`, `a == 2 * z1 + 1` alone gives
-    // `z1 <= 0` and `b <= 4`; `b <= 2` needs `a <= -3`, which takes both equalities with
-    // rounding between them, and the part's `z1 <= -2` does not reach `b` (PRODUCT-two-eq-round).
-    // The rule that one equality of two names per name is added to the part's rows is not
-    // the cause: with every such equality added, `b <= 4` still.
-    let k0 =
-        "a=[..=-3, 9..=39, 45..] b=[..=4, 8..] z0=[..=-1, 3..=13, 15..] z1=[..=-2, 4..=19, 22..]";
-    let k1 = "a=[..=-3, 9..] b=[..=4, 8..] z0=[..=-1, 3..] z1=[..=-2, 4..]";
+    // `a` is odd and a multiple of 3, so `a == 3 mod 6`. In the arm `a <= 2` that gives
+    // `a <= -3`, `z1 <= -2` and `b <= 2`, the bound PRODUCT-two-eq-round lacked; the exact
+    // cover (PRES-pugh-work-budget) now finds it. In the arm `b >= 8` (k = 0), `b - z1 <= 4`
+    // needs `z1 >= 4`, so `a >= 9`, or `z1 >= 20` gives `a >= 45`; between them `a` takes
+    // 9, 15, ..., 39, each with a point (a = 15: z0 = 5, z1 = 7, b = 8). The open ends stay
+    // intervals, so `..=-3` and `45..` include values of other remainders. The oracle's
+    // `9 mod 12` comes from its window, which holds only -3 and 9. At k = 1, with
+    // `a = 6t + 3`, `z1 = 3t + 1`: the arm `a <= 2` has `t <= -1`, so `b <= z1 + 4 <= 2`
+    // (`t = -1`, `b = 2` a point); the arm `b >= 8` has `z1 >= b - 4 >= 4`, so `t >= 1`,
+    // `a >= 9`, and every `b >= 8`; `b` in 3..=7 is in neither arm.
+    let k0 = "a=[..=-3, 9..=9, 15..=15, 21..=21, 27..=27, 33..=33, 39..=39, 45..] b=[..=2, 8..] \
+              z0=[..=-1, 3..=3, 5..=5, 7..=7, 9..=9, 11..=11, 13..=13, 15..] \
+              z1=[..=-2, 4..=4, 7..=7, 10..=10, 13..=13, 16..=16, 19..=19, 22..]";
+    let k1 = "a=[..=-3, 9..] b=[..=2, 8..] z0=[..=-1, 3..] z1=[..=-2, 4..]";
     for (k, want) in [(0, k0), (1, k1)] {
         check(
             "two_eq_case",
@@ -2356,7 +2359,7 @@ A26 audit seed 26 steps 0-4: a=[-8..=5] x=[-8..=3] y=[-8..=5] z=[-4..=8]
 C1 x = 2w, x = 2y + 1: bottom
 C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] y=[1..=3] w=[1..=2]
 C3 x = 2w + 1, x = 2y: bottom
-C4 x = 3w + 1, x >= y: x=[1..=7] y=[0..=3] w=[0..=2]
+C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] y=[0..=3] w=[0..=2]
 ";
 
 mod bench;

@@ -18898,16 +18898,14 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 }
 
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
-/// note): exact where the join of row sums answers (module `row_sums`), a set holding them
-/// otherwise. A bound past `i64` is read as no bound.
+/// note). A bound past `i64` is read as no bound.
 ///
-/// The solver's projection is not exact even with one disjunction or none: it gives each
+/// The solver's projection alone is not exact even with one disjunction or none: it gives each
 /// disjunct its hull, which loses the parity or the holes an equality forces (`x + 2 * y == 0`
 /// gives `x` its hull, not its even values), a wrong answer under author P197. The cover of
-/// module `exact` ([`project_each_exact`]) makes each set it answers the exact projection, and
-/// refuses the symbol with [`Refusal::Questions`] past its work limit (`meter::EXACT_LIMIT`);
-/// it is not yet on this path (row PRES-cover-wire, pending the benchmarks of row
-/// PRES-cover-bench-regressions).
+/// module `exact`, on this path since PRES-cover-wire, makes each set it answers the exact
+/// projection, and refuses the symbol with [`Refusal::Questions`] past its work limit
+/// (`meter::EXACT_LIMIT`). What follows is the solver's answer, which the cover starts from.
 ///
 /// Complexity tradeoff: with two or more disjunctions the answer is the meet of each
 /// disjunction's union of projections, with its two ends moved in by `tighten`; the gaps
@@ -19022,10 +19020,10 @@ fn memo_off() -> bool {
         || meter::EXACT_LIMIT_SET.with(|c| c.get().is_some())
 }
 
-/// [`project_each`] with no memo: the solver's answer alone, as [`project_each_solver`], until
-/// row PRES-cover-wire puts the cover of module `exact` ([`project_each_exact`]) on this path.
+/// [`project_each`] with no memo: the solver's answer made exact by the cover of module
+/// `exact` ([`project_each_exact`]).
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, false)
+    project_each_with(f, syms, true)
 }
 
 /// [`project_each`] made exact by the cover of module `exact` (Monniaux's model-guided
@@ -19115,9 +19113,13 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     // Complexity tradeoff: one pass over `f` for each projection the cover checks, O(n log n)
     // in the size of `f` (`signed`, then `canonical_parts`), before the contradiction check
     // too, against reading `f` as written there, which let a contradiction be answered in one
-    // writing and refused in another.
+    // writing and refused in another. With the cover turned off (`meter::EXACT_OFF`) the
+    // solver reads `f` as written: `cover_input` writes a shared part `u` of one row as that
+    // row, which [`factored`] does not take out, and so it lost the narrowing of seed 0x5f5b's
+    // formula 9 (`b` in (-inf, inf) where the formula as written gives (-inf, 0]; test
+    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`).
     let written;
-    let f = if cover {
+    let f = if cover && !meter::EXACT_OFF.get() {
         written = cover_input(f);
         &written
     } else {
@@ -20811,7 +20813,7 @@ impl Level {
                             // when the projection is exact (PRES-project-exact-solver), since
                             // the exact projection is a function of the formula and the symbol
                             // alone. Tests: `batch_and_single_sound` over the random draws,
-                            // `seed_1446_case_7_single_alone_reports_a_cause`,
+                            // `seed_1446_case_7_single_hull_alone_reports_a_cause`,
                             // `batch_and_single_on_a_parity`.
                             _ => hull_from(g.base_of(r), s, &model),
                         }
@@ -29546,11 +29548,14 @@ mod by_halves_against_old {
     /// Equal hulls are not asserted (PROOF-batch-single-hull-agree): a symbol's hull depends on
     /// the other symbols asked with it (the note at the `hull_from` fallback of `Level::open`),
     /// so the two can differ with a cause on either side or on neither
-    /// ([`seed_1446_case_7_single_alone_reports_a_cause`]); and with no cause neither side is
-    /// the exact hull in general ([`project`]: parity, and the gaps between the disjuncts of two
-    /// or more disjunctions; [`batch_and_single_on_a_parity`]). Until 2026-11-15 this asserted
-    /// equality with no cause on either side and containment with a cause on one, an unproved
-    /// claim. Measured 2026-11-15 over seeds 1 to 2000, 298,958 comparisons: 298,558 with no
+    /// ([`seed_1446_case_7_single_hull_alone_reports_a_cause`], on the hulls before the
+    /// cover); and before the cover, with no cause neither side is the exact hull in general
+    /// ([`project`]: parity, and the gaps between the disjuncts of two or more disjunctions).
+    /// With the cover (PRES-project-exact-solver, PRES-pugh-work-budget) each set answered with
+    /// no cause is exact, so batch and single agree wherever both answer
+    /// ([`batch_and_single_on_a_parity`], [`seed_1446_case_7_batch_and_single_are_exact`]).
+    /// Until 2026-11-15 this asserted equality with no cause on either side and containment
+    /// with a cause on one, an unproved claim. Measured 2026-11-15 over seeds 1 to 2000, 298,958 comparisons: 298,558 with no
     /// cause and equal hulls, none with no cause and different hulls; a cause on batch alone
     /// 80 times (4 with different hulls); on both 320 (all equal); on single alone never.
     fn batch_and_single_sound(
@@ -29738,28 +29743,26 @@ mod by_halves_against_old {
         Formula::and(fs)
     }
 
-    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch projection gives it, and
-    /// single projection gives a set holding it with the cause of the disjunction it left out.
-    /// The exact set, checked with no projection: each of 1 to 4 has the point listed below
-    /// (`holds` evaluates the formula), and no point has `v0` at 0 or above 4. By hand: rows
-    /// 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
+    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch and single projection give
+    /// it, with no cause. The exact set, checked with no projection: each of 1 to 4 has the
+    /// point listed below (`holds` evaluates the formula), and no point has `v0` at 0 or above
+    /// 4. By hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
     /// `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
     /// disjunction reads `v5 == v1 + 4`, `v5 >= v1 + 3` or `v1 == v5 + 6`; the last needs
     /// `v1 >= 6`, so `v5 >= v1 + 3 >= 3`. Rows 2, 10, 9 and 8 give
     /// `v2 >= v1 + v10 >= v1 + v6 + v9 - 1 >= v1 + v6 + v5 + v4 + v7 - 1`, and with
     /// `v2 <= 2 - 2·v7` that is `v1 + v4 + v5 + v6 + 3·v7 <= 3`: `v5 = 3` and the others 0. Row 6,
     /// `v6 >= v5 + v7 - 2`, then needs `v6 >= 1`, which is false.
-    /// Single projection gives `[0, 4]`: its question "is there a point with `v0 <= 1`" over
-    /// the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel of that disjunct for `v0` alone, is
-    /// refused for `Refusal::Growth`, and the hull keeps the 0 it cannot rule out. Until
-    /// FAIL-by-halves-seed-1446, [`project`] dropped that cause. That single projection gives
-    /// `[1, 4]` with no cause is row PRES-growth-hull-side-one-symbol, whose parked test is
-    /// /home/luke/Work/wt/failing-tests/PRES-growth-hull-side-one-symbol.rs; its fix makes the
-    /// "single reports a cause" assert below fail, and moves the exact assert back here. Batch
-    /// of all eleven symbols reports `[Growth]` too and is exact; batch of `v0` and `v10`
-    /// reports none.
+    /// Before the cover (`meter::EXACT_OFF`) single projection gives `[0, 4]`: its question "is
+    /// there a point with `v0 <= 1`" over the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel
+    /// of that disjunct for `v0` alone, is refused for `Refusal::Growth`, and the hull keeps the
+    /// 0 it cannot rule out ([`seed_1446_case_7_single_hull_alone_reports_a_cause`]). The cover
+    /// then finds that 0 has no point, so single projection is exact with no cause, the assert
+    /// of row PRES-growth-hull-side-one-symbol's parked test
+    /// (/home/luke/Work/wt/failing-tests/PRES-growth-hull-side-one-symbol.rs), met since
+    /// PRES-pugh-work-budget.
     #[test]
-    fn seed_1446_case_7_batch_is_exact_and_single_reports_its_cause() {
+    fn seed_1446_case_7_batch_and_single_are_exact() {
         let f = seed_1446_case_7();
         let syms: Vec<Atom> = (0..11).map(|i| Atom::Sym(format!("v{i}").into())).collect();
         for p in [
@@ -29780,29 +29783,29 @@ mod by_halves_against_old {
             .expect("batch of v0 and v10 answers");
         assert_eq!(two[0].as_ref().ok(), Some(&exact), "batch of v0 and v10");
         assert_eq!(causes, [], "batch of v0 and v10");
-        let (one, causes) = project(&f, &syms[0]).expect("single answers");
-        assert!(!causes.is_empty(), "single {one:?} reports no cause");
-        assert!(
-            exact.is_subset(&one),
-            "single {one:?} does not hold {exact:?}"
-        );
+        assert_eq!(project(&f, &syms[0]), Ok((exact, vec![])), "single");
     }
 
-    /// A draw where single projection alone reports a cause (PROOF-batch-single-hull-agree; no
-    /// random draw of [`answers_are_those_of_the_old_path`] over seeds 1 to 2000 reached it):
+    /// A draw where single projection alone reports a cause, on the hulls before the cover
+    /// (`meter::EXACT_OFF`; PROOF-batch-single-hull-agree; no random draw of
+    /// [`answers_are_those_of_the_old_path`] over seeds 1 to 2000 reached it):
     /// [`seed_1446_case_7`] with batch of `v0` and `v10` ([`project_each`], `[1, 4]`, no cause)
-    /// against `v0` alone ([`project`], a wider set with `Growth`), as
-    /// [`seed_1446_case_7_batch_is_exact_and_single_reports_its_cause`] shows. The hulls differ,
-    /// and [`batch_and_single_sound`] checks that each holds every value `v0` takes. When row
-    /// PRES-growth-hull-side-one-symbol is fixed the case returned here changes, and this test
-    /// needs another such draw.
+    /// against `v0` alone ([`project`], a wider set with `Growth`). The hulls differ, and
+    /// [`batch_and_single_sound`] checks that each holds every value `v0` takes. With the
+    /// cover both are exact ([`seed_1446_case_7_batch_and_single_are_exact`]); when the hull of
+    /// one symbol stops growing here (row PRES-growth-hull-side-one-symbol, whose answer the
+    /// cover already makes exact) this test needs another such draw.
     #[test]
-    fn seed_1446_case_7_single_alone_reports_a_cause() {
+    fn seed_1446_case_7_single_hull_alone_reports_a_cause() {
         let f = seed_1446_case_7();
         let (v0, v10) = (Atom::Sym("v0".into()), Atom::Sym("v10".into()));
-        let (two, causes) = project_each(&f, &[v0.clone(), v10]).expect("batch answers");
+        meter::EXACT_OFF.set(true);
+        let two = project_each(&f, &[v0.clone(), v10]);
+        let one = project(&f, &v0);
+        meter::EXACT_OFF.set(false);
+        let (two, causes) = two.expect("batch answers");
         let x = two[0].as_ref().expect("batch hull of v0");
-        let (one, one_causes) = project(&f, &v0).expect("single answers");
+        let (one, one_causes) = one.expect("single answers");
         assert_eq!(
             batch_and_single_sound(&f, &v0, (x, &causes), (&one, &one_causes), "seed 1446"),
             ((false, true), false),
@@ -29812,11 +29815,10 @@ mod by_halves_against_old {
 
     /// Batch and single projection meet the parity case of [`project`]'s note: over
     /// `x == 2·y + 1`, `0 <= y <= 3` and the disjunction `y <= 1 || y >= 3`, `x` takes 1, 3
-    /// and 7 only. Each side reports no cause and gives `x` the union of its disjuncts' hulls,
-    /// `[1, 3]` and `[7, 7]`, so 2 is in it and has no point: the set is not the exact one
-    /// though no cause is reported, on either side (PROOF-batch-single-hull-agree; the exact
-    /// projection is row PRES-project-exact-solver, whose fix changes the expected set here
-    /// to `{1, 3, 7}`).
+    /// and 7 only. Before PRES-pugh-work-budget each side gave `x` the union of its disjuncts'
+    /// hulls, `[1, 3]` and `[7, 7]`, which holds 2, a value with no point
+    /// (PROOF-batch-single-hull-agree). Each side now gives the exact set `{1, 3, 7}` with no
+    /// cause, the values the loop below finds by enumeration.
     #[test]
     fn batch_and_single_on_a_parity() {
         let k = Lin::constant;
@@ -29835,7 +29837,9 @@ mod by_halves_against_old {
                 "x = {val}"
             );
         }
-        let hull = IntervalSet::of(1, 3).join(&IntervalSet::single(7));
+        let hull = IntervalSet::single(1)
+            .join(&IntervalSet::single(3))
+            .join(&IntervalSet::single(7));
         let (each, causes) = project_each(&f, &syms).expect("batch answers");
         let (one, one_causes) = project(&f, &syms[0]).expect("single answers");
         assert_eq!(
