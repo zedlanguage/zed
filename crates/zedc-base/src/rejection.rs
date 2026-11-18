@@ -66,11 +66,14 @@ rows! {
     CostUnbounded => "Unbounded work under a cost claim",
     // No diagnostic uses the next row yet: plan row TERM-verdicts emits it.
     NotProvedToEnd => "Not proved to end",
-    // No diagnostic uses the next six rows yet: plan row COST-required emits them.
+    // No diagnostic uses the next four rows yet: plan row COST-required emits them.
     CostClaimMissing => "Function without a cost claim in a unit under `@cost(#required);`",
     CostReasonMissing => "Cost claim above `O(n log n)` without a reason",
     CostClaimUnbounded => "Cost claim that bounds nothing",
     CostKindMissing => "Cost claim with no kind of bound, or with a lower bound",
+    // No diagnostic uses the next row yet: plan row L18.2g emits it.
+    CostClaimTime => "Time in a cost claim",
+    // No diagnostic uses the next two rows yet: plan row COST-required emits them.
     EquivalentShape => "Equivalent switch of another shape",
     EquivalentNoInputs => "Equivalent switch below proof grade without inputs",
     // No diagnostic uses the next three rows yet: steps L18.2d (the first) and L18.2e (the other
@@ -289,6 +292,13 @@ rows! {
     LogUnitInOperation => "Logarithmic unit in an operation that would change with the unit",
     ExponentialBaseDiffers => "Exponential whose base differs from the logarithm's",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
+    // No diagnostic uses the next six rows yet: plan row L33.1e emits them.
+    SecretPosition => "Read at a secret position",
+    SecretLoopEnd => "Loop whose end depends on a secret",
+    SecretVariableTime => "Variable-time operation on a secret",
+    SecretAllocationSize => "Allocation sized by a secret",
+    SecretSelectionNotBranchFree => "Secret selection that cannot be made branch-free",
+    CryptosafeCallNotFollowed => "Call that `@cryptosafe` cannot follow",
     // No diagnostic uses the next row yet: plan row FPWARN emits it.
     RoundedAtRefusingParameter => "Rounded value at a parameter that refuses it",
     NoIntEquals => "No `int` equals the value",

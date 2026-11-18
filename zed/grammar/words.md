@@ -29,5 +29,5 @@
 | L30 | — | — | `Picture` |
 | L31 | — | — | `#mcu` |
 | L32 | — | — | `Pointer`, `Keys` |
-| L33 | — | — | `jvp`, `vjp`, `gradient`, `hvp`, `#notDifferentiable`, `#notElementary`, `#noClosedForm` |
+| L33 | `@cryptosafe` | — | `jvp`, `vjp`, `gradient`, `hvp`, `#notDifferentiable`, `#notElementary`, `#noClosedForm`, `ctDivRem` |
 | L34 | — | — | `Midi`, `Camera`, `Audio`, `Sensors`, `#late` |
