@@ -56,6 +56,9 @@ thread_local! {
     pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
 }
 
+/// A solver step that eliminates the atoms a test picks from constraints ([`Solver`]).
+pub(super) type Eliminate = fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>;
+
 /// The steps of the solver (`presburger.rs`) that the cover asks, handed to it as function
 /// values. Named in `exact.rs`, they made the cover import the solver, which calls the cover
 /// from `project_each`: an import cycle (`s_01f_import_graph`). The solver builds this once
@@ -66,9 +69,9 @@ pub(super) struct Solver {
     /// `presburger::satisfiable`.
     pub(super) satisfiable: fn(&Formula) -> Result<Option<Model>, Refusal>,
     /// `presburger::eliminated_counted`.
-    pub(super) eliminated_counted: fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>,
+    pub(super) eliminated_counted: Eliminate,
     /// `presburger::eliminated_whole`.
-    pub(super) eliminated_whole: fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>,
+    pub(super) eliminated_whole: Eliminate,
     /// `presburger::point_of`.
     pub(super) point_of: fn(&[Con], bool) -> Option<Model>,
 }

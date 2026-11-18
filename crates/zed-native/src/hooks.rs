@@ -55,8 +55,17 @@ pub(crate) struct Run {
     /// For each node, the merge its last call by name made ([`place_named`]).
     merged: Vec<Option<Merged>>,
     pub kernel_calls: u64,
+    /// How many calls by name ran through a placed entry ([`rt_direct`], [`rt_direct_read`]).
+    pub placed_calls: u64,
     /// For each atom node, the shape last made from constant name and field words.
     shapes: Vec<Option<(Word, Word, Shape)>>,
+    /// The number of hook calls so far, raised by [`with`]; debug builds only.
+    #[cfg(debug_assertions)]
+    hook_calls: u64,
+    /// [`Run::hook_calls`] when [`rt_direct`] last sent a call to a placed entry, until that
+    /// entry's [`rt_direct_read`]; debug builds only.
+    #[cfg(debug_assertions)]
+    direct_at: Option<u64>,
 }
 
 /// An atom's name, its field names sorted, and for each field the payload input it holds.
@@ -90,7 +99,12 @@ impl State {
             named: Vec::new(),
             merged: vec![None; t.nodes.len()],
             kernel_calls: 0,
+            placed_calls: 0,
             shapes: vec![None; t.nodes.len()],
+            #[cfg(debug_assertions)]
+            hook_calls: 0,
+            #[cfg(debug_assertions)]
+            direct_at: None,
         };
         State { t, run }
     }
@@ -114,6 +128,10 @@ fn with<R>(f: impl FnOnce(&Tables, &mut Run) -> R) -> R {
     STATE.with(|c| {
         let mut slot = c.borrow_mut();
         let s = slot.as_mut().expect("a run is installed");
+        #[cfg(debug_assertions)]
+        {
+            s.run.hook_calls += 1;
+        }
         f(&s.t, &mut s.run)
     })
 }
@@ -172,6 +190,7 @@ pub(crate) const HOOKS: &[(&str, usize, usize)] = &[
     ("rt_named", 1, 2),
     ("rt_args", 1, 1),
     ("rt_direct", 3, 2),
+    ("rt_direct_read", 0, 0),
 ];
 
 /// Each hook's address, in the order of [`HOOKS`].
@@ -194,6 +213,7 @@ pub(crate) fn addresses() -> Vec<*const u8> {
         rt_named as extern "C" fn(i64) -> Named as *const u8,
         rt_args as extern "C" fn(i64) -> i64 as *const u8,
         rt_direct as extern "C" fn(i64, i64, i64) -> Named as *const u8,
+        rt_direct_read as extern "C" fn() as *const u8,
     ]
 }
 
@@ -283,8 +303,9 @@ const LEFT: u32 = u32::MAX;
 /// for the list of the closure `f` and that list has no fill, the address of the placed entry
 /// of `f`'s lambda ([`Tables::placed`]) and of the merge's byte offsets ([`Merged::offs`]), from
 /// which the entry reads each parameter among the arguments the call site stored with
-/// [`rt_args`], that buffer then emptied; else a call of 0, the buffer kept, and the call goes
-/// through [`rt_named`], which makes the merge. A lambda with no placed entry misses.
+/// [`rt_args`]; else a call of 0, and the call goes through [`rt_named`], which makes the merge.
+/// A lambda with no placed entry misses. The buffer is kept either way: the entry empties it
+/// with [`rt_direct_read`] after it has read the arguments.
 // Complexity tradeoff: through `rt_named` a call passes its p arguments three times, into the
 // runtime's buffer, into the placed order ([`call_placed`]) and into the body, where a call to
 // the function by its name passes them once; the placed call ran 2.6 times the instructions of
@@ -321,17 +342,50 @@ extern "C" fn rt_direct(id: i64, tag: i64, bits: i64) -> Named {
             return none;
         }
         let call = s.entries[t.placed(*lambda)];
+        #[cfg(debug_assertions)]
         if call != 0 {
-            // Emptied as `rt_named` empties it for a placed call, for the next `rt_arg`. The
-            // words stay where they are, `Word` being `Copy` and the capacity kept: the entry
-            // reads them before it calls any hook.
-            s.args.clear();
+            s.direct_at = Some(s.hook_calls);
         }
         Named {
             call,
             buf: offs.as_ptr() as i64,
         }
     })
+}
+
+/// Called by a placed entry ([`Tables::placed`]) once it has read its arguments from the
+/// buffer of [`rt_args`], as the first hook it calls: empties the buffer for the next
+/// [`rt_arg`], as [`rt_named`] empties it for a placed call, and counts the call
+/// ([`Run::placed_calls`]).
+///
+/// Why the entry reads the words the call site stored: the call site (`Gen::named`) stores
+/// them at the address [`rt_args`] gave and calls [`rt_direct`], which changes neither the
+/// buffer nor its length; on a hit the code between `rt_direct`'s return and this hook is a
+/// compare, a branch, an add and the indirect call, in `Gen::named_direct`, then the entry's
+/// jump to its first block and its loads, in `Gen::function` and `Gen::placed`, and none of it
+/// calls a hook. A hook in between could move the buffer ([`rt_args`] resizes it) or
+/// overwrite it ([`rt_args`], [`rt_arg`], [`rt_named`]), so debug builds check that no hook ran
+/// between [`rt_direct`] and this one: every hook goes through [`with`], which counts it.
+/// The buffer is emptied here, after the loads, not in [`rt_direct`] before them.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
+extern "C" fn rt_direct_read() {
+    with(|_, s| {
+        // A failed run, not a panic, which would abort the process from an `extern "C"` fn.
+        #[cfg(debug_assertions)]
+        if s.direct_at.take().map(|n| n + 1) != Some(s.hook_calls) {
+            let e = zed_rt::bug(
+                "read a call's arguments after the runtime could have changed them",
+                "a hook ran between rt_direct and the placed entry's rt_direct_read",
+            );
+            fail(s, e, None);
+        }
+        s.args.clear();
+        s.placed_calls += 1;
+    });
 }
 
 /// The merge of a call by name with a parameter list, kept for the call's node.

@@ -193,8 +193,8 @@ fn a_call_through_functions_differing_in_places_or_defaults_runs() {
 }
 
 /// The value of `name` in `src` from native code, which calls the kernel for no node: as
-/// [`runs_to`], and the run's `kernel_calls` is 0.
-fn runs_natively_to(src: &str, name: &str, want: &str) {
+/// [`runs_to`], and the run's `kernel_calls` is 0. Gives the run's `placed_calls`.
+fn runs_natively_to(src: &str, name: &str, want: &str) -> u64 {
     use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
     use zed_tests::step_helpers::l01_36_cranelift::native;
     runs_to(src, name, want);
@@ -203,6 +203,7 @@ fn runs_natively_to(src: &str, name: &str, want: &str) {
     let o = native(&t).unwrap_or_else(|e| panic!("{src}: {e}"));
     assert_eq!(o.kernel_calls, 0, "native code called the kernel: {src}");
     assert_eq!(o.value.to_string(), want, "native code's value: {src}");
+    o.placed_calls
 }
 
 /// The calls of [`a_call_through_functions_differing_in_places_or_defaults_runs`] and of the
@@ -252,27 +253,31 @@ fn a_call_its_function_places_runs_in_native_code_alone() {
 
 /// A call by name that runs again through the same list goes straight to the placed entry of
 /// the function's lambda, which reads each argument where the call site stored it (row
-/// CALL-callee-places-native): `k0`'s call runs four times, the first merging the names. The
+/// CALL-callee-places-native): `k0`'s call runs four times, the first merging the names, so
+/// the run's `placed_calls`, counted by the entry, is 3 (row CALL-direct-buffer-proof); `q`,
+/// the function `u` itself and not a closure a `place` made, takes no placed entry. The
 /// arguments include a function, a cell whose count the entry raises for the body (a list
 /// would run in the kernel), and the closure reads what it captures.
 #[test]
 fn a_repeated_placed_call_runs_in_native_code_through_its_placed_entry() {
     let pick = "pick(c: bool) = if c { f } else { g };\nh = pick(c: false);\n";
     let ks = "k1(z: int) = k0(z: z) + k0(z: z + 1);\nk2(z: int) = k1(z: z) + k1(z: z + 2);\na = k2(z: 0);\n";
-    runs_natively_to(
+    let placed = runs_natively_to(
         &format!(
             "u(x: int) = x + 1;\nf(q, b: int) = q(x: b) - 1;\ng(b: int, q) = q(x: b) * 10;\n{pick}k0(z: int) = h(q: u, b: z);\n{ks}"
         ),
         "a",
         "100",
     );
-    runs_natively_to(
+    assert_eq!(placed, 3, "calls through a placed entry");
+    let placed = runs_natively_to(
         &format!(
             "pick(c: bool, d: int) = {{\n  f(a: int, b: int) = a - b + d;\n  g(b: int, a: int) = a * 10 + b + d;\n  if c {{ f }} else {{ g }}\n}};\nh = pick(c: false, d: 100);\nk0(z: int) = h(a: z, b: 2);\n{ks}"
         ),
         "a",
         "468",
     );
+    assert_eq!(placed, 3, "calls through a placed entry");
 }
 
 /// A call through a value that leaves out a parameter whose default reads an earlier

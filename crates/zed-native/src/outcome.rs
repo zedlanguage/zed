@@ -19,6 +19,9 @@ pub struct Outcome {
     pub stats: Stats,
     /// How many nodes the kernel ran for the runtime.
     pub kernel_calls: u64,
+    /// How many calls by name ran through a placed entry, sent there by the merge kept for the
+    /// call's node (`hooks::rt_direct`).
+    pub placed_calls: u64,
     /// The entries of the heap's table of uncounted values when the run ends.
     pub table: usize,
     /// The cells the heap holds when the run ends, live or free.
@@ -48,6 +51,7 @@ pub(crate) fn call(
         value: r.map_err(|e| (e, s.run.err_at))?,
         stats: s.run.heap.stats,
         kernel_calls: s.run.kernel_calls,
+        placed_calls: s.run.placed_calls,
         table: s.run.heap.table_len(),
         cells: s.run.heap.cell_slots(),
     })

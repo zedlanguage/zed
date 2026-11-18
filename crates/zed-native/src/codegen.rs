@@ -354,7 +354,8 @@ impl<M: Module> Gen<'_, M> {
 
     /// Lambda `i`'s placed entry: it takes the closure's word and the addresses of the
     /// arguments of a call by name, as its call site stored them, and of the byte offsets of a
-    /// merge ([`crate::hooks`]' `rt_direct`), reads each parameter at its offset, gives a
+    /// merge ([`crate::hooks`]' `rt_direct`), reads each parameter at its offset, then calls
+    /// `rt_direct_read`, which empties the buffer (row CALL-direct-buffer-proof), gives a
     /// reference to each the body consumes, as a call the runtime places gives it, and runs the
     /// body inline (row CALL-callee-places-native).
     // Complexity tradeoff: a call through a function that calls the body on the parameters
@@ -375,6 +376,9 @@ impl<M: Module> Gen<'_, M> {
                 let bits = fx.b.ins().load(I64, flags, at, 8);
                 ws.push((tag, bits));
             }
+            // The first hook call, after every load from the buffer: it empties the buffer,
+            // and in debug builds checks that no hook ran since `rt_direct` (its proof).
+            cg.call(fx, "rt_direct_read", &[]);
             let mut kept = Vec::with_capacity(l.params);
             for (w, m) in ws.into_iter().zip(&l.modes) {
                 if *m == Mode::Owned {
@@ -758,7 +762,9 @@ impl<M: Module> Gen<'_, M> {
     /// function's lambda when the runtime's merge kept for the node holds for the function's
     /// list (`rt_direct`), with its result to `merge`; else on to the code after, which
     /// places the call through `rt_named`. The entry reads the arguments after the function
-    /// where the call site stored `ins` for `rt_named`, at `buf`.
+    /// where the call site stored `ins` for `rt_named`, at `buf`. Nothing here between
+    /// `rt_direct` and the indirect call may call a hook (`hooks::rt_direct_read` says why and
+    /// checks it in debug builds).
     fn named_direct(&mut self, fx: &mut Fx<'_>, id: usize, ins: &[Loc], buf: V, merge: Block) {
         let f = self.get(fx, ins[1]);
         let k = fx.b.ins().iconst(I64, id as i64);
