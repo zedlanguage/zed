@@ -32,6 +32,11 @@ use std::hint::black_box;
 
 use zed_tests::scaling::{Meter, Work};
 
+// Only the binary `crossover` uses zed-corpus-ref, and `cargo test --workspace` (the build of
+// tools/run_tests.sh) does not build it (`test = false`), so cargo's unused-dependency lint
+// would report the dependency unused there. Naming it here keeps that build free of the warning.
+use zed_corpus_ref as _;
+
 /// How many runs each measurement takes: the least is the measurement, and the most over the
 /// least is the spread of repeated runs. Instruction counts of the same run differ by a
 /// fraction of a percent, mostly in the first run, which finds the allocator cold.
