@@ -1565,3 +1565,109 @@ fn every_name_of_the_repaired_unit_has_its_exact_answer() {
     );
     assert_eq!(exact("x"), Ok(IntervalSet::range(End::of(4), End::PosInf)));
 }
+
+/// [`reduced`] of `f` keeping `x`, with the limit `limit`.
+fn reduce_keeping_x(f: &Formula, limit: u64) -> Result<Option<Formula>, Refusal> {
+    let x = a("x");
+    let mut work = Work {
+        used: 0,
+        limit,
+        solver: SOLVER,
+    };
+    reduced(f, &|b| *b == x, &mut work)
+}
+
+/// Whether `f` and `g` have a point at the same values of `x` in `-12..=12`, by the solver.
+fn same_on_x(f: &Formula, g: &Formula) {
+    for v in -12..=12 {
+        let at = |h: &Formula| {
+            let q = Formula::and(vec![h.clone(), eq(&[("x", 1)], -v)]);
+            (SOLVER.satisfiable)(&q).unwrap().is_some()
+        };
+        assert_eq!(at(f), at(g), "x = {v}: {f:?} and {g:?}");
+    }
+}
+
+/// A conjunction of rows is left to [`direct`]: `reduced` gives `None`.
+#[test]
+fn reduced_leaves_a_conjunction_of_rows_alone() {
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 10),
+        eq(&[("y", 1), ("x", -1)], -1),
+    ]);
+    assert_eq!(reduce_keeping_x(&f, EXACT_LIMIT), Ok(None));
+}
+
+/// `0 <= x <= 3`, `y == x + 1`, `z >= x or y <= -3`: `z` is read by the first disjunct
+/// alone and has no upper bound, so the disjunction holds at every value of the rest and goes
+/// (the rule of module `absorbing`); `y` is then read by no disjunction and is eliminated.
+/// What is left reads `x` alone, with the same values of `x`.
+#[test]
+fn reduced_removes_a_disjunction_its_private_atom_satisfies_and_eliminates_the_rest() {
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 3),
+        eq(&[("y", 1), ("x", -1)], -1),
+        Formula::or(vec![ge(&[("z", 1), ("x", -1)], 0), ge(&[("y", -1)], -3)]),
+    ]);
+    let g = reduce_keeping_x(&f, EXACT_LIMIT)
+        .unwrap()
+        .expect("a smaller formula");
+    assert_eq!(g.atoms(), [a("x")].into_iter().collect(), "{g:?}");
+    same_on_x(&f, &g);
+}
+
+/// `0 <= x <= 9`, `y == 2x`, `x <= 2 or x >= 7`: the disjunction reads the kept `x`, which is
+/// never private, so it stays; `y` goes.
+#[test]
+fn reduced_keeps_a_disjunction_over_a_kept_atom() {
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 9),
+        eq(&[("y", 1), ("x", -2)], 0),
+        Formula::or(vec![ge(&[("x", -1)], 2), ge(&[("x", 1)], -7)]),
+    ]);
+    let g = reduce_keeping_x(&f, EXACT_LIMIT)
+        .unwrap()
+        .expect("a smaller formula");
+    assert_eq!(g.atoms(), [a("x")].into_iter().collect(), "{g:?}");
+    assert!(
+        g.conjuncts().iter().any(|h| matches!(h, Formula::Or(_))),
+        "{g:?}"
+    );
+    same_on_x(&f, &g);
+}
+
+/// `0 <= x <= 5`, `y == x + 2`, `z == y + 1`, `y <= 3 or y >= 6`: the disjunction reads `y`,
+/// which the rows also read, so it stays and `y` is kept for it; `z`, read by the rows alone,
+/// goes.
+#[test]
+fn reduced_keeps_the_atoms_a_remaining_disjunction_reads() {
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 5),
+        eq(&[("y", 1), ("x", -1)], -2),
+        eq(&[("z", 1), ("y", -1)], -1),
+        Formula::or(vec![ge(&[("y", -1)], 3), ge(&[("y", 1)], -6)]),
+    ]);
+    let g = reduce_keeping_x(&f, EXACT_LIMIT)
+        .unwrap()
+        .expect("a smaller formula");
+    assert_eq!(g.atoms(), [a("x"), a("y")].into_iter().collect(), "{g:?}");
+    same_on_x(&f, &g);
+}
+
+/// The elimination is metered: with no work left it is refused, never a smaller formula from
+/// a stopped elimination.
+#[test]
+fn reduced_is_refused_past_the_limit() {
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 5),
+        eq(&[("y", 1), ("x", -1)], -2),
+        eq(&[("z", 1), ("y", -1)], -1),
+        Formula::or(vec![ge(&[("y", -1)], 3), ge(&[("y", 1)], -6)]),
+    ]);
+    assert_eq!(reduce_keeping_x(&f, 0), Err(Refusal::Questions));
+}
