@@ -2830,22 +2830,26 @@ fn a_certificate_that_declines_late_leaves_the_rest_only_what_is_left() {
 }
 
 /// As above, with the certificate taking more than 90% of the limit (the limit is its work
-/// times 20/19): the reading and the fast paths get only the last 5%, and the fast work of the
-/// call is the certificate's and at most that remainder. Negative control: with the certificate
-/// off, the reading alone takes more than the remainder.
+/// times 20/19): the reading and the fast paths get only the last 5%, so the fast work of the
+/// call after the certificate is exactly the reading's when run alone on that remainder (which
+/// passes the remainder only by the reading's one stopping charge: 100 units on 51). Negative
+/// control: with the certificate off, the reading takes more than ten times that.
 #[test]
 fn a_certificate_that_declines_after_most_of_the_limit_leaves_only_the_remainder() {
-    let (limit, spent, _, fast_on, fast_off) = late_decline(|spent, _| spent + spent / 19);
-    assert!(spent * 10 > limit * 9, "the certificate took {spent} of {limit}");
-    let rest = limit - spent;
+    let (limit, spent, read_left, fast_on, fast_off) = late_decline(|spent, _| spent + spent / 19);
     assert!(
-        fast_on - spent <= rest + 1,
-        "after the certificate, {} passes the remainder {rest}",
-        fast_on - spent
+        spent * 10 > limit * 9,
+        "the certificate took {spent} of {limit}"
+    );
+    assert_eq!(
+        fast_on - spent,
+        read_left,
+        "after the certificate, the rest is not the reading's on the remainder {}",
+        limit - spent
     );
     assert!(
-        fast_off > rest + 1,
-        "control: the reading alone took {fast_off}, within the remainder {rest}"
+        fast_off > 10 * read_left,
+        "control: the reading alone took {fast_off}, not more than ten times {read_left}"
     );
 }
 
