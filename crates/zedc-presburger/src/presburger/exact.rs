@@ -75,7 +75,7 @@ use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, 
 mod guarded;
 mod projection;
 pub use projection::{METHOD, Method};
-use projection::{Strided, Tail, bounded, fin, holds_at, value};
+use projection::{Strided, Tail, bounded, each_constraint, fin, holds_at, value};
 
 /// The charge of [`Work`] that eliminates rows, here rather than in module `meter` with the
 /// rest of [`Work`], so that the meter holds no step of the cover (row MAIN-red-pugh-land).
@@ -3121,6 +3121,7 @@ fn factors(f: &Formula) -> HashSet<Atom> {
     out
 }
 
+<<<<<<< HEAD
 /// The answers of [`exact_each`] read off a smaller formula, where two or more atoms of `f`
 /// have the same coefficient in every constraint (the same column), or `None` where none do,
 /// or where the smaller formula's answers are not all exact.
@@ -3213,25 +3214,6 @@ fn by_columns(
         sets,
         causes: Vec::new(),
     })
-}
-
-/// Calls `at` on each constraint of `f`, a shared part read once (by [`Id`]), the parts
-/// waiting on an explicit stack (see [`fold`]).
-fn each_constraint<'a>(f: &'a Formula, mut at: impl FnMut(&'a Con)) {
-    let mut seen: HashSet<Id> = HashSet::new();
-    let mut stack = vec![f];
-    while let Some(g) = stack.pop() {
-        if let Some(k) = Id::of(g)
-            && !seen.insert(k)
-        {
-            continue;
-        }
-        match g {
-            Formula::Con(c) => at(c),
-            Formula::Not(h) => stack.push(h),
-            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
-        }
-    }
 }
 
 /// The rows of `rows` joined to `s` through shared atoms. The others hold at the point the

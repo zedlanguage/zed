@@ -48,7 +48,7 @@ use zedc_lattice::interval::{End, IntervalSet};
 use super::super::formula::Id;
 use super::super::meter::{PIECE, Work};
 use super::super::{Atom, Con, Formula, Lin, Refusal, Rel};
-use super::projection::fin;
+use super::projection::{each_constraint, fin};
 
 /// A definition of one atom from others ([module note](self)).
 enum Def<'a> {
@@ -186,7 +186,7 @@ fn read<'a>(f: &'a Formula, s: &Atom, work: &mut Work) -> Result<Option<Reading<
     let mut found = false;
     for g in &parts {
         work.charge(PIECE)?;
-        super::each_constraint(g, |c| {
+        each_constraint(g, |c| {
             for a in c.lin.terms.keys() {
                 found |= matches!(a, Atom::Product(..));
                 all.insert(a);

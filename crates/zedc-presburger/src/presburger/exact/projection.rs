@@ -23,12 +23,13 @@
 //! docs/handoff/PRES-pugh-findings.md; they are switched by [`METHOD`] for that comparison.
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
 
+use super::super::formula::Id;
 use super::super::meter::{EXACT_QUESTIONS, LISTED, PIECE, Work};
 use super::super::{Atom, Classed, Con, Formula, Lin, Model, Refusal, Rel};
 
@@ -1234,6 +1235,27 @@ pub(super) fn holds_at(c: &Con, v: &Int) -> bool {
     match c.rel {
         Rel::Ge => !v.is_negative(),
         Rel::Eq => v.is_zero(),
+    }
+}
+
+/// Calls `at` on each constraint of `f`, a shared part read once (by [`Id`]), the parts
+/// waiting on an explicit stack (as `fold` in `exact.rs`). It is here, not in `exact.rs`, so
+/// that `guarded.rs`, which `exact.rs` calls, reads it without importing `exact.rs`
+/// (`s_01f_import_graph`).
+pub(super) fn each_constraint<'a>(f: &'a Formula, mut at: impl FnMut(&'a Con)) {
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        if let Some(k) = Id::of(g)
+            && !seen.insert(k)
+        {
+            continue;
+        }
+        match g {
+            Formula::Con(c) => at(c),
+            Formula::Not(h) => stack.push(h),
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+        }
     }
 }
 
