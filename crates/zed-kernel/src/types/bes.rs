@@ -433,6 +433,8 @@ fn gfp(g: &Bes, sub: &[u32], base_lo: bool, start_tmp: bool, narrow: bool, sc: &
             Kind::And => true,
             Kind::Or => g.kind[w] == Kind::Or && sc.o_comp[v] == sc.o_comp[w],
             Kind::Mor => false,
+            // `w` is a child of `v` (both callers), and a constant has no child: `Bes::add` and
+            // `Bes::set` assert it, and `simplify` makes a node `Bot` only with no children.
             Kind::Top | Kind::Bot => unreachable!("a constant node has no child `w`"),
         }
     };
@@ -481,6 +483,8 @@ fn gfp(g: &Bes, sub: &[u32], base_lo: bool, start_tmp: bool, narrow: bool, sc: &
                     sc.need[p] == 0
                 }
                 Kind::And | Kind::Mor => true,
+                // `Bes::seal` makes `p` a parent of `w` only for a child `w` of `p`, and a
+                // constant has no child (`Bes::add`, `Bes::set`, `simplify`).
                 Kind::Top | Kind::Bot => unreachable!("a constant node is no node's parent"),
             };
             if dead {
@@ -609,6 +613,9 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
                     }
                 }
                 Kind::And | Kind::Mor => {}
+                // `tc` is a component with `cyclic` true: two nodes or more, each with a child
+                // in it, or one node that is its own child. A constant has no child (`Bes::add`,
+                // `Bes::set`, `simplify`).
                 Kind::Top | Kind::Bot => unreachable!("a constant node on a tuple cycle"),
             }
         }

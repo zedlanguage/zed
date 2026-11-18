@@ -317,3 +317,58 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
     }
     Some((stop, name, atoms[0][0].clone(), atoms[0][1].clone()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ByType;
+    use crate::types::Type;
+    use std::collections::BTreeMap;
+
+    /// Every operation of [`ByType`] agrees with a `BTreeMap` on 600 atoms. In the
+    /// short-addresses build, whose digests keep 8 bits, many of the atoms share a digest, so
+    /// the arms for a digest of two keys or more (`Tied::Many`) run; in the normal build the
+    /// keys of one digest are one.
+    #[test]
+    fn a_map_by_type_agrees_with_an_ordered_map_also_where_digests_tie() {
+        let keys: Vec<Type> = (0..600).map(|i| Type::atom(&format!("k{i}"))).collect();
+        let mut m: ByType<u32> = ByType::new();
+        let mut model: BTreeMap<Type, u32> = BTreeMap::new();
+        let agree = |m: &ByType<u32>, model: &BTreeMap<Type, u32>| {
+            for k in &keys {
+                assert_eq!(m.get(k), model.get(k), "{k}");
+                assert_eq!(m.contains_key(k), model.contains_key(k), "{k}");
+            }
+        };
+        for (i, k) in keys.iter().enumerate() {
+            let v = u32::try_from(i).expect("600 keys");
+            assert_eq!(*m.entry(k.clone()).or_insert_with(|| v), v);
+            model.insert(k.clone(), v);
+        }
+        // An entry of a key present keeps its value.
+        for k in keys.iter().step_by(7) {
+            assert_eq!(*m.entry(k.clone()).or_insert_with(|| 9999), model[k]);
+        }
+        agree(&m, &model);
+        // A second `insert` of a key replaces its value and returns the old one.
+        for k in keys.iter().step_by(3) {
+            assert_eq!(m.insert(k.clone(), 7), model.insert(k.clone(), 7));
+        }
+        for k in keys.iter().step_by(5) {
+            *m.get_mut(k).expect("a key") += 1;
+            *model.get_mut(k).expect("a key") += 1;
+            assert_eq!(m[k], model[k]);
+        }
+        agree(&m, &model);
+        for k in keys.iter().step_by(2) {
+            assert_eq!(m.remove(k), model.remove(k), "{k}");
+            assert_eq!(m.remove(k), None, "{k} removed twice");
+            assert_eq!(m.get_mut(k), None, "{k}");
+        }
+        agree(&m, &model);
+        m.retain(|_, v| *v % 3 != 0);
+        model.retain(|_, v| *v % 3 != 0);
+        agree(&m, &model);
+        m.clear();
+        assert!(keys.iter().all(|k| m.get(k).is_none()));
+    }
+}

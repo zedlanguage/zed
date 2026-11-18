@@ -169,3 +169,52 @@ Part1)` it is written out, not named `Part1`, where printed not apart it is `Par
 set of one literal or more (`Bdd::list`), each refused literal goes to `first` (or the meet
 there) and each taken one to `taken`, so the two are never both empty; the arm could not be
 reached, and no test can reach `put` with such a block. The proof is at the site and in `put`.
+
+Fourth round (cover4, 2026-11-18): every kernel file but `types/empty.rs`, which cover3 takes.
+
+Coverage was run again at 847a31d3e (395a28b68 and a comment in `print.rs`):
+`tools/run_tests.sh --cov` over every local piece but the short-addresses ones, which are not
+built for coverage (2,664 pieces, 22 failed, all of them executables, links, runs and builds of
+programs that fail under the coverage build, none a kernel test; load 64 to 315), merged with the
+toolchain's `llvm-profdata` and read with `llvm-cov export` over the 157 test executables the
+run built. Under `crates/zed-kernel/src/types`, outside `empty.rs`, benchmarks and test files,
+340 lines in 251 ranges are unreached; the list is
+/home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-4-cover4.txt (`file line`, numbered at
+847a31d3e). `llvm-cov` warned of 2,014 functions with mismatched data (one function built with
+different features in several binaries); a line it lists is checked by hand before it is closed.
+The rest of `crates/zed-kernel/src` (`eval.rs`, `value.rs`, `poly.rs` and others, 1,700 lines)
+was not in this row's list and is not taken here.
+
+Closed in this round:
+
+- `empty/shared.rs` `ByType`, the arms for two keys of one digest (`Tied::Many` in `get_mut`,
+  `remove`, `retain`, 53, 76-85, 97-98): test
+  `types::empty::shared::tests::a_map_by_type_agrees_with_an_ordered_map_also_where_digests_tie`,
+  every operation against a `BTreeMap` on 600 atoms. In the short-addresses build (8-bit
+  digests) it reaches each of those lines (llvm-cov of that build, 53: 341 runs, 76-77: 496,
+  97-98: 270 and 135); negative control: `remove` made to keep the key of a shared digest fails
+  the test in that build. In the normal build no two of the keys share a digest.
+- `bes.rs` 436, 484, 612, the arms for a constant node where a child, a parent or a cycle is
+  read: proofs at the site (`Bes::add` and `Bes::set` assert a constant has no child,
+  `simplify` makes a node `Bot` only with none, `Bes::seal` makes parents only of children,
+  and `cyclic` holds only of a component whose nodes each have a child in it).
+- `print.rs` `list`, the arm for a block of value `false` (cover2's claim that its texts are
+  never both empty): checked by tracing every path that builds a cell. `Cell::block` is an
+  `Arc<Set<A>>`, a treap node holding a literal, so every block of `Bdd::list` has one; the
+  one block whose texts are left empty follows a block with `merged`, which is set only where
+  that block has value `true`. The claim holds; the proof is at the site.
+- Lines that run only in another build: `hash.rs` 9 (the short-addresses digest);
+  `bdd.rs` 88-94 (`Tables::new`, a `const fn` evaluated in the `const` initializers of the
+  thread-locals `TUPLES` and `MORPHISMS`, `types.rs`, so never at run time).
+- Failure branches of test checkers (`#[cfg(test)]`): `bdd.rs` `index_is_sound` and
+  `cells_are_sound` (4441, 4448, 4489, 4503, 4508, 4513), each `return false` read only when a
+  test's `assert!` fails.
+- Guards with their proof already at the site (cover2 or earlier): `bdd/list/treap.rs` 195;
+  `bdd.rs` 1039, 1238, 1966, 2495; `bes.rs` 352, 622, 747; `empty/escape.rs` 411, 557;
+  `empty/refused.rs` 198; `empty/shared.rs` 134, 144, 147 (each on the line after the match that
+  makes it), 291, 315; `empty/sweep.rs` 1194; `print.rs` 139, 309, 916; `print/uses.rs` 114;
+  `rec/group.rs` 100, 256; `rec/unfold.rs` 350, 516; `types.rs` 395, 1637, 1640, 4617, 5952,
+  5973, 6102, 7298. `bucket.rs` 403 and `rec/group.rs` 874 are in `#[cfg(test)]` helpers.
+
+Open (the other ranges of the list), for the next round: see the handoff
+/home/luke/Work/wt/pause/cover4-2026-11-18-handoff.md.
