@@ -10875,7 +10875,7 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// Why `Forms::fns` meets every component this walk reads (BENCH-closed-form-late-variable,
 /// the claim FAIL-closed-form-shared-rows-scaling left unproved): a row or shape is `open`
 /// exactly when a component is not [`Ty::closed`]; an open row has no kernel type, so no exact
-/// one ([`Row::made`]), and an open shape has no exact one ([`Shape::new`]), so
+/// one ([`Row::new`]), and an open shape has no exact one ([`Shape::new`]), so
 /// [`Node::kept`] is none for each, and [`Node::below`] yields every open row and payload
 /// shape of a type (it filters only on `kept`, over the same shapes as
 /// [`Ty::payload_shapes`]). `Forms::fns` walks the components of each node it yields, and
