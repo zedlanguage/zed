@@ -1496,11 +1496,13 @@ fn signed(f: &Formula, how: Signs) -> Formula {
                     .map(|(k, p)| p.as_ref().unwrap_or(k))
                     .collect();
                 let paired = opposite_rows(&rows);
-                if paired.is_empty() && parts.iter().all(Option::is_none) {
+                let implied = rows_equations_imply(&rows, &paired);
+                if paired.is_empty() && implied.is_empty() && parts.iter().all(Option::is_none) {
                     return None;
                 }
                 let kids = (rows.iter().enumerate())
                     .map(|(i, k)| match k {
+                        _ if implied.contains(&i) => Formula::top(),
                         Formula::Con(c)
                             if paired.contains(&i)
                                 && !(how == Signs::Free && sign_by_terms(&c.lin).is_eq()) =>
@@ -1528,6 +1530,73 @@ fn signed(f: &Formula, how: Signs) -> Formula {
         },
     );
     changed.unwrap_or_else(|| f.clone())
+}
+
+/// The places of the rows `t + j >= 0` among the parts `gs` of a conjunction that an equation
+/// `t + k == 0` among them implies ([`without_rows_equations_imply`]), which [`signed`] writes
+/// as `true`. An equation is read as written, as held with both signs (`Signs::Both`), or as a
+/// row of `paired` ([`opposite_rows`]), which `signed` writes as its equation. So `t == 5 &&
+/// t >= -8` is written `t == 5`, as the split writing `t >= 5 && t <= 5 && t >= -8` already
+/// is ([`Formula::and`] keeps the tighter of two rows of one left-hand side), and the two
+/// writings are one formula to every later step. Before, only the solver dropped the row
+/// (FAIL-pendants-split-writing-seed), while the search above it read the formula with it: the
+/// solver alone refused every symbol of case 9 of seed 7683774971210369151 of
+/// `l01_39_reduced_product::pendants` with the equation, and gave the exact sets with it
+/// split (FAIL-pendants-sound-7683774971).
+// Complexity tradeoff: O(T) expected for the T terms of the parts, by the hash of
+// `without_rows_equations_imply`, and nothing read past one pass where no part is an equation;
+// naive version, each row against each equation, O(m²) for m parts. Test:
+// `l01_39_reduced_product::pendants::an_equation_beside_a_row_it_implies_is_projected_as_when_split`.
+fn rows_equations_imply(gs: &[&Formula], paired: &BTreeSet<usize>) -> BTreeSet<usize> {
+    // The equation a part holds with both signs.
+    let both = |g: &Formula| match g {
+        Formula::And(hs) => match &hs[..] {
+            [Formula::Con(e), Formula::Con(o)]
+                if e.rel == Rel::Eq && o.rel == Rel::Eq && opposite_lins(&e.lin, &o.lin) =>
+            {
+                Some(e.clone())
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let is_eq = |(i, g): (usize, &&Formula)| {
+        paired.contains(&i) || matches!(g, Formula::Con(c) if c.rel == Rel::Eq) || both(g).is_some()
+    };
+    if !gs.iter().enumerate().any(is_eq) {
+        return BTreeSet::new();
+    }
+    // Each part that is one constraint, an equation of `paired` or of both signs as the
+    // equation; the places of the others are left out.
+    let read: Vec<(usize, std::borrow::Cow<Con>)> = (gs.iter().enumerate())
+        .filter_map(|(i, g)| match g {
+            Formula::Con(c) if paired.contains(&i) => Some((
+                i,
+                std::borrow::Cow::Owned(Con {
+                    lin: c.lin.clone(),
+                    rel: Rel::Eq,
+                }),
+            )),
+            Formula::Con(c) => Some((i, std::borrow::Cow::Borrowed(c))),
+            g => both(g).map(|e| (i, std::borrow::Cow::Owned(e))),
+        })
+        .collect();
+    let cons: Vec<&Con> = read.iter().map(|(_, c)| c.as_ref()).collect();
+    let kept = without_rows_equations_imply(cons.clone());
+    if kept.len() == cons.len() {
+        return BTreeSet::new();
+    }
+    // `kept` is `cons` in its order with the implied rows left out.
+    let mut out = BTreeSet::new();
+    let mut next = kept.iter().peekable();
+    for (n, c) in cons.iter().enumerate() {
+        if next.peek().is_some_and(|k| std::ptr::eq(**k, *c)) {
+            next.next();
+        } else {
+            out.insert(read[n].0);
+        }
+    }
+    out
 }
 
 /// The places of the rows `t >= 0` among `gs` whose opposite `-t >= 0` is among them too, found
@@ -27205,6 +27274,46 @@ pub(super) mod tests {
             lin: lin(terms, k),
             rel: Rel::Ge,
         })
+    }
+
+    /// `t == 5 && t >= -8` is written as `t == 5`, as its split writing `t >= 5 && t <= 5 &&
+    /// t >= -8` is, in each sign mode and either order (FAIL-pendants-sound-7683774971); a row
+    /// that contradicts the equation stays.
+    #[test]
+    fn signed_writes_an_equation_beside_a_row_it_implies_as_the_equation() {
+        let t = [("a", 1), ("b", 1), ("c", 2), ("z", -1)];
+        let neg = [("a", -1), ("b", -1), ("c", -2), ("z", 1)];
+        let eq = Formula::Con(Con {
+            lin: lin(&t, -5),
+            rel: Rel::Eq,
+        });
+        let other = ge(&[("a", 1), ("z", 1)], 0);
+        // The parts, in an order of their own: `signed` keeps the places of the parts.
+        let parts = |f: Formula| {
+            let s = f.to_string();
+            let mut ps: Vec<String> = s.split(" && ").map(str::to_string).collect();
+            ps.sort();
+            ps
+        };
+        for how in [Signs::Chosen, Signs::Free, Signs::Both, Signs::Opposite] {
+            let split = signed(
+                &Formula::and(vec![ge(&t, -5), ge(&neg, 5), ge(&t, 8), other.clone()]),
+                how,
+            );
+            let want = parts(signed(&Formula::and(vec![eq.clone(), other.clone()]), how));
+            for written in [
+                vec![eq.clone(), ge(&t, 8), other.clone()],
+                vec![ge(&t, 8), other.clone(), eq.clone()],
+                vec![eq.clone(), ge(&neg, 9), other.clone()],
+            ] {
+                let got = parts(signed(&Formula::and(written.clone()), how));
+                assert_eq!(got, want, "{}", Formula::and(written));
+            }
+            assert_eq!(parts(split), want);
+            // `t >= 6` contradicts `t == 5` and stays.
+            let kept = signed(&Formula::and(vec![eq.clone(), ge(&t, -6)]), how);
+            assert!(kept.to_string().contains(">="), "{kept}");
+        }
     }
 
     /// An equation `t + k == 0` and a row `t + j >= 0` or `-t + j >= 0` reach the Omega test as

@@ -3816,3 +3816,13 @@ fn the_whole_part_keeps_the_parity_an_equality_forces_at_seed_113425404634046836
     let seed = 11_342_540_463_404_683_610;
     pendants_against_whole(Rng::new(seed), seed);
 }
+
+/// Case 9 of seed 7683774971210369151, each part two joined: with `a + b + 2 * c == z1 + 5`
+/// beside `a + b + 2 * c >= z1 - 8`, a row it implies, the solver alone refused every name, and
+/// with the equation split it gave the exact sets `a=[3,4] b=[-1,-1] c=[0,1] z0=[2,2]
+/// z1=[-3,0]`: the solver dropped the row (FAIL-pendants-split-writing-seed) but the search
+/// above it did not. The writing of the formula now drops it (FAIL-pendants-sound-7683774971).
+#[test]
+fn an_equation_beside_a_row_it_implies_is_projected_as_when_split() {
+    refused_names_in(7683774971210369151, 10, true);
+}
