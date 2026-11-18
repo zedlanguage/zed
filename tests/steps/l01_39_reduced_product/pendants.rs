@@ -362,14 +362,33 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
             (coefficients(c), at(1), at(-1), c.constant, c.eq)
         })
         .collect();
+    // Each hub within its box, `-far..=far`, and the floor and ceiling of its greatest and
+    // least value at the rational points of `cons` ([`lp_max`]): a hub value outside those
+    // has no integer point, so it would fail the hubs' rows or close a negative cycle below,
+    // and leaving it out changes nothing found.
+    //
+    // Complexity tradeoff: the hubs' ranges as `-far..=far` within their boxes alone visit up
+    // to 151^3 hub points per disjunct, each with an `O(z^3)` closure; two [`lp_max`] per hub
+    // (a few pivots each) first cut the ranges to what the rows allow. Measured on seeds 214
+    // and 509 of the joined parts (PERF-pendants-joined-slow-seeds; see COMPLEXITY.md).
+    let rows = lp_rows(cons, boxes);
+    let unit = |m: &str, s: i64| -> Vec<i64> {
+        boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
+    };
+    let at_most = |m: &str, s: i64, bound: i64| match lp_max(&rows, &unit(m, s)) {
+        Lp::Max(g) => g.to_i64().map_or(bound, |g| g.min(bound)),
+        Lp::Empty => -far - 1,
+        Lp::Unbounded => bound,
+    };
     let ranges: Vec<(i64, i64)> = hubs
         .iter()
         .map(|h| {
             let (lo, hi) = boxes[*h];
-            (
+            let (lo, hi) = (
                 lo.map_or(-far, |l| l.max(-far)),
                 hi.map_or(far, |h| h.min(far)),
-            )
+            );
+            (-at_most(h, -1, -lo), at_most(h, 1, hi))
         })
         .collect();
     let total: i64 = ranges.iter().map(|(l, h)| (h - l + 1).max(0)).product();
@@ -390,7 +409,18 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
     let mut z_hull: Vec<Option<(i64, i64)>> = vec![None; zs.len()];
     let mut z_seen: Vec<HashSet<(i64, i64)>> = vec![HashSet::new(); zs.len()];
     let mut v = vec![0i64; hubs.len()];
-    let mut d = vec![vec![INF; size]; size];
+    // The distances, row `i` at `d[i * size..]`, and the edges of the boxes of the `z`, the
+    // same at every point: found once here, not by name at each point, which with the
+    // distances as a vector of rows took a third of the time of seed 509 of the joined parts
+    // (PERF-pendants-joined-slow-seeds).
+    let mut d = vec![INF; size * size];
+    let z_edges: Vec<(usize, usize, i64)> = (zs.iter().enumerate())
+        .flat_map(|(i, z)| {
+            let (l, h) = boxes[*z];
+            [l.map(|l| (i, src, -l)), h.map(|h| (src, i, h))]
+        })
+        .flatten()
+        .collect();
     let at_hubs =
         |hub: &[i64], c: i64, v: &[i64]| c + hub.iter().zip(v).map(|(k, x)| k * x).sum::<i64>();
     for at in 0..total {
@@ -406,11 +436,14 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
         if !on_hubs.iter().all(holds) {
             continue;
         }
-        for (i, row) in d.iter_mut().enumerate() {
-            row.fill(INF);
-            row[i] = 0;
+        d.fill(INF);
+        for i in 0..size {
+            d[i * size + i] = 0;
         }
-        let mut edge = |from: usize, to: usize, w: i64| d[from][to] = d[from][to].min(w);
+        let mut edge = |from: usize, to: usize, w: i64| {
+            let e = &mut d[from * size + to];
+            *e = (*e).min(w);
+        };
         for (hub, plus, minus, c, eq) in &on_zs {
             // `plus - minus + c0 >= 0` is `minus - plus <= c0`: an edge from `plus` to
             // `minus` of weight `c0`, and for an equation one back of weight `-c0`.
@@ -420,32 +453,32 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
                 edge(*minus, *plus, -c0);
             }
         }
-        for (i, z) in zs.iter().enumerate() {
-            let (l, h) = boxes[*z];
-            if let Some(l) = l {
-                edge(i, src, -l);
-            }
-            if let Some(h) = h {
-                edge(src, i, h);
-            }
+        for &(from, to, w) in &z_edges {
+            edge(from, to, w);
         }
+        // Floyd and Warshall's closure, a row `i` with no path to `k` skipped whole.
         for k in 0..size {
             for i in 0..size {
+                let ik = d[i * size + k];
+                if ik >= INF {
+                    continue;
+                }
                 for j in 0..size {
-                    if d[i][k] < INF && d[k][j] < INF && d[i][k] + d[k][j] < d[i][j] {
-                        d[i][j] = d[i][k] + d[k][j];
+                    let kj = d[k * size + j];
+                    if kj < INF && ik + kj < d[i * size + j] {
+                        d[i * size + j] = ik + kj;
                     }
                 }
             }
         }
-        if (0..size).any(|i| d[i][i] < 0) {
+        if (0..size).any(|i| d[i * size + i] < 0) {
             continue;
         }
         for (i, (l, _)) in ranges.iter().enumerate() {
             hub_seen[i][(v[i] - l) as usize] = true;
         }
         for (i, h) in z_hull.iter_mut().enumerate() {
-            let (lo, hi) = (-d[i][src], d[src][i]);
+            let (lo, hi) = (-d[i * size + src], d[src * size + i]);
             *h = Some(h.map_or((lo, hi), |(l, u)| (l.min(lo), u.max(hi))));
             if exact {
                 z_seen[i].insert((lo, hi));
@@ -2226,8 +2259,20 @@ fn boxed_as_named(
     bs: &BTreeMap<String, Vec<Piece>>,
     f: &Formula,
 ) -> Result<BTreeMap<String, (IntervalSet, bool)>, String> {
-    let s = scope(bs);
-    let want = boxed_names(&s, f, &item_names(items));
+    let want = boxed_names(&scope(bs), f, &item_names(items));
+    renamed_alike(items, bs, want)
+}
+
+/// `Ok(want)` where [`boxed_names`] of `items` within `bs` with the names reversed
+/// ([`reversing`]), each name read back, is `want`, the answer as written; `Err` with both where
+/// they differ. [`refused_alike`] passes the answer it has already, which asking again would
+/// only repeat (PERF-pendants-joined-slow-seeds).
+#[allow(clippy::type_complexity)]
+fn renamed_alike(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    want: BTreeMap<String, (IntervalSet, bool)>,
+) -> Result<BTreeMap<String, (IntervalSet, bool)>, String> {
     let to = reversing(bs);
     let (items2, bs2) = renamed(items, bs, &to);
     let back: BTreeMap<&String, &String> = to.iter().map(|(k, v)| (v, k)).collect();
@@ -2470,8 +2515,10 @@ fn check_refused(
 /// Returns the scope and the sets, or `None` where no name is refused.
 ///
 /// Complexity tradeoff: comparing only where a name is refused cost one [`boxed_names`] per
-/// answered case; comparing in every case costs about 10 (2 in [`boxed_as_named`], 3 other
-/// writings, 4 other orders). Measured at seeds 11 to 18 (instructions, so load does not
+/// answered case; comparing in every case costs about 9 (the writing as given, 1 with the names
+/// reversed in [`renamed_alike`], 3 other writings, 4 other orders; until
+/// PERF-pendants-joined-slow-seeds `boxed_as_named` asked the writing as given a second time).
+/// Measured at seeds 11 to 18 (instructions, so load does not
 /// enter): 5.3 times the work of each random test, 1.8 times where refused parts and their
 /// hulls already took most of it; at most 38.9 G instructions (seed 17, 100 parts), about
 /// 6.5 s. A fault put in to mark a name refused in the reversed writing of answered parts
@@ -2493,7 +2540,7 @@ fn refused_alike(
     if refused {
         count.0 += 1;
     }
-    if let Err(e) = boxed_as_named(items, bs, &f) {
+    if let Err(e) = renamed_alike(items, bs, got.clone()) {
         wrong.push(format!("{label}: {f}\n  {e}"));
     }
     let ways = four_ways(items).into_iter().skip(1);

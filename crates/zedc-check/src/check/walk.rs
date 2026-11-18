@@ -7009,7 +7009,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 self.put(Undo::Adopt(s, Some(v)));
                             }
                             let e = a.expr.expect("a call read at a carrier");
-                            self.put(Undo::Fit(e.span, Some(Fit::Read(c))));
+                            self.put_read(e.span, c, span);
                             match flip {
                                 false => x.ty = t,
                                 true => y.ty = t,
@@ -23011,7 +23011,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             self.put(Undo::Adopt(s, Some(v)));
                         }
                         let e = a.expr.expect("a call read at a carrier");
-                        self.put(Undo::Fit(e.span, Some(Fit::Read(c))));
+                        self.put_read(e.span, c, span);
                     }
                     Some((c, Err(v))) => {
                         return Err(self.unread_call(what, args, a, &v, c, true));
@@ -23233,7 +23233,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             self.put(Undo::Adopt(s, Some(v)));
                         }
                         let e = a.expr.expect("a call read at a carrier");
-                        self.put(Undo::Fit(e.span, Some(Fit::Read(c))));
+                        self.put_read(e.span, c, span);
                         Cow::Owned(t)
                     }
                     Some(Err((v, c))) => {
@@ -23843,7 +23843,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     }
                 }
-                match self.fewest(what, sig, args)? {
+                match self.fewest(what, sig, args, span)? {
                     Some(kept) => kept,
                     // Reported: no value, as a rejected application gives, so that no operator
                     // around it reports it again.
@@ -26199,6 +26199,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         sig: &Sig,
         args: &mut [Option<Arg<'a>>],
+        span: Span,
     ) -> Result<Option<Vec<usize>>, String> {
         // Per arrow: its adoptions, the calls of literal values it reads at a carrier, and
         // each argument a literal of which adopts or a call that is read, retyped.
@@ -26534,7 +26535,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.put(Undo::Adopt(s, Some(v)));
         }
         for (s, c) in reads {
-            self.put(Undo::Fit(s, Some(Fit::Read(c))));
+            self.put_read(s, c, span);
         }
         Ok(Some(kept))
     }

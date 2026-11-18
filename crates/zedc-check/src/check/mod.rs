@@ -1977,6 +1977,11 @@ struct Ck<'t, 'a> {
     /// a scan of the log since the trial's mark for a write at the span, is O(log) a write
     /// and O(n^2) over a construct of n arguments; this set is O(1).
     trial_fits: HashSet<Span>,
+    /// For each span a [`Fit::Read`] was written at, the span of the construct that first
+    /// wrote it ([`Self::put_read`]). Not undone with the log: under the claim it checks, the
+    /// writer of a span is the same in every write, trials and their undos included, so the
+    /// first is the one. O(1) a write.
+    read_by: HashMap<Span, Span>,
     /// The spans of the needs [`Ck::meet`] is checking, outermost first: the uses in the
     /// bodies a check of a fold passes through on its way from the call that meets it
     /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
@@ -2591,6 +2596,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
             trial_fits: HashSet::new(),
+            read_by: HashMap::new(),
             need_chain: Vec::new(),
             passing_on: Vec::new(),
             fold_uses: HashSet::new(),
@@ -7393,8 +7399,8 @@ impl Ck<'_, '_> {
     ///
     /// A trial ([`Self::trying`]) checks one construct again, and a [`Fit::Read`] it puts at
     /// an argument replaces the one the walk put there before the trial: the construct that
-    /// reads an argument is the one writer of a `Read` at its span (the comment at
-    /// `Frame::Guarded` in walk.rs), so the walk's `Read` is the fit the construct had before
+    /// reads an argument is the one writer of a `Read` at its span (proved and checked at
+    /// [`Self::put_read`]), so the walk's `Read` is the fit the construct had before
     /// the repair tried, and the repaired program has the trial's in its place. The carried
     /// fix `1r` of `r = (v60 -> 0)(1) + (1 / 2)` reads the call at `rat` where the walk read it
     /// at `f64`, and refusing that dropped the fix from the menu
@@ -7402,13 +7408,61 @@ impl Ck<'_, '_> {
     /// puts it back. A span inside an arrow lambda keeps the refusal, since the lambda's other
     /// arrow may read the span at another carrier in the repaired program as well.
     fn put(&mut self, w: Undo) {
+        self.put_from(w, false);
+    }
+
+    /// [`Self::put`] of the fit [`Fit::Read`] at `c` at the argument `at` of the construct at
+    /// `by` (an operator, a call or a word applied), the one way such a fit is written. The
+    /// replacement under a trial that [`Self::put`] describes rests on the claim that the
+    /// construct reading an argument is the one writer of a `Read` at its span
+    /// (PROOF-read-fit-single-writer). Proof, by the writes and the arguments they read:
+    ///
+    /// 1. This is the one place a `Read` is made: zedc-check names `Fit::Read` nowhere else
+    ///    as a value. Its callers are [`Self::binary_op`] (`==` and `!=`), `apply_one` (twice)
+    ///    and `fewest`, through `apply_many`; each writes at `a.expr` of an argument `a` of
+    ///    the application it checks, and passes that application's `span` as `by`.
+    /// 2. An argument has an expression only where it is the value of that expression as an
+    ///    argument of the construct being walked: `Frame::ArgOf` and `arg` (an expression the
+    ///    construct pushed as `Job::Arg`, so one of its operands), the receiver of a curried
+    ///    bit word and of `zip` (operands of the call at `span`), each component of a tuple
+    ///    written as `sum`'s argument (an operand of the one `+` of `sum`'s chain that adds it,
+    ///    whose span runs from the first component that `+` adds to that one, the same on
+    ///    every check of the `sum`), and `Forwarded`, a copy of
+    ///    the call's own argument, read back only by `zip`'s need under [`Self::meet`], where
+    ///    `replaying` is set and no fit is written. Every other `Arg` is `Arg::of` a type,
+    ///    with no expression, and is never read.
+    /// 3. An expression is an operand of one construct, its parent in the tree, and every
+    ///    application of that construct (each arrow, each function its callee's type holds,
+    ///    each trial of a repair or a carried fix) passes the construct's own span.
+    ///
+    /// So a `Read` at `at` has one writer, `by`. The claim is checked here as well, so that a
+    /// writer added later cannot break it unseen: the construct that first wrote a `Read` at
+    /// `at` is kept ([`Self::read_by`]), a write from another fails a debug assertion (the
+    /// tests are built with them), and in a build without them the walk's `Read` there is not
+    /// replaced but refused as any other second fit is ([`Self::fit_twice`]).
+    fn put_read(&mut self, at: Span, c: Carrier, by: Span) {
+        if self.replaying > 0 {
+            return;
+        }
+        let first = *self.read_by.entry(at).or_insert(by);
+        debug_assert_eq!(
+            first, by,
+            "a Read fit at {at:?} written by the construct at {by:?}, and before by the one at \
+             {first:?} (PROOF-read-fit-single-writer)"
+        );
+        self.put_from(Undo::Fit(at, Some(Fit::Read(c))), first == by);
+    }
+
+    /// [`Self::put`], where `one_writer` says that a [`Fit::Read`] written is put by the
+    /// construct that wrote the one at its span before ([`Self::put_read`]).
+    fn put_from(&mut self, w: Undo, one_writer: bool) {
         if self.replaying > 0 {
             return;
         }
         if let Undo::Fit(at, Some(new)) = &w
             && let Some(old) = self.info.fits.get(at)
             && old != new
-            && !self.walk_read_replaced(*at, old, new)
+            && !(one_writer && self.walk_read_replaced(*at, old, new))
         {
             return self.fit_twice(*at);
         }
@@ -7420,7 +7474,8 @@ impl Ck<'_, '_> {
     }
 
     /// Whether the fit `new` at `at`, put by a trial, replaces the fit `old` that the walk put
-    /// there before the trial, as [`Self::put`] says: both [`Fit::Read`], `at` not written in
+    /// there before the trial, as [`Self::put`] says: both [`Fit::Read`], written by the same
+    /// construct ([`Self::put_read`]), `at` not written in
     /// this trial ([`Self::trial_fits`]) and not inside an arrow lambda. O(1) but for the
     /// arrow lambdas, scanned only on this path, where two fits differ under a trial.
     fn walk_read_replaced(&self, at: Span, old: &Fit, new: &Fit) -> bool {
@@ -14470,6 +14525,43 @@ mod tests {
     #[should_panic(expected = "arrow 0 of a family has `partial` true")]
     fn a_family_arrow_whose_fields_disagree_is_caught() {
         family_values(&family_with_lookup(Ty::carrier(Carrier::Int)));
+    }
+
+    /// PROOF-read-fit-single-writer: a trial's [`Fit::Read`] from the construct that wrote the
+    /// walk's `Read` at a span replaces it, and the trial's undo puts the walk's back
+    /// ([`Ck::put_read`]).
+    #[test]
+    fn a_trial_s_read_from_the_same_construct_replaces_the_walk_s() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = checker(&t);
+        let (arg, call) = (span(10), span(0));
+        ck.put_read(arg, Carrier::F64, call);
+        let saved = ck.mark();
+        let was = std::mem::replace(&mut ck.trying, true);
+        ck.put_read(arg, Carrier::Rat, call);
+        assert_eq!(ck.info.fits.get(&arg), Some(&Fit::Read(Carrier::Rat)));
+        assert_eq!(ck.errors.len(), saved.errors);
+        ck.end_trial(was);
+        ck.undo(&saved);
+        assert_eq!(ck.info.fits.get(&arg), Some(&Fit::Read(Carrier::F64)));
+    }
+
+    /// PROOF-read-fit-single-writer, the check of the claim: a [`Fit::Read`] written at a
+    /// span by a construct other than the one that wrote the `Read` there before fails the
+    /// debug assertion of [`Ck::put_read`], here under a trial, where the write would
+    /// otherwise replace the walk's `Read` unseen.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "PROOF-read-fit-single-writer")]
+    fn a_read_fit_from_a_second_construct_is_caught() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = checker(&t);
+        let arg = span(10);
+        ck.put_read(arg, Carrier::F64, span(0));
+        ck.trying = true;
+        ck.put_read(arg, Carrier::Rat, span(20));
     }
 
     /// The two builders make arrows whose fields agree, and each of the two ways to break
