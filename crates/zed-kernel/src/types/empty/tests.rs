@@ -1582,3 +1582,39 @@ fn the_three_sat_reduction_at_residue_length_is_correct() {
         "{sat} satisfiable, {unsat} unsatisfiable"
     );
 }
+
+/// Cases that catch slips in `greedy_length` the random scan draws rarely (XR-wlen round 1,
+/// Gemini seat): a term dead on one prime revived on a later one, a ratio taken one power too
+/// far, a meeting pair picked outside the lengths of `all`, and three powers of one prime.
+#[test]
+fn greedy_length_handles_three_primes_disjoint_pairs_and_deep_trees() {
+    // Three primes, shares 29/30: only 0 modulo 30 is left. `(30, 15)` fails on 2 and matches 0
+    // on 3; revived on 5, it would pick 6, which `(30, 6)` holds.
+    let three_primes = [
+        (30, 6),
+        (30, 12),
+        (30, 18),
+        (30, 24),
+        (6, 4),
+        (6, 2),
+        (6, 1),
+        (6, 5),
+        (10, 1),
+        (30, 15),
+        (30, 15),
+    ];
+    assert_eq!(residue_agrees(&[], &three_primes), (true, true));
+    // Shares 25/30, leaving 4 modulo 6 (and so even): a ratio one power too far drops the
+    // prime 3 at the first step and picks an odd length, which `(10, 1..=9)` all cover.
+    let ratio_step = [(10, 1), (10, 3), (10, 5), (10, 7), (10, 9), (6, 0), (6, 2)];
+    assert_eq!(residue_agrees(&[], &ratio_step), (true, true));
+    // On `all = [(2, 0)]` the shares sum to one; the two `(2, 1)` meet each other but not the
+    // even lengths, so the pair must be taken among the classes that meet `all`; 10 modulo 12.
+    let disjoint_pair = [(2, 1), (2, 1), (6, 2), (12, 2), (6, 0), (12, 4)];
+    let n = residue_length(&[(2, 0)], &disjoint_pair).expect("a length 10 modulo 12");
+    assert_eq!(&n % 12u32, BigUint::from(10u32));
+    // Three powers of one prime, shares 7/8, leaving 7 modulo 8.
+    let deep = [(2, 0), (4, 1), (8, 3)];
+    let n = residue_length(&[], &deep).expect("a length 7 modulo 8");
+    assert_eq!(&n % 8u32, BigUint::from(7u32));
+}

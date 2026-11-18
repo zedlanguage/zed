@@ -133,3 +133,55 @@ fn a_union_of_cycles_less_one_scales() {
         || run(&large),
     );
 }
+
+#[test]
+fn a_list_of_cycles_less_many_disjoint_classes_scales() {
+    // XR-wlen round 1 (Gemini seat): the even lists of a meet of prime cycles, less the classes
+    // `2s + 1` modulo `2j` for `s < j <= t`, all odd and so disjoint from the even lists, each
+    // its own cycle. The length is checked against every class taken out; that check took one
+    // remainder of the lcm-sized length per class (`t²/2` of them) and now takes one per
+    // distinct period (`t`). The classes cost the sum of `2j²` definitions, the cycles the sum
+    // of their primes; the first odd primes are added until the two sizes are 8 times apart.
+    // 17_782 and 142_511 definitions: 8.056 times the instructions with one remainder per
+    // period (load 63), 8.057 with one per class (load 51, the old check run once and not
+    // committed); through types the remainders are a small part of the work at these sizes,
+    // so this is a scaling record of the family, not a control that tells the two apart.
+    // 1x 0.21 s by `ns`.
+    let defs_less = |t: usize| (1..=t).map(|j| 2 * j * j).sum::<usize>();
+    let primes = first_primes(400);
+    let defs_primes = |k: usize| primes[1..=k].iter().sum::<usize>();
+    let size = |t: usize, k: usize| 2 + defs_less(t) + defs_primes(k);
+    let (ta, ka, tb) = (24, 60, 48);
+    let n = size(ta, ka);
+    let kb = (ka..399)
+        .find(|&k| size(tb, k) >= 8 * n)
+        .expect("enough primes");
+    let m = size(tb, kb);
+    assert!((7.95..8.1).contains(&(m as f64 / n as f64)), "{n} and {m}");
+    let list = |t: usize, k: usize| {
+        let all = (primes[1..=k].iter()).fold(period(2, 0), |a, &p| &a & &period(p, 0));
+        let less =
+            Type::union_all((1..=t).flat_map(|j| (0..j).map(move |s| period(2 * j, 2 * s + 1))));
+        &all - &less
+    };
+    let (small, large) = (list(ta, ka), list(tb, kb));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        &format!(
+            "a meet of prime cycles less {} and {} odd classes: {n} and {m} definitions, {:.2} \
+             times",
+            ta * (ta + 1) / 2,
+            tb * (tb + 1) / 2,
+            m as f64 / n as f64
+        ),
+        1,
+        || run(&small),
+        || run(&large),
+    );
+}

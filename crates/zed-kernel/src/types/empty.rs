@@ -1968,27 +1968,28 @@ type ResidueValue = ((u64, u64), BigInt);
 /// expectations with a pessimistic estimator (Raghavan 1988): the residue modulo the largest
 /// power of each prime of the periods is chosen in turn, the residues not yet chosen taken as
 /// uniform among those `all` allows, each prime on its own. The estimator is
-/// `g(n) = Σ_c [n ∈ c] − [n ∈ a ∩ b]` over the classes `c` of `none`, with `a` and `b` two
-/// classes of `none` that meet, or with no pair when the shares sum below one: Hunter's bound
-/// (Hunter 1976) on a tree of one edge. Each residue is the one for which the expectation of `g`
-/// is least, counted exactly in integers.
+/// `g(n) = Σ_c [n ∈ c] − [n ∈ a ∩ b]` over the entries `c` of `none`, with `a` and `b` two
+/// entries of `none` that meet `all` and each other, or with no pair when the shares sum below
+/// one: Hunter's bound (Hunter 1976) keeping one edge, a forest of one edge. Each residue is the
+/// one for which the expectation of `g` is least, counted exactly in integers.
 ///
 /// Proof that a length is found whenever the rule (`shares`, on the classes
 /// `residue_classes` gives) finds one: `g(n) ≥ [n is in some class of none]` for every `n`,
 /// since `g(n) = 0` when no class holds `n`, `g(n) = Σ ≥ 1` when some class holds it and `a ∩ b`
 /// does not, and `g(n) = Σ − 1 ≥ 1` when `a ∩ b` holds it, as then `a` and `b` both do. The
 /// rule answers `Some` when the shares sum below one, and then `E[g] < 1` with no pair; or
-/// when they sum to one and two classes `a` and `b` meet, and then `E[g] = 1 − share(a ∩ b)`,
-/// below one because `a ∩ b` meets the lengths of `all`: on each prime the classes are balls of
-/// the `r`-adic integers, and balls that meet two by two share a point, so the classes of
-/// `all`, `a` and `b` share a residue on each prime and, by the Chinese remainder theorem, a
-/// length. The expectation of `g` given the residues chosen so far is the average over the
-/// next residue of the expectation given that one too, so its least is at most the average,
-/// and the expectation never rises. Once every residue is chosen `g(n)` is an integer below
-/// one, so at most 0, and no class of `none` holds `n`. The counts are exact (`BigUint`), so
-/// no rounding can rise past one: the former choice in `f64`, by the expected number of
-/// classes alone, took the tied residue 0 for `none = [(3, 1), (6, 1), (3, 0), (6, 2)]` on
-/// both 2 and 3, and the length 0 is in `(3, 0)` (KERNEL-witness-length-miss).
+/// when they sum to one and two entries `a` and `b` that meet `all` meet each other, and then
+/// `E[g] = 1 − share(a ∩ b)`, below one because `a ∩ b` meets the lengths of `all`: on each
+/// prime the classes are balls of the `r`-adic integers, and balls that meet two by two share
+/// a point, so the classes of `all`, `a` and `b` share a residue on each prime and, by the
+/// Chinese remainder theorem, a length. The expectation of `g` given the residues chosen so far
+/// is the average over the next residue of the expectation given that one too, so its least is
+/// at most the average, and the expectation never rises. Once every residue is chosen `g(n)` is
+/// an integer below one, so at most 0, and no class of `none` holds `n`. The counts are exact
+/// (`BigUint` and `BigInt`), so no rounding can rise past one: the former choice in `f64`, by
+/// the expected number of classes alone, took the tied residue 0 for
+/// `none = [(3, 1), (6, 1), (3, 0), (6, 2)]` on both 2 and 3, and the length 0 is in `(3, 0)`
+/// (KERNEL-witness-length-miss).
 ///
 /// When the rule refuses, a length may still be found, and the caller checks it. The length is
 /// at most the lcm of the periods, a number of as many digits as the periods have together.
@@ -2298,9 +2299,20 @@ fn inverse(a: u64, m: u64) -> Option<u64> {
 /// every class. The work is that of the two, polynomial in the classes; the length, up to the
 /// lcm of the periods and so exponential in them, is a number and no list of it is walked.
 fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
+    // One remainder of the length per distinct period, not per class: a list `none` of many
+    // classes of few periods (classes disjoint from `all` among them, which no share counts)
+    // took one division of the lcm-sized length per class, Θ(n^1.5 √log n) word operations
+    // when every class is charged its period (XR-wlen round 1, Gemini seat, measured on this
+    // function alone; through types `a_list_of_cycles_less_many_disjoint_classes_scales` sees
+    // no difference at 142_511 definitions); distinct periods sum to at most `n`, so at most
+    // `sqrt(2n)` divisions are taken, each looked up by period.
     let fits = |n: &BigUint| {
-        all.iter().all(|&(p, at)| n % p == BigUint::from(at))
-            && none.iter().all(|&(p, at)| n % p != BigUint::from(at))
+        let mut rem: HashMap<u64, u64> = HashMap::new();
+        let mut at = |p: u64| {
+            *rem.entry(p)
+                .or_insert_with(|| u64::try_from(n % p).expect("a remainder below a u64 period"))
+        };
+        all.iter().all(|&(p, r)| at(p) == r) && none.iter().all(|&(p, r)| at(p) != r)
     };
     let (lengths, classes) = residue_classes(all, none);
     let classes = match lengths {
