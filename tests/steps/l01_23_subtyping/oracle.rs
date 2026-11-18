@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Universe, Verdict};
+use zed_kernel::types::{Refusal, Type, Universe, Verdict};
 use zed_kernel::{Family, Value};
 use zed_tests::instances::{Rng, pick_seeds};
 
@@ -652,17 +652,29 @@ fn term_holds(f: &F, v: u32) -> bool {
 /// The pair `a`, `b` of system `idx` of `seed`, with a value of `a` outside `b` when there is
 /// one; `None` when the group is rejected.
 fn recursive_pair(seed: u64, idx: usize) -> Option<(Type, Type, Option<Value>)> {
+    let (a, b, classes) = recursive_classes(seed, idx)?;
+    let witness = classes
+        .into_iter()
+        .find(|(in_a, in_b, _)| *in_a && !*in_b)
+        .map(|(_, _, w)| w);
+    Some((a, b, witness))
+}
+
+/// The pair `a`, `b` of system `idx` of `seed`, with each membership vector a finite value has
+/// (`reachable`), as whether its values are in `a`, whether they are in `b`, and one of them;
+/// `None` when the group is rejected.
+fn recursive_classes(seed: u64, idx: usize) -> Option<(Type, Type, Vec<(bool, bool, Value)>)> {
     let mut g = Lcg((seed << 32) ^ (idx as u64 * 2 + 1));
     for _ in 0..4 {
         g.next(2);
     }
     let (eqs, ts) = system(&mut g)?;
     let (fa, fb) = (term(&mut g, ts.len(), 3), term(&mut g, ts.len(), 3));
-    let witness = reachable(&eqs)
+    let classes = reachable(&eqs)
         .into_iter()
-        .find(|(v, _)| term_holds(&fa, *v) && !term_holds(&fb, *v))
-        .map(|(_, w)| w);
-    Some((term_type(&fa, &ts), term_type(&fb, &ts), witness))
+        .map(|(v, w)| (term_holds(&fa, v), term_holds(&fb, v), w))
+        .collect();
+    Some((term_type(&fa, &ts), term_type(&fb, &ts), classes))
 }
 
 /// The pairs of the cross-review's random systems (wt/xv/Q1Q7/REPORT.md, check 4) on which
@@ -801,6 +813,65 @@ fn the_systems_reaching_rare_branches_agree_with_the_oracle() {
     assert_eq!(accepted, SYSTEMS_REACHING_RARE_BRANCHES.len());
     // Fixed systems, so exact counts: both routes decide each alike.
     assert_eq!(routes.same, accepted, "{routes:?}");
+}
+
+/// Systems (seed, index) whose pair, compared both ways and met, reaches a branch of the
+/// emptiness search that no test of the local suite reached (llvm-cov over the whole suite,
+/// TEST-types-unreached-paths-2). Each was the first system of seeds 1 to 40 to reach its
+/// branch, found with a counter at each unreached line; the one-way pairs of the systems above
+/// reach none of them. With each, the refusals both routes give on it, out of two, and its meet's
+/// verdict.
+const SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS: [((u64, usize), usize, Verdict); 11] = [
+    // `nested_pieces`: `laminar_pieces` leaves a test undecided, so the pieces are cut one by
+    // one, and a later cell is read against the pieces before it.
+    ((32, 784), 0, Verdict::Inhabited),
+    // `affine_lists_empty`: a list state met a second time on the walk.
+    ((1, 23), 0, Verdict::Empty),
+    // `swept`: the rows a sweep takes do not satisfy the part, so it gives no order.
+    ((1, 2441), 0, Verdict::Empty),
+    // `read_two_sat`: a literal held outright becomes a unit clause.
+    ((1, 2735), 0, Verdict::Refused(Refusal::Fork)),
+    // `affine_lists_empty`: no integer is left unnamed by a dead operand while some other is.
+    ((1, 920), 0, Verdict::Empty),
+    // `tuples`: no piece can be taken out, and cells held on a fork are read back.
+    ((16, 3121), 0, Verdict::Inhabited),
+    // The two-literal clauses: a meet of two operands asked a second time.
+    ((21, 31), 2, Verdict::Inhabited),
+    // `tuples`: a fork taken where a cell's row is forced.
+    ((23, 3846), 0, Verdict::Empty),
+    // `affine_lists_empty`: no step the walk can take on any value, so the lists are empty.
+    ((35, 1552), 0, Verdict::Inhabited),
+    // `bdd` meet of two diagrams: the left's keys fewer than the right's at one node.
+    ((38, 3838), 0, Verdict::Inhabited),
+    // `tuples`: a part shown empty by its classes while a blame is being kept.
+    ((4, 3114), 1, Verdict::Inhabited),
+];
+
+#[test]
+fn the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle() {
+    for ((seed, idx), refusals, meet) in SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS {
+        let (a, b, classes) = recursive_classes(seed, idx).expect("the group is accepted");
+        let none = |p: &dyn Fn(bool, bool) -> bool| !classes.iter().any(|(x, y, _)| p(*x, *y));
+        let mut routes = Routes::default();
+        // `record` checks each verdict against the closure oracle.
+        routes.record(&a, &b, none(&|x, y| x && !y));
+        routes.record(&b, &a, none(&|x, y| y && !x));
+        assert_eq!(
+            (routes.same, routes.decided_over_refusal, routes.refused),
+            (2 - refusals, 0, refusals),
+            "system {seed}, {idx}: {routes:?}"
+        );
+        Type::forget_emptiness();
+        let v = (&a & &b).verdict();
+        let disjoint = none(&|x, y| x && y);
+        let wrong = if disjoint {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        assert!(v != wrong, "system {seed}, {idx}: {a} & {b} is {v:?}");
+        assert_eq!(v, meet, "system {seed}, {idx}: {a} & {b}");
+    }
 }
 
 mod bench;
