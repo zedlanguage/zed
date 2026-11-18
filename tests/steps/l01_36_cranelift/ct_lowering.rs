@@ -12,6 +12,11 @@
 //!   memory), and a store overwritten before any read is removed; so a wipe written as plain
 //!   stores survives Cranelift, and the negative control of step L33.1g must make the wipe dead
 //!   some other way.
+//! - (Round 2.) Under the host's features, which zed-native takes, the bit counts use
+//!   `popcnt`, `lzcnt` and `tzcnt`; with the features off, `clz` and `ctz` still use `bsr` and
+//!   `bsf`; all five are off Intel's list, so zedc lowers the bit counts of a secret itself.
+//! - (Round 2, corrected in round 3.) A float spill is a 16-byte `movdqu`, on Intel's list; an
+//!   `f64`-typed store is SSE `movsd`, not on it.
 //!
 //! The checks read Cranelift's own listing of the machine instructions it chose
 //! (`Context::set_disasm`), on x86-64 only (the first release's target). Each pseudo-instruction
@@ -112,16 +117,59 @@ block0(v0: i64):
 }
 ";
 
+/// The bit counts of a secret, which zedc lowers itself (round 2).
+const BIT_COUNTS: &str = "
+function %popcnt_u64(i64) -> i64 {
+block0(v0: i64):
+    v1 = popcnt v0
+    return v1
+}
+function %clz_u64(i64) -> i64 {
+block0(v0: i64):
+    v1 = clz v0
+    return v1
+}
+function %ctz_u64(i64) -> i64 {
+block0(v0: i64):
+    v1 = ctz v0
+    return v1
+}
+";
+
+/// An `f64` live across a call: System V saves no `xmm` register, so it is spilled.
+const F64_ACROSS_CALL: &str = "
+function %f64_across_call(f64) -> f64 {
+    sig0 = () system_v
+    fn0 = %g sig0
+block0(v0: f64):
+    call fn0()
+    return v0
+}
+";
+
 /// Cranelift's listing of each function in `clif`, by name, at `opt_level`.
 fn listings(clif: &str, opt_level: &str) -> Vec<(String, String)> {
+    listings_with(clif, &[("opt_level", opt_level)], &[])
+}
+
+/// Cranelift's listing of each function in `clif`, by name, with the shared settings `flags`
+/// and the x86-64 settings `isa_flags` (the host's features, as zed-native takes them).
+fn listings_with(
+    clif: &str,
+    flags: &[(&str, &str)],
+    isa_flags: &[(&str, &str)],
+) -> Vec<(String, String)> {
     let mut b = settings::builder();
-    b.set("opt_level", opt_level).unwrap();
     b.set("enable_llvm_abi_extensions", "true").unwrap();
+    for (k, v) in flags {
+        b.set(k, v).unwrap();
+    }
     let triple = target_lexicon::Triple::from_str("x86_64-unknown-linux-gnu").unwrap();
-    let isa = isa::lookup(triple)
-        .unwrap()
-        .finish(settings::Flags::new(b))
-        .unwrap();
+    let mut ib = isa::lookup(triple).unwrap();
+    for (k, v) in isa_flags {
+        ib.set(k, v).unwrap();
+    }
+    let isa = ib.finish(settings::Flags::new(b)).unwrap();
     cranelift_reader::parse_functions(clif)
         .unwrap()
         .into_iter()
@@ -215,4 +263,127 @@ fn a_store_before_a_return_is_kept_and_an_overwritten_store_is_removed() {
     // above sees a removal when there is one.
     let text = listing(&all, "overwritten");
     assert_eq!(stores_through_first_argument(text), 1, "{text}");
+}
+
+/// The words of a listing that name one of `mnemonics`, with or without a size suffix.
+fn uses(text: &str, mnemonics: &[&str]) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| {
+            mnemonics.iter().any(|m| {
+                w.strip_prefix(m)
+                    .is_some_and(|s| matches!(s, "" | "w" | "l" | "q"))
+            })
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn bit_counts_use_instructions_off_intels_list_only_under_the_hosts_features() {
+    // Round 2 (CT-STUDY.md): POPCNT, LZCNT, TZCNT, BSR and BSF are not on Intel's DOIT list,
+    // and zed-native takes the host's features, so zedc lowers the bit counts of a secret
+    // itself and compiles secret code with these features off.
+    const OFF_LIST: [&str; 5] = ["popcnt", "lzcnt", "tzcnt", "bsr", "bsf"];
+    // A host with these features also has SSE4.2, which Cranelift's `use_popcnt` requires
+    // (cranelift-codegen 0.137.1 src/isa/x64/lower/isle.rs:516-517).
+    let host = [
+        ("has_sse3", "true"),
+        ("has_ssse3", "true"),
+        ("has_sse41", "true"),
+        ("has_sse42", "true"),
+        ("has_popcnt", "true"),
+        ("has_lzcnt", "true"),
+        ("has_bmi1", "true"),
+    ];
+    let on = listings_with(BIT_COUNTS, &[("opt_level", "speed")], &host);
+    for (name, mnemonic) in [
+        ("popcnt_u64", "popcnt"),
+        ("clz_u64", "lzcnt"),
+        ("ctz_u64", "tzcnt"),
+    ] {
+        let text = listing(&on, name);
+        assert!(
+            !uses(text, &[mnemonic]).is_empty(),
+            "{name} with the host's features:\n{text}"
+        );
+    }
+    // Features off: the popcount is a sequence of shifts, masks and additions, but the leading
+    // and trailing counts still use `bsr` and `bsf`, also off the list; so zedc must lower all
+    // three itself and turning the features off is not enough on its own.
+    let off = listings_with(BIT_COUNTS, &[("opt_level", "speed")], &[]);
+    let text = listing(&off, "popcnt_u64");
+    assert_eq!(
+        uses(text, &OFF_LIST),
+        Vec::<String>::new(),
+        "popcnt_u64 off:\n{text}"
+    );
+    for name in ["clz_u64", "ctz_u64"] {
+        let text = listing(&off, name);
+        assert!(
+            !uses(text, &["bsr", "bsf"]).is_empty(),
+            "{name} off:\n{text}"
+        );
+    }
+}
+
+/// An `f64` stored to memory by the program, not by the register allocator.
+const F64_STORE: &str = "
+function %f64_store(f64, i64) {
+block0(v0: f64, v1: i64):
+    store v0, v1
+    return
+}
+";
+
+/// The mnemonics of the moves to or from the stack in a listing.
+fn stack_moves(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.contains("(%rsp)") && l.trim_start().starts_with("mov"))
+        .map(|l| l.split_whitespace().next().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_float_spills_with_movdqu_and_a_stored_f64_uses_sse_movsd() {
+    // The register allocator spills every float-class register as a 16-byte vector
+    // (machinst/abi.rs `gen_spill` with `canonical_type_for_rc`, x64 inst/mod.rs 1432-1438), so
+    // an `f64` live across a call is saved with `movdqu`, which is on Intel's list; round 2 said
+    // `movsd`, wrongly. An `f64`-typed store is SSE `movsd` (inst/mod.rs 347-357), which is not
+    // on the list (its MOVSD rows are the string move, opcode A5): one reason a secret `f64` is
+    // held as the integer of its bits. The `i64` spill (`movq`) is the control that the
+    // spill-finding check finds a spill of the other register class.
+    let as_i64 = F64_ACROSS_CALL.replace("f64", "i64");
+    for alloc in ["backtracking", "single_pass"] {
+        for opt in ["none", "speed"] {
+            let flags = [("opt_level", opt), ("regalloc_algorithm", alloc)];
+            let all = listings_with(F64_ACROSS_CALL, &flags, &[]);
+            let text = listing(&all, "f64_across_call");
+            let moves = stack_moves(text);
+            assert!(
+                moves.iter().any(|m| m == "movdqu"),
+                "{alloc} {opt}:\n{text}"
+            );
+            assert!(
+                !moves.iter().any(|m| m == "movsd"),
+                "{alloc} {opt}:\n{text}"
+            );
+            let all = listings_with(&as_i64, &flags, &[]);
+            let text = listing(&all, "i64_across_call");
+            let moves = stack_moves(text);
+            assert!(
+                moves.iter().any(|m| m == "movq"),
+                "{alloc} {opt}, i64:\n{text}"
+            );
+            assert!(
+                !moves.iter().any(|m| m == "movdqu"),
+                "{alloc} {opt}, i64:\n{text}"
+            );
+            let all = listings_with(F64_STORE, &flags, &[]);
+            let text = listing(&all, "f64_store");
+            assert!(
+                !uses(text, &["movsd"]).is_empty(),
+                "{alloc} {opt}, store:\n{text}"
+            );
+        }
+    }
 }
