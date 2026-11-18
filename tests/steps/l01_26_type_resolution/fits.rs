@@ -1021,3 +1021,51 @@ fn k_joined_components_fit_shapes_that_differ_on_some_of_them() {
         }
     }
 }
+
+/// TEST-read-fit-span-cross-file: `Ck::read_by` (zedc-check) keys the writer of a
+/// [`Fit::Read`] by a span, and a span names no file. Two units of one package whose
+/// `Read` fits sit at one span, written by constructs at different spans, are each checked by
+/// a checker of their own: the package loads, both units compile, and the debug assertion of
+/// `Ck::put_read`, which a second writer at one span fails
+/// (`a_read_fit_from_a_second_construct_is_caught` in zedc-check), does not fire. Were the
+/// two units ever checked into one `Ck`, this package would fail that assertion here.
+#[test]
+fn two_units_with_read_fits_at_one_span_are_checked_apart() {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use zedc::lex::Span;
+    use zedc::query::Db;
+    use zedc::unit::{Memory, load};
+
+    // `g(b, x)`, of type `1 | f64`, is read at `f64` by the `+` beside `x` (L1.26a, as in
+    // l01_26a call_union_at_f64.rs), at one span in both texts; the `+` starts one byte
+    // earlier in `b`, at its `(`.
+    const G: &str = "g(positional c: bool, positional x: f64) = if c { x } else { 1 };\n";
+    let a = format!("{G}k(positional b: bool, positional x: f64) =  x + g(b, x);\n");
+    let b = format!("{G}k(positional b: bool, positional x: f64) = (x)+ g(b, x);\n");
+    let start = a.rfind("g(b, x)").expect("the call");
+    assert_eq!(b.rfind("g(b, x)"), Some(start));
+    let at = Span {
+        start,
+        end: start + "g(b, x)".len(),
+    };
+    for text in [&a, &b] {
+        let fits = info(text).0.fits;
+        assert_eq!(
+            fits.get(&at),
+            Some(&Fit::Read(zedc::check::ty::Carrier::F64)),
+            "{text}{fits:?}"
+        );
+    }
+    let files: HashMap<String, Arc<str>> = [("a.zed", &a), ("b.zed", &b)]
+        .into_iter()
+        .map(|(f, t)| (f.to_string(), Arc::from(t.as_str())))
+        .collect();
+    let mut db = Db::new();
+    let p = load(&mut db, &Memory(files), &["a", "b"]);
+    let problems = p.report(std::path::Path::new(""));
+    assert!(problems.is_empty(), "{problems:#?}");
+    for text in [&a, &b] {
+        assert!(db.front(text).is_ok(), "{text}");
+    }
+}

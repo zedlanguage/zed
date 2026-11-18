@@ -7439,6 +7439,21 @@ impl Ck<'_, '_> {
     ///    application of that construct (each arrow, each function its callee's type holds,
     ///    each trial of a repair or a carried fix) passes the construct's own span.
     ///
+    /// 4. A span names no file, and needs none: a `Ck` checks the expressions of one unit's
+    ///    text. Every maker of a `Ck` takes one unit: [`walk::check_with`], `walk::check_given`
+    ///    (for tests), and checkers of the empty unit (`walk::operator`,
+    ///    `Operands::adoptions`). `check_with` walks
+    ///    `unit`, the statements of one text, under `Tables` built from that `unit` and its one
+    ///    `Resolution`, which holds binders, spans and the paths of imported units but no
+    ///    expression of another unit (`Tables::funcs` points into `unit`). Its one caller,
+    ///    zedc-elab's `elaborate_in`, is reached from zedc's `front::checked` with the
+    ///    statements parsed from one text (`build::read` rewrites them in place, at their own
+    ///    spans), and from `mutate::mutants` with the statements of one unit. A package's
+    ///    units are each checked alone, by the query of their own text (zedc `query::Db::front`).
+    ///    Tested by `two_units_with_read_fits_at_one_span_are_checked_apart` (l01_26 fits.rs,
+    ///    TEST-read-fit-span-cross-file): two units of one package with `Read` fits at one span
+    ///    from writers at different spans load and compile with this assertion on.
+    ///
     /// So a `Read` at `at` has one writer, `by`. The claim is checked here as well, so that a
     /// writer added later cannot break it unseen: the construct that first wrote a `Read` at
     /// `at` is kept ([`Self::read_by`]), a write from another fails a debug assertion (the

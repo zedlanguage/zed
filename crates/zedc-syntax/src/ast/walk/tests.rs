@@ -89,6 +89,106 @@ fn each_desugaring_gives_each_expression_its_own_span() {
     }
 }
 
+/// A seeded generator (splitmix64) of random expressions that nest the desugarings of
+/// [`DESUGARINGS`] inside each other, for [`random_programs_give_each_expression_its_own_span`].
+struct Gen(u64);
+
+impl Gen {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    /// An operand of `depth` levels at most: a leaf at depth 0, else a form in parentheses, so
+    /// that it is one operand whatever the precedence of the form around it (an infix call next
+    /// to `-` is an error). The parentheses give the form a span of their own text, so a form
+    /// is also written bare, as a definition's whole right side ([`Self::program`]): a
+    /// desugaring that copies a span shows only there, as the chain `3 ~f~ 4 ~f~ 5` of
+    /// [`DESUGARINGS`] does.
+    fn operand(&mut self, depth: u32) -> String {
+        if depth == 0 {
+            return match self.below(4) {
+                0 => "a".into(),
+                1 => "b".into(),
+                2 => format!("{}", self.below(100)),
+                _ => format!("(-{})", self.below(10)),
+            };
+        }
+        format!("({})", self.form(depth))
+    }
+
+    /// A form of `depth` levels at most (at least 1), its operands of fewer, written bare.
+    fn form(&mut self, depth: u32) -> String {
+        let d = depth - 1;
+        match self.below(17) {
+            0 => format!("{} + {}", self.operand(d), self.operand(d)),
+            1 => format!("{} * {}", self.operand(d), self.operand(d)),
+            2 => format!("{} ~f~ {}", self.operand(d), self.operand(d)),
+            3 => format!(
+                "{} ~f~ {} ~f~ {}",
+                self.operand(d),
+                self.operand(d),
+                self.operand(d)
+            ),
+            4 => format!("[{}, {}] >< (+)", self.operand(d), self.operand(d)),
+            5 => format!("[{}] >< (*) else {}", self.operand(d), self.operand(d)),
+            6 => format!("{} is int", self.operand(d)),
+            7 => format!("{} in {{1, 2}}", self.operand(d)),
+            8 => format!("[{}][0] else {}", self.operand(d), self.operand(d)),
+            9 => format!("(n -> n + {})({})", self.operand(d), self.operand(d)),
+            10 => format!("\"s ${{{}}} t\"", self.operand(d)),
+            11 => format!("!({} == {})", self.operand(d), self.operand(d)),
+            12 => format!("-{}", self.operand(d)),
+            13 => format!("f(x: {}, y: {})", self.operand(d), self.operand(d)),
+            14 => format!("[{}, 2].sort(desc)", self.operand(d)),
+            15 => format!(
+                "for n in 1..={} where n != {} {{ n * 2 }}",
+                self.operand(d),
+                self.operand(d)
+            ),
+            _ => format!(
+                "if {} == 1 {{ {} }} else {{ {} }}",
+                self.operand(d),
+                self.operand(d),
+                self.operand(d)
+            ),
+        }
+    }
+
+    /// A program of a few definitions, each a random expression.
+    fn program(&mut self) -> String {
+        let mut text = String::from("f(x: int, y: int) = x + y;\na = 1;\nb = 2;\n");
+        for i in 0..1 + self.below(4) {
+            let depth = 1 + self.below(4) as u32;
+            text.push_str(&format!("v{i} = {};\n", self.form(depth)));
+        }
+        text
+    }
+}
+
+/// TEST-read-fit-span-cross-file, part 2: random programs that nest the desugarings in each
+/// other, from fixed seeds, build and give each expression its own span. Asserted for every
+/// draw: each program builds (the generator writes only forms the parser takes) and no span
+/// is shared.
+#[test]
+fn random_programs_give_each_expression_its_own_span() {
+    for seed in 0..400u64 {
+        let text = Gen(seed).program();
+        match shared_span(&text) {
+            Ok(None) => {}
+            Ok(Some(why)) => panic!("seed {seed}: {why}, in\n{text}"),
+            Err(e) => panic!("seed {seed}: {e}, in\n{text}"),
+        }
+    }
+}
+
 /// The `.zed` files under `dir`, sorted.
 fn zed_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
