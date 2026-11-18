@@ -2299,3 +2299,133 @@ fn classed_differences_and_counts_agree_with_the_listed_sets() {
         }
     }
 }
+
+/// A named formula and the values each of its atoms takes.
+type Case<'a> = (&'a str, Formula, Vec<(&'a str, IntervalSet)>);
+
+/// The counterexamples to pushing a conjunction's unary rows down into its parts (Gemini, round 2
+/// of XR-cover-hybrid: CE1, CE1b, CE2, CE3) and three fixtures of Sol's from the same round, each
+/// with the values every atom takes. The exact projection gives them, and `read_once`, when it
+/// answers, gives the same; a push-down that escapes past an ancestor's box answers every value.
+#[test]
+fn pushed_down_boxes_do_not_escape_their_ancestors() {
+    let all = IntervalSet::range(End::NegInf, End::PosInf);
+    let none = IntervalSet::empty();
+    let box5 = || Formula::and(vec![ge(&[("s", 1)], 5), ge(&[("s", -1)], 5)]);
+    let s_or_y = || Formula::or(vec![ge(&[("s", 1)], 0), ge(&[("y", 1)], 0)]);
+    let ce1 = Formula::and(vec![box5(), s_or_y()]);
+    let ce1b = Formula::or(vec![
+        Formula::and(vec![box5(), s_or_y()]),
+        eq(&[("s", 1)], -10),
+    ]);
+    let ce2 = Formula::and(vec![
+        ge(&[("s", 1)], 5),
+        ge(&[("s", -1)], 2),
+        Formula::or(vec![
+            Formula::and(vec![ge(&[("s", 1)], -4), ge(&[("s", -1)], 6), s_or_y()]),
+            Formula::and(vec![eq(&[("z", 1)], -1), eq(&[("z", 1)], -2)]),
+        ]),
+    ]);
+    let ce3 = Formula::and(vec![
+        box5(),
+        eq(&[("s", 1), ("w", -2)], 0),
+        Formula::or(vec![eq(&[("s", 1)], -1), eq(&[("s", 1)], -2)]),
+    ]);
+    let sol1 = Formula::and(vec![
+        Formula::or(vec![eq(&[("s", 1)], 0), eq(&[("t", 1)], 0)]),
+        Formula::and(vec![eq(&[("u", 1)], 0), eq(&[("u", 1)], -1)]),
+    ]);
+    let sol2 = Formula::and(vec![
+        eq(&[("s", 1)], 0),
+        Formula::or(vec![
+            eq(&[("t", 1)], 0),
+            Formula::and(vec![
+                ge(&[("s", 1)], -1),
+                Formula::or(vec![eq(&[("s", 1)], -2), eq(&[("u", 1)], 0)]),
+            ]),
+        ]),
+    ]);
+    let sol3 = Formula::or(vec![
+        Formula::and(vec![eq(&[("s", 1)], 0), eq(&[("t", 1)], 0)]),
+        Formula::and(vec![eq(&[("s", 1)], -2), eq(&[("u", 1)], 0)]),
+    ]);
+    let five = IntervalSet::of(-5, 5);
+    let cases: Vec<Case> = vec![
+        ("CE1", ce1, vec![("s", five.clone()), ("y", all.clone())]),
+        (
+            "CE1b",
+            ce1b,
+            vec![
+                (
+                    "s",
+                    IntervalSet::from_pieces(vec![
+                        (End::of(-5), End::of(5)),
+                        (End::of(10), End::of(10)),
+                    ]),
+                ),
+                ("y", all.clone()),
+            ],
+        ),
+        (
+            "CE2",
+            ce2,
+            vec![
+                ("s", none.clone()),
+                ("y", none.clone()),
+                ("z", none.clone()),
+            ],
+        ),
+        (
+            "CE3",
+            ce3,
+            vec![("s", IntervalSet::single(2)), ("w", IntervalSet::single(1))],
+        ),
+        (
+            "sol1",
+            sol1,
+            vec![
+                ("s", none.clone()),
+                ("t", none.clone()),
+                ("u", none.clone()),
+            ],
+        ),
+        (
+            "sol2",
+            sol2,
+            vec![
+                ("s", IntervalSet::single(0)),
+                ("t", IntervalSet::single(0)),
+                ("u", all.clone()),
+            ],
+        ),
+        (
+            "sol3",
+            sol3,
+            vec![
+                (
+                    "s",
+                    IntervalSet::from_pieces(vec![
+                        (End::of(0), End::of(0)),
+                        (End::of(2), End::of(2)),
+                    ]),
+                ),
+                ("t", all.clone()),
+                ("u", all.clone()),
+            ],
+        ),
+    ];
+    for (name, f, want) in cases {
+        let once = read_once_answers(&f);
+        for (n, set) in want {
+            assert_eq!(project(&f, n), set, "{name} {n}");
+            if let Some((has, sets)) = &once {
+                let got = if *has {
+                    sets[&a(n)].clone()
+                } else {
+                    none.clone()
+                };
+                assert_eq!(got, set, "{name} {n} read_once");
+            }
+        }
+    }
+}
