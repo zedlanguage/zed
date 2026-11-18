@@ -600,6 +600,9 @@ pub(super) struct InferF<'a> {
     fid: usize,
     params: Vec<SParam>,
     ids: Vec<usize>,
+    /// The position in `ids` of each parameter's binder, the first where two are one; empty
+    /// when no parameter has a default, the only reader being [`Ck::note_default_reads`].
+    index: HashMap<usize, usize>,
     given: Vec<Option<Ty>>,
     level: usize,
     tys: Vec<Ty>,
@@ -3065,11 +3068,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 range: range.map(ParamRange::Int),
             });
         }
+        let mut index = HashMap::new();
+        if f.params.iter().any(|p| p.default.is_some()) {
+            for (j, &id) in ids.iter().enumerate() {
+                index.entry(id).or_insert(j);
+            }
+        }
         let s = InferF {
             f,
             fid,
             params,
             ids,
+            index,
             given: Vec::new(),
             level: 0,
             tys: Vec::new(),
@@ -3521,7 +3531,13 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Records in [`Ck::default_reads`] the parameter that the default `d` of the parameter
     /// `s.i` is, where `d` is the bare name of another parameter of `s`, as `x` of
-    /// `pass(x, y = x)`. O(p) for p parameters, once per such default.
+    /// `pass(x, y = x)`.
+    ///
+    /// Complexity tradeoff: O(1) expected per such default, one lookup in `s.index`, which
+    /// [`Ck::infer`] builds once in O(p) for a function of p parameters with a default. The
+    /// naive way, a search of `s.ids` per default, costs O(p) each and O(p^2) for a function
+    /// whose p defaults each read a parameter: l01_29's `the_merges_between_a_value_and_its_use_scale`
+    /// (2n such defaults) measured 11.2 times the instructions for 8 times n with it.
     fn note_default_reads(&mut self, s: &InferF<'a>, d: &'a Expr) {
         let Some((binder, index, _)) = s.params[s.i].default else {
             return;
@@ -3530,7 +3546,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
             _ => return,
         };
-        if let Some(j) = s.ids.iter().position(|&id| id == b)
+        if let Some(&j) = s.index.get(&b)
             && j != s.i
         {
             self.default_reads.insert((binder, index), j);
