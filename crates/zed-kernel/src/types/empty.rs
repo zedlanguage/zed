@@ -6458,6 +6458,35 @@ impl<'m> Searching<'m> {
             .iter()
             .map(|o| o.iter().copied().max_by_key(|&x| outside[x].len()))
             .collect();
+        // Answers that are those of one order make `parent` a forest. Inside a search they may
+        // not be: a test that reads a type still being decided answers on what is known so far,
+        // and is tried again once that type is settled, so cells strictly nested can be read as
+        // each within the next round a cycle (cells `cons(int \ 1 \ 2, _)` and `cons(int \ 1,
+        // _)` over list definitions, the case of
+        // `l01_23_groups_and_refusals::sweep_agreement::the_search_ends_when_cells_are_read_as_nested_in_a_cycle`),
+        // and the walk up the cells holding each piece below would never end. Such answers do
+        // not describe nested or disjoint cells, so the cells count as crossing and the box is
+        // left to the steps after `nested_cover`. Each cell is marked once on the walk up from
+        // it and once when its walk reaches a root, order `n` for `n` cells (standing rule
+        // P207: every walk up these links keeps a visited set).
+        let mut state = vec![0u8; n]; // 0 not seen, 1 on the current walk, 2 reaches a root
+        for c in 0..n {
+            let mut walk = Vec::new();
+            let mut up = Some(c);
+            while let Some(p) = up {
+                match state[p] {
+                    2 => break,
+                    1 => return Some(None),
+                    _ => {}
+                }
+                state[p] = 1;
+                walk.push(p);
+                up = parent[p];
+            }
+            for p in walk {
+                state[p] = 2;
+            }
+        }
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (c, p) in parent.iter().enumerate() {
             if let Some(p) = *p {

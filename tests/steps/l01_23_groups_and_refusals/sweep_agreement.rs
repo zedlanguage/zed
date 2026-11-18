@@ -465,48 +465,84 @@ fn the_sweep_agrees_on_random_chains() {
     eprintln!("random chains: {t:?}");
 }
 
+/// Case 394 of `the_sweep_agrees_on_random_chains` with `ZED_TEST_SEED=256`, which never ended.
+/// Inside the search, the cells of one tuple component, list types `cons(int \ 1 \ 2, _)` and
+/// `cons(int \ 1, _)` over these definitions, were read as each within the next in a cycle,
+/// though they are strictly nested, while one of them was still being decided. The walk up the
+/// cells holding each piece then went round that cycle forever. The type is inhabited: `[3]` is
+/// in `D0` and in none of `D1`, `D3` and `D6`.
+#[test]
+fn the_search_ends_when_cells_are_read_as_nested_in_a_cycle() {
+    let int_less_1 = INT & !ONE;
+    let int_less_1_2 = INT & !ONE & !TWO;
+    let row = |h, t| (h, t);
+    let d = |nil, rows| D { nil, rows };
+    let spec = Spec {
+        groups: vec![vec![
+            d(true, vec![row(int_less_1, 0)]),
+            d(true, vec![]),
+            d(true, vec![row(int_less_1, 0), row(int_less_1, 4)]),
+            d(true, vec![row(int_less_1_2, 3), row(int_less_1, 6)]),
+            d(false, vec![row(int_less_1_2, 5)]),
+            d(true, vec![]),
+            d(true, vec![row(int_less_1, 1), row(int_less_1_2, 4)]),
+        ]],
+    };
+    let term = Term {
+        pos: vec![(0, 0)],
+        neg: vec![(0, 1), (0, 3), (0, 6)],
+    };
+    assert!(spec.inhabited(&term));
+    let ts = spec.build("_xr394");
+    let mut tally = Tally::default();
+    tally.check(&spec.ty(&ts, &term), true, "cells nested in a cycle");
+    assert_eq!(tally.inhabited, 1, "{tally:?}");
+}
+
 /// Random families of links, the sweep's shape: up to eight definitions of one row each, with
 /// `nil` or not, over the integer cells or the boolean ones, less the union of most of them.
 #[test]
 fn the_sweep_agrees_on_random_links() {
-    let t = {
-        let mut tally = Tally::default();
-        let (mut rng, _) = Rng::fresh("random links");
-        let sets: [&[u16]; 2] = [
-            &[INT, ONE, INT & !ONE, TWO, INT & !TWO, ONE | TWO],
-            &[BOOL, TRUE, BOOL & !TRUE],
-        ];
-        for id in 0..400 {
-            let palette = sets[rng.below(2)];
-            let all = palette[0];
-            let k = 1 + rng.below(8);
-            let mut ds = vec![D {
-                nil: true,
-                rows: vec![(all, 0)],
-            }];
-            ds.extend((0..k).map(|_| D {
-                nil: rng.below(3) == 0,
-                rows: vec![(palette[rng.below(palette.len())], rng.below(k + 1))],
-            }));
-            let neg = (1..=k)
-                .filter(|_| rng.below(4) != 0)
-                .map(|i| (0, i))
-                .collect();
-            let spec = Spec { groups: vec![ds] };
-            let term = Term {
-                pos: vec![(0, 0)],
-                neg,
-            };
-            let ts = spec.build(&format!("_xl{id}"));
-            tally.check(
-                &spec.ty(&ts, &term),
-                spec.inhabited(&term),
-                &format!("links {id}"),
-            );
-        }
-        tally
-    };
+    let t = random_links(Rng::fresh("random links").0);
     eprintln!("random links: {t:?}");
+}
+
+/// The cases of [`the_sweep_agrees_on_random_links`], drawn from `rng`.
+fn random_links(mut rng: Rng) -> Tally {
+    let mut tally = Tally::default();
+    let sets: [&[u16]; 2] = [
+        &[INT, ONE, INT & !ONE, TWO, INT & !TWO, ONE | TWO],
+        &[BOOL, TRUE, BOOL & !TRUE],
+    ];
+    for id in 0..400 {
+        let palette = sets[rng.below(2)];
+        let all = palette[0];
+        let k = 1 + rng.below(8);
+        let mut ds = vec![D {
+            nil: true,
+            rows: vec![(all, 0)],
+        }];
+        ds.extend((0..k).map(|_| D {
+            nil: rng.below(3) == 0,
+            rows: vec![(palette[rng.below(palette.len())], rng.below(k + 1))],
+        }));
+        let neg = (1..=k)
+            .filter(|_| rng.below(4) != 0)
+            .map(|i| (0, i))
+            .collect();
+        let spec = Spec { groups: vec![ds] };
+        let term = Term {
+            pos: vec![(0, 0)],
+            neg,
+        };
+        let ts = spec.build(&format!("_xl{id}"));
+        tally.check(
+            &spec.ty(&ts, &term),
+            spec.inhabited(&term),
+            &format!("links {id}"),
+        );
+    }
+    tally
 }
 
 /// Checks a case, then the case built again with every definition list, row list, body and
@@ -840,71 +876,7 @@ fn the_sweep_agrees_on_staggered_chains_with_the_atom() {
 /// second carrier met in, so the carrier head is a meet.
 #[test]
 fn the_sweep_agrees_on_random_positive_chains() {
-    let t = {
-        let mut tally = Tally::default();
-        let (mut rng, _) = Rng::fresh("random positive chains");
-        let palette = [
-            INT,
-            ONE,
-            INT & !ONE,
-            INT | ATOM,
-            ATOM,
-            HOLES[0],
-            HOLES[0],
-            HOLES[1],
-            INT & !HOLES[0],
-            HOLES[0] | ATOM,
-        ];
-        for id in 0..300 {
-            let k = 2 + rng.below(6);
-            let mut ds = vec![D {
-                nil: true,
-                rows: vec![(INT, 0)],
-            }];
-            ds.extend((1..=k).map(|i| {
-                let tail = |rng: &mut Rng| match rng.below(3) {
-                    0 => 0,
-                    _ if i < k => i + 1 + rng.below(k - i),
-                    _ => 0,
-                };
-                D {
-                    nil: rng.below(4) == 0,
-                    rows: (0..1 + usize::from(rng.below(5) == 0))
-                        .map(|_| (palette[rng.below(palette.len())], tail(&mut rng)))
-                        .collect(),
-                }
-            }));
-            let p = 1 + rng.below(k);
-            let mut pos = vec![(0, p)];
-            if rng.below(2) == 0 {
-                pos.push((0, 0));
-            }
-            // A second carrier, `L2 = nil | cons(h, L2)`, met in: the carrier head is the meet
-            // of both, whichever comes first.
-            if rng.below(3) == 0 {
-                let h = [HOLES[0], INT & !ONE, INT | ATOM][rng.below(3)];
-                ds.push(D {
-                    nil: true,
-                    rows: vec![(h, k + 1)],
-                });
-                pos.push((0, k + 1));
-            }
-            let neg = (1..=k)
-                .filter(|&i| i != p && rng.below(3) != 0)
-                .map(|i| (0, i))
-                .collect();
-            let spec = Spec { groups: vec![ds] };
-            let term = Term { pos, neg };
-            both_orders(
-                &mut tally,
-                &spec,
-                &term,
-                &format!("_xp{id}"),
-                &format!("positive chains {id}"),
-            );
-        }
-        tally
-    };
+    let t = random_positive_chains(Rng::fresh("random positive chains").0);
     eprintln!("random positive chains: {t:?}");
     // The sweep decides a case on every run, built (PROOF-test-count-thresholds):
     // `D2 = cons(int, L)` less `D1 = cons(1, L)`, a positive chain of the shape drawn above,
@@ -912,6 +884,72 @@ fn the_sweep_agrees_on_random_positive_chains() {
     // control of PROOF-test-count-thresholds fails here when the sweep declines it).
     let b = built(&[(ONE, 0), (INT, 0)], &[2], &[1], "pc");
     assert_eq!((b.swept, b.inhabited), (2, 2), "the built case: {b:?}");
+}
+
+/// The cases of [`the_sweep_agrees_on_random_positive_chains`], drawn from `rng`.
+fn random_positive_chains(mut rng: Rng) -> Tally {
+    let mut tally = Tally::default();
+    let palette = [
+        INT,
+        ONE,
+        INT & !ONE,
+        INT | ATOM,
+        ATOM,
+        HOLES[0],
+        HOLES[0],
+        HOLES[1],
+        INT & !HOLES[0],
+        HOLES[0] | ATOM,
+    ];
+    for id in 0..300 {
+        let k = 2 + rng.below(6);
+        let mut ds = vec![D {
+            nil: true,
+            rows: vec![(INT, 0)],
+        }];
+        ds.extend((1..=k).map(|i| {
+            let tail = |rng: &mut Rng| match rng.below(3) {
+                0 => 0,
+                _ if i < k => i + 1 + rng.below(k - i),
+                _ => 0,
+            };
+            D {
+                nil: rng.below(4) == 0,
+                rows: (0..1 + usize::from(rng.below(5) == 0))
+                    .map(|_| (palette[rng.below(palette.len())], tail(&mut rng)))
+                    .collect(),
+            }
+        }));
+        let p = 1 + rng.below(k);
+        let mut pos = vec![(0, p)];
+        if rng.below(2) == 0 {
+            pos.push((0, 0));
+        }
+        // A second carrier, `L2 = nil | cons(h, L2)`, met in: the carrier head is the meet
+        // of both, whichever comes first.
+        if rng.below(3) == 0 {
+            let h = [HOLES[0], INT & !ONE, INT | ATOM][rng.below(3)];
+            ds.push(D {
+                nil: true,
+                rows: vec![(h, k + 1)],
+            });
+            pos.push((0, k + 1));
+        }
+        let neg = (1..=k)
+            .filter(|&i| i != p && rng.below(3) != 0)
+            .map(|i| (0, i))
+            .collect();
+        let spec = Spec { groups: vec![ds] };
+        let term = Term { pos, neg };
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            &format!("_xp{id}"),
+            &format!("positive chains {id}"),
+        );
+    }
+    tally
 }
 
 /// A case built for a random test of the sweep (PROOF-test-count-thresholds): the carrier
@@ -1283,79 +1321,7 @@ fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
 /// (`optional_spine_choice`) the prefix chains say Empty on case 1479, which is Inhabited.
 #[test]
 fn r7_random_optional_spine_choices_against_masks() {
-    let tally = {
-        let mut tally = Tally::default();
-        let (mut rng, _) = Rng::fresh("R7 optional spine choices");
-        // Cofinite heads for the positive chain, so that it can follow a negative chain past
-        // that chain's arrival at `L` or leave it; any head for the negatives.
-        let cofinite = [
-            INT,
-            INT,
-            INT,
-            HOLES[0],
-            HOLES[1],
-            INT & !ONE,
-            INT & !TWO,
-            ONE,
-        ];
-        let any = [
-            INT,
-            INT,
-            INT,
-            INT,
-            ONE,
-            TWO,
-            HOLES[0],
-            HOLES[1],
-            INT & !ONE,
-            INT & !TWO,
-        ];
-        for id in 0..150 {
-            let mut ds = vec![D {
-                nil: true,
-                rows: vec![(INT, 0)],
-            }];
-            let chain = |ds: &mut Vec<D>, rng: &mut Rng, len: usize, heads: &[u16]| {
-                // The end: the carrier, or now and then an earlier chain's node (a shared
-                // suffix).
-                let mut at = if ds.len() > 1 && rng.below(8) == 0 {
-                    1 + rng.below(ds.len() - 1)
-                } else {
-                    0
-                };
-                for _ in 0..len {
-                    ds.push(D {
-                        nil: rng.below(16) == 0,
-                        rows: vec![(heads[rng.below(heads.len())], at)],
-                    });
-                    at = ds.len() - 1;
-                }
-                at
-            };
-            let plen = 3 + rng.below(4);
-            let p = chain(&mut ds, &mut rng, plen, &cofinite);
-            let negs = 3 + rng.below(2);
-            let neg = (0..negs)
-                .map(|_| {
-                    let len = 2 + rng.below(plen - 1);
-                    (0, chain(&mut ds, &mut rng, len, &any))
-                })
-                .collect();
-            let term = Term {
-                pos: vec![(0, p)],
-                neg,
-            };
-            let spec = Spec { groups: vec![ds] };
-            both_orders(
-                &mut tally,
-                &spec,
-                &term,
-                &format!("_r7o{id}"),
-                &format!("R7 optional spine choices {id}"),
-            );
-        }
-        tally
-    };
+    let tally = r7_optional_spine_choices(Rng::fresh("R7 optional spine choices").0);
     eprintln!("R7 optional spine choices: {tally:?}");
     // The sweep decides a case on every run, built (PROOF-test-count-thresholds): the positive
     // straight chain `D3 = cons(int, D2)`, `D2 = cons(int, D1)`, `D1 = cons(int, L)` and the
@@ -1369,6 +1335,106 @@ fn r7_random_optional_spine_choices_against_masks() {
         "r7",
     );
     assert_eq!((b.swept, b.empty), (2, 2), "the built case: {b:?}");
+}
+
+/// The cases of [`r7_random_optional_spine_choices_against_masks`], drawn from `rng`.
+fn r7_optional_spine_choices(mut rng: Rng) -> Tally {
+    let mut tally = Tally::default();
+    // Cofinite heads for the positive chain, so that it can follow a negative chain past
+    // that chain's arrival at `L` or leave it; any head for the negatives.
+    let cofinite = [
+        INT,
+        INT,
+        INT,
+        HOLES[0],
+        HOLES[1],
+        INT & !ONE,
+        INT & !TWO,
+        ONE,
+    ];
+    let any = [
+        INT,
+        INT,
+        INT,
+        INT,
+        ONE,
+        TWO,
+        HOLES[0],
+        HOLES[1],
+        INT & !ONE,
+        INT & !TWO,
+    ];
+    for id in 0..150 {
+        let mut ds = vec![D {
+            nil: true,
+            rows: vec![(INT, 0)],
+        }];
+        let chain = |ds: &mut Vec<D>, rng: &mut Rng, len: usize, heads: &[u16]| {
+            // The end: the carrier, or now and then an earlier chain's node (a shared
+            // suffix).
+            let mut at = if ds.len() > 1 && rng.below(8) == 0 {
+                1 + rng.below(ds.len() - 1)
+            } else {
+                0
+            };
+            for _ in 0..len {
+                ds.push(D {
+                    nil: rng.below(16) == 0,
+                    rows: vec![(heads[rng.below(heads.len())], at)],
+                });
+                at = ds.len() - 1;
+            }
+            at
+        };
+        let plen = 3 + rng.below(4);
+        let p = chain(&mut ds, &mut rng, plen, &cofinite);
+        let negs = 3 + rng.below(2);
+        let neg = (0..negs)
+            .map(|_| {
+                let len = 2 + rng.below(plen - 1);
+                (0, chain(&mut ds, &mut rng, len, &any))
+            })
+            .collect();
+        let term = Term {
+            pos: vec![(0, p)],
+            neg,
+        };
+        let spec = Spec { groups: vec![ds] };
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            &format!("_r7o{id}"),
+            &format!("R7 optional spine choices {id}"),
+        );
+    }
+    tally
+}
+
+/// The random tests above under fixed seeds whose cases reach code no fixed case reaches
+/// (TEST-types-unreached-paths-2; found by recording which code each case runs, over seeds 1
+/// to 400). The positive chains under seed 153 reach a list sweep whose `Inhabited` witness
+/// `check_list_value` cannot rebuild a row for, so `list_sweep` declines and the search
+/// decides; under seeds 153 and 339 the prefix-chain search's memo of the last miss is read
+/// again, and under 339 an emitting node's head is evaluated on a memo miss. The R7 optional
+/// spine choices under seed 11 reach a partial negative group whose remaining head is cut to
+/// empty. The random links under seed 12 reach the order of two sets of nodes in which the
+/// first side's subtree is the smaller. Each case is checked against its oracle as in the
+/// random test; a change to a generator moves these cases, and the record in
+/// `crates/zedc-types/COMPLETENESS.md` says how to find new seeds.
+#[test]
+fn the_random_tests_under_seeds_reaching_rare_paths_agree_with_their_oracles() {
+    for seed in [153, 339] {
+        eprintln!(
+            "positive chains, seed {seed}: {:?}",
+            random_positive_chains(Rng::new(seed))
+        );
+    }
+    eprintln!(
+        "R7 optional spine choices, seed 11: {:?}",
+        r7_optional_spine_choices(Rng::new(11))
+    );
+    eprintln!("random links, seed 12: {:?}", random_links(Rng::new(12)));
 }
 
 /// R7: two roots on one spine. `R1` reaches the leaf `S1` at step 2 and `R2` at step 3;
