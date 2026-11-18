@@ -551,7 +551,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 10 | L1.41-join-zedc-preimage-perf | Join of the open zedc-preimage performance rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | BENCH-hole-end-pad-timeout, BENCH-named-wide-conjunction-tiers, BENCH-reduced-product-scaling-work, PERF-preimage-chain-draw-spread, PERF-preimage-cross-dead-under9, BENCH-scope-project-due-blocks, PERF-alternating-product-bytes, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-l139-under9, PERF-wide-modulus-cliffs, SCALE-near-limit-l0139, PERF-refused-shape-disjunctions-quadratic, PERF-hull-join-row-after, PERF-preimage-seed-7776978274844439420-round1, BENCH-project-block-whole-release | tests/steps/ |
 | 3 | L1.41-join-tools | Join of the open tools (dagview, plan, sync) rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | RAM-cause-log2, ST-single-value-cases-bytes, PROOF-sweep, ORACLE-env-persist, PRINT-preimage-defs, SPEC-residue-fragment, HAS-point-M5-merge, ENUM-no-calls, ANNOT-arg-peg, BOARD-redundant-needs, BUILD-slots-random-start, DAGVIEW-first-relayout-x, DAGVIEW-held-digitless, DAGVIEW-relayout-stable, DAGVIEW-rows-under9, DAGVIEW-shape-edges, DB-pool, HULL-elim-text, PERF-l0124-cube-bytes, PERF-rat-literal-text-length, TOOLS-time-tests-fixes, TIME-pieces-under-cap-high-load, DOC-ladder-study-b56-1, IMBL-upstream-release, BUILD-new-layout, TEST-periodic-correctness, MERGE-plan-fix-rebased-tool, MERGE-generated-sections-auto | tests/steps/ |
 | 10 | L1.41-join-zedc-presburger-correct | Join of the open zedc-presburger correctness rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | PRES-shadow-exact-comment, PRES-growth-hull-side-one-symbol, Q1-LOCAL-method, PRES-hull-random-refusals, FAIL-batch-linked-copies-growth, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-floor-grow, PRES-fused-bound, PRES-growth-coefficient-bits, PRES-growth-exp-families, PRES-growth-ladder-bytes, PRES-growth-linked-nest, PRES-growth-nest-point, PRES-growth-pncx-pairs, PRES-growth-probe-guards, PRES-growth-sliding-windows, PRES-shadows-refusal-by-cost, PRES-sign-tie-names, PRES-solve-equation-sign, TEST-presburger-unreached-paths, PRES-cover-wire, PRES-pugh-xr-rounds, FAIL-one-scope-bodies-seed-shadows, FAIL-dark-cycle-both-ways-growth, FAIL-tie-doubled-cycle-deeper-search, PROOF-tied-projection-refusal-names, PROOF-solve-omega-path-renaming, PRES-a99-per-call-or-symbol, PRES-join-cost-predictor, FAIL-case-wake-punctured-seed, FAIL-exact-refusals-4164922340, FAIL-omega-pairs-4972743790605253739, FLAKE-presburger-unseeded-order3, FAIL-exact-refusals-13733945893095969990, SOLVE-growth-implied-row, FAIL-ids-shared-parts-stack-overflow | tests/steps/ |
-| 12 | L1.41-join-zedc-check-correct | Join of the open zedc-check correctness rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | TEST-read-type-flaws, L1.29c, CHECK-big-literal-key-paths, CHECK-destructure-order, CHECK-fold-merge-errs, PORT-block-name, PORT-table-param, PORT-untyped-arg, ST-walk-bound-test, TEST-term-for-uncovered, CHECK-sum-of-summarized-names, CHECK-implicit-call-limits, CHECK-binder-call-summary, SPEC-headline-piece-in-collection, FAIL-nested-display-headline-code-quadratic, FAIL-print-two-variables-one-name, FAIL-map-chain-needs-quadratic, FAIL-arrow-lambda-partial-slot, TEST-sig-text-printed-type-matches-calls, TEST-minmax-struct-menu-compiles, TEST-arrow-lambda-trial-stale, FAIL-top-literal-op-nested-or-component, FAIL-int-or-rat-param-division, PLACE-value-inside-arg, FAIL-remap-key-literal-f64, FAIL-finish-split-walk-memo, TEST-generic-operand-messages-reached, PROOF-read-fit-single-writer, TEST-read-fit-span-unique, TEST-read-fit-span-cross-file, FAIL-random-f64-destructured-family, CHK-pow-component-bound | tests/steps/ |
+| 12 | L1.41-join-zedc-check-correct | Join of the open zedc-check correctness rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | TEST-read-type-flaws, L1.29c, CHECK-big-literal-key-paths, CHECK-destructure-order, CHECK-fold-merge-errs, PORT-block-name, PORT-table-param, PORT-untyped-arg, ST-walk-bound-test, TEST-term-for-uncovered, CHECK-sum-of-summarized-names, CHECK-implicit-call-limits, CHECK-binder-call-summary, SPEC-headline-piece-in-collection, FAIL-nested-display-headline-code-quadratic, FAIL-print-two-variables-one-name, FAIL-map-chain-needs-quadratic, FAIL-arrow-lambda-partial-slot, TEST-sig-text-printed-type-matches-calls, TEST-minmax-struct-menu-compiles, TEST-arrow-lambda-trial-stale, FAIL-top-literal-op-nested-or-component, FAIL-int-or-rat-param-division, PLACE-value-inside-arg, FAIL-remap-key-literal-f64, FAIL-finish-split-walk-memo, TEST-generic-operand-messages-reached, PROOF-read-fit-single-writer, TEST-read-fit-span-unique, TEST-read-fit-span-cross-file, FAIL-random-f64-destructured-family, CHK-pow-component-bound, TEST-random-sweep-off, KERNEL-prim-arrow-table | tests/steps/ |
 | 1 | L1.41-join-zedc-check-proofs | Join of the open zedc-check proof rows before L1.41, split from L1.41-join-zedc-check-correct to keep each join's fan-in at most 32 (DAG-fanin-check-clean, 2026-11-18): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | PROOF-part-tokens-slice-lex, PROOF-reorder-forwarded-uses-complete, PROOF-fit-twice-only-arrow-lambda, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused | tests/steps/ |
 | 9 | L1.41-join-other-crates | Join of the open other-crate rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | PROOF-nearest-name-quadratic, MSG-struct-field-nearest-name, CAST-rat-unreduced-text, DIAG-exponent-row, DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, ENGINE-kept-ends, HEAP-fresh-ratio, MSG-too-large-figure, KERNEL-print-distinct, MSG-lower-port-repair-kind, SPEC-m07-string-serial, PERF-long-literal-digits, LAYER-steps-check, TOOL-plan-row-columns, TEST-rt-weakmem, SPEC-copies-out | tests/steps/ |
 | 8 | L1.41-join-zedc-presburger-perf | Join of the open zedc-presburger performance rows before L1.41 (author P381, 2026-11-17): the tests of these items pass together on one main commit; a new fault in this area goes into this row's needs, not L1.41's | S | no | BENCH-frontier-containment-reach, PRES-cover-bench-regressions, PERF-tie-rekey-count, PRES-cover-refusals-moduli, PRES-c12-small-cost, PRES-pair-scan-cost | tests/steps/ |
@@ -1948,6 +1948,10 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | FAIL-random-f64-destructured-family | Done (claims4, 2026-11-18): the commit "FAIL-random-f64-destructured-family: a literal passed on is never summed as a family". Cause: `sum` of a variable goes to `Ck::sum_beside`, which recorded a SumMethod need on a class of carriers alone (the literal bound by the call), and no later step checked it; now refused with `sum`'s message by the O(1) `carriers_only` test of 727dae146. Test `l01_26_type_resolution::soundness::a_literal_component_is_not_summed` (red before; int and f64 literals, through zero, one and two calls; the seed's program; a family or tuple still sums); the seed passes. Rat literals not tested apart: they take the same class path. Found by xr-ct2 (2026-11-18) in merge-push's re-check of 49dea941c, a plan-text commit; reproduced there with `ZED_TEST_SEED=11135536357509542642` on `random::accepted_random_programs_raise_no_type_error` (l01_26_type_resolution), rc 101: the checker accepts `h0(positional p) { a, b = p; return sum(a); } h1(positional p) = (3 * p[0]); h2(positional p, positional q) = h0(p); r = h0((-2.5, (3, 3, -2)));` and the kernel rejects it with "type error: expected a family, found a value of type `f64`". A sibling of FAIL-random-int-destructured-accepted (727dae146): there an int literal passed on through a call was taken apart; here a float literal taken out of a tuple argument reaches `sum`, which needs a family. Minimize, find the cause by tracing, fix it in general; expected: the call is rejected with the message a known `f64` gets where a family is needed. Tests: the minimized program, red before, the seed, and the int, f64 and rat forms through one and two calls. Test source: /home/luke/Work/wt/failing-tests/FAIL-random-f64-destructured-family.md | S | yes | none | `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_26_type_resolution/` |
 | 0 | FAIL-random-pow-destructured-literal | Done (bundle-types3, 2026-11-18): the commit "FAIL-random-pow-destructured-literal: the uses on a top-level literal's class are checked when it takes its type". Found by merge-push's re-check of 73dfbe7a6: `ZED_TEST_SEED=5371329205760031685` on `random::accepted_random_programs_raise_no_type_error` (l01_26_type_resolution), rc 101: `h0(positional p) { a, b = p; return (0)^a; } h1(positional p) = (p[1] - p[1]); r = h0((-3, if 0 < 3 { 0 } else { 0 }));` was accepted and the kernel raised "type error: `^` applied to `int`, `int`". Cause: `^` records its exponent need on the class of the literal `-3`; outside every function `resolve_top_parts` gives that class its type and checked none of the uses recorded on it, and no function ends there to check them (`generalize` does inside one). Fix: the uses that bound the ints the class holds (`Power`, `NoInt`) are checked on the type it takes, O(u) in the uses; the uses that ask for carriers are already met by the class's mask and reported by the application, and checking them too gave those errors twice. Not the `carriers_only` refusal of 727dae146 and FAIL-random-f64-destructured-family: a carrier is a valid exponent. Precision: the class takes its whole carrier `int` (L1.26a), so `h0((3, 0))` is refused too, as the same call inside a function already was; the bound is row CHK-pow-component-bound. Test `l01_26_type_resolution::soundness::a_literal_component_is_no_negative_int_exponent` (red before); the seed passes; COMPLEXITY.md row FAIL-random-pow-destructured-literal. | S | yes | none | `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_26_type_resolution/` |
 | 0 | CHK-pow-component-bound | Done (bundle-types4, 2026-11-18): the commit that marks this row Done; no spec change. An exponent or `popCount` argument read straight from a part of a tuple parameter records its bound on the parameter with a path of steps (`NeedKind::InDomain::path`, `PathStep` in `zedc-types` `ty.rs`; `open_place`, `part_passed_on`, the path branch of `floors_at` in `walk.rs`), and each call checks the argument's own part, so `h((3, 0))` is accepted and `h((-3, 0))` refused on `p[0]` in `int[0..]`; `0^(a - 5)` stays refused on the class. A test on the name where the `^` is narrows it (`int_read_binder`, `ints_as_int`): `if a >= 0 { 0^a }` and, before refused too, `h1(x) = if x >= 0 { 0^x }` with `h1(x: -3)`. The `NoInt` path (`popCount` on a component) is reached and tested both ways. Tests: `soundness::a_literal_component_is_no_negative_int_exponent` (red before at `3`, the narrowing, nested components, a name bound in the caller), `component_exponents_give_one_error_per_call_below_zero`; benches `bench::soundness::component_exponent_bounds_check_in_linear_time` 8.0 times and `a_component_exponent_bound_d_deep_checks_in_linear_time` 8.1 times (sizes 200 and 1600, load 62); COMPLEXITY.md row CHK-pow-component-bound. Groups l01_26, l01_26a, l01_39*, zedc_check, zedc_types: 1064 pieces, 0 failed (load 45 to 62). Found by FAIL-random-pow-destructured-literal (2026-11-18): `h(positional p) { a, b = p; return (0)^a; }` refuses `h((3, 0))` and the same call inside a function ("Int power with an exponent that may be negative"), since the class of the literal `3` takes the whole carrier `int`, while `h(x) = 2^x;` takes `h(x: 3)` because its signature carries `x` in `int[0..]`. Carry the exponent bound of a tuple component (taken apart or indexed) into the signature the same way, so `h((3, 0))` is accepted and `h((-3, 0))` refused with the bound named; a component whose class also holds a computed value (`0^(a - 5)`) stays refused. Also check that a narrowing (`if a >= 0 { 0^a } else { 0 }`) is honored there, which it is not now for a component. Tests: the cases of `a_literal_component_is_no_negative_int_exponent` with `3` accepted, the narrowing, through one to three calls, inside and outside a function. | S | yes | none | `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_26_type_resolution/` |
+| 0 | CHK-obligation-sweep | Owner share1 (STUDY-checker-kernel-one-rule, author P424, 2026-11-18). When the walk ends, every use still on a class whose type is known and that has no recorded discharge (CHK-obligation-ledger) is checked on that type with `check_on`, so a path that records a need and never checks it cannot accept the program (the cause of FAIL-random-f64-destructured-family and FAIL-random-pow-destructured-literal). Built together with CHK-obligation-ledger. Tests: both seeds red before green with the specific fixes off (test-only cfg); scaling at n and 8n classes; COMPLEXITY.md row. Prototype: branch wt/share1 833261673. | S | no | none | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_26_type_resolution/` |
+| 1 | CHK-obligation-ledger | Owner share1. Every removal from `Class::uses` records its reason (checked on the class's type, moved into a signature, met by the class's mask, refused by `carriers_only`); the end-of-walk step (CHK-obligation-sweep) checks only uses with no recorded discharge, so a use met by the mask is never checked again. In a debug build `finish` asserts that no undischarged use is left; in release such a use is checked, refusing rather than accepting. Tests: a program the sweep must not refuse for each discharge reason. | S | no | CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs`, `tests/steps/l01_26_type_resolution/` |
+| 2 | TEST-random-sweep-off | Owner share1. A test-only cfg turns off the specific fixes (the `carriers_only` refusal in `sum_beside` and the bounds check in `resolve_top_parts`) so the random accepted-program test runs with the obligation sweep alone; each later fault then shows as a seed the sweep catches or misses. | S | no | CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs`, `tests/steps/l01_26_type_resolution/` |
+| 0 | KERNEL-prim-arrow-table | Owner share1 (STUDY-checker-kernel-one-rule). One table of the carriers each primitive takes, `Prim::arrows()` in zed-kernel; the checker's `op_sig` and `word_sig` are built from it, and an exhaustive kernel test checks that `prim_on` accepts a tuple of carriers exactly when the table has an arrow for it. Removes the one rule written twice (carrier tables as match arms in the kernel and as `Arrow` lists in the checker). | S | no | none | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-call-chain-full | Done: 39111129f (bundle-check2, 2026-11-17); no spec change. A need passed on by a call holds one shared link to the callee's need (`Need::via`, `CallPath` in zedc-types `ty.rs`, left out of a need's equality and hash; `Ck::passing_on` in zedc-check), and the rejection notes each call from the call to the use, outermost first, written only when the error is reported. COMPLEXITY F229; bench `l01_29_repairs_and_printing::bench::scaling::naming_each_call_of_a_chain_scales` 8.02 (negative control, copied notes, 19.7). Tests: `l01_26_type_resolution::soundness::a_rejection_at_a_call_names_each_call_on_the_path` (destructuring, index and call, each through 1, 2 and 3 calls), `l01_29_repairs_and_printing::scaling::naming_each_call_of_a_chain`. Was: Found by FAIL-random-int-destructured-accepted (2026-11-14): the note on a rejection at a call names one level of the call chain ("`h1` needs this … at `h0(b, 1)`") and not the line inside `h0` that makes the request; L1.29 (full derivation, every site and propagation step) asks for the whole path. Print each step from the use to the call that fails, in the program's words, short (PROMINENT concise-messages rule). Tests: chains of 1, 2 and 3 calls; the destructuring, indexing and call cases; scaling of the message's construction over a chain of n calls at 1x and 8x. | S | no | none | `crates/zedc-check/src/check/`, `tests/steps/l01_29_repairs_and_printing/` |
 | 0 | FAIL-codex-r3-order-seed | Done: 514df5f03 and the commit that marks this row Done. Cause: a group's canonical form gave a union's arms their written places, so `A \| B` and `B \| A` built groups whose members had different digests, and the search, which meets parts in digest order and chooses greedily, could reach another verdict; now a union's arms are read as a set, as a meet's operands are (`Shape::unordered`, COMPLEXITY.md K102). Seeds 1 to 2000 of the test: 4 failed before (383, 548, 714, 941), none after; both seeds below pass. Fixed cases: `codex_r3_trials_that_depended_on_the_order` and `codex_r3_order_seed_10489595623140704143_trial_26` in `tests/steps/l01_23_groups_and_refusals/refusals.rs`. Found by TEST-types-unreached-paths in a coverage run of l01_23. The random test `refusals::codex_r3_variants_agree_with_the_oracle` fails with `ZED_TEST_SEED=10489595623140704143`, on origin/main 531c58875 as well: "random definition/union order 26", left Inhabited, right Refused(Fork), at tests/steps/l01_23_subtyping/refusals.rs:3113 (the verdict depends on the order of the definitions and union members). A second seed, `ZED_TEST_SEED=10693457847492653602`, failed in merge-push's step 1 for wt/merge-tools2c (2026-11-17, a branch that changed only manifests): "random definition/union order 28", left Refused(Fork), right Inhabited, same line. Command: `ZED_TEST_SEED=10489595623140704143 timeout 120 systemd-run --user --scope --slice=zedtests.slice -q /home/luke/Work/wt/zrun tools/run_tests.sh --no-doc --only '^l01_23_subtyping::refusals::codex_r3_variants_agree_with_the_oracle$'`. Expected: the same verdict in every order, for every seed; once GROUP-order-verdicts is fixed, rerun this seed and add it as a fixed case of the test | S | no | none | `tests/steps/l01_23_subtyping/refusals.rs` |
 | 2 | TEST-complete-lattices | Done: 99c2f920a "TEST-complete-lattices: completeness tests and case lists for l01_24 and m0_05" and the commit that marks this row Done. Author P188, P189. COMPLETENESS.md in both groups: 56 cases (l01_24 30, m0_05 26). 23 small tests in a new complete.rs per group (l01_24 13, m0_05 10), all passing in 0.02 s; l01_24 83 to 96 tests, m0_05 64 to 74. llvm-cov over zedc-lattice (crate unit tests and both groups, benchmarks left out): lines missed 374 to 215 (90.53% to 94.56%), regions 90.42% to 93.85%; lattice.rs, cell.rs, float.rs, affine.rs, schedule.rs now 100% of lines. What stays uncovered: bit_word (TEST-complete-reduced's), unreachable arms, a test helper, equality branches reached only on a 61-bit hash collision, and dead code in revision.rs pow_end (lines 614 to 616: Num::pow_by already handles a base of 0, 1 or -1). One FAIL row: FAIL-lattice-f32-literal (an f32 literal's cell leaves the float class at the top). bf16 has no width in float.rs (row FLOAT-interval). Note for TEST-bench-move-l0123: l01_24 runs 11 to 20 s as one piece at load 18 to 33 (one run hit the 20 s limit); `ends::kept_forms_compute_as_their_values_written_out` takes 13.5 s alone and `num_text::a_written_end_is_num_bigints_text` 7.3 s. No compiler change. Completeness pass (author P189, 2026-11-14) over l01_24_refinement_lattices, m0_05_widening_and_iteration, crate zedc-lattice, already split into tests and benchmarks: for each piece of code these tests exercise, add small, fast correctness tests for every conceivable way it can be called and every way it can interact with other language features, with expected results from DESIGN.md; write the case list as COMPLETENESS.md beside the tests (case, covering test or reason none is needed); llvm-cov as the floor. Failing tests are not fixed here: each gets a FAIL-* row and a copy in wt/failing-tests (P188). Brief: wt/cd-xr/P189-completeness.md | M | no | TEST-bench-move-crates | `tests/steps/l01_24_refinement_lattices/`, `tests/steps/m0_05_widening_and_iteration/`, `crates/zedc-lattice/` |
@@ -4015,6 +4019,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-default-unknown-type, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4268,6 +4274,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-types-as-literals, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4326,6 +4334,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CMP-repair-values, DIAG-union-carrier-row | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, CAST-atom-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, LIT-op-carrier-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, CHK-obligation-sweep | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs` |
@@ -4409,6 +4419,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROV-scaling-10_5, BIT-shift-bytes | `crates/zed-kernel/src/bits.rs` |
 | 0 | PROV-scaling-10_5, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | PROV-scaling-10_5, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | PROV-scaling-10_5, KERNEL-prim-arrow-table | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs` |
 | 0 | PROV-scaling-10_5, PROOF-meet-rows-finite | `crates/zed-kernel/src/types.rs` |
 | 0 | PROV-scaling-10_5, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
 | 0 | PROV-scaling-10_5, SPEC-pure-region-port-read | `crates/zed-kernel/src/eval.rs` |
@@ -4499,6 +4510,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-cast-no-carrier-first, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4594,6 +4607,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-forced-carrier, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4638,6 +4653,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-order-carrier-row, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4681,6 +4698,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-slash-mixed-carrier, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4723,6 +4742,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-union-carrier-row, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4764,6 +4785,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CAST-atom-arg, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4804,6 +4827,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-op-carrier-headline, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
@@ -4907,6 +4932,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DAGVIEW-held-digitless, TOOLS-time-tests-fixes | `tools/dagview/state.ts`, `tools/dagview/` |
 | 0 | REPAIR-text-cast-menu-check, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
@@ -4937,6 +4963,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REPAIR-text-cast-menu-check, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
@@ -5093,6 +5120,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-parity-cold-verdict, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, FP-ops-order | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | CHECK-destructure-order, CHK-obligation-sweep | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
@@ -5122,6 +5150,70 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-destructure-order, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, KERNEL-prim-arrow-table | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHK-obligation-sweep, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHK-obligation-sweep, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | KERNEL-prim-arrow-table, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, CHECK-fold-merge-errs | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, DIAG-len-args-repair | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, SPEC-pure-region-port-read | `crates/zed-kernel/src/eval.rs` |
+| 0 | KERNEL-prim-arrow-table, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, LIMITS-remove-all | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, TEST-term-for-uncovered | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, FAIL-arrow-lambda-partial-slot | `crates/zed-kernel/src/eval.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs` |
+| 0 | KERNEL-prim-arrow-table, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, PERF-guarded-function-walk | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, FP-ops-order | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs` |
+| 0 | KERNEL-prim-arrow-table, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
+| 0 | KERNEL-prim-arrow-table, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-meet-rows-finite, LIMITS-remove-all | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, PERF-guarded-function-walk | `crates/zed-kernel/src/types.rs` |
@@ -6096,6 +6188,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | TAG-run, REPAIR-through-branch | `crates/zedc-check/src/check/walk.rs` |
 | 1 | TAG-run, MSG-too-large-figure | `crates/zedc-check/src/check/` |
 | 1 | TAG-run, LIT-generic-class-follows-needs | `crates/zedc-check/src/check/` |
+| 1 | TAG-run, CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 1 | TAG-run, PROOF-sweep | `crates/zedc-check/src/check/`, `crates/zedc-elab/src/` |
 | 1 | TAG-run, POW-domains | `crates/zedc-check/src/check/walk.rs` |
 | 1 | TAG-run, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
@@ -6126,6 +6219,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | L1.29e, REPAIR-through-branch | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, MSG-too-large-figure | `crates/zedc-check/src/check/` |
 | 1 | L1.29e, LIT-generic-class-follows-needs | `crates/zedc-check/src/check/` |
+| 1 | L1.29e, CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 1 | L1.29e, PROOF-sweep | `crates/zedc-check/src/check/` |
 | 1 | L1.29e, POW-domains | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
@@ -6135,12 +6229,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | L1.29e, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | REPAIR-through-branch, MSG-too-large-figure | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, LIT-generic-class-follows-needs | `crates/zedc-check/src/check/walk.rs` |
+| 1 | REPAIR-through-branch, CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, PROOF-sweep | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, POW-domains | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | REPAIR-through-branch, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, LIT-generic-class-follows-needs | `crates/zedc-check/src/check/` |
+| 1 | MSG-too-large-figure, CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 1 | MSG-too-large-figure, PROOF-sweep | `crates/zedc-check/`, `crates/zed-rt/` |
 | 1 | MSG-too-large-figure, POW-domains | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
@@ -6148,6 +6244,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | MSG-too-large-figure, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs`, `crates/zed-rt/src/ports.rs` |
 | 1 | MSG-too-large-figure, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
+| 1 | LIT-generic-class-follows-needs, CHK-obligation-ledger | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, PROOF-sweep | `crates/zedc-check/src/check/` |
 | 1 | LIT-generic-class-follows-needs, POW-domains | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
@@ -6155,6 +6252,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | LIT-generic-class-follows-needs, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
+| 1 | CHK-obligation-ledger, PROOF-sweep | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 1 | CHK-obligation-ledger, POW-domains | `crates/zedc-check/src/check/walk.rs` |
+| 1 | CHK-obligation-ledger, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
+| 1 | CHK-obligation-ledger, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
+| 1 | CHK-obligation-ledger, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | CHK-obligation-ledger, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | PROOF-sweep, PRES-cover-refusals-moduli | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
 | 1 | PROOF-sweep, PRES-shadows-refusal-by-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 1 | PROOF-sweep, POW-domains | `crates/zedc-check/src/check/walk.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zedc-lattice/src/float.rs` |
@@ -6206,12 +6309,15 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 2 | L1.14a, L1.29c | `crates/zedc-check/src/check/` |
 | 2 | L1.14a, CONST-too-large-products-fix | `crates/zedc-check/src/check/` |
 | 2 | L1.14a, PERF-long-literal-digits | `crates/zedc-check/src/check/` |
+| 2 | L1.14a, TEST-random-sweep-off | `crates/zedc-check/src/check/walk.rs` |
 | 2 | L1.14a, LAYER-L1-forms | `crates/zedc-check/src/check/` |
 | 2 | L1.14a, RANGE-keys-in-printed-type | `crates/zedc-resolve/src/resolve.rs` |
 | 2 | L1.29c, CONST-too-large-products-fix | `crates/zedc-check/src/check/` |
 | 2 | L1.29c, PERF-long-literal-digits | `crates/zedc-check/src/check/` |
+| 2 | L1.29c, TEST-random-sweep-off | `crates/zedc-check/src/check/walk.rs` |
 | 2 | L1.29c, LAYER-L1-forms | `crates/zedc-check/src/check/` |
 | 2 | CONST-too-large-products-fix, PERF-long-literal-digits | `crates/zedc-check/src/` |
+| 2 | CONST-too-large-products-fix, TEST-random-sweep-off | `crates/zedc-check/src/check/walk.rs` |
 | 2 | CONST-too-large-products-fix, LAYER-L1-forms | `crates/zedc-check/src/check/` |
 | 2 | MAIN-limits-count, HEAP-fresh-ratio | `crates/zed-rt/src/heap.rs` |
 | 2 | MAIN-limits-count, PULL-bisect | `crates/zed-rt/src/` |
@@ -6301,10 +6407,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 2 | PRES-growth-linked-nest, PRES-growth-coefficient-bits | `compiler/src/store/presburger` |
 | 2 | PRES-growth-linked-nest, PRES-growth-probe-guards | `compiler/src/store/presburger` |
 | 2 | PRES-growth-coefficient-bits, PRES-growth-probe-guards | `compiler/src/store/presburger` |
+| 2 | PERF-long-literal-digits, TEST-random-sweep-off | `crates/zedc-check/src/check/walk.rs` |
 | 2 | PERF-long-literal-digits, LAYER-L1-forms | `crates/zedc-check/src/check/` |
 | 2 | PERF-alternating-product-bytes, PERF-wide-modulus-cliffs | `crates/zedc-preimage/src/` |
 | 2 | PERF-alternating-product-bytes, PULL-bisect | `crates/zedc-preimage/src/` |
 | 2 | PERF-wide-modulus-cliffs, PULL-bisect | `crates/zedc-preimage/src/` |
+| 2 | TEST-random-sweep-off, LAYER-L1-forms | `crates/zedc-check/src/check/walk.rs` |
+| 2 | TEST-random-sweep-off, PERF-value-key-sites-bench | `crates/zedc-check/src/check/walk.rs` |
 | 2 | PRES-sign-tie-names, PRES-solve-equation-sign | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | PRES-sign-tie-names, HAS-point-overlap2c-mid | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | PRES-solve-equation-sign, HAS-point-overlap2c-mid | `crates/zedc-presburger/src/presburger.rs` |
@@ -8217,7 +8326,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-kernel/src/num/`: level 0: POLY-mul-cost-gaps, RADIX-nlog2-10_5; level 2: PERF-div-bytes-2p17; level 44: CONST-fold-budget-failure
 - `crates/zed-kernel/src/print.rs`: level 8: L2.4; level 19: L2.10; level 23: L3.4; level 27: L3.8
 - `crates/zed-kernel/src/provenance.rs`: level 8: L2.4; level 20: L3.2; level 22: L3.3; level 23: L6.7; level 51: L7.3; level 54: L7.6; level 59: L15.4; level 86: L27.2
-- `crates/zed-kernel/src/term.rs`: level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
+- `crates/zed-kernel/src/term.rs`: level 0: KERNEL-prim-arrow-table; level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
 - `crates/zed-kernel/src/text.rs`: level 39: L5.6; level 44: L6.16; level 45: STR-cursor
 - `crates/zed-kernel/src/types.rs`: level 0: PERF-row-hash-tied-digest, PROOF-meet-rows-finite; level 1: LIT-power-expression; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 17: L1.40e; level 26: L3.7; level 37: L5.2; level 49: L7.1; level 50: L7.1b, L7.2; level 52: L7.4, L9.1; level 53: L10.2; level 54: L10.3
 - `crates/zed-kernel/src/types/`: level 0: FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, TEST-kernel-unreached-paths-4; level 1: PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 2: REFUSAL-front-rest, REFUSAL-r3-seed2-16-inhabited; level 3: A5-print, GROUP-order-verdicts; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
@@ -8267,7 +8376,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc-check/src/check/ladder.rs`: level 39: L6.12; level 40: L6.12g
 - `crates/zedc-check/src/check/mod.rs`: level 0: CMP-repair-values, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-many-args-shared-var-square, PLACE-value-inside-arg, PRINT-repair-parens-minimal, PROOF-diff-payload-rest-refused, TEST-arrow-lambda-trial-stale, TEST-sig-text-printed-type-matches-calls; level 1: PUSH-bubble-nested; level 7: L2.5; level 9: L6.8, T11-ty; level 10: LOOP-frames-final, T11-check; level 11: LOOP-break-checkpoints; level 15: L2.7; level 17: L2.6; level 18: HKT-2, L2.12, L2.6b; level 19: BUBBLE-msg, L2.10; level 20: L3.2; level 21: L3.2b, L4.1; level 25: L3.6, L6.4; level 26: L3.7; level 27: L3.8; level 31: L3.10; level 32: L3.18; level 33: L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening; level 40: L6.12g, L6.19, L6.5; level 41: HKT-1, L6.5c, L6.8a; level 42: L5.10; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 51: LIT-declared-fix-call-arg; level 53: L10.2, L21.2; level 56: CODEC-utf8, PASSES-vars-test; level 57: L20.1; level 59: L20.2; level 60: L22.2; level 61: L22.8; level 64: L22.3; level 65: L22.4, L22.5; level 66: L22.6, L22.7; level 68: L24.4; level 77: L21.1; level 86: L27.2
 - `crates/zedc-check/src/check/overload.rs`: level 17: L2.6; level 18: L2.12, L2.6b; level 19: BUBBLE-msg; level 64: LIST-exact-overlap
-- `crates/zedc-check/src/check/walk.rs`: level 0: CHECK-binder-call-summary, CHECK-destructure-order, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, FAIL-arrow-lambda-partial-slot, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-generic-lambda-result-literal-type, MSG-many-args-shared-var-square, PRINT-repair-parens-minimal, PROOF-call-written-append-only, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached; level 1: POW-domains, REDUCE-by-function, REDUCE-family-entries, REPAIR-through-branch, WHERE-loose-atoms; level 3: ST-walk-bound-test; level 4: RANGE-open-names; level 11: FAIL-map-chain-needs-quadratic; level 20: OR-PAT-check; level 24: SCHED-scc-unit; level 39: RANGE-loop-key-widening
+- `crates/zedc-check/src/check/walk.rs`: level 0: CHECK-binder-call-summary, CHECK-destructure-order, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CHK-obligation-sweep, FAIL-arrow-lambda-partial-slot, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-generic-lambda-result-literal-type, MSG-many-args-shared-var-square, PRINT-repair-parens-minimal, PROOF-call-written-append-only, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached; level 1: CHK-obligation-ledger, POW-domains, REDUCE-by-function, REDUCE-family-entries, REPAIR-through-branch, WHERE-loose-atoms; level 2: TEST-random-sweep-off; level 3: ST-walk-bound-test; level 4: RANGE-open-names; level 11: FAIL-map-chain-needs-quadratic; level 20: OR-PAT-check; level 24: SCHED-scc-unit; level 39: RANGE-loop-key-widening
 - `crates/zedc-check/src/check/walk/fp_ops.rs`: level 0: FP-ops-order, MSG-generic-lambda-result-literal-type, TEST-generic-operand-messages-reached; level 26: ZIP-keyspace-loops-recursion
 - `crates/zedc-check/src/check/walk/remap.rs`: level 1: GROUP-prelude, REMAP-fewer-binders, TONIC-remap-witness; level 2: GROUP-nested
 - `crates/zedc-check/src/check/witness.rs`: level 36: L4.4; level 37: L4.5
