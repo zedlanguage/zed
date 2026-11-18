@@ -1480,6 +1480,19 @@ type ReadOnce = (bool, HashMap<Atom, IntervalSet>);
 /// where the paths to the blocks of `s` part (their lowest common ancestors), checked one by one,
 /// and on the paths between them, where one part alone reads `s` and `esc` is counted as before
 /// (Sol, round 2 of XR-cover-hybrid).
+///
+/// A conjunction's rows of one atom are kept as a box apart from its block, so a conjunction may
+/// read an atom in its box and in one part under it. Each block's rows are met with the boxes of
+/// the conjunctions above it before it is projected: at a point of `f` that comes through the
+/// block, every conjunction on the path holds, so the added rows change neither `f`'s points nor
+/// the values read there. The rule above then holds with "every value" read as the box met on the
+/// path down to that node: a disjunction's part with a point that does not read `s` gives `s` the
+/// values the conjunctions above allow, no more (CE1: `(-5 <= s <= 5) && (s >= 0 || y >= 0)` gives
+/// `s` in [-5, 5]); a conjunction whose met box is empty has no point (CE2). A conjunction with two
+/// parts reading `s` beyond its box is still declined (CE3) (Gemini, round 3 of XR-cover-hybrid,
+/// PRES-cover-unary-push-down). The walk keeps the met box with an undo list, O(1) a bound, so it
+/// costs O(n) over the tree; the naive alternative, each block's ancestors read again, is O(n
+/// depth).
 // Complexity tradeoff: [`direct`] reads the whole of `f` once for each symbol, O(k n) for k
 // symbols, 52.9 times the time at 8 times the depth of a chain of accounts
 // (`deep_condition::bench::arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth`).
@@ -1554,6 +1567,11 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                     values.push(nodes.len() - 1);
                     continue;
                 }
+                // A conjunction takes in the parts of the conjunctions under it, and its rows
+                // are one block: the rows of `x0 <= -1 and not (x0 >= 0 or ...)` that read
+                // `x0` meet in one block. Each list taken in is moved into the longer one, so a
+                // chain of n conjunctions costs O(n log n), not O(n^2). The nodes taken in stay
+                // in `nodes`, unreached. Rows of one atom are then met into the box `unary`.
                 let mut rows: Vec<Con> = Vec::new();
                 let mut unary: HashMap<Atom, Ends> = HashMap::new();
                 let mut unsat = false;
@@ -1674,7 +1692,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         Exit(Vec<(Atom, Option<Ends>)>),
     }
     let mut cur_box: HashMap<Atom, Ends> = HashMap::new();
-    let mut after_box: Vec<HashMap<Atom, Ends>> = (0..nodes.len()).map(|_| HashMap::new()).collect();
+    let mut after_box: Vec<HashMap<Atom, Ends>> =
+        (0..nodes.len()).map(|_| HashMap::new()).collect();
     let mut box_unsat = vec![false; nodes.len()];
     let mut pushed: Vec<Vec<Con>> = (0..nodes.len()).map(|_| Vec::new()).collect();
     let mut bstack = vec![BoxStep::Enter(root)];
@@ -1842,7 +1861,9 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 }
                 all
             }
-            Node::And { unsat, kids: cs, .. } => !*unsat && !box_unsat[i] && cs.iter().all(|&c| sat[c]),
+            Node::And {
+                unsat, kids: cs, ..
+            } => !*unsat && !box_unsat[i] && cs.iter().all(|&c| sat[c]),
             Node::Or(cs) => cs.iter().any(|&c| sat[c]),
         };
     }
@@ -1876,6 +1897,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
             }
         }
     }
+    // Where some atom is read by two nodes, or a conjunction holds a box: the order of a walk of
+    // the tree from the root, and the ancestors of each node 2^j steps up.
     let mut order = vec![0usize; nodes.len()];
     let mut lift: Vec<Vec<usize>> = Vec::new();
     if any_and_unary || occ_of.values().any(|os| os.len() > 1) {
@@ -1924,7 +1947,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         if ends_empty(e) {
             IntervalSet::empty()
         } else {
-            let fin = |v: &Option<Int>, inf: End| v.as_ref().map_or(inf, |x| End::Fin(Num::from(x)));
+            let fin =
+                |v: &Option<Int>, inf: End| v.as_ref().map_or(inf, |x| End::Fin(Num::from(x)));
             IntervalSet::range(fin(&e.0, End::NegInf), fin(&e.1, End::PosInf))
         }
     };
