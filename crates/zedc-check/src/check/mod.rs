@@ -14555,6 +14555,70 @@ mod tests {
         family_values(&family_with_lookup(Ty::carrier(Carrier::Int)));
     }
 
+    /// Plan row PERF-value-key-sites-bench: the literals recorded by [`Ck::spells`] are keyed by
+    /// their values in `spelled` and `mixed`, so a value written two ways is one key, mixed, and
+    /// two values are two keys. `31` and `0x1F`; 10^19 from its digits and from a decimal
+    /// exponent, past 64 bits; 3/4 built from 3 and 4 and read as `75e-2`; `0.0` and `-0.0`,
+    /// recorded as the zero under its `-`; `1e19 + 1` and `32`, written once.
+    #[test]
+    fn equal_literal_values_are_one_key_of_the_spellings() {
+        use num_bigint::BigInt;
+        use zed_kernel::num::Rat;
+        let text =
+            "31 0x1F 10000000000000000000 1e19 0.75r 75e-2r 0.0 -0.0 10000000000000000001 32";
+        let at = |s: &str| {
+            let start = text.find(s).expect("in the text");
+            Span {
+                start,
+                end: start + s.len(),
+            }
+        };
+        let wide = Value::int(BigInt::from(10_u64.pow(19)));
+        let wide_decimal =
+            Value::integer(Rat::decimal("1e19").expect("memory").expect("a decimal"));
+        let built = Rat::new(BigInt::from(3), BigInt::from(4)).expect("a denominator above 0");
+        let quarters = Value::rat(built);
+        let decimal = Value::rat(Rat::decimal("75e-2").expect("memory").expect("a decimal"));
+        let next = Value::int(BigInt::from(10_u64.pow(19)) + 1);
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let mut t = Tables::new(&[], &res);
+        t.text = Some(text);
+        let mut ck = checker(&t);
+        let written = [
+            (Value::Int(31), at("31")),
+            (Value::Int(31), at("0x1F")),
+            (wide.clone(), at("10000000000000000000")),
+            (wide_decimal.clone(), at("1e19")),
+            (quarters.clone(), at("0.75r")),
+            (decimal.clone(), at("75e-2r")),
+            (Value::float(0.0), at("0.0")),
+            (Value::float(0.0), at("-0.0")),
+            (next.clone(), at("10000000000000000001")),
+            (Value::Int(32), at("32")),
+        ];
+        for (v, span) in &written {
+            ck.spells(v, *span);
+        }
+        assert_eq!(ck.spelled.len(), 6);
+        let mixed = [Value::Int(31), wide_decimal, decimal, Value::float(0.0)];
+        assert_eq!(ck.mixed.len(), mixed.len());
+        for v in &mixed {
+            assert!(ck.mixed.contains(v), "{v} is mixed");
+        }
+        for (v, want) in [
+            (Value::Int(31), "31"),
+            (wide, "10000000000000000000"),
+            (quarters, "0.75r"),
+            (next, "10000000000000000001"),
+            (Value::Int(32), "32"),
+        ] {
+            let spelled = ck.spelling(&v);
+            assert_eq!(spelled.text.as_deref(), Some(want), "{v}");
+        }
+        assert!(ck.spelling(&Value::Int(32)).everywhere);
+        assert!(!ck.spelling(&Value::Int(31)).everywhere);
+    }
+
     /// PROOF-read-fit-single-writer: a trial's [`Fit::Read`] from the construct that wrote the
     /// walk's `Read` at a span replaces it, and the trial's undo puts the walk's back
     /// ([`Ck::put_read`]).

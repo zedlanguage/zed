@@ -2197,3 +2197,31 @@ fn xr_r2_q3_three_tuple_non_reversal_permutation_boundary() {
     assert_eq!(g_id, vec![vec![0, 1]]);
     assert_eq!(g_perm, vec![vec![0], vec![1]]);
 }
+
+/// Plan row PERF-value-key-sites-bench: classes keyed by [`ValueKey`], given as `stored_class`
+/// gives them (`entry` and `or_insert` of the next number), to families. Every value of a group
+/// of `value::key_forms::family_key_groups` (a range, its map and a `++` list; `0.0` and `-0.0`,
+/// two classes; a rational, a key past 64 bits and a string key in two forms; nested families;
+/// values swapped between keys; families one entry apart) gets its group's class, and the groups
+/// get one class each. A tuple key of those classes is one class per group too.
+#[test]
+fn equal_families_get_one_class_by_value_key() {
+    let keys = crate::value::key_forms::family_keys();
+    let mut classes: HashMap<ValueKey, usize> = HashMap::new();
+    let mut of_group: BTreeMap<usize, usize> = BTreeMap::new();
+    for (v, g) in &keys {
+        let next = classes.len();
+        let class = *classes.entry(ValueKey::Value(v.clone())).or_insert(next);
+        assert_eq!(*of_group.entry(*g).or_insert(class), class, "{v}");
+    }
+    let groups = of_group.len();
+    assert_eq!(classes.len(), groups);
+    for (v, g) in &keys {
+        let class = classes[&ValueKey::Value(v.clone())];
+        let next = classes.len();
+        let pair = ValueKey::Tuple(vec![class, *g]);
+        let paired = *classes.entry(pair).or_insert(next);
+        assert_eq!(classes[&ValueKey::Tuple(vec![of_group[g], *g])], paired);
+    }
+    assert_eq!(classes.len(), 2 * groups);
+}

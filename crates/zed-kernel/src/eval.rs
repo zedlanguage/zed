@@ -51,6 +51,9 @@ mod binder_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod bench;
+
 /// The minimum depth of nested calls the evaluator reaches (DESIGN.md step M0.11, prelude unit
 /// `limits`): a conforming compiler never rejects an evaluation for nesting calls this deep. It
 /// is a minimum and not a maximum: the evaluator's frames are on the heap, so it is bounded only

@@ -169,3 +169,36 @@ fn the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales() {
         },
     );
 }
+
+/// Plan row PERF-value-key-sites-bench: n families of one size and the same end entries given
+/// classes by [`ValueKey`] as `stored_class` gives them (`entry`, `or_insert` of the next
+/// number), then each found again by a copy built apart: one digest and O(1) expected compares a
+/// key, O(n) in all; with the hash that read the size alone, O(n^2). The keys are built before
+/// timing; the run is the map's inserts and lookups alone. The classes are checked at small
+/// sizes by `equal_families_get_one_class_by_value_key` in `tests.rs`.
+#[test]
+fn classes_of_families_by_value_key_scale() {
+    use crate::value::key_forms::families_of_one_size;
+    let inputs = crate::scaling::inputs(20_000, |n| {
+        let key = |v: Value| ValueKey::Value(v);
+        let keys: Vec<ValueKey> = families_of_one_size(n).into_iter().map(key).collect();
+        let probes: Vec<ValueKey> = families_of_one_size(n).into_iter().map(key).collect();
+        (keys, probes)
+    });
+    crate::scaling::check_order(
+        "classes of n families of one size by ValueKey, and n lookups",
+        20_000,
+        1,
+        |n| {
+            let (keys, probes) = &inputs[&n];
+            let mut classes: HashMap<ValueKey, usize> = HashMap::new();
+            for k in keys {
+                let next = classes.len();
+                classes.entry(k.clone()).or_insert(next);
+            }
+            assert_eq!(classes.len(), n);
+            let found = probes.iter().filter(|p| classes.contains_key(p)).count();
+            assert_eq!(found, n);
+        },
+    );
+}

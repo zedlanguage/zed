@@ -125,6 +125,18 @@ pub(crate) fn add(a: u64, b: u64) -> u64 {
     if s >= SUM_MODULUS { s - SUM_MODULUS } else { s }
 }
 
+/// The bit a kept sum carries beside its residue when the entries it covers hold a `-0.0` at
+/// any depth (`value::family_sum`), so that whether a family is its own key (`Value::is_key`)
+/// is read from the kept sums at the cost of a hash. A residue is below [`SUM_MODULUS`], under
+/// `2^61`, so the bit is free, and a flagged sum is below `2^63`, never [`UNSUMMED`].
+pub(crate) const NEG_ZERO: u64 = 1 << 62;
+
+/// Two sums as [`Map::sum`] joins them: the residues added by [`add`], the flags
+/// [`NEG_ZERO`] joined by or.
+pub(crate) fn join(a: u64, b: u64) -> u64 {
+    add(a & !NEG_ZERO, b & !NEG_ZERO) | ((a | b) & NEG_ZERO)
+}
+
 impl<K, V> Branch<K, V> {
     /// The branch of `child` and the entry `next` after it, no sum kept.
     fn new(child: Node<K, V>, next: Option<(K, V)>) -> Self {
@@ -334,7 +346,8 @@ impl<K, V> Map<K, V> {
         self.iter().map(|(_, v)| v)
     }
 
-    /// The sum modulo [`SUM_MODULUS`] of `entry` over the entries, each term below the modulus.
+    /// The sum modulo [`SUM_MODULUS`] of `entry` over the entries, each term below the modulus
+    /// with or without the flag [`NEG_ZERO`], which the sum carries if any term does.
     /// `entry` is called on the entries the kept sums do not cover, in key order, and must be
     /// the one function every sum of a map of this `K` and `V` is taken with, since a branch
     /// keeps its child's sum for the next sum of any map that shares it; the families'
@@ -347,7 +360,7 @@ impl<K, V> Map<K, V> {
     pub(crate) fn sum(&self, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
         fn node<K, V>(n: &Node<K, V>, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
             match n {
-                Node::Leaf(s) => s.iter().fold(0, |acc, (k, v)| add(acc, entry(k, v))),
+                Node::Leaf(s) => s.iter().fold(0, |acc, (k, v)| join(acc, entry(k, v))),
                 Node::Inner(bs) => bs.iter().fold(0, |acc, b| {
                     let kept = b.sum.load(Relaxed);
                     let below = match kept {
@@ -360,7 +373,7 @@ impl<K, V> Map<K, V> {
                         s => s,
                     };
                     let here = b.next.as_ref().map_or(0, |(k, v)| entry(k, v));
-                    add(add(acc, below), here)
+                    join(join(acc, below), here)
                 }),
             }
         }

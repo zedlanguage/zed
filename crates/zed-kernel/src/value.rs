@@ -727,23 +727,24 @@ impl Value {
     /// The value as a key (sec:type_resolution, "Equality and order corner rules"): `-0.0`
     /// becomes `0.0` at any depth, since `0.0 == -0.0` makes the two zeros one key, which then
     /// holds the same bits whichever zero arrived first. NaN is already one value. A value that
-    /// is its own key is shared, not copied.
+    /// is its own key is shared, not copied; of one that is not, only the parts that hold a
+    /// `-0.0` are copied (`keyed`). "Any depth" takes in the keys and values of families, since
+    /// `[-0.0, 1.0] == [0.0, 1.0]` (plan row PERF-value-key-sites-bench: the lookup
+    /// `{[0.0, 1.0] -> 7}[[-0.0, 1.0]]` missed when a family was kept as it came).
     pub fn key(&self) -> Value {
-        match self {
-            Value::Tuple(_) | Value::Path(_) | Value::Atom(_) if self.is_key() => self.clone(),
-            Value::Tuple(_) | Value::Path(_) | Value::Atom(_) => {
-                let mut one = copy(slice::from_ref(self), key_leaf);
-                one.pop().expect("a copy of one value holds one value")
-            }
-            leaf => key_leaf(leaf),
+        match self.is_key() {
+            true => self.clone(),
+            false => keyed(self),
         }
     }
 
-    /// Whether the value is its own key: whether it holds no `-0.0`.
+    /// Whether the value is its own key: whether it holds no `-0.0`, in a family read from the
+    /// flag its kept sums carry (`btree::NEG_ZERO`), at the cost of its hash.
     pub fn is_key(&self) -> bool {
         all_leaves(slice::from_ref(self), |v| match v {
             Value::Float(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
             Value::Float32(x) => !(x.get() == 0.0 && x.get().is_sign_negative()),
+            Value::Family(f) => !family_flagged(f, &mut Read::default()),
             _ => true,
         })
     }
@@ -872,13 +873,88 @@ impl Value {
     }
 }
 
-/// A value `Value::key` keeps: anything but a zero, which is made positive.
-fn key_leaf(v: &Value) -> Value {
-    match v {
-        Value::Float(x) if x.get() == 0.0 => Value::float(0.0),
-        Value::Float32(x) if x.get() == 0.0 => Value::float32(0.0),
-        v => v.clone(),
+/// The key of a value that is not its own key ([`Value::key`]): each zero made positive, at any
+/// depth, families included. The families that hold a `-0.0` (by the flag of their sums) are
+/// found by a walk with its own stack and rebuilt after those beneath them, each once, with
+/// their keys and values made keys; every other family and every shared sequence is kept or
+/// copied once ([`copy`]), so depth takes no native stack.
+// Complexity tradeoff: the naive key copies the value whole, O(its size) on every lookup, also
+// for a family key that holds no `-0.0`. Used: `is_key` reads each family's flag from its
+// kept sums, O(1) amortized as its hash is, and only a value that holds a `-0.0` comes here,
+// which copies the families that hold it, O(their size), as a fresh copy of the key must.
+// Tradeoff: a sequence shared by several such families is read once for each of them.
+fn keyed(top: &Value) -> Value {
+    let mut read = Read::default();
+    let mut stack: Vec<(&Family, bool)> = Vec::new();
+    let mut done: HashMap<usize, Value> = HashMap::new();
+    flagged_beneath(top, &mut read, &mut HashSet::new(), &mut stack);
+    // Post-order: a family is rebuilt when popped the second time, after every flagged family
+    // its entries hold. Values are acyclic, so a family pushed again is finished before the
+    // copy below it is popped, which then finds it done.
+    while let Some((f, expanded)) = stack.pop() {
+        if done.contains_key(&f.0.key()) {
+            continue;
+        }
+        match expanded {
+            true => {
+                let map = f
+                    .iter()
+                    .map(|(k, v)| (key_with(k, &done), key_with(v, &done)));
+                done.insert(f.0.key(), Value::Family(Family::from_map(map.collect())));
+            }
+            false => {
+                stack.push((f, true));
+                // A set of its own: a sequence read under another family may hold a family
+                // pushed then and not yet rebuilt, which this one must push again.
+                let mut seen = HashSet::new();
+                for (k, v) in f.iter() {
+                    flagged_beneath(k, &mut read, &mut seen, &mut stack);
+                    flagged_beneath(v, &mut read, &mut seen, &mut stack);
+                }
+            }
+        }
     }
+    key_with(top, &done)
+}
+
+/// Pushes onto `stack` each family that holds a `-0.0` and is found in `v` without passing
+/// through a family: `v` itself, or one in its tuples, keypaths and atoms' payloads, each
+/// shared sequence read once while `seen` lives.
+fn flagged_beneath<'a>(
+    v: &'a Value,
+    read: &mut Read,
+    seen: &mut HashSet<Id>,
+    stack: &mut Vec<(&'a Family, bool)>,
+) {
+    let mut todo = vec![v];
+    while let Some(x) = todo.pop() {
+        match x {
+            Value::Family(f) => {
+                if family_flagged(f, read) {
+                    stack.push((f, false));
+                }
+            }
+            _ => {
+                if let Some((_, xs)) = with_sequence(x)
+                    && (!xs.is_shared() || seen.insert(xs.id()))
+                {
+                    todo.extend(xs.iter());
+                }
+            }
+        }
+    }
+}
+
+/// `v` with each zero made positive and each family that holds a `-0.0` replaced by its
+/// rebuilt key in `done`, which holds every such family `v` holds.
+fn key_with(v: &Value, done: &HashMap<usize, Value>) -> Value {
+    let mut one = copy(slice::from_ref(v), &mut |x| match x {
+        Value::Float(f) if f.get() == 0.0 => Value::float(0.0),
+        Value::Float32(f) if f.get() == 0.0 => Value::float32(0.0),
+        Value::Family(f) => done.get(&f.0.key()).cloned().unwrap_or_else(|| x.clone()),
+        x => x.clone(),
+    });
+    one.pop().expect("a copy of one value holds one value")
 }
 
 /// Two numbers by value; equal values by kind, `int`, `rat`, `f32`, `f64`, and two
@@ -1075,13 +1151,19 @@ fn value_term(v: &Value, read: &mut Read) -> u64 {
 
 /// The sum of the entries of a map as `family_sum` takes it, with each branch's sum kept
 /// ([`btree::Map::sum`]). Consecutive integer keys step the power of `R` by one product.
+/// The term of an entry carries [`btree::NEG_ZERO`] when its key or value holds a `-0.0`
+/// (`holds_neg_zero`).
 fn map_sum(m: &btree::Map<Value, Value>, read: &mut Read) -> u64 {
     let mut before: Option<(i64, u64)> = None;
     m.sum(&mut |k, v| {
+        let flag = match holds_neg_zero(k, read) || holds_neg_zero(v, read) {
+            true => btree::NEG_ZERO,
+            false => 0,
+        };
         let g = value_term(v, read);
         let Some((_, e)) = integer_residues(k) else {
             before = None;
-            return mix(digest_in(k, read), g) % P;
+            return (mix(digest_in(k, read), g) % P) | flag;
         };
         let w = match (k, before) {
             (Value::Int(i), Some((j, w))) if j.checked_add(1) == Some(*i) => field_mul(w, R),
@@ -1091,8 +1173,51 @@ fn map_sum(m: &btree::Map<Value, Value>, read: &mut Read) -> u64 {
             Value::Int(i) => Some((*i, w)),
             _ => None,
         };
-        field_mul(g, w)
+        field_mul(g, w) | flag
     })
+}
+
+/// Whether `v` holds a `-0.0` (of either width) at any depth: in its tuples, keypaths and atoms'
+/// payloads, read with a stack of their own, each shared sequence once, and in its families by
+/// the flag [`btree::NEG_ZERO`] of their sums, which `fill` put in `read` before the sum that
+/// asks. A range holds integers only.
+// Complexity tradeoff: every entry of every hashed map asks this of its key and its value, so a
+// value with no sequence (an integer, a float, a family) is answered with no allocation, O(1);
+// only a sequence builds the stack and the set of shared sequences seen, O(its parts). Building
+// both for every value cost 24% more instructions on `bench::hashing_a_map_after_each_change_
+// scales` and 38% on `bench::a_hash_set_of_families_of_one_size_scales` (2026-11-18).
+fn holds_neg_zero(v: &Value, read: &mut Read) -> bool {
+    let one = |x: &Value, read: &mut Read| match x {
+        Value::Float(f) => f.get() == 0.0 && f.get().is_sign_negative(),
+        Value::Float32(f) => f.get() == 0.0 && f.get().is_sign_negative(),
+        Value::Family(f) => family_flagged(f, read),
+        _ => false,
+    };
+    if with_sequence(v).is_none() {
+        return one(v, read);
+    }
+    let mut todo = vec![v];
+    let mut seen: HashSet<Id> = HashSet::new();
+    while let Some(x) = todo.pop() {
+        if one(x, read) {
+            return true;
+        }
+        if let Some((_, xs)) = with_sequence(x)
+            && (!xs.is_shared() || seen.insert(xs.id()))
+        {
+            todo.extend(xs.iter());
+        }
+    }
+    false
+}
+
+/// Whether the family holds a `-0.0` at any depth: the flag [`btree::NEG_ZERO`] of its sum. An
+/// unbounded family `a ..` holds the integers from `a`.
+fn family_flagged(f: &Family, read: &mut Read) -> bool {
+    match &f.0 {
+        Entries::Map(_) | Entries::Seq(_) => family_sum(f, read) & btree::NEG_ZERO != 0,
+        Entries::Range(_) | Entries::From(_) => false,
+    }
 }
 
 /// The sum of the entries of the range `lo ..= lo + n - 1`, each key mapping to itself, as
@@ -2100,7 +2225,8 @@ mod chain {
 
         /// The sum of the list's entries as a family's hash takes it (`family_sum`), from
         /// `leaf`, the sum of a leaf's entries counted from 0: a part of `p` entries after
-        /// `o` adds its own sum times `R^o`, since the term of key `i` is `G(v) · R^i`.
+        /// `o` adds its own sum times `R^o`, since the term of key `i` is `G(v) · R^i`. The flag
+        /// [`btree::NEG_ZERO`] of a part is carried past the product and joined by or.
         // Complexity tradeoff: the naive sum reads the list's entries, O(n) a hash. Used: each
         // node and deep tree keeps its sum once read; a part is never changed, so the sum
         // holds while the part lives. A list made by `++` from lists already summed builds
@@ -2119,7 +2245,9 @@ mod chain {
                 let (mut acc, mut offset) = (0, 0u64);
                 for q in p.parts() {
                     let s = part(q, leaf);
-                    acc = btree::add(acc, field_mul(s, pow_r(offset % (P - 1))));
+                    let flag = s & btree::NEG_ZERO;
+                    let r = field_mul(s & !btree::NEG_ZERO, pow_r(offset % (P - 1)));
+                    acc = btree::join(acc, r | flag);
                     offset += q.len() as u64;
                 }
                 *kept.get_or_init(|| acc)
@@ -4131,7 +4259,7 @@ impl<'a> Copying<'a> {
 // its address), so each shared sequence is read once: O(distinct sequences) time, O(depth)
 // heap. Tradeoff: the map or set costs memory in the shared sequences met, and only sequences
 // held in more than one place (`is_shared`) are entered in it.
-pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
+pub(crate) fn copy(from: &[Value], leaf: &mut impl FnMut(&Value) -> Value) -> Vec<Value> {
     let mut level = Copying::new(from, Shape::Tuple, None);
     let mut above = Vec::new();
     let mut copied: HashMap<Id, Items> = HashMap::new();
@@ -4855,6 +4983,9 @@ impl From<TooLong> for KernelError {
 mod bench;
 
 #[cfg(test)]
+pub(crate) mod key_forms;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -4880,6 +5011,79 @@ mod tests {
             .map(|i| digest(&Value::Family(Family::range(i, i + 9))))
             .collect();
         assert_eq!(lists.len(), 64);
+    }
+
+    /// A key holds no `-0.0` at any depth, families included (DESIGN.md sec:type_resolution,
+    /// "Equality and order corner rules"; plan row PERF-value-key-sites-bench): `[-0.0, 1.0]`
+    /// finds the entry of `[0.0, 1.0]`, in each form of list and nested in a tuple and a family,
+    /// and `key` gives the value with `0.0`. Before the fix `is_key` passed over families, so
+    /// the lookup missed and `key` kept `-0.0`.
+    #[test]
+    fn a_family_holding_minus_zero_has_the_key_of_the_one_holding_zero() {
+        let list = |xs: Vec<Value>| Family::of((0_i64..).zip(xs));
+        let fam = |xs: Vec<Value>| Value::Family(list(xs));
+        let (z, n, one) = (Value::float(0.0), Value::float(-0.0), Value::float(1.0));
+        let joined = Value::Family(
+            list(vec![n.clone()])
+                .concat(&list(vec![one.clone()]))
+                .unwrap(),
+        );
+        let tuple = |v: Value| Value::Tuple(vec![Value::Int(3), v].into());
+        let outer = |v: Value| Value::Family(Family::of([(0_i64, v)]));
+        let f32 = |x: f32| fam(vec![Value::float32(x)]);
+        let pairs = [
+            (
+                fam(vec![n.clone(), one.clone()]),
+                fam(vec![z.clone(), one.clone()]),
+            ),
+            (joined, fam(vec![z.clone(), one.clone()])),
+            (tuple(fam(vec![n.clone()])), tuple(fam(vec![z.clone()]))),
+            (outer(fam(vec![n.clone()])), outer(fam(vec![z.clone()]))),
+            (
+                outer(outer(tuple(n.clone()))),
+                outer(outer(tuple(z.clone()))),
+            ),
+            (f32(-0.0), f32(0.0)),
+        ];
+        for (minus, plus) in &pairs {
+            assert!(!minus.is_key(), "{minus}");
+            assert!(plus.is_key(), "{plus}");
+            assert_eq!(&minus.key(), plus, "{minus}");
+            assert_eq!(digest(&minus.key()), digest(plus), "{minus}");
+            let t = Family::set([plus.clone()]);
+            assert_eq!(t.get(minus), Some(plus), "{minus} in {t}");
+        }
+        // A sequence shared by a family and by a family it holds, read under the first one
+        // before the second, which must still find the family in it.
+        let shared = Value::Tuple(vec![fam(vec![n.clone()])].into());
+        let inner = Value::Family(Family::of([(0_i64, shared.clone())]));
+        let top = Value::Family(Family::of([(0_i64, shared), (1, inner)]));
+        let plus = Value::Tuple(vec![fam(vec![z.clone()])].into());
+        let want = Family::of([
+            (0_i64, plus.clone()),
+            (1, Value::Family(Family::of([(0_i64, plus)]))),
+        ]);
+        assert_eq!(top.key(), Value::Family(want));
+        // A value that is its own key is shared, not copied.
+        let kept = fam(vec![z, one]);
+        let at = |v: &Value| v.as_family().expect("a family").0.key();
+        assert_eq!(at(&kept.key()), at(&kept));
+    }
+
+    /// The flag of a kept sum follows changes: a `-0.0` put into a map of many entries is found,
+    /// and its removal clears the flag on its path.
+    #[test]
+    fn the_minus_zero_flag_follows_changes() {
+        let mut m: btree::Map<Value, Value> = (0..1_000_i64)
+            .map(|i| (Value::Int(i), Value::float(1.0)))
+            .collect();
+        let flagged =
+            |m: &btree::Map<Value, Value>| !Value::Family(Family::from_map(m.clone())).is_key();
+        assert!(!flagged(&m));
+        m.insert(Value::Int(500), Value::float(-0.0));
+        assert!(flagged(&m));
+        m.insert(Value::Int(500), Value::float(2.0));
+        assert!(!flagged(&m));
     }
 
     /// Equal families hash alike in each form: a map, a range of 64-bit ends, a range of wide

@@ -370,9 +370,10 @@ fn a_right_fold_building_a_list_by_concatenation_runs_in_n_log_n() {
 /// The terms are lowered, legalized and planned before the runs; each run compiles the program
 /// too, most of its instructions, since `zed_native::run` does both. Before the fix the ratio
 /// was 43.3 at n = 1000: the compile, whose table of constants compared the n one-entry lists
-/// with one another, all of one count (`zed_native::tables`, `ConstKey`, which now hashes a
-/// family's end entries too). Controls, not committed: the hash without the end entries fails
-/// at 37.76; each `++` building its list's map, O(n) a step, fails at 14.71.
+/// with one another, all of one count (`zed_native::tables`; a key `ConstKey` then hashed a
+/// family's end entries too, and since PERF-family-hash-count-only `Value`'s own hash reads
+/// every entry). Controls, not committed: the hash without the end entries fails at 37.76;
+/// each `++` building its list's map, O(n) a step, fails at 14.71.
 fn native_concat_chain_ratio(right: bool, what: &str) {
     scaling::on_a_thread(1 << 29, || {
         let planned = scaling::inputs(N_CONCAT, |k| {
@@ -401,6 +402,37 @@ fn a_native_left_nested_chain_of_concatenations_runs_in_n_log_n() {
         false,
         "n native `a ++ [x]`, each on the list made by the one before, instructions",
     );
+}
+
+/// Plan row PERF-value-key-sites-bench: a native program holding n distinct constants
+/// `[0, i, 0]`, of one count and the same end entries, the case `ConstKey` (F223b) left in one
+/// bucket. `(x) -> (x, [0, 0, 0], …, [0, n-1, 0])` applied to 7: the parameter keeps the tuple
+/// from being one constant, so the compile puts each list in the table of constants
+/// (`zed_native::tables`, `const_at`, keyed by `Value`'s hash), O(1) expected compares each,
+/// and the run builds the tuple. The terms are lowered, legalized and planned before the runs.
+/// The correctness test at a small size is `zed_native`'s
+/// `tables::tests::equal_constants_share_one_entry_and_others_do_not`.
+#[test]
+fn constants_of_families_of_one_size_and_ends_scale() {
+    const N: usize = 2_000;
+    let list = |i: usize| Value::Family(Family::of([(0_i64, 0), (1, i as i64), (2, 0)]));
+    scaling::on_a_thread(1 << 29, || {
+        let planned = scaling::inputs(N, |k| {
+            let items = std::iter::once(var("x")).chain((0..k).map(|i| lit(list(i))));
+            let body = Term::Prim(Prim::Tuple, items.collect());
+            cranelift::planned(&app(lam(&["x"], body), vec![lit(7_i64)]))
+        });
+        let run = |k: usize| {
+            let (g, p) = &planned[&k];
+            let o = zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap();
+            let Value::Tuple(parts) = &o.value else {
+                panic!("not a tuple: {}", o.value)
+            };
+            assert_eq!(parts.len(), k + 1);
+            assert_eq!(parts[k], list(k - 1));
+        };
+        scaling::check_order("a native program of n constants [0, i, 0]", N, 1, run);
+    });
 }
 
 /// Plan row FP-ops-scan: the scan walks the entries once, each step an entry step,

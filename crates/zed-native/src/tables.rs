@@ -9,7 +9,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Value};
@@ -257,21 +256,21 @@ pub(crate) struct Tables {
     // and a compare only of constants of equal digest, which are equal or collide. Order was
     // never read; `consts` keeps the order of first use. Test
     // `l01_36a_executables/doubling.rs`.
-    // Complexity tradeoff (COMPLEXITY.md F223b): keyed by the value, every family hashed by its
-    // number of entries alone (`Value`'s `Hash`, plan row PERF-family-hash-count-only), so the n
-    // one-entry lists of n `[x] ++ a` fell in one bucket
-    // and each insert and lookup compared them all: O(n^2) compares to compile the program,
-    // 43 times the instructions at 8n (plan row PERF-list-concat-native). Here a family's hash
-    // also reads its first and last entry ([`ConstKey`]), O(log n) on a list made by `++` or
-    // a map, O(1) on a range, so families of one count with other ends fall apart; the key is
-    // still the value under `==`, which an executable needs (see `ConstKey`; a key by the
-    // built value's id, tried first, numbered the entries of a built program otherwise than
-    // its executable and failed `l01_36a_executables::port_in_family`). Tradeoff: n distinct
-    // family constants of one count and the same ends (`[0, i, 0]` for each i) still share a
-    // bucket, O(n^2) compares; not seen in a program yet, and the general fix of the family
-    // hash is plan row PERF-family-hash-count-only. Test
-    // `l03_15a_fp_ops_run::bench::a_native_right_nested_chain_of_concatenations_runs_in_n_log_n`.
-    const_at: HashMap<ConstKey, usize>,
+    // Complexity tradeoff (COMPLEXITY.md F223b, F223e): keyed by the value under `==`, which an
+    // executable needs: it builds this table again from the decoded program (`exe::start`),
+    // where every family and tuple constant is a copy of its own, so a key by the built value's
+    // id, tried first, numbered the entries of a built program otherwise than its executable and
+    // failed `l01_36a_executables::port_in_family`. When `Value`'s hash read only a family's
+    // number of entries, the n one-entry lists of n `[x] ++ a` fell in one bucket and each insert
+    // and lookup compared them all, O(n^2) compares, 43 times the instructions at 8n (plan row
+    // PERF-list-concat-native); a key that also hashed the first and last entry (`ConstKey`,
+    // F223b) left the n families of one count and the same ends (`[0, i, 0]` for each i) in one
+    // bucket. A family now hashes by all its entries, kept as sums (PERF-family-hash-count-only,
+    // F223e), O(1) for a family built once, so the value is the key: one digest and O(1)
+    // expected compares a constant. Tests `tests::equal_constants_share_one_entry_and_others_do_not`,
+    // and in `l03_15a_fp_ops_run::bench`, `constants_of_families_of_one_size_and_ends_scale` and
+    // `a_native_right_nested_chain_of_concatenations_runs_in_n_log_n`.
+    const_at: HashMap<Value, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
     /// The nodes legalization swapped, by number.
@@ -651,7 +650,7 @@ impl Tables {
             && Word::scalar(v).is_none()
         {
             let n = self.consts.len();
-            if let Entry::Vacant(e) = self.const_at.entry(ConstKey(v.clone())) {
+            if let Entry::Vacant(e) = self.const_at.entry(v.clone()) {
                 e.insert(n);
                 self.consts.push(v.clone());
             }
@@ -662,37 +661,84 @@ impl Tables {
     pub fn const_index(&self, v: &Value) -> usize {
         *self
             .const_at
-            .get(&ConstKey(v.clone()))
+            .get(v)
             .unwrap_or_else(|| panic!("constant {v:?} is not in the table {:?}", self.consts))
     }
 }
 
-/// The key of a constant in [`Tables`]'s table: the value, equal under `==` as `Value`'s own
-/// `Eq` has it, so that equal constants share one entry however they were built. An executable
-/// builds its table again from the decoded program (`exe::start`), where every family and
-/// tuple constant is a copy of its own, so an entry per built value would number the entries
-/// otherwise than the compile did.
-struct ConstKey(Value);
+#[cfg(test)]
+mod tests {
+    use zed_kernel::term::build::{lam, lit, prim, var};
+    use zed_kernel::{Family, Rat};
+    use zedc::zir::lower::lower;
+    use zedc::zir::memory::plan;
 
-impl PartialEq for ConstKey {
-    fn eq(&self, other: &ConstKey) -> bool {
-        self.0 == other.0
+    use super::*;
+
+    /// `{k -> v, 1 -> 1}`.
+    fn with_one(k: Value, v: Value) -> Value {
+        Value::Family(Family::of([(k, v), (Value::Int(1), Value::Int(1))]))
     }
-}
 
-impl Eq for ConstKey {}
-
-/// `Value`'s hash, and for a family its first entry and, unless it has no upper end, its last:
-/// equal families have equal ends, so equal values hash alike, and the ends tell apart most
-/// families of one count, which `Value`'s hash does not.
-impl Hash for ConstKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-        if let Value::Family(f) = &self.0 {
-            f.end_entry(false).hash(state);
-            if f.open_lo().is_none() {
-                f.end_entry(true).hash(state);
+    /// Plan row PERF-value-key-sites-bench: the table of constants keeps one entry per value
+    /// under `==` ([`Tables::constant`], [`Tables::const_index`]), whatever form each was built
+    /// in, and one per value that differs. Each group below is one value: 0..9 as a range, a map
+    /// and a list made by `++`; 3/4 as `3 / 4` and read as `75e-2`; 10^19 as a key from
+    /// its digits and from a decimal exponent; a nested list and its `++` form. Apart from them:
+    /// `0.0` and `-0.0` as an entry's value, which `1 / x` tells apart, and `[0, i, 0]` for three
+    /// `i`, of one count and the same end entries.
+    #[test]
+    fn equal_constants_share_one_entry_and_others_do_not() {
+        let fam = Value::Family;
+        let half = |at: i64| Family::of((0..5_i64).map(|i| (i, i + at)));
+        let whole = |s: &str| Rat::decimal(s).expect("memory").expect("a decimal");
+        let quarters = (whole("3").div(&whole("4")).expect("memory")).expect("4 is not 0");
+        let decimal = whole("75e-2");
+        let digits = Value::int_text(&format!("1{}", "0".repeat(19)), 10)
+            .expect("memory")
+            .expect("digits");
+        let exponent = Value::integer(whole("1e19"));
+        let inner = Family::of([(0_i64, 1_i64), (1, 2)]);
+        let joined = Family::of([(0_i64, 1_i64)])
+            .concat(&Family::of([(0_i64, 2_i64)]))
+            .expect("lists join");
+        let mut groups = vec![
+            vec![
+                fam(Family::range(0, 9)),
+                fam(Family::of((0..10_i64).map(|i| (i, i)))),
+                fam(half(0).concat(&half(5)).expect("lists join")),
+            ],
+            vec![
+                with_one(Value::Int(0), Value::rat(quarters)),
+                with_one(Value::Int(0), Value::rat(decimal)),
+            ],
+            vec![
+                with_one(digits, Value::Int(1)),
+                with_one(exponent, Value::Int(1)),
+            ],
+            vec![
+                with_one(Value::Int(0), fam(inner)),
+                with_one(Value::Int(0), fam(joined)),
+            ],
+            vec![with_one(Value::Int(0), Value::float(0.0))],
+            vec![with_one(Value::Int(0), Value::float(-0.0))],
+        ];
+        groups.extend((0..3_i64).map(|i| vec![fam(Family::of([(0_i64, 0), (1, i), (2, 0)]))]));
+        // `(x) -> (x, c_1, …, c_k)`: the parameter keeps the tuple from being one constant.
+        let items = std::iter::once(var("x"));
+        let items = items.chain(groups.iter().flatten().map(|v| lit(v.clone())));
+        let term = lam(&["x"], prim(Prim::Tuple, items.collect()));
+        let g = crate::legal::legalize(lower(&term).expect("the term lowers"));
+        let (t, _) = Tables::new(&g, &plan(g.graph(), false)).expect("the tables");
+        assert_eq!(t.consts.len(), groups.len(), "{:?}", t.consts);
+        let mut at = Vec::new();
+        for g in &groups {
+            let first = t.const_index(&g[0]);
+            for v in g {
+                assert_eq!(t.const_index(v), first, "{v}");
             }
+            assert!(!at.contains(&first), "{} shares an entry", g[0]);
+            at.push(first);
         }
     }
 }

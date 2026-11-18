@@ -729,3 +729,52 @@ fn the_names_a_body_reads_take_no_part_in_equality() {
     // The terms still differ where they differ.
     assert!(Shared::new(var("x")) != run);
 }
+
+/// Plan row PERF-value-key-sites-bench: a fix whose domain holds families finds each by the hash
+/// of its entries ([`key_index`], [`position`]). Every value of each group of
+/// `value::key_forms::family_key_groups` (a range, its map and a `++` list; a rational, a key
+/// past 64 bits and a string key in two forms; nested families; values swapped between keys;
+/// families one entry apart) finds the position of its group, the one a binary search of the
+/// ordered domain finds. Two groups share a position exactly when their keys (`as_key`) are
+/// equal.
+#[test]
+fn a_domain_of_families_finds_each_family_in_every_form() {
+    use crate::value::key_forms::family_key_groups;
+    let groups = family_key_groups();
+    let set = Family::set(groups.iter().map(|g| as_key(&g[0]).into_owned()));
+    let domain: Box<[Value]> = set.keys().cloned().collect();
+    let index = key_index(&domain);
+    let mut at = Vec::new();
+    for g in &groups {
+        let first = position(&index, &g[0]).expect("a key of the domain");
+        for v in g {
+            assert_eq!(position(&index, v), Some(first), "{v}");
+            assert_eq!(domain.binary_search(&*as_key(v)).ok(), Some(first), "{v}");
+        }
+        at.push(first);
+    }
+    for (g, a) in groups.iter().zip(&at) {
+        for (h, b) in groups.iter().zip(&at) {
+            assert_eq!(
+                a == b,
+                as_key(&g[0]) == as_key(&h[0]),
+                "{} and {}",
+                g[0],
+                h[0]
+            );
+        }
+    }
+    // The family with `-0.0` as a value is not its own key, and finds the entry of the one with
+    // `0.0`: one key fewer than groups (before the fix `as_key` kept `-0.0` in a family, and
+    // the two were apart).
+    let minus = groups
+        .iter()
+        .position(|g| !g[0].is_key())
+        .expect("the group with -0.0");
+    let plus = groups
+        .iter()
+        .position(|g| as_key(&g[0]) == as_key(&groups[minus][0]));
+    assert_ne!(plus, Some(minus));
+    assert_eq!(at[plus.expect("the group with 0.0")], at[minus]);
+    assert_eq!(domain.len(), groups.len() - 1);
+}

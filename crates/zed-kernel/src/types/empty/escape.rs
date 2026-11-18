@@ -2002,6 +2002,77 @@ fn cells_windows(
 }
 
 #[cfg(test)]
+mod bench;
+
+/// Plan row PERF-value-key-sites-bench: the maps of [`forest`] keyed by `Value`, `first_out` and
+/// `owner`, at small sizes; `bench.rs` runs them at n and 8n.
+#[cfg(test)]
+mod forest_tests {
+    use num_bigint::BigInt;
+
+    use super::*;
+    use crate::num::Rat;
+
+    pub(super) fn finite(vals: impl IntoIterator<Item = Value>) -> Ints {
+        Ints::new(false, vals.into_iter().collect())
+    }
+
+    pub(super) fn cofinite(vals: impl IntoIterator<Item = Value>) -> Ints {
+        Ints::new(true, vals.into_iter().collect())
+    }
+
+    /// 10^19, past 64 bits, from its digits and from a decimal exponent, and 10^19 + 1.
+    fn wide() -> (Value, Value, Value) {
+        let digits = Value::int_text(&format!("1{}", "0".repeat(19)), 10)
+            .expect("memory")
+            .expect("digits");
+        let r = Rat::decimal("1e19").expect("memory").expect("a decimal");
+        let next = Value::int(BigInt::from(10_u64.pow(19)) + 1);
+        (digits, Value::integer(r), next)
+    }
+
+    /// Equal integers built two ways are one key of `owner` and of `first_out`, and an integer
+    /// one apart is another: the finite atom `{10^19}` (as a decimal) lies in `{10^19, 1}` (from
+    /// digits), `{10^19 + 1}` in no finite atom; under the cofinite chain, all integers, then all
+    /// but `10^19`, each finite atom's parent is the deepest cofinite atom that holds its values.
+    #[test]
+    fn equal_wide_integers_are_one_key_of_the_forest() {
+        let (digits, decimal, next) = wide();
+        let atom = vec![
+            (0, finite([digits.clone(), Value::Int(1)])),
+            (0, finite([decimal.clone()])),
+            (0, finite([next.clone()])),
+        ];
+        let mut parent = vec![None; atom.len()];
+        assert_eq!(forest(&[0, 1, 2], &atom, &mut parent), Some(()));
+        assert_eq!(parent, vec![None, Some(0), None]);
+
+        let atom = vec![
+            (0, cofinite([])),
+            (0, cofinite([digits])),
+            (0, finite([decimal])),
+            (0, finite([Value::Int(2)])),
+            (0, finite([next])),
+        ];
+        let mut parent = vec![None; atom.len()];
+        assert_eq!(forest(&[0, 1, 2, 3, 4], &atom, &mut parent), Some(()));
+        assert_eq!(parent, vec![None, Some(0), Some(0), Some(1), Some(1)]);
+    }
+
+    /// Two finite atoms that share one value and not the other cross, and the forest says so.
+    #[test]
+    fn crossing_atoms_of_wide_integers_are_found() {
+        let (digits, decimal, next) = wide();
+        let atom = vec![
+            (0, finite([digits, Value::Int(1)])),
+            (0, finite([decimal, next])),
+        ];
+        let mut parent = vec![None; atom.len()];
+        assert_eq!(forest(&[0, 1], &atom, &mut parent), None);
+    }
+}
+
+#[cfg(test)]
 mod windows_tests {
     use super::*;
 
