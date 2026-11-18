@@ -286,7 +286,9 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
     for (name, a) in &p.atoms.names {
         match (a.bare, a.payload == Type::empty()) {
             (true, true) if stop.is_none() => stop = Some(name.clone()),
-            (false, true) => {}
+            // A finite map of atoms lists no name whose part is none, the bare atom out and no
+            // payload (`Atoms::set`), and the map is finite here.
+            (false, true) => unreachable!("a finite map of atoms lists no name of no atom"),
             (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
         }
@@ -306,7 +308,11 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
     if atoms.len() != 1 || !f.eval(&|_| true) {
         return None;
     }
+    // A part over one atom is that atom, its complement or a leaf: `Part::zip_at_once` gives `a`
+    // for `a | a` and `a & a`, and `Connect::zipped` a leaf for `a | !a` and `a & !a`. One true
+    // where its atom holds is the atom, false where it fails; the check stays for release builds.
     if f.eval(&|_| false) {
+        debug_assert!(false, "a part over one atom true at both of its values");
         return None;
     }
     Some((stop, name, atoms[0][0].clone(), atoms[0][1].clone()))

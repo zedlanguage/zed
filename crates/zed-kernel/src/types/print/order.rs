@@ -228,6 +228,32 @@ mod tests {
             union_of_names(["Zeta", "Alpha", "String"]),
             "Alpha | String | Zeta"
         );
+        // Every name `of_name` reads: the number types in their order, then the booleans.
+        assert_eq!(
+            union_of_names([
+                "bool", "true", "f16", "false", "rat", "bf16", "f32", "int", "f64"
+            ]),
+            "int | bf16 | f16 | f32 | f64 | rat | false | true | bool"
+        );
+    }
+
+    /// Two literals of one value and one carrier, `-0.0` and `0.0`, are ordered by the value
+    /// itself: `-0.0` first, as `f64::total_cmp` orders them.
+    #[test]
+    fn literals_of_one_value_and_carrier_go_by_the_value() {
+        let (neg, pos) = (Value::float(-0.0), Value::float(0.0));
+        assert_eq!(
+            cmp(&Member::Number(&pos), &Member::Number(&neg)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            cmp(&Member::Number(&neg), &Member::Number(&pos)),
+            Ordering::Less
+        );
+        assert_eq!(
+            cmp(&Member::Number(&pos), &Member::Number(&pos)),
+            Ordering::Equal
+        );
     }
 
     #[test]

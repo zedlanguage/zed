@@ -535,6 +535,19 @@ mod tests {
         assert_eq!(check(tree(&b.borrow())), vec![3, 7]);
         b.borrow_mut().leave(0, Arc::as_ptr(&z));
         assert_eq!(check(tree(&b.borrow())), vec![3]);
-        drop((x, w));
+        // The last node leaves the treap; the next one is its root.
+        let slot = {
+            let b = b.borrow();
+            let t = tree(&b);
+            (0..t.nodes.len())
+                .find(|&s| t.nodes[s].item.upgrade().is_some_and(|x| *x == 3))
+                .expect("3 has a node")
+        };
+        b.borrow_mut()
+            .leave(u32::try_from(slot).expect("few slots"), Arc::as_ptr(&w));
+        assert!(b.borrow().is_empty());
+        let v = get(&b, 9);
+        assert_eq!(check(tree(&b.borrow())), vec![9]);
+        drop((x, w, v));
     }
 }

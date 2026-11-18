@@ -47,31 +47,11 @@ impl Type {
         self.surface_at(At::Any)
     }
 
-    /// The type in the surface syntax as one operand of a union, parenthesized where it would
-    /// not be one, as a message writes a type among others.
-    pub fn surface_in_union(&self) -> Surface {
-        self.surface_at(At::Union)
-    }
-
     /// The type in the surface syntax as an operand of any connective, parenthesized unless it
     /// is a tuple or one token.
     #[cfg(test)]
     pub(crate) fn surface_operand(&self) -> Surface {
         self.surface_at(At::Prim)
-    }
-
-    /// The type in the surface syntax as the key of an arrow, `K -> V` or `K ->? V`, parenthesized
-    /// where it would not be one: an arrow, a union, an intersection or a difference, whose
-    /// bare form is rejected there, `(int | #a) -> int`, and a tuple, which
-    /// would read as the parameters.
-    pub fn surface_key(&self) -> Surface {
-        self.surface_at(At::Key)
-    }
-
-    /// The type in the surface syntax as a bound of `L .. U -> V`, parenthesized where it would
-    /// not be one: an arrow, a union, an intersection or a difference, `(#a | #b) .. #c -> V`.
-    pub fn surface_bound(&self) -> Surface {
-        self.surface_at(At::Bound)
     }
 
     /// The type in the surface syntax after `is`, where sec:grammar reads a `TypeUnion` (in
@@ -111,24 +91,12 @@ impl Type {
         .print(types)
     }
 
-    /// Several types written as [`Type::surfaces_by_name`] writes them, each literal value that
-    /// `spell` spells written so, as the program wrote it (DESIGN.md sec:diagnostics: a message
-    /// prints a literal as written), and any other in canonical form. A spelling must read back
-    /// to the value it spells. Time as [`Type::surfaces_by_name`], with one lookup in `spell`
-    /// per literal written.
-    pub fn surfaces_spelled(types: &[(Type, At)], spell: Spell<'_>) -> Surfaces {
-        Printer {
-            by_name: true,
-            spell: Some(spell),
-            ..Printer::default()
-        }
-        .print(types)
-    }
-
-    /// Several types written as [`Type::surfaces_by_name`] writes them, or as
-    /// [`Type::surfaces_spelled`] with `spell`, each type `k` for which `apart[k]` holds
-    /// written out where it stands, never by a name of its own, and not counted as a use of
-    /// it: a part of a set that a compiler type prints apart from the rest of the set, in the
+    /// Several types written as [`Type::surfaces_by_name`] writes them. With `spell`, each
+    /// literal value that `spell` spells is written so, as the program wrote it (DESIGN.md
+    /// sec:diagnostics: a message prints a literal as written), and any other in canonical
+    /// form, with one lookup in `spell` per literal written; a spelling must read back to the
+    /// value it spells. Each type `k` for which `apart[k]` holds is written out where it
+    /// stands, never by a name of its own, and not counted as a use of it: a part of a set that a compiler type prints apart from the rest of the set, in the
     /// order of a union (`order`), such as the atoms of `int | #a | #b` after a tuple. The
     /// parts inside it are named as usual. Time as [`Type::surfaces_by_name`].
     pub fn surfaces_apart(
@@ -548,7 +516,7 @@ struct Printer<'s> {
     /// its node's id ([`Printer::meet_of_literals`]).
     meets: HashMap<u64, bool>,
     /// The program's own spelling of a literal value, where a message has one
-    /// ([`Type::surfaces_spelled`]).
+    /// ([`Type::surfaces_apart`]).
     spell: Option<Spell<'s>>,
     /// Whether each root is printed apart, written out where it stands
     /// ([`Type::surfaces_apart`]); a root past its end is not.

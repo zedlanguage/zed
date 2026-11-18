@@ -139,7 +139,7 @@ fn scalar(v: &Value) -> u64 {
 }
 
 /// The program's own spelling of a literal value, if it has one: the text of a literal it
-/// wrote, which reads back to that value ([`Type::surfaces_spelled`]), with whether it is the
+/// wrote, which reads back to that value ([`Type::surfaces_apart`]), with whether it is the
 /// spelling wherever a message is written ([`Spelled`]).
 pub type Spell<'a> = &'a dyn Fn(&Value) -> Spelled<'a>;
 

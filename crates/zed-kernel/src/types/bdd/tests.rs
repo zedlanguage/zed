@@ -2885,4 +2885,12 @@ fn the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to() {
         format!("{:?}", lit(0)),
         format!("Bdd(Node({:?}, true, false))", atom(0))
     );
+    // The diagram alone, without the part around it.
+    let Part::Bdd(b) = lit(0) else {
+        panic!("one literal is a diagram")
+    };
+    assert_eq!(
+        format!("{b:?}"),
+        format!("Node({:?}, true, false)", atom(0))
+    );
 }

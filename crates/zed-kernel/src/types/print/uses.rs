@@ -310,6 +310,32 @@ mod tests {
         assert_eq!(new_many(&c, &mut seen), [3]);
     }
 
+    /// Two branches whose keys lie apart: of one branching bit with different prefixes, and one
+    /// branching higher than the other without holding its prefix, in both orders. The union
+    /// joins them beside each other, and a key outside every prefix is not found.
+    #[test]
+    fn branches_whose_keys_lie_apart_are_joined_beside_each_other() {
+        let of = |keys: &[u32], from: u32| {
+            (keys.iter()).fold(Uses::default(), |m, &k| m.with(k, one(from)))
+        };
+        let low = of(&[0, 1], 1);
+        for (a, b) in [
+            (low.clone(), of(&[0x100, 0x101], 2)),
+            (low.clone(), of(&[0x400, 0x600], 2)),
+            (of(&[0x400, 0x600], 2), low.clone()),
+        ] {
+            let u = a.union(&b);
+            for k in [0, 1] {
+                assert_eq!(u.get(k), Some(one(1)), "{k}");
+            }
+            for k in [0x100, 0x101, 0x400, 0x600] {
+                assert_eq!(u.get(k), b.get(k).or(a.get(k)), "{k}");
+            }
+            assert_eq!(u.get(0x800), None);
+            assert_eq!(u.get(0x200), None);
+        }
+    }
+
     #[test]
     fn many_keys_in_any_order_agree_with_a_list() {
         // Keys spread over all 32 bits, each inserted under a parent by its residue.

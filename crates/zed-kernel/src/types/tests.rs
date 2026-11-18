@@ -33,7 +33,7 @@ fn agree(all: &[Type]) {
                 a.scalar_cell(b, false),
                 Some((a - b).is_empty()),
                 "{} \\ {}",
-                a.surface_in_union(),
+                op(a),
                 op(b)
             );
         }

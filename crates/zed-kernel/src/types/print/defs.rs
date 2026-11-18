@@ -1149,6 +1149,50 @@ mod tests {
         assert!(defs.is_empty());
     }
 
+    /// A sentence's tuple at a place where its text is parenthesized, `T[]`, is written whole in
+    /// parentheses.
+    #[test]
+    fn a_sentence_writes_a_wrapped_tuple_whole_in_parentheses() {
+        let _on = collect();
+        let d0 = add_soft("(1, 1)".into());
+        let mut s = format!("`f` does not take {}[]", wrapped(&soft_reference(d0)));
+        let (defs, _) = lift_holding(&mut [&mut s], true, &|_| false);
+        assert_eq!(s, "`f` does not take ((1, 1))[]");
+        assert!(defs.is_empty());
+    }
+
+    /// A printed type inside another is counted with the outermost: a counted part used once
+    /// in each is used twice by one type, and named.
+    #[test]
+    fn a_type_printed_inside_another_counts_with_the_outermost() {
+        let _on = collect();
+        let r = counted_reference(add_counted("#a | #b".into()));
+        let ty = |text: String| {
+            let mut roots = [text];
+            enclose(&mut roots);
+            let [text] = roots;
+            text
+        };
+        let mut t = ty(format!("({r}, {})", ty(r.clone())));
+        let defs = lift(&mut [&mut t], &|_| false);
+        assert_eq!(t, "(Part1, Part1)");
+        assert_eq!(defs, [("Part1".to_string(), "#a | #b".to_string())]);
+    }
+
+    /// Forgetting the printed parts empties what a printer keeps, and does nothing when no
+    /// table is on.
+    #[test]
+    fn forgetting_the_printed_parts_empties_what_is_kept() {
+        forget_printed();
+        assert!(!active());
+        assert_eq!(with_kept_of(|n: &mut u32| *n), None);
+        let _on = collect();
+        assert_eq!(with_kept_of(|n: &mut u32| std::mem::replace(n, 7)), Some(0));
+        assert_eq!(with_kept_of(|n: &mut u32| *n), Some(7));
+        forget_printed();
+        assert_eq!(with_kept_of(|n: &mut u32| *n), Some(0));
+    }
+
     #[test]
     fn collecting_ends_with_its_guard() {
         {

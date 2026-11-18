@@ -405,7 +405,11 @@ impl Nodes {
             for (n, a) in &p.atoms.names {
                 match (a.bare, a.payload == Type::empty()) {
                     (true, true) if stop.is_none() => stop = Some(n.clone()),
-                    (false, true) => {}
+                    // A finite map of atoms lists no name whose part is none, the bare atom out
+                    // and no payload (`Atoms::set`), and the map is finite here.
+                    (false, true) => {
+                        unreachable!("a finite map of atoms lists no name of no atom")
+                    }
                     _ => return None,
                 }
             }
@@ -548,7 +552,9 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     for (name, a) in &p.atoms.names {
         match (a.bare, a.payload == Type::empty()) {
             (true, _) => return None,
-            (false, true) => {}
+            // A finite map of atoms lists no name whose part is none, the bare atom out and no
+            // payload (`Atoms::set`), and the map is finite here.
+            (false, true) => unreachable!("a finite map of atoms lists no name of no atom"),
             (false, false) => {
                 if link.is_some() {
                     return None;

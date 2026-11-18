@@ -55,3 +55,36 @@ skipped), before and after: whole crate 65.30% to 66.61%; `num.rs` 82.9% to 94.1
 | `poly.rs`, `poly/roots.rs` | | Covered by l01_39_reduced_product (TEST-complete-reduced) and its own unit tests (96 to 98%). |
 | `sites.rs`, `site_table.rs`, `address.rs`, `limits.rs`, `text.rs` | | Used by zedc, zedc-stage, zed-native and l01_37a_short_addresses; covered by TEST-complete-crates and TEST-complete-native. |
 | Large sizes and scaling | the `bench` modules | Benchmarks (P178). |
+
+## Row TEST-types-unreached-paths-3: zed-kernel `types/**`
+
+The lines under `crates/zed-kernel/src/types` that the whole local suite left unreached at
+5461fb972 (types8's coverage run, /home/luke/Work/wt/coverage/TEST-types-unreached-paths-3.txt).
+Each case below was checked by an llvm-cov build of the zed-kernel unit tests, run once as
+usual and once with `--features short-addresses` (8-bit digests), reading the target lines
+each run reaches. Line numbers are those of 5461fb972.
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| `bdd/set.rs` `same`: two sets of one sum, length and root literal whose roots hold a child on different sides (803) | `types::bdd::set::tests::sets_of_one_sum_and_root_with_children_on_different_sides_are_not_the_same` (the fourth literal solved so that the hashes sum alike) | |
+| `bdd/list/treap.rs` `split` meeting the key itself (191-192) | | Removed for an `unreachable!` with the proof at the site: the one caller, `insert`, walks down the nodes above the new one in the order `(prio, key)`, and a node of the same key has the same priority, so the walk stops at it and gives it the new value; the subtree it splits never holds the key |
+| `bucket.rs` the last node of a bucket leaving its treap (288) | `types::bucket::tests::a_bucket_of_one_node_is_found_left_and_written_over_when_dead` (now also takes the last node out and puts a new one in) | |
+| `debug.rs` `fmt` of a `Bdd` alone (397-399) | `types::bdd::tests::the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to` | |
+| `print.rs` `surface_in_union`, `surface_key`, `surface_bound`, `surfaces_spelled` (52-54, 67-75, 119-126) | | Removed: no caller (`surface_in_union` was used only in a failure message of `types::tests`, now written with `op`); docs that linked `surfaces_spelled` now link `surfaces_apart` |
+| `print.rs` `surface_operand` (59-61) | | A `#[cfg(test)]` helper read only in failure messages |
+| `print/order.rs` the order of `bf16`, `f16`, `f32`, `f64` and `bool` among names (84-91); two literals of one value and carrier, `0.0` and `-0.0` (136) | `types::print::order::tests::names_print_in_the_fixed_order` (the nine scalar names given shuffled), `types::print::order::tests::literals_of_one_value_and_carrier_go_by_the_value` | |
+| `print/uses.rs` joining Patricia branches whose keys lie apart, on each side and at a higher bit (173, 179, 186), and a lookup of a key past every branch (203) | `types::print::uses::tests::branches_whose_keys_lie_apart_are_joined_beside_each_other` | |
+| `print/uses.rs` `rebuild` given a leaf (113) | | Kept `unreachable!`: every caller passes a branch |
+| `print/defs.rs` `forget_printed` with no table and with the table on (365); a type printed inside another, counted with the outermost (393); a wrapped tuple written whole in parentheses in a sentence (693) | `types::print::defs::tests::forgetting_the_printed_parts_empties_what_is_kept`, `a_type_printed_inside_another_counts_with_the_outermost`, `a_sentence_writes_a_wrapped_tuple_whole_in_parentheses` | |
+| `types.rs` `rewrite_levels` (2098-2099) | types8's `types::tests::a_recursive_node_is_rewritten_only_where_level_keeps_its_unfolding` | |
+| `empty/shared.rs` `list_step` (289) and `empty/escape.rs` `node` (408), `decide_counted` (551): a listed atom name with neither the bare atom nor a payload | | Kept as `unreachable!` with the reason at each site: a finite map of atoms lists no name whose part is none (`Atoms::set` leaves the default out, and every write goes through `set`), and each site has checked the map is finite |
+| `empty/shared.rs` `list_step` a part over one atom true at both values (310) | | Kept as a check with a `debug_assert!`: a part over one atom is the atom, its complement or a leaf (`Part::zip_at_once` for `a | a`, `Connect::zipped` for `a | !a`), so one true where its atom holds is false where it fails |
+| Comparisons and maps when two digests tie: `empty/shared.rs` `ByType` with several keys of one digest (53, 76-98); `rec/group.rs` the numbering's next probe (131) and a group of one digest and other definitions (203-204); `hash.rs` the short `mix` (9); `bdd.rs` `before` by contents (801), the set walk's ends (2650-2651); `empty.rs` 3656, 12628; `types.rs` the orders by contents after a tie (913-914, 958, 962, 1068, 1073, 1148-1149, 1191, 1230-1234, 1245, 7841, 7856, 8168, 8178) | zed-kernel unit tests `types::empty::`, `types::rec::`, `types::bdd::`, `types::print` and `types::tests::` in the short-addresses build | Reached only when digests tie, which 64-bit digests do not do in these tests. The suite builds short addresses only for l01_37 and l01_37a, not for the kernel's unit tests; in that build two of them fail on an assumption of few ties (`rec::group::tests::an_instance_whose_parts_were_unfolded_is_freed_at_the_end_of_its_unit`, `bdd::set::tests::chosen_literals_give_a_logarithmic_height`). Row TEST-kernel-units-short-addresses runs them there |
+| `rec/group.rs` `of` (98), `regular` (253), `rec/unfold.rs` (348, 511), `empty/refused.rs` `site` (196) | | Existing `unreachable!` guards with their reasons: a leaf shape is never built as a node; only a recursive occurrence is kept as the bad one; a member is a recursive node |
+| `rec/unfold/show.rs` `fmt` outside the surface syntax (17) | `types::rec::unfold::tests::a_part_s_name_is_unchanged_when_the_names_inside_it_are_shared` (its helper `spelled` checks that `Display` writes the spelled-out text) | |
+| Failure arms of tests and their helpers (`bucket.rs` 403, `rec/group.rs` 864, `empty.rs` 14382, `bdd/list/treap/tests.rs` 39, 46, `bdd/set/tests.rs` 322) | | Panic and assertion messages and failing checks, run only when their test fails |
+| Test branches for other builds and inputs (`bdd/set/tests.rs` 351-353 and 492, the short-addresses branches, reached in that build; 395-397, a benchmark; 450, an atom met twice in a union, which the reference allows for) | | Not product code |
+
+The other entries of this list, most of them in `empty.rs`, `bdd.rs`, `types.rs`, `empty/sweep.rs`,
+`empty/escape.rs`, `empty/refused.rs`, `bes.rs`, the rest of `print.rs` and `rec/`, are row
+TEST-kernel-unreached-paths-4.

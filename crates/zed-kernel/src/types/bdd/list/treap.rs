@@ -168,8 +168,8 @@ pub(super) fn iter<K, V>(t: &Tree<K, V>) -> impl Iterator<Item = (&K, &V)> {
     })
 }
 
-/// The entries of `t` before `key` and those after it, `key`'s own left out: one walk down from
-/// the root, the nodes passed made again on each side, `O(height)`.
+/// The entries of `t` before `key` and those after it, `t` holding no entry of `key`: one walk
+/// down from the root, the nodes passed made again on each side, `O(height)`.
 fn split<K: Keyed + Borrow<Q>, Q: Ord + ?Sized, V: Clone>(
     t: &Tree<K, V>,
     key: &Q,
@@ -187,10 +187,12 @@ fn split<K: Keyed + Borrow<Q>, Q: Ord + ?Sized, V: Clone>(
                 rights.push(n);
                 cur = n.left.as_ref();
             }
-            Ordering::Equal => {
-                (l, r) = (n.left.clone(), n.right.clone());
-                break;
-            }
+            // The one caller, `insert`, splits the subtree below the nodes that stand above the
+            // new one. The key's own node, if the tree has it, has the key's priority, and every
+            // node above it in the tree stands above it in the order `(prio, key)`; so the walk
+            // of `insert` follows its ancestors down to it and stops there, and gives it the new
+            // value without a split. The subtree split never holds the key.
+            Ordering::Equal => unreachable!("insert splits only a subtree without the key"),
         }
     }
     for n in lefts.into_iter().rev() {

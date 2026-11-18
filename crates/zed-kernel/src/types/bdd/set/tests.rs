@@ -270,6 +270,8 @@ fn sets_whose_digests_tie_and_shapes_differ_are_ordered_by_their_literals() {
             continue;
         }
         found += 1;
+        // Equal digests, lengths and roots, and children of different shapes: not the same set.
+        assert!(!same(x, y), "{e}");
         let expected = (in_order(&s).iter().map(|k| (k.1, &k.0)))
             .cmp(in_order(&t).iter().map(|k| (k.1, &k.0)));
         assert_ne!(expected, std::cmp::Ordering::Equal);
@@ -285,6 +287,53 @@ fn sets_whose_digests_tie_and_shapes_differ_are_ordered_by_their_literals() {
         );
     }
     assert!(found > 0, "no digest of 64 gave two shapes");
+}
+
+/// Two sets of one sum of hashes, one length and one root literal, whose roots hold their other
+/// literals on different sides: `{a, r, b}` with `a` below `r` and `b` above it, and `{r, c, d}`
+/// with both above it, `d` solved so that the hashes of `c` and `d` sum to those of `a` and `b`.
+/// They are not the same set.
+#[test]
+fn sets_of_one_sum_and_root_with_children_on_different_sides_are_not_the_same() {
+    if crate::address::SHORT {
+        // `mix_inv` undoes the 64-bit hash only.
+        return;
+    }
+    let hash = |k: &Key<Row>| mix(15, k.0.digest() ^ u64::from(k.1));
+    let a = (forced(1 << 60, vec![int(0)]), true);
+    let mut found = false;
+    for i in 0..256u64 {
+        let r = (forced((1 << 62) + i, vec![int(1)]), true);
+        let b = (forced(3 << 61, vec![int(2)]), true);
+        let c = (forced(5 << 60, vec![int(3)]), true);
+        let x = mix_inv(
+            Some(15),
+            None,
+            hash(&a).wrapping_add(hash(&b)).wrapping_sub(hash(&c)),
+        );
+        let d = (forced(x ^ 1, vec![int(4)]), true);
+        assert_eq!(
+            hash(&a).wrapping_add(hash(&b)),
+            hash(&c).wrapping_add(hash(&d))
+        );
+        let top = |k: &Key<Row>| (priority(k), k.clone());
+        let others = [&a, &b, &c, &d];
+        if d.0.digest() <= r.0.digest() || others.iter().any(|k| top(k) > top(&r)) {
+            continue;
+        }
+        let mut cd = vec![r.clone(), c, d];
+        cd.sort();
+        let s = from_sorted(vec![a.clone(), r.clone(), b]);
+        let t = from_sorted(cd);
+        let (x, y) = (s.as_ref().expect("three"), t.as_ref().expect("three"));
+        assert_eq!((x.digest, x.len, &x.key), (y.digest, y.len, &r));
+        assert!(x.left.is_some() && y.left.is_none());
+        assert!(!same(x, y) && !same(y, x));
+        assert!(same(x, x));
+        found = true;
+        break;
+    }
+    assert!(found, "no root of 256 stood above the others");
 }
 
 /// Literals chosen by the fixed hash of a literal's digest that was the priority before the draw

@@ -77,7 +77,10 @@ fn spelled(e: &Node, env: &Env) -> String {
         e,
         surface: false,
     };
-    show.rope().strs().collect()
+    let text: String = show.rope().strs().collect();
+    // Written by `Display` outside the surface syntax: the same text.
+    assert_eq!(show.to_string(), text);
+    text
 }
 
 #[test]
