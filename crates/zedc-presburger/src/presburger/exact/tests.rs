@@ -2202,22 +2202,36 @@ fn odd_x(bound: i64) -> Formula {
     ])
 }
 
-/// [`direct`] answers a stride as its range met with its class, a few pieces whatever the
-/// bound, not one piece per value (PRES-interval-strided-piece): the odd values of
-/// `-bound..=bound` are the range from the first odd value to the last, met with 1 mod 2.
+/// [`block_set`] with `list` (as [`cut_at_shared`] reads it) answers a stride as its range met
+/// with its class, a few pieces whatever the bound, not one piece per value
+/// (PRES-interval-strided-piece): the odd values of `-bound..=bound` are the range from the
+/// first odd value to the last, met with 1 mod 2. [`direct`] declines the stride
+/// (PRES-direct-stride-answer-downstream: its answer, one disjunct per value in the preimage
+/// stage's check, made `l01_25` `bench::s22::remainder_chains_in_the_linear_stage_scale` run
+/// past 60 s), and the public answer is still the odd values.
 #[test]
 fn a_stride_is_answered_as_its_range_and_class() {
     let mut pieces = Vec::new();
     for bound in [101, 808] {
         let f = odd_x(bound);
+        let Formula::And(rows) = &f else {
+            panic!("odd_x is a conjunction")
+        };
+        let rows: Vec<Con> = rows
+            .iter()
+            .map(|r| match r {
+                Formula::Con(c) => c.clone(),
+                other => panic!("odd_x holds rows only: {other:?}"),
+            })
+            .collect();
         let mut work = Work {
             used: 0,
             limit: super::super::meter::EXACT_LIMIT,
             solver: SOLVER,
         };
-        let got = direct(&f, &a("x"), &IntervalSet::top(), &mut work)
+        let got = block_set(&rows, &a("x"), &IntervalSet::top(), true, &mut work)
             .unwrap()
-            .expect("direct answers the stride");
+            .expect("with `list`, the stride is answered");
         assert_eq!(
             got.class,
             Congruence::new(Num::from(2), Num::from(1)),
@@ -2227,9 +2241,13 @@ fn a_stride_is_answered_as_its_range_and_class() {
         assert_eq!(got.ranges, IntervalSet::of(-odd, odd), "{got:?}");
         assert_eq!(got.met(), brute_odd(bound));
         pieces.push(got.ranges.len());
-        // The public answer, with its class, and its listed form for the old callers.
-        let each = super::super::project_each_classed(&f, &[a("x")]).unwrap();
-        assert_eq!(each.sets[0].as_ref().unwrap(), &got);
+        let mut work = Work {
+            used: 0,
+            limit: super::super::meter::EXACT_LIMIT,
+            solver: SOLVER,
+        };
+        let declined = direct(&f, &a("x"), &IntervalSet::top(), &mut work).unwrap();
+        assert_eq!(declined, None, "direct declines the stride");
         assert_eq!(project(&f, "x"), brute_odd(bound));
     }
     assert_eq!(pieces, vec![1, 1]);

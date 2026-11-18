@@ -3320,13 +3320,16 @@ boxes_at_modulus_tests! {
 /// Row PRES-cover-refusals-moduli, the shapes `two moduli of one input` and `remainders of two
 /// inputs`: at moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13 over `x` and `y` in
 /// `[-60, 60]`, the exact cover answers wherever the solver alone answers, with a box of `x`
-/// inside the solver's. Before `direct` kept disjunctions as blocks of rows (2026-11-18), 26
-/// of these were refused past the work limit (`Refusal::Questions`), the worst at 44 M units
-/// with no limit. The other three shapes still have 24 refused cases (the row stays open;
-/// /home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs).
+/// inside the solver's, except in the cases of [`REFUSED_AT_A_STRIDE`], which are refused
+/// (`Refusal::Questions`) and must stay exactly those. 94f38f6d3 answered them too by listing
+/// each value of a stride in `direct` (`block_set`), which made the preimage stage slower
+/// than linear in the pieces on `bench::s22::remainder_chains_in_the_linear_stage_scale`, so
+/// that listing was taken back (PRES-direct-stride-answer-downstream). The other three shapes
+/// have 24 refused cases (/home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs).
 #[test]
 fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7() {
     let (ds, d) = (xy_in(60), Demand::Bool(true));
+    let mut refused = Vec::new();
     for m in [5, 7] {
         for seed in 1..=3 {
             for shape in ["remainders of two inputs", "two moduli of one input"] {
@@ -3335,14 +3338,52 @@ fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_a
                     let alone = solver_alone(|| preimage(&t, &ds, &d));
                     let covered = preimage(&t, &ds, &d);
                     if alone.refusal.is_none() {
-                        assert_eq!(covered.refusal, None, "{t}");
+                        if covered.refusal.is_some() {
+                            refused.push((m, seed, shape, k));
+                            continue;
+                        }
                         assert!(covered.domains["x"].is_subset(&alone.domains["x"]), "{t}");
                     }
                 }
             }
         }
     }
+    refused.sort();
+    let mut want = REFUSED_AT_A_STRIDE.to_vec();
+    want.sort();
+    assert_eq!(refused, want);
 }
+
+/// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`]
+/// refused while `direct` does not list the values of a stride: modulus, seed, shape, k.
+const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 26] = [
+    (5, 1, "two moduli of one input", 5),
+    (5, 1, "two moduli of one input", 13),
+    (5, 2, "remainders of two inputs", 13),
+    (5, 2, "two moduli of one input", 2),
+    (5, 2, "two moduli of one input", 5),
+    (5, 2, "two moduli of one input", 13),
+    (5, 3, "remainders of two inputs", 13),
+    (5, 3, "two moduli of one input", 2),
+    (5, 3, "two moduli of one input", 5),
+    (5, 3, "two moduli of one input", 13),
+    (7, 1, "remainders of two inputs", 5),
+    (7, 1, "remainders of two inputs", 13),
+    (7, 1, "two moduli of one input", 1),
+    (7, 1, "two moduli of one input", 5),
+    (7, 1, "two moduli of one input", 13),
+    (7, 2, "remainders of two inputs", 5),
+    (7, 2, "remainders of two inputs", 13),
+    (7, 2, "two moduli of one input", 1),
+    (7, 2, "two moduli of one input", 2),
+    (7, 2, "two moduli of one input", 5),
+    (7, 2, "two moduli of one input", 13),
+    (7, 3, "remainders of two inputs", 5),
+    (7, 3, "remainders of two inputs", 13),
+    (7, 3, "two moduli of one input", 2),
+    (7, 3, "two moduli of one input", 5),
+    (7, 3, "two moduli of one input", 13),
+];
 
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
 /// [`select_remainder_chain`], spread over `[-100, 99]`.
