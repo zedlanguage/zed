@@ -490,12 +490,15 @@ struct Held {
     reads: ReadsMemo,
 }
 
-/// The memo in [`Held`]'s `reads`, a type of its own so that clippy.toml can name it in
-/// `ignore-interior-mutability`: clippy's `mutable_key_type` otherwise refuses every map or set
-/// keyed by a type that holds a [`Shared`] (zedc-preimage's `Address`). It takes no part in any
-/// equality, order or hash. `Shared`'s equality reads the id and the term; no `Hash` or `Ord` is
-/// implemented for `Shared` or `Term`; the memo is private to this crate and read only through
-/// [`Shared::reads_memo`], whose only callers are in `eval/made.rs`.
+/// The memo in [`Held`]'s `reads`, a type of its own so that clippy's notes name it: clippy's
+/// `mutable_key_type` refuses every map or set keyed by a type that holds a [`Shared`], and
+/// clippy.toml lists each such key type whose order is shown not to read the memo, now only
+/// zedc-preimage's `Address`. It takes no part in any equality, order or hash. `Shared`'s
+/// equality reads the id and the term; no `Hash` or `Ord` is implemented for `Shared` or
+/// `Term`; the memo is private to this crate and read only through [`Shared::reads_memo`],
+/// whose only callers are in `eval/made.rs` (tests
+/// `eval::tests::the_names_a_body_reads_take_no_part_in_equality` and zedc-preimage's
+/// `address::tests::a_run_of_the_canonical_term_does_not_change_the_address`).
 // Complexity tradeoff: naive version, the memo kept outside the node, in a table keyed by the
 // node's id, so that the node holds no cell: one hash lookup per made function where the memo
 // in the node costs one pointer read, and a table that outlives the nodes it names, with no

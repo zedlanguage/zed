@@ -6,6 +6,7 @@
 
 mod arms;
 mod bench;
+mod binders;
 mod cone;
 mod dag;
 mod differential;

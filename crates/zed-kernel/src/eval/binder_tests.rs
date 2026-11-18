@@ -6,7 +6,7 @@
 //! superset where a node is reached twice. Each was seen to fail with that form's binders
 //! broken in `kids` (the negative controls, run once and not kept; the running log has them).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::term::build::{app, lam, let_, lit, prim, var};
@@ -40,6 +40,11 @@ fn tree_free(t: &Term, bound: &mut Vec<Arc<str>>, out: &mut BTreeSet<Arc<str>>) 
         bound: &mut Vec<Arc<str>>,
         out: &mut BTreeSet<Arc<str>>,
     ) {
+        // A node [`upper_of`] marks is read with no name bound, its binder's included.
+        if APART.with(|a| a.borrow().contains(&(t as *const Term))) {
+            tree_free(t, &mut Vec::new(), out);
+            return;
+        }
         let n = bound.len();
         bound.extend(names.iter().cloned());
         tree_free(t, bound, out);
@@ -131,6 +136,42 @@ fn tree_free(t: &Term, bound: &mut Vec<Arc<str>>, out: &mut BTreeSet<Arc<str>>) 
 fn free_of(t: &Term) -> Vec<String> {
     let mut out = BTreeSet::new();
     tree_free(t, &mut Vec::new(), &mut out);
+    out.iter().map(|x| x.to_string()).collect()
+}
+
+std::thread_local! {
+    /// The nodes [`tree_free`] reads with no name bound: empty but inside [`upper_of`].
+    static APART: std::cell::RefCell<HashSet<*const Term>> = Default::default();
+}
+
+/// An upper bound on `reads` of `t` where parts are shared: the tree walk's free names, with no
+/// name bound at a node that two or more references reach anywhere in `t`. `reads` reads a
+/// node reached twice in its region with no name bound, and every other node under the
+/// binders of the one path to it within the region, then takes a nested lambda's parameters
+/// and the names bound around it out of its set; a node reached twice in `t` is reached twice
+/// in a region or once in each of two, so `reads` binds at least what this binds, and gives
+/// at most these names. Tighter than every variable of `t`: a name read only where a binder
+/// on its one path binds it is left out.
+fn upper_of(t: &Term) -> Vec<String> {
+    let mut count: HashMap<*const Term, u32> = HashMap::new();
+    let mut stack = vec![t];
+    while let Some(u) = stack.pop() {
+        kids(u, |k, _| match k {
+            Kid::Inline(v) => stack.push(v),
+            Kid::Shared(s) => {
+                let n = count.entry(&**s as *const Term).or_insert(0);
+                *n += 1;
+                if *n == 1 {
+                    stack.push(s);
+                }
+            }
+        });
+    }
+    let apart = (count.into_iter()).filter_map(|(p, n)| (n >= 2).then_some(p));
+    APART.with(|a| *a.borrow_mut() = apart.collect());
+    let mut out = BTreeSet::new();
+    tree_free(t, &mut Vec::new(), &mut out);
+    APART.with(|a| a.borrow_mut().clear());
     out.iter().map(|x| x.to_string()).collect()
 }
 
@@ -545,15 +586,20 @@ fn a_body_shared_by_two_lambdas_has_one_set_whichever_is_read_first() {
     }
 }
 
-/// A small generator of terms over four names, each form of the kernel and its binders, so
-/// that a name is often both bound and read and binders shadow each other.
+/// A small generator of terms over the first `names` of [`NAMES`], each form of the kernel and
+/// its binders, so that a name is often both bound and read and binders shadow each other.
+/// With `share`, a part is often a node made before; with `nest`, a part is often one node read
+/// at three to five depths under binders of one name ([`Gen::nest`]). With 4 names and no
+/// `nest`, it draws what it drew before row TEST-reads-deep-sharing, seed for seed.
 struct Gen {
     state: u64,
     pool: Vec<Shared>,
     share: bool,
+    names: u64,
+    nest: bool,
 }
 
-const NAMES: [&str; 4] = ["x", "y", "this", "k"];
+const NAMES: [&str; 6] = ["x", "y", "this", "k", "a", "b"];
 
 impl Gen {
     fn next(&mut self, n: u64) -> u64 {
@@ -567,7 +613,43 @@ impl Gen {
     }
 
     fn name(&mut self) -> &'static str {
-        NAMES[self.next(4) as usize]
+        NAMES[self.next(self.names) as usize]
+    }
+
+    /// One node `s` read at each of three to five nested binders of one name `x`, each binder
+    /// a form drawn in turn (a lambda, a `let`, a `fam`, a `match` arm, a definedness `fix`),
+    /// and also read outside each as its operand (the `let`'s value, the domain, the
+    /// scrutinee, the `fix`'s init): `s` is reached under every depth of binders of `x` from
+    /// none to five, by a path that binds `x` and one that does not.
+    fn nest(&mut self, d: u32) -> Term {
+        let s = self.sub(d);
+        let x: Arc<str> = self.name().into();
+        let mut t = Term::If(sh(var(self.name())), s.clone(), s.clone());
+        for _ in 0..3 + self.next(3) {
+            let body = sh(Term::If(sh(var(self.name())), s.clone(), sh(t)));
+            t = match self.next(5) {
+                0 => Term::Lam(vec![x.clone()], body),
+                1 => Term::Let(x.clone(), s.clone(), body),
+                2 => Term::Fam {
+                    domain: s.clone(),
+                    var: x.clone(),
+                    body,
+                },
+                3 => Term::Match(
+                    s.clone(),
+                    vec![(Pattern::Bind(x.clone()), Shared::unwrap_or_clone(body))],
+                ),
+                _ => Term::Fix {
+                    init: s.clone(),
+                    step: body,
+                    this: x.clone(),
+                    key: self.name().into(),
+                    kind: FixKind::Definedness,
+                    ev: Evidence::new(),
+                },
+            };
+        }
+        t
     }
 
     fn sub(&mut self, depth: u32) -> Shared {
@@ -604,6 +686,9 @@ impl Gen {
             };
         }
         let d = depth - 1;
+        if self.nest && self.next(6) == 0 {
+            return self.nest(d);
+        }
         match self.next(16) {
             0 => var(self.name()),
             1 => {
@@ -692,6 +777,8 @@ fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
                 state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
                 pool: Vec::new(),
                 share,
+                names: 4,
+                nest: false,
             };
             let t = g.term(5);
             let tree = free_of(&t);
@@ -709,5 +796,36 @@ fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
                 }
             }
         }
+    }
+}
+
+/// On 20,000 terms over six names, of depth 3 to 6 by seed, whose parts are shared at random
+/// and often one node is read under three to five nested binders of one name
+/// ([`Gen::nest`]): `reads` holds the tree walk's set and lies within [`upper_of`], which
+/// leaves out a name read only where the binders on its one path bind it (row
+/// TEST-reads-deep-sharing). Seen to fail with `scoped_names` reading every shared node
+/// inside a node reached twice apart too, which the test above misses.
+#[test]
+fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms() {
+    for seed in 1..=20_000u64 {
+        let mut g = Gen {
+            state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            pool: Vec::new(),
+            share: true,
+            names: NAMES.len() as u64,
+            nest: true,
+        };
+        let t = g.term(3 + (seed % 4) as u32);
+        let tree = free_of(&t);
+        let upper = upper_of(&t);
+        let got = reads_of(t.clone());
+        assert!(
+            tree.iter().all(|x| got.contains(x)),
+            "seed {seed}: {got:?} ⊉ {tree:?}: {t:?}"
+        );
+        assert!(
+            got.iter().all(|x| upper.contains(x)),
+            "seed {seed}: {got:?} ⊈ {upper:?}: {t:?}"
+        );
     }
 }

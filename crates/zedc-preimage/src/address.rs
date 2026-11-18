@@ -1258,6 +1258,48 @@ mod tests {
         assert_eq!(a, Address::of(&t));
     }
 
+    /// Plan row TEST-reads-memo-not-in-key: the names a lambda body reads, which the kernel
+    /// keeps on the body's node once a run makes a closure of it (`ReadsMemo`, zed-kernel
+    /// term.rs; the kernel test `the_names_a_body_reads_take_no_part_in_equality` checks that
+    /// a run fills it), take no part in the order or equality of an address, and `Address`
+    /// has no `Hash`. `Address` is the only map key that holds a [`Shared`]: clippy.toml lists
+    /// it, and not the memo, in `ignore-interior-mutability`, so clippy's `mutable_key_type`
+    /// refuses any other key type that holds one. Seen to fail with `Address::cmp` made to
+    /// read whether the memo of its term's body is filled (the negative control, run once and
+    /// not kept).
+    #[test]
+    fn a_run_of_the_canonical_term_does_not_change_the_address() {
+        /// Compiles only while `T` does not implement `Hash`.
+        trait NoHash<A> {
+            fn check() {}
+        }
+        impl<T: ?Sized> NoHash<()> for T {}
+        struct ByHash;
+        impl<T: ?Sized + std::hash::Hash> NoHash<ByHash> for T {}
+        <Address as NoHash<_>>::check();
+
+        let f = lam(&["x"], prim(Prim::Tuple, vec![var("x"), lit(1)]));
+        let t = Term::App(f.into(), vec![lit(2)]);
+        let (run, never) = (Address::of(&t), Address::of(&t));
+        zed_kernel::eval(run.term()).expect("a tuple");
+        assert_eq!(run.cmp(&never), Ordering::Equal);
+        assert_eq!(never.cmp(&run), Ordering::Equal);
+        assert!(run == never && never == run);
+        let set: std::collections::BTreeSet<&Address> = [&run, &never].into_iter().collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    /// clippy.toml exempts `Address` from `mutable_key_type`, and not the memo inside every
+    /// [`Shared`], so a new key type that holds one is refused until its own order is shown
+    /// not to read the memo (plan row TEST-reads-memo-not-in-key).
+    #[test]
+    fn clippy_exempts_the_address_and_not_the_memo() {
+        let toml = include_str!("../../../clippy.toml");
+        let listed = |name: &str| toml.lines().any(|l| l.trim() == format!("\"{name}\","));
+        assert!(listed("zedc_preimage::address::Address"));
+        assert!(!listed("zed_kernel::term::ReadsMemo"));
+    }
+
     /// `(z) -> s() && s()` where `s` is `match z { p => p + v }`, one node read under the
     /// lambda and, as `t()` with `t` the same node, outside it, where `z` is free.
     fn shared_match(z: &str, p: &str) -> Term {

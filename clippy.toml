@@ -21,17 +21,20 @@
 # zed-kernel, read only through `Shared::reads_memo` by src/eval/made.rs, and no `Hash` or `Ord`
 # is implemented for `Shared` or `Term`. So the order of a written constraint's address
 # (zedc-preimage src/address.rs, `Address`), which reads its digest, node ids and canonical
-# term, never reads it either.
+# term, never reads it either. `Address` is listed rather than the memo, so that any other key
+# type that holds a subterm is refused until its order is shown not to read the memo (tests
+# `address::tests::a_run_of_the_canonical_term_does_not_change_the_address` and
+# `eval::tests::the_names_a_body_reads_take_no_part_in_equality`).
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
   "zed_kernel::value::Span",
   "zed_kernel::value::chain::Chain",
-  "zed_kernel::term::ReadsMemo",
   "zedc_int::int::Memo",
   "zedc_types::ty::Facts",
   "zedc_types::ty::Members",
   "zedc_types::ty::Row",
   "zedc_types::ty::Shape",
   "zedc_presburger::presburger::formula::Shared",
+  "zedc_preimage::address::Address",
 ]

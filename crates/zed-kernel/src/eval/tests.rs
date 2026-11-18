@@ -683,3 +683,49 @@ fn a_run_under_globals_on_a_fresh_evaluator_gives_its_value() {
     let got = ev.run_under(&one, &super::Globals::default(), &[]);
     assert_eq!(got.expect("a literal"), Value::Int(1));
 }
+
+/// Plan row TEST-reads-memo-not-in-key: the names a lambda body reads, kept on its node
+/// (`ReadsMemo` in term.rs), take no part in equality, and no `Hash` or `Ord` is implemented
+/// for `Shared` or `Term`, so no map key reads them. Two nodes built from one term, one whose
+/// memo a run filled when it made a closure of it and one never run, are equal both ways, and
+/// so are the terms that hold them; so is a node whose memo holds a wrong set. Seen to fail
+/// with `Shared`'s equality made to read whether the memo is filled, and to stop compiling
+/// with a `Hash` for `Shared` added (the negative controls, run once and not kept).
+#[test]
+fn the_names_a_body_reads_take_no_part_in_equality() {
+    use crate::term::build::{app, lam, let_, lit, prim, var};
+    use crate::term::{Prim, Shared, Term};
+    /// Compiles only while `T` implements neither `Hash` nor `Ord`: were it to implement one,
+    /// `check` would have two impls to choose from and the call would be ambiguous.
+    trait NoKey<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> NoKey<()> for T {}
+    struct ByHash;
+    struct ByOrd;
+    impl<T: ?Sized + Hash> NoKey<ByHash> for T {}
+    impl<T: ?Sized + Ord> NoKey<ByOrd> for T {}
+    <Shared as NoKey<_>>::check();
+    <Term as NoKey<_>>::check();
+
+    let body = || prim(Prim::Tuple, vec![var("x"), var("y")]);
+    let (run, never) = (Shared::new(body()), Shared::new(body()));
+    let f = Term::Lam(vec!["x".into()], run.clone());
+    let made = let_("y", lit(1i64), app(f, vec![lit(2i64)]));
+    let want = Value::tuple(vec![Value::Int(2), Value::Int(1)]);
+    assert_eq!(super::eval(&made).expect("a tuple"), want);
+    assert!(run.reads_memo().get().is_some(), "the run filled the memo");
+    assert!(never.reads_memo().get().is_none());
+    assert_ne!(run.id(), never.id());
+    assert!(run == never && never == run);
+    let held = |b: &Shared| lam(&["z"], Term::Lam(vec!["x".into()], b.clone()));
+    assert!(held(&run) == held(&never) && held(&never) == held(&run));
+    // A memo that holds a wrong set changes nothing either.
+    let wrong = Shared::new(body());
+    let _ = wrong
+        .reads_memo()
+        .set(std::sync::Arc::from([std::sync::Arc::from("z")]));
+    assert!(wrong == never && never == wrong && wrong == run);
+    // The terms still differ where they differ.
+    assert!(Shared::new(var("x")) != run);
+}
