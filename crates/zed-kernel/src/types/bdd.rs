@@ -777,51 +777,6 @@ mod build {
             }
         }
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::super::tests::{atom, random};
-        use super::*;
-        use crate::types::Row;
-
-        /// `Part::connect` keeps the value of the expression built without folding, on random
-        /// parts with leaves mixed in, at every assignment of the six atoms.
-        #[test]
-        fn connecting_keeps_the_value_of_the_unfolded_expression() {
-            let mut seed =
-                crate::seed::seed("connecting_keeps_the_value_of_the_unfolded_expression");
-            let operand = |seed: &mut u64| {
-                *seed = seed
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                match (*seed >> 33) % 4 {
-                    0 => Part::Bdd(Bdd::Leaf(true)),
-                    1 => Part::Bdd(Bdd::Leaf(false)),
-                    _ => random(seed, 2),
-                }
-            };
-            let mut folded = 0;
-            for _ in 0..2000 {
-                let (a, b) = (operand(&mut seed), operand(&mut seed));
-                for op in [Op::Or, Op::And] {
-                    let old = Part::expr(match op {
-                        Op::Or => Form::Or(a.clone(), b.clone()),
-                        Op::And => Form::And(a.clone(), b.clone()),
-                    });
-                    let new = Part::connect(op, a.clone(), b.clone());
-                    if !matches!(new, Part::Expr(_)) {
-                        folded += 1;
-                    }
-                    for set in 0..64u32 {
-                        let holds = |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
-                        let or = matches!(op, Op::Or);
-                        assert_eq!(new.eval(&holds), old.eval(&holds), "{a:?} or {or} {b:?}");
-                    }
-                }
-            }
-            assert!(folded > 1000, "{folded} folded");
-        }
-    }
 }
 
 /// The digest of the expression `a | b` (`Op::Or`) or `a & b` (`Op::And`) whose operands, in
@@ -3034,10 +2989,15 @@ mod xor {
         } else {
             (meet(&p, &nq), meet(&np, &q))
         };
-        // The form is made when first read (`Part::expr_unmade`), so it cannot be folded; its
-        // operands are no leaves: each is the meet of a literal and an exclusive or (or their
-        // complements) over disjoint atoms, which `meet` keeps as an expression or a two-literal
-        // list, never a leaf.
+        // The form is made when first read (`Part::expr_unmade`), so it cannot be folded. Proof
+        // that neither operand is a leaf ([`Form`]): `s` has two or more atoms (this function's
+        // contract), so `p` is the literal of one atom and `q` the exclusive or of one or more
+        // others. `p`, `q`, `!p` and `!q` are each true at some assignment of their atoms and
+        // false at another. `x` and `y` each meet one of `p`, `!p` with one of `q`, `!q`, over
+        // disjoint atoms, so each is true where both operands are and false where one is not:
+        // not constant. `meet` returns either `Part::connect` of two non-leaves, which is an
+        // expression, or the diagram `Bdd::assemble` or `zip` builds of that meet, which by
+        // their correctness is that function; a leaf is a constant, so neither result is one.
         let form = if x.before(&y) {
             Form::Or(x, y)
         } else {

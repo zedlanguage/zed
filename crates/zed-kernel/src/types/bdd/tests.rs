@@ -7,7 +7,7 @@ pub(super) fn atom(i: u64) -> Row {
     Row::new(vec![Type::lit(&Value::Int(i as i64)).unwrap()])
 }
 
-pub(super) fn random(seed: &mut u64, depth: u32) -> Part<Row> {
+fn random(seed: &mut u64, depth: u32) -> Part<Row> {
     *seed = seed
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
@@ -2891,4 +2891,43 @@ fn the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to() {
         format!("{b:?}"),
         format!("Node({:?}, true, false)", atom(0))
     );
+}
+
+/// `Part::connect` keeps the value of the unfolded expression `a | b` or `a & b` (that is, of
+/// its operands joined by `||` or `&&`), on random parts with leaves mixed in, at every
+/// assignment of the six atoms.
+#[test]
+fn connecting_keeps_the_value_of_the_unfolded_expression() {
+    let mut seed = crate::seed::seed("connecting_keeps_the_value_of_the_unfolded_expression");
+    let operand = |seed: &mut u64| {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        match (*seed >> 33) % 4 {
+            0 => Part::Bdd(Bdd::Leaf(true)),
+            1 => Part::Bdd(Bdd::Leaf(false)),
+            _ => random(seed, 2),
+        }
+    };
+    let mut folded = 0;
+    for _ in 0..2000 {
+        let (a, b) = (operand(&mut seed), operand(&mut seed));
+        for op in [Op::Or, Op::And] {
+            let or = matches!(op, Op::Or);
+            let new = Part::connect(op, a.clone(), b.clone());
+            if !matches!(new, Part::Expr(_)) {
+                folded += 1;
+            }
+            for set in 0..64u32 {
+                let holds = |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
+                let old = if or {
+                    a.eval(&holds) || b.eval(&holds)
+                } else {
+                    a.eval(&holds) && b.eval(&holds)
+                };
+                assert_eq!(new.eval(&holds), old, "{a:?} or {or} {b:?}");
+            }
+        }
+    }
+    assert!(folded > 1000, "{folded} folded");
 }
