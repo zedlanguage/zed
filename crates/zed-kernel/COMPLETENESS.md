@@ -233,8 +233,9 @@ first. `find_prefix_chains` is never called on those lists: the front sweep
 only on the heads (`int`, `bool`). With the heads `1` and `1 | 2` the sweep declines.
 
 - `find_prefix_chains`, the first loop's test of `carriers` for a second row's carrier (old
-  7412): removed, with the proof at the site. `forced` lists each row once, and every row met
-  there has the head `c.item`, so two rows differ in their carrier.
+  7412): removed with the record it guarded, for the reason given in the next entry. The
+  test could not have been true in any case: `forced` lists each row once, and every row met there has
+  the head `c.item`, so two rows differ in their carrier.
 - The second loop's arm for a second carrier of the one cycle (old 7430-7434): reached by the new
   test `l01_23_groups_and_refusals` `chains_to_two_carriers_of_one_cycle_with_other_heads_agree_with_the_oracle`
   (three cases, each the oracle's verdict on lists of up to 4 items). The negative control (the

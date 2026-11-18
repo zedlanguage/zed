@@ -7406,11 +7406,10 @@ impl<'m> Searching<'m> {
                             carrier_cycle = Some(c);
                             carriers.push(a[1].clone());
                         }
-                        // No test of `carriers` for `a[1]`: `forced` lists each row once (its
-                        // rows come from one ordered set of settings, `bdd::settings`, or one
-                        // block, a set by atom), and every row met here has `a[0] == c.item`,
-                        // so two rows met here differ in `a[1]`.
-                        Some(prev) if prev == &c => carriers.push(a[1].clone()),
+                        // A second carrier of the one cycle is not kept, as in the loop below:
+                        // `is_carrier` accepts it by its step, so `walk` maps it to node 0 and
+                        // its row is read as one ending at the carrier.
+                        Some(prev) if prev == &c => {}
                         Some(_) => return None,
                     }
                 }
