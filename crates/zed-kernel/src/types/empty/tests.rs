@@ -1618,3 +1618,85 @@ fn greedy_length_handles_three_primes_disjoint_pairs_and_deep_trees() {
     let n = residue_length(&[], &deep).expect("a length 7 modulo 8");
     assert_eq!(&n % 8u32, BigUint::from(7u32));
 }
+
+/// Random types for [`kept_height_bounds_agree_with_fresh_ones_across_rebuilds`], made from the
+/// draws of `s` alone: the cells of [`random_cells`] (plain types, the members of two random
+/// groups, under names and one-tuples), lists, and pairs, meets, unions and differences of
+/// them. The same draws make equal types, new nodes and new group instances each time.
+fn random_height_types(s: &mut u64) -> Vec<Type> {
+    let mut ts = random_cells(s);
+    ts.push(list_group(below(s, 2) == 0));
+    ts.push(fixed_list(below(s, 4)));
+    for _ in 0..below(s, 6) {
+        let a = ts[below(s, ts.len())].clone();
+        let b = ts[below(s, ts.len())].clone();
+        ts.push(match below(s, 5) {
+            0 => Type::tuple(vec![a, b]),
+            1 => Type::atom_with("cons", &Type::tuple(vec![a, b])),
+            2 => &a | &b,
+            3 => &a & &b,
+            _ => &a - &b,
+        });
+    }
+    ts
+}
+
+/// The first type of `ts` whose bounds kept in `HEIGHTS` ([`height_bounds`]) differ from those
+/// a fresh `Heights` finds, with both.
+#[expect(clippy::type_complexity, reason = "an index and two pairs of bounds")]
+fn first_stale(ts: &[Type]) -> Option<(usize, Option<(u64, u64)>, Option<(u64, u64)>)> {
+    ts.iter().enumerate().find_map(|(i, t)| {
+        let (kept, fresh) = (height_bounds(t), Heights::default().height_bounds(t));
+        (kept != fresh).then_some((i, kept, fresh))
+    })
+}
+
+/// The bounds kept in `HEIGHTS` never go stale (TEST-heights-cache-invalidation; the proof at
+/// `HEIGHTS`): on random types, asked in random order, the kept bounds equal those a fresh
+/// `Heights` finds, both before and after the same types are built again from the same draws
+/// (new nodes, new instances of the groups, unfoldings made again) with the kept map left
+/// as it was, and after `Type::forget_emptiness`, which ends the unit and drops the unfoldings,
+/// called between some rounds. Negative control: a wrong entry put in the kept map for one type
+/// is found by the same comparison, for that type.
+#[test]
+fn kept_height_bounds_agree_with_fresh_ones_across_rebuilds() {
+    let mut s = crate::seed::seed("kept_height_bounds_agree_with_fresh_ones_across_rebuilds") | 1;
+    Type::forget_emptiness();
+    let mut compared = 0;
+    for case in 0..150 {
+        let draws = next(&mut s) | 1;
+        let ts = random_height_types(&mut draws.clone());
+        // Ask the kept bounds of some types first, in random order, so later ones find
+        // children kept by earlier questions.
+        for _ in 0..ts.len() {
+            height_bounds(&ts[below(&mut s, ts.len())]);
+        }
+        assert_eq!(first_stale(&ts), None, "case {case}, as built");
+        if below(&mut s, 3) == 0 {
+            Type::forget_emptiness();
+        }
+        let again = random_height_types(&mut draws.clone());
+        assert_eq!(again.len(), ts.len(), "case {case}: the same draws");
+        assert_eq!(first_stale(&again), None, "case {case}, built again");
+        compared += ts.len() + again.len();
+        // Negative control: a wrong kept entry is seen.
+        let k = below(&mut s, again.len());
+        let t = &again[k];
+        let wrong = match height_bounds(t) {
+            None => Some((0, 0)),
+            Some((lo, hi)) => Some((lo, hi.saturating_add(1).max(lo + 1))),
+        };
+        let wrong = if wrong == height_bounds(t) {
+            None
+        } else {
+            wrong
+        };
+        HEIGHTS.with_borrow_mut(|h| h.bounds.insert(t.clone(), wrong));
+        let found = first_stale(&again).expect("a wrong kept entry is found");
+        assert_eq!(height_bounds(&again[found.0]), wrong, "case {case}");
+        assert_eq!(found.1, wrong, "case {case}");
+        Type::forget_emptiness();
+    }
+    eprintln!("{compared} kept bounds compared with fresh ones");
+    assert!(compared > 1000, "only {compared} compared");
+}

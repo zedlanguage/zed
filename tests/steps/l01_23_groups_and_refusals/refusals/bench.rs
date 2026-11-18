@@ -1591,3 +1591,47 @@ fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
         |n, tag| &list_named(Type::int(), tag) - &by_place_from_the_end(n, None, tag),
     );
 }
+
+/// The `n` tuples `(i, i)` less the `n` tuples `(a | i, a | i)` for one bare atom `a`, which is
+/// empty (PERF-diagonal-rows-difference, found by perfh1). Every cell `a | i` shares the atom `a`,
+/// so the cells of a component form one class; before the fix each of the `n` open tuple types
+/// was decided on its own with every cell retested: 3.73M to 700M instructions from n 8 to 256.
+fn diagonal(n: usize) -> (Type, Type) {
+    let x = (0..n).fold(Type::empty(), |x, i| {
+        let a = lit(i as i64);
+        &x | &Type::tuple(vec![a.clone(), a])
+    });
+    let u = (0..n).fold(Type::empty(), |u, i| {
+        let c = &Type::atom("hbone") | &lit(i as i64);
+        &u | &Type::tuple(vec![c.clone(), c])
+    });
+    (x, u)
+}
+
+#[test]
+fn diagonal_rows_less_rows_sharing_an_atom_are_empty_in_their_size() {
+    big(|| {
+        let pairs = scaling::inputs(32, diagonal);
+        scaling::check("n diagonal rows less n rows sharing an atom", 32, |n| {
+            Type::forget_emptiness();
+            let (x, u) = &pairs[&n];
+            assert!((x - u).is_empty());
+        });
+    });
+}
+
+/// [`diagonal`] at the sizes of `XR_N` (default 8 to 256), printing the work of each, for
+/// reading the growth by eye with `--nocapture`.
+#[test]
+fn diagonal_rows_difference_sweep() {
+    let sizes = std::env::var("XR_N").unwrap_or("8,16,32,64,128,256".into());
+    big(move || {
+        for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
+            Type::forget_emptiness();
+            let (x, u) = diagonal(n);
+            let mut meter = scaling::Meter::new();
+            let w = meter.work(|| assert!((&x - &u).is_empty()));
+            eprintln!("DIAG n {n} units {} bytes {}", w.units, w.bytes);
+        }
+    });
+}

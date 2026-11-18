@@ -730,3 +730,31 @@ fn a_bounded_partial_arrow_narrowing_many_arrows_is_compared_in_linear_time() {
         },
     );
 }
+
+/// `m` rows `((#_, i) \ (#a, i), 0)` against `m` shapes `((#_, int), i | i + 1)`: the rows are
+/// split into disjoint disjuncts (K80) and each is narrowed against every shape
+/// (PERF-disjoint-rows-shared-shapes, PERF-nested-cover-narrow-per-piece). At 8eb436214, 1.15G
+/// and 285G instructions at m 32 and 256; after wt/kern-empty, 50.2M and 630M, 12.56 times.
+fn chain(m: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let left: Vec<String> = (0..m)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), 0)"))
+        .collect();
+    let right: Vec<String> = (0..m)
+        .map(|i| format!("((#_, int), {i} | {})", i + 1))
+        .collect();
+    (
+        parse_type(&left.join(" | ")).unwrap(),
+        parse_type(&right.join(" | ")).unwrap(),
+    )
+}
+
+#[test]
+fn rows_against_a_chain_of_shapes_are_decided_in_linear_time() {
+    let n = 32;
+    let pairs = scaling::inputs(n, chain);
+    scaling::check("m rows against m chained shapes", n, |m| {
+        let (left, right) = &pairs[&m];
+        assert!(left.subtype(right));
+    });
+}

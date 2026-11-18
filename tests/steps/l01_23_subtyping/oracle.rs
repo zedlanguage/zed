@@ -836,8 +836,9 @@ const SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS: [((u64, usize), usize, Verdict);
     ((1, 920), 0, Verdict::Empty),
     // `tuples`: no piece can be taken out, and cells held on a fork are read back.
     ((16, 3121), 0, Verdict::Inhabited),
-    // The two-literal clauses: a meet of two operands asked a second time.
-    ((21, 31), 2, Verdict::Inhabited),
+    // The two-literal clauses: a meet of two operands asked a second time. One way is decided
+    // since the pieces of crossing cells of literals are taken out (PERF-diagonal-rows-difference).
+    ((21, 31), 1, Verdict::Inhabited),
     // `tuples`: a fork taken where a cell's row is forced.
     ((23, 3846), 0, Verdict::Empty),
     // `affine_lists_empty`: no step the walk can take on any value, so the lists are empty.

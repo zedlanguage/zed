@@ -203,6 +203,24 @@ thread_local! {
         const { RefCell::new(ByType::new()) };
     /// The bounds on the heights of the values of each type asked ([`height_bounds`]): a
     /// function of the type alone, kept for every search until `Type::forget_emptiness`.
+    ///
+    /// Proof that a kept entry is never stale, so no change needs to drop it
+    /// (TEST-heights-cache-invalidation): (1) a type never changes: `Type` is an `Arc` of a
+    /// node no method changes once built; a recursive node sets lazily only its name, its atom
+    /// names and its unfolding, and the unfolding is `make()` of its key, the same parts each
+    /// time `rec::unfold::end_unit` drops it and a use makes it again. (2) The map finds an
+    /// entry only for a type equal to the one asked (`Eq` on `Type`): two nodes of parts are
+    /// equal only when their parts are, child by child, and two recursive nodes only when their
+    /// keys name one class of one canonical form at equal arguments (`rec::Key::order`), whose
+    /// unfoldings are the same parts over equal children. (3) `Heights::height_bounds`,
+    /// `least_height` and `most_height` read nothing but the parts of the type asked and of the
+    /// types it reaches (`Type::p`) and the entries of the same maps, so by induction on the
+    /// order in which entries are made each entry is what a fresh `Heights` finds for every type
+    /// equal to its key. The proof rests on (2) for recursive nodes of two instances that the
+    /// canonical form merges; the test
+    /// `types::empty::tests::kept_height_bounds_agree_with_fresh_ones_across_rebuilds` builds
+    /// such instances again from the same draws, and compares the kept bounds with fresh ones
+    /// before and after `forget_emptiness`, with a wrong entry as its negative control.
     static HEIGHTS: RefCell<Heights> = RefCell::new(Heights::default());
     /// The verdict of each type asked. A verdict is decided by a search that reads no kept
     /// result, or with the other members of its recursive group ([`group_verdicts`]), so it is
@@ -2679,6 +2697,11 @@ struct Searching<'m> {
 enum Each<'a> {
     Decide {
         may_cover: bool,
+    },
+    /// Narrowing alone, for [`key_pieces`]: a piece it does not prove empty with no fork sets
+    /// `failed` and stops the split.
+    Narrow {
+        failed: &'a mut bool,
     },
     Seek {
         len: usize,
@@ -5635,9 +5658,28 @@ impl<'m> Searching<'m> {
             if self.s().blame.is_some() && empty_by_classes(g, &f, &open) {
                 return true;
             }
-            if let Some((j, classes)) = classes(g, &open) {
-                let mut each = Each::Decide { may_cover };
-                return self.split_classes(g, &f, j, &classes, &mut each).await;
+            if let Some((j, classes, by_keys)) = classes(g, &open, true) {
+                if !by_keys {
+                    let mut each = Each::Decide { may_cover };
+                    return self.split_classes(g, &f, j, &classes, &mut each).await;
+                }
+                // The regions of flat keys ([`key_pieces`]) are the pieces of component `j` cut
+                // by the open cells, and this is DESIGN.md L1.23's step "each piece on which
+                // narrowing alone proves the part empty is taken out of the box", for cells
+                // that may cross: when narrowing alone proves the part empty on every piece and
+                // on the rest of the component, the box is empty. Otherwise nothing read here
+                // is kept and the steps below run as before, so the check decides the same
+                // parts it did, and refuses those that need a split of the box in two
+                // components at once.
+                let snap = self.fork_snapshot();
+                let mut failed = false;
+                let mut each = Each::Narrow {
+                    failed: &mut failed,
+                };
+                if self.split_classes(g, &f, j, &classes, &mut each).await && !failed {
+                    return true;
+                }
+                self.discard_since(snap);
             }
             let forking = {
                 let s = self.s();
@@ -5969,10 +6011,20 @@ impl<'m> Searching<'m> {
         classes: &[Class],
         each: &mut Each<'_>,
     ) -> bool {
-        let class_of: DigestMap<usize, usize> = (classes.iter().enumerate())
-            .flat_map(|(i, (_, ks))| ks.iter().map(move |&k| (k, i)))
-            .collect();
-        let at = |a: &Row| class_of.get(&g.index[a]).copied();
+        // Each tuple type's classes, in increasing order: one for the classes of `overlaps`,
+        // one or more for the pieces of `key_pieces`.
+        let mut class_of: DigestMap<usize, Vec<usize>> = DigestMap::default();
+        for (i, (_, ks)) in classes.iter().enumerate() {
+            for &k in ks {
+                class_of.entry(k).or_default().push(i);
+            }
+        }
+        let at = |a: &Row| class_of.get(&g.index[a]);
+        // Whether a tuple type of classes `is` has one in `this`: one binary search.
+        let within = |is: &[usize], this: &Range<usize>| {
+            is.get(is.partition_point(|&i| i < this.start))
+                .is_some_and(|&i| i < this.end)
+        };
         let mut forks = Vec::new();
         let out = f.restrict(&|a| at(a).map(|_| false));
         // Complexity tradeoff (PERF-types-cut-rows-union-scaling): naive, each class's piece
@@ -5992,8 +6044,10 @@ impl<'m> Searching<'m> {
         // component `j` lies in a cell of the class meets no cell of another class, so the
         // piece's part agrees with `f` there. Given up: when `out` is not `false` (the rest of
         // the component is then empty, or the rest's piece has answered), the meet is kept, so
-        // a large class over such a box still costs its size per test.
-        let wide = out.is_leaf() == Some(false);
+        // a large class over such a box still costs its size per test. The proof needs each
+        // tuple type in one class; a piece of `key_pieces` whose tuple types are also in other
+        // pieces keeps only its own values, a finite set of keys.
+        let wide = out.is_leaf() == Some(false) && class_of.values().all(|is| is.len() == 1);
         if !wide {
             let met = Type::union_all(classes.iter().map(|(c, _)| c.clone()));
             let rest = &g.r[j] - &met;
@@ -6013,14 +6067,16 @@ impl<'m> Searching<'m> {
                 (true, None) => {}
             }
         }
-        // Each entry: the part of the halves above, the classes of this half, and those of the
-        // other half, whose tuple types this half takes out of the part (none at the top).
-        let mut halves = vec![(f.clone(), 0..classes.len(), None::<Range<usize>>)];
-        while let Some((f, this, other)) = halves.pop() {
-            let f = match other {
-                None => f,
-                Some(other) => {
-                    let f = f.restrict(&|a| at(a).filter(|i| other.contains(i)).map(|_| false));
+        // Each entry: the part of the halves above, the classes of this half, and whether the
+        // tuple types with no class in this half are to be taken out of the part (not at the
+        // top). Each tuple type is then in the parts of the halves that hold one of its
+        // classes, `O(s log k)` of them for `s` classes of `k`.
+        let mut halves = vec![(f.clone(), 0..classes.len(), false)];
+        while let Some((f, this, cut)) = halves.pop() {
+            let f = match cut {
+                false => f,
+                true => {
+                    let f = f.restrict(&|a| at(a).filter(|is| !within(is, &this)).map(|_| false));
                     if f.is_leaf() == Some(false) {
                         continue;
                     }
@@ -6044,9 +6100,8 @@ impl<'m> Searching<'m> {
                 continue;
             }
             let m = this.start + this.len() / 2;
-            let (lo, hi) = (this.start..m, m..this.end);
-            halves.push((f.clone(), hi.clone(), Some(lo.clone())));
-            halves.push((f, lo, Some(hi)));
+            halves.push((f.clone(), m..this.end, true));
+            halves.push((f, this.start..m, true));
         }
         for fork in forks {
             self.restore_fork(fork);
@@ -6058,6 +6113,21 @@ impl<'m> Searching<'m> {
     async fn each(&'m self, each: &mut Each<'_>, r: Vec<Type>, f: Part<Row>) -> bool {
         match each {
             Each::Decide { may_cover } => self.piece(r, f, *may_cover).await,
+            Each::Narrow { failed } => {
+                if f.is_leaf() == Some(false) {
+                    return true;
+                }
+                let snap = self.fork_snapshot();
+                let mut h = self.region(r, &f).await;
+                if self.narrow_tuples(&mut h, &mut f.clone()).await
+                    && self.take_fork(snap, None).is_none()
+                {
+                    return true;
+                }
+                self.discard_since(snap);
+                **failed = true;
+                false
+            }
             Each::Seek { len, found } => {
                 let piece = &Type::tuple(r)
                     & &Type::with(|p| {
@@ -10327,7 +10397,7 @@ impl<'m> Searching<'m> {
     /// there are no such classes; `Some(None)` when no piece has a value found.
     async fn class_rep(&'m self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<usize>> {
         let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
-        let (j, classes) = classes(b, &open)?;
+        let (j, classes, _) = classes(b, &open, false)?;
         let mut found = None;
         let mut each = Each::Seek {
             len,
@@ -12375,6 +12445,10 @@ fn empty_by_classes(g: &Region, f: &Part<Row>, open: &[usize]) -> bool {
 /// so the pieces below a split hold each tuple type at most once and the nodes stay linear in
 /// the tuple types; a tuple type that held the component would go to every piece, and splits
 /// in turn on each component would be a search over all of them.
+/// When no component falls into two classes and `keys` is set, the first in the same order
+/// whose open cells hold only flat keys gives the pieces of [`key_pieces`] instead, with `true`
+/// as the last field; a tuple type is then in several pieces, and the caller only narrows
+/// each (`Each::Narrow`).
 // Complexity tradeoff (GROUP-order-classes-outside-cpoly, COMPLEXITY.md K35b): the first
 // component that splits, in written order, made the verdict depend on the order of the
 // components: on `((#a|#b), (L12|#c))` less five pairs, splitting the first component forked
@@ -12387,7 +12461,7 @@ fn empty_by_classes(g: &Region, f: &Part<Row>, open: &[usize]) -> bool {
 // `O(1)` on different digests; the `overlaps` calls are those of the first-found search, at
 // most one per candidate. A tie (two components of equal type and equal open cells) is broken
 // by position; it can then only matter when those two components carry different rows.
-fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
+fn classes(g: &Region, open: &[usize], keys: bool) -> Option<(usize, Vec<Class>, bool)> {
     let mut order: Vec<(&Type, Vec<&Type>, usize, Vec<usize>)> = (0..g.r.len())
         .filter(|&j| g.opens[j] >= open.len() && open.iter().all(|&k| g.is_open(k, j)))
         .map(|j| {
@@ -12398,12 +12472,13 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
         })
         .collect();
     order.sort_unstable_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
-    order.into_iter().find_map(|(_, _, j, cells)| {
+    let open: BTreeSet<usize> = open.iter().copied().collect();
+    let by_class = order.iter().find_map(|(_, _, j, cells)| {
+        let j = *j;
         let groups = overlaps(cells.iter().map(|&c| &g.cells[j][c].ty));
         if groups.len() < 2 {
             return None;
         }
-        let open: BTreeSet<usize> = open.iter().copied().collect();
         let classes = groups.into_iter().map(|is| {
             let cells = is.iter().map(|&i| &g.cells[j][cells[i]]);
             let ty = Type::union_all(cells.clone().map(|c| c.ty.clone()));
@@ -12412,8 +12487,97 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
                 .filter(|k| open.contains(k));
             (ty, ks.collect())
         });
-        Some((j, classes.collect()))
+        Some((j, classes.collect(), false))
+    });
+    by_class.or_else(|| {
+        let mut order = order.iter().filter(|_| keys);
+        order.find_map(|(_, _, j, cells)| Some((*j, key_pieces(g, *j, cells, &open)?, true)))
     })
+}
+
+/// The pieces that the open cells `cells` of component `j` cut it into, when each holds
+/// finitely many booleans, numbers, strings and bare atoms and nothing else ([`flat_keys`]),
+/// and they cut it into two or more: one piece for each set of cells that holds some key and
+/// no other cell does, the keys held by exactly that set of cells, with the tuple types of
+/// `open` of those cells. Each value of the component then lies in one piece or in no cell,
+/// and every cell either holds a piece whole or shares no value with it, so a tuple type of
+/// `open` is true on component `j` of a piece exactly when it is among the piece's tuple types
+/// (the pieces are the regions of the Venn diagram of the cells, here each a finite set of
+/// keys). A tuple type may then be among the tuple types of several pieces, which
+/// [`Searching::split_classes`] allows for. `None` when a cell has other values, or when the
+/// cells cut the component into one piece only.
+// Complexity tradeoff (PERF-diagonal-rows-difference, COMPLEXITY.md K128): the classes of
+// [`overlaps`] join every cell that shares a key with another, so `n` cells `a | i` sharing
+// the atom `a` form one class, and the part was decided after that by one piece per open tuple
+// type, each retesting every cell of the box: order `n²` (650M instructions at n 256, 3.7
+// times a doubling). Naive Venn regions of `c` cells are `2^c` sets; read through the keys,
+// each key lies in one region, so the regions are at most the keys `K` and the tuple types
+// listed over all pieces at most `Σ` (keys of a cell): one pass files each key under the set of
+// cells holding it, `O(Σ log K)` comparisons of keys, and as many of the sets, compared in
+// `O(|s|)` each. The pieces split on through `split_classes`, `O(Σ log K)` restrictions of
+// the part in all, and each piece is narrowed once (`Each::Narrow`). Given up: a piece that
+// narrowing alone does not prove empty drops the whole split, and the part goes on to the
+// steps after it as before (the split into open tuple types, or `Refused(TupleSplit)`), so
+// the work of the pieces narrowed before it is spent for nothing, at most the order of that
+// split; deciding such a piece in full would split the box in two components at once, which
+// DESIGN.md L1.23 refuses (box covers over `#a | #b | #c` stay refused).
+fn key_pieces(g: &Region, j: usize, cells: &[usize], open: &BTreeSet<usize>) -> Option<Vec<Class>> {
+    let held = Held::default();
+    let none = Type::empty();
+    let mut holders: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
+    for (x, &c) in cells.iter().enumerate() {
+        for k in flat_keys(g.cells[j][c].ty.p_held(&held), &none)? {
+            holders.entry(k).or_default().push(x);
+        }
+    }
+    let mut regions: BTreeMap<Vec<usize>, Vec<Key>> = BTreeMap::new();
+    for (k, xs) in holders {
+        regions.entry(xs).or_default().push(k);
+    }
+    if regions.len() < 2 {
+        return None;
+    }
+    let pieces = regions.into_iter().map(|(xs, keys)| {
+        let ty = Type::union_all(keys.iter().map(key_type));
+        let ks = (xs.iter())
+            .flat_map(|&x| g.cells[j][cells[x]].rows.iter().copied())
+            .filter(|k| open.contains(k));
+        (ty, ks.collect())
+    });
+    Some(pieces.collect())
+}
+
+/// The values of `p` as keys, sorted, when it holds finitely many booleans, numbers, strings
+/// and bare atoms and nothing else; `None` otherwise. Each key is one value.
+fn flat_keys(p: &Parts, none: &Type) -> Option<Vec<Key>> {
+    if p.atoms.cofinite
+        || !p.tuples.is_default()
+        || p.structs
+        || p.morphisms.is_leaf() != Some(false)
+    {
+        return None;
+    }
+    let lists = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
+    if lists.iter().any(|l| l.cofinite) {
+        return None;
+    }
+    let mut keys: Vec<Key> = (0..2u8)
+        .filter(|b| p.bools & (1 << b) != 0)
+        .map(Key::Bool)
+        .collect();
+    for (u, l) in lists.into_iter().enumerate() {
+        keys.extend(l.values.iter().map(|v| Key::Lit(u, v.clone())));
+    }
+    for (n, a) in &p.atoms.names {
+        if a.payload != *none {
+            return None;
+        }
+        if a.bare {
+            keys.push(Key::Atom(n.clone()));
+        }
+    }
+    keys.sort();
+    Some(keys)
 }
 
 /// What a value of a type can be equal to, at one node of the trie `overlaps` builds: a
@@ -12562,12 +12726,13 @@ fn meeting_pairs(ts: &[&Type]) -> BTreeSet<(usize, usize)> {
     pairs
 }
 
-/// The type of the one value of a key of [`literal_keys`].
+/// The type of the one value of a key of [`literal_keys`] or [`flat_keys`].
 fn key_type(k: &Key) -> Type {
     let v = match k {
         Key::Bool(b) => Value::Bool(*b == 1),
         Key::Lit(_, v) => v.clone(),
-        _ => unreachable!("literal_keys gives booleans and literals only"),
+        Key::Atom(n) => return Type::atom(n),
+        _ => unreachable!("literal_keys and flat_keys give booleans, literals and atoms only"),
     };
     Type::lit(&v).expect("a boolean or literal has a type of its own")
 }
