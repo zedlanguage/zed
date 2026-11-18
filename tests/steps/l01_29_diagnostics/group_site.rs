@@ -83,24 +83,19 @@ fn parity(n: usize) -> Vec<Type> {
     group(&defs)
 }
 
-/// The test `fork_empty` of `l01_23_groups_and_refusals::refusals`, written with named definitions, each
-/// list a ring of `n`: `(Ints, Ints)` within the pairs whose first list holds only 1s and whose
-/// second has an even length, only 2s and odd, and the rest of each. It holds, but the excluded
-/// first lists meet at `#nil` and differ, so deciding it follows both at once, which the
-/// checker refuses.
+/// Written with named definitions, each list a ring of `n`: `(Ints, Ints)` within the pairs
+/// whose second list has an even length and those whose second list has an odd length. It
+/// holds, but the two excluded second lists differ and each refers back to itself, and only
+/// the two together hold `Ints`: whether they do is the universality of a union of automata, so
+/// the checker refuses. (This used the pairs of lists of only 1s and of only 2s with each
+/// parity, the test `fork_empty` of `l01_23_groups_and_refusals::refusals`, until
+/// GROUP-order-fork-cuts-together decided those.)
 fn fork_empty(n: usize) -> (Ty, Ty) {
     let lists = ring("Ints", int(), n);
-    let ones = ring("Ones", one(1), n);
-    let twos = ring("Twos", one(2), n);
     let parity = parity(n);
     let (even, odd) = (&parity[0], &parity[1]);
     let pair = |a: &Type, b: &Type| Type::tuple(vec![a.clone(), b.clone()]);
-    let within = Type::union_all([
-        pair(&ones, even),
-        pair(&twos, odd),
-        pair(&(&lists - &ones), even),
-        pair(&(&lists - &twos), odd),
-    ]);
+    let within = &pair(&lists, even) | &pair(&lists, odd);
     (Ty::set(pair(&lists, &lists)), Ty::set(within))
 }
 

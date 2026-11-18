@@ -248,7 +248,7 @@ impl Ints {
             .filter(|(_, s)| !s.cof)
             .min_by_key(|(_, s)| s.vals.len())
         {
-            let mut vals = (*min_fin.vals).clone();
+            let mut vals: BTreeSet<Value> = (*min_fin.vals).clone();
             for (idx, s) in sets.iter().enumerate() {
                 if idx == min_idx || vals.is_empty() {
                     continue;
@@ -861,7 +861,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 let mut changed = false;
                 for side in 0..2 {
                     let mut drop_mask = vec![false; clauses_work.len()];
-                    let mut merged_new = Vec::new();
+                    let mut merged_new: Vec<Vec<(usize, Ints)>> = Vec::new();
                     {
                         let mut groups: HashMap<(usize, &Ints, usize), Vec<usize>, Digests> =
                             HashMap::default();
@@ -943,7 +943,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 let mut next_work = Vec::with_capacity(clauses_work.len());
                 for atoms in clauses_work {
                     let mut killed = false;
-                    let mut updated = Vec::with_capacity(atoms.len());
+                    let mut updated: Vec<(usize, Ints)> = Vec::with_capacity(atoms.len());
                     for (j, a) in atoms {
                         if narrowed_places.contains_key(&j) {
                             if pl[j].subset(&a) {
@@ -1152,7 +1152,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                     }
                     pl_ext.push(c.clone());
                 } else if let Some(nx) = nodes[v].next {
-                    let mut h = nodes[v].head.clone();
+                    let mut h: Ints = nodes[v].head.clone();
                     if car_pos && let Some(c) = &h_car {
                         h = h.meet(c);
                     }

@@ -59,7 +59,9 @@ fn a_meet_with_an_empty_operand_is_empty_with_no_search() {
     assert!(g[2].is_empty());
 }
 
-/// `D = List \ nil` is read as `List`, which is inhabited, so its answer comes from the search;
+/// `D = List \ nil` is read as `List`, which is inhabited; the exact decision of flat differences
+/// (`exact_flat_diff_decide`) settles it and the shared Horn search builds its value, so it is not
+/// sent to the search (it was, as one member, before GROUP-order-cpoly-merge);
 /// `E = Endless \ nil`, in a group of its own, is read as `Endless`, which the decider proves
 /// empty with no search. The count is of the group, whose verdicts are decided together.
 #[test]
@@ -76,7 +78,7 @@ fn a_difference_is_read_as_its_left_operand() {
     ])
     .unwrap()
     .instance(vec![]);
-    assert_eq!(verdict_and_searched(&d[1]), (Verdict::Inhabited, 1));
+    assert_eq!(verdict_and_searched(&d[1]), (Verdict::Inhabited, 0));
     assert_eq!(verdict_and_searched(&e[1]), (Verdict::Empty, 0));
 }
 
@@ -841,7 +843,9 @@ fn a_parity_meet_with_a_second_link_atom_is_inhabited() {
 }
 
 /// Small instance of `bench::meets_of_k_members_scale`: the meet of a few even-length lists is
-/// settled with no search when an endless list is among them, and searched once otherwise.
+/// settled with no search when an endless list is among them, and searched once otherwise; a
+/// meet of one member is a difference, which the decider settles with no search since
+/// GROUP-order-cpoly-merge.
 #[test]
 fn meets_of_a_few_members_are_decided() {
     for k in [1, 2, 3] {
@@ -852,7 +856,7 @@ fn meets_of_a_few_members_are_decided() {
         );
         assert_eq!(
             verdict_and_searched(&meet_of_k(k, false)),
-            (Verdict::Inhabited, 1),
+            (Verdict::Inhabited, usize::from(k > 1)),
             "k = {k}"
         );
     }
