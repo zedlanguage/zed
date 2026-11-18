@@ -1064,7 +1064,7 @@ expression: "tokens_by_key(&fences::design())"
  18 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
  19 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
 == DESIGN.md [sec:tour_grammar] 1 L21
-  2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
+  2 | «struct» KeyVal «grammar» { key : JsonStr str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
   6 | cfg = Json . parse ( bytes ) ;

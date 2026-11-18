@@ -1,6 +1,6 @@
 // variant: // note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
 // one declaration: type + parser + serializer (round-trip canonical)
-struct KeyVal  grammar { key: Ident  ":"  value: Json }
+struct KeyVal  grammar { key: JsonStr  ":"  value: Json }
 struct JsonObj grammar { "{"  entries: KeyVal sep ","  "}" }
 type   Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null;
 
