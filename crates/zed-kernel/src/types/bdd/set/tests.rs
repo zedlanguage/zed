@@ -472,7 +472,19 @@ fn chosen_literals(n: usize, least: usize) {
     {
         pick.push(prev[i]);
     }
-    assert!(pick.len() > least, "{} literals chosen", pick.len());
+    // A rising run holds one literal per old priority at most. With 8-bit digests
+    // (`crate::address::SHORT`) the numbers have few distinct priorities (34 literals are
+    // chosen among 2^16 numbers), so no long run exists to choose and only the bound is checked
+    // (plan row TEST-kernel-units-short-addresses).
+    let mut distinct = p.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert!(pick.len() <= distinct.len());
+    assert!(
+        crate::address::SHORT || pick.len() > least,
+        "{} literals chosen",
+        pick.len()
+    );
     let atoms = pick.iter().map(|&i| keys[i].0.clone()).collect();
     check("chosen literals", atoms, |_| true);
 }

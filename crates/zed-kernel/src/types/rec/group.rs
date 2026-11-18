@@ -849,12 +849,19 @@ mod tests {
         }]
     }
 
-    /// Whether [`GROUPS`] has an entry for a group of `digest`.
-    fn grouped(digest: u64) -> bool {
+    /// Whether [`GROUPS`] holds the live group `number` of `digest`. Other live groups may share
+    /// the digest, as the tests run in parallel and a digest of the short-addresses build has 8
+    /// bits (plan row TEST-kernel-units-short-addresses), so the group is told by its number.
+    fn grouped(digest: u64, number: u64) -> bool {
         GROUPS
             .lock()
             .expect("no panic under the lock")
-            .contains_key(&digest)
+            .get(&digest)
+            .is_some_and(|b| {
+                b.iter()
+                    .filter_map(Weak::upgrade)
+                    .any(|h| h.number == number)
+            })
     }
 
     /// The instance a recursive member belongs to, held weakly.
@@ -874,6 +881,7 @@ mod tests {
         let t = g.instance(vec![]);
         assert!(!t[0].is_empty());
         let env = env_of(&t[0]);
+        assert!(grouped(digest, number));
         drop((g, t));
         assert!(
             env.upgrade().is_some(),
@@ -882,7 +890,7 @@ mod tests {
         Type::forget_emptiness();
         assert!(env.upgrade().is_none(), "freed at the end of the unit");
         assert!(!instanced(number));
-        assert!(!grouped(digest));
+        assert!(!grouped(digest, number));
     }
 
     #[test]
@@ -912,11 +920,12 @@ mod tests {
         let t = g.instance(vec![]);
         assert!(!t[0].surface().root.is_empty());
         let env = env_of(&t[0]);
+        assert!(grouped(digest, number));
         drop((g, t));
         Type::forget_emptiness();
         assert!(env.upgrade().is_none(), "freed at the end of the unit");
         assert!(!instanced(number));
-        assert!(!grouped(digest));
+        assert!(!grouped(digest, number));
     }
 
     #[test]
@@ -980,9 +989,9 @@ mod tests {
         let t = g.instance(vec![]);
         assert!(!instanced(number));
         assert_eq!(g.instance(vec![]), t);
-        assert!(grouped(digest));
+        assert!(grouped(digest, number));
         drop((g, again));
-        assert!(!grouped(digest));
+        assert!(!grouped(digest, number));
         let made_again = Group::new(defs("TableLifePlain", 9_001, false)).expect("a plain group");
         assert_eq!(made_again.instance(vec![]), t);
     }

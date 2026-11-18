@@ -520,10 +520,15 @@ wants() {
 # tests/full are selected below, by their pieces' names, as before; short_steps names the steps of
 # the short-addresses build.
 short_steps="l01_37a_short_addresses l01_37_oracle"
+# short_libs names the packages whose unit tests also run in the short-addresses build, each as
+# the piece short-<package with - made _>: the zed-kernel unit tests reach the lines taken only
+# when digests tie (the `ByType` buckets, the orders by contents after a tie), which no other
+# test reaches (TEST-kernel-units-short-addresses, 2026-11-18).
+short_libs="zed-kernel"
 # The short-addresses pieces build in a clone mounted in the zrun namespace (see below), so a
 # run that selects one stops here, before any build, when it does not run through zrun.
 short_build=
-for s in $short_steps; do
+for s in $short_steps ${short_libs//-/_}; do
   selected "short-$s" "short-$s" && short_build=1
 done
 if [ -n "$short_build" ] && [ -n "$cov" ]; then
@@ -587,7 +592,7 @@ else
         wants "$a" "full-$d" "full-$d" && any=1 && tests+="--test full"$'\n'
       done
     fi
-    for s in $short_steps; do
+    for s in $short_steps ${short_libs//-/_}; do
       wants "$a" "short-$s" "short-$s" && any=1
     done
     [ -n "$any" ] || unused+=" '$a'"
@@ -669,6 +674,14 @@ if [ -n "$short_build" ]; then
   fi
   if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test -p zed-tests --features short-addresses,spec \
     $(printf -- '--test %s ' $short_steps) --no-run --message-format=short >"$out/build-short.log" 2>&1; then
+    tail -40 "$out/build-short.log"
+    echo "BUILD FAILED (short-addresses)"
+    exit 1
+  fi
+  # The packages of short_libs ask for nothing but short-addresses, which the build above gave
+  # zed-kernel already, so this builds only their unit-test binaries.
+  if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test $(printf -- '-p %s ' $short_libs) \
+    --features short-addresses --lib --no-run --message-format=short >>"$out/build-short.log" 2>&1; then
     tail -40 "$out/build-short.log"
     echo "BUILD FAILED (short-addresses)"
     exit 1
@@ -880,7 +893,10 @@ step_pieces() {
   done
   for p in $short; do
     n=short-$(basename "${p%-*}")
-    echo "$n $n $n tests $p"
+    case $n in
+      short-zed_kernel) echo "$n $n $n crates/zed-kernel $p" ;;
+      *) echo "$n $n $n tests $p" ;;
+    esac
   done
   if [ -n "$full" ]; then
     for d in tests/full/*/; do
