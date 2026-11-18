@@ -175,11 +175,15 @@ fn the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales() {
 /// number), then each found again by a copy built apart: one digest and O(1) expected compares a
 /// key, O(n) in all; with the hash that read the size alone, O(n^2). The keys are built before
 /// timing; the run is the map's inserts and lookups alone. The classes are checked at small
-/// sizes by `equal_families_get_one_class_by_value_key` in `tests.rs`.
+/// sizes by `equal_families_get_one_class_by_value_key` in `tests.rs`. n is 160,000 so that both
+/// sizes are past the CPU's last-level cache: at n = 20,000 the run touches 32 MB, about one
+/// 32 MB L3 of the Ryzen 9 5950X, and 8n touches 255 MB, so the wall ratio was 9.35 to 12.26
+/// at load5 under 40 while instructions and bytes were 8.00; at 160,000 against 1,280,000 the
+/// wall ratio is 8.78 and 6.83 (2026-11-18, load5 38.0 to 34.7), instructions 8.00.
 #[test]
 fn classes_of_families_by_value_key_scale() {
     use crate::value::key_forms::families_of_one_size;
-    let inputs = crate::scaling::inputs(20_000, |n| {
+    let inputs = crate::scaling::inputs(160_000, |n| {
         let key = |v: Value| ValueKey::Value(v);
         let keys: Vec<ValueKey> = families_of_one_size(n).into_iter().map(key).collect();
         let probes: Vec<ValueKey> = families_of_one_size(n).into_iter().map(key).collect();
@@ -187,7 +191,7 @@ fn classes_of_families_by_value_key_scale() {
     });
     crate::scaling::check_order(
         "classes of n families of one size by ValueKey, and n lookups",
-        20_000,
+        160_000,
         1,
         |n| {
             let (keys, probes) = &inputs[&n];

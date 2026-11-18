@@ -5086,6 +5086,94 @@ mod tests {
         assert!(!flagged(&m));
     }
 
+    /// `holds_neg_zero` agrees with a plain walk of every part, families entry by entry, on
+    /// every variant of `Value`, alone and nested two deep in each holder (a tuple, a keypath,
+    /// an atom's payload, a family's key and its value), with and without a `-0.0` of either
+    /// width. The walk's match has no `_` arm and `kind` numbers every variant, so a new variant
+    /// fails to compile until both handle it, and the test checks every variant is sampled. Its
+    /// shortcut answers a value with no sequence from the value alone; the negative control,
+    /// a check of the top value alone, disagrees with the walk on nested samples, so the
+    /// samples do reach the depths the shortcut skips.
+    #[test]
+    fn holds_neg_zero_agrees_with_a_full_walk_on_every_variant() {
+        fn full(v: &Value) -> bool {
+            match v {
+                Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Str(_) => {
+                    false
+                }
+                Value::Float(f) => f.get() == 0.0 && f.get().is_sign_negative(),
+                Value::Float32(f) => f.get() == 0.0 && f.get().is_sign_negative(),
+                Value::Atom(a) => a.args().iter().any(full),
+                Value::Tuple(xs) | Value::Path(xs) => xs.iter().any(full),
+                Value::Family(f) => f.iter().any(|(k, x)| full(k) || full(x)),
+            }
+        }
+        fn kind(v: &Value) -> usize {
+            match v {
+                Value::Bool(_) => 0,
+                Value::Int(_) => 1,
+                Value::Big(_) => 2,
+                Value::Rat(_) => 3,
+                Value::Float(_) => 4,
+                Value::Float32(_) => 5,
+                Value::Str(_) => 6,
+                Value::Atom(_) => 7,
+                Value::Tuple(_) => 8,
+                Value::Path(_) => 9,
+                Value::Family(_) => 10,
+            }
+        }
+        let holders: Vec<fn(Value) -> Value> = vec![
+            |v| Value::tuple(vec![Value::Int(1), v]),
+            |v| Value::path(vec![v, Value::Int(2)]),
+            |v| Value::atom_with("e", vec![v]),
+            |v| Value::Family(Family::of([(0_i64, v)])),
+            |v| Value::Family(Family::set([v])),
+        ];
+        let mut leaves = vec![
+            Value::Bool(true),
+            Value::Int(0),
+            Value::int(BigInt::from(u64::MAX) * 3),
+            Value::rat(Rat::new(BigInt::from(1), BigInt::from(3)).expect("1/3")),
+            Value::float(0.0),
+            Value::float(-0.0),
+            Value::float(1.5),
+            Value::float32(0.0),
+            Value::float32(-0.0),
+            Value::str("s"),
+            Value::atom("e"),
+            Value::tuple(vec![]),
+            Value::path(vec![]),
+            Value::Family(Family::range(-2, 2)),
+            Value::Family(Family::of([(0_i64, Value::float(-0.0))])),
+        ];
+        let one_deep: Vec<Value> = holders
+            .iter()
+            .flat_map(|h| leaves.iter().map(|v| h(v.clone())))
+            .collect();
+        let two_deep: Vec<Value> = holders
+            .iter()
+            .flat_map(|h| one_deep.iter().map(|v| h(v.clone())))
+            .collect();
+        leaves.extend(one_deep);
+        leaves.extend(two_deep);
+        let kinds: HashSet<usize> = leaves.iter().map(kind).collect();
+        assert_eq!(kinds.len(), 11, "every variant sampled");
+        let (mut with, mut nested) = (0, 0);
+        for v in &leaves {
+            let want = full(v);
+            assert_eq!(holds_neg_zero(v, &mut Read::default()), want, "{v}");
+            with += usize::from(want);
+            let top = matches!(v, Value::Float(f) if f.get() == 0.0 && f.get().is_sign_negative())
+                || matches!(v, Value::Float32(f) if f.get() == 0.0 && f.get().is_sign_negative());
+            nested += usize::from(want && !top);
+        }
+        assert!(with > 0 && with < leaves.len());
+        // The negative control: the top value alone misses every nested `-0.0`.
+        // 465 samples, 61 holding a `-0.0` below the top.
+        assert_eq!((leaves.len(), nested), (465, 61));
+    }
+
     /// Equal families hash alike in each form: a map, a range of 64-bit ends, a range of wide
     /// ends, a list made by `++`, and a map of wide keys, as its range and its list.
     #[test]
