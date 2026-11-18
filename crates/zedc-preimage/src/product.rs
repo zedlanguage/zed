@@ -20036,6 +20036,12 @@ mod tests {
                 );
             }
             let ints_only = kept.classes() & !Value::INT_CLASS == 0;
+            // The bound `fills` rests on: a set inside the interval has no more members than
+            // it has integers, so `fills` comparing the counts by `>=` would answer as `==`
+            // does (TEST-ints-listed-shortcut-off).
+            if ints_only && let Some(m) = x.members() {
+                assert!(Num::from(kept.len() as u64) <= m, "round {round}");
+            }
             for inside in [true, false] {
                 if fills(&kept, &x, inside) {
                     assert!(ints_only && !kept.is_empty());
@@ -20062,6 +20068,74 @@ mod tests {
                 assert_eq!(points(&vs), x, "round {round}");
             }
         }
+    }
+
+    /// The shortcuts of [`IntsListed`] give exactly what the walks they skip give
+    /// (TEST-ints-listed-shortcut-off): for a product whose finite set is `vs`, recorded as
+    /// listed with an interval `i0` whose integers are all members of `vs` (the record's own
+    /// condition), and whose interval `x` is any interval, inside `i0` or not,
+    /// [`Product::kept_by_listed`] gives, when it answers, the set [`kept_in`] gives, and
+    /// [`Product::ints_all_listed`] gives, when it answers, `x`, which then equals `x` met with
+    /// the points of `vs` (what listing the set and meeting gives). Each must answer in some
+    /// rounds. Sets of runs and gaps of integers, against intervals of one piece and of many.
+    #[test]
+    fn the_listed_shortcuts_give_what_the_walks_give() {
+        let mut seed: u64 = 0x4e3f_47ab_c0de_0002;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        let (mut kept_fired, mut all_fired) = (0, 0);
+        for round in 0..2000 {
+            let mut vs = TreapSet::new();
+            let mut n = next(20) as i64 - 30;
+            for _ in 0..1 + next(30) {
+                vs.insert(Value::Int(n));
+                n += 1 + next(3) as i64 * next(2) as i64;
+            }
+            let pieces = |next: &mut dyn FnMut(u64) -> u64| -> IntervalSet {
+                IntervalSet::from_pieces(
+                    (0..1 + next(4))
+                        .map(|_| {
+                            let a = next(70) as i64 - 35;
+                            (End::of(a), End::of(a + next(12) as i64))
+                        })
+                        .collect(),
+                )
+            };
+            let i0 = match round % 3 {
+                0 => points(&vs),
+                _ => points(&vs).meet(&pieces(&mut next)),
+            };
+            let x = match round % 4 {
+                0 => i0.meet(&pieces(&mut next)),
+                1 => i0.clone(),
+                _ => pieces(&mut next),
+            };
+            let mut p = Product::top();
+            p.cell.finite.element = FiniteSet::Set(vs.clone());
+            p.cell.ints.element = Bounds::ints(x.clone());
+            p.listed = IntsListed(Some((i0.clone(), vs.clone())));
+            if let Some(kept) = p.kept_by_listed(&vs) {
+                kept_fired += 1;
+                assert_eq!(kept, kept_in(&vs, &x), "round {round}: {vs:?} {i0:?} {x:?}");
+            }
+            if let Some(all) = p.ints_all_listed() {
+                all_fired += 1;
+                assert_eq!(all, x, "round {round}");
+                assert_eq!(
+                    x.meet(&points(&vs)),
+                    x,
+                    "round {round}: {vs:?} {i0:?} {x:?}"
+                );
+            }
+        }
+        assert!(
+            kept_fired > 100 && all_fired > 100,
+            "{kept_fired} {all_fired}"
+        );
     }
 
     /// [`Product::meet_type`] leaves a product reduced, its finite set the same values as

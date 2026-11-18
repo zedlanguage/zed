@@ -18,7 +18,12 @@
 //! (a `kept_by_listed` with no count test, which keeps members the interval excludes), changes
 //! no result, and neither these checks nor the arms' scopes of the store's walk
 //! (`store::product::arms`, tried: they did not differ even under the first-piece break, so
-//! they are not compared here) show it.
+//! they are not compared here) show it. The unit test
+//! `product::tests::the_listed_shortcuts_give_what_the_walks_give` in zedc-preimage compares
+//! `kept_by_listed` and `ints_all_listed` with the walks as exactly equal sets, and fails with
+//! the count test or the subset test taken out. `fills` comparing the counts by `>=` gives the
+//! same answers as `==`, since a set inside an interval never has more members than the
+//! interval has integers (checked in `the_members_kept_by_an_interval_are_those_a_filter_keeps`).
 
 use zed_tests::instances::Rng;
 use zedc::run::load;
