@@ -905,7 +905,7 @@ impl Formula {
     /// order of the terms and the parts is the formula's own, which follows the symbols as
     /// they are and not as they are written: so it is the order of the written names, except
     /// where one written name is another followed by digits (`a` and `a1`, `a@2` sorting after
-    /// `a1`). Linear in the text, and in node visits linear in the distinct nodes ([`show`]).
+    /// `a1`). Linear in the text, and in node visits linear in the distinct nodes (`show`).
     pub fn written(&self, name: fn(&str) -> &str) -> String {
         show(self, false, name)
     }
