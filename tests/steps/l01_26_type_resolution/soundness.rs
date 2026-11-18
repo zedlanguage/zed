@@ -882,6 +882,20 @@ pub(super) fn component_exponents(n: usize) -> String {
         .collect()
 }
 
+/// `n` functions, each comparing the first component of its tuple argument, called with a
+/// decimal literal there, and `n` generic functions: `n` classes outside every function whose
+/// uses are left met by their mask, and `n` signatures with needs, all accepted. What the end
+/// of the walk reads (CHK-obligation-sweep), its time measured in `bench::soundness`.
+pub(super) fn uses_left_on_classes(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "h{i}(positional p) = if p[0] < 5 {{ p[0] }} else {{ 0 }};\nr{i} = h{i}(({i}.5, 2));\ng{i}(positional x) = x + {i};\n"
+            )
+        })
+        .collect()
+}
+
 /// One function taking apart a tuple nested `d` deep and raising 2 to the innermost
 /// component, called once with it at least 0 and once below 0: the path of the exponent's
 /// bound is `d` steps long (CHK-pow-component-bound). The call below 0 is the one error.
@@ -1264,4 +1278,26 @@ fn a_power_of_a_division_of_integer_literals_is_refused_with_the_exact_fix() {
         runs("", r#""${(3.0f64/2)^-2}""#, ""),
         "0.4444444444444444\n"
     );
+}
+
+/// The two seeds the random test found (FAIL-random-f64-destructured-family,
+/// FAIL-random-pow-destructured-literal), each with the specific fix that refuses it turned
+/// off (`obligation_test_modes`, TEST-random-sweep-off): with the end-of-walk check off too,
+/// each is accepted, the fault the kernel then met (red); with it on, each is refused, by the
+/// check of the use no step discharged (green, CHK-obligation-sweep).
+#[test]
+fn the_end_of_walk_check_alone_refuses_both_seeds() {
+    use zedc::check::obligation_test_modes::set;
+    let summed = "h0(positional p) {\n  a, b = p;\n  return sum(a);\n}";
+    let power = "h1(positional p) {\n  a, b = p;\n  return (0)^a;\n}";
+    for (defs, call) in [(summed, "h0((-2.5, (3, 3, -2)))"), (power, "h1((-3, 0))")] {
+        set(true, true);
+        let red = r_errors(defs, call);
+        set(true, false);
+        let green = r_errors(defs, call);
+        set(false, false);
+        assert!(red.is_empty(), "{defs}\n{call}: {red:?}");
+        assert_eq!(green.len(), 1, "{defs}\n{call}: {green:?}");
+        assert_eq!(green, r_errors(defs, call), "{defs}\n{call}");
+    }
 }

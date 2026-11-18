@@ -1,7 +1,20 @@
 use zed_tests::scaling;
 
 use super::super::scaling::resolved;
-use super::super::soundness::{component_exponents, nested_component_exponent};
+use super::super::soundness::{
+    component_exponents, nested_component_exponent, uses_left_on_classes,
+};
+
+/// CHK-obligation-sweep: the end of the walk reads each class and the uses left on it once,
+/// each looked up in the set of uses met by their mask in O(1): `n` such classes and `n`
+/// generic functions check in time linear in `n`.
+#[test]
+fn the_end_of_walk_check_scales() {
+    let units = resolved(200, uses_left_on_classes);
+    scaling::check("the end-of-walk check over n classes with uses left", 200, |n| {
+        assert_eq!(units[&n].check().errors.len(), 0);
+    });
+}
 
 /// CHK-pow-component-bound: the bound an exponent puts on a component of a tuple parameter is
 /// recorded once, on a path of steps from the parameter, and each call checks its argument's

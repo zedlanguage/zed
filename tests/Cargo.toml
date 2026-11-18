@@ -316,7 +316,7 @@ spec = []
 short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
 
 [dependencies]
-zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
+zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref", "obligation-test-modes"] }
 zed-tools.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true

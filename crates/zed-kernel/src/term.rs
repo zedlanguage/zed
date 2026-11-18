@@ -372,6 +372,176 @@ impl Prim {
             AwayFromZero => 87,
         }
     }
+
+    /// The arrows of a primitive over scalar carriers, the one table both the evaluator and
+    /// the checker read (KERNEL-prim-arrow-table): for each tuple of operand carriers the
+    /// primitive takes, the carrier of its result and the atoms a checked program may see it
+    /// give. `None` for a primitive whose operands are not all scalars (a family, a tuple, a
+    /// key path, a function, any value at all) or whose arrows the checker builds by another
+    /// rule (the bit words, step L1.39a). The checker's `op_sig` and `word_sig` are built from
+    /// this table, in its order, which is the order a class tries the carriers; the test
+    /// `prim_arrow_table` checks that [`crate::eval`] takes each tuple of scalars exactly
+    /// when an arrow here does, and gives that arrow's carrier or an atom.
+    ///
+    /// The atoms are those the checker types, not every atom the evaluator may give: `int(x)`
+    /// of a float gives `#invalid` when `x` is not whole, but the checker accepts the cast
+    /// only where it proves `x` whole (step L1.18), so the arrow lists no atom.
+    pub fn arrows(self) -> Option<&'static [ScalarArrow]> {
+        use Prim::*;
+        use ScalarType::{Bool as B, F32, F64, Int as I, Rat as R, Str as S};
+        const fn a(
+            params: &'static [ScalarType],
+            result: ScalarType,
+            atoms: &'static [&'static str],
+        ) -> ScalarArrow {
+            ScalarArrow {
+                params,
+                result,
+                atoms,
+            }
+        }
+        // A list of arrows as a constant, so the slice it returns is `'static`.
+        macro_rules! list {
+            ($($arrow:expr),* $(,)?) => {{
+                const LIST: &[ScalarArrow] = &[$($arrow),*];
+                LIST
+            }};
+        }
+        const DIV0: &[&str] = &["divByZero"];
+        const NAN: &[&str] = &["NaN", "overflow"];
+        const INVALID: &[&str] = &["invalid"];
+        const NOT_SCALAR: &[&str] = &["notScalar"];
+        const ARITH: &[ScalarArrow] = &[
+            a(&[I, I], I, &[]),
+            a(&[F64, F64], F64, &[]),
+            a(&[R, R], R, &[]),
+            a(&[F32, F32], F32, &[]),
+        ];
+        const ORDER: &[ScalarArrow] = &[
+            a(&[I, I], B, &[]),
+            a(&[F64, F64], B, &[]),
+            a(&[R, R], B, &[]),
+            a(&[F32, F32], B, &[]),
+            a(&[S, S], B, &[]),
+            a(&[B, B], B, &[]),
+        ];
+        const NUMBER: &[ScalarArrow] = &[
+            a(&[I], I, &[]),
+            a(&[F64], F64, &[]),
+            a(&[R], R, &[]),
+            a(&[F32], F32, &[]),
+        ];
+        // The rounding words give an `int` (DESIGN.md sec:facets, "Rounding to a whole
+        // number"); no whole number stands for the NaN or an infinity, which give `#NaN` and
+        // `#overflow` (author, P361).
+        const ROUND: &[ScalarArrow] = &[
+            a(&[I], I, &[]),
+            a(&[R], I, &[]),
+            a(&[F64], I, NAN),
+            a(&[F32], I, NAN),
+        ];
+        Some(match self {
+            Add | Sub | Mul => ARITH,
+            Div => list![
+                a(&[F64, F64], F64, &[]),
+                a(&[F32, F32], F32, &[]),
+                a(&[R, R], R, DIV0),
+            ],
+            IntDiv | Mod => list![a(&[I, I], I, DIV0)],
+            // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative
+            // power is `#divByZero`. `f32 ^ int` is the one arrow between two carriers
+            // (DESIGN.md L1.18).
+            Pow => list![
+                a(&[I, I], I, &[]),
+                a(&[F64, F64], F64, &[]),
+                a(&[F32, F32], F32, &[]),
+                a(&[R, I], R, DIV0),
+                a(&[F32, I], F32, &[]),
+            ],
+            Concat => list![a(&[S, S], S, &[])],
+            Eq | Ne | Lt | Le | Gt | Ge => ORDER,
+            And | Or => list![a(&[B, B], B, &[])],
+            Not => list![a(&[B], B, &[])],
+            Neg | Abs => NUMBER,
+            Min | Max => ARITH,
+            CastInt => list![
+                a(&[I], I, &[]),
+                a(&[F64], I, &[]),
+                a(&[F32], I, &[]),
+                a(&[R], I, &[]),
+                a(&[S], I, INVALID),
+            ],
+            // No `rat` stands for the NaN or an infinity (DESIGN.md sec:corner_cases, "Casts
+            // are domain proofs"; author P361).
+            CastRat => list![
+                a(&[I], R, &[]),
+                a(&[F64], R, NAN),
+                a(&[F32], R, NAN),
+                a(&[R], R, &[]),
+                a(&[S], R, INVALID),
+            ],
+            // A cast to a float format is the float nearest the value, and the infinity of its
+            // sign beyond the largest finite one (step L1.18), so it gives no atom.
+            CastF64 => list![
+                a(&[I], F64, &[]),
+                a(&[F64], F64, &[]),
+                a(&[R], F64, &[]),
+                a(&[S], F64, INVALID),
+                a(&[F32], F64, &[]),
+            ],
+            CastF32 => list![
+                a(&[I], F32, &[]),
+                a(&[F64], F32, &[]),
+                a(&[R], F32, &[]),
+                a(&[S], F32, INVALID),
+                a(&[F32], F32, &[]),
+            ],
+            Round | RoundTiesAway | Floor | Ceil | Trunc | AwayFromZero => ROUND,
+            // The float formats alone: an `int` or `rat` operand is cast first, `sqrt(f64(n))`,
+            // so no call rounds where the text does not say so (row FLOAT-sqrt).
+            Sqrt => list![a(&[F64], F64, &[]), a(&[F32], F32, &[])],
+            Fma => list![a(&[F64, F64, F64], F64, &[]), a(&[F32, F32, F32], F32, &[])],
+            Len => list![a(&[S], I, &[])],
+            CodePoint => list![a(&[S], I, NOT_SCALAR)],
+            Scalar => list![a(&[I], S, NOT_SCALAR)],
+            Lower | Upper | Trim => list![a(&[S], S, &[])],
+            Get | Count | Union | Path | PathKey | PathLen | Tuple | TupleGet | Atom | Show
+            | Sum | BitAnd | BitOr | BitXor | BitNot | Shl | Shr | PopCount | LeadingZeros
+            | TrailingZeros | Rotl | Rotr | F64Bits | Utf8 | FromUtf8 | MulHi | BitReverse
+            | ByteSwap | Pdep | Pext | FunnelShl | FunnelShr | At | Entries | Has | Range
+            | FirstEntry | LastEntry | EntryAfter | EntryBefore | First | Last | Split | Lines
+            | Join | RangeFrom | ListConcat | Place | CallNamed => return None,
+        })
+    }
+}
+
+/// A scalar carrier, as [`Prim::arrows`] names the operands and results of a primitive.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ScalarType {
+    /// `bool`.
+    Bool,
+    /// `int`.
+    Int,
+    /// `rat`.
+    Rat,
+    /// `f32`.
+    F32,
+    /// `f64`.
+    F64,
+    /// `String`.
+    Str,
+}
+
+/// One arrow of [`Prim::arrows`]: the operand carriers, the result's carrier, and the atoms a
+/// checked program may see the primitive give beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ScalarArrow {
+    /// The operands' carriers, in order.
+    pub params: &'static [ScalarType],
+    /// The result's carrier.
+    pub result: ScalarType,
+    /// The atoms, by name, the result may be instead.
+    pub atoms: &'static [&'static str],
 }
 
 /// A pattern of a `match` arm.

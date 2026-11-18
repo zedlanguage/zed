@@ -57,10 +57,14 @@ printed-types = ["zedc-types/printed-types"]
 # would admit and where each would be forced (row FAIL-map-chain-step0, `check/probe.rs`). Off in
 # a release build; on in this crate's own tests.
 forward-probe = []
+# The test-only modes of the obligation check (`check::obligation_test_modes`,
+# TEST-random-sweep-off): the specific fixes off, the end-of-walk check off. Off in a release
+# build; zedc's feature `obligation-test-modes` turns it on for the step tests.
+obligation-test-modes = []
 
 # A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds this
 # crate and zedc-types with the feature the workspace build gives them (the step tests turn on
 # `printed-types` through zedc), and does not overwrite the copies the step tests link to.
 [dev-dependencies.zedc-check]
 path = "."
-features = ["printed-types"]
+features = ["printed-types", "obligation-test-modes"]

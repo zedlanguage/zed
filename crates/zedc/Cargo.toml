@@ -53,6 +53,9 @@ printed-types = ["zedc-check/printed-types"]
 # The checker's counters for design D of row FAIL-map-chain-needs-quadratic (zedc-check's
 # `forward-probe`). Off in a release build.
 forward-probe = ["zedc-check/forward-probe"]
+# The test-only modes of the obligation check (zedc-check's `obligation-test-modes`,
+# TEST-random-sweep-off). Off in a release build.
+obligation-test-modes = ["zedc-check/obligation-test-modes"]
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
 # work of the linear programs by a count that does not depend on the load (SLABS-count), and the
 # nodes `LetPa::sum` enters in `store::preimage` (PA-let-narrow). Off in a release build.
@@ -71,4 +74,4 @@ workspace = true
 # overwrite it and the next build of the tests would rebuild it (see crates/zed-native/Cargo.toml).
 [dev-dependencies.zedc]
 path = "."
-features = ["printed-types", "counts", "preimage-ref"]
+features = ["printed-types", "counts", "preimage-ref", "obligation-test-modes"]

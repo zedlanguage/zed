@@ -137,7 +137,7 @@ rustix.workspace = true
 # package overwrites the other's and the next build rebuilds it. Here as dev-dependencies, so
 # that `cargo test -p zed-native` matches and the runtime library of a release build stays
 # without the test counters.
-zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
+zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref", "obligation-test-modes"] }
 zed-rt = { workspace = true, features = ["counts"] }
 # Likewise this package with the feature `counts` zed-tests gives it, and zedc-presburger with
 # `two-at-a-time`, which the tests of zedc and its crates give it in the workspace build.

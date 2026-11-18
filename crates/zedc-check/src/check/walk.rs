@@ -2876,6 +2876,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         class.uses = kept;
+        self.discharge(Discharge::Checked, now.len());
         let pending = self.pending_fixes.len();
         let outer = (self.fixing.replace(f), self.written.take());
         let t = Ty::carrier(c);
@@ -5221,7 +5222,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // recorded, which no later step would check (FAIL-random-f64-destructured-family;
                 // the test of `carriers_only`, FAIL-random-int-destructured-accepted). O(1).
                 let piece = Piece::Var(v.clone());
-                if self.carriers_only(&piece) && !proto_flag("ZED_PROTO_NOFIX") {
+                if self.carriers_only(&piece) && !obligation_test_modes::fixes_off() {
+                    self.discharge(Discharge::Refused, 1);
                     let shown = self.show(&piece.ty());
                     self.sum_refused(&shown, span);
                     continue;
@@ -6221,68 +6223,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// It is written here, beside [`Self::lit_takes`], and not in `mod.rs` beside the classes,
     /// since a call from `mod.rs` into this file would close an import cycle between the two
     /// (step S.1f).
-    /// PROTOTYPE (STUDY-checker-kernel-one-rule): the obligation sweep. Every use recorded on
-    /// a class ([`Self::need`]) is an obligation; it is discharged when it is checked on the
-    /// class's type (`generalize`, `resolve_top_parts`, `powers_bound`) or moved into a
-    /// signature (`generalize`, the class's type its own variable). A use still on a class
-    /// whose type is known when the walk ends was never checked: this checks it now, so a
-    /// path that forgets one cannot accept the program. Only when the walk found no error:
-    /// a refused program needs no backstop, and the uses kept on purpose at
-    /// `resolve_top_parts` would otherwise report their errors twice.
-    /// Complexity: one pass over the classes and their uses, O(classes + uses).
-    pub(super) fn sweep_unchecked_uses(&mut self) {
-        let mut left = Vec::new();
-        let mut unresolved = 0usize;
-        for k in 0..self.classes.len() {
-            if self.find(k) != k || self.classes[k].uses.is_empty() {
-                continue;
-            }
-            match self.classes[k].resolved.clone() {
-                Some(t) if t != Ty::var(format!("${k}").into()) => {
-                    for (_, n) in &self.classes[k].uses {
-                        left.push((n.clone(), t.clone()));
-                    }
-                }
-                Some(_) => {}
-                None => unresolved += self.classes[k].uses.len(),
-            }
-        }
-        let clean = self.errors.is_empty() && self.info.errors.is_empty();
-        let before = self.errors.len() + self.info.errors.len();
-        if clean && !proto_flag("ZED_PROTO_NOSWEEP") {
-            for (n, t) in &left {
-                self.check_on(n, t, n.span, None);
-            }
-        }
-        if let Some(path) = std::env::var_os("ZED_PROTO_SWEEP_LOG") {
-            use std::io::Write;
-            let after = self.errors.len() + self.info.errors.len();
-            let kinds: Vec<String> = left
-                .iter()
-                .map(|(n, t)| {
-                    let k = format!("{:?}", n.kind);
-                    let name: String = k.chars().take_while(|c| c.is_alphanumeric()).collect();
-                    format!("{name}@{}", self.show(t))
-                })
-                .collect();
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                let _ = writeln!(
-                    f,
-                    "left={} unresolved={} clean={} new_errors={} kinds={:?}",
-                    left.len(),
-                    unresolved,
-                    clean,
-                    after - before,
-                    kinds
-                );
-            }
-        }
-    }
-
     fn resolve_top_parts(&mut self, from: usize) -> Vec<&'a Expr> {
         let mut unmet = Vec::new();
         let mut now = Vec::new();
@@ -6372,19 +6312,101 @@ impl<'t, 'a> Ck<'t, 'a> {
             // Complexity tradeoff: each use is read once and the bounding ones checked once,
             // O(uses) in all; checking at each use as it is recorded is not possible, since
             // the class has no type yet then.
+            // The uses kept are recorded as met by the mask (CHK-obligation-ledger), so the
+            // end of the walk does not check them again ([`Self::sweep_unchecked_uses`]).
+            // With the fixes off (a test mode, TEST-random-sweep-off) the bounding uses stay on
+            // the class with no discharge, as before FAIL-random-pow-destructured-literal.
             let (bounds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
                 .into_iter()
-                .partition(|(_, n)| {
-                    !proto_flag("ZED_PROTO_NOFIX")
-                        && matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_))
-                });
+                .partition(|(_, n)| matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_)));
+            let (bounds, unchecked) = match obligation_test_modes::fixes_off() {
+                false => (bounds, Vec::new()),
+                true => (Vec::new(), bounds),
+            };
+            self.discharge(Discharge::Mask, kept.len());
+            self.met_by_mask.extend(kept.iter().map(|&(seq, _)| seq));
             self.classes[r].uses = kept;
+            self.classes[r].uses.extend(unchecked);
+            self.discharge(Discharge::Checked, bounds.len());
             now.extend(bounds.into_iter().map(|(_, n)| (n, ty.clone())));
         }
         for (n, t) in &now {
             self.check_on(n, t, n.span, None);
         }
         unmet
+    }
+
+    /// The end of the walk (CHK-obligation-sweep, STUDY-checker-kernel-one-rule): each use
+    /// recorded on a class ([`Self::need`]) is an obligation, which a step discharges and
+    /// records ([`Discharge`]): checked on the class's type (`generalize`, `resolve_top_parts`,
+    /// `powers_bound`), moved into a signature (`generalize`), met by the class's mask
+    /// (`resolve_top_parts`, [`Ck::met_by_mask`]) or joined into an equal use (`merge`). A use
+    /// with no discharge still on a class whose type is known (not its own variable) was never
+    /// checked, as the needs of FAIL-random-f64-destructured-family and
+    /// FAIL-random-pow-destructured-literal were: the kernel then raised a type error on a
+    /// program the checker accepted (DESIGN.md rule 4). No step leaves one, which a debug
+    /// build asserts; a release build checks each one found here on its class's type, so a
+    /// step that forgets one refuses the program rather than accepting it.
+    ///
+    /// Only when the walk found no error: a refused program is refused already. A class with
+    /// no type when the walk ends gives no type to check a use on; its uses are left, as
+    /// before (classes never resolved: no step reads their values as a carrier).
+    ///
+    /// Complexity tradeoff: one pass over the classes and the uses still on them, O(classes +
+    /// uses), each membership test in `met_by_mask` O(1); the naive alternative, checking
+    /// every use again at the end whatever its discharge, costs as much and reports each
+    /// mask-met error twice (the prototype on branch wt/share1, 833261673).
+    pub(super) fn sweep_unchecked_uses(&mut self) {
+        let mut left = Vec::new();
+        for k in 0..self.classes.len() {
+            if self.find(k) != k || self.classes[k].uses.is_empty() {
+                continue;
+            }
+            let Some(t) = &self.classes[k].resolved else {
+                continue;
+            };
+            if t.as_var().is_some_and(|v| v.strip_prefix('$') == Some(&*k.to_string())) {
+                continue;
+            }
+            for (seq, n) in &self.classes[k].uses {
+                if !self.met_by_mask.contains(seq) {
+                    left.push((n.clone(), t.clone()));
+                }
+            }
+        }
+        let clean = self.errors.is_empty() && self.info.errors.is_empty();
+        if left.is_empty() || !clean || obligation_test_modes::sweep_off() {
+            self.note_discharged();
+            return;
+        }
+        debug_assert!(
+            obligation_test_modes::fixes_off(),
+            "uses never discharged, at {:?}",
+            left.iter().map(|(n, _)| n.span).collect::<Vec<_>>()
+        );
+        self.discharge(Discharge::Swept, left.len());
+        for (n, t) in &left {
+            self.check_on(n, t, n.span, None);
+        }
+        self.note_discharged();
+    }
+
+    /// Records that `count` uses were discharged for the reason `why` (CHK-obligation-ledger).
+    fn discharge(&mut self, why: Discharge, count: usize) {
+        self.discharged[why as usize] += count;
+    }
+
+    /// Under `cfg(test)`, keeps the counts of discharged uses of this check for the unit
+    /// tests ([`last_discharged`]).
+    fn note_discharged(&self) {
+        if std::env::var_os("ZED_PROBE_DISCHARGE").is_some()
+            && (self.discharged[0] + self.discharged[2] + self.discharged[3]) > 0
+        {
+            let text: String = self.t.text.unwrap_or("").chars().take(300).collect();
+            eprintln!("DISCHARGE {:?} {text:?}", self.discharged);
+        }
+        #[cfg(test)]
+        LAST_DISCHARGED.with(|d| d.set(self.discharged));
     }
 
     /// Outside every function, the carrier the operations on bare literals alone `ops`
@@ -12358,11 +12380,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[r].order_of = None;
             self.classes[r].data = false;
             match self.classes[r].resolved.clone() {
-                Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(
-                    uses.into_iter()
-                        .map(|(s, n)| (s, self.strip_widened(n, strip))),
-                ),
-                Some(t) => now.extend(uses.into_iter().map(|(_, n)| (n, t.clone()))),
+                Some(t) if t == Ty::var(format!("${r}").into()) => {
+                    self.discharge(Discharge::Signature, uses.len());
+                    needs.extend(
+                        uses.into_iter()
+                            .map(|(s, n)| (s, self.strip_widened(n, strip))),
+                    )
+                }
+                Some(t) => {
+                    self.discharge(Discharge::Checked, uses.len());
+                    now.extend(uses.into_iter().map(|(_, n)| (n, t.clone())))
+                }
                 None => unreachable!("resolved above"),
             }
         }
@@ -12877,6 +12905,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // A `min` or `max` use of a site both classes hold is joined into one. Each was
         // checked on what flowed into the other class above, so nothing is checked again.
+        let mut joined = 0;
         for (seq, mut n) in uses {
             if let NeedKind::Order {
                 word, first, other, ..
@@ -12887,6 +12916,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         if let NeedKind::Order { other: kept, .. } = &mut c.uses[*at.get()].1.kind {
                             *kept = one_shape_per_length(&kept.union(other));
                         }
+                        joined += 1;
                         continue;
                     }
                     Entry::Vacant(at) => {
@@ -12924,6 +12954,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.reasons.push(reason);
         c.mask = m;
         c.level = c.level.min(level);
+        self.discharge(Discharge::Joined, joined);
         if lowered {
             let mut vars = Vars::default();
             for (_, n) in &self.classes[root].uses {
@@ -28142,6 +28173,86 @@ mod tests {
             }
         }
     }
+
+    /// The errors of the unit `text`, checked alone, each its message.
+    fn unit_errors(text: &str) -> Vec<String> {
+        let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");
+        let (tree, errors) = zedc_syntax::parse::parse_unit(text, &tokens, zedc_syntax::parse::TOP);
+        assert!(errors.is_empty(), "the unit parses");
+        let unit = zedc_syntax::ast::unit(text, &tokens, &tree).expect("the unit builds");
+        let res = zedc_resolve::resolve::resolve(&unit).expect("the unit resolves");
+        let info = check(&unit, &res);
+        info.errors.iter().map(|e| e.message.to_string()).collect()
+    }
+
+    /// For each reason a use is discharged (CHK-obligation-ledger), a program whose check
+    /// discharges some use for it is accepted, and the end of the walk finds no use left to
+    /// check (`Swept` 0; a debug build would also fail its assertion). A use met by the mask
+    /// of its class is not checked again at the end: `h((1.5, 2))` keeps the `<` use of the
+    /// class of `1.5` on the class unchecked, and is accepted.
+    #[test]
+    fn each_discharge_reason_leaves_nothing_for_the_end_of_the_walk() {
+        let programs = [
+            (
+                Discharge::Checked,
+                "h(positional p) = 2^p[0];\nr = h((3, 0));\n",
+            ),
+            (Discharge::Signature, "inc(positional x) = x + 1;\n"),
+            (
+                Discharge::Mask,
+                "h(positional p) = if p[0] < 5 { p[0] } else { 0 };\nr = h((1.5, 2));\n",
+            ),
+            (
+                Discharge::Joined,
+                "f(positional x, positional y) {\n  a = min(x, 1);\n  b = if x < y { x } else { y };\n  c = min(b, 1);\n  return a + c;\n}\n",
+            ),
+        ];
+        for (why, text) in programs {
+            let errors = unit_errors(text);
+            assert!(errors.is_empty(), "{why:?}: {text}: {errors:?}");
+            assert!(last_discharged(why) > 0, "{why:?}: {text}");
+            assert_eq!(last_discharged(Discharge::Swept), 0, "{why:?}: {text}");
+        }
+    }
+
+    #[test]
+    fn probe_discharge_counts() {
+        let programs = [
+            "h(positional p) = 2^p[0];\nr = h((3, 0));\n",
+            "g0(positional a) = min(a, (0, 0));\ng1(positional a) = g0(min(a, (1, 0)));\ng2(positional a) = g1(min(a, (2, 0)));\nx = g2((5, 9));\n",
+            "h(positional p) = p[0]^2;\nr = h((1.5, 0));\n",
+            "h(positional p) = 2^p[0];\nr = h((1.5, 0));\n",
+            "h(positional p) = p[1]^p[0];\nr = h((3, 2));\n",
+            "h(positional p) {\n  a, b = p;\n  return 2^a;\n}\nr = h((3, 1));\n",
+            "h(positional p) {\n  a, b = p;\n  return a^2;\n}\nr = h((3.5, 1));\n",
+            "h(positional p) = if p[0] < 5 { p[0] } else { 0 };\nr = h((1.5, 2));\n",
+            "h(positional p) = (0)^p[0];\nr = h((3, 0));\n",
+            "f(positional x) {\n  y = x + 1.5;\n  return x^2;\n}\n",
+            "f(positional x) {\n  y = x + 1;\n  return 2^x;\n}\nr = f(3);\n",
+            "x = (3, 0);\ny = 2^x[0];\n",
+            "h(positional p) = (p[0] ^ 2) + 1;\nr = h((3, 0));\n",
+            "f(positional x, positional y) {\n  a = min(x, 1);\n  b = if x < y { x } else { y };\n  c = min(b, 1);\n  return a + c;\n}\n",
+            "f(positional x) {\n  a = x < 1;\n  b = x < 1;\n  return a && b;\n}\n",
+            "f(positional x, positional y) {\n  a = x < y;\n  b = y < x;\n  return a && b;\n}\n",
+            "f(positional x, positional y) = if x < y { x } else { y };\nr = f(1, 2);\n",
+        ];
+        for text in programs {
+            let errors = unit_errors(text);
+            let counts: Vec<_> = Discharge::ALL.iter().map(|&w| (w, last_discharged(w))).collect();
+            eprintln!("PROBE {text:?} {errors:?} {counts:?}");
+        }
+    }
+
+    /// A sum of a class of carriers alone is refused once, with no use recorded for the end
+    /// of the walk to check again (`Refused`, FAIL-random-f64-destructured-family).
+    #[test]
+    fn a_sum_refused_for_carriers_alone_is_refused_once() {
+        let text = "h(positional p) {\n  a, b = p;\n  return sum(a);\n}\nr = h((2.5, 1));\n";
+        let errors = unit_errors(text);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(last_discharged(Discharge::Refused) > 0);
+        assert_eq!(last_discharged(Discharge::Swept), 0);
+    }
 }
 
 /// The steps of a path written after a name, as a program reads them: `[0]` each
@@ -28155,8 +28266,15 @@ fn steps_text(path: &[PathStep]) -> String {
         .collect()
 }
 
-/// PROTOTYPE (STUDY-checker-kernel-one-rule): an experiment switch, set when the environment
-/// variable `name` is `1`.
-fn proto_flag(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| v == "1")
+#[cfg(test)]
+thread_local! {
+    /// The counts of discharged uses of the last check on this thread, by [`Discharge`].
+    static LAST_DISCHARGED: std::cell::Cell<[usize; Discharge::ALL.len()]> =
+        const { std::cell::Cell::new([0; Discharge::ALL.len()]) };
+}
+
+/// The count of uses the last check on this thread discharged for the reason `why`.
+#[cfg(test)]
+fn last_discharged(why: Discharge) -> usize {
+    LAST_DISCHARGED.with(|d| d.get()[why as usize])
 }

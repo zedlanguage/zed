@@ -64,6 +64,7 @@ use zed_kernel::num::{
     show_f64,
 };
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
+use zed_kernel::term::ScalarType;
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -1677,6 +1678,82 @@ struct Keyspaces<'a> {
     checked: HashSet<Span>,
 }
 
+/// Why a use recorded on a class ([`Ck::need`]) needs no further check (CHK-obligation-ledger,
+/// STUDY-checker-kernel-one-rule). Each use is an obligation: a program the checker accepts
+/// must meet it at run time (DESIGN.md rule 4). Every step that takes a use off a class's list,
+/// or leaves it there as met, records one of these; a use with none recorded on a class whose
+/// type is known when the walk ends was never checked, and is checked then
+/// ([`Ck::sweep_unchecked_uses`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Discharge {
+    /// Checked on the type the class took (`generalize`, `resolve_top_parts`, `powers_bound`).
+    Checked,
+    /// Moved into the signature of the function that ended, its class a type variable
+    /// (`generalize`): each call checks it.
+    Signature,
+    /// Left on the class as met by the carriers of its mask (`resolve_top_parts`), which the
+    /// application already reports where they are not met.
+    Mask,
+    /// A `min` or `max` use joined into an equal one of the class it merged with.
+    Joined,
+    /// A sum of a class of carriers alone, refused with no use recorded (`carriers_only`).
+    Refused,
+    /// Checked at the end of the walk, no step before having discharged it.
+    Swept,
+}
+
+impl Discharge {
+    pub(crate) const ALL: [Discharge; 6] = [
+        Discharge::Checked,
+        Discharge::Signature,
+        Discharge::Mask,
+        Discharge::Joined,
+        Discharge::Refused,
+        Discharge::Swept,
+    ];
+}
+
+/// Test-only modes of the obligation check (TEST-random-sweep-off): the specific fixes that
+/// discharge a use where it arises turned off, so a test shows what the end-of-walk check
+/// ([`Ck::sweep_unchecked_uses`]) catches alone, and that check turned off too, so a test shows
+/// the fault it catches (red before green). Built only with the feature
+/// `obligation-test-modes`, which no release build turns on; each mode is per thread, off
+/// until a test sets it.
+#[cfg(feature = "obligation-test-modes")]
+pub mod obligation_test_modes {
+    use std::cell::Cell;
+
+    thread_local! {
+        static MODES: Cell<(bool, bool)> = const { Cell::new((false, false)) };
+    }
+
+    /// Turns the specific fixes off (`fixes_off`) and the end-of-walk check off
+    /// (`sweep_off`) for the checks this thread runs next.
+    pub fn set(fixes_off: bool, sweep_off: bool) {
+        MODES.with(|m| m.set((fixes_off, sweep_off)));
+    }
+
+    pub(crate) fn fixes_off() -> bool {
+        MODES.with(|m| m.get().0)
+    }
+
+    pub(crate) fn sweep_off() -> bool {
+        MODES.with(|m| m.get().1)
+    }
+}
+
+/// Without the feature, both modes are off and compiled away.
+#[cfg(not(feature = "obligation-test-modes"))]
+mod obligation_test_modes {
+    pub(crate) const fn fixes_off() -> bool {
+        false
+    }
+
+    pub(crate) const fn sweep_off() -> bool {
+        false
+    }
+}
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1949,6 +2026,12 @@ struct Ck<'t, 'a> {
     bound: Vec<Vars>,
     /// The needs recorded so far.
     needs: usize,
+    /// How many uses were discharged for each reason ([`Discharge`], CHK-obligation-ledger).
+    discharged: [usize; Discharge::ALL.len()],
+    /// The uses [`Ck::resolve_top_parts`] leaves on their class as met by the class's mask,
+    /// by their number (`needs` when each was recorded, unique for the whole check): the
+    /// end of the walk ([`Ck::sweep_unchecked_uses`]) checks every other use left.
+    met_by_mask: HashSet<usize>,
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
@@ -2597,6 +2680,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             pending: vec![Vec::new()],
             bound: Vec::new(),
             needs: 0,
+            discharged: [0; Discharge::ALL.len()],
+            met_by_mask: HashSet::new(),
             replaying: 0,
             remap_keys: Vec::new(),
             meet_alike: Vec::new(),
@@ -11623,19 +11708,6 @@ fn article(c: Carrier) -> &'static str {
     }
 }
 
-/// One arrow per carrier in `cs`, of `n` parameters of that carrier, returning `result` or
-/// the carrier itself.
-fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow> {
-    cs.iter()
-        .map(|&c| Arrow {
-            params: vec![Ty::carrier(c); n],
-            result: result(c),
-            partial: false,
-            stores_not_found: false,
-        })
-        .collect()
-}
-
 /// The values the family `sig` stores: the union of its arrows' value types
 /// ([`Arrow::value`]). A `#notFound` there is a stored value, as in `[n, #notFound]` (author
 /// P350; DESIGN.md sec:corner_cases, `m : Utf8String -> int | #notFound`), and so is an
@@ -11811,60 +11883,63 @@ impl fmt::Display for Label<'_> {
     }
 }
 
-/// An operator's arrows.
+/// The arrows of the primitive `p` from the kernel's table, [`Prim::arrows`], in its order
+/// (KERNEL-prim-arrow-table): each operand a carrier, the result its carrier with the atoms
+/// the table lists. Before, the checker wrote these lists itself, beside the evaluator's match
+/// arms, and nothing tied the two together. O(arrows).
+fn prim_arrows(p: Prim) -> Vec<Arrow> {
+    let carrier = |t: ScalarType| match t {
+        ScalarType::Bool => Carrier::Bool,
+        ScalarType::Int => Carrier::Int,
+        ScalarType::Rat => Carrier::Rat,
+        ScalarType::F32 => Carrier::F32,
+        ScalarType::F64 => Carrier::F64,
+        ScalarType::Str => Carrier::Str,
+    };
+    let table = p.arrows().expect("a primitive the kernel's table types");
+    (table.iter())
+        .map(|a| Arrow {
+            params: a.params.iter().map(|&t| Ty::carrier(carrier(t))).collect(),
+            result: (a.atoms.iter()).fold(Ty::carrier(carrier(a.result)), |t, n| {
+                t.union(&Ty::set(KType::atom(n)))
+            }),
+            partial: false,
+            stores_not_found: false,
+        })
+        .collect()
+}
+
+/// An operator's arrows: those of its primitive in the kernel's table ([`prim_arrows`]).
+/// `==` and `!=` are checked by [`Ck::equal`]; their arrows say only what they make.
 fn op_sig(op: Operator) -> Sig {
-    use Carrier::*;
-    let same = |c: Carrier| Ty::carrier(c);
-    let bool_ = |_| Ty::carrier(Bool);
-    let div0 = |c: Carrier| Ty::carrier(c).union(&Ty::set(KType::atom("divByZero")));
-    let (n, arrows) = match op {
-        Operator::Binary(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) => {
-            (2, arrows(&[Int, F64, Rat, F32], 2, same))
-        }
-        Operator::Binary(BinaryOp::Div) => (
+    let (n, p) = match op {
+        Operator::Binary(op) => (
             2,
-            [arrows(&[F64, F32], 2, same), arrows(&[Rat], 2, div0)].concat(),
+            match op {
+                BinaryOp::Add => Prim::Add,
+                BinaryOp::Sub => Prim::Sub,
+                BinaryOp::Mul => Prim::Mul,
+                BinaryOp::Div => Prim::Div,
+                BinaryOp::IntDiv => Prim::IntDiv,
+                BinaryOp::Mod => Prim::Mod,
+                BinaryOp::Pow => Prim::Pow,
+                BinaryOp::Concat => Prim::Concat,
+                BinaryOp::Eq => Prim::Eq,
+                BinaryOp::Ne => Prim::Ne,
+                BinaryOp::Lt => Prim::Lt,
+                BinaryOp::Le => Prim::Le,
+                BinaryOp::Gt => Prim::Gt,
+                BinaryOp::Ge => Prim::Ge,
+                BinaryOp::And => Prim::And,
+                BinaryOp::Or => Prim::Or,
+            },
         ),
-        Operator::Binary(BinaryOp::IntDiv | BinaryOp::Mod) => (2, arrows(&[Int], 2, div0)),
-        // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative power
-        // is `#divByZero`, which the walk drops where the base holds no `0r` or the exponent
-        // is shown at least 0.
-        Operator::Binary(BinaryOp::Pow) => (
-            2,
-            [
-                arrows(&[Int, F64, F32], 2, same),
-                vec![
-                    Arrow {
-                        params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
-                        result: div0(Rat),
-                        partial: false,
-                        stores_not_found: false,
-                    },
-                    // `f32 ^ int`, the one arrow between two carriers (DESIGN.md L1.18).
-                    Arrow {
-                        params: vec![Ty::carrier(F32), Ty::carrier(Int)],
-                        result: same(F32),
-                        partial: false,
-                        stores_not_found: false,
-                    },
-                ],
-            ]
-            .concat(),
-        ),
-        Operator::Binary(BinaryOp::Concat) => (2, arrows(&[Str], 2, same)),
-        // The order of the carriers, and whether two values may be equal: the operator makes
-        // no atom. `==` and `!=` are checked by [`Ck::equal`]; these arrows say only what they
-        // make.
-        Operator::Binary(
-            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge,
-        ) => (2, arrows(&[Int, F64, Rat, F32, Str, Bool], 2, bool_)),
-        Operator::Binary(BinaryOp::And | BinaryOp::Or) => (2, arrows(&[Bool], 2, bool_)),
-        Operator::Unary(UnaryOp::Not) => (1, arrows(&[Bool], 1, bool_)),
-        Operator::Unary(UnaryOp::Neg) => (1, arrows(&[Int, F64, Rat, F32], 1, same)),
+        Operator::Unary(UnaryOp::Not) => (1, Prim::Not),
+        Operator::Unary(UnaryOp::Neg) => (1, Prim::Neg),
     };
     Sig {
         params: positional(n),
-        arrows,
+        arrows: prim_arrows(p),
         bounds: BTreeMap::new(),
         data: false,
         dense: Dense::No,
@@ -11900,97 +11975,27 @@ fn word_params(w: &str) -> &'static [&'static str] {
     }
 }
 
-/// A prelude word's arrows.
+/// A prelude word's arrows: those of its primitive in the kernel's table ([`prim_arrows`]),
+/// which says why each arrow is there; `String`, `utf8` and `fromUtf8`, whose operand or
+/// result is not a carrier, are written here. Any other word takes a string to a string.
 fn word_sig(w: &str) -> Arc<Sig> {
-    use Carrier::*;
-    let a = |names: &[&str]| {
-        names
-            .iter()
-            .fold(Ty::empty(), |t, n| t.union(&Ty::set(KType::atom(n))))
-    };
-    let arrow = |from: Carrier, to: Carrier, fails: &[&str]| Arrow {
-        params: vec![Ty::carrier(from)],
-        result: Ty::carrier(to).union(&a(fails)),
+    let arrow = |params: Ty, result: Ty| Arrow {
+        params: vec![params],
+        result,
         partial: false,
         stores_not_found: false,
     };
     let arrows = match w {
-        "String" => vec![Arrow {
-            params: vec![Ty::dynamic()],
-            result: Ty::carrier(Str),
-            partial: false,
-            stores_not_found: false,
-        }],
-        // `int` of a float or a `rat` is accepted only where the checker proves the value
-        // whole (step L1.18; `word_applied` rejects any other with "No `int` equals the
-        // value"), and a whole value is never an infinity or the NaN, so it gives no atom.
-        "int" => vec![
-            arrow(Int, Int, &[]),
-            arrow(F64, Int, &[]),
-            arrow(F32, Int, &[]),
-            arrow(Rat, Int, &[]),
-            arrow(Str, Int, &["invalid"]),
-        ],
-        // No `rat` stands for the NaN or an infinity, which give `#NaN` and `#overflow` as at
-        // a rounding word (DESIGN.md sec:corner_cases, "Casts are domain proofs"; author P361).
-        "rat" => vec![
-            arrow(Int, Rat, &[]),
-            arrow(F64, Rat, &["NaN", "overflow"]),
-            arrow(F32, Rat, &["NaN", "overflow"]),
-            arrow(Rat, Rat, &[]),
-            arrow(Str, Rat, &["invalid"]),
-        ],
-        // A cast to a float format is the float nearest the value, ties to even, and the
-        // infinity of its sign beyond the largest finite one (step L1.18), so it gives no atom;
-        // what it lost is the `inexact()` and `overflow()` facts of step L10.3b. A text that is
-        // not a number is `#invalid`.
-        "f64" => vec![
-            arrow(Int, F64, &[]),
-            arrow(F64, F64, &[]),
-            arrow(Rat, F64, &[]),
-            arrow(Str, F64, &["invalid"]),
-            // Every `f32` is an `f64`.
-            arrow(F32, F64, &[]),
-        ],
-        "f32" => vec![
-            arrow(Int, F32, &[]),
-            arrow(F64, F32, &[]),
-            arrow(Rat, F32, &[]),
-            arrow(Str, F32, &["invalid"]),
-            arrow(F32, F32, &[]),
-        ],
-        "abs" => arrows(&[Int, F64, Rat, F32], 1, Ty::carrier),
-        // The rounding words give an `int` (DESIGN.md sec:facets, "Rounding to a whole
-        // number"); no whole number stands for the NaN or an infinity, which give `#NaN` and
-        // `#overflow` (author, P361). `ties:` changes no arrow. The expected-carrier result
-        // (`n: i32 = trunc(x)`) is not built here.
-        "round" | "floor" | "ceil" | "trunc" | "awayFromZero" => vec![
-            arrow(Int, Int, &[]),
-            arrow(Rat, Int, &[]),
-            arrow(F64, Int, &["NaN", "overflow"]),
-            arrow(F32, Int, &["NaN", "overflow"]),
-        ],
-        "min" | "max" => arrows(&[Int, F64, Rat, F32], 2, Ty::carrier),
-        // The float formats alone: an `int` or `rat` operand is cast first, `sqrt(f64(n))`,
-        // so no call rounds where the text does not say so (row FLOAT-sqrt).
-        "sqrt" => arrows(&[F64, F32], 1, Ty::carrier),
-        "fma" => arrows(&[F64, F32], 3, Ty::carrier),
-        "len" => vec![arrow(Str, Int, &[])],
-        "codePoint" => vec![arrow(Str, Int, &["notScalar"])],
-        "scalar" => vec![arrow(Int, Str, &["notScalar"])],
-        "utf8" => vec![Arrow {
-            params: vec![Ty::carrier(Str)],
-            result: bytes(),
-            partial: false,
-            stores_not_found: false,
-        }],
-        "fromUtf8" => vec![Arrow {
-            params: vec![bytes()],
-            result: Ty::carrier(Str).union(&a(&["badUtf8"])),
-            partial: false,
-            stores_not_found: false,
-        }],
-        _ => vec![arrow(Str, Str, &[])],
+        "String" => vec![arrow(Ty::dynamic(), Ty::carrier(Carrier::Str))],
+        "utf8" => vec![arrow(Ty::carrier(Carrier::Str), bytes())],
+        "fromUtf8" => vec![arrow(
+            bytes(),
+            Ty::carrier(Carrier::Str).union(&Ty::set(KType::atom("badUtf8"))),
+        )],
+        _ => match zedc_base::interp::prim(w).filter(|p| p.arrows().is_some()) {
+            Some(p) => prim_arrows(p),
+            None => vec![arrow(Ty::carrier(Carrier::Str), Ty::carrier(Carrier::Str))],
+        },
     };
     Arc::new(Sig {
         params: positional(word_arity(w)),

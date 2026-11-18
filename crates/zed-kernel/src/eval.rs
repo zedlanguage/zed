@@ -47,6 +47,8 @@ pub use made::{FILL_NAME, Made, MadeFun, MadeNode, MadeShape, fun_term, placed_f
 type Env<'t> = env::Env<'t, Binding<'t>>;
 
 #[cfg(test)]
+mod arrow_tests;
+#[cfg(test)]
 mod binder_tests;
 #[cfg(test)]
 mod tests;

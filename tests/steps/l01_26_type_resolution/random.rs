@@ -674,6 +674,24 @@ fn accepted_random_programs_raise_no_type_error() {
     }
 }
 
+/// The test of random programs with the specific fixes off (TEST-random-sweep-off,
+/// `obligation_test_modes`): the end-of-walk check of uses no step discharged
+/// (CHK-obligation-sweep) refuses alone what those fixes refuse, so no accepted program raises
+/// a kernel type error. A seed this fails on and the test above passes is a fault the end-of-walk
+/// check misses; a seed both fail on is a fault neither catches.
+#[test]
+fn accepted_random_programs_raise_no_type_error_with_the_fixes_off() {
+    let seed = zed_tests::seed::seed("accepted_random_programs_raise_no_type_error_with_the_fixes_off");
+    zedc::check::obligation_test_modes::set(true, false);
+    let r = run_programs(seed, SETS);
+    zedc::check::obligation_test_modes::set(false, false);
+    println!(
+        "{} ran, {} rejected, {} may give a function, {} stopped, {} untyped",
+        r.ran, r.rejected, r.functions, r.stopped, r.untyped
+    );
+    assert_sound(seed, &r);
+}
+
 #[test]
 fn each_program_built_for_a_form_runs_and_uses_it() {
     for (k, (name, _)) in FORMS.iter().enumerate() {
