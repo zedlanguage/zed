@@ -475,6 +475,36 @@ fn a_union_holding_a_joined_list_builds_no_map() {
     );
 }
 
+/// Plan row PERF-list-concat-leaf-merge: a list of n entries made by n - 1 `++` of one-entry
+/// lists, nested to the right or to the left, holds at most twice the bytes of the same list
+/// built as one map. Bytes are those left allocated on this thread (`zed_alloc_count::live`).
+/// Each operand kept as a leaf of its own gave 2.47 times (2,839,336 bytes against 1,150,536);
+/// short leaves merged at a join (`chain::LEAF`, 16 entries) give 1.07.
+#[test]
+fn a_list_joined_from_one_entry_lists_holds_at_most_twice_the_bytes_of_the_flat_list() {
+    let n = 10_000;
+    let one = |i: i64| Family::of([(int(0), int(i))]);
+    let bytes = |build: &dyn Fn() -> Family| {
+        let (list, live) = zed_alloc_count::live(build);
+        assert_eq!(list, Family::of((0..n).map(|i| (i, i))));
+        live.net
+    };
+    let flat = bytes(&|| Family::of((0..n).map(|i| (i, i))));
+    let right = bytes(&|| {
+        (0..n - 1)
+            .rev()
+            .fold(one(n - 1), |acc, i| one(i).concat(&acc).unwrap())
+    });
+    let left = bytes(&|| (1..n).fold(one(0), |acc, i| acc.concat(&one(i)).unwrap()));
+    eprintln!("bytes of {n} entries: flat {flat}, right-nested {right}, left-nested {left}");
+    for (what, b) in [("right", right), ("left", left)] {
+        assert!(
+            b <= 2 * flat,
+            "{what}-nested: {b} bytes against {flat} for the flat list"
+        );
+    }
+}
+
 /// A walk over every entry builds the map of a list made by `++` once, O(n), which the copies of
 /// the list share: printing it twice builds one map, and its text is the one map's.
 #[test]

@@ -6,8 +6,10 @@
 //! costs a reference count however much lies below it. Where a node is (`r.3/0.1`) is worked
 //! out for a message, from the links up, and is not kept: a path is as long as its depth.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Value};
@@ -255,7 +257,21 @@ pub(crate) struct Tables {
     // and a compare only of constants of equal digest, which are equal or collide. Order was
     // never read; `consts` keeps the order of first use. Test
     // `l01_36a_executables/doubling.rs`.
-    const_at: HashMap<Value, usize>,
+    // Complexity tradeoff (COMPLEXITY.md F223b): keyed by the value, every family hashed by its
+    // number of entries alone (`Value`'s `Hash`, plan row PERF-family-hash-count-only), so the n
+    // one-entry lists of n `[x] ++ a` fell in one bucket
+    // and each insert and lookup compared them all: O(n^2) compares to compile the program,
+    // 43 times the instructions at 8n (plan row PERF-list-concat-native). Here a family's hash
+    // also reads its first and last entry ([`ConstKey`]), O(log n) on a list made by `++` or
+    // a map, O(1) on a range, so families of one count with other ends fall apart; the key is
+    // still the value under `==`, which an executable needs (see `ConstKey`; a key by the
+    // built value's id, tried first, numbered the entries of a built program otherwise than
+    // its executable and failed `l01_36a_executables::port_in_family`). Tradeoff: n distinct
+    // family constants of one count and the same ends (`[0, i, 0]` for each i) still share a
+    // bucket, O(n^2) compares; not seen in a program yet, and the general fix of the family
+    // hash is plan row PERF-family-hash-count-only. Test
+    // `l03_15a_fp_ops_run::bench::a_native_right_nested_chain_of_concatenations_runs_in_n_log_n`.
+    const_at: HashMap<ConstKey, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
     /// The nodes legalization swapped, by number.
@@ -633,10 +649,12 @@ impl Tables {
     fn constant(&mut self, s: &Src) {
         if let Src::Const(v) = s
             && Word::scalar(v).is_none()
-            && !self.const_at.contains_key(v)
         {
-            self.const_at.insert(v.clone(), self.consts.len());
-            self.consts.push(v.clone());
+            let n = self.consts.len();
+            if let Entry::Vacant(e) = self.const_at.entry(ConstKey(v.clone())) {
+                e.insert(n);
+                self.consts.push(v.clone());
+            }
         }
     }
 
@@ -644,7 +662,37 @@ impl Tables {
     pub fn const_index(&self, v: &Value) -> usize {
         *self
             .const_at
-            .get(v)
+            .get(&ConstKey(v.clone()))
             .unwrap_or_else(|| panic!("constant {v:?} is not in the table {:?}", self.consts))
+    }
+}
+
+/// The key of a constant in [`Tables`]'s table: the value, equal under `==` as `Value`'s own
+/// `Eq` has it, so that equal constants share one entry however they were built. An executable
+/// builds its table again from the decoded program (`exe::start`), where every family and
+/// tuple constant is a copy of its own, so an entry per built value would number the entries
+/// otherwise than the compile did.
+struct ConstKey(Value);
+
+impl PartialEq for ConstKey {
+    fn eq(&self, other: &ConstKey) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ConstKey {}
+
+/// `Value`'s hash, and for a family its first entry and, unless it has no upper end, its last:
+/// equal families have equal ends, so equal values hash alike, and the ends tell apart most
+/// families of one count, which `Value`'s hash does not.
+impl Hash for ConstKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        if let Value::Family(f) = &self.0 {
+            f.end_entry(false).hash(state);
+            if f.open_lo().is_none() {
+                f.end_entry(true).hash(state);
+            }
+        }
     }
 }

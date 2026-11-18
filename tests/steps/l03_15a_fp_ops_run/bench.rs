@@ -22,6 +22,7 @@ use zed_tests::scaling::{self, FACTOR, Meter, hold, hold_linear};
 
 use super::program;
 use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, value, with_prelude};
+use zed_tests::step_helpers::l01_36_cranelift as cranelift;
 use zed_tests::step_helpers::l01_36a_executables::interpreter;
 
 /// Entries of a kernel run.
@@ -295,6 +296,43 @@ fn a_left_nested_chain_of_concatenations_runs_in_n_log_n() {
     );
 }
 
+/// The 2k steps `acc = acc ++ [i]` then `acc = acc ∪ {acc.count -> i}`, for `i` from 0 to
+/// `k - 1`, on the list `[0]`, as `let`s: a `++` and then a change of one entry, alternately.
+fn concat_change_chain(k: usize) -> Term {
+    let acc = || var("acc");
+    let change = |i: usize| {
+        let one = Term::Prim(Prim::Entries, vec![count(acc()), lit(i as i64)]);
+        Term::Prim(Prim::Union, vec![acc(), one])
+    };
+    let body = (0..k).rev().fold(acc(), |body, i| {
+        let joined = app(var("cat"), vec![acc(), lit(one(i))]);
+        let_("acc", joined, let_("acc", change(i), body))
+    });
+    let_("cat", elaborated_concat(), let_("acc", lit(one(0)), body))
+}
+
+/// Plan row PERF-list-concat-change: n `++`, each followed by a change that adds one entry,
+/// each on the list made by the step before. Each step must cost O(log n), as the `++` alone
+/// does; a change that builds the joined list's map, O(n), makes the chain O(n²): 55.6 times at
+/// 8n before the union joined an added entry as `++` does (`value::list_union`, COMPLEXITY.md
+/// F223c), 8.05 after.
+#[test]
+fn concatenations_alternating_with_one_entry_changes_run_in_n_log_n() {
+    let terms = scaling::inputs(N_CONCAT, |k| with_prelude(concat_change_chain(k)));
+    let run = |k: usize| {
+        let v = Evaluator::new(World::new()).run(&terms[&k]).unwrap();
+        let xs = [0].into_iter().chain((0..k as i64).flat_map(|i| [i, i]));
+        let want = Family::of(xs.enumerate().map(|(j, x)| (j as i64, x)));
+        assert_eq!(v, Value::Family(want));
+    };
+    ratio(
+        "n `a ++ [x]`, each followed by `a ∪ {a.count -> x}`, instructions",
+        N_CONCAT,
+        1,
+        run,
+    );
+}
+
 /// The term zedc elaborates the fold `q` to, which builds the list of `xs`'s n entries back by
 /// `++` on its accumulator (plan row FP-ops-concat-fold-acc), run at n and 8n and held under
 /// the limit for n log n work: each `++` adds one entry to the shared tree, O(log n), as in
@@ -323,6 +361,45 @@ fn a_right_fold_building_a_list_by_concatenation_runs_in_n_log_n() {
     fold_concat_ratio(
         "the elaborated `xs.foldr((x, a) -> [x] ++ a, [])` over n entries",
         "xs.foldr((x, a) -> [x] ++ a, [])",
+    );
+}
+
+/// [`concat_chain_ratio`] with the chain run natively (plan row PERF-list-concat-native): each
+/// `++` a native call of `cat`, whose prim `ListConcat` the runtime hands to the kernel
+/// (`zed_native::hooks`), which hands the operands over as kernel values, shared, not copied.
+/// The terms are lowered, legalized and planned before the runs; each run compiles the program
+/// too, most of its instructions, since `zed_native::run` does both. Before the fix the ratio
+/// was 43.3 at n = 1000: the compile, whose table of constants compared the n one-entry lists
+/// with one another, all of one count (`zed_native::tables`, `ConstKey`, which now hashes a
+/// family's end entries too). Controls, not committed: the hash without the end entries fails
+/// at 37.76; each `++` building its list's map, O(n) a step, fails at 14.71.
+fn native_concat_chain_ratio(right: bool, what: &str) {
+    scaling::on_a_thread(1 << 29, || {
+        let planned = scaling::inputs(N_CONCAT, |k| {
+            cranelift::planned(&with_prelude(concat_chain(k, right)))
+        });
+        let run = |k: usize| {
+            let (g, p) = &planned[&k];
+            let o = zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap();
+            assert_eq!(o.value, chain_value(k, right));
+        };
+        ratio(what, N_CONCAT, 1, run);
+    });
+}
+
+#[test]
+fn a_native_right_nested_chain_of_concatenations_runs_in_n_log_n() {
+    native_concat_chain_ratio(
+        true,
+        "n native `[x] ++ a`, each on the list made by the one before, instructions",
+    );
+}
+
+#[test]
+fn a_native_left_nested_chain_of_concatenations_runs_in_n_log_n() {
+    native_concat_chain_ratio(
+        false,
+        "n native `a ++ [x]`, each on the list made by the one before, instructions",
     );
 }
 
@@ -546,7 +623,9 @@ fn first_last_and_concat_of_a_joined_list_build_no_map() {
     // `a ++ a` builds O(log n) nodes at step i, with allocation, where the reads above build
     // none: proved O(log min(p, q)) for operands of p and q leaves (Hinze and Paterson 2006,
     // their concatenation), so the chain is O(n log n), held to 8 ln(8n) / ln(n), 10.41 at
-    // n = 1000, the ratio of n log n at 8n (measured 9.92, 2026-11-16, load 40).
+    // n = 1000, the ratio of n log n at 8n (measured 9.92, 2026-11-16, load 40; 10.21 with
+    // short leaves merged at a join, `chain::LEAF` 16, 2026-11-17, load 61 to 74, COMPLEXITY.md
+    // F223d).
     let n = N_CONCAT as f64;
     let n_log_n = FACTOR as f64 * (FACTOR as f64 * n).ln() / n.ln();
     joined_read_under("a ++ a", n_log_n, |_| {

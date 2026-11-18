@@ -1571,7 +1571,8 @@ mod chain {
     use super::*;
 
     /// The entries of a list made by `++` (plan row PERF-list-concat-shared): the lists joined, in
-    /// order, as the leaves of a finger tree whose parts each hold their count of entries, and the
+    /// order, short ones merged into one (`LEAF`, plan row PERF-list-concat-leaf-merge), as the
+    /// leaves of a finger tree whose parts each hold their count of entries, and the
     /// map of the whole list once a reader walks it. Entry `i` of the list is entry `i - o` of the
     /// leaf that starts at offset `o`, so the keys `0 ..< n` are positions, found by the counts.
     // Complexity tradeoff: the naive `++` builds the joined list's map, as the union of `a` and `b`
@@ -1589,10 +1590,10 @@ mod chain {
     // entries or reads them all by key (a print, `keys`, a fold, a change through
     // `Entries::built_map_mut`; every such read names `Entries::built_map` or `built_map_mut`)
     // builds the map once, O(n), which the copies share, as a range's (`Span::map`). Tradeoffs:
-    // a leaf per list joined, never merged with its neighbors, so a
-    // chain of one-entry lists holds a leaf, a one-entry map and O(1) tree nodes per entry; and a
-    // change to a list made by `++` builds its map, O(n), where the map made by the union took
-    // O(log n).
+    // short lists joined are copied into one leaf of at most `LEAF` entries, O(LEAF) per join
+    // (see `LEAF`); and a change to a list made by `++` builds its map, O(n), where the map
+    // made by the union took O(log n), except a change that only adds entries after the last,
+    // which is joined as `++` joins (`list_union`, COMPLEXITY.md F223c).
     pub(crate) struct Chain {
         tree: Part,
         pub(super) map: std::sync::OnceLock<btree::Map<Value, Value>>,
@@ -1652,6 +1653,101 @@ mod chain {
             };
             a.iter().flatten().chain(middle).chain(b.iter().flatten())
         }
+
+        /// The tree `self`, a list's own tree (leaves at its top), with its last leaf replaced by
+        /// that leaf then `f`'s entries, when the two hold at most [`LEAF`] entries together.
+        fn with_last(&self, f: &Family) -> Option<Part> {
+            match &*self.0 {
+                ChainTree::Leaf(g) => {
+                    (g.len() + f.len() <= LEAF).then(|| chain_leaf(leaves_merged(g, f)))
+                }
+                ChainTree::Deep {
+                    len,
+                    front,
+                    middle,
+                    back,
+                } => {
+                    let i = back.iter().take_while(|p| p.is_some()).count() - 1;
+                    let last = back[i].as_ref()?.with_last(f)?;
+                    let mut back = back.clone();
+                    back[i] = Some(last);
+                    Some(chain_deep(
+                        len + f.len(),
+                        front.clone(),
+                        middle.clone(),
+                        back,
+                    ))
+                }
+                // A list's own tree holds leaves at its top, never a node, and is never empty.
+                ChainTree::Empty | ChainTree::Node { .. } => None,
+            }
+        }
+
+        /// The tree `self`, as for [`Part::with_last`], with its first leaf replaced by `f`'s
+        /// entries then that leaf's, when the two hold at most [`LEAF`] entries together.
+        fn with_first(&self, f: &Family) -> Option<Part> {
+            match &*self.0 {
+                ChainTree::Leaf(g) => {
+                    (f.len() + g.len() <= LEAF).then(|| chain_leaf(leaves_merged(f, g)))
+                }
+                ChainTree::Deep {
+                    len,
+                    front,
+                    middle,
+                    back,
+                } => {
+                    let first = front[0].as_ref()?.with_first(f)?;
+                    let mut front = front.clone();
+                    front[0] = Some(first);
+                    Some(chain_deep(
+                        len + f.len(),
+                        front,
+                        middle.clone(),
+                        back.clone(),
+                    ))
+                }
+                ChainTree::Empty | ChainTree::Node { .. } => None,
+            }
+        }
+    }
+
+    // Complexity tradeoff: a join of two lists whose entries fit in `LEAF` together, or of a
+    // short list to the end leaf of a list made by `++`, copies them into one leaf of at most
+    // `LEAF` entries, as a join of strings copies short blocks (`text::LEAF`): O(LEAF) work per
+    // join and O(LEAF) memory per list kept, against O(1) when each operand stays a leaf of its
+    // own. Naive (each operand a leaf, never merged): a list built from n one-entry lists holds a
+    // leaf, its one-entry map and a share of a tree node per entry, 2.47 times the bytes of the
+    // same list built as one map (10,000 entries, 2,839,336 against 1,150,536 bytes,
+    // `l03_15a_fp_ops_run::kernel::a_list_joined_from_one_entry_lists_holds_at_most_twice_the_bytes_of_the_flat_list`),
+    // and a walk reads one leaf per entry. Given up: n prefixes of a list built by `++`, all
+    // kept, keep up to `LEAF` entries each besides their O(1) nodes; nothing in order or in
+    // results. Trigger: a join whose adjacent leaves are short. Measured (2026-11-17, the l03_15a
+    // benchmarks by instructions at n, merging off, then `LEAF` 8, 16, 32 and 64; bytes of the
+    // 10,000 entries over the flat list's): bytes 2.47, 1.160, 1.067, 1.072, 1.034; the chain of
+    // n = 1000 `a ++ [x]` 17.50, 19.55, 20.85, 24.13, 29.58 million instructions; the `foldl` of
+    // 20,000 `a ++ [x]` 913, 954, 981, 1047, 1159 million; every ratio at 8n 7.99 to 8.08 in
+    // each, and `a ++ a` 9.92, 10.18, 10.21, 9.97, 9.57 against its n log n limit 10.41. 16
+    // holds the bytes of 32 at less work. COMPLEXITY.md F223d. Text and
+    // lists keep two finger trees of one design, not one generic tree: the string's measures a
+    // pair (bytes and characters, with a refusal past `usize::MAX` bytes) and its tree is the
+    // public `Text`, whose node ids name strings in staging (`Text::node_id`), so sharing it
+    // would rewrite the string's tuned code for no change in cost.
+    /// The most entries a leaf of a list made by `++` gets by a merge at a join.
+    pub(super) const LEAF: usize = 16;
+
+    /// A part of height 0: the list `f`, not empty and not made by `++`.
+    fn chain_leaf(f: Family) -> Part {
+        Part(Arc::new(ChainTree::Leaf(f)))
+    }
+
+    /// The list of `a`'s entries then `b`'s, both lists not made by `++`, as one map: O(m) for
+    /// their `m` entries, at most [`LEAF`].
+    fn leaves_merged(a: &Family, b: &Family) -> Family {
+        let values = a.0.built_map().values().chain(b.0.built_map().values());
+        let entries = values
+            .enumerate()
+            .map(|(i, v)| (Value::Int(i as i64), v.clone()));
+        Family::from_map(entries.collect())
     }
 
     impl Chain {
@@ -1659,10 +1755,16 @@ mod chain {
         pub(super) fn join(a: &Family, b: &Family) -> Chain {
             let part = |f: &Family| match &f.0 {
                 Entries::Seq(c) => c.tree.clone(),
-                _ => Part(Arc::new(ChainTree::Leaf(f.clone()))),
+                _ => chain_leaf(f.clone()),
+            };
+            let (a, b) = (part(a), part(b));
+            let merged = match (&*a.0, &*b.0) {
+                (_, ChainTree::Leaf(f)) => a.with_last(f),
+                (ChainTree::Leaf(f), _) => b.with_first(f),
+                _ => None,
             };
             Chain {
-                tree: chain_concat(&part(a), &[], &part(b)),
+                tree: merged.unwrap_or_else(|| chain_concat(&a, &[], &b)),
                 map: std::sync::OnceLock::new(),
             }
         }
@@ -1742,6 +1844,20 @@ mod chain {
                 }
                 out.into_iter().collect()
             })
+        }
+
+        /// The counts of entries of the leaves, in order: O(n).
+        #[cfg(test)]
+        pub(super) fn leaf_counts(&self) -> Vec<usize> {
+            let mut out = Vec::new();
+            let mut todo = vec![&self.tree];
+            while let Some(t) = todo.pop() {
+                match &*t.0 {
+                    ChainTree::Leaf(f) => out.push(f.len()),
+                    _ => todo.extend(t.parts().rev()),
+                }
+            }
+            out
         }
 
         /// The values of the list in position order, read from the leaves, building no map.
@@ -2703,6 +2819,9 @@ impl<'a> Merging<'a> {
 // vector, each reallocated at its exact length at an insertion into it; a collision is reported where building `a`'s leaves then `b`'s would report it, so the
 // walk keeps the keypath prefix, O(depth) memory.
 fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
+    if let Some(f) = list_union(a, b).or_else(|| list_union(b, a)) {
+        return Ok(f);
+    }
     let mut prefix = Vec::new();
     let mut level = Merging::new(a, b);
     let mut above = Vec::new();
@@ -2757,6 +2876,54 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
             }
             _ => return Err(collision(&prefix)),
         }
+    }
+}
+
+/// `s ∪ t` for a list `s` made by `++` (`Entries::Seq`) of `n` entries and a family `t` of at
+/// most `n` entries that changes `s` only by adding entries after its last: each key of `t` an
+/// integer, those below `n` holding a value that is not a family and equals `s`'s there, and
+/// the others the keys `n ..< n + m`. The union is then `s ++ [those values]`, built as `++`
+/// builds it, sharing `s` and building no map of it. `None` for any other pair, which
+/// [`union`] then makes, collision or not; so the two agree on every pair this answers.
+// Complexity tradeoff (COMPLEXITY.md F223c): the naive method, the general union, inserts `t`'s
+// entries into a copy of `s`'s map, and a list made by `++` builds that map first, O(n), so a
+// loop that alternates `++` with a one-entry change is O(n²) in all (measured: 55.64 times for 8
+// times the length, `l03_15a_fp_ops_run::bench::concatenations_alternating_with_one_entry_changes_run_in_n_log_n`).
+// Used: an append, read and joined in the finger tree, O(m log n) for `t`'s `m` entries: a key
+// below `n` is read in its leaf, O(log n), and the new entries are one leaf joined at the end,
+// O(1) amortized. Tradeoffs: a change at a key below `n` to a family (a union of two nested
+// families) still takes the general union and builds the map, as does any collision; the new
+// list's id is fresh and its from-id 0, as `++` makes them, so the provenance pass reads its
+// entries rather than a difference from `s`, which on a list made by `++` it did anyway.
+fn list_union(s: &Family, t: &Family) -> Option<Family> {
+    let Entries::Seq(c) = &s.0 else {
+        return None;
+    };
+    let n = c.len();
+    if matches!(t.0, Entries::From(_)) || t.size() > n as u128 {
+        return None;
+    }
+    let mut added = btree::Map::default();
+    for (k, v) in t.0.built_map().iter() {
+        let Value::Int(i) = k else {
+            return None;
+        };
+        let i = usize::try_from(*i).ok()?;
+        match i < n {
+            true => match (c.lookup(k)?, v) {
+                (Value::Family(_), _) | (_, Value::Family(_)) => return None,
+                (x, y) if x == *y => {}
+                _ => return None,
+            },
+            false if i == n + added.len() => {
+                added.insert(Value::Int(added.len() as i64), v.clone());
+            }
+            false => return None,
+        }
+    }
+    match added.is_empty() {
+        true => Some(s.clone()),
+        false => s.concat(&Family::from_map(added)),
     }
 }
 
@@ -4630,6 +4797,124 @@ mod tests {
         let mut changed = shapes[0].clone();
         changed.extend([(Value::Int(n), Value::Int(n))]);
         assert_eq!(changed, list_of(0, n + 1));
+    }
+
+    /// The counts of entries of the leaves of `f`, a list made by `++`.
+    fn leaf_counts(f: &Family) -> Vec<usize> {
+        let Entries::Seq(c) = &f.0 else {
+            panic!("a join of two lists is kept as its parts")
+        };
+        c.leaf_counts()
+    }
+
+    #[test]
+    fn short_lists_joined_share_leaves_of_at_most_leaf_entries() {
+        // Plan row PERF-list-concat-leaf-merge: a join copies two short adjacent leaves into
+        // one of at most `LEAF` entries, at either end, and leaves longer ones apart; the list
+        // reads as the one built entry by entry, its map unbuilt.
+        let (n, leaf) = (200, chain::LEAF as i64);
+        assert_eq!(leaf, 16, "the counts below are written for 16");
+        let one = |i: i64| list_of(i, i + 1);
+        let left = (1..n).fold(one(0), |acc, i| cat(&acc, &one(i)));
+        let right = (0..n - 1)
+            .rev()
+            .fold(one(n - 1), |acc, i| cat(&one(i), &acc));
+        let full = vec![16; 12];
+        assert_eq!(leaf_counts(&left), [full.clone(), vec![8]].concat());
+        assert_eq!(leaf_counts(&right), [vec![8], full].concat());
+        let halved = halves(0, n);
+        let counts = leaf_counts(&halved);
+        assert!(counts.iter().all(|&c| 0 < c && c <= 16), "{counts:?}");
+        assert_eq!(counts.iter().sum::<usize>(), n as usize);
+        for (s, x) in [left, right, halved].iter().enumerate() {
+            assert_eq!(*x, list_of(0, n), "{s}");
+            assert!(!chain_built(x), "{s}");
+        }
+        // Lists longer than a leaf together stay apart; a short list joins the end leaf of a
+        // list made by `++` while it fits, then starts a leaf of its own.
+        assert_eq!(
+            leaf_counts(&cat(&list_of(0, 10), &list_of(10, 20))),
+            [10, 10]
+        );
+        assert_eq!(leaf_counts(&cat(&list_of(0, 40), &one(40))), [40, 1]);
+        assert_eq!(leaf_counts(&cat(&one(0), &list_of(1, 40))), [1, 39]);
+        let mut acc = cat(&list_of(0, 40), &list_of(40, 54));
+        for i in 54..60 {
+            acc = cat(&acc, &one(i));
+        }
+        assert_eq!(leaf_counts(&acc), [40, 16, 4]);
+        assert_eq!(acc, list_of(0, 60));
+        // A range leaf merges as a map leaf does, and reads the same.
+        let r = cat(&Family::range(0, 9), &one(10));
+        assert_eq!(leaf_counts(&r), [11]);
+        assert_eq!(r, list_of(0, 11));
+        assert_eq!(r.lookup(&Value::Int(10)), Some(Value::Int(10)));
+    }
+
+    #[test]
+    fn a_union_that_adds_entries_after_a_joined_list_joins_them_and_any_other_agrees() {
+        // Plan row PERF-list-concat-change: the union of a list made by `++` and a family, in
+        // either order, is the union of the same list built entry by entry and that family:
+        // the same family, or the same collision. When the family only adds entries after the
+        // last (`list_union`), the result is a list made by `++` and neither list builds its
+        // map; otherwise the general union decides.
+        let n = 6;
+        let joined = || halves(0, n);
+        let built = list_of(0, n);
+        let fam = |es: &[(Value, Value)]| Family::of(es.iter().cloned());
+        let (i, f) = (Value::Int, |x: i64| Value::Family(list_of(x, x + 1)));
+        let appends = [
+            fam(&[]),
+            fam(&[(i(n), i(7))]),
+            fam(&[(i(n), i(7)), (i(n + 1), f(8))]),
+            fam(&[(i(0), i(0)), (i(n - 1), i(n - 1)), (i(n), i(9))]),
+            fam(&[(i(2), i(2))]),
+        ];
+        let others = [
+            fam(&[(i(0), i(99))]),
+            fam(&[(i(n + 1), i(7))]),
+            fam(&[(i(-1), i(7))]),
+            fam(&[(Value::str("a"), i(1))]),
+            fam(&[(i(0), f(0))]),
+            fam(&[(i(n), i(1)), (i(n - 1), i(0))]),
+            list_of(0, n + 3),
+            Family::range(0, 2),
+        ];
+        for (s, t) in appends.iter().chain(&others).enumerate() {
+            let is_append = s < appends.len();
+            for b_first in [false, true] {
+                let a = joined();
+                let (got, want) = match b_first {
+                    false => (a.union(t), built.union(t)),
+                    true => (t.union(&a), t.union(&built)),
+                };
+                assert_eq!(got, want, "{s}, {b_first}");
+                if is_append {
+                    let got = got.expect("an append does not collide");
+                    assert!(!chain_built(&a), "{s}: the union built the list's map");
+                    assert!(!chain_built(&got), "{s}: the union built its own map");
+                }
+            }
+        }
+        // A list of families: an equal family at a key below the count takes the general
+        // union, and agrees.
+        let lists = cat(&fam(&[(i(0), f(0))]), &fam(&[(i(0), f(1))]));
+        let t = fam(&[(i(0), f(0)), (i(2), f(2))]);
+        let got = lists.union(&t);
+        assert_eq!(got, Family::from_map(lists.0.built_map().clone()).union(&t));
+        assert!(got.is_ok());
+        // Ids: an append is a new list, with no from-id; a union that adds nothing is `s`.
+        let a = joined();
+        let grown = a.union(&appends[1]).expect("an append");
+        assert!(grown.id() != a.id() && grown.id() != 0 && grown.from() == 0);
+        assert_eq!(a.union(&appends[0]).expect("empty").id(), a.id());
+        // A chain of appends reads as the list built entry by entry.
+        let mut acc = joined();
+        for x in n..n + 50 {
+            acc = acc.union(&fam(&[(i(x), i(x))])).expect("an append");
+        }
+        assert!(!chain_built(&acc));
+        assert_eq!(acc, list_of(0, n + 50));
     }
 
     #[test]
