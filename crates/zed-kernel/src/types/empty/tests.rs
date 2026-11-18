@@ -2225,3 +2225,123 @@ fn equal_families_get_one_class_by_value_key() {
     }
     assert_eq!(classes.len(), 2 * groups);
 }
+
+/// Lists and the fork-refused type `nfa` of the refusal step tests, built in the kernel.
+mod fork_inputs {
+    use super::super::super::rec::{Def, Expr, Group};
+    use super::*;
+
+    pub(super) fn r(i: usize) -> Expr {
+        Expr::Ref(i, vec![])
+    }
+
+    pub(super) fn cons(head: Expr, tail: Expr) -> Expr {
+        Expr::Atom("cons".into(), vec![head, tail])
+    }
+
+    pub(super) fn nil() -> Expr {
+        Expr::Type(Type::atom("nil"))
+    }
+
+    pub(super) fn def(name: &str, body: Expr) -> Def {
+        Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        }
+    }
+
+    pub(super) fn lit(i: i64) -> Type {
+        Type::lit(&Value::Int(i)).expect("an integer literal")
+    }
+
+    pub(super) fn list(head: Type) -> Type {
+        let body = Expr::Union(vec![nil(), cons(Expr::Type(head), r(0))]);
+        Group::new(vec![def("L", body)])
+            .expect("a group")
+            .instance(vec![])
+            .remove(0)
+    }
+
+    /// `by_place_from_the_end` of the step tests: the lists of integers with a 1 at each place
+    /// `i` from the end for `i` up to `n`, with a 1 beyond `n`, or with no 1.
+    pub(super) fn by_place_from_the_end(n: usize) -> Type {
+        let int = || Expr::Type(Type::int());
+        let mut defs = vec![def("R0", nil())];
+        defs.extend((1..=n).map(|k| def(&format!("R{k}"), cons(int(), r(k - 1)))));
+        defs.extend((1..=n).map(|i| {
+            let body = Expr::Union(vec![
+                cons(int(), r(n + i)),
+                cons(Expr::Type(lit(1)), r(i - 1)),
+            ]);
+            def(&format!("G{i}"), body)
+        }));
+        let a = 2 * n + 1;
+        defs.push(def("A0", Expr::Union(vec![nil(), cons(int(), r(a))])));
+        defs.extend((1..=n).map(|k| def(&format!("A{k}"), cons(int(), r(a + k - 1)))));
+        let far = Expr::Union(vec![
+            cons(int(), r(a + n + 1)),
+            cons(Expr::Type(lit(1)), r(a + n)),
+        ]);
+        defs.push(def("H", far));
+        let ts = Group::new(defs).expect("a group").instance(vec![]);
+        let no_one = list(&Type::int() - &lit(1));
+        (1..=n)
+            .map(|i| &ts[n + i])
+            .chain([&ts[a + n + 1], &no_one])
+            .fold(Type::empty(), |u, t| &u | t)
+    }
+
+    /// Empty, refused for a fork: the decision would follow places 1 and 2 from the end at once.
+    pub(super) fn nfa() -> Type {
+        &list(Type::int()) - &by_place_from_the_end(2)
+    }
+}
+
+/// A member of a second group that reads a fork-refused type only through another member is
+/// still decided: `group_verdict` blames the fork on the member that reads it (the
+/// `blame.push` of a `Refused(Fork)` member), so the search of the group goes on past it.
+/// Negative control: with that arm made to refuse the whole search instead, `F` comes back
+/// `Refused(Fork)` in both orders.
+#[test]
+fn fork_read_by_another_group_is_blamed_on_its_reader() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::*;
+    for f_first in [true, false] {
+        Type::forget_emptiness();
+        let d = Group::new(vec![def(
+            &format!("BlameD{f_first}"),
+            Expr::Union(vec![Expr::Type(nfa()), cons(Expr::Type(Type::int()), r(0))]),
+        )])
+        .expect("a group")
+        .instance(vec![])
+        .remove(0);
+        assert_eq!(d.verdict(), Verdict::Refused(Refusal::Fork));
+        let es = Group::new(vec![
+            def(
+                &format!("BlameE{f_first}"),
+                Expr::Union(vec![
+                    cons(Expr::Type(Type::int()), Expr::Type(d)),
+                    cons(Expr::Type(Type::bool()), r(0)),
+                ]),
+            ),
+            def(
+                &format!("BlameF{f_first}"),
+                Expr::Union(vec![
+                    cons(Expr::Type(Type::bool()), r(1)),
+                    Expr::And(vec![r(0), nil()]),
+                ]),
+            ),
+        ])
+        .expect("a group")
+        .instance(vec![]);
+        let (e, f) = if f_first {
+            let f = es[1].verdict();
+            (es[0].verdict(), f)
+        } else {
+            (es[0].verdict(), es[1].verdict())
+        };
+        assert_eq!(f, Verdict::Empty, "F first: {f_first}");
+        assert_eq!(e, Verdict::Refused(Refusal::Fork), "F first: {f_first}");
+    }
+}
