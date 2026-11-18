@@ -1529,19 +1529,28 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
 }
 
 /// Pushes the parts of a need. A kind that holds no type is written by its derived `Debug`;
-/// each is named, so that a kind added with a type is written here.
+/// each is named, so that a kind added with a type is written here. The need and each kind are
+/// taken apart field by field, with no `..`, so that a field added later fails to compile
+/// here until it is written (`alike`, `via`, `Component::site` and `Remap::rank` were added
+/// after this was written and were left out, TEST-types-unreached-paths-2).
 fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
-    parts.extend([
-        Dbg::Text("Need { on: "),
-        Dbg::Ty(&n.on),
-        Dbg::Text(", kind: "),
-    ]);
-    match &n.kind {
-        NeedKind::Component { i, key, .. } => parts.extend([
+    let Need {
+        on,
+        kind,
+        result,
+        span,
+        alike,
+        via,
+    } = n;
+    parts.extend([Dbg::Text("Need { on: "), Dbg::Ty(on), Dbg::Text(", kind: ")]);
+    match kind {
+        NeedKind::Component { i, key, site } => parts.extend([
             Dbg::Text("Component { i: "),
             Dbg::Leaf(i),
             Dbg::Text(", key: "),
             Dbg::Ty(key),
+            Dbg::Text(", site: "),
+            Dbg::Leaf(site),
             Dbg::Text(" }"),
         ]),
         NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
@@ -1570,11 +1579,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(site),
             Dbg::Text(" }"),
         ]),
-        NeedKind::Remap { at, src, .. } => parts.extend([
+        NeedKind::Remap { at, src, rank } => parts.extend([
             Dbg::Text("Remap { at: "),
             Dbg::Leaf(at),
             Dbg::Text(", src: "),
             Dbg::Ty(src),
+            Dbg::Text(", rank: "),
+            Dbg::Leaf(rank),
             Dbg::Text(" }"),
         ]),
         NeedKind::Call {
@@ -1687,11 +1698,19 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
     parts.push(Dbg::Text(", result: "));
-    match &n.result {
+    match result {
         None => parts.push(Dbg::Text("None")),
         Some(t) => parts.extend([Dbg::Text("Some("), Dbg::Ty(t), Dbg::Text(")")]),
     }
-    parts.extend([Dbg::Text(", span: "), Dbg::Leaf(&n.span), Dbg::Text(" }")]);
+    parts.extend([
+        Dbg::Text(", span: "),
+        Dbg::Leaf(span),
+        Dbg::Text(", alike: "),
+        Dbg::Leaf(alike),
+        Dbg::Text(", via: "),
+        Dbg::Leaf(via),
+        Dbg::Text(" }"),
+    ]);
 }
 
 /// The payload an atom was built with, kept in one shared node with what it holds at any depth,

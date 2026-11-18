@@ -187,7 +187,10 @@ if [ -n "$cov" ]; then
   [[ $cov == /* ]] || cov=$root/$cov
   mkdir -p "$cov" || exit 1
   export CARGO_TARGET_DIR=$root/build/cov
-  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage"
+  # zrun's absolute rpaths name build/cargo only; a copy of an executable in another directory
+  # (l01_36a a_stripped_zedc_builds) finds this build's dylibs, whose hashed names differ from
+  # build/cargo's, only through this one.
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage -C link-arg=-Wl,-rpath,$root/build/cov/debug/deps"
   export LLVM_PROFILE_FILE=$cov/other-%p.profraw
 fi
 if [ -n "$trace" ]; then

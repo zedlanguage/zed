@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
-use zedc::check::ty::{self, Binds, SParam, Shape, Sig, Ty, Vars};
+use zedc::check::ty::{
+    self, Binds, CallPath, LevelWord, MapWord, Narrow, Need, NeedKind, SParam, Shape, Sig, Ty,
+    Vars, Via,
+};
 
 pub(super) fn z() -> Ty {
     Ty::set(Type::atom("z"))
@@ -307,6 +310,117 @@ fn debug_writes_what_a_derived_debug_writes() {
         s.ends_with(", needs: [], own: {}, held: {}, named: 0, hull: None, facts: _ }"),
         "{s}"
     );
+}
+
+#[test]
+fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
+    // `Need` and `NeedKind` derive `Debug`, which writes every field; a signature's text writes
+    // its needs from its own loop and must give the same bytes for a need of every kind
+    // (TEST-types-unreached-paths-2: no test wrote a signature with a need).
+    let at = |i: usize| zedc::lex::Span {
+        start: i,
+        end: i + 1,
+    };
+    let word: Arc<str> = "w".into();
+    let kinds = vec![
+        NeedKind::Component {
+            i: Some(0),
+            key: y(),
+            site: at(1),
+        },
+        NeedKind::Index(y()),
+        NeedKind::Destructure { i: 1, n: 2 },
+        NeedKind::Call {
+            what: word.clone(),
+            positional: vec![y(), z()],
+            named: vec![(word.clone(), y())],
+            curry: true,
+            site: Some(at(2)),
+        },
+        NeedKind::Into {
+            what: word.clone(),
+            ty: y(),
+        },
+        NeedKind::Narrow(Narrow::Not(y())),
+        NeedKind::Narrow(Narrow::Loose),
+        NeedKind::Order {
+            what: word.clone(),
+            word: word.clone(),
+            other: y(),
+            first: true,
+        },
+        NeedKind::Sum,
+        NeedKind::Entries,
+        NeedKind::SumMethod {
+            site: at(3),
+            beside: y(),
+        },
+        NeedKind::Map {
+            f: y(),
+            word: MapWord::Where,
+            lambda: true,
+        },
+        NeedKind::Group {
+            f: y(),
+            recv: at(4),
+        },
+        NeedKind::Level {
+            word: LevelWord::Count,
+            f: y(),
+            site: at(5),
+        },
+        NeedKind::Remap {
+            at: at(6),
+            src: y(),
+            rank: (1, 2),
+        },
+        NeedKind::Fold {
+            tys: vec![y(), z()],
+            right: true,
+            by: false,
+        },
+        NeedKind::Strings {
+            word: word.clone(),
+            tys: vec![y()],
+        },
+        NeedKind::Concat {
+            other: y(),
+            first: false,
+        },
+        NeedKind::Zip {
+            other: y(),
+            first: true,
+            shared: false,
+        },
+    ];
+    let via = Via {
+        at: at(7),
+        text: "h(x)".into(),
+        next: None,
+    };
+    let needs: Vec<Need> = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(i, kind)| Need {
+            on: z(),
+            kind,
+            result: (i % 2 == 0).then(z),
+            span: at(8 + i),
+            alike: if i % 3 == 0 {
+                Arc::from([(at(40), at(41), CallPath::default())])
+            } else {
+                Arc::from([])
+            },
+            via: CallPath((i % 4 == 0).then(|| Arc::new(via.clone()))),
+        })
+        .collect();
+    let mut s = sig(z(), z());
+    s.needs = needs.clone();
+    let text = format!("{s:?}");
+    let each: Vec<String> = needs.iter().map(|n| format!("{n:?}")).collect();
+    let written = format!(", needs: [{}], own: ", each.join(", "));
+    assert!(text.contains(&written), "{written}\nin\n{text}");
+    assert_eq!(format!("{s:#?}"), text, "one line for {{:#?}} too");
 }
 
 #[test]
