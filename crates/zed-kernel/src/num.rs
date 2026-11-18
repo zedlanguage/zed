@@ -509,6 +509,24 @@ impl Rat {
         )
     }
 
+    /// The integer's residues `n mod M` and `n mod (M - 1)`, each in `0 .. modulus`, for
+    /// `M = 2^61 - 1`: a family's hash weighs the entry of key `n` by `R^n` (`value::family_sum`),
+    /// where `R^(M - 1) = 1`. It must be an integer. Each `p^e` is reduced by squaring over the
+    /// bits of `e`, so the cost is the size of the coefficient and exponents, never of the value.
+    pub fn integer_residues(&self) -> (u64, u64) {
+        debug_assert!(self.is_integer(), "residues of an integer");
+        let (negative, n, _) = self.residues();
+        let q = MERSENNE_61 - 1;
+        let mut e = rem_u64(self.num.magnitude(), q);
+        for (p, k) in self.pows.iter() {
+            e = mul_mod_any(e, pow_mod_any(*p % q, k.magnitude(), q), q);
+        }
+        match negative {
+            true => ((MERSENNE_61 - n) % MERSENNE_61, (q - e) % q),
+            false => (n, e),
+        }
+    }
+
     /// Its text as a literal type writes it: when it is a decimal, `m * 10^K` with `m` an
     /// integer not divisible by 10, as the one literal `meKr` (`1e400000r`, `5e-1r`, `-25e9r`,
     /// `7r`), which is the form the type syntax has (`SignedLit` in DESIGN.md sec:grammar).
@@ -1389,7 +1407,7 @@ impl Rat {
 const MERSENNE_61: u64 = (1 << 61) - 1;
 
 /// `a * b mod 2^61 - 1`, for `a` and `b` below it.
-fn mul_mod(a: u64, b: u64) -> u64 {
+pub(crate) fn mul_mod(a: u64, b: u64) -> u64 {
     let x = u128::from(a) * u128::from(b);
     let m = u128::from(MERSENNE_61);
     // `2^61 = 1 (mod M)`, so the high part adds to the low part; one subtraction ends it.
@@ -1434,6 +1452,25 @@ fn pow_mod(p: u64, e: &BigUint) -> u64 {
         }
         b = mul_mod(b, b);
         k >>= 1;
+    }
+    r
+}
+
+/// `a * b mod m`, for `a` and `b` below `m`.
+fn mul_mod_any(a: u64, b: u64, m: u64) -> u64 {
+    let r = u128::from(a) * u128::from(b) % u128::from(m);
+    // Unreachable: the remainder is below `m`, a `u64`.
+    u64::try_from(r).expect("a remainder below a u64 modulus")
+}
+
+/// `b^e mod m`, for `b` below `m`, by squaring over the bits of `e`: O(bits of `e`).
+fn pow_mod_any(b: u64, e: &BigUint, m: u64) -> u64 {
+    let mut r = 1 % m;
+    for i in (0..e.bits()).rev() {
+        r = mul_mod_any(r, r, m);
+        if e.bit(i) {
+            r = mul_mod_any(r, b, m);
+        }
     }
     r
 }

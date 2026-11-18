@@ -63,6 +63,72 @@ fn the_table_of_pairs_scales() {
     );
 }
 
+/// n families of one size and different entries put in a hash set keyed by `Value`, the key of
+/// eval.rs's `key_index`, escape.rs, empty.rs's `ValueKey`, zedc-check's maps and zed-native's
+/// `ConstKey` alike, each of which hashes by `Hash for Value`: O(n). With the hash that read the
+/// size alone it was O(n^2), every family compared with each one before it
+/// (PERF-family-hash-count-only).
+#[test]
+fn a_hash_set_of_families_of_one_size_scales() {
+    let inputs = crate::scaling::inputs(20_000, |n| {
+        (0..n as i64)
+            .map(|i| Value::Family(Family::of([(1_i64, i), (2, -i), (i + 3, 0)])))
+            .collect::<Vec<_>>()
+    });
+    crate::scaling::check_order(
+        "a hash set of n families of three entries",
+        20_000,
+        1,
+        |n| {
+            let set: HashSet<&Value> = inputs[&n].iter().collect();
+            assert_eq!(set.len(), n);
+        },
+    );
+}
+
+/// A map of n entries changed one entry at a time, hashed after each change: each hash reads
+/// the O(log n) entries the change put on its path, the rest kept by the branches
+/// (`btree::Map::sum`), so O(n log n) in all; the naive hash read all n each time, O(n^2).
+#[test]
+fn hashing_a_map_after_each_change_scales() {
+    crate::scaling::check_order("n inserts into a map, hashed after each", 20_000, 1, |n| {
+        let mut m: btree::Map<Value, Value> = btree::Map::default();
+        let mut x: u64 = 7;
+        for i in 0..n {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            m.insert(Value::Int((x >> 1) as i64), Value::Int(i as i64));
+            std::hint::black_box(digest(&Value::Family(Family::from_map(m.clone()))));
+        }
+    });
+}
+
+/// A list made by n `++` of short lists, hashed after each: each hash reads the O(log n) parts
+/// the join made, the rest kept by the chain's nodes (`Chain::sum`), O(n log n) in all.
+#[test]
+fn hashing_a_list_after_each_join_scales() {
+    crate::scaling::check_order("n joins of a list, hashed after each", 5_000, 1, |n| {
+        let mut list = Family::of([(0_i64, 0_i64)]);
+        for i in 0..n as i64 {
+            let part = Family::of([(0_i64, i), (1, -i)]);
+            list = list.concat(&part).expect("lists join");
+            std::hint::black_box(digest(&Value::Family(list.clone())));
+        }
+    });
+}
+
+/// A family nested 200,000 levels deep, each family the value of the one above, is digested:
+/// the families are summed from the innermost out by `fill`, with no stack per level.
+#[test]
+fn a_family_200000_levels_deep_is_digested() {
+    let mut v = Value::Int(0);
+    for i in 0..200_000_i64 {
+        v = Value::Family(Family::of([(i, v)]));
+    }
+    let _ = digest(&v);
+}
+
 /// A value 200,000 levels deep, each level holding the one below twice, is digested: the walk
 /// keeps its own stack, so the depth is not limited by the thread's (author P178: an unusual
 /// depth is a benchmark).

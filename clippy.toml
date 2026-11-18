@@ -15,7 +15,11 @@
 # them it fills on first walk holds the same entries (zed-kernel src/value.rs, `Span`).
 # A list joined by `++` is the same: its hash, order and equality read its entries, which its
 # parts fix, and the map of them it fills on first walk holds the same entries (zed-kernel
-# src/value.rs, `Chain`).
+# src/value.rs, `Chain`), and the sum of its entries a part keeps once a hash reads it is fixed
+# by those entries too.
+# A map's hash, order and equality read its entries, never the sums of the entries beneath its
+# branches that a family's hash keeps (zed-kernel src/btree.rs, `Map::sum`), which the entries
+# fix and which a change clears on its path.
 # A kernel subterm's equality reads its id and its term, never the names the term reads, which
 # the evaluator fills on first use (zed-kernel src/term.rs, `ReadsMemo`): the memo is private to
 # zed-kernel, read only through `Shared::reads_memo` by src/eval/made.rs, and no `Hash` or `Ord`
@@ -30,6 +34,7 @@ ignore-interior-mutability = [
   "zed_kernel::text::Text",
   "zed_kernel::value::Span",
   "zed_kernel::value::chain::Chain",
+  "zed_kernel::btree::Map",
   "zedc_int::int::Memo",
   "zedc_types::ty::Facts",
   "zedc_types::ty::Members",

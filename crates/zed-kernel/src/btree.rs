@@ -14,6 +14,8 @@ use std::cmp::Ordering;
 use std::iter::{self, FusedIterator};
 use std::mem;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 
 /// The most entries a node holds.
 const MAX: usize = 16;
@@ -49,6 +51,7 @@ impl<K: Clone, V: Clone> Take for Branch<K, V> {
         Branch {
             child: self.child.clone(),
             next: self.next.take(),
+            sum: AtomicU64::new(self.sum.load(Relaxed)),
         }
     }
 }
@@ -98,10 +101,50 @@ enum Node<K, V> {
     Inner(Arc<[Branch<K, V>]>),
 }
 
-/// A child of an inner node and the entry after it, `None` for the last child.
+/// A child of an inner node and the entry after it, `None` for the last child, and the sum of
+/// the entries beneath the child ([`Map::sum`]) once a sum has read them.
 struct Branch<K, V> {
     child: Node<K, V>,
     next: Option<(K, V)>,
+    /// The sum of the child's entries, below [`SUM_MODULUS`], or [`UNSUMMED`] while none is
+    /// kept. Every change beneath the child goes through [`Branch::child_mut`] or builds a new
+    /// branch, which clears it; a copy of the branch keeps it, since the copy holds the same
+    /// child.
+    sum: AtomicU64,
+}
+
+/// The modulus of [`Map::sum`], the prime `2^61 - 1`.
+pub(crate) const SUM_MODULUS: u64 = (1 << 61) - 1;
+
+/// The mark of a branch whose sum is not kept: no sum, which is below [`SUM_MODULUS`], is it.
+const UNSUMMED: u64 = u64::MAX;
+
+/// `a + b` modulo [`SUM_MODULUS`], for `a` and `b` below it.
+pub(crate) fn add(a: u64, b: u64) -> u64 {
+    let s = a + b;
+    if s >= SUM_MODULUS { s - SUM_MODULUS } else { s }
+}
+
+impl<K, V> Branch<K, V> {
+    /// The branch of `child` and the entry `next` after it, no sum kept.
+    fn new(child: Node<K, V>, next: Option<(K, V)>) -> Self {
+        Branch {
+            child,
+            next,
+            sum: AtomicU64::new(UNSUMMED),
+        }
+    }
+
+    /// The branch of this child, moved unchanged with its kept sum, and the entry `next`.
+    fn with_next(self, next: Option<(K, V)>) -> Self {
+        Branch { next, ..self }
+    }
+
+    /// The child, to be changed: the kept sum is cleared first.
+    fn child_mut(&mut self) -> &mut Node<K, V> {
+        *self.sum.get_mut() = UNSUMMED;
+        &mut self.child
+    }
 }
 
 impl<K, V> Clone for Node<K, V> {
@@ -118,6 +161,7 @@ impl<K: Clone, V: Clone> Clone for Branch<K, V> {
         Branch {
             child: self.child.clone(),
             next: self.next.clone(),
+            sum: AtomicU64::new(self.sum.load(Relaxed)),
         }
     }
 }
@@ -234,6 +278,16 @@ impl<K, V> Map<K, V> {
     }
 
     /// Whether the two maps are one tree, shared, or both empty.
+    /// The address of the root's allocation, which every copy of this map shares and no other
+    /// live map holds; 0 when empty.
+    pub(crate) fn root_address(&self) -> usize {
+        match &self.root {
+            None => 0,
+            Some(Node::Leaf(s)) => Arc::as_ptr(s).cast::<u8>() as usize,
+            Some(Node::Inner(bs)) => Arc::as_ptr(bs).cast::<u8>() as usize,
+        }
+    }
+
     pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
         match (&self.root, &other.root) {
             (Some(a), Some(b)) => a.same(b),
@@ -278,6 +332,62 @@ impl<K, V> Map<K, V> {
     /// The values in key order.
     pub(crate) fn values(&self) -> impl DoubleEndedIterator<Item = &V> + ExactSizeIterator {
         self.iter().map(|(_, v)| v)
+    }
+
+    /// The sum modulo [`SUM_MODULUS`] of `entry` over the entries, each term below the modulus.
+    /// `entry` is called on the entries the kept sums do not cover, in key order, and must be
+    /// the one function every sum of a map of this `K` and `V` is taken with, since a branch
+    /// keeps its child's sum for the next sum of any map that shares it; the families'
+    /// (`value::family_sum`) is the only one.
+    // Complexity tradeoff: the naive sum reads every entry, O(n) a sum. Used: each branch keeps
+    // its child's sum once read, cleared on the path of a change (`Branch::child_mut`) and moved
+    // with a child moved whole by a mend, so a sum after d changes reads the O(d log n) entries
+    // of the nodes on their paths and the root: O(log n) amortized a change, O(n) only the
+    // first time. Tradeoff: 8 bytes an inner branch, one in about 9 of the tree's slots.
+    pub(crate) fn sum(&self, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
+        fn node<K, V>(n: &Node<K, V>, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
+            match n {
+                Node::Leaf(s) => s.iter().fold(0, |acc, (k, v)| add(acc, entry(k, v))),
+                Node::Inner(bs) => bs.iter().fold(0, |acc, b| {
+                    let kept = b.sum.load(Relaxed);
+                    let below = match kept {
+                        UNSUMMED => {
+                            // The depth is the tree's height, O(log n).
+                            let s = node(&b.child, entry);
+                            b.sum.store(s, Relaxed);
+                            s
+                        }
+                        s => s,
+                    };
+                    let here = b.next.as_ref().map_or(0, |(k, v)| entry(k, v));
+                    add(add(acc, below), here)
+                }),
+            }
+        }
+        self.root.as_ref().map_or(0, |n| node(n, entry))
+    }
+
+    /// Calls `f` on each entry that [`Map::sum`] would read now, in key order: those beneath no
+    /// branch whose sum is kept.
+    pub(crate) fn for_each_unsummed<'a>(&'a self, f: &mut impl FnMut(&'a K, &'a V)) {
+        fn node<'a, K, V>(n: &'a Node<K, V>, f: &mut impl FnMut(&'a K, &'a V)) {
+            match n {
+                Node::Leaf(s) => s.iter().for_each(|(k, v)| f(k, v)),
+                Node::Inner(bs) => {
+                    for b in bs.iter() {
+                        if b.sum.load(Relaxed) == UNSUMMED {
+                            node(&b.child, f);
+                        }
+                        if let Some((k, v)) = &b.next {
+                            f(k, v);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(n) = &self.root {
+            node(n, f);
+        }
     }
 
     /// The entries of `self` and `other` side by side in step, the i-th of one with the i-th of
@@ -354,9 +464,11 @@ fn build<K, V, I: Iterator<Item = (K, V)>>(it: &mut I, n: usize, unit: usize) ->
     let (base, extra) = ((n + 1 - c) / c, (n + 1 - c) % c);
     Node::Inner(
         (0..c)
-            .map(|j| Branch {
-                child: build(it, base + usize::from(j < extra), below),
-                next: (j + 1 < c).then(|| it.next().expect("the entries counted are there")),
+            .map(|j| {
+                Branch::new(
+                    build(it, base + usize::from(j < extra), below),
+                    (j + 1 < c).then(|| it.next().expect("the entries counted are there")),
+                )
             })
             .collect(),
     )
@@ -448,14 +560,8 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
             Grown::Split(middle, right) => {
                 let left = self.root.take().expect("a split node is the root");
                 self.root = Some(Node::Inner(Arc::from([
-                    Branch {
-                        child: left,
-                        next: Some(middle),
-                    },
-                    Branch {
-                        child: right,
-                        next: None,
-                    },
+                    Branch::new(left, Some(middle)),
+                    Branch::new(right, None),
                 ])));
             }
         }
@@ -539,7 +645,7 @@ fn insert_in<K: Ord + Clone + Hole, V: Clone + Hole>(
             // The child, when another map holds this node: changed apart, then put into one
             // copy of this node at its new length.
             let (child, (middle, right)) = match Arc::get_mut(bs) {
-                Some(unique) => match insert_in(&mut unique[i].child, k, v) {
+                Some(unique) => match insert_in(unique[i].child_mut(), k, v) {
                     Grown::Split(middle, right) => (None, (middle, right)),
                     done => return done,
                 },
@@ -548,15 +654,7 @@ fn insert_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                     match insert_in(&mut child, k, v) {
                         Grown::Split(middle, right) => (Some(child), (middle, right)),
                         done => {
-                            *bs = replaced(
-                                bs,
-                                i,
-                                i + 1,
-                                [Branch {
-                                    child,
-                                    next: bs[i].next.clone(),
-                                }],
-                            );
+                            *bs = replaced(bs, i, i + 1, [Branch::new(child, bs[i].next.clone())]);
                             return done;
                         }
                     }
@@ -568,14 +666,8 @@ fn insert_in<K: Ord + Clone + Hole, V: Clone + Hole>(
             let (left, split) = parts!(bs, i, i + 1, |a, m, b| {
                 let old = m.next().expect("branch i is there");
                 let pair = [
-                    Branch {
-                        child: child.unwrap_or(old.child),
-                        next: Some(middle),
-                    },
-                    Branch {
-                        child: right,
-                        next: old.next,
-                    },
+                    Branch::new(child.unwrap_or(old.child), Some(middle)),
+                    Branch::new(right, old.next),
                 ];
                 let mut all = a.chain(pair).chain(b);
                 if n <= MAX {
@@ -656,7 +748,7 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
             let below = if here { Target::Max } else { target };
             match Arc::get_mut(bs) {
                 Some(unique) => {
-                    let out = remove_in(&mut unique[i].child, below);
+                    let out = remove_in(unique[i].child_mut(), below);
                     let out = match here {
                         true => {
                             unique[i].next = out;
@@ -680,7 +772,7 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                         true => (None, out),
                         false => (out, bs[i].next.clone()),
                     };
-                    let fixed = Branch { child, next };
+                    let fixed = Branch::new(child, next);
                     *bs = if fixed.child.len() >= MIN {
                         replaced(bs, i, i + 1, [fixed])
                     } else {
@@ -719,6 +811,9 @@ fn sibling<K, V>(bs: &[Branch<K, V>], i: usize) -> usize {
 fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K, V>) -> bool {
     let between = l.next.take().expect("siblings have an entry between them");
     let (ln, rn) = (l.child.len(), r.child.len());
+    // Both children change, so neither kept sum holds; `l.next` changes beside them below.
+    l.child_mut();
+    r.child_mut();
     match (&mut l.child, &mut r.child) {
         (Node::Leaf(x), Node::Leaf(y)) => {
             if ln < MIN && rn > MIN {
@@ -750,43 +845,29 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                 // The first child of `y` moves to the end of `x`, with the entry between before it.
                 let (rest, first) = parts!(y, 0, 1, |_a, m, b| (b.collect(), m.next()));
                 *y = rest;
-                let first = first.expect("an inner node has a first branch");
+                let mut first = first.expect("an inner node has a first branch");
+                l.next = first.next.take();
                 *x = parts!(x, ln, ln + 1, |a, m, _b| {
                     let last = m.next().expect("an inner node has a last branch");
-                    a.chain([
-                        Branch {
-                            child: last.child,
-                            next: Some(between),
-                        },
-                        Branch {
-                            child: first.child,
-                            next: None,
-                        },
-                    ])
-                    .collect()
+                    a.chain([last.with_next(Some(between)), first.with_next(None)])
+                        .collect()
                 });
-                l.next = first.next;
                 false
             } else if rn < MIN && ln > MIN {
                 // The last child of `x` moves to the front of `y`, the entry before it going up.
-                let (rest, up, child) = parts!(x, ln - 1, ln + 1, |a, m, _b| {
-                    let before = m
+                let (rest, up, last) = parts!(x, ln - 1, ln + 1, |a, m, _b| {
+                    let mut before = m
                         .next()
                         .expect("an inner node has a branch before its last");
                     let last = m.next().expect("an inner node has a last branch");
-                    let rest = a
-                        .chain(iter::once(Branch {
-                            child: before.child,
-                            next: None,
-                        }))
-                        .collect();
-                    (rest, before.next, last.child)
+                    let up = before.next.take();
+                    let rest = a.chain(iter::once(before)).collect();
+                    (rest, up, last)
                 });
                 *x = rest;
-                *y = parts!(y, 0, 0, |_a, _m, b| iter::once(Branch {
-                    child,
-                    next: Some(between),
-                })
+                *y = parts!(y, 0, 0, |_a, _m, b| iter::once(
+                    last.with_next(Some(between))
+                )
                 .chain(b)
                 .collect());
                 l.next = up;
@@ -795,10 +876,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                 *x = parts!(x, ln, ln + 1, |a, m, _b| {
                     let last = m.next().expect("an inner node has a last branch");
                     parts!(y, 0, 0, |_c, _n, d| a
-                        .chain(iter::once(Branch {
-                            child: last.child,
-                            next: Some(between),
-                        }))
+                        .chain(iter::once(last.with_next(Some(between))))
                         .chain(d)
                         .collect())
                 });

@@ -38,7 +38,7 @@ use std::mem;
 use std::ops::Deref;
 use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
@@ -991,12 +991,219 @@ fn mix(a: u64, b: u64) -> u64 {
     crate::digest::step(a, b)
 }
 
+/// The modulus of a family's hash, the prime `2^61 - 1`.
+const P: u64 = btree::SUM_MODULUS;
+/// The base of a family's hash: the term of the entry of integer key `i` is `G(v) · R^i`. Fixed,
+/// so the hash is the same on every run; any `R` other than 0 and 1 below `P` serves.
+const R: u64 = 0x0d8e_4e27_c47d_124f;
+/// `G(n) = A + B · n` for an integer value `n` (`value_term`).
+const A: u64 = 0x1a3f_5c2b_9e8d_7061;
+const B: u64 = 0x07b3_a9e1_d2c4_f583;
+
+/// `a · b mod P`, for `a` and `b` below `P`.
+fn field_mul(a: u64, b: u64) -> u64 {
+    crate::num::mul_mod(a, b)
+}
+
+/// `x^e mod P`, by squaring: 61 squarings at most for `e < P`.
+fn field_pow(x: u64, mut e: u64) -> u64 {
+    let (mut b, mut r) = (x, 1);
+    while e > 0 {
+        if e & 1 == 1 {
+            r = field_mul(r, b);
+        }
+        b = field_mul(b, b);
+        e >>= 1;
+    }
+    r
+}
+
+/// `R^e mod P`.
+fn pow_r(e: u64) -> u64 {
+    field_pow(R, e)
+}
+
+/// `1 / x mod P`, for `x` not 0 modulo `P` (Fermat).
+fn field_inv(x: u64) -> u64 {
+    field_pow(x, P - 2)
+}
+
+/// `a - b mod P`, for `a` and `b` below `P`.
+fn field_sub(a: u64, b: u64) -> u64 {
+    btree::add(a, P - b)
+}
+
+/// The residues `n mod P` and `n mod (P - 1)` of an integer `n`, `Int` or `Big`; none for any
+/// other value. O(1), or O(the size of a `Big`'s coefficient and exponents).
+fn integer_residues(v: &Value) -> Option<(u64, u64)> {
+    match v {
+        Value::Int(i) => Some((
+            // Unreachable: a remainder by a positive modulus below 2^61 fits a u64.
+            u64::try_from(i128::from(*i).rem_euclid(i128::from(P))).expect("a residue"),
+            u64::try_from(i128::from(*i).rem_euclid(i128::from(P - 1))).expect("a residue"),
+        )),
+        Value::Big(r) => Some(r.integer_residues()),
+        _ => None,
+    }
+}
+
+/// The digests of the parts one walk has read: each shared sequence's by its [`Id`], and each
+/// family's sum (`family_sum`) by its entries' allocation (`Entries::key`), which no other
+/// family holds while the walk holds the value.
+#[derive(Default)]
+struct Read {
+    sequences: HashMap<Id, u64>,
+    families: HashMap<usize, u64>,
+}
+
+/// `G(v)`, the value's part of an entry's term: `A + B · n` for an integer `n`, so that a range,
+/// whose values are its keys, has a closed form (`range_sum`); the digest, reduced, for any
+/// other value.
+fn value_term(v: &Value, read: &mut Read) -> u64 {
+    match integer_residues(v) {
+        Some((n, _)) => btree::add(A, field_mul(B, n)),
+        None => digest_in(v, read) % P,
+    }
+}
+
+/// The sum of the entries of a map as `family_sum` takes it, with each branch's sum kept
+/// ([`btree::Map::sum`]). Consecutive integer keys step the power of `R` by one product.
+fn map_sum(m: &btree::Map<Value, Value>, read: &mut Read) -> u64 {
+    let mut before: Option<(i64, u64)> = None;
+    m.sum(&mut |k, v| {
+        let g = value_term(v, read);
+        let Some((_, e)) = integer_residues(k) else {
+            before = None;
+            return mix(digest_in(k, read), g) % P;
+        };
+        let w = match (k, before) {
+            (Value::Int(i), Some((j, w))) if j.checked_add(1) == Some(*i) => field_mul(w, R),
+            _ => pow_r(e),
+        };
+        before = match k {
+            Value::Int(i) => Some((*i, w)),
+            _ => None,
+        };
+        field_mul(g, w)
+    })
+}
+
+/// The sum of the entries of the range `lo ..= lo + n - 1`, each key mapping to itself, as
+/// `map_sum` gives it for the same entries: `Σ (A + B·i) R^i = R^lo ((A + B·lo) S0 + B S1)`, with
+/// `S0 = Σ_{k<n} R^k = (R^n - 1)/(R - 1)` and `S1 = Σ_{k<n} k R^k = R (1 - n R^(n-1) + (n-1) R^n)
+/// / (R - 1)^2`. `lo` and `n` are given by their residues modulo `P` (the factors) and
+/// `P - 1` (the exponents, as `R^(P-1) = 1`).
+// Complexity tradeoff: the naive sum reads the n entries, O(n), and a wide range has more
+// than memory holds. Used: the closed form, O(1) field operations and three powers of 61
+// squarings, after the residues of the ends, O(their digits).
+fn range_sum(lo: (u64, u64), n: (u64, u64)) -> u64 {
+    let (lo_p, lo_e) = lo;
+    let (n_p, n_e) = n;
+    let r_n = pow_r(n_e);
+    let inv = field_inv(R - 1);
+    let s0 = field_mul(field_sub(r_n, 1), inv);
+    // `n R^(n-1) = n R^n / R`.
+    let n_r_n1 = field_mul(field_mul(n_p, r_n), field_inv(R));
+    let inner = btree::add(field_sub(1, n_r_n1), field_mul(field_sub(n_p, 1), r_n));
+    let s1 = field_mul(field_mul(R, inner), field_mul(inv, inv));
+    let first = btree::add(A, field_mul(B, lo_p));
+    let total = btree::add(field_mul(first, s0), field_mul(B, s1));
+    field_mul(pow_r(lo_e), total)
+}
+
+/// The sum of a family's entries, the same for equal families whatever their form: the sum
+/// modulo `P` over its entries of `G(v) · R^i` for an integer key `i` (`value_term`), and of the
+/// mixed digests of key and value for any other key. A sum over the entries does not depend on
+/// the form that holds them: a map's is read from its tree with each branch's sum kept, a
+/// list's made by `++` from its parts with each part's kept (`Chain::sum`), and a range's is a
+/// closed form (`range_sum`). Values are read through `read`, which holds every family the
+/// walk met beneath this one (`fill`), so the depth of nesting takes no stack.
+// Complexity tradeoff: the naive hash reads every entry, O(n) a hash, and the hash before this
+// one read only the number of entries, O(1), so every family of one size collided: a hash set
+// of n families of one size took O(n^2) comparisons (`value::tests::families_of_one_size_hash_apart`,
+// COMPLEXITY.md F223e). Used: an additive hash over the entries, so the sum of a part of the
+// tree is kept with it; a change clears the sums on its path, O(log n) entries read again a
+// change, each at the cost of its value's digest. Tradeoff: 8 bytes an inner branch of a map
+// and a word a node of a list's tree; a family met again in another walk reads its root anew.
+fn family_sum(f: &Family, read: &mut Read) -> u64 {
+    let key = f.0.key();
+    if let Some(&s) = read.families.get(&key) {
+        return s;
+    }
+    fill(f, read);
+    read.families[&key]
+}
+
+/// The sum of `f`'s entries (`family_sum`), its nested families read already.
+fn own_sum(f: &Family, read: &mut Read) -> u64 {
+    match &f.0 {
+        Entries::Map(m) => map_sum(m, read),
+        Entries::Range(s) => match &s.ends {
+            Ends::Word { lo, last } => {
+                let n = i128::from(*last) - i128::from(*lo) + 1;
+                let n = Value::int(BigInt::from(n));
+                let n = integer_residues(&n).expect("a count is an integer");
+                range_sum(integer_residues(&Value::Int(*lo)).expect("an integer"), n)
+            }
+            Ends::Wide { lo, count, .. } => range_sum(
+                integer_residues(lo).expect("a range's end is an integer"),
+                integer_residues(count).expect("a count is an integer"),
+            ),
+        },
+        Entries::Seq(c) => c.sum(&mut |leaf| family_sum(leaf, read)),
+        // Not summed: an unbounded family is hashed by its low end (`leaf_digest`).
+        Entries::From(_) => 0,
+    }
+}
+
+/// Puts into `read` the sum of `top` and of every family beneath it that its sum reads: first
+/// the families are found by a walk that keeps its own stack, then each is summed after those
+/// beneath it, so a sum finds the sums it needs in `read` and nesting of any depth takes no
+/// stack. The walk passes over the parts whose sums are kept, as the sums do.
+fn fill(top: &Family, read: &mut Read) {
+    let mut order: Vec<&Family> = Vec::new();
+    let mut found: HashSet<usize> = HashSet::new();
+    let mut sequences: HashSet<Id> = HashSet::new();
+    let mut families = vec![top];
+    let mut values: Vec<&Value> = Vec::new();
+    loop {
+        while let Some(f) = families.pop() {
+            let key = f.0.key();
+            if read.families.contains_key(&key) || !found.insert(key) {
+                continue;
+            }
+            order.push(f);
+            match &f.0 {
+                Entries::Map(m) => m.for_each_unsummed(&mut |k, v| values.extend([k, v])),
+                Entries::Seq(c) => c.for_each_unsummed_leaf(&mut |g| families.push(g)),
+                Entries::Range(_) | Entries::From(_) => {}
+            }
+        }
+        let Some(x) = values.pop() else { break };
+        match x {
+            Value::Family(g) => families.push(g),
+            _ => {
+                if let Some((_, xs)) = with_sequence(x)
+                    && (!xs.is_shared() || sequences.insert(xs.id()))
+                {
+                    values.extend(xs.iter());
+                }
+            }
+        }
+    }
+    for f in order.into_iter().rev() {
+        let s = own_sum(f, read);
+        read.families.insert(f.0.key(), s);
+    }
+}
+
 /// The digest of a value that holds no sequence: a boolean, number, string or family. Two such
 /// values equal under `==` are of one variant (an `int` of 64 bits never equals a wide one) and
 /// equal there: booleans and integers by value, a rational by its residues, the same whatever primes
 /// it keeps as powers ([`Rat::residues`]), a float by its bits, a string by its text however joined,
-/// and a family by its number of entries, which equal families share.
-fn leaf_digest(v: &Value) -> u64 {
+/// a family by its number of entries and the sum of its entries (`family_sum`), the same for
+/// every form of equal entries, and a family with no upper end by its low end.
+fn leaf_digest(v: &Value, read: &mut Read) -> u64 {
     let mut h = Digest::default();
     match v {
         Value::Bool(b) => h.write_u64(u64::from(*b)),
@@ -1009,7 +1216,10 @@ fn leaf_digest(v: &Value) -> u64 {
         // for equal bytes however joined, and not by its bytes: a string doubled 62 times, a few
         // thousand nodes, would feed 2^62 bytes (item BUILD-doubling-60s).
         Value::Str(s) => (5, s.poly_hash()).hash(&mut h),
-        Value::Family(f) => (6, f.size()).hash(&mut h),
+        Value::Family(f) => match &f.0 {
+            Entries::From(lo) => (11, digest_in(lo, read)).hash(&mut h),
+            _ => (6, f.size(), family_sum(f, read)).hash(&mut h),
+        },
         Value::Atom(_) | Value::Tuple(_) | Value::Path(_) => {
             unreachable!("a value with a sequence")
         }
@@ -1048,6 +1258,11 @@ fn with_sequence(v: &Value) -> Option<(u64, &Items)> {
 /// which a walk can meet again, is read once and its digest kept by its [`Id`], so a value of
 /// shared parts costs its distinct parts, as comparing it does; the walk keeps its own stack.
 fn digest(v: &Value) -> u64 {
+    digest_in(v, &mut Read::default())
+}
+
+/// [`digest`], with the parts read so far in `read`.
+fn digest_in(v: &Value, read: &mut Read) -> u64 {
     /// A sequence being read: the digest of its holder's other parts, of its components so far,
     /// the components left, and its id when it is shared.
     struct Frame<'v> {
@@ -1068,18 +1283,17 @@ fn digest(v: &Value) -> u64 {
         }
     }
     let Some((head, xs)) = with_sequence(v) else {
-        return leaf_digest(v);
+        return leaf_digest(v, read);
     };
     if xs.is_empty() {
         return mix(head, mix(10, 0));
     }
-    let mut seen: HashMap<Id, u64> = HashMap::new();
     let mut stack = vec![open(head, xs)];
     while let Some(top) = stack.last_mut() {
         if let Some(x) = top.rest.next() {
             match with_sequence(x) {
-                None => top.acc = mix(top.acc, leaf_digest(x)),
-                Some((head, xs)) => match shared(xs).and_then(|id| seen.get(&id)) {
+                None => top.acc = mix(top.acc, leaf_digest(x, read)),
+                Some((head, xs)) => match shared(xs).and_then(|id| read.sequences.get(&id)) {
                     Some(&acc) => top.acc = mix(top.acc, mix(head, acc)),
                     None => stack.push(open(head, xs)),
                 },
@@ -1088,7 +1302,7 @@ fn digest(v: &Value) -> u64 {
         }
         let done = stack.pop().expect("the frame just read");
         if let Some(id) = done.id {
-            seen.insert(id, done.acc);
+            read.sequences.insert(id, done.acc);
         }
         let d = mix(done.head, done.acc);
         match stack.last_mut() {
@@ -1224,6 +1438,17 @@ impl Default for Entries {
 // (plan row TEST-list-map-build-callers-complete, COMPLEXITY.md F223): with `Deref`, a method of
 // the map called on `f.0` built it unseen.
 impl Entries {
+    /// The address of the entries' allocation, which every copy shares and no other live
+    /// family holds (`Read`): the map's root, 0 for an empty map, or the `Arc` of the others.
+    fn key(&self) -> usize {
+        match self {
+            Entries::Map(m) => m.root_address(),
+            Entries::Range(s) => Arc::as_ptr(s) as usize,
+            Entries::From(v) => Arc::as_ptr(v) as usize,
+            Entries::Seq(c) => Arc::as_ptr(c) as usize,
+        }
+    }
+
     /// The entries as a map: a map's own; a range's or a list's made by `++`, built on the first
     /// call, O(n), and shared by every copy of the family after (`Span::map`, `Chain::map`).
     pub(crate) fn built_map(&self) -> &btree::Map<Value, Value> {
@@ -1618,6 +1843,8 @@ mod chain {
         Node {
             len: usize,
             parts: [Option<Part>; 3],
+            /// The sum of its entries (`Chain::sum`), once read.
+            sum: OnceLock<u64>,
         },
         /// `front`, then the parts of the nodes that `middle` holds, then `back`, and their count of
         /// entries. A tree of one part is that part itself.
@@ -1626,6 +1853,8 @@ mod chain {
             front: ChainDigit,
             middle: Part,
             back: ChainDigit,
+            /// The sum of its entries (`Chain::sum`), once read.
+            sum: OnceLock<u64>,
         },
     }
 
@@ -1666,6 +1895,7 @@ mod chain {
                     front,
                     middle,
                     back,
+                    ..
                 } => {
                     let i = back.iter().take_while(|p| p.is_some()).count() - 1;
                     let last = back[i].as_ref()?.with_last(f)?;
@@ -1695,6 +1925,7 @@ mod chain {
                     front,
                     middle,
                     back,
+                    ..
                 } => {
                     let first = front[0].as_ref()?.with_first(f)?;
                     let mut front = front.clone();
@@ -1860,6 +2091,52 @@ mod chain {
             out
         }
 
+        /// The sum of the list's entries as a family's hash takes it (`family_sum`), from
+        /// `leaf`, the sum of a leaf's entries counted from 0: a part of `p` entries after
+        /// `o` adds its own sum times `R^o`, since the term of key `i` is `G(v) · R^i`.
+        // Complexity tradeoff: the naive sum reads the list's entries, O(n) a hash. Used: each
+        // node and deep tree keeps its sum once read; a part is never changed, so the sum
+        // holds while the part lives. A list made by `++` from lists already summed builds
+        // O(log min(p, q)) new parts, and its sum reads those, O(log n) powers of `R` of 61
+        // squarings each. The depth is the tree's height, O(log n).
+        pub(super) fn sum(&self, leaf: &mut impl FnMut(&Family) -> u64) -> u64 {
+            fn part(p: &Part, leaf: &mut impl FnMut(&Family) -> u64) -> u64 {
+                let kept = match &*p.0 {
+                    ChainTree::Empty => return 0,
+                    ChainTree::Leaf(f) => return leaf(f),
+                    ChainTree::Node { sum, .. } | ChainTree::Deep { sum, .. } => sum,
+                };
+                if let Some(&s) = kept.get() {
+                    return s;
+                }
+                let (mut acc, mut offset) = (0, 0u64);
+                for q in p.parts() {
+                    let s = part(q, leaf);
+                    acc = btree::add(acc, field_mul(s, pow_r(offset % (P - 1))));
+                    offset += q.len() as u64;
+                }
+                *kept.get_or_init(|| acc)
+            }
+            part(&self.tree, leaf)
+        }
+
+        /// Calls `f` on each leaf that [`Chain::sum`] would read now: those beneath no part whose
+        /// sum is kept.
+        pub(super) fn for_each_unsummed_leaf<'a>(&'a self, f: &mut impl FnMut(&'a Family)) {
+            let mut todo = vec![&self.tree];
+            while let Some(t) = todo.pop() {
+                match &*t.0 {
+                    ChainTree::Empty => {}
+                    ChainTree::Leaf(g) => f(g),
+                    ChainTree::Node { sum, .. } | ChainTree::Deep { sum, .. } => {
+                        if sum.get().is_none() {
+                            todo.extend(t.parts());
+                        }
+                    }
+                }
+            }
+        }
+
         /// The values of the list in position order, read from the leaves, building no map.
         pub(super) fn values(&self) -> Values<'_> {
             Values {
@@ -1903,7 +2180,11 @@ mod chain {
         debug_assert!((2..=3).contains(&parts.len()));
         let len = parts.iter().map(Part::len).sum();
         let parts = std::array::from_fn(|i| parts.get(i).cloned());
-        Part(Arc::new(ChainTree::Node { len, parts }))
+        Part(Arc::new(ChainTree::Node {
+            len,
+            parts,
+            sum: OnceLock::new(),
+        }))
     }
 
     /// A digit of the given parts, one to four.
@@ -1930,6 +2211,7 @@ mod chain {
             front,
             middle,
             back,
+            sum: OnceLock::new(),
         }))
     }
 
@@ -4577,6 +4859,93 @@ mod tests {
         }
     }
 
+    /// Families of one size and different entries hash apart (plan row
+    /// PERF-family-hash-count-only): the hash read only the size, so all 4096 of these had one
+    /// digest, and a hash set of them compared each new one with every one before it.
+    #[test]
+    fn families_of_one_size_hash_apart() {
+        let families: Vec<Value> = (0..4096_i64)
+            .map(|i| Value::Family(Family::of([(1_i64, i), (2, i / 7), (i + 3, 0)])))
+            .collect();
+        let digests: HashSet<u64> = families.iter().map(digest).collect();
+        assert_eq!(digests.len(), families.len());
+        let lists: HashSet<u64> = (0..64_i64)
+            .map(|i| digest(&Value::Family(Family::range(i, i + 9))))
+            .collect();
+        assert_eq!(lists.len(), 64);
+    }
+
+    /// Equal families hash alike in each form: a map, a range of 64-bit ends, a range of wide
+    /// ends, a list made by `++`, and a map of wide keys, as its range and its list.
+    #[test]
+    fn equal_families_hash_alike_in_every_form() {
+        let map_of = |lo: &BigInt, n: i64| {
+            Family::from_map(
+                (0..n)
+                    .map(|i| {
+                        let k = Value::int(lo + i);
+                        (k.clone(), k)
+                    })
+                    .collect(),
+            )
+        };
+        let d = |f: &Family| digest(&Value::Family(f.clone()));
+        for (lo, n) in [(-5_i64, 1_i64), (0, 40), (-20, 300), (i64::MAX - 3, 3)] {
+            let range = Family::range(lo, lo + n - 1);
+            assert_eq!(d(&range), d(&map_of(&BigInt::from(lo), n)), "{lo} {n}");
+        }
+        let wide: BigInt = BigInt::from(u64::MAX) * 1000_i64;
+        let range = Family::range_wide(wide.clone(), &wide + 99);
+        assert_eq!(d(&range), d(&map_of(&wide, 100)));
+        let low = -&wide;
+        let across = Family::range_wide(&low - 50, &low + 49);
+        assert_eq!(d(&across), d(&map_of(&(&low - 50), 100)));
+        // A list made by `++`, against the same list built in one map.
+        let parts: Vec<Family> = (0..50)
+            .map(|i| Family::of((0..(i % 7 + 1)).map(|j| (j, Value::str(&format!("{i}.{j}"))))))
+            .collect();
+        let joined = parts.iter().skip(1).fold(parts[0].clone(), |acc, p| {
+            acc.concat(p).expect("lists join")
+        });
+        let flat = Family::from_map(joined.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+        assert_eq!(joined, flat);
+        assert_eq!(d(&joined), d(&flat));
+        // Keys past 64 bits hash apart, not only by count.
+        let a = Family::of([(Value::int(wide.clone()), 1_i64)]);
+        let b = Family::of([(Value::int(&wide + 1), 1_i64)]);
+        assert_ne!(d(&a), d(&b));
+    }
+
+    /// The sums a map's branches keep stay right through inserts and removals that split and
+    /// mend nodes: after each change the hash equals that of the same entries built afresh.
+    #[test]
+    fn kept_sums_follow_changes() {
+        let mut m: btree::Map<Value, Value> = btree::Map::default();
+        let mut x: u64 = 12345;
+        let d = |m: &btree::Map<Value, Value>| digest(&Value::Family(Family::from_map(m.clone())));
+        for step in 0..3000 {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let k = Value::Int(i64::try_from(x >> 54).expect("10 bits"));
+            let kept = m.clone();
+            if x & 3 == 0 {
+                m.remove(&k);
+            } else {
+                m.insert(k, Value::Int(step));
+            }
+            if step % 7 == 0 {
+                let fresh: btree::Map<Value, Value> =
+                    m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                assert_eq!(d(&m), d(&fresh), "step {step}");
+                // The copy kept from before the change still hashes as its entries do.
+                let old: btree::Map<Value, Value> =
+                    kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                assert_eq!(d(&kept), d(&old), "step {step}");
+            }
+        }
+    }
+
     #[test]
     fn a_stop_for_memory_offers_repairs_and_no_other_error_does() {
         // No test of this crate sets a memory limit of `main`, so the limit's repairs (which
@@ -5071,7 +5440,7 @@ mod tests {
         // The hash and the comparisons read the exact size, so none of them builds the map
         // either: against a copy, a range one shorter, and a small map.
         let one_less = Family::range(i64::MIN, i64::MAX - 1);
-        let digest = |f: &Family| leaf_digest(&Value::Family(f.clone()));
+        let digest = |f: &Family| digest(&Value::Family(f.clone()));
         assert_eq!(digest(&all), digest(&all.clone()));
         assert_ne!(digest(&all), digest(&one_less));
         assert!(families_eq(&all, &all.clone()));
@@ -5245,7 +5614,7 @@ mod tests {
         assert_eq!(all.beside_at(&Value::float(f64::INFINITY), false), at(&n));
         assert_eq!(all.beside_at(&Value::atom("a"), true), at(&-&n));
         assert_eq!(all.beside_at(&Value::str("a"), true), None);
-        let digest = |f: &Family| leaf_digest(&Value::Family(f.clone()));
+        let digest = |f: &Family| digest(&Value::Family(f.clone()));
         assert_eq!(digest(&all), digest(&all.clone()));
         assert!(families_eq(&all, &all.clone()));
         assert!(!families_eq(&all, &one_less));
