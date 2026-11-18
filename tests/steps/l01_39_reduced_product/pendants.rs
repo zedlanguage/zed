@@ -2336,11 +2336,12 @@ fn refused_projections_keep_the_box_of_their_rows_in_scaled_writings() {
 type RefusedCount = (usize, usize, usize);
 
 /// Checks the names of `items` within `bs` that the solver refuses, where it refuses one: each
-/// keeps a set that holds its exact hull (`hulls`, asked only then), the same with the names
-/// reversed ([`boxed_as_named`]), in each writing of [`four_ways`], and in other orders of the
-/// parts and of the names: reversed, two random orders drawn from `order`, and a random
-/// writing of [`rewritten`], so that a box whose answer depends on the order of the rows is
-/// caught. Adds to `count`, and describes each mismatch, under `label`, in `wrong`.
+/// keeps a set that holds its exact hull (`hulls`, asked only then). In every case, refused or
+/// not ([`refused_alike`]), the sets and refusals are the same with the names reversed
+/// ([`boxed_as_named`]), in each writing of [`four_ways`], and in other orders of the parts
+/// and of the names: reversed, two random orders drawn from `order`, and a random writing of
+/// [`rewritten`], so that a box whose answer depends on the order of the rows is caught. Adds
+/// to `count`, and describes each mismatch, under `label`, in `wrong`.
 ///
 /// These checks are made with the solver alone ([`solver_alone`]). Under the exact cover the
 /// names refused depend on how the part is written (row GROUP-order-verdicts: seed
@@ -2411,9 +2412,18 @@ fn check_refused(
     }
 }
 
-/// The checks of [`check_refused`] that do not read the hulls: where some name is refused, the
-/// same sets in each writing and order. Returns the scope and the sets, or `None` where no
-/// name is refused.
+/// The checks of [`check_refused`] that do not read the hulls: the same sets and refusals in
+/// each writing and order, in every case, so that a writing that refuses a name, or answers it
+/// otherwise, where the plain writing answers is caught too (TEST-refused-alike-plain-answered).
+/// Returns the scope and the sets, or `None` where no name is refused.
+///
+/// Complexity tradeoff: comparing only where a name is refused cost one [`boxed_names`] per
+/// answered case; comparing in every case costs about 10 (2 in [`boxed_as_named`], 3 other
+/// writings, 4 other orders). Measured at seeds 11 to 18 (instructions, so load does not
+/// enter): 5.3 times the work of each random test, 1.8 times where refused parts and their
+/// hulls already took most of it; at most 38.9 G instructions (seed 17, 100 parts), about
+/// 6.5 s. A fault put in to mark a name refused in the reversed writing of answered parts
+/// failed all 100 cases of a seed; before this change it could not fail.
 #[allow(clippy::type_complexity)]
 fn refused_alike(
     label: &str,
@@ -2427,10 +2437,10 @@ fn refused_alike(
     let syms = item_names(items);
     let f = formula(items);
     let got = boxed_names(&s, &f, &syms);
-    if !got.values().any(|(_, refused)| *refused) {
-        return None;
+    let refused = got.values().any(|(_, refused)| *refused);
+    if refused {
+        count.0 += 1;
     }
-    count.0 += 1;
     if let Err(e) = boxed_as_named(items, bs, &f) {
         wrong.push(format!("{label}: {f}\n  {e}"));
     }
@@ -2459,7 +2469,7 @@ fn refused_alike(
             ));
         }
     }
-    Some((s, got))
+    refused.then_some((s, got))
 }
 
 /// For each writing of `ways` whose sets and refusals in `s` differ from `got`, those of `f`,
