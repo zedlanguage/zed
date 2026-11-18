@@ -3866,6 +3866,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | HOLES-exact-between, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-hull-join-row-after | `crates/zedc-preimage/src/holes.rs`, `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -3886,6 +3887,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TIGHTEN-k-parts, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4129,6 +4131,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-block-incr, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PERF-l139-block-incr, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/conjuncts.rs` |
@@ -4152,6 +4155,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
@@ -4176,6 +4180,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-hopb-wakes, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4339,6 +4344,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S22-scaling-10_5, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | S22-scaling-10_5, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | S22-scaling-10_5, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -4929,6 +4935,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PATH-reads-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PATH-reads-scale, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | PATH-reads-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -4948,6 +4955,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | NARROW-hub-interleaved-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | NARROW-hub-interleaved-scale, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | NARROW-hub-interleaved-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -4963,6 +4971,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STAR-satellite-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | STAR-satellite-scale, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | STAR-satellite-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -4977,6 +4986,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LINKED-incremental-scratch-agree, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4988,6 +4998,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAMILY-scale-larger, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4998,6 +5009,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCOPE-assume-disjunctions-setup, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5007,6 +5019,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5015,6 +5028,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SOLVER-refused-parts-slow, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5131,6 +5145,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-scope-project-due-blocks, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5179,6 +5194,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-again-monotone, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-again-monotone, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5453,6 +5469,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-sum-of-summarized-names, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | CHECK-sum-of-summarized-names, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
@@ -5520,9 +5537,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-binder-call-summary, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-literal-union-spaced, TEST-ints-listed-shortcut-off | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-literal-union-spaced, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-literal-union-spaced, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-literal-union-spaced, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | TEST-ints-listed-shortcut-off, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
+| 0 | TEST-ints-listed-shortcut-off, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | TEST-ints-listed-shortcut-off, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot | `crates/zedc-elab/src/elab/walk.rs` |
 | 0 | DOC-lit-follows-exponent-f32, FP-ops-order | `crates/zedc-elab/src/elab/walk/fp_ops.rs` |
 | 0 | PRES-join-cost-predictor, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
