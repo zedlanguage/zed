@@ -237,8 +237,8 @@ type Held<'a> = Option<(bool, Saved<'a>)>;
 pub(super) struct Want {
     fun: Option<Arc<Sig>>,
     /// The function types of the type expected, where it holds two or more and no type
-    /// variable or unknown: a lambda is fitted to the one whose parameters its own match
-    /// ([`lambda_takes`]), where only one does.
+    /// variable or unknown: a lambda is fitted to the one its parameters take
+    /// ([`Ck::lambda_in_fns`]).
     funs: Option<ty::Members<Arc<Sig>>>,
     num: Option<Carrier>,
     guard: Option<Ty>,
@@ -271,29 +271,35 @@ fn one_fn(t: &Ty) -> Option<Arc<Sig>> {
     }
 }
 
-/// Whether a lambda of parameters `params` can be fitted to `e`'s parameters as
-/// [`Ck::fit_lambda`] fits it: one parameter at least for each that `e` passes by position,
-/// and each of the rest named as a parameter `e` passes by name, a different one each, or
-/// given a default. The parameter types are not compared: the fit compares them. Cost:
-/// O(p + q) for the two lists, with a set of the names taken.
-fn lambda_takes(params: &[Param], e: &Sig) -> bool {
-    let pos = e.params.iter().filter(|q| q.positional).count();
-    if params.len() < pos {
-        return false;
-    }
-    let mut named: HashMap<&str, bool> = (e.params.iter())
-        .filter(|q| !q.positional)
-        .map(|q| (&*q.name, false))
+/// Where a lambda of parameters `params` can be fitted to `e`'s parameters as
+/// [`Ck::fit_lambda`] fits it, the place in `e` of each of its parameters (`None` for one
+/// `e` does not pass, which has a default): one parameter at least for each that `e`
+/// passes by position, and each of the rest named as a parameter `e` passes by name, a
+/// different one each, or given a default. `None` where it cannot. The parameter types are
+/// not compared here. Cost: O(p + q) for the two lists, with a map of the names.
+fn lambda_places(params: &[Param], e: &Sig) -> Option<Vec<Option<usize>>> {
+    let pos: Vec<usize> = (0..e.params.len())
+        .filter(|&j| e.params[j].positional)
         .collect();
-    params[pos..]
-        .iter()
-        .all(|p| match named.get_mut(p.name.as_str()) {
-            Some(taken @ false) => {
+    if params.len() < pos.len() {
+        return None;
+    }
+    let mut named: HashMap<&str, (usize, bool)> = (e.params.iter().enumerate())
+        .filter(|(_, q)| !q.positional)
+        .map(|(j, q)| (&*q.name, (j, false)))
+        .collect();
+    let mut places: Vec<Option<usize>> = pos.iter().map(|&j| Some(j)).collect();
+    for p in &params[pos.len()..] {
+        match named.get_mut(p.name.as_str()) {
+            Some((j, taken @ false)) => {
                 *taken = true;
-                true
+                places.push(Some(*j));
             }
-            _ => p.default.is_some(),
-        })
+            _ if p.default.is_some() => places.push(None),
+            _ => return None,
+        }
+    }
+    Some(places)
 }
 
 pub(super) enum Job<'a> {
@@ -3668,15 +3674,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let (Some(_), ExprKind::Section(_, lambda)) = (&want.fun, &e.kind) {
             return self.expr_at(m, lambda, want);
         }
-        // Of several function types, the one whose parameters the lambda's match, where only
-        // one does: `(x: int) -> x` where `((x: int) -> int) | ((s: Utf8String) -> int)` is
-        // wanted (FAIL-check-lambda-into-fn-union). Where none or several do, the lambda is
-        // checked alone, as before. Cost: O(p + q) for each of the k function types.
-        if let (Some(funs), ExprKind::Lambda { params, body }) = (&want.funs, &e.kind) {
-            let mut fits = funs.iter().filter(|s| lambda_takes(params, s));
-            if let (Some(sig), None) = (fits.next(), fits.next()) {
-                return self.fit_lambda(m, params, body, sig.clone(), e.span);
-            }
+        // Of several function types, the one the lambda's parameters take
+        // (FAIL-check-lambda-into-fn-union, FAIL-check-lambda-fn-union-same-names).
+        if let (Some(funs), ExprKind::Lambda { params, body }) = (&want.funs, &e.kind)
+            && self.lambda_in_fns(m, funs, params, body, e.span).is_some()
+        {
+            return;
         }
         if let Some(sig) = want.fun {
             if let ExprKind::Lambda { params, body } = &e.kind {
@@ -9555,6 +9558,82 @@ impl<'t, 'a> Ck<'t, 'a> {
             m.k(Frame::BindDefault(p));
             m.job(Job::Expr(p.default.as_ref().expect("a default")));
         }
+    }
+
+    /// A lambda where a type of several function types `funs` is wanted, and no type
+    /// variable or unknown (DESIGN sec:premise: an unmarked lambda parameter takes its kind
+    /// from the function type the lambda is expected to have). It is fitted
+    /// ([`Self::fit_lambda`]) to the one function type whose parameters its own take by
+    /// position and name ([`lambda_places`]), where one only does: `(x: int) -> x` where
+    /// `((x: int) -> int) | ((s: Utf8String) -> int)` is wanted (FAIL-check-lambda-into-fn-union).
+    /// Where several do, those its written parameter types take are kept, each such type
+    /// holding what each arrow passes there, as the fit requires; where one is left, it is
+    /// fitted to that one: `(x: int) -> x` where `((x: int) -> int) | ((x: Utf8String) -> int)`
+    /// is wanted (FAIL-check-lambda-fn-union-same-names). Where several are left and they give
+    /// each of the lambda's parameters one kind, it is checked as a lambda alone with those
+    /// kinds, generic in a parameter with no written type, and its type is compared with the
+    /// type wanted as any argument's is: `x -> 0` there. `None` where none of this applies,
+    /// and the lambda is checked alone, every parameter positional. Choosing among several
+    /// by checking the body at each would check a lambda nested `d` deep `k^d` times; this
+    /// reads only the parameter lists and written types. Cost: O(k (p + q) + k a p) for `k`
+    /// function types of `q` parameters and `a` arrows and a lambda of `p` parameters, each
+    /// written type compared once per arrow.
+    fn lambda_in_fns(
+        &mut self,
+        m: &mut M<'a>,
+        funs: &ty::Members<Arc<Sig>>,
+        params: &'a [Param],
+        body: &'a Expr,
+        span: Span,
+    ) -> Option<()> {
+        let mut placed: Vec<(Arc<Sig>, Vec<Option<usize>>)> = (funs.iter())
+            .filter_map(|s| Some((s.clone(), lambda_places(params, s)?)))
+            .collect();
+        if placed.len() > 1 {
+            placed.retain(|(s, places)| self.written_take(params, s, places));
+        }
+        let ((first, places), rest) = placed.split_first()?;
+        if rest.is_empty() {
+            self.fit_lambda(m, params, body, first.clone(), span);
+            return Some(());
+        }
+        let kinds = |s: &Sig, places: &[Option<usize>]| -> Option<Vec<bool>> {
+            places
+                .iter()
+                .map(|j| Some(s.params[(*j)?].positional))
+                .collect()
+        };
+        let kind = kinds(first, places)?;
+        if rest
+            .iter()
+            .any(|(s, places)| kinds(s, places).as_ref() != Some(&kind))
+        {
+            return None;
+        }
+        let names = (params.iter().zip(kind))
+            .map(|(p, positional)| SParam {
+                name: p.name.as_str().into(),
+                positional,
+                default: None,
+                range: None,
+            })
+            .collect();
+        self.lambda_sig(m, params.iter().map(Some), &[], names, body, None);
+        Some(())
+    }
+
+    /// Whether each written type of the lambda's parameters `params`, placed in `e` at
+    /// `places` ([`lambda_places`]), holds the type each arrow of `e` passes there, as
+    /// [`Self::fit_step`] requires of it. The type is read with no new class made, as
+    /// [`Self::written_params`] reads it. O(a p) comparisons.
+    fn written_take(&mut self, params: &[Param], e: &Sig, places: &[Option<usize>]) -> bool {
+        params.iter().zip(places).all(|(p, j)| match (&p.ty, j) {
+            (Some(t), Some(j)) => {
+                let t = self.written(t, false);
+                e.arrows.iter().all(|a| self.subtype(&a.params[*j], &t))
+            }
+            _ => true,
+        })
     }
 
     /// A lambda in a slot of the function type `e`: its first parameters take `e`'s

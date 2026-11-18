@@ -593,6 +593,48 @@ fn a_choice_between_generic_functions_with_needs_is_accepted() {
     }
 }
 
+/// A choice between generic functions whose need is of each kind a use of a parameter makes:
+/// `group`, `foldl`, `sum`, `++` and `zip`. The two branches' signatures are joined, which
+/// makes each need again with its types (`sig_parts` and `Need::map_tys` in zedc-types), and
+/// the need still holds at the call through the choice: the call with a list is accepted and
+/// the call with a number refused (TEST-types-unreached-paths-2).
+#[test]
+fn a_choice_between_generic_functions_with_each_kind_of_need_keeps_it() {
+    let pick = "pick(positional b: bool) = if b { g } else { g };\n";
+    for (def, good, bad) in [
+        (
+            "g(positional t) = t.group(v -> v);\n",
+            "x = pick(true)([1, 2]);\n",
+            "x = pick(true)(1);\n",
+        ),
+        (
+            "g(positional t) = t.foldl(0, (a, x) -> a + x);\n",
+            "x = pick(true)([1, 2]);\n",
+            "x = pick(true)(1);\n",
+        ),
+        (
+            "g(positional t) = sum(t);\n",
+            "x = pick(true)([1, 2]);\n",
+            "x = pick(true)(1);\n",
+        ),
+        (
+            "g(positional t) = t ++ [1];\n",
+            "x = pick(true)([1, 2]);\n",
+            "x = pick(true)(1);\n",
+        ),
+        (
+            "g(positional t, positional u) = t.zip(u);\n",
+            "x = pick(true)([1], [2]);\n",
+            "x = pick(true)(1, [2]);\n",
+        ),
+    ] {
+        let src = format!("{def}{pick}{good}");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        let src = format!("{def}{pick}{bad}");
+        assert_eq!(type_errors(&src).len(), 1, "{src}");
+    }
+}
+
 /// A function that returns a generic function, passed where a function with a function result
 /// is expected. With no need on the returned function, its signature fits as written. With a
 /// need, the signatures are compared with each solved variable read as its type (`fits_in`

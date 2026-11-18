@@ -4389,8 +4389,20 @@ impl<'m> Searching<'m> {
             return Stack::ready(false);
         }
         // A type whose values' heights are bounded by an empty range has none
-        // ([`Search::height_bounds`]); like the diagonal, a fact of the type alone.
-        if self.s().height_bounds(t).is_none() {
+        // ([`Search::height_bounds`]); like the diagonal, a fact of the type alone. Asked only
+        // of a type with an atom of a non-empty payload, as a list is: skipping it is sound, as
+        // it only ever shows a type empty.
+        // Complexity tradeoff: asked of every type, it cost each new type of a search the
+        // bounds of the type from its children's, about 73,000 instructions a level of a
+        // verdict on tuples of bare atoms n deep and 94,000 of a difference (bounds 286,000 and
+        // 245,000 in `deep_ops::subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level`,
+        // over by 15% and 30%), where a tuple's heights are those its components give and no
+        // range comes out empty that the search would not refute a level down. The meets it is
+        // for, of lists of different lengths (`R_a & R_b`, SUB-fork-place-512), are atom types
+        // with a payload, and a tuple or a part that holds one reaches it a level down, where it
+        // is asked. Given up: a tuple type whose components' heights clash is refuted by the
+        // search at its components, not here.
+        if !t.p().atoms.payloads.is_empty() && self.s().height_bounds(t).is_none() {
             return Stack::ready(true);
         }
         let i = match self.s().met(t) {

@@ -7732,10 +7732,10 @@ fn left_out_by(x: &Ty, v: &str, w: &str, cx: &Cx) -> bool {
 /// ([`Comparing::search`]): a shape whose component at a place is one variable `v`, bound
 /// alone to `w` ([`bound_alone`]), is pinned there under `w`, and a member whose component
 /// there holds a piece [`left_out_by`] names skips it. A shape is pinned at every place at
-/// which a binding pins it, and the shapes are filed by the set of places at which they are
-/// pinned and, within a set, by the tuple of the variables `w` there; a member reads in each
-/// set the shapes under its own tuple ([`Bound::lists`]), so a shape that leaves it out at any
-/// of its pinned places is not tried. The shapes pinned nowhere are read from the bucket past
+/// which a binding pins it, and the shapes are filed in a trie by the places at which they
+/// are pinned, in increasing order, each with its variable `w`; a member reads the nodes whose
+/// path it allows ([`Bound::lists`]), so a shape that leaves it out at any of its pinned
+/// places is not tried. The shapes pinned nowhere are read from the bucket past
 /// the runs of pinned places. The tables are persistent maps, so a copy for the split rows of
 /// [`Comparing::row_in`], kept only when the rows are held, is O(1).
 ///
@@ -7744,21 +7744,32 @@ fn left_out_by(x: &Ty, v: &str, w: &str, cx: &Cx) -> bool {
 /// agreed with it at that place, though another pinned place left it out: N shapes of
 /// variables differing on log N components, against the same rows written out, cost N²/4 fits
 /// (3968 for each tuple at N = 128), as any one place parts the shapes in halves only. Now a
-/// member costs one lookup in each set of places pinned (each O(p log n) for p places), and
-/// tries only shapes that agree with it at every place pinned; a shape is filed again when a
-/// place is added to it, at most once a place, O(p log n). Given up: the number of sets of
-/// places is not bounded by the places, only by the shapes pinned; with shapes pinned at
-/// many different sets each member pays a lookup in each (in the case measured, N = 2^m
-/// shapes bound row by row in written order, the sets fall from 2^m to 1 as the rows bind
-/// the second variable at each place, and the lookups sum to about N m / 2). The
-/// alternative, a trie over the places with the least shape in each subtree, read best first,
-/// finds the first shape that agrees without visiting the sets that cannot hold an earlier
-/// one, but costs a structure that must move a shape between paths as its places grow; not
-/// taken while the sets stay few. Prior work: partial-match retrieval (Rivest, "Partial-Match
+/// member tries only shapes that agree with it at every place pinned; a shape moves to a
+/// longer path with all the places one [`Bound::grow`] adds to it, O(p + d log n) for p places
+/// and d nodes on its path ([`Bound::pin`]). Not bounded: a shape of p places pinned by p
+/// separate calls of `grow`, each adding one place, moves p times, O(p²). That takes p shapes
+/// tried of the same bucket, so p places each and an input of p² components; but each of
+/// those p shapes may move p times as well, O(p³) = O(N^1.5) for N components. No test makes
+/// one (plan row TEST-types-bound-pin-moves-adversarial).
+///
+/// Complexity tradeoff (TEST-types-bound-pin-sets-adversarial): the shapes were first filed
+/// by their set of places, and a member paid one lookup in each set pinned, a number bounded
+/// only by the shapes: N shapes of 10 places, each pinned at a different set, against the
+/// same rows written out, cost N²/2 lookups, 23.9 times the instructions from N = 120 to 960.
+/// Now they are filed in a trie whose path is their places in increasing order, each with
+/// its `w`, and a member visits only the nodes whose path it allows: with a variable
+/// [`keyed`] at a place, not bound alone, it follows one edge there, a lookup, so in that
+/// case it pays for each node visited a lookup at each place below it, and visits none that
+/// a member of one fresh variable at each place leaves out. Given up: at a place where the
+/// member has no such variable it follows every edge, and a node so reached may hold no
+/// shape and lead to none the member allows, so a member with many such places can still
+/// visit up to the nodes; no member of the tests has one (it needs a component of only
+/// functions, rigid variables of no carrier, or a first variable bound alone). Prior work: partial-match retrieval (Rivest, "Partial-Match
 /// Retrieval Algorithms", SIAM J. Comput. 5(1), 1976), whose stored records here hold
 /// wildcards (the places not pinned) as well as the queries; with both, no general method is
-/// known that beats one lookup per pattern of wildcards, which is what the sets are.
-/// Benchmark `l01_26_type_resolution::bench::fits::shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`.
+/// known that beats one lookup per pattern of wildcards. Benchmarks
+/// `l01_26_type_resolution::bench::fits::shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`
+/// and `shapes_pinned_at_n_different_sets_of_places_scale`.
 ///
 /// Proof that a shape left out does not hold the member: at its place `j` its component is
 /// `t = Var(v)` alone, `v` bound alone to `w`, and the member's component `x` there holds a
@@ -7786,89 +7797,169 @@ fn left_out_by(x: &Ty, v: &str, w: &str, cx: &Cx) -> bool {
 /// search, the removals in tests or on binds of their own) and the differential test
 /// `bound_shapes_agree_with_trying_every_shape`.
 ///
-/// Proof that [`Bound::lists`] leaves out only such shapes: a shape `s` of a set of places
-/// `P` is left out when at some `j` in `P` the member's component `x` holds the unknown, a
-/// scalar value, a tuple or a function, which [`left_out_by`] names; or when at every `j` in
-/// `P` the first variable `y` of `x` [`keyed`] is not bound alone, and the tuple of those `y`
-/// is not that of `s`, so at some `j` `y` is not `w`; nor is it `v`, which is bound alone
-/// (the pins hold, above) where `y` is not, so [`left_out_by`] holds there. Where some `y` is
-/// bound alone, or `x` has no variable keyed, every shape of the set is read. (No test makes
-/// a member's `y` bound alone, as each side's own variables are named apart; with the key
-/// taken there all the same, every test passes. The case is kept so that the proof needs no
-/// such assumption.)
+/// Proof that [`Bound::lists`] leaves out only such shapes: a shape `s` is left out when at
+/// some place `j` of its path, with `v` and `w` there, the member's component `x` holds the
+/// unknown, a scalar value, a tuple or a function, which [`left_out_by`] names; or its first
+/// variable `y` [`keyed`] is not bound alone and is not `w`. Such a `y` is not `v` either, as
+/// `v` is bound alone (the pins hold, above) and `y` is not, so [`left_out_by`] holds at `j`.
+/// Where `x` has no keyed variable, or its first is bound alone, every `w` is read. A member
+/// with two keyed variables not bound alone there is held by no shape pinned there, but tries
+/// those under its first all the same ([`Bound::lists`] gives why).
+/// (No test makes a member's variable bound alone, as each side's own variables are named
+/// apart; the case is kept so that the proof needs no such assumption.)
 #[derive(Clone, Default)]
 struct Bound {
     /// The runs of places in the bucket of the shapes pinned, each from its start to its end
     /// (the end not in it), apart and not touching.
     runs: imbl::OrdMap<usize, usize>,
-    /// Each set of places at which shapes are pinned, in increasing order, with those shapes.
-    at: imbl::OrdMap<Vec<usize>, BoundAt>,
-    /// Each shape pinned, with the places at which it is pinned, in increasing order, and the
-    /// variable `w` at each.
-    of: imbl::OrdMap<usize, (Vec<usize>, Vec<Arc<str>>)>,
+    /// The shapes pinned, each at the node whose path is its places in increasing order, each
+    /// with the variable `w` there.
+    trie: BoundNode,
+    /// Each shape pinned, with its path in `trie`.
+    of: imbl::OrdMap<usize, Vec<PinStep>>,
     /// The variables whose shapes are pinned.
     done: imbl::OrdSet<Arc<str>>,
 }
 
-/// The shapes pinned at one set of places by [`Bound`]: all, and those under each tuple of
-/// the variables `w` they are bound alone to there, in written order.
+/// A step of a path in the trie of [`Bound`]: a place and the variable `w` there.
+type PinStep = (usize, Arc<str>);
+
+/// A node of the trie of [`Bound`]: the shapes pinned at the places, under the variables, of
+/// the path to it, and the nodes further down, each by the first step of the edge to it, with
+/// the edge's other steps. The trie is compressed (a radix tree): a node other than the root
+/// holds a shape or has two nodes below it, so a node's depth in nodes is at most the
+/// square root of twice the components of the bucket (a chain of d such nodes has a shape at
+/// or below each, of at least 1, 2, ..., d places). Uncompressed, a shape of n places was n
+/// nodes deep, and filing, taking and dropping it recursed n times: one shape of a
+/// variable at 16000 places overflowed the stack
+/// (`a_variable_standing_n_times_is_found_repeated_in_linear_time`).
 #[derive(Clone, Default)]
-struct BoundAt {
-    all: imbl::OrdSet<usize>,
-    by: imbl::OrdMap<Vec<Arc<str>>, imbl::OrdSet<usize>>,
+struct BoundNode {
+    shapes: imbl::OrdSet<usize>,
+    next: imbl::OrdMap<PinStep, (Arc<[PinStep]>, BoundNode)>,
+}
+
+impl BoundNode {
+    /// Files the shape `r` at the node of `path` below this one, splitting the edge where
+    /// `path` leaves it. O(p + d log n) for p places and d nodes on the way.
+    fn insert(&mut self, path: &[PinStep], r: usize) {
+        let Some((first, rest)) = path.split_first() else {
+            self.shapes.insert(r);
+            return;
+        };
+        let Some((label, child)) = self.next.get_mut(first) else {
+            let leaf = BoundNode {
+                shapes: imbl::OrdSet::unit(r),
+                next: imbl::OrdMap::new(),
+            };
+            self.next.insert(first.clone(), (rest.into(), leaf));
+            return;
+        };
+        let c = (label.iter().zip(rest)).take_while(|(a, b)| a == b).count();
+        if c < label.len() {
+            let mut mid = BoundNode::default();
+            let old = std::mem::take(child);
+            mid.next
+                .insert(label[c].clone(), (label[c + 1..].into(), old));
+            *child = mid;
+            *label = label[..c].into();
+        }
+        child.insert(&rest[c..], r);
+    }
+
+    /// Takes the shape `r` from the node of `path` below this one, `path` being where it was
+    /// filed, then the nodes left empty on the way, and joins a node left with no shape and
+    /// one node below to the edge above it; whether this node is then empty. O(p + d log n).
+    fn remove(&mut self, path: &[PinStep], r: usize) -> bool {
+        match path.split_first() {
+            None => {
+                self.shapes.remove(&r);
+            }
+            Some((first, rest)) => {
+                if let Some((label, child)) = self.next.get_mut(first) {
+                    debug_assert!(rest.starts_with(label));
+                    if child.remove(&rest[label.len()..], r) {
+                        self.next.remove(first);
+                    } else if child.shapes.is_empty() && child.next.len() == 1 {
+                        let (step, (below, grand)) = child.next.iter().next().unwrap();
+                        let joined: Vec<PinStep> = (label.iter().cloned())
+                            .chain([step.clone()])
+                            .chain(below.iter().cloned())
+                            .collect();
+                        let grand = grand.clone();
+                        *label = joined.into();
+                        *child = grand;
+                    }
+                }
+            }
+        }
+        self.shapes.is_empty() && self.next.is_empty()
+    }
+}
+
+/// What a member's component allows of the shapes pinned at its place ([`Bound::lists`]).
+enum Allow {
+    /// No shape: the component holds the unknown, a scalar value, a tuple or a function, which
+    /// [`left_out_by`] names whatever `w` is.
+    None,
+    /// The shapes under any variable: the component has no variable [`keyed`], or its first is
+    /// bound alone.
+    Any,
+    /// The shapes under this variable, the component's first variable [`keyed`], not bound
+    /// alone.
+    One(Arc<str>),
 }
 
 /// The [`Bound`] pins of each bucket a search has needed them in, by bucket.
 type BoundTable<G> = imbl::OrdMap<BucketAt<G>, Bound>;
 
 impl Bound {
-    /// Pins the shapes `exact` lists under `v` (those of the bucket `bucket` whose component at
-    /// a place is `Var(v)`), each at that place under `w`, beside the places it is pinned at
-    /// already: the shape is filed again under its larger set of places. O(k p log n) for k
-    /// such shapes pinned at up to p places, once for each variable.
-    fn pin(&mut self, bucket: &[usize], exact: &ExactVars, v: &Arc<str>, w: &Arc<str>) {
-        if self.done.insert(v.clone()).is_some() {
-            return;
-        }
-        for &(r, j) in exact.get(v).into_iter().flatten() {
-            let Ok(n) = bucket.binary_search(&r) else {
+    /// Pins, for each new variable `v` of `vars` bound alone to `w`, the shapes `exact` lists
+    /// under `v` (those of the bucket `bucket` whose component at a place is `Var(v)`), each
+    /// at that place under `w`, beside the places it is pinned at already: each shape moves
+    /// once to the node of its longer path, with all its new places. O(k log k + s (p + d log
+    /// n)) for k places listed, s shapes moved, p places of a path and d nodes on it.
+    /// Moving a shape once a place, as before, cost O(p) a place, O(n²) for one shape of a
+    /// variable at n places.
+    fn pin(&mut self, bucket: &[usize], exact: &ExactVars, vars: &[(Arc<str>, Arc<str>)]) {
+        let mut added: BTreeMap<usize, Vec<PinStep>> = BTreeMap::new();
+        for (v, w) in vars {
+            if self.done.insert(v.clone()).is_some() {
                 continue;
-            };
-            let (mut places, mut keys) = match self.of.get(&r) {
-                Some((places, _)) if places.binary_search(&j).is_ok() => continue,
-                Some((places, keys)) => {
-                    let (places, keys) = (places.clone(), keys.clone());
-                    if let Some(at) = self.at.get_mut(&places) {
-                        at.all.remove(&r);
-                        if let Some(by) = at.by.get_mut(&keys) {
-                            by.remove(&r);
-                            if by.is_empty() {
-                                at.by.remove(&keys);
-                            }
-                        }
-                        if at.all.is_empty() {
-                            self.at.remove(&places);
-                        }
+            }
+            for &(r, j) in exact.get(v).into_iter().flatten() {
+                if bucket.binary_search(&r).is_ok() {
+                    added.entry(r).or_default().push((j, w.clone()));
+                }
+            }
+        }
+        for (r, mut steps) in added {
+            let mut path = match self.of.get(&r) {
+                Some(path) => {
+                    steps.retain(|s| path.binary_search_by_key(&s.0, |t| t.0).is_err());
+                    if steps.is_empty() {
+                        continue;
                     }
-                    (places, keys)
+                    let path = path.clone();
+                    self.trie.remove(&path, r);
+                    path
                 }
                 None => {
+                    let n = bucket.binary_search(&r).unwrap();
                     let start = match self.runs.range(..n).next_back() {
                         Some((&s, &e)) if e == n => s,
                         _ => n,
                     };
                     let end = self.runs.remove(&(n + 1)).unwrap_or(n + 1);
                     self.runs.insert(start, end);
-                    (Vec::new(), Vec::new())
+                    Vec::new()
                 }
             };
-            let i = places.partition_point(|&p| p < j);
-            places.insert(i, j);
-            keys.insert(i, w.clone());
-            let at = self.at.entry(places.clone()).or_default();
-            at.all.insert(r);
-            at.by.entry(keys.clone()).or_default().insert(r);
-            self.of.insert(r, (places, keys));
+            // A place holds one variable, so no place comes twice.
+            path.extend(steps);
+            path.sort_unstable_by_key(|s| s.0);
+            self.trie.insert(&path, r);
+            self.of.insert(r, path);
         }
     }
 
@@ -7885,7 +7976,7 @@ impl Bound {
         exact: impl Fn() -> Arc<ExactVars>,
         cx: &Cx,
     ) -> (bool, Option<Bound>) {
-        let mut pins: Option<Bound> = None;
+        let mut new = Vec::new();
         let mut left_out = false;
         for (j, d) in row.iter().enumerate() {
             let Some((v, w)) = d
@@ -7895,22 +7986,26 @@ impl Bound {
                 continue;
             };
             left_out |= left_out_by(xs[j], v, w, cx);
-            if pins.as_ref().or(old).is_some_and(|p| p.done.contains(v)) {
-                continue;
+            if !old.is_some_and(|p| p.done.contains(v)) {
+                new.push((v.clone(), w.clone()));
             }
-            let pins = pins.get_or_insert_with(|| old.cloned().unwrap_or_default());
-            pins.pin(bucket, &exact(), v, w);
         }
-        (left_out, pins)
+        if new.is_empty() {
+            return (left_out, None);
+        }
+        let mut pins = old.cloned().unwrap_or_default();
+        pins.pin(bucket, &exact(), &new);
+        (left_out, Some(pins))
     }
 
     /// The lists of shapes of the bucket `bucket` that may hold the member whose components are
-    /// `xs`, under the bindings `binds`: those pinned nowhere, and for each set of places
-    /// pinned, none where the member's component at one of them holds the unknown, a scalar
-    /// value, a tuple or a function, else those under the tuple of its first variables
-    /// [`keyed`] there, where each place has one and none is bound alone, else all pinned at
-    /// that set ([`Bound`] has the proof). The lists are apart, as each shape is pinned at one
-    /// set of places. O(s p log n) for s sets of up to p places.
+    /// `xs`, under the bindings `binds`: those pinned nowhere, and those of each node of the
+    /// trie whose path the member allows at every place ([`Allow`]): none where its component
+    /// holds the unknown, a scalar value, a tuple or a function; the variable `w` that is its
+    /// first variable [`keyed`], where that one is not bound alone; any `w` where it has no such
+    /// variable or its first is bound alone ([`Bound`] has the proof). The lists are apart, as each shape is at one node.
+    /// O(m + d c log n) for m components, d nodes visited and c places at which a node visited
+    /// has nodes below it; the nodes visited are those whose path the member allows.
     fn lists<'c>(
         &self,
         bucket: &'c [usize],
@@ -7919,28 +8014,56 @@ impl Bound {
         cx: &Cx,
     ) -> Vec<Shapes<'c>> {
         let mut out = vec![Shapes::Free(bucket, self.runs.clone())];
-        'sets: for (places, at) in &self.at {
-            let mut key = Some(Vec::with_capacity(places.len()));
-            for &j in places {
-                let x = xs[j];
+        if self.trie.next.is_empty() {
+            return out;
+        }
+        let allow: Vec<Allow> = (xs.iter())
+            .map(|x| {
                 if x.dynamic || !x.set.is_empty() || !x.tuples.is_empty() || !x.fns.is_empty() {
-                    continue 'sets;
+                    return Allow::None;
                 }
+                // Its first variable keyed only, as before the trie: a member with two such
+                // variables, which no shape pinned there holds, still tries the shapes under the
+                // first. Leaving them all out (as the proof allows) took 1840 fits for 420 at
+                // m = 2 of `k_joined_components_differing_on_m_components_cost_a_bounded_factor`
+                // (5.09 times the work of the rows written out, limit 3.5): a failed fit is where
+                // the bucket pins the shapes of the variables, bound alone already, of the shape
+                // tried ([`Bound::grow`]), so the split rows after it skip them; with no fit they
+                // are not pinned and the split rows try them.
                 match x.vars.iter().find(|y| keyed(y, cx)) {
-                    Some(y) if bound_alone(y, binds, cx).is_none() => {
-                        if let Some(key) = &mut key {
-                            key.push(y.clone());
-                        }
-                    }
-                    _ => key = None,
+                    Some(y) if bound_alone(y, binds, cx).is_none() => Allow::One(y.clone()),
+                    _ => Allow::Any,
                 }
+            })
+            .collect();
+        let allows = |(j, w): &PinStep| match &allow[*j] {
+            Allow::None => false,
+            Allow::One(y) => y == w,
+            Allow::Any => true,
+        };
+        // The edge to a node is followed only if the member allows each of its steps.
+        let follow = |e: &&(Arc<[PinStep]>, BoundNode)| e.0.iter().all(allows);
+        let empty: Arc<str> = Arc::from("");
+        let mut stack = vec![&self.trie];
+        while let Some(node) = stack.pop() {
+            if !node.shapes.is_empty() {
+                out.push(Shapes::Set(node.shapes.clone()));
             }
-            let shapes = match key {
-                Some(key) => at.by.get(&key).cloned().unwrap_or_default(),
-                None => at.all.clone(),
-            };
-            if !shapes.is_empty() {
-                out.push(Shapes::Set(shapes));
+            // Each place at which the node has nodes below it, its least key first.
+            let mut from = node.next.get_min().map(|(k, _)| k.0);
+            while let Some(j) = from {
+                match &allow[j] {
+                    Allow::None => {}
+                    Allow::One(y) => {
+                        let e = node.next.get(&(j, y.clone()));
+                        stack.extend(e.filter(follow).map(|e| &e.1));
+                    }
+                    Allow::Any => {
+                        let range = node.next.range((j, empty.clone())..(j + 1, empty.clone()));
+                        stack.extend(range.map(|(_, e)| e).filter(follow).map(|e| &e.1));
+                    }
+                }
+                from = (node.next.range((j + 1, empty.clone())..).next()).map(|(k, _)| k.0);
             }
         }
         out
@@ -9441,7 +9564,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// shapes, the n² of `#a(String, 1) | … <: #a(T, 1) | …` before the index, and of n shapes
     /// `(T_i,)` each with the ceiling `X_i` for the members `(X_i,)`. Chosen: a member costs a
     /// lookup in each group, the first shape it tries in each of its buckets, the lists of the
-    /// pins at each place, or for the bindings each set of places, pinned (a lookup each) and, for one member of the union per
+    /// pins at each place, or for the bindings the nodes of their trie it visits ([`Bound`])
+    /// and, for one member of the union per
     /// bucket, the shapes past the first it fails; the pins cost the bucket's components and the
     /// variables of the ceilings of its pinned shapes, once for the union; the pins of the
     /// bindings cost, for each variable bound alone, the shapes of the bucket with that variable
@@ -9455,8 +9579,10 @@ impl<'m, 's> Comparing<'m, 's> {
     /// where the members have scalars there, or bound alone in a bucket the ceilings pin (the
     /// two pins are not taken together). A shape pinned by bindings is filed under all the
     /// places they pin, so a member that one of them leaves out does not try it
-    /// (PERF-types-variable-shapes-one-bucket); the member pays a lookup for each set of
-    /// places at which shapes are pinned ([`Bound`]). The
+    /// (PERF-types-variable-shapes-one-bucket); the member pays a lookup at each place below
+    /// each node of the trie it visits, and visits only nodes whose path it allows, by
+    /// lookup where it has one variable there (TEST-types-bound-pin-sets-adversarial,
+    /// [`Bound`]). The
     /// proposal was to count, for shapes of one canonical form, the members of each form and
     /// compare the counts; not taken, as a variable with no ceiling takes the union of every
     /// member it holds, so counts of shapes say nothing of whether the result holds the
@@ -21654,6 +21780,58 @@ mod tests {
         );
         assert_eq!(one_shape_agrees(&s, &same), Some(true), "{same} in {s}");
         assert_eq!(one_shape_agrees(&s, &more), Some(false), "{more} in {s}");
+    }
+
+    /// The compressed trie of [`Bound`] ([`BoundNode`]) files and takes shapes as a map from
+    /// path to shapes does, on random paths over few places and variables, so that edges are
+    /// split and joined often; and after each step a node other than the root holds a shape or
+    /// has two nodes below it.
+    #[test]
+    fn bound_trie_agrees_with_a_map_of_paths() {
+        fn walk(
+            node: &BoundNode,
+            path: &mut Vec<PinStep>,
+            root: bool,
+            out: &mut BTreeMap<Vec<PinStep>, BTreeSet<usize>>,
+        ) {
+            assert!(root || !node.shapes.is_empty() || node.next.len() >= 2);
+            if !node.shapes.is_empty() {
+                out.insert(path.clone(), node.shapes.iter().copied().collect());
+            }
+            for (first, (rest, child)) in &node.next {
+                let len = path.len();
+                path.push(first.clone());
+                path.extend(rest.iter().cloned());
+                walk(child, path, false, out);
+                path.truncate(len);
+            }
+        }
+        let mut rng = Rng(crate::seed::seed("bound_trie_agrees_with_a_map_of_paths"));
+        let vars: [Arc<str>; 2] = [Arc::from("a"), Arc::from("b")];
+        let mut trie = BoundNode::default();
+        let mut of: BTreeMap<usize, Vec<PinStep>> = BTreeMap::new();
+        for _ in 0..4000 {
+            let r = rng.below(24) as usize;
+            if let Some(path) = of.remove(&r) {
+                trie.remove(&path, r);
+            } else {
+                let mut path: Vec<PinStep> = Vec::new();
+                for j in 0..6 {
+                    if rng.below(2) == 0 {
+                        path.push((j, vars[rng.below(2) as usize].clone()));
+                    }
+                }
+                trie.insert(&path, r);
+                of.insert(r, path);
+            }
+            let mut want: BTreeMap<Vec<PinStep>, BTreeSet<usize>> = BTreeMap::new();
+            for (&r, path) in &of {
+                want.entry(path.clone()).or_default().insert(r);
+            }
+            let mut got = BTreeMap::new();
+            walk(&trie, &mut Vec::new(), true, &mut got);
+            assert_eq!(got, want);
+        }
     }
 
     /// The members found or passed by the pins of the bindings ([`Bound`]) are matched as the

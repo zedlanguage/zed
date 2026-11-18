@@ -144,15 +144,37 @@ fn a_lambda_in_a_union_slot_is_fitted_to_the_function_type_its_parameters_fit() 
     );
 }
 
-/// Where the lambda's names fit none of the function types, or several, it is checked alone,
-/// with positional parameters, and no function type of the slot takes it
-/// (FAIL-check-lambda-fn-union-same-names files choosing among several by written types).
+/// Where the lambda's names fit several function types, those its written parameter types
+/// take are kept, and it is fitted to the one left: `(x: int) -> x` to `(x: int) -> int`,
+/// `(x: String) -> 0` to `(x: String) -> int`. Where several are left and they give each
+/// parameter one kind, the lambda is checked alone with those kinds and compared with the
+/// slot: `x -> 0` is generic and fits both (FAIL-check-lambda-fn-union-same-names).
+#[test]
+fn a_lambda_whose_names_fit_several_function_types_of_a_union_is_chosen_by_its_written_types() {
+    let slot = "((x: int) -> int) | ((x: String) -> int)";
+    for lambda in [
+        "(x: int) -> x",
+        "(x: String) -> 0",
+        "x -> 0",
+        "(x: int) -> x + 1",
+    ] {
+        let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
+        assert_eq!(type_errors(&p), Vec::<String>::new(), "{p}");
+    }
+    // A written type that takes neither: checked alone, as before, and refused.
+    let p = format!("p(h: {slot}) = 0;\nq = p(h: (x: f64) -> 0);\n");
+    assert_eq!(type_errors(&p).len(), 1, "{p}");
+    // Both left, and the result fits neither: refused. (`x -> x` is accepted: it fits
+    // `(x: int) -> int`, and a union takes a function that fits one member.)
+    let p = format!("p(h: {slot}) = 0;\nq = p(h: x -> \"a\");\n");
+    assert_eq!(type_errors(&p).len(), 1, "{p}");
+}
+
+/// Where the lambda's names fit none of the function types, it is checked alone, with
+/// positional parameters, and no function type of the slot takes it.
 #[test]
 fn a_lambda_whose_names_fit_no_one_function_type_of_a_union_is_refused() {
-    for (slot, lambda) in [
-        ("((x: int) -> int) | ((s: String) -> int)", "(y: int) -> y"),
-        ("((x: int) -> int) | ((x: String) -> int)", "(x: int) -> x"),
-    ] {
+    for (slot, lambda) in [("((x: int) -> int) | ((s: String) -> int)", "(y: int) -> y")] {
         let p = format!("p(h: {slot}) = 0;\nq = p(h: {lambda});\n");
         assert_eq!(
             type_errors(&p),

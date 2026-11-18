@@ -180,6 +180,64 @@ fn shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales(
     });
 }
 
+/// The signatures `(x0: shapes) -> int` and `(x0: written) -> int` for `n` shapes of one tuple
+/// of 10 components: shape r has one variable at each place whose bit is set in r + 1 and two
+/// variables, `X_a | X_b`, at the others, so no two shapes are pinned at the same set of
+/// places and each at one place at least; `written` is the same rows of the variables `Y`.
+/// (A shape of two variables at every place, with two others after it, is refused: the
+/// members that need the later shapes both fail the first, FAIL-types-joined-shape-first.)
+fn shapes_at_different_sets_of_places(n: usize) -> [zedc::check::ty::Sig; 2] {
+    const K: usize = 10;
+    assert!(n < 1 << K);
+    let var = |p: &str, r: usize, j: usize, s: usize| {
+        Ty::var(format!("{p}{}", (r * K + j) * 2 + s).into())
+    };
+    let row = |p: &str, r: usize| {
+        let cs = (0..K)
+            .map(|j| match ((r + 1) >> j) & 1 {
+                1 => var(p, r, j, 0),
+                _ => var(p, r, j, 0).union(&var(p, r, j, 1)),
+            })
+            .collect();
+        Ty::tuple(cs)
+    };
+    let rows = |p: &str| {
+        (0..n)
+            .map(|r| row(p, r))
+            .reduce(|a, b| a.union(&b))
+            .expect("one shape at least")
+    };
+    let int = Ty::carrier(Carrier::Int);
+    let c = 2 * K * n;
+    [
+        own_sig("X", c, Some(EVERY), rows("X"), int.clone()),
+        own_sig("Y", c, Some(EVERY), rows("Y"), int),
+    ]
+}
+
+/// N shapes of variables in one bucket, each pinned by the bindings at a different set of its
+/// 10 places, against the same rows written out, N = 64 and 512
+/// (TEST-types-bound-pin-sets-adversarial). When `Bound` in ty.rs filed a pinned shape by its
+/// set of places, a row paid one lookup for each set pinned so far, a number bounded only by
+/// the shapes: here row r met r sets, N²/2 lookups in all (16.9 times the instructions at 8n),
+/// where [`shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`] has
+/// the sets fall to one. In its trie a row of fresh variables follows one edge a place.
+/// Besides its ratio: the rows fit at each size.
+#[test]
+fn shapes_pinned_at_n_different_sets_of_places_scale() {
+    let what = "N shapes of variables, each pinned at a different set of 10 places, against the \
+                rows written out";
+    let n = 64;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, shapes_at_different_sets_of_places(n)))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let [s, written] = &sigs[&n];
+        assert!(fits_sig(s, written), "{what} at {n}");
+    });
+}
+
 /// [`k_joined_components_differing_on_m_components_cost_a_bounded_factor`] at m = 3, n and 8n
 /// tuples: linear in the tuples.
 #[test]
