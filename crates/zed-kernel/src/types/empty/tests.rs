@@ -2094,8 +2094,6 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
     eprintln!("{decided} decided, {refused} refused");
     assert!(decided > 2000, "only {decided} decided");
 }
-||||||| parent of f566de82b (kernel: merge the round-3 kernels of XR-group-order-5 without their bounds; a fork held by the union of its cuts is decided; prefix-chain twins checked alike)
-
 
 // Append to: `crates/zed-kernel/src/types/empty/tests.rs`
 // Round 3 cross-review kernel unit tests for Q3 (`overlaps` comparison, 1-tuple meet fix, and S_3 permutation check).
