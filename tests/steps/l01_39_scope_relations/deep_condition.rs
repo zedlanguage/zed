@@ -10,7 +10,6 @@ use std::sync::Arc;
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Prim, Term};
 use zed_tests::scaling;
-use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::preimage::relations;
 use zedc::store::presburger;
 use zedc::store::product::{Arm, Scope, arms};
@@ -257,11 +256,8 @@ fn a_branch_with_no_point_does_not_widen_the_other() {
     assert_eq!(then_arm(2, 1), ["[3..]", "[0..]", "[1..]"]);
     // With `k = 1` and `z >= 0`, `a` and `b` occur alike, as do `y` and `z`: only a search
     // in an order chosen by name would show the second branch empty (NAME-ties, COMPLEXITY.md
-    // NAME-ties-or), so the solver keeps it; the cover of module `exact`
-    // (PRES-pugh-exact-projection-research) asks whether a value of each name outside the
-    // first branch has a point, a question with one answer whatever the order, finds none,
-    // and gives the first branch's arm.
-    assert_eq!(then_arm(1, 0), ["[3..]", "[0..]", "[0..]"]);
+    // NAME-ties-or), so it is kept, and the then arm is no narrower than the scope.
+    assert_eq!(then_arm(1, 0), ["[..]", "[..]", "[..]"]);
 }
 
 /// [`accounts_paired`] nested `d` deep, each level's choice on its own symbol `qi`, around
@@ -450,21 +446,15 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
 }
 
 /// Searches `if nest(d) { 1 } else { 2 }` for each nest of [`heavy`] and [`moving`] and each
-/// depth of `depths`, and checks that the search tests from one to 48 parts per level. The
-/// search is the solver's, so it is counted with the solver alone ([`solver_alone`]); the
-/// questions of the exact cover search again, each within the cover's work limit, and their
-/// parts are printed.
+/// depth of `depths`, and checks that the search tests from one to 48 parts per level.
 fn parts_tested_per_level(depths: [usize; 2]) {
     let scope = ints(&level_names());
     for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
         for d in depths {
             let test = if_(nest(d), lit(1), lit(2));
             presburger::parts_tested();
-            solver_alone(|| std::hint::black_box(arms(&test, &scope)));
-            let tested = presburger::parts_tested();
             std::hint::black_box(arms(&test, &scope));
-            let covered = presburger::parts_tested();
-            eprintln!("{name}, d = {d}: {covered} parts tested with the exact cover");
+            let tested = presburger::parts_tested();
             assert!(
                 tested >= d as u64,
                 "{name}, d = {d}: {tested} parts tested, fewer than one per level"

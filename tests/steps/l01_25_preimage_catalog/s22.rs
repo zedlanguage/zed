@@ -21,7 +21,6 @@ use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
-use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
@@ -35,44 +34,6 @@ use zedc::store::revision::reduce_congruence;
 
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
-
-/// The preimage of `t` as the solver alone gives it ([`solver_alone`]), which the tests of the
-/// transfer here pin, and the preimage with the exact cover of PRES-pugh-work-budget checked:
-/// every point within `windows` that meets the demand is in it (and, where it is exact, no
-/// other), and each of its sets lies within the solver's. The cover makes some boxes here
-/// narrower or exact (the holes of `x mod 3` in `remainder_cases_cut_at_their_neighbors_keep_
-/// the_holes`, the even `y` of `remainder_reads_outside_a_split_have_their_preimages`) and
-/// refuses others past its work limit with no relation, where the solver kept one (`cross`
-/// at k = 50, and boxes of `x` at modulus 5 and 7 in [`boxes_at_modulus`], where the box
-/// kept is then wider than the solver's; row PRES-cover-refusals-where-exact); those changes
-/// are the cover's, checked here, not the transfer's.
-fn alone_and_covered(t: &Term, ds: &Domains, d: &Demand, windows: &[(i64, i64)]) -> Preimage {
-    let alone = solver_alone(|| preimage(t, ds, d));
-    let covered = preimage(t, ds, d);
-    for &w in windows {
-        check(t, ds, d, &covered, w);
-    }
-    // A cover that refuses the projection says so (P197, P13), and its box is the one the
-    // transfer keeps without the projection, which may be wider than the solver's (the boxes
-    // of `x` at modulus 5 and 7 in `boxes_at_modulus`, where the solver's relation is lost
-    // too; row PRES-cover-refusals-where-exact); sound, as checked above.
-    if matches!(covered.refusal, Some(Refusal::Questions | Refusal::Repeats)) {
-        return alone;
-    }
-    for (k, s) in &covered.domains {
-        assert!(
-            s.is_subset(&alone.domains[k]),
-            "{t}: the cover's {k} = {s} against the solver's {} (the cover's refusal {:?}, \
-             relation {}; the solver's refusal {:?}, relation {})",
-            alone.domains[k],
-            covered.refusal,
-            covered.relation.is_some(),
-            alone.refusal,
-            alone.relation.is_some()
-        );
-    }
-    alone
-}
 
 pub(super) fn var(x: &str) -> Term {
     Term::Var(x.into())
@@ -1155,12 +1116,7 @@ fn chains_of_slow_families_keep_their_preimages() {
         for k in few.into_iter().chain([rng.pick(&more)]) {
             let (t, ds, d) = family(name, k);
             let (renamed, reflected) = (diffs.renamed, diffs.reflected);
-            // The transfer against the one before, the solver alone; the cover, which made one
-            // box of these exact that the solver alone kept wider (the count of boxes made exact
-            // was 1 against 0 at seed 16395279566149096518), checked by the interpreter
-            // ([`alone_and_covered`]).
-            solver_alone(|| diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d));
-            alone_and_covered(&t, &ds, &d, &[(-8, 8)]);
+            diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
             // Since PREIMAGE-summaries-slow-seed the linear stage writes the copies of an `if`
             // of one guard and arms as one variable, as it always wrote an `if` bound once by
             // `let` and read twice. So the relation of `cross`, `cross_live`, `indep_2j` and
@@ -1256,12 +1212,7 @@ fn steep_summaries_of_two_inputs_keep_the_holes_of_their_demand() {
         });
         let ds = over(&[("b", holed(&mut rng)), ("z", holed(&mut rng))]);
         let d = Demand::Ints(holed(&mut rng));
-        // The transfer against the one before, the solver alone (under the cover, which runs
-        // under both transfers, no box counts as narrower: 0 and 0 against 2 and 2); the cover,
-        // checked by the interpreter over every point of the domains, `-12..=21`
-        // ([`alone_and_covered`]).
-        solver_alone(|| diffs.preimage(&format!("case {case}"), &t, &ds, &d));
-        alone_and_covered(&t, &ds, &d, &[(-12, 21)]);
+        diffs.preimage(&format!("case {case}"), &t, &ds, &d);
     }
     // 17 results differ from the ones before only in the names of their relations' variables
     // (S22-transfer-rem), which `explained` allows.
@@ -1368,18 +1319,14 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
     let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
-    // The cover of module `exact` (PRES-pugh-exact-projection-research) runs under both
-    // transfers, so the transfer before is now exact as well, with the same true set.
-    assert!(now.exact && then.exact);
+    assert!(now.exact && !then.exact);
     assert_eq!(now.domains["i"], pieces(&[(-10, -10), (1, 3), (10, 10)]));
-    assert_eq!(then.domains["i"], now.domains["i"]);
+    assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 3), (10, 10)]));
     assert!(!refuted(&t, &ds, &d, &then.domains, false));
     assert!(!refuted(&t, &ds, &d, &now.domains, true));
     let mut diffs = Diffs::default();
     diffs.preimage("the narrowed case", &t, &ds, &d);
-    // Both transfers are exact under the cover, so the case is no longer counted as one made
-    // exact.
-    assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 0, 0));
+    assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 1, 0));
 }
 /// Every kind of guard and arm the summary reads, and some it does not: `cases` cases of the
 /// sequence from `seed`, each compared with the transfer before and both boxes checked against
@@ -2229,8 +2176,7 @@ fn remainders_compared_every_way_are_read_exactly() {
 /// boxes is not a box). A stretch where one class keeps its points and another does not that
 /// spans many periods is answered by the split since S22e-wide: its box, the projection of the
 /// classes' relation, lists the first and last periods of the stretch, inside the box before,
-/// and is inexact, with that relation. The cover of module `exact` now lists the stretch value by
-/// value and is exact.
+/// and is inexact, with that relation.
 #[test]
 fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
     let i = || var("i");
@@ -2299,14 +2245,18 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         preimage(&wide, &ds, &d),
         before::preimage(&wide, &ds, &old(&d)),
     );
-    // The cover of module `exact` (PRES-pugh-exact-projection-research) lists every even
-    // value of `10..=1000`, the exact preimage: an odd `i` gives 0, outside the demand. The
-    // split listed the first and last periods and kept `14..=994` whole. The cover runs under
-    // the transfer before as well, which gives the same exact set.
-    assert!(now.exact && then.exact);
-    let evens: Vec<(i64, i64)> = (5..=500).map(|v| (2 * v, 2 * v)).collect();
-    assert_eq!(now.domains["i"], pieces(&evens));
-    assert_eq!(then.domains["i"], now.domains["i"]);
+    assert!(!now.exact && !then.exact);
+    let listed = [
+        (10, 10),
+        (12, 12),
+        (14, 994),
+        (996, 996),
+        (998, 998),
+        (1000, 1000),
+    ];
+    assert_eq!(now.domains["i"], pieces(&listed));
+    assert_eq!(then.domains["i"], pieces(&[(10, 998), (1000, 1000)]));
+    assert!(split_relation_exact(&wide, &ds, &d, &now));
     check(&wide, &ds, &d, &now, (-60, 1060));
 }
 
@@ -2352,7 +2302,7 @@ fn chains_on_two_inputs_keep_their_boxes(ks: &[usize]) {
                 continue;
             }
             let (t, ds, d) = family(name, k);
-            let p = alone_and_covered(&t, &ds, &d, &[(-8, 8)]);
+            let p = preimage(&t, &ds, &d);
             let what = format!("{name} k={k}");
             let ki = k as i64;
             let (i, m) = match name {
@@ -2840,7 +2790,7 @@ fn remainder_reads_outside_a_split_have_their_preimages() {
             .iter()
             .zip(want)
         {
-            let p = alone_and_covered(t, &ds, &d, &[(-15, 15), (-60, -45)]);
+            let p = preimage(t, &ds, &d);
             let got = (&p.domains["x"], &p.domains["y"], p.exact);
             if x.is_empty() {
                 assert!(got.0.is_empty() || got.1.is_empty(), "k={k}: {t}: {p:?}");
@@ -3182,7 +3132,7 @@ fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
     for (s, seed, k, want, level) in CUT_BOXES {
         let shape = REMAINDER_SHAPES[s];
         let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
-        let p = alone_and_covered(&t, &ds, &d, &[(-20, 20), (45, 60)]);
+        let p = preimage(&t, &ds, &d);
         let (want, level) = (pieces(want), pieces(level));
         assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
         let within = (s, seed, k) != HOLE_WIDER;
@@ -3258,7 +3208,7 @@ fn boxes_at_modulus(test: &str, m: i64, seed: u64, points: usize) {
     for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
         for k in [1, 2, 5, 13] {
             let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
-            let p = alone_and_covered(&t, &ds, &d, &[(-8, 8)]);
+            let p = preimage(&t, &ds, &d);
             let window = if whole == (s, k) { 60 } else { 8 };
             check(&t, &ds, &d, &p, (-window, window));
             let x = &p.domains["x"];
@@ -3368,7 +3318,7 @@ fn remainder_cases_cut_at_their_neighbors_stay_linear() {
     let (ds, d) = (xy_in(100000), Demand::Bool(true));
     for k in [1, 4, 16] {
         let t = below_three_and_even_y(spread_remainder_chain(k));
-        let p = alone_and_covered(&t, &ds, &d, &[(-110, -90), (90, 110)]);
+        let p = preimage(&t, &ds, &d);
         let two = (1..=k as i64).filter(|&j| spread_constant(j) <= 1).count();
         assert_eq!(remainder_cases(&p), 2 * k + 1 + 3 * two, "k = {k}");
         check(&t, &ds, &d, &p, (-110, -90));
@@ -3387,7 +3337,7 @@ fn remainder_cases_sliced_by_a_test_stay_linear() {
     let (ds, d) = (xy_in(100000), Demand::Bool(true));
     for k in [1, 4, 16] {
         let t = below_three_and_even_y(select_remainder_chain(k));
-        let p = alone_and_covered(&t, &ds, &d, &[(-110, -90), (-60, -40)]);
+        let p = preimage(&t, &ds, &d);
         let cases = remainder_cases(&p);
         assert!(cases <= 5 * k + 1, "k = {k}: {cases} cases");
         check(&t, &ds, &d, &p, (-110, -90));
@@ -3531,7 +3481,7 @@ fn split_pieces_reach_each_kind_of_touched() {
     let mut sums = [TouchedPaths::default(); 2];
     touched_paths();
     for ((name, t, ds, d), w) in cases.into_iter().zip(want.lines()) {
-        let p = alone_and_covered(&t, &ds, &d, &[(-60, 60)]);
+        let p = preimage(&t, &ds, &d);
         assert_eq!(format!("{name}\t{p:?}"), w, "{name}");
         let c = touched_paths();
         let s = match name.split(' ').next() {
