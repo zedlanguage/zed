@@ -9778,10 +9778,19 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     if !fast && let Some(res) = try_pick_disjoint_wide(p, deep) {
         return res;
     }
+    // Each solve goes through [`solve_repair`], so a system solved before in the same probe
+    // ([`RepairMemo`]) is not solved again. The slow reading starts with the solve of `p.cons`
+    // the fast reading made, and an ask of [`search_by_halves`] may repeat a system of an
+    // earlier ask (PRES-presbench1-red: on the formula of seed 4164922340731529606, round 268,
+    // the work of the projection fell from 15.0 M to 13.8 M units, and 11 of 67 refusals over
+    // 200 seeds of `random_formulas_project_to_the_values_of_their_points` went away). The
+    // answers are those of [`solve`], which reads only its rows and `want`; a refusal is not kept.
+    // Cost: a hash of the rows per solve, which the solve reads anyway, and the systems kept
+    // until the probe ends.
     // The disjuncts taken, each with its constraints among those taken, which the model is a
     // point of at the end.
     let mut took: Vec<&Parts> = Vec::new();
-    let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
+    let mut model = solve_repair(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut values = TermValues::default();
     let mut acc = Linked::default();
     let mut near = Near::default();
@@ -9860,7 +9869,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                     kernel = rows.map(Linked::of);
                 }
                 if !valid && kernel.is_none() {
-                    model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                    model = solve_repair(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
                     values.clear();
                     stamp = fresh_stamp();
                     valid = true;
@@ -9927,7 +9936,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                     if let Some(k) = &kernel {
                         let mut cs = k.around(&d.cons);
                         cs.extend(d.cons.iter());
-                        match solve(&cs, false) {
+                        match solve_repair(&cs, false) {
                             Ok(None) => continue,
                             Ok(Some(_)) => {
                                 taken = Some((d, Model::new()));
@@ -9938,14 +9947,14 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                         }
                     }
                     if !valid {
-                        model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                        model = solve_repair(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
                         values.clear();
                         stamp = fresh_stamp();
                         valid = true;
                     }
                     let mut cs = acc.around(&d.cons);
                     cs.extend(d.cons.iter());
-                    match solve(&cs, true) {
+                    match solve_repair(&cs, true) {
                         Ok(Some(m)) => {
                             taken = Some((d, m));
                             break;
@@ -9987,7 +9996,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
         (0..batch.len()).try_for_each(|i| one(i, &mut || None).map(drop))?;
     }
     if !valid {
-        model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+        model = solve_repair(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
     }
     Ok((model, took))
 }

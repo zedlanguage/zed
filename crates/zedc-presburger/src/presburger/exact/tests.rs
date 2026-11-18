@@ -269,7 +269,26 @@ fn formula(rng: &mut Rng, depth: u32) -> Formula {
 /// and printed with its cause.
 #[test]
 fn random_formulas_project_to_the_values_of_their_points() {
-    let seed = crate::seed::seed("random_formulas_project_to_the_values_of_their_points");
+    random_formulas_at(crate::seed::seed(
+        "random_formulas_project_to_the_values_of_their_points",
+    ));
+}
+
+/// [`random_formulas_project_to_the_values_of_their_points`] at seed 10413658062665981385,
+/// which refused 4 answers, past the 3 allowed (FAIL-exact-refusals-10413658062665981385).
+#[test]
+fn random_formulas_at_seed_10413658062665981385() {
+    random_formulas_at(10413658062665981385);
+}
+
+/// [`random_formulas_project_to_the_values_of_their_points`] at seed 3569362060062839708,
+/// which refused 4 answers, past the 3 allowed (FAIL-exact-refusals-3569362060062839708).
+#[test]
+fn random_formulas_at_seed_3569362060062839708() {
+    random_formulas_at(3569362060062839708);
+}
+
+fn random_formulas_at(seed: u64) {
     let mut rng = Rng(seed | 1);
     let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
     let (mut wrong, mut refused, mut wider_before) = (Vec::new(), Vec::new(), 0);
@@ -290,7 +309,7 @@ fn random_formulas_project_to_the_values_of_their_points() {
             match each.as_ref().map(|e| &e.0[k]) {
                 Ok(Ok(got)) if got == &want => {}
                 Ok(Ok(got)) => wrong.push(format!("round {round} {n}: {got} not {want}: {f}")),
-                Ok(Err(e)) | Err(e) => refused.push(format!("round {round} {n}: {e:?}")),
+                Ok(Err(e)) | Err(e) => refused.push(format!("round {round} {n}: {e:?}: {f}")),
             }
         }
     }
