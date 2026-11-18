@@ -729,6 +729,16 @@ fn hubs_within(
 /// (none exists for `z0 == 2 * a + 1`, whose piece is one value and whose cone has `t = 2`
 /// only), the piece stays out of `lower`, and a check that reads these sets says it cannot
 /// decide, rather than call an answer exact or unsound on a set it has not proved.
+///
+/// A hole is filled by the same step first ([`reached`]): a value `v` of it is taken where
+/// some value `u` already taken (found, or filled before) and some integer point `r` of the
+/// cone give `v = u + n(r)`, `n(r) != 0`, since `x0 + r` is then a point of the disjunct with
+/// `n = v`, as above. Only what is left of a hole goes to [`hubs_within`]. Without this, the
+/// values of `z0 == 2 * a + 3 * b`, `a, b >= 0`, found with the hubs within `0..=75`, end
+/// `.., 373, 375` with 374 missing (it needs `a >= 76` or `b >= 76`), the hub ranges there are
+/// unbounded, and the brute force stopped on that hole before it reached the end, which the
+/// step 2 proves (TEST-pendants-step-proof-complete; test
+/// `a_hole_filled_by_a_step_of_the_cone_is_taken`).
 fn decided_ends(
     (hull, set): (IntervalSet, IntervalSet),
     n: &str,
@@ -737,9 +747,9 @@ fn decided_ends(
     far: i64,
     steps: impl Fn(&str) -> IntervalSet,
 ) -> (IntervalSet, IntervalSet, IntervalSet) {
-    let (Some(first), Some(last)) = (set.first(), set.last()) else {
+    if set.is_empty() {
         return (hull, set.clone(), set);
-    };
+    }
     let rows = lp_rows(cons, boxes);
     if hubs_within(&rows, boxes, far).is_ok() {
         return (hull, set.clone(), set);
@@ -748,23 +758,54 @@ fn decided_ends(
         boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
     };
     // Each hole between two pieces found, `[b + 1, a - 1]` between `[.., b]` and `[a, ..]`.
-    for (p, q) in set.pieces().zip(set.pieces().skip(1)) {
-        let (End::Fin(b), End::Fin(a)) = (&p.1, &q.0) else {
-            panic!("pieces with a hole between them have finite ends: {set:?}");
-        };
-        let (b, a) = (b.to_i64().expect("a value"), a.to_i64().expect("a value"));
-        let mut within = rows.clone();
-        within.push((unit(n, -1), -(b + 1)));
-        within.push((unit(n, 1), a - 1));
-        if let Err(why) = hubs_within(&within, boxes, far) {
-            panic!(
-                "the brute force cannot decide the hole {}..={} of {n}: in it {why}, within \
-                 {cons:?} {boxes:?}",
-                b + 1,
-                a - 1
-            );
+    let holes: Vec<(i64, i64)> = (set.pieces().zip(set.pieces().skip(1)))
+        .map(|(p, q)| {
+            let (End::Fin(b), End::Fin(a)) = (&p.1, &q.0) else {
+                panic!("pieces with a hole between them have finite ends: {set:?}");
+            };
+            (
+                b.to_i64().expect("a value") + 1,
+                a.to_i64().expect("a value") - 1,
+            )
+        })
+        .collect();
+    // The values of the holes a step of the cone proves taken, until no more are (see above).
+    // A pass over the holes' values costs O(holes' length · pieces), and each pass but the last
+    // fills one value or more: a test oracle over holes of a few hundred values at most.
+    let steps_n = steps(n);
+    let mut taken = set.clone();
+    loop {
+        let before = taken.clone();
+        for &(b, a) in &holes {
+            for v in b..=a {
+                if !taken.contains(v) && reached(v, &taken, &steps_n) {
+                    taken = taken.join(&IntervalSet::single(v));
+                }
+            }
+        }
+        if taken == before {
+            break;
         }
     }
+    // Each stretch of a hole left: decided empty where the hubs are within range there.
+    for &(b, a) in &holes {
+        for (l, h) in IntervalSet::of(b, a).minus(&taken).pieces() {
+            let (l, h) = (l.to_i64().expect("a value"), h.to_i64().expect("a value"));
+            let mut within = rows.clone();
+            within.push((unit(n, -1), -l));
+            within.push((unit(n, 1), h));
+            if let Err(why) = hubs_within(&within, boxes, far) {
+                panic!(
+                    "the brute force cannot decide the hole {l}..={h} of {n}: in it {why}, within \
+                     {cons:?} {boxes:?}"
+                );
+            }
+        }
+    }
+    let set = &taken;
+    let (Some(first), Some(last)) = (set.first(), set.last()) else {
+        unreachable!("the set only grew");
+    };
     let (lo, hi) = boxes[n];
     // The end decided, and whether every value of the piece at it is proved taken: always but
     // for an opened end, where a step of the cone proves it (see above). `piece` is the piece
@@ -821,6 +862,17 @@ fn decided_ends(
         lower = lower.join(&high);
     }
     (IntervalSet::range(l, h), lower, upper)
+}
+
+/// Whether `v = u + t` for some `u` in `taken` and some `t != 0` in `steps`, the values of `n`
+/// at the integer points of the cone: then `v` is taken ([`decided_ends`]).
+fn reached(v: i64, taken: &IntervalSet, steps: &IntervalSet) -> bool {
+    taken.pieces().any(|(l, h)| {
+        // `t = v - u` for `u` in `[l, h]` is `[v - h, v - l]`; an infinite end stays infinite.
+        let flip = |e: &End, inf: End| e.to_i64().map_or(inf, |w| End::of(v - w));
+        let ts = IntervalSet::range(flip(h, End::NegInf), flip(l, End::PosInf));
+        !ts.minus(&IntervalSet::single(0)).meet(steps).is_empty()
+    })
 }
 
 /// The range `-far..=far` [`brute`] enumerates the hubs within on random parts.
@@ -1311,8 +1363,8 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 /// On random parts from a new seed each run, the projection by pendants, where it is taken,
 /// and that of the whole part, where neither refuses, are each sound, over the same names
 /// ([`pendants_against_whole`]); [`PENDANT_PARTS`] parts are drawn.
-/// Each must be the exact set (author P197); until PRES-switchover-not-race makes both
-/// exact, the test asserts soundness and prints how many names of each are wider.
+/// Each must be the exact set (author P197), so the test fails on any name where the two
+/// differ, naming the precision of each answer ([`compared`]), and prints the counts.
 /// Seed 0x7e4d at 400 parts took 1.6 s.
 #[test]
 fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
@@ -3431,6 +3483,54 @@ fn an_opened_end_proved_by_a_step_of_the_cone_is_exact() {
         assert!(
             got.as_ref().is_err_and(|e| e.contains("(unsound)")),
             "{part}: {name} = {fewer}: want unsound, got {got:?}"
+        );
+    }
+}
+
+/// Plan row TEST-pendants-step-proof-complete: opened ends that are exact where the values
+/// found within the range have holes near their end that only a hub beyond the range fills,
+/// so the rows alone do not decide them ([`decided_ends`]). `z0 == 2 * a + 3 * b` with `a`
+/// and `b` from 0 takes 0 and every value from 2 on, steps 2 and 3 combined; within the range
+/// it misses 374, which needs `a = 76` or `b = 76`. With `b` in `0..=1` it takes the same, step
+/// 2 alone from 0 and from 3; within the range it misses 152. The lower side alike. Each hole
+/// is filled by a step of the cone from a value found, the end is then proved, the set is
+/// judged exact, and the set without the filled value unsound. The brute force panicked on
+/// each such hole before ("cannot decide the hole").
+#[test]
+fn a_hole_filled_by_a_step_of_the_cone_is_taken() {
+    for (part, bx, want, fewer) in [
+        (
+            "z0 == 2 * a + 3 * b",
+            "a=[0,inf] b=[0,inf] z0=[-inf,inf]",
+            "[0,0 2,inf]",
+            "[0,0 2,373 375,inf]",
+        ),
+        (
+            "z0 == 2 * a + 3 * b",
+            "a=[0,inf] b=[0,1] z0=[-inf,inf]",
+            "[0,0 2,inf]",
+            "[0,0 2,151 153,inf]",
+        ),
+        (
+            "z0 + 2 * a + 3 * b == 0",
+            "a=[0,inf] b=[0,inf] z0=[-inf,inf]",
+            "[-inf,-2 0,0]",
+            "[-inf,-375 -373,-2 0,0]",
+        ),
+    ] {
+        let (items, bs) = (parse(part), boxes(bx));
+        let (_, bounds) = brute_answer(&items, &bs);
+        assert_eq!(
+            bounds["z0"],
+            (want.to_string(), want.to_string()),
+            "{part} {bx}"
+        );
+        let x = shown_set(want);
+        assert_eq!(precision("z0", &x, &x, &x), Ok(Precision::Exact), "{part}");
+        let got = judged(&items, &bs, "z0", fewer);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains("(unsound)")),
+            "{part} {bx}: z0 = {fewer}: want unsound, got {got:?}"
         );
     }
 }
