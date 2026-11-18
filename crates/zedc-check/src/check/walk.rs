@@ -6220,6 +6220,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (step S.1f).
     fn resolve_top_parts(&mut self, from: usize) -> Vec<&'a Expr> {
         let mut unmet = Vec::new();
+        let mut now = Vec::new();
         let parts = self.top_parts.split_off(from);
         let mut ops: HashMap<usize, Vec<&'a Expr>> = HashMap::new();
         for &(k, op) in &parts {
@@ -6286,7 +6287,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             };
             self.touch(r);
-            self.classes[r].resolved = Some(ty);
+            self.classes[r].resolved = Some(ty.clone());
+            // The uses recorded on the class that bound the ints it holds (`^`'s exponent, a
+            // domain of ints) are checked on the type it takes, as [`Self::generalize`] checks
+            // those of a class of one type when its function ends: outside every function no
+            // function ends, so nothing else checks them. Before, none was, and `r = h((-3,
+            // 0))` with `h(positional p) { a, b = p; return 0^a; }` was accepted, the exponent
+            // need of `^` recorded on the class of `-3` and never met
+            // (FAIL-random-pow-destructured-literal). The other uses ask the class for
+            // carriers, which its mask already meets and the application already reports (a
+            // use at `int` refused for `1.5` in `h((1.5, 2))`); checking them here too gave
+            // each such error twice, so they stay on the class unchecked here.
+            // A class a use asked takes its whole carrier, so `h((3, 0))` is refused too, as
+            // the same call inside a function was already, and as `bitAnd(p[0], 3)` refuses
+            // every component; the literal's own value is not enough, since the body's `a - 5`
+            // lies in the same class. Given up: a bound of the component carried into the
+            // signature, as `int[0..]` is for a parameter `x` of `2^x`
+            // (CHK-pow-component-bound).
+            // Complexity tradeoff: each use is read once and the bounding ones checked once,
+            // O(uses) in all; checking at each use as it is recorded is not possible, since
+            // the class has no type yet then.
+            let (bounds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
+                .into_iter()
+                .partition(|(_, n)| matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_)));
+            self.classes[r].uses = kept;
+            now.extend(bounds.into_iter().map(|(_, n)| (n, ty.clone())));
+        }
+        for (n, t) in &now {
+            self.check_on(n, t, n.span, None);
         }
         unmet
     }

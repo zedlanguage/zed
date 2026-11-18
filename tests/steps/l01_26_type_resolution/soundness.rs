@@ -868,6 +868,50 @@ fn a_rat_or_int_literal_component_is_not_summed() {
     }
 }
 
+#[test]
+fn a_literal_component_is_no_negative_int_exponent() {
+    // FAIL-random-pow-destructured-literal: the checker accepted each, and the kernel then
+    // raised "type error: `^` applied to `int`, `int`": the exponent need of `^` was recorded
+    // on the class of the literal `-3` of a call's tuple argument outside every function, and
+    // that class took its type with no recorded need checked on it.
+    let taken_apart = "h1(positional p) {\n  a, b = p;\n  return (0)^a;\n}";
+    let indexed = "h1(positional p) = 2^p[0];";
+    for h1 in [taken_apart, indexed] {
+        for depth in [1, 2, 3] {
+            let defs = wrapped(h1, depth);
+            for literal in ["-3", "-1", "3"] {
+                let call = format!("h{depth}(({literal}, 0))");
+                let errors = r_errors(&defs, &call);
+                assert_eq!(errors.len(), 1, "{defs}\n{call}: {errors:?}");
+                assert!(errors[0].contains('^'), "{defs}\n{call}: {errors:?}");
+                // The same call inside a function gets the same verdict: there the class's
+                // needs were checked before, on the carrier `int` the class takes, so `3` is
+                // refused as well; the exponent's bound is not carried through the component
+                // as it is for a parameter (`h1(x) = 2^x` takes `x` in `int[0..]`).
+                let inside = format!("{defs}\ng() = {call};");
+                let errors = r_errors(&inside, "g()");
+                assert_eq!(errors.len(), 1, "{inside}: {errors:?}");
+                assert!(errors[0].contains('^'), "{inside}: {errors:?}");
+            }
+        }
+    }
+    // A base that is no int takes any int exponent, and a parameter or a literal taken apart
+    // inside the function is bounded where the `^` is.
+    let rat_base = "h1(positional p) {\n  a, b = p;\n  return 2r^a;\n}";
+    let ok = r#"if h1((-3, 0)) is rat { "rat" } else { "other" }"#;
+    assert_eq!(runs(rat_base, ok, ""), "rat\n");
+    assert_eq!(runs("h1(x) = 2^x;", &kind_of("h1(x: 3)"), ""), "int\n");
+    assert_eq!(r_errors("h1(x) = 2^x;", "h1(x: -3)").len(), 1);
+    let local = "g() {\n  a, b = (3, 0);\n  return 0^a;\n}";
+    assert_eq!(runs(local, &kind_of("g()"), ""), "int\n");
+    // The program the random test found (seed 5371329205760031685 of
+    // `random::accepted_random_programs_raise_no_type_error`).
+    let found = "h0(positional p) {\n  a, b = p;\n  return (0)^a;\n}\n\
+                 h1(positional p) = (p[1] - p[1]);";
+    let errors = r_errors(found, "h0((-3, if 0 < 3 { 0 } else { 0 }))");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+}
+
 /// `defs` with `h2` … `h{depth}` added, each passing its argument on to the one before:
 /// `h2(positional p) = h1(p);`.
 fn wrapped(defs: &str, depth: usize) -> String {
