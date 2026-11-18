@@ -57,9 +57,8 @@ impl Bes {
     }
 
     /// Adds a node and returns its number. A `Mor` node has exactly one child, and a `Top` or
-    /// `Bot` node none, so that no constant node is on a cycle: the arms for them in the
-    /// passes over a component with a cycle are never taken (tests/steps/l01_23_subtyping/
-    /// COMPLETENESS.md).
+    /// `Bot` node none, so that no constant node is on a cycle or is a parent: the arms for
+    /// them in the passes over a component with a cycle are `unreachable!`.
     pub fn add(&mut self, kind: Kind, children: Vec<u32>) -> u32 {
         assert!(
             kind != Kind::Mor || children.len() == 1,
@@ -347,8 +346,11 @@ fn lfp(
             0
         } else {
             match g.kind(v_u32) {
-                Kind::Top => 0,
-                Kind::Bot => u32::MAX,
+                // `sub` lies in a component with a tuple cycle (`settle` with one, `bounds`,
+                // step 4 of `decide`), and a constant, with no child, is on no cycle.
+                Kind::Top | Kind::Bot => {
+                    unreachable!("a constant node in a component with a cycle")
+                }
                 Kind::Mor => {
                     let w = g.children(v_u32)[0] as usize;
                     let holds = if !sc.in_sub[w] {
@@ -430,7 +432,8 @@ fn gfp(g: &Bes, sub: &[u32], base_lo: bool, start_tmp: bool, narrow: bool, sc: &
         match g.kind[v] {
             Kind::And => true,
             Kind::Or => g.kind[w] == Kind::Or && sc.o_comp[v] == sc.o_comp[w],
-            Kind::Mor | Kind::Top | Kind::Bot => false,
+            Kind::Mor => false,
+            Kind::Top | Kind::Bot => unreachable!("a constant node has no child `w`"),
         }
     };
     for &v_u32 in sub {
@@ -478,7 +481,7 @@ fn gfp(g: &Bes, sub: &[u32], base_lo: bool, start_tmp: bool, narrow: bool, sc: &
                     sc.need[p] == 0
                 }
                 Kind::And | Kind::Mor => true,
-                Kind::Top | Kind::Bot => false,
+                Kind::Top | Kind::Bot => unreachable!("a constant node is no node's parent"),
             };
             if dead {
                 sc.cur[p] = false;
@@ -605,8 +608,8 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
                         }
                     }
                 }
-                Kind::Top => s += 1,
-                Kind::And | Kind::Mor | Kind::Bot => {}
+                Kind::And | Kind::Mor => {}
+                Kind::Top | Kind::Bot => unreachable!("a constant node on a tuple cycle"),
             }
         }
         seeds[cid] = s;
@@ -614,8 +617,9 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
     for &v_u32 in u_set {
         let v = v_u32 as usize;
         let need = match g.kind(v_u32) {
-            Kind::Top => u32::MAX,
-            Kind::Bot => 0,
+            // `u_set` lies in a component with a cycle (step 4 of `decide`), and a constant,
+            // with no child, is on no cycle.
+            Kind::Top | Kind::Bot => unreachable!("a constant node in a component with a cycle"),
             Kind::Mor | Kind::And => {
                 let dead_ext = g
                     .children(v_u32)
@@ -738,7 +742,10 @@ fn refusal(
                         tuples.push(v);
                     }
                     Kind::Or => branching_or += 1,
-                    Kind::Mor | Kind::Top | Kind::Bot => {}
+                    // A `Mor` node has one child and a constant none (`Bes::add`, `simplify`).
+                    Kind::Mor | Kind::Top | Kind::Bot => {
+                        unreachable!("two children of a morphism or constant node")
+                    }
                 }
             }
         }
