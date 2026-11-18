@@ -1268,7 +1268,7 @@ fn list_group(cycle: bool) -> Type {
     .remove(0)
 }
 
-/// `Search::height_bounds` on the shapes its proof names (COMPLEXITY.md K126): a fixed-length
+/// `Heights::height_bounds` on the shapes its proof names (COMPLEXITY.md K126): a fixed-length
 /// list is bounded exactly; two of different lengths meet in nothing, as do two pairs whose
 /// second components are such lists, and two of one length meet in that length; a recursive
 /// list is bounded from below only, and its meet with a fixed-length list is bounded above; a
@@ -1323,13 +1323,16 @@ fn height_bounds_are_exact_on_lists_cycles_and_open_parts() {
         ("(R_2,) \\ (R_2,)", &one(r(2)) - &one(r(2)), None),
     ];
     for (name, t, want) in cases {
-        let got = Search::default().height_bounds(&t);
+        let got = Heights::default().height_bounds(&t);
         assert_eq!(got, want, "{name}");
+        // The bounds kept for every search (`HEIGHTS`) are the same, asked once and again.
+        assert_eq!(height_bounds(&t), want, "{name}, kept");
+        assert_eq!(height_bounds(&t), want, "{name}, kept, again");
         assert_eq!(t.is_empty(), want.is_none(), "{name}");
     }
 }
 
-/// `Search::value_height`, `Search::least_height` and `Search::height_bounds` agree on every
+/// `Search::value_height`, `Heights::least_height` and `Heights::height_bounds` agree on every
 /// value the search finds: for each type of a pool of lists, pairs, atoms and their unions,
 /// meets and differences, the value found, when its height is known, lies within the type's
 /// bounds, and the least height is the bounds' lower end; a type with no bounds has no value.
@@ -1361,8 +1364,10 @@ fn every_value_found_lies_within_its_types_height_bounds() {
     let mut checked = 0;
     for (i, t) in types.iter().enumerate() {
         let mut s = Search::default();
-        let bounds = s.height_bounds(t);
-        let lo = s.least_height(t);
+        let mut heights = Heights::default();
+        let bounds = heights.height_bounds(t);
+        let lo = heights.least_height(t);
+        assert_eq!(height_bounds(t), bounds, "type {i}, kept");
         match bounds {
             None => assert!(t.is_empty(), "type {i} has no bounds but a value"),
             Some((l, h)) => {

@@ -1163,6 +1163,27 @@ if [ -s "$out/bench.log" ]; then
   echo "bench lines ($out/bench.log):"
   cat "$out/bench.log"
 fi
+# The output of each failed piece, printed here so that a copy of this run's output names the
+# tests that failed and why: the piece's log is emptied by the next run that passes it, and goes
+# with the worktree, so a failure seen once under load and passed on every rerun was known only
+# as a piece name (FLAKE-l01-39-scaling-unnamed). A benchmark piece, one test run with
+# --nocapture, prints its whole log. A correctness piece prints libtest's lines for the tests
+# still running past 60 s and its account of the failures, from the line `failures:` to the end
+# (each failed test's captured output and panic, then their names); when there is none (a piece
+# stopped by its limit or a signal, or a crash), the last 40 lines, as a failed build prints.
+grep -v 'rc=0 ' "$out/summary" | while read -r name _; do
+  echo "---- failed piece $name (its output: $out/$name.log) ----"
+  if [ "$run_kind" != test ]; then
+    cat "$out/$name.log"
+  else
+    grep -E '^test .* has been running for over' "$out/$name.log"
+    if grep -q '^failures:$' "$out/$name.log"; then
+      sed -n '/^failures:$/,$p' "$out/$name.log"
+    else
+      tail -40 "$out/$name.log"
+    fi
+  fi
+done
 echo "pieces: $(wc -l <"$out/summary"), failed: $bad, load: $load, cores: $cores"
 [ -z "$cov" ] || echo "coverage profiles in $cov; a scaling verdict of this run is not to be relied on"
 [ "$bad" = 0 ]

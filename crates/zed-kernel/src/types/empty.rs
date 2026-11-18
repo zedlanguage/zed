@@ -201,6 +201,9 @@ thread_local! {
     /// The answer of [`Type::empty_past_forks`] for each type asked: a function of the type alone.
     static PAST_FORKS: RefCell<ByType<bool>> =
         const { RefCell::new(ByType::new()) };
+    /// The bounds on the heights of the values of each type asked ([`height_bounds`]): a
+    /// function of the type alone, kept for every search until `Type::forget_emptiness`.
+    static HEIGHTS: RefCell<Heights> = RefCell::new(Heights::default());
     /// The verdict of each type asked. A verdict is decided by a search that reads no kept
     /// result, or with the other members of its recursive group ([`group_verdicts`]), so it is
     /// a function of the type alone, and keeping it changes no answer: these
@@ -526,6 +529,7 @@ impl Type {
         super::clear_compound_types();
         MEMO.with(|m| m.borrow_mut().clear());
         PAST_FORKS.with(|m| m.borrow_mut().clear());
+        HEIGHTS.take();
         VERDICTS.with(|m| m.borrow_mut().clear());
         STORES.with(|m| m.borrow_mut().clear());
         CLASSES.with(|m| *m.borrow_mut() = Classes::default());
@@ -1446,11 +1450,6 @@ struct Search {
     members: HashMap<(usize, Type), Option<bool>, Digests>,
     /// The height of each value shown whose height is known ([`Search::value_height`]).
     heights: DigestMap<usize, Option<u64>>,
-    /// The least height of a value of each type asked about ([`Search::least_height`]).
-    least: HashMap<Type, u64, Digests>,
-    /// The least and greatest height of a value of each type asked about, `None` for a type
-    /// shown to have no value ([`Search::height_bounds`]).
-    bounds: HashMap<Type, Option<(u64, u64)>, Digests>,
     /// Per tuple part a tuple of plain values was tested against ([`makeable`]), its
     /// rows filed by the values they may hold ([`RowIndex`]), made at the first such test and
     /// kept with the part, so that its id names no other part. A list and an expression may
@@ -3252,7 +3251,7 @@ impl Search {
     /// shown here: a scalar, a bare atom, a struct or a closure is of height 0, a tuple one more
     /// than its highest component (1 when it has none), an atom with a payload one more than its
     /// payload tuple. `None` for a value with a level not read in ([`Rep::Of`]), a list kept as
-    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Search::least_height`] is compared
+    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Heights::least_height`] is compared
     /// only with a height known exactly. Each value is measured once, on a list rather than the
     /// thread's stack, so a list of `n` items costs `O(n)` once for all its suffixes.
     fn value_height(&mut self, v: usize) -> Option<u64> {
@@ -3291,7 +3290,51 @@ impl Search {
         }
         self.heights[&v]
     }
+}
 
+/// The bounds on the heights of types' values ([`height_bounds`]), kept in `HEIGHTS`.
+#[derive(Default)]
+struct Heights {
+    /// The least height of a value of each type asked about ([`Heights::least_height`]).
+    least: HashMap<Type, u64, Digests>,
+    /// The least and greatest height of a value of each type asked about, `None` for a type
+    /// shown to have no value ([`Heights::height_bounds`]).
+    bounds: HashMap<Type, Option<(u64, u64)>, Digests>,
+}
+
+/// [`Heights::height_bounds`] of `t`, kept for every search of this thread until
+/// `Type::forget_emptiness`: the bounds are a function of the type alone (their proof reads
+/// nothing but `t` and the types it reaches), so a search reads those another made.
+// Complexity tradeoff: each type is bounded once until the kept results are dropped, so the
+// searches of a check together walk each type reached once, O(V + E) in all. Naive
+// alternative: bounds kept per search, as they were until PERF-height-bounds-group-benches;
+// each search walked again every type its first question reaches, and the searches of a group
+// of n definitions that each reach O(n) types walked O(n^2) types: the X14 groups
+// (`group_oracle::bench`, with the bounds asked of every type), 1,579 types walked at n 256 and
+// 23,401 at n 1024; kept here, 213 and 860, and 3,473 at n 4096 (debug build: 8.48M, 45.1M,
+// 397M instructions at n 64, 256, 1024 before; 7.19M, 53.6M, 424M at n 64, 512, 4096 after,
+// 7.5 and 7.9 times a step). The map is taken out of `HEIGHTS` while a type is bounded, so a
+// question asked while making a type's parts (unfolding a recursive node) bounds with an empty
+// map and adds its answers back, rather than finding the map borrowed; what both found is
+// merged, the smaller map into the larger.
+fn height_bounds(t: &Type) -> Option<(u64, u64)> {
+    if let Some(b) = HEIGHTS.with_borrow(|h| h.bounds.get(t).copied()) {
+        return b;
+    }
+    let mut h = HEIGHTS.take();
+    let b = h.height_bounds(t);
+    HEIGHTS.with_borrow_mut(|kept| {
+        // `kept` is empty unless a question was asked inside this one; the larger map stays.
+        if kept.bounds.len() + kept.least.len() < h.bounds.len() + h.least.len() {
+            std::mem::swap(kept, &mut h);
+        }
+        kept.bounds.extend(h.bounds);
+        kept.least.extend(h.least);
+    });
+    b
+}
+
+impl Heights {
     /// A lower bound on the height ([`Search::value_height`]) of every value of `t`, `u64::MAX`
     /// when `t` has none: the height of the shortest derivation of `t` in the grammar whose
     /// rules are, for each type, a scalar, a bare atom, a struct or a closure it may hold (height
@@ -3308,16 +3351,17 @@ impl Search {
     /// part; it is then a value of that tuple type's components. A type left with no derivation
     /// has no value, so `u64::MAX` is a bound too.
     ///
-    /// Each type's bound is kept for the rest of the search; the types not yet bounded that `t`
-    /// reaches are bounded together by Knuth's generalization of Dijkstra's algorithm (Knuth,
+    /// Each type's bound is kept in `HEIGHTS` ([`height_bounds`]); the types not yet bounded that
+    /// `t` reaches are bounded together by Knuth's generalization of Dijkstra's algorithm (Knuth,
     /// "A generalization of Dijkstra's algorithm", Inf. Proc. Letters 6, 1977): each rule's
     /// height is one plus the highest of its children's, a superior function, so the types are
     /// settled in order of height and each rule is ready once its last child is settled.
     // Complexity tradeoff: O(E log E) for the E rules and children of the types reached and not
-    // bounded before, each type once a search. Naive alternative: iterate the equations to a
-    // fixpoint from 0, O(E) a round but with no bound on the rounds when a cycle derives
-    // nothing (`G = #cons((int, G))` alone rises forever), or from below with cycles read as 0,
-    // which leaves `G_i = #cons((int, G_i)) | #cons((1, R_{i-1}))` at height 2 instead of `2i`.
+    // bounded before, each type once until the kept bounds are dropped. Naive alternative:
+    // iterate the equations to a fixpoint from 0, O(E) a round but with no bound on the rounds
+    // when a cycle derives nothing (`G = #cons((int, G))` alone rises forever), or from below
+    // with cycles read as 0, which leaves `G_i = #cons((int, G_i)) | #cons((1, R_{i-1}))` at
+    // height 2 instead of `2i`.
     fn least_height(&mut self, t: &Type) -> u64 {
         if let Some(&h) = self.least.get(t) {
             return h;
@@ -3356,13 +3400,15 @@ impl Search {
             if p.tuples.rest {
                 ready.push(std::cmp::Reverse((1, n)));
             }
-            let mut children: Vec<Vec<Type>> = Vec::new();
-            for a in p.atoms.names.values() {
-                if a.bare {
-                    ready.push(std::cmp::Reverse((0, n)));
-                }
-                children.push(vec![a.payload.clone()]);
+            if p.atoms.bare_names > 0 {
+                ready.push(std::cmp::Reverse((0, n)));
             }
+            // An atom name gives a rule of its own only through a payload that lists something
+            // (`Atoms::payloads`): a payload that lists nothing has no value, so its rule never
+            // becomes ready, and its bare atom is the rule of height 0 pushed above.
+            let mut children: Vec<Vec<Type>> = (p.atoms.payloads.iter())
+                .map(|name| vec![p.atoms.names[name].payload.clone()])
+                .collect();
             for f in p.tuples.lens.values() {
                 if f.is_leaf() == Some(false) {
                     continue;
@@ -3421,12 +3467,18 @@ impl Search {
         self.least[t]
     }
 
-    /// The types whose values' heights bound those of `t`'s values: each atom's payload type and
-    /// each component of each tuple type of each tuple part.
+    /// The types whose values' heights bound those of `t`'s values: each atom's payload type that
+    /// lists something, and each component of each tuple type of each tuple part. A payload that
+    /// lists nothing (the empty type) has no value, so it bounds nothing: its least height is
+    /// `u64::MAX` and [`Heights::most_height`] takes nothing from it.
+    // Complexity tradeoff: the names with such a payload are read from `Atoms::payloads`, in
+    // O(log n) each, so a type pays for its payload atoms only. Naive alternative: read every
+    // atom name, which made the union of `n` bare atoms (`r11_names_family`, `n` such types
+    // each with `n` names) cost O(n^2) here and in the two functions below.
     fn height_children(t: &Type) -> Vec<Type> {
         let p = t.p();
-        let mut out: Vec<Type> = (p.atoms.names.values())
-            .map(|a| a.payload.clone())
+        let mut out: Vec<Type> = (p.atoms.payloads.iter())
+            .map(|name| p.atoms.names[name].payload.clone())
             .collect();
         for f in p.tuples.lens.values() {
             for row in f.distinct_atoms() {
@@ -3438,12 +3490,12 @@ impl Search {
 
     /// Bounds `(lo, hi)` on the height ([`Search::value_height`]) of every value of `t`, `hi`
     /// `u64::MAX` when none is known; `None` when `t` is shown to have no value. `lo` is
-    /// [`Search::least_height`]. `hi` is `u64::MAX` for a type on a cycle of the types it
+    /// [`Heights::least_height`]. `hi` is `u64::MAX` for a type on a cycle of the types it
     /// reaches through atom payloads and tuple components; for any other type it is the
     /// greatest over its parts: 0 for a scalar, a bare atom, a struct or a closure, `u64::MAX`
     /// for the atoms outside a finite set or the tuples of a length it holds all of, one more
     /// than the payload's `hi` for an atom with a payload, and for a tuple part one more than the
-    /// greatest component bound over its clauses ([`Search::part_heights`]). A type whose parts
+    /// greatest component bound over its clauses ([`Heights::part_heights`]). A type whose parts
     /// all have no value, or whose `lo` exceeds its `hi`, is `None`.
     ///
     /// Proof that the bounds hold, by induction on the order in which the types are bounded
@@ -3451,24 +3503,25 @@ impl Search {
     /// one of its parts. A scalar, a bare atom, a struct or a closure has height 0. An atom with
     /// a payload `v` of the payload type has height `1 + h(v)`, within one more than that
     /// type's bounds, which exist since `v` is a value of it. A tuple of a part satisfies one of
-    /// the part's clauses ([`Search::part_heights`]), so each component lies in every tuple type
+    /// the part's clauses ([`Heights::part_heights`]), so each component lies in every tuple type
     /// the clause takes, and its height in the meet of their bounds at that component: that
     /// meet is not empty, the clause was kept, and `h(x)` is one more than the greatest
     /// component height, at most one more than the greatest kept upper bound. A type on a cycle
     /// is given `hi = u64::MAX`, which bounds anything. So `h(x) <= hi`, and `lo <= h(x)` by
-    /// [`Search::least_height`]; a type with no part left or with `lo > hi` has no value.
+    /// [`Heights::least_height`]; a type with no part left or with `lo > hi` has no value.
     ///
     /// Use: the meet of a list of length `a` and a list of length `b != a`, written as nested
     /// `#cons` tuples (`R_a`, of height exactly `2a`), has no value, and the search that
     /// shows it walks `min(a, b)` levels of new meets; here each meet of the lists' suffixes is
-    /// bounded once in `O(1)` from the suffixes' bounds, kept for the search.
+    /// bounded once in `O(1)` from the suffixes' bounds, kept for every search
+    /// ([`height_bounds`]).
     // Complexity tradeoff: one walk of the types `t` reaches that are not bounded yet, by
     // Tarjan's algorithm for the cycles (Tarjan, "Depth-first search and linear graph
     // algorithms", SIAM J. Comput. 1, 1972), O(V + E) for the V types and E children, plus each
     // tuple part's clauses once, O(its literals times its length), plus `least_height`, O(E log
-    // E); kept for the rest of the search. Naive alternative: decide each meet by the search,
-    // which walks the shorter list once for each pair of lengths met, O(n^2) types for `n`
-    // lengths (the lists by the place of a 1 from the end, `verdict` at `n` 512: 263,783 types
+    // E); kept for every search ([`height_bounds`]). Naive alternative: decide each meet by the
+    // search, which walks the shorter list once for each pair of lengths met, O(n^2) types for
+    // `n` lengths (the lists by the place of a 1 from the end, `verdict` at `n` 512: 263,783 types
     // and 18.9 s; COMPLEXITY.md K126). Given up: a type on a cycle is bounded from below only,
     // so a meet of two cyclic types is left to the search; a part kept as an expression is
     // bounded through its tuple types as a union, or not at all.
@@ -3550,7 +3603,7 @@ impl Search {
         self.bounds[t]
     }
 
-    /// The greatest height over the parts of `t` ([`Search::height_bounds`]), every type `t`
+    /// The greatest height over the parts of `t` ([`Heights::height_bounds`]), every type `t`
     /// reaches outside its own cycle bounded already; `None` when no part may hold a value.
     fn most_height(&mut self, t: &Type) -> Option<u64> {
         let p = t.p();
@@ -3567,11 +3620,13 @@ impl Search {
         if p.atoms.cofinite || p.tuples.rest {
             take(u64::MAX);
         }
-        for a in p.atoms.names.values() {
-            if a.bare {
-                take(0);
-            }
-            if let Some((_, h)) = self.bounds[&a.payload] {
+        if p.atoms.bare_names > 0 {
+            take(0);
+        }
+        // Only the payloads that list something, as in `height_children`: those that list
+        // nothing are bounded `None` and take nothing.
+        for name in &p.atoms.payloads {
+            if let Some((_, h)) = self.bounds[&p.atoms.names[name].payload] {
                 take(h.saturating_add(1));
             }
         }
@@ -4389,7 +4444,7 @@ impl<'m> Searching<'m> {
             return Stack::ready(false);
         }
         // A type whose values' heights are bounded by an empty range has none
-        // ([`Search::height_bounds`]); like the diagonal, a fact of the type alone. Asked only
+        // ([`height_bounds`]); like the diagonal, a fact of the type alone. Asked only
         // of a type with an atom of a non-empty payload, as a list is: skipping it is sound, as
         // it only ever shows a type empty.
         // Complexity tradeoff: asked of every type, it cost each new type of a search the
@@ -4402,7 +4457,7 @@ impl<'m> Searching<'m> {
         // with a payload, and a tuple or a part that holds one reaches it a level down, where it
         // is asked. Given up: a tuple type whose components' heights clash is refuted by the
         // search at its components, not here.
-        if !t.p().atoms.payloads.is_empty() && self.s().height_bounds(t).is_none() {
+        if !t.p().atoms.payloads.is_empty() && height_bounds(t).is_none() {
             return Stack::ready(true);
         }
         let i = match self.s().met(t) {
@@ -10274,14 +10329,14 @@ impl<'m> Searching<'m> {
             return Stack::ready(b);
         }
         // A value whose height is outside the bounds on the heights of `u`'s values
-        // ([`Search::height_bounds`]) is not in `u`, read in O(1) once the bounds are made, where
+        // ([`height_bounds`]) is not in `u`, read in O(1) once the bounds are made, where
         // the test below walks the value against `u` level by level: for the lists by the place
         // of a 1 from the end, a list of length `k` tested against each of `n` types `G_i` of
         // least height `2i`, Θ(n²) levels in all (COMPLEXITY.md K126).
         {
             let mut s = self.s();
             if let Some(h) = s.value_height(v)
-                && (s.height_bounds(u)).is_none_or(|(lo, hi)| h < lo || hi < h)
+                && height_bounds(u).is_none_or(|(lo, hi)| h < lo || hi < h)
             {
                 s.members.insert(key, Some(false));
                 return Stack::ready(Some(false));

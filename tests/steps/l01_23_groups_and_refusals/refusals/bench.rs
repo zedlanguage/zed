@@ -1550,7 +1550,10 @@ fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
     // SUB-fork-place-512 (K126): the value search before the refusal met the lists of lengths
     // `a` and `b` for each pair, walking `min(a, b)` levels each, 263,783 types at 512; a type
     // whose bounds on its values' heights are an empty range is now empty at once
-    // (`Search::height_bounds`): 621M and 5.02G instructions, 8.09 times (32.4 times without).
+    // (`height_bounds` in `types/empty.rs`): 621M and 5.02G instructions, 8.09 times (32.4 times
+    // without). The bounds kept for every search since PERF-height-bounds-group-benches
+    // (COMPLEXITY.md, row PERF-height-bounds-group-benches): 587M and 4.76G, 8.11 times (load
+    // 73).
     refusal_scales(
         "Fork, by the place of a 1 from the end",
         64,
