@@ -948,6 +948,20 @@ expression: "tokens_by_key(&fences::design())"
  22 | rectArea ( w : f64 , h : f64 = w , scale : f64 = 1.0f ) -> f64 { w * h * scale }
  25 | @export ( str["c"] )
  26 | greet ( name : Utf8String ) -> Utf8String { str["Hello, " ${name} "!"] }
+ 29 | @export ( str["c"] )
+ 30 | vocab ( text : Utf8String ) = text . split ( str[" "] ) . group ( w -> w . lower ) :: domain ;
+ 33 | @export ( str["c"] )
+ 34 | repeats ( text : Utf8String ) -> Utf8String ->? bool {
+ 35 | text . split ( str[" "] ) . group ( w -> w . lower ) . map ( ws -> ws . count > 1₍10₎ )
+ 36 | }
+ 39 | @export ( str["c"] )
+ 40 | lookup ( m : Utf8String ->? bool , w : Utf8String ) -> bool | #notFound { m [ w ] }
+ 43 | @export ( str["c"] )
+ 44 | percent ( n : u8 ) -> int [ 0₍10₎ ..< 100₍10₎ ] | #over { «if» n < 100₍10₎ { n } «else» { #over } }
+ 47 | @export ( str["c"] )
+ 48 | spellings ( text : Utf8String ) -> ( Utf8String , Utf8String ) ->? i64 {
+ 49 | text . split ( str[" "] ) . group ( w -> ( w . lower , w ) ) . map ( ws -> ws . count )
+ 50 | }
 == DESIGN.md [sec:tour_basics] 1 L2
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
