@@ -1096,7 +1096,7 @@ pub fn decide(raw: &Bes) -> Decision {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Bes, Kind, Stamp, decide};
+    use super::{Answer, Bes, Edges, Kind, Scratch, Stamp, components, decide, gfp};
 
     /// After 2^32 - 1 advances the marks are cleared: a node marked under the first stamp is
     /// seen fresh again under the stamp of the same number (item TEST-types-unreached-paths;
@@ -1196,6 +1196,43 @@ mod tests {
             assert_ne!(got.answers[v], Answer::Refused, "node {v}");
             assert_eq!(got.answers[v] == Answer::Inhabited, want[v], "node {v}");
         }
+    }
+
+    /// The parent walk of the narrowed `gfp` skips a cut edge: `w` dies, but `p` never counted
+    /// its cut edge to `w`, so `p` stays inhabited through `x`. `decide` alone does not show
+    /// it (the random test passes without the skip): a `lo` that is too small is still sound,
+    /// and the later passes recover what it lost.
+    #[test]
+    fn the_narrowed_greatest_fixed_point_does_not_count_a_cut_edge_twice() {
+        let mut g = Bes::new();
+        let (p, w) = (g.add(Kind::Bot, vec![]), g.add(Kind::Bot, vec![]));
+        let x = g.add(Kind::Top, vec![]);
+        g.set(p, Kind::Or, vec![w, x]);
+        g.set(w, Kind::Or, vec![p]);
+        g.seal();
+        let sub = [p, w];
+        let mut sc = Scratch::new(g.len());
+        for (edges, comp) in [(Edges::Tuple, 0), (Edges::OrOr, 1)] {
+            for (i, c) in components(&g, &sub, edges, &mut sc.local)
+                .iter()
+                .enumerate()
+            {
+                for &v in c {
+                    let at = if comp == 0 {
+                        &mut sc.t_comp
+                    } else {
+                        &mut sc.o_comp
+                    };
+                    at[v as usize] = i as u32;
+                }
+            }
+        }
+        assert_eq!(sc.t_comp[p as usize], sc.t_comp[w as usize]);
+        assert_eq!(sc.o_comp[p as usize], sc.o_comp[w as usize]);
+        sc.lo[x as usize] = true;
+        gfp(&g, &sub, true, false, true, &mut sc);
+        assert!(sc.cur[p as usize], "p reads x, which holds");
+        assert!(!sc.cur[w as usize], "w's one edge is cut");
     }
 
     /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.

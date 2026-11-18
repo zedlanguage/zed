@@ -244,7 +244,16 @@ its module `build`, where `Part::expr` is private; `Part::connect` folds a leaf 
 form) assert that no operand is a leaf. The rule is stated on `enum Form`. The test
 `connecting_keeps_the_value_of_the_unfolded_expression` compares `connect` with the unfolded
 expression on 2000 random pairs, leaves mixed in, at all 64 assignments; with `a | false` made
-`false` it fails.
+`false` it fails. `xor::halves` proves at the site, from its callers' contract (two or more
+atoms), that neither operand is a leaf, so the claim does not rest on its `debug_assert`.
+
+The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
+the test removed from the walk, every `decide` test still passed, since a `lo` that is too small
+stays sound and the later passes recover it. The test
+`the_narrowed_greatest_fixed_point_does_not_count_a_cut_edge_twice` calls the narrowed `gfp`
+directly on an `Or` cycle with one way out and fails without the test (the `Or` node loses its
+one counted child). For an `And` parent the test in the walk is redundant: a cut child already
+makes it dead in the first pass.
 
 Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,
 and the cascade after it; no draw reaches it, and no proof yet: it needs an exit node true in
