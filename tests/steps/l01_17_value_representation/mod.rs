@@ -3,6 +3,10 @@
 //! `==` is IEEE 754 at floats and the bitwise identity of keys elsewhere; an atom carries a
 //! payload by position or by name; and `==` on functions waits for the enumerable domain
 //! their types give.
+// Proving the bench closures `Sync` (zed_tests::scaling::check) walks the kernel's nested types
+// deeper than rustc's default limit of 128; since nightly-2026-11-18 that is the lint
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), an error under clippy -D warnings.
+#![recursion_limit = "256"]
 
 mod asks;
 mod atoms;

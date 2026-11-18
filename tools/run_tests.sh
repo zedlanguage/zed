@@ -80,7 +80,10 @@
 # run directly gives itself by starting again, crate zed-meter-settings), writing its profiles
 # to <dir>/<piece>-<pid>.profraw; build scripts and the links made before the timed pieces write
 # <dir>/other-<pid>.profraw. Merge them with `llvm-profdata merge -sparse <dir>/*.profraw -o
-# <file>` and read them with `llvm-cov report` or `llvm-cov show` and the binaries the run built.
+# <file>` and read them with `llvm-cov report` or `llvm-cov show` and the binaries the run built,
+# both the toolchain's own (component llvm-tools, in `$(rustc --print
+# sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin`): the system's are of an older LLVM, which
+# refuses the compiler's raw profiles ("raw profile version mismatch", BUILD-parallel-frontend).
 # A coverage run's scaling verdicts are printed but not to be relied on: each pass of a loop adds
 # to a counter all threads share, and with tests beside each other the instruction counter read
 # up to 5% high (TEST-cov-scaling-noise). The short-addresses pieces are not built for coverage.

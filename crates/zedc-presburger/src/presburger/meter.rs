@@ -64,6 +64,10 @@ pub(super) type Eliminate = fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con
 /// from `project_each`: an import cycle (`s_01f_import_graph`). The solver builds this once
 /// (`presburger::SOLVER`) and gives it to the cover with each call, so the cover imports
 /// only this module and the formula's types (row PRES-cover-wire).
+/// An elimination step of the solver: the constraints with the atoms the predicate names
+/// removed, or `None` where it gives up.
+pub(super) type Eliminate = fn(&[Con], &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>>;
+
 #[derive(Clone, Copy)]
 pub(super) struct Solver {
     /// `presburger::satisfiable`.

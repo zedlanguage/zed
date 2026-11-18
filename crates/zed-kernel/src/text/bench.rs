@@ -70,8 +70,6 @@ fn a_chain_either_way_is_built_in_order_n() {
     }
 }
 
-/// A text of `n` pieces, each a different character, joined one at a time at the end
-
 #[test]
 fn try_flat_of_a_join_costs_its_length() {
     // One walk over the blocks into memory asked for once: order `n` in the blocks, so 8n

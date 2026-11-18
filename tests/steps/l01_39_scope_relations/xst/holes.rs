@@ -662,9 +662,9 @@ fn staircase(n: usize) -> Inst {
 /// Laps whose other names also lack the value `r - i`.
 fn mixed(n: usize, r: i64) -> Inst {
     let mut inst = laps(n, r);
-    for i in 1..n {
+    for (i, out) in inst.out[..n].iter_mut().enumerate().skip(1) {
         if i != n / 2 {
-            inst.out[i] = vec![r - i as i64];
+            *out = vec![r - i as i64];
         }
     }
     inst

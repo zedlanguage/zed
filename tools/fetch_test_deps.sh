@@ -5,8 +5,8 @@
 # from its pool, so a 404 means the versions below need updating.
 #   aarch64/, riscv64/   target sysroots: glibc, libgcc and libstdc++ (the Fedora aarch64
 #                        sysroot package has no libgcc, and Fedora has no riscv64 one)
-#   rust/                the official rustc with std for both targets; Fedora's rustc
-#                        rejects the official std with E0514, so target builds use this
+#   rust-<pin>/          the official rustc with std for both targets, of the build the root's
+#                        rust-toolchain.toml pins (rustup's toolchain has only the host's std)
 #   bin/                 <target>-cc, clang with the flags for each sysroot
 #   podman/              storage for tests, apart from the user's own Podman config
 #   rustup/              the context of the image with rustup that s09_release runs
@@ -17,8 +17,9 @@ ubuntu=http://archive.ubuntu.com/ubuntu/pool/main
 rust=https://static.rust-lang.org/dist
 image=docker.io/library/alpine:3.20
 
-fetch() { # url sha256
-  file=$deps/dl/$(basename "$1")
+fetch() { # url sha256 [file under dl/, by default the url's last part]
+  file=$deps/dl/${3:-$(basename "$1")}
+  mkdir -p "$(dirname "$file")"
   [ -e "$file" ] || curl -fsSL -m 300 -o "$file" "$1"
   echo "$2  $file" | sha256sum -c --quiet -
 }
@@ -29,9 +30,10 @@ deb() { # sysroot-dir path sha256
   mkdir -p "$unpack" "$deps/$1"
   (pushd "$unpack" >/dev/null && ar x "$deps/dl/$name" && tar xf data.tar.* -C "$deps/$1")
 }
-component() { # name sha256: a component of the official toolchain
-  fetch "$rust/$1.tar.xz" "$2"
-  tar xf "$deps/dl/$1.tar.xz" -C "$deps/dl"
+component() { # path sha256: a component of the official toolchain, path <date>/<name> for a
+  # nightly, kept and unpacked under dl/<date>/, so two nightlies' files of one name never mix
+  fetch "$rust/$1.tar.xz" "$2" "$1.tar.xz"
+  tar xf "$deps/dl/$1.tar.xz" -C "$deps/dl/$(dirname "$1")"
 }
 
 g=g/gcc-15-cross
@@ -51,14 +53,23 @@ deb aarch64 $g/libgcc-15-dev-arm64-cross_15.2.0-4ubuntu4cross1_all.deb 5b501c0cb
 deb aarch64 $g/libstdc++6-arm64-cross_15.2.0-4ubuntu4cross1_all.deb ea227e0bab954ec1fcbd9012e5a3487d2d344ae1aebb91c7a92db98646be2e53
 deb aarch64 $g/libstdc++-15-dev-arm64-cross_15.2.0-4ubuntu4cross1_all.deb 9bd8daaadc2eb5e9cf564e88fca5d7259c06fd47ea80d38b8f766ab99e611449
 
+# The build the root's rust-toolchain.toml pins, in rust-<pin>/, one directory per pin, so that a
+# new pin never leaves the old one's libraries beside its own (two std crates for one target are
+# error E0464). The hashes are the xz_hash entries of
+# https://static.rust-lang.org/dist/<date>/channel-rust-nightly.toml; s09_release checks that the
+# paths below name the pin.
+pin=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$(dirname "$0")/../rust-toolchain.toml")
+[ -n "$pin" ] || { echo "rust-toolchain.toml names no channel"; exit 1; }
 host=x86_64-unknown-linux-gnu
-component rustc-1.99.1-$host 2ff05ff9c08a90861e7f6e4065b40a8b87463b4576186fd613871c3e37f2091f
-component rust-std-1.99.1-$host 109b074225bf5b9ea3820890876bfdf4ed161adbfaf94b2b4b5984c85ee5d958
-component rust-std-1.99.1-aarch64-unknown-linux-gnu e25668477083d6a9ddb87b9beb9c00742225f38233ccb4bfba3afa7a07427f52
-component rust-std-1.99.1-riscv64gc-unknown-linux-gnu 0fe2aa8294281e16886a101466160ec460ed99e51c8af11e1c76f88f8bd0de6b
-cp -a "$deps/dl/rustc-1.99.1-$host/rustc/." "$deps/rust/"
+component 2026-11-18/rustc-nightly-$host 579543c68dd2bd8384b5a814dbfa6e9a9699747540f960a616be827a32892219
+component 2026-11-18/rust-std-nightly-$host cea426225a818c536a0b152f6f7132a24d46599803df59957274b9004d116b3a
+component 2026-11-18/rust-std-nightly-aarch64-unknown-linux-gnu 41ca4f4537ba435a94e6b6ce9f3418c4d90dafe7258a353f2d802103cfeb2eb5
+component 2026-11-18/rust-std-nightly-riscv64gc-unknown-linux-gnu 772fa3d5c76abd667083a32a63a89fe8b24ff19e273ba4bd08bf0ddc16a1a74f
+date=${pin#nightly-}
+mkdir -p "$deps/rust-$pin/lib/rustlib"
+cp -a "$deps/dl/$date/rustc-nightly-$host/rustc/." "$deps/rust-$pin/"
 for t in $host aarch64-unknown-linux-gnu riscv64gc-unknown-linux-gnu; do
-  cp -a "$deps/dl/rust-std-1.99.1-$t/rust-std-$t/lib/rustlib/$t" "$deps/rust/lib/rustlib/"
+  cp -a "$deps/dl/$date/rust-std-nightly-$t/rust-std-$t/lib/rustlib/$t" "$deps/rust-$pin/lib/rustlib/"
 done
 
 for a in aarch64 riscv64; do
@@ -80,14 +91,11 @@ CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error pull 
 
 # The image localhost/zed-test-rustup:<pin>, with rustup, the toolchain the root's
 # rust-toolchain.toml pins and an older default, 1.98.0, for the full piece s09_release, which
-# checks that rustup picks the pin over the default (BUILD-toolchain-pin-rustup). The test machine
-# has no rustup, and the test runs the container with no network, so rustup and both toolchains
-# are installed here, at build time. rustup-init is the musl build (the image is Alpine), checked by
+# checks that rustup picks the pin over the default (BUILD-toolchain-pin-rustup). The test runs
+# the container with no network, so rustup and both toolchains are installed here, at build time. rustup-init is the musl build (the image is Alpine), checked by
 # its SHA-256 like every file above; rustup checks each toolchain it installs against the SHA-256
 # in the release's manifest, fetched over HTTPS. The toolchains need libgcc_s. A new pin needs
 # this script run again; until then the test finds no image of that tag.
-pin=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$(dirname "$0")/../rust-toolchain.toml")
-[ -n "$pin" ] || { echo "rust-toolchain.toml names no channel"; exit 1; }
 fetch https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-musl/rustup-init 1552169aba2836777136ccff7a381e95c17233b5d8250cd5e10ae3cb971bfcfc
 mkdir -p "$deps/rustup"
 install -m 755 "$deps/dl/rustup-init" "$deps/rustup/rustup-init"

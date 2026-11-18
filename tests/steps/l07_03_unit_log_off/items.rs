@@ -43,8 +43,8 @@ fn below_layer_l7_the_text_is_not_the_unit_item() {
             .map(|n| tree.name(n).to_string())
             .collect::<Vec<_>>()
     };
-    assert!(names(7).contains(&"UnitAnnot".to_string()));
-    assert!(names(TOP).contains(&"UnitAnnot".to_string()));
+    assert!(names(7).iter().any(|i: &String| i == "UnitAnnot"));
+    assert!(names(TOP).iter().any(|i: &String| i == "UnitAnnot"));
     // An annotation followed by `;` is never `@log` on the statement `(#off);`, at any layer,
     // so a unit's tree does not change between layers: below L7 the text does not parse.
     for ring in 1..7 {

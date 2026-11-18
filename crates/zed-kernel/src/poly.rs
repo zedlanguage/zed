@@ -1372,7 +1372,7 @@ impl<'t> Identity<'t> {
             return None;
         }
         let mut found = Vec::with_capacity(self.binders);
-        for b in 0..self.binders {
+        for (b, name) in self.names[..self.binders].iter().enumerate() {
             let v = u32::try_from(b).expect("fewer than 2^32 binders");
             let mut reduced: HashMap<(K, u64), u64> = HashMap::new();
             for (k, c) in &cur {
@@ -1406,7 +1406,7 @@ impl<'t> Identity<'t> {
             }
             let (x, left) = next?;
             cur = left;
-            found.push((self.names[b].clone(), BigInt::from(x)));
+            found.push((name.clone(), BigInt::from(x)));
         }
         Some(Point(found))
     }

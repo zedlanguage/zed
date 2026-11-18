@@ -32,7 +32,7 @@ fn a_definition_computed_from_build_stage_names_is_build_stage_and_built() {
         );
     }
     assert!(
-        report.built.contains(&"mode".to_string()),
+        report.built.iter().any(|i: &String| i == "mode"),
         "{:?}",
         report.built
     );
@@ -53,7 +53,7 @@ fn the_constants_partial_evaluation_computes_are_built_and_write_as_the_program_
     let (p, s, report) = staged(src);
     for name in ["big", "nan", "ninf"] {
         assert!(
-            report.built.contains(&name.to_string()),
+            report.built.iter().any(|i: &String| i == name),
             "{name}: {:?}",
             report.built
         );
@@ -72,7 +72,7 @@ fn an_else_whose_value_fails_at_build_is_built_to_its_default() {
     assert_eq!(term(&s, "v"), "5");
     assert_eq!(term(&s, "w"), "4");
     assert!(
-        report.built.contains(&"v".to_string()),
+        report.built.iter().any(|i: &String| i == "v"),
         "{:?}",
         report.built
     );
@@ -89,7 +89,7 @@ fn a_tuple_a_lambda_and_a_cast_are_built() {
     let (p, s, report) = staged(src);
     for name in ["pair", "r"] {
         assert!(
-            report.built.contains(&name.to_string()),
+            report.built.iter().any(|i: &String| i == name),
             "{name}: {:?}",
             report.built
         );
@@ -106,12 +106,12 @@ fn a_definition_a_test_reads_is_demanded() {
                main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n";
     let (_, _, report) = staged(src);
     assert!(
-        !report.unread.contains(&"g".to_string()),
+        !report.unread.iter().any(|i: &String| i == "g"),
         "{:?}",
         report.unread
     );
     assert!(
-        !report.unread.contains(&"k".to_string()),
+        !report.unread.iter().any(|i: &String| i == "k"),
         "{:?}",
         report.unread
     );

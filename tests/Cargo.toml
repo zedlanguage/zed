@@ -316,9 +316,7 @@ spec = []
 short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
 
 [dependencies]
-insta.workspace = true
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
-zed-corpus-ref.workspace = true
 zed-tools.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
@@ -327,7 +325,6 @@ zed-kernel.workspace = true
 zed-native = { workspace = true, features = ["counts"] }
 zed-rt = { workspace = true, features = ["counts"] }
 stacker.workspace = true
-unicode-ident.workspace = true
 unicode-normalization = "0.1.26"
 num-bigint = "0.4.8"
 num-integer = "0.1"
@@ -349,7 +346,10 @@ rustix.workspace = true
 # dylib, whose file name does not change with its features, and a build with others would
 # overwrite the one every test binary loads; object as zed-native's tests have it.
 [dev-dependencies]
-zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+# Used by the test targets only, not by the library under tests/src.
+insta.workspace = true
+zed-corpus-ref.workspace = true
+zedc-presburger ={ workspace = true, features = ["two-at-a-time"] }
 object = { workspace = true, features = ["build"] }
 # target-lexicon, under zed-native's cranelift-codegen, with `std`, which cranelift-reader
 # (through zed-clif) gives it in the workspace build (see crates/zed-native/Cargo.toml).

@@ -516,8 +516,7 @@ impl<'t> Lower<'t> {
                 s
             }
         };
-        for j in from + 1..=k {
-            let f = &mut self.frames[j];
+        for f in &mut self.frames[from + 1..=k] {
             f.captures.push(s);
             f.region.args.push(Edge::State(p.clone()));
             s = Src::Arg(f.region.args.len() - 1);
@@ -631,8 +630,7 @@ impl<'t> Lower<'t> {
         // the frame outside it reads in place, and otherwise sends the read where that frame
         // does. A function region holding `p`'s state stopped the walk, so none is passed here.
         let mut a = base;
-        for i in j + 1..=k {
-            let f = &mut self.frames[i];
+        for (i, f) in (j + 1..).zip(&mut self.frames[j + 1..=k]) {
             let body = matches!(f.region.kind, RegionKind::Loop | RegionKind::Function);
             if !body && a == i - 1 {
                 a = i;

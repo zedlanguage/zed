@@ -42,7 +42,7 @@ pub(crate) fn call(
     let stack = Stack::new().map_err(|e| (e, None))?;
     let taken = std::mem::replace(ev, Evaluator::new(World::new()));
     hooks::install(hooks::State::new(t, taken));
-    let w = stack.run(|| root());
+    let w = stack.run(root);
     drop(stack);
     let mut s = hooks::remove();
     let r = hooks::finish(&s.t, &mut s.run, w);

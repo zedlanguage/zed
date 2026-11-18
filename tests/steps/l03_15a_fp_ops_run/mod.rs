@@ -10,6 +10,10 @@
 //! kernel primitives the row adds on their own; `runs` checks the words built so far three
 //! ways (the M0 model, `zedc run`, an executable); `bench` measures them at n and 8n.
 //! COMPLETENESS.md lists each case and the test that covers it.
+// Proving the bench closures `Sync` (zed_tests::scaling::check) walks the kernel's nested types
+// deeper than rustc's default limit of 128; since nightly-2026-11-18 that is the lint
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), an error under clippy -D warnings.
+#![recursion_limit = "256"]
 
 mod bench;
 mod cases;

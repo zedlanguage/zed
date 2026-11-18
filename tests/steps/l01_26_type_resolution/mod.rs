@@ -2,6 +2,10 @@
 //! body; a bare numeric literal adopts the carrier an operator or a parameter expects,
 //! exactly or not at all; an `is` test narrows the name it tests; a function argument fits
 //! the function type its slot expects.
+// Proving the bench closures `Sync` (zed_tests::scaling::check) walks the kernel's nested types
+// deeper than rustc's default limit of 128; since nightly-2026-11-18 that is the lint
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), an error under clippy -D warnings.
+#![recursion_limit = "256"]
 
 mod adoption;
 mod always_fails;

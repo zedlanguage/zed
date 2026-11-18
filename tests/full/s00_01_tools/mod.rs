@@ -101,7 +101,7 @@ fn rust_builds_for_each_target() {
     let dir = scratch("rust");
     let src = dir.join("p.rs");
     std::fs::write(&src, RUST_PROGRAM).unwrap();
-    let rustc = deps().join("rust/bin/rustc");
+    let rustc = deps().join(format!("rust-{}/bin/rustc", crate::s09_release::pinned()));
     for (arch, triple) in [
         ("aarch64", "aarch64-unknown-linux-gnu"),
         ("riscv64", "riscv64gc-unknown-linux-gnu"),

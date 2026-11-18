@@ -1768,7 +1768,14 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 
 ## Decisions made
 
-- Toolchain: Fedora's rustc and cargo 1.99.1, edition 2024. CI uses the stable toolchain.
+- Toolchain: the dated nightly `nightly-2026-11-18` (rustc 1.102.0-nightly 59cbdee2e), pinned in
+  `rust-toolchain.toml` and installed by rustup, edition 2024 (BUILD-parallel-frontend, author
+  P389, P393, P395; until 2026-11-18 Fedora's and then the upstream rustc 1.99.1). A nightly
+  for its parallel front end, `-Zunstable-options --jobs-frontend=N`, set in
+  `.cargo/config.toml` and in zrun. CI (turned off) installs stable, but its rustup reads
+  `rust-toolchain.toml` and installs the pin; a stable rustc refuses the `-Z` flag. Cargo keeps
+  the old layout of its build directory (`[unstable] build-dir-new-layout = false`), which the
+  build tools read; BUILD-new-layout moves them to the new one.
 - Cargo's target directory is `build/cargo`, set in `.cargo/config.toml`.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.

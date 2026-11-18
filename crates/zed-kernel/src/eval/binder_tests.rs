@@ -512,7 +512,7 @@ fn a_node_under_two_binders_keeps_every_name_either_needs() {
                 "{what}: {got:?} ⊉ {tree:?}"
             );
             assert!(got.iter().all(|x| x == "x" || x == "y"), "{what}: {got:?}");
-            assert!(got.contains(&"y".to_string()), "{what}: {got:?}");
+            assert!(got.iter().any(|i| i == "y"), "{what}: {got:?}");
         }
     }
 }

@@ -70,15 +70,13 @@ fn a_default_in_one_branch_names_nothing_in_the_other() {
     );
     // The derivation follows: the `if`, its branches, and the call's declaration.
     assert!(
-        notes.contains(
-            &"this `if` gives int | #notFound \
+        notes.iter().any(|i: &String| i == "this `if` gives int | #notFound \
               [if c > 0 { lookup(1) else #notFound } else { lookup(2) }]"
-                .to_string()
         ),
         "{notes:#?}"
     );
     assert!(
-        notes.contains(&"this call of `lookup` gives int | #notFound [lookup(2)]".to_string()),
+        notes.iter().any(|i: &String| i == "this call of `lookup` gives int | #notFound [lookup(2)]"),
         "{notes:#?}"
     );
     assert!(

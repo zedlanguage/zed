@@ -94,11 +94,11 @@ fn the_engine_reads_a_grammar_over_characters() {
     assert_eq!(run("Word", "_").0, Some(1));
     let (end, far, expected) = run("Word", "9a");
     assert_eq!((end, far), (None, 0));
-    assert!(expected.contains(&"Class".to_string()), "{expected:?}");
+    assert!(expected.iter().any(|i: &String| i == "Class"), "{expected:?}");
     let (end, far, expected) = run("All", "xyz");
     assert_eq!((end, far), (Some(3), 3));
     assert!(
-        expected.contains(&r#"Name("ANY")"#.to_string()),
+        expected.iter().any(|i: &String| i == r#"Name("ANY")"#),
         "{expected:?}"
     );
     assert_eq!(run("Esc", "\n\0").0, Some(2));
@@ -110,14 +110,14 @@ fn the_engine_reads_a_grammar_over_characters() {
     let (end, _, expected) = run("Undef", "a");
     assert_eq!(end, None);
     assert!(
-        expected.contains(&r#"Name("Missing")"#.to_string()),
+        expected.iter().any(|i: &String| i == r#"Name("Missing")"#),
         "{expected:?}"
     );
     // Characters have no token kinds.
     let (end, _, expected) = run("Tok", "a");
     assert_eq!(end, None);
     assert!(
-        expected.contains(&r#"Name("IDENT")"#.to_string()),
+        expected.iter().any(|i: &String| i == r#"Name("IDENT")"#),
         "{expected:?}"
     );
     assert_eq!(run("Empty", "").0, Some(0));

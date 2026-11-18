@@ -679,7 +679,7 @@ fn composition_checked(name: &str, sys: &System, at: &str) -> Option<bool> {
         "{at}, least, {name}: {sys:?}"
     );
     if name == "cycle" {
-        for root in 0..n {
+        for (root, want) in oracle.projection[..n].iter().enumerate() {
             let domains: Vec<Domain> = sys
                 .domains
                 .iter()
@@ -698,7 +698,7 @@ fn composition_checked(name: &str, sys: &System, at: &str) -> Option<bool> {
                 .collect();
             assert_eq!(
                 cycle_marginal(&domains, &weights),
-                oracle.projection[root],
+                *want,
                 "{at}, cycle_marginal, root {root}: {sys:?}"
             );
         }

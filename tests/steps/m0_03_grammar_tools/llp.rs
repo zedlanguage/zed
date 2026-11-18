@@ -71,7 +71,7 @@ fn two_stacks_for_one_pair_are_a_conflict_and_one_stack_is_not() {
     assert_eq!(r.starts, 1);
     let stacks = &r.stacks_of["'x' 'n'"];
     assert_eq!(stacks.len(), 2);
-    assert!(stacks.contains(&"[A]".to_string()) && stacks.contains(&"[B]".to_string()));
+    assert!(stacks.iter().any(|i| i == "[A]") && stacks.iter().any(|i| i == "[B]"));
     // The pair is read at the item whose dot follows `x`, an item of `Item`.
     assert_eq!(r.conflicts["Item"], ["'x' 'n'"]);
     assert!(r.ll1["Item"] > 0);
@@ -138,7 +138,7 @@ fn head_copies_give_conflicts_that_a_token_after_the_head_removes() {
     let r = report(&g, "");
     assert!(r.head_only > 0, "{:?}", r.stacks_of);
     let stacks = &r.stacks_of["'if' 'n'"];
-    assert!(stacks.contains(&"[E@head]".to_string()), "{stacks:?}");
+    assert!(stacks.iter().any(|i| i == "[E@head]"), "{stacks:?}");
     let r = report(&g, "h: end of head -> HEAD_END");
     assert_eq!(r.head_only, 0, "{:?}", r.stacks_of);
     assert!(!r.stacks_of.contains_key("'if' 'n'"), "{:?}", r.stacks_of);
@@ -148,7 +148,7 @@ fn head_copies_give_conflicts_that_a_token_after_the_head_removes() {
         &read_rules("h: end of head -> HEAD_END").expect("rules"),
     )
     .expect("reads");
-    assert!(cfg.terms.contains(&"HEAD_END".to_string()));
+    assert!(cfg.terms.iter().any(|i| i == "HEAD_END"));
     assert!(
         !cfg.nts.iter().any(|n| n.contains("@head")),
         "{:?}",
@@ -161,7 +161,7 @@ fn lookaheads_are_listed_and_left_recursion_is_rewritten() {
     let g = small("Item = 'x' !'y' L ';'  L1\nL = L '+' 'n'  L1\n  | 'n'  L1\n");
     let cfg = Cfg::of(&g, "Unit", &[]).expect("reads");
     assert!(cfg.dropped.contains("Item: !'y'"), "{:?}", cfg.dropped);
-    assert!(cfg.nts.contains(&"L~".to_string()), "{:?}", cfg.nts);
+    assert!(cfg.nts.iter().any(|i| i == "L~"), "{:?}", cfg.nts);
     let r = report(&g, "");
     assert!(r.left.is_empty(), "{:?}", r.left);
     // Left recursion through another rule is listed, not rewritten.

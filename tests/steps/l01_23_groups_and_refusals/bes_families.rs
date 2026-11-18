@@ -1051,8 +1051,8 @@ pub mod reference {
     fn classical(gm: &Game, work: &mut u64) -> Vec<bool> {
         let n = gm.p2.len();
         let mut pred = vec![vec![]; n];
-        for v in 0..n {
-            for &w in &gm.succ[v] {
+        for (v, succ) in gm.succ[..n].iter().enumerate() {
+            for &w in succ {
                 pred[w as usize].push(v as u32);
             }
         }

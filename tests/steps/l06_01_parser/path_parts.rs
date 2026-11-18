@@ -45,9 +45,7 @@ fn an_update_in_the_default_of_an_else_with_an_atom_pattern_is_on_some_paths() {
             "{src}"
         );
         assert!(
-            notes(&src, &e).contains(
-                &"`c*.a` updates `c` only on the paths through the default of the `else` [c*.a]"
-                    .to_string()
+            notes(&src, &e).iter().any(|i| i == "`c*.a` updates `c` only on the paths through the default of the `else` [c*.a]"
             ),
             "{src}"
         );

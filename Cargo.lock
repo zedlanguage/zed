@@ -1149,7 +1149,6 @@ dependencies = [
  "rustix",
  "stacker",
  "target-lexicon",
- "unicode-ident",
  "unicode-normalization",
  "zed-alloc-count",
  "zed-corpus-ref",

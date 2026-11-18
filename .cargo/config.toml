@@ -1,3 +1,14 @@
 # Every generated file goes under build/, which git ignores (see docs/layout.md).
 [build]
 target-dir = "build/cargo"
+# The compiler's front end on several threads (BUILD-parallel-frontend; nightly only, see
+# rust-toolchain.toml). /home/luke/Work/wt/zrun sets RUSTFLAGS, which replaces this list, so it
+# passes the same flags itself; keep the two the same.
+rustflags = ["-Zunstable-options", "--jobs-frontend=8"]
+
+[unstable]
+# Cargo 1.100 and later put each unit in a directory of its own, build/<package>/<hash>/, with no
+# deps/ or .fingerprint/. zrun's rpaths (<profile>/deps), tests/src/scratch.rs and the build
+# tools in /home/luke/Work/wt (build-stale-units.mjs) read the old layout, which this keeps
+# (BUILD-new-layout moves them to the new one).
+build-dir-new-layout = false

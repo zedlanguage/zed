@@ -553,7 +553,7 @@ fn cover(
                     let (filled, left) = projection::ranges(&open, work)?;
                     c = c.join(&filled);
                     let known = found.join(&c);
-                    tails = Vec::new();
+                    tails.clear();
                     let mut listed = Vec::new();
                     for t in left {
                         // The difference below reads each piece of `known` inside the tail's

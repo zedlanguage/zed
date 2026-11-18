@@ -5,6 +5,10 @@
 //! nested deep; and the suites of the cross-reviews xst and LAZY-hub-xr. The other tests of
 //! L1.39, and the step's COMPLETENESS.md, are in l01_39_reduced_product; the folder is split so
 //! that an edit to either half rebuilds only that half (rule in docs/layout.md, Tests).
+// Proving the bench closures `Sync` (zed_tests::scaling::check) walks the kernel's nested types
+// deeper than rustc's default limit of 128; since nightly-2026-11-18 that is the lint
+// `recursion_depth_exceeding_limit` (rust-lang/rust#159228), an error under clippy -D warnings.
+#![recursion_limit = "256"]
 
 mod case_wake;
 mod deep_condition;

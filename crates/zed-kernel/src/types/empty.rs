@@ -8694,10 +8694,8 @@ impl<'m> Searching<'m> {
                 u = nodes[u].up[17];
                 k -= 1 << 17;
             }
-            for b in 0..17 {
-                if (k >> b) & 1 != 0 {
-                    u = nodes[u].up[b];
-                }
+            for b in (0..17).filter(|b| (k >> b) & 1 != 0) {
+                u = nodes[u].up[b];
             }
             u
         };
