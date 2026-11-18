@@ -50,7 +50,8 @@ TEST-types-unreached-paths-2.
 | Subtyping, meets and differences of `Ty` through programs: records, payloads, tuples with variables, refused buckets and their text | `tests/steps/l01_22_type_representation/kinds.rs`; `tests/steps/l01_23_subtyping/` | |
 | Union, `is` narrowing, literals, fits and calls in the checker | `tests/steps/l01_26_type_resolution/`, `l01_26a_generic_literals/` (their COMPLETENESS.md) | |
 | Loose atoms, `else` and `#errs` | `tests/steps/l01_27_absences/` | |
-| Debug text: `debug_need`, `write_debug`, `debug_ty`, the `fmt` impls at 1209 and 3380, the hasher `write` at 800 | | Debug text is for developers and DESIGN gives none |
+| Debug text: `write_debug`, `debug_ty`, the `fmt` impls at 1209 and 3380, the hasher `write` at 800 | | Debug text is for developers and DESIGN gives none |
+| Debug text of a signature's needs (`debug_need`): every kind of need, holding a type, written as the derived `Debug` of `Need` writes it | l01_26 `deep_ops.rs` `a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it` | It failed before TEST-types-unreached-paths-2: `Need::alike`, `Need::via`, `Component`'s site and `Remap`'s rank were left out |
 | `Facts` `eq` and `hash` (2255, 2263) | | Constant bodies (`true`, nothing hashed): the facts are a cache that takes no part in equality |
 | `Via` `eq`, `hash` and the loop of its `Drop`: two types that carry call chains compared, a shared chain dropped | `ty.rs` unit test `two_chains_of_calls_are_equal_link_by_link` | |
 | `unreachable!` arms in `made_held` (2022, 2064) | | Unreachable by the match above each |
@@ -65,3 +66,24 @@ TEST-types-unreached-paths-2.
 | `through_fn`: two function types whose arrows take different numbers of parameters | l01_26 `deep_ops.rs`, the mismatched pairs | |
 | A lambda in a slot of several function types (checker, `check/walk.rs` `lambda_takes`, `lambda_in_fns`): fitted to the one whose parameter names and number it matches, reordered by name; among several the names match, those its written parameter types take; where several remain with one kind per parameter, checked alone with those kinds; refused when its names match none | l01_26 `fits.rs` `a_lambda_in_a_union_slot_is_fitted_to_the_function_type_its_parameters_fit`, the test after it and `a_lambda_whose_names_fit_several_function_types_of_a_union_is_chosen_by_its_written_types`; `held_functions.rs` | |
 | `Bound`: the shapes of a bucket pinned by bindings, filed in a compressed trie by their places and variables; insert, remove (a node left with no shape and one child is joined into its edge) and the members a row allows | `ty.rs` `bound_trie_agrees_with_a_map_of_paths` (4000 random steps against a map of paths, and the trie's invariants); l01_26 `bench/fits.rs` `shapes_pinned_at_n_different_sets_of_places_scale` | A shape moved by many separate grows is row TEST-types-bound-pin-moves-adversarial |
+
+Row TEST-types-unreached-paths-2 (2026-11-17), from a fresh coverage run of the whole local
+suite: llvm-cov `show` run on each object alone (each test binary, `libzedc_types` and
+`libzed_kernel`), since one merged report drops the counts of every function whose profile
+does not match. To find an input for a line, a probe build (never merged) recorded which
+unreached lines each case of the random and recursive-system tests ran, over seeds 1 to 400.
+What this pass did:
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| zed-kernel `types/empty.rs` (`nested_pieces` after `laminar_pieces` leaves a test undecided, `read_two_sat`'s unit clause, the two-literal meet asked twice, `swept`'s unordered rows, three branches of `affine_lists_empty`, four of `tuples`) and `types/bdd.rs` (a meet whose left keys are fewer): 49 lines | l01_23_subtyping `oracle.rs` `the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle` (eleven recursive systems, each compared both ways and met, against the closure oracle) | |
+| `empty/sweep.rs`: a list sweep's `Inhabited` witness for which `check_list_value` finds no row, so `list_sweep` declines; `empty.rs` prefix chains: the memo of the last miss read again, an emitting node's head evaluated on a memo miss, a partial negative group whose remaining head is cut to empty; `bdd.rs`: two sets of nodes ordered where the first side's subtree is the smaller | l01_23_groups_and_refusals `sweep_agreement.rs` `the_random_tests_under_seeds_reaching_rare_paths_agree_with_their_oracles` (positive chains under seeds 153 and 339, R7 spine choices under 11, random links under 12; each case against its oracle) | A change to a generator moves these cases off the lines: to find seeds again, record the lines each case runs over seeds 1 to 400 |
+| `laminar_pieces` on cells whose parents form a cycle | l01_23_groups_and_refusals `sweep_agreement.rs` `the_search_ends_when_cells_are_read_as_nested_in_a_cycle` | Found by this pass: the search did not end (seed 256, case 394 of the random chains). Inside the search a cell's test can read a type still being decided, so the cells `cons(int \ 1 \ 2, _)`, `cons(int \ 1, _)` and a third were read as each strictly inside the next, round a cycle, and the walk to the root never ended. Cells read so are now counted as crossing (the check is O(n), one visited mark per cell); the case is inhabited (`[3]`) and is decided so |
+| The delegating `==`, orders and texts of the kernel's types and parts (`debug.rs` `fmt` of `Node`, `Row`, `Morphism`; `types.rs` `Arrow` `eq`, `Lits` `partial_cmp`, `Refusal` `Display`; `bdd.rs` `Part`, `Expr`, `Bdd`) | zed-kernel unit tests `types::tests::the_delegating_orders_and_texts_of_types_agree_with_what_they_delegate_to`, `types::bdd::tests::the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to` | |
+| `fn_cover` returning `Cover::Together` | `ty.rs` unit test `a_fit_with_functions_in_the_results_has_each_verdict_on_built_cases`, the built Together case | |
+| Failure branches of test helpers (`ty.rs` 20235-6, 22296, 22421, 22676, 23500; zed-kernel `bucket.rs` 403, `rec/group.rs` 864, `empty.rs` 14353) | | A panic or assertion message, run only when its test fails |
+| Branches of test references and random draws not taken (`ty.rs` 19701, 22241, 23050, 23071-2, 23543) | | The paths of the product they stand for are tested by the built cases named in each test |
+
+The rest of the list, most of it early returns in `ty.rs` and the zed-kernel functions
+`find_prefix_chains`, `check_chain_witness`, `tuples_on`, `morphisms`, `print.rs` and `bes.rs`,
+is row TEST-types-unreached-paths-3.
