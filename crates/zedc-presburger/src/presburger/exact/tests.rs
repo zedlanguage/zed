@@ -2,6 +2,8 @@ use super::super::meter::SOLVER_STEP;
 use super::super::{SOLVER, Shared, member, project_each_exact};
 use super::*;
 
+mod columns;
+
 /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
 /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
 struct Rng(u64);

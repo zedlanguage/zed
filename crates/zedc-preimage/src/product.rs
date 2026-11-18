@@ -7514,6 +7514,17 @@ fn mentioned(text: &str, names: impl IntoIterator<Item = Arc<str>>) -> Vec<Arc<s
         .collect()
 }
 
+/// [`mentioned`] of the text of `f` ([`Formula::written`] through [`written_name`]), read off
+/// its constraints ([`Formula::written_names`]) and not the text: the same names, as the names
+/// of the text are those of its constraints' texts. O(c + n) for the c constraints of the
+/// distinct nodes of `f`, where the text may be as long as `f` written out as a tree.
+fn mentioned_by(f: &Formula, names: impl IntoIterator<Item = Arc<str>>) -> Vec<Arc<str>> {
+    let written = f.written_names(written_name);
+    (names.into_iter())
+        .filter(|n| written.contains(written_name(n)))
+        .collect()
+}
+
 /// The names `f` mentions, as the scope holds them, the factors of a product included. O(c log
 /// a) for c constraints and a atoms.
 fn syms_of(f: &Formula) -> impl Iterator<Item = Arc<str>> {
@@ -12678,7 +12689,7 @@ impl Scope {
                     .collect();
                 let between = Formula::and(gs.into_iter().map(|g| (**g).clone()).collect());
                 let constraint: Arc<str> = between.written(written_name).into();
-                let on = mentioned(&constraint, syms_of(&between));
+                let on = mentioned_by(&between, syms_of(&between));
                 let mut holed: Vec<Arc<str>> = holed
                     .iter()
                     .map(|&i| written_name(&names[i]).into())
@@ -14846,7 +14857,7 @@ impl Scope {
         let mut refuse = |s: &mut Scope, asked: Asked, cause: presburger::Refusal, kept: Kept| {
             let (constraint, on) = text.get_or_insert_with(|| {
                 let written: Arc<str> = part.written(written_name).into();
-                let on = mentioned(&written, syms_of(part));
+                let on = mentioned_by(part, syms_of(part));
                 (written, on)
             });
             let r = Refused {

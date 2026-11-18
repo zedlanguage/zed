@@ -763,39 +763,77 @@ impl Hash for Formula {
     }
 }
 
-/// A piece of the text of a formula: a formula yet to be shown, or text.
+/// A piece of the text of a formula: a formula yet to be shown, text, or the end of the text
+/// of a shared part begun at an offset.
 enum Piece<'a> {
     Formula(&'a Formula),
     Text(&'static str),
+    End(Id, usize),
+}
+
+/// A constraint written with each symbol through a function.
+struct ConWritten<'a>(&'a Con, Names);
+
+impl fmt::Display for ConWritten<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.show(f, self.1)
+    }
 }
 
 /// Shows the formula with `show` for each node, as the derived form does when `debug`, each
 /// symbol of a constraint written through `name`; each node pushes the pieces it is made of,
-/// in reverse, onto one list. A shared part is written out at each place it is held, so the
-/// text is as long as the tree written out.
-fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool, name: Names) -> fmt::Result {
+/// in reverse, onto one list. The text is as long as the tree written out, a shared part
+/// written out at each place it is held; it is written once, and copied from there at each
+/// other place. The text of a node depends on the node alone (its parent writes any
+/// parentheses around it), and a part's id names the same parts wherever it is held
+/// ([`Shared`]), so the copy is the text the part would be written as again; and the pieces a
+/// node pushes are all taken before any piece under them, so the text from its start to its
+/// `End` is its own.
+// Complexity tradeoff: naive version, each node written at each place it is held, O(text) in
+// node visits, the integers formatted each time: a refused part of the named benchmarks of
+// l01_39_reduced_product (`named_test::bench`) wrote 25.7M characters, 4.6G instructions
+// for each of its 4 refusals at depth 960. Used: O(d) node visits for d distinct nodes, and
+// O(text) bytes copied.
+fn show(root: &Formula, debug: bool, name: Names) -> String {
+    use fmt::Write;
+    let mut out = String::new();
+    let mut at: HashMap<Id, (usize, usize)> = HashMap::new();
     let mut stack = vec![Piece::Formula(root)];
     while let Some(piece) = stack.pop() {
         let g = match piece {
             Piece::Text(t) => {
-                f.write_str(t)?;
+                out.push_str(t);
+                continue;
+            }
+            Piece::End(k, start) => {
+                at.insert(k, (start, out.len()));
                 continue;
             }
             Piece::Formula(g) => g,
         };
+        if let Some(k) = Id::of(g) {
+            if let Some(&(start, end)) = at.get(&k) {
+                out.extend_from_within(start..end);
+                continue;
+            }
+            stack.push(Piece::End(k, out.len()));
+        }
+        // Writing into a `String` does not fail.
         if debug {
             match g {
-                Formula::Con(c) => write!(f, "Con({c:?})")?,
+                Formula::Con(c) => {
+                    let _ = write!(out, "Con({c:?})");
+                }
                 Formula::Not(h) => {
-                    f.write_str("Not(")?;
+                    out.push_str("Not(");
                     stack.extend([Piece::Text(")"), Piece::Formula(h)]);
                 }
                 Formula::And(_) | Formula::Or(_) => {
-                    f.write_str(if matches!(g, Formula::And(_)) {
+                    out.push_str(if matches!(g, Formula::And(_)) {
                         "And(["
                     } else {
                         "Or(["
-                    })?;
+                    });
                     stack.push(Piece::Text("])"));
                     let kids: Vec<&Formula> = Flat::of(g).collect();
                     for (i, h) in kids.into_iter().enumerate().rev() {
@@ -809,19 +847,21 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool, name: Names) ->
             continue;
         }
         match g {
-            Formula::Con(c) => c.show(f, name)?,
+            Formula::Con(c) => {
+                let _ = write!(out, "{}", ConWritten(c, name));
+            }
             Formula::Not(h) => {
-                f.write_str("!")?;
+                out.push('!');
                 match &**h {
                     Formula::Con(_) | Formula::And(_) | Formula::Or(_) => {
-                        f.write_str("(")?;
+                        out.push('(');
                         stack.extend([Piece::Text(")"), Piece::Formula(h)]);
                     }
                     Formula::Not(_) => stack.push(Piece::Formula(h)),
                 }
             }
             Formula::And(_) | Formula::Or(_) if Flat::of(g).next().is_none() => {
-                write!(f, "{}", matches!(g, Formula::And(_)))?
+                let _ = write!(out, "{}", matches!(g, Formula::And(_)));
             }
             Formula::And(_) | Formula::Or(_) => {
                 let sep = if matches!(g, Formula::And(_)) {
@@ -850,21 +890,12 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool, name: Names) ->
             }
         }
     }
-    Ok(())
+    out
 }
 
 impl fmt::Display for Formula {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        show(self, f, false, as_is)
-    }
-}
-
-/// A formula shown with each symbol written through a function ([`Formula::written`]).
-struct Written<'a>(&'a Formula, Names);
-
-impl fmt::Display for Written<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        show(self.0, f, false, self.1)
+        f.write_str(&show(self, false, as_is))
     }
 }
 
@@ -874,15 +905,47 @@ impl Formula {
     /// order of the terms and the parts is the formula's own, which follows the symbols as
     /// they are and not as they are written: so it is the order of the written names, except
     /// where one written name is another followed by digits (`a` and `a1`, `a@2` sorting after
-    /// `a1`). Linear in the text.
+    /// `a1`). Linear in the text, and in node visits linear in the distinct nodes ([`show`]).
     pub fn written(&self, name: fn(&str) -> &str) -> String {
-        Written(self, name).to_string()
+        show(self, false, name)
+    }
+
+    /// The words [`super::names_in`] finds in the text of [`Formula::written`], each
+    /// constraint read once however often it is held. The text is the texts of the
+    /// constraints with `!`, `(`, `)`, ` && `, ` || `, `true` and `false` between them, and no
+    /// constraint's text holds `(`: so no word runs across two of these, no word is followed
+    /// by `(` in the text or in its constraint's text, and `true` and `false` are not names.
+    /// So a word is a name of the text exactly where it is a name of a constraint's text.
+    // Complexity tradeoff: naive version, `names_in` of the whole text, O(text): 20.1M
+    // characters for a refused part at depth 960 in l01_39_reduced_product's
+    // `named_test::bench`. Used: O(c) for the texts of the c constraints of the distinct
+    // nodes.
+    pub fn written_names(&self, name: fn(&str) -> &str) -> HashSet<String> {
+        let mut out = HashSet::new();
+        let mut seen: HashSet<Id> = HashSet::new();
+        let mut stack = vec![self];
+        while let Some(g) = stack.pop() {
+            if let Some(k) = Id::of(g)
+                && !seen.insert(k)
+            {
+                continue;
+            }
+            match g {
+                Formula::Con(c) => {
+                    let text = ConWritten(c, name).to_string();
+                    out.extend(super::names_in(&text).into_iter().map(String::from));
+                }
+                Formula::Not(h) => stack.push(h),
+                Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            }
+        }
+        out
     }
 }
 
 impl fmt::Debug for Formula {
     /// The derived form, `And([Con(..), Not(..)])`, on one line also under `{:#?}`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        show(self, f, true, as_is)
+        f.write_str(&show(self, true, as_is))
     }
 }

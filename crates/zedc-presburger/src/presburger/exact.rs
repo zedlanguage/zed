@@ -140,6 +140,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
             .collect();
         return EachClassed::plain((out, Vec::new()));
     }
+    if let Some(out) = by_columns(f, syms, &each, solver) {
+        return out;
+    }
     let limit = EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT);
     // The conjuncts of `f` grouped into parts that share no atom (`split`): each symbol is
     // covered over its own part, and the answers stand once every part is shown to have a
@@ -3093,6 +3096,100 @@ fn factors(f: &Formula) -> HashSet<Atom> {
         }
     });
     out
+}
+
+/// The answers of [`exact_each`] read off a smaller formula, where two or more atoms of `f`
+/// have the same coefficient in every constraint (the same column), or `None` where none do,
+/// or where the smaller formula's answers are not all exact.
+///
+/// Proof. Let C be such a class, with coefficient `c_r` in row r. Each row reads the atoms of
+/// C through `c_r·Σ_C z` alone, so f(x, z_C) = g(x, Σ_C z), with g the formula with every
+/// member but the least, m, dropped from every row and m standing for the sum. (a) An atom y
+/// outside every class: ∃(rest, z_C) f ⟺ ∃(rest, s) g(·, s), as each s is Σ_C z for some z_C
+/// (all on m, the others 0), so y has the same projection in f and in g. (b) A member a of
+/// C with |C| ≥ 2: given any point (x, s) of g and any value v, set z_a = v, a second member
+/// to s − v and the others to 0; this is a point of f. So a takes every integer where g has a
+/// point and none where it has none. Each answer below is the exact projection, as are
+/// those of [`exact_each`] with no cause, and the exact projection has one form ([`Classed`]):
+/// where both paths answer, they answer the same. A solver's set for y is a set over the
+/// projection of y in f, so in g too, and is passed on; m's is every integer.
+// Complexity: O(t) for t terms of the distinct constraints, to find the columns and rebuild;
+// the covers then run over g, whose rows have one term per class. Before: a k-term sum row
+// made each of its k symbols' covers O(k), so O(k^2) for the call (`families::bench::wide`).
+fn by_columns(
+    f: &Formula,
+    syms: &[Atom],
+    each: &[Result<IntervalSet, Refusal>],
+    solver: Solver,
+) -> Option<EachClassed> {
+    let mut rows: Vec<&Con> = Vec::new();
+    each_constraint(f, |c| rows.push(c));
+    let mut columns: HashMap<&Atom, Vec<(usize, &Int)>> = HashMap::new();
+    for (r, c) in rows.iter().enumerate() {
+        for (a, k) in &c.lin.terms {
+            if matches!(a, Atom::Product(..)) {
+                return None;
+            }
+            columns.entry(a).or_default().push((r, k));
+        }
+    }
+    let mut classes: HashMap<&[(usize, &Int)], Vec<&Atom>> = HashMap::new();
+    for (a, col) in &columns {
+        classes.entry(col.as_slice()).or_default().push(*a);
+    }
+    // Each member of a class of two or more, to the least member, which stands for the sum.
+    let mut least: HashMap<Atom, Atom> = HashMap::new();
+    for (_, mut ms) in classes {
+        if ms.len() < 2 {
+            continue;
+        }
+        ms.sort();
+        for m in &ms {
+            least.insert((*m).clone(), ms[0].clone());
+        }
+    }
+    if least.is_empty() {
+        return None;
+    }
+    let g = f.map_cons(&|c| {
+        let mut c = c.clone();
+        c.lin
+            .terms
+            .retain(|a, _| least.get(a).is_none_or(|m| m == a));
+        Formula::Con(c)
+    });
+    let asked: Vec<Atom> = (syms.iter())
+        .map(|s| least.get(s).unwrap_or(s).clone())
+        .collect();
+    let given: Vec<Result<IntervalSet, Refusal>> = (syms.iter().zip(each))
+        .map(|(s, h)| match least.get(s) {
+            Some(_) => Ok(IntervalSet::top()),
+            None => h.clone(),
+        })
+        .collect();
+    let got = exact_each(&g, &asked, (given, Vec::new()), solver);
+    if !got.causes.is_empty() {
+        return None;
+    }
+    let mut sets = Vec::with_capacity(syms.len());
+    for ((s, h), r) in syms.iter().zip(each).zip(got.sets) {
+        sets.push(match (h, r) {
+            (Err(e), _) => Err(e.clone()),
+            (Ok(_), Err(_)) => return None,
+            (Ok(_), Ok(set)) if least.contains_key(s) => {
+                Ok(Classed::plain(if set.ranges.is_empty() {
+                    IntervalSet::empty()
+                } else {
+                    IntervalSet::top()
+                }))
+            }
+            (Ok(_), Ok(set)) => Ok(set),
+        });
+    }
+    Some(EachClassed {
+        sets,
+        causes: Vec::new(),
+    })
 }
 
 /// Calls `at` on each constraint of `f`, a shared part read once (by [`Id`]), the parts
