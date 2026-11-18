@@ -21340,31 +21340,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(&self.errors[i])
     }
 
-    /// Records that the errors from the place `from` on are about to be removed, some perhaps
-    /// to be pushed again, for [`Self::kept_since`]: the errors keep the order of their ids,
-    /// so the smallest id removed is that of the error at `from`. Nothing where there is none.
-    /// Amortized O(1): each removal enters [`Self::cuts`] once and leaves it at most once.
-    pub(super) fn errors_cut(&mut self, from: usize) {
-        let Some(e) = self.errors.get(from) else {
-            return;
-        };
-        let id = e.id;
-        self.cut_seq += 1;
-        while self.cuts.last().is_some_and(|&(_, i)| i >= id) {
-            self.cuts.pop();
-        }
-        self.cuts.push((self.cut_seq, id));
-    }
-
-    /// Whether no error of an id up to `max` was removed after the removal numbered `at`
-    /// ([`Self::cut_seq`]). The smallest id removed after it is that of the first entry of
-    /// [`Self::cuts`] after it: an entry left out has a later one of no greater id. One binary
-    /// search, O(log removals).
-    fn kept_since(&self, at: u64, max: usize) -> bool {
-        let k = self.cuts.partition_point(|&(s, _)| s <= at);
-        self.cuts.get(k).is_none_or(|&(_, id)| id > max)
-    }
-
     /// Drops the fix `p` from the menu of its rejection, which the errors hold in the order
     /// they were found in ([`Found::id`]), found by binary search, O(log errors); where that
     /// leaves none the message says that none is offered ([`Msg::dropped`]).
