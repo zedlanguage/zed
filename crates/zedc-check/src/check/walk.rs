@@ -2496,6 +2496,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             }
                             let why = Why::Component(i, c.clone());
                             self.origin(id, value.span, why, Some(value.span));
+                            self.taken_from.insert(id, (value, PathStep::Part { i, n }));
                             self.env.insert(id, c);
                         }
                         Target::Wild => {
@@ -6301,9 +6302,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A class a use asked takes its whole carrier, so `h((3, 0))` is refused too, as
             // the same call inside a function was already, and as `bitAnd(p[0], 3)` refuses
             // every component; the literal's own value is not enough, since the body's `a - 5`
-            // lies in the same class. Given up: a bound of the component carried into the
-            // signature, as `int[0..]` is for a parameter `x` of `2^x`
-            // (CHK-pow-component-bound).
+            // lies in the same class. A use inside a function reaches the parameter's
+            // signature instead, as a bound on the component's path (`InDomain::path`,
+            // CHK-pow-component-bound), so a call is checked against that one component.
             // Complexity tradeoff: each use is read once and the bounding ones checked once,
             // O(uses) in all; checking at each use as it is recorded is not possible, since
             // the class has no type yet then.
@@ -15321,10 +15322,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (ints, narrowed) = self.ints_here(e);
         let shown_at_least_zero = ints.is_subset(&at_least_zero());
         if floor && !shown_at_least_zero {
-            match self.open_param(e) {
+            // A part of a parameter, as `a` of `a, b = p` or `p[0]`, takes the need on that
+            // part, checked at each call with the part's own ints, as a whole parameter does
+            // (CHK-pow-component-bound); see [`Self::open_place`]. A test above the `^` that
+            // leaves the exponent at least 0 wherever it is an int, as `if a >= 0 { 0^a }`,
+            // takes no need, as `popCount` reads it ([`Self::floor`], [`Self::ints_as_int`]).
+            let open = self.open_place(e);
+            let as_int = self.int_read_binder(e, &open);
+            let shown_as_int = !self.trying
+                && as_int.is_some()
+                && self.ints_as_int(e, as_int).is_subset(&at_least_zero());
+            match open {
+                _ if shown_as_int => {}
                 // A trial application is undone; the application that stays records the need.
                 Some(_) if self.trying => {}
-                Some(id) => {
+                Some((id, path)) => {
                     let domain = IntDomain {
                         what: "`^` on an int takes an exponent in int[0..]".into(),
                         below_two_pow: None,
@@ -15339,6 +15351,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             param: 0,
                             via: None,
                             bits: None,
+                            path: path.into(),
                         },
                         result: None,
                         span,
@@ -15808,14 +15821,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         if ints_in(&d, &self.ints_here(e).0) {
             return;
         }
-        let open = self.open_param(e);
-        if !self.trying && ints_in(&d, &self.ints_as_int(e, open)) {
+        // A part of a parameter takes the need on that part, as `^`'s exponent does
+        // ([`Self::open_place`]), and the scope reads it as an int ([`Self::int_read_binder`]).
+        let open = self.open_place(e);
+        let as_int = self.int_read_binder(e, &open);
+        if !self.trying && ints_in(&d, &self.ints_as_int(e, as_int)) {
             return;
         }
         match open {
             // A trial application is undone; the application that stays records the need.
             Some(_) if self.trying => {}
-            Some(id) => self.floor_on(
+            Some((id, path)) => self.floor_on(
                 id,
                 Need {
                     on: Ty::empty(),
@@ -15824,6 +15840,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: 0,
                         via: None,
                         bits: None,
+                        path: path.into(),
                     },
                     result: None,
                     span,
@@ -15839,6 +15856,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// nested, `int[0..]` holding every `int[0..<2 ^ w]` and a smaller `w` the smaller domain,
     /// so one need per binder decides each call: the smallest domain, from its first use.
     fn floor_on(&mut self, id: usize, n: Need) {
+        // A need on a part of the parameter (CHK-pow-component-bound) is on another value
+        // than the whole one's: each distinct part and domain is kept once, the first need
+        // met for it, found by a hash set in O(path length).
+        if let NeedKind::InDomain { domain, path, .. } = &n.kind
+            && !path.is_empty()
+        {
+            if self.path_seen.insert((id, path.clone(), domain.clone())) {
+                self.ranged_floors.entry(id).or_default().push(n);
+            }
+            return;
+        }
         // A declared range, passed on from a call (DESIGN.md L1.39), nests neither in the
         // ints from 0 nor in another range, so each distinct range is kept, the first need
         // met for it; a hash set finds one met before in O(1).
@@ -15982,6 +16010,187 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The binder of the parameter of no declared type of a function being checked whose
+    /// part `e` is, and the steps from the parameter's value to it, outermost first
+    /// (CHK-pow-component-bound): through names bound to names, names bound by destructuring,
+    /// `a` of `a, b = p` being component 0 of 2 of `p`, and `[k]` with the literal `k`. Empty
+    /// steps where `e` is the whole value, as [`Self::open_param`] finds it.
+    ///
+    /// Proof that the value of `e` is the part the steps name of the caller's argument: a
+    /// name has one value, bound once (DESIGN.md sec:diagnostics), so a name bound to `v` is
+    /// `v`, and one bound by destructuring a tuple of `n` into `n` names is its component
+    /// `i`; a value that is no tuple of `n` is refused there ([`Self::component`]), and the
+    /// call's own check of the destructuring refuses an argument that is none. `x[k]` is the
+    /// entry `k` of `x`, its component `k` where `x` is a tuple.
+    ///
+    /// Complexity tradeoff: one step per name or bracket followed, each a hash lookup, so
+    /// O(d) for a part `d` steps below the parameter; a name met twice ends the walk, so a
+    /// cycle of names costs O(names). The naive way records the need on the class of the
+    /// part, which a call then fixes to its whole carrier (the class of the literal `3` of
+    /// `h((3, 0))` also holds `a - 5` of the body), refusing every int; the path costs O(d)
+    /// per need at each call ([`Self::floors_at`]) and lets the call check the part's own
+    /// ints. COMPLEXITY.md CHK-pow-component-bound.
+    fn open_place(&self, mut e: &'a Expr) -> Option<(usize, Vec<PathStep>)> {
+        let mut seen = HashSet::new();
+        // Innermost step first; reversed at the end.
+        let mut steps = Vec::new();
+        loop {
+            match &e.kind {
+                ExprKind::Name(_) => {}
+                ExprKind::Index(of, k) => {
+                    let Some(Value::Int(k)) = literal(k, None).map(|l| l.value) else {
+                        return None;
+                    };
+                    steps.push(PathStep::Index(usize::try_from(k).ok()?));
+                    e = of;
+                    continue;
+                }
+                _ => return None,
+            }
+            let id = match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+                _ => return None,
+            };
+            if self.open_params.contains(&id) {
+                steps.reverse();
+                return Some((id, steps));
+            }
+            if !seen.insert(id) {
+                return None;
+            }
+            match (self.facts.get(&id), self.taken_from.get(&id)) {
+                (Some(v), _) => e = v,
+                (None, Some(&(v, step))) => {
+                    steps.push(step);
+                    e = v;
+                }
+                (None, None) => return None,
+            }
+        }
+    }
+
+    /// The binder a scope reads as an int for the exponent or operand `e` that is the place
+    /// `open` of a parameter ([`Self::ints_as_int`]): the parameter itself for its whole
+    /// value, and for a part of it, the name `e` writes, as `a` of `a, b = p`, whose tests
+    /// above the use narrow it; `None` for `p[0]`, which a scope does not read by name.
+    ///
+    /// Proof that the read is sound for a part: as for a whole parameter at
+    /// [`Self::ints_as_int`], the question asked is only which ints reach the use where `e`
+    /// is an int, and the need on the part is on its ints alone, so a value of another type
+    /// that a test reading the name as an int would leave out is not one the need checks.
+    /// O(1): one lookup.
+    fn int_read_binder(&self, e: &'a Expr, open: &Option<(usize, Vec<PathStep>)>) -> Option<usize> {
+        match open {
+            Some((id, path)) if path.is_empty() => Some(*id),
+            Some(_) => match (&e.kind, self.t.res.uses.get(&e.span)) {
+                (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => Some(ids[0]),
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
+    /// The type of the part `step` of a value of type `t`, at a call that checks a need on
+    /// that part ([`Self::floors_at`]); `None` where the checker cannot tell it, and the
+    /// call is refused. A tuple of another length, or with no component `k`, is left out,
+    /// and so is a class of carriers alone: the call's own check of the body's destructuring
+    /// or bracket refuses that value. A family gives its entries' type.
+    fn part_type(&self, t: &Ty, step: PathStep) -> Option<Ty> {
+        let mut out = Ty::empty();
+        for p in t.pieces() {
+            match (&p, step) {
+                (Piece::Tuple(cs), PathStep::Part { i, n }) if cs.len() == n => {
+                    out = out.union(&cs[i])
+                }
+                (Piece::Tuple(cs), PathStep::Index(k)) => {
+                    if let Some(c) = cs.get(k) {
+                        out = out.union(c);
+                    }
+                }
+                (Piece::Tuple(_), PathStep::Part { .. }) => {}
+                (Piece::Fn(sig), PathStep::Index(_)) if sig.data => {
+                    for a in &sig.arrows {
+                        out = out.union(&a.result);
+                    }
+                }
+                (Piece::Dyn, _) => out = out.union(&Ty::dynamic()),
+                (Piece::Var(_), _) if self.carriers_only(&p) => {}
+                (p, _) if p.is_atoms() => {}
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// The expression of the part `step` of the value `e` is written with, where `e` shows
+    /// it: a tuple display of the length `step` reads, through names bound to values; else
+    /// none, and the part is read from its type alone ([`Self::floors_at`]).
+    fn part_expr(&self, mut e: &'a Expr, step: PathStep) -> Option<&'a Expr> {
+        let mut seen = HashSet::new();
+        loop {
+            match (&e.kind, step) {
+                (ExprKind::Tuple(items), PathStep::Part { i, n }) if items.len() == n => {
+                    return items.get(i);
+                }
+                (ExprKind::Tuple(items), PathStep::Index(k)) => return items.get(k),
+                (ExprKind::Name(_), _) => {
+                    let id = match self.t.res.uses.get(&e.span) {
+                        Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+                        _ => return None,
+                    };
+                    if !seen.insert(id) {
+                        return None;
+                    }
+                    e = self.facts.get(&id)?;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Passes the need on the int at `path` of the parameter of no declared type `id`, whose
+    /// part `e` is, written at `at` as the argument `p` of the call of `what`, on to that
+    /// parameter: the need of `domain` at the use `use_at`, with the link of this call before
+    /// the calls `via` that passed it on (CHK-need-bound, CHK-pow-component-bound).
+    #[allow(clippy::too_many_arguments)]
+    fn part_passed_on(
+        &mut self,
+        id: usize,
+        path: Vec<PathStep>,
+        e: &'a Expr,
+        at: Span,
+        p: &str,
+        what: &str,
+        domain: &IntDomain,
+        via: &Option<Arc<Via>>,
+        use_at: Span,
+    ) {
+        let name = match &e.kind {
+            ExprKind::Name(name) => name.to_string(),
+            _ => self.code(Some(e.span)).unwrap_or("this value").to_string(),
+        };
+        let link = Via {
+            at,
+            text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
+            next: via.clone(),
+        };
+        let need = Need {
+            on: Ty::empty(),
+            kind: NeedKind::InDomain {
+                domain: domain.clone(),
+                param: 0,
+                via: Some(Arc::new(link)),
+                bits: None,
+                path: path.into(),
+            },
+            result: None,
+            span: use_at,
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        };
+        self.floor_on(id, need);
+    }
+
     /// Checks that a value of `t` holds no int, or only ints listed in the domain `d`, as its
     /// use at `span` needs (CHK-need-bound): a class takes the need on each of its values.
     fn no_int(&mut self, t: &Ty, d: &IntDomain, span: Span) {
@@ -16066,7 +16275,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             let open = sig.params.get(j).is_some_and(|p| p.range.is_none());
             let mut meet: Option<IntervalSet> = None;
             for mut n in self.floors.remove(id).into_iter().chain(ranged) {
-                if let NeedKind::InDomain { domain, param, .. } = &mut n.kind {
+                if let NeedKind::InDomain {
+                    domain,
+                    param,
+                    path,
+                    ..
+                } = &mut n.kind
+                    && !path.is_empty()
+                {
+                    // A need on a part of the parameter gives the whole no range.
+                    self.path_seen.remove(&(*id, path.clone(), domain.clone()));
+                    *param = j;
+                } else if let NeedKind::InDomain { domain, param, .. } = &mut n.kind {
                     if let Some(r) = &domain.written {
                         self.ranged_seen.remove(&(*id, r.clone()));
                         if open {
@@ -16125,6 +16345,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: j,
                         via: None,
                         bits: None,
+                        path: Arc::from([]),
                     },
                     result: None,
                     span: at,
@@ -16151,6 +16372,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: j,
                         via: None,
                         bits: None,
+                        path: Arc::from([]),
                     },
                     result: None,
                     span,
@@ -16234,6 +16456,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 param,
                 via,
                 bits,
+                path,
             } = &n.kind
             else {
                 continue;
@@ -16257,6 +16480,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .map(|p| p.name.clone())
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| domain.name.clone());
+            // A need on a part of the parameter names the part, `p[0]` (CHK-pow-component-bound).
+            let p: Arc<str> = match path.is_empty() {
+                true => p,
+                false => format!("{p}{}", steps_text(path)).into(),
+            };
             if let Some(k) = &domain.key {
                 let a = args.get(*param).and_then(Option::as_ref);
                 let defaulted = sig.params.get(*param).is_some_and(|p| p.default.is_some());
@@ -16299,7 +16527,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let default = sig.params.get(*param).and_then(|p| p.default);
                 let shown_in = default
                     .and_then(|(binder, index, _)| self.default_ints.get(&(binder, index)))
-                    .is_some_and(|ints| !ints.is_empty() && ints_in(domain, ints));
+                    .is_some_and(|ints| {
+                        path.is_empty() && !ints.is_empty() && ints_in(domain, ints)
+                    });
                 if shown_in {
                     continue;
                 }
@@ -16325,6 +16555,67 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.error_with(span, message, notes);
                 }
                 continue;
+            };
+            // A need on a part of the parameter (CHK-pow-component-bound) is checked on that
+            // part of the argument: followed through the tuple displays and names bound to
+            // values it is written with as far as they go, and through its type throughout. A
+            // part of a parameter of no declared type of the function the call is in takes the
+            // need on, with the rest of the path; a type the part cannot be read from is refused.
+            //
+            // Complexity tradeoff: O(d) steps for a path of d, each a lookup or a pass over the
+            // pieces of the type it reads, the size of a type already built; the need on the
+            // class of the part, the naive way, costs O(1) but fixes the part to its whole
+            // carrier. COMPLEXITY.md CHK-pow-component-bound.
+            let part;
+            let a = if path.is_empty() {
+                a
+            } else {
+                let mut e = a.expr;
+                let mut ty = a.ty.clone();
+                let mut known = true;
+                let mut passed_on = false;
+                for (s, &step) in path.iter().enumerate() {
+                    if let Some(x) = e
+                        && let Some((id, pre)) = self.open_place(x)
+                    {
+                        if !self.trying {
+                            let rest = pre.into_iter().chain(path[s..].iter().copied()).collect();
+                            let at = a.at.unwrap_or(x.span);
+                            self.part_passed_on(id, rest, x, at, &p, what, domain, via, n.span);
+                        }
+                        passed_on = true;
+                        break;
+                    }
+                    e = e.and_then(|x| self.part_expr(x, step));
+                    match self.part_type(&ty, step) {
+                        Some(t) => ty = t,
+                        None => {
+                            known = false;
+                            break;
+                        }
+                    }
+                }
+                if passed_on {
+                    continue;
+                }
+                if !known {
+                    let at = a.at.unwrap_or(span);
+                    let shown = self.show(&a.ty);
+                    let why = format!("the checker cannot tell the type of `{p}` in this argument");
+                    self.domain_error(&passed, &shown, why, at);
+                    continue;
+                }
+                part = Arg {
+                    ty,
+                    lit: None,
+                    at: e.map(|x| x.span).or(a.at),
+                    expr: e,
+                    parts: None,
+                    branches: None,
+                    via: None,
+                    below: None,
+                };
+                &part
             };
             let generic = !a.ty.vars.is_empty();
             let ns = &a.ty.set & &int;
@@ -16380,32 +16671,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             let at = a.at.unwrap_or(e.span);
             if generic && !ints_in(domain, &self.ints_here(e).0) {
-                match self.open_param(e) {
+                match self.open_place(e) {
                     Some(_) if self.trying => {}
-                    Some(id) => {
-                        let name = match &e.kind {
-                            ExprKind::Name(name) => name.to_string(),
-                            _ => "this value".into(),
-                        };
-                        let link = Via {
-                            at,
-                            text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
-                            next: via.clone(),
-                        };
-                        let need = Need {
-                            on: Ty::empty(),
-                            kind: NeedKind::InDomain {
-                                domain: domain.clone(),
-                                param: 0,
-                                via: Some(Arc::new(link)),
-                                bits: None,
-                            },
-                            result: None,
-                            span: n.span,
-                            alike: Arc::from([]),
-                            via: CallPath::default(),
-                        };
-                        self.floor_on(id, need);
+                    Some((id, pre)) => {
+                        self.part_passed_on(id, pre, e, at, &p, what, domain, via, n.span);
                     }
                     None => self.no_int_vars(&a.ty, &passed, at),
                 }
@@ -16573,6 +16842,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: 0,
                         via: Some(Arc::new(link)),
                         bits: None,
+                        path: Arc::from([]),
                     },
                     result: None,
                     span: use_at.0,
@@ -18128,6 +18398,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 param: j,
                 via: None,
                 bits: Some(span),
+                path: Arc::from([]),
             },
             result: None,
             span,
@@ -27222,11 +27493,16 @@ fn range_need_of<'n>(s: &Sig, n: &'n Need) -> Option<(usize, &'n IntDomain)> {
         domain,
         param,
         bits: None,
+        path,
         ..
     } = &n.kind
     else {
         return None;
     };
+    // A need on a part of the parameter is not its declared range (CHK-pow-component-bound).
+    if !path.is_empty() {
+        return None;
+    }
     let (Some(r), None) = (&domain.written, &domain.key) else {
         return None;
     };
@@ -27799,4 +28075,15 @@ mod tests {
             }
         }
     }
+}
+
+/// The steps of a path written after a name, as a program reads them: `[0]` each
+/// (CHK-pow-component-bound). O(steps).
+fn steps_text(path: &[PathStep]) -> String {
+    path.iter()
+        .map(|s| match s {
+            PathStep::Part { i, .. } => format!("[{i}]"),
+            PathStep::Index(k) => format!("[{k}]"),
+        })
+        .collect()
 }

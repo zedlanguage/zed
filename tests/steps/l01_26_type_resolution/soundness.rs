@@ -868,6 +868,46 @@ fn a_rat_or_int_literal_component_is_not_summed() {
     }
 }
 
+/// `n` functions, each raising 2 to the first component of its tuple argument, each called
+/// once with that component at least 0 and once with it below 0 (CHK-pow-component-bound).
+/// The calls below 0 are the `n` errors. The time is measured in `bench::soundness`.
+pub(super) fn component_exponents(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "h{i}(positional p) {{\n  a, b = p;\n  return 2^a;\n}}\nb{i} = h{i}(({i}, 0));\nc{i} = h{i}((-{}, 0));\n",
+                i + 1
+            )
+        })
+        .collect()
+}
+
+/// One function taking apart a tuple nested `d` deep and raising 2 to the innermost
+/// component, called once with it at least 0 and once below 0: the path of the exponent's
+/// bound is `d` steps long (CHK-pow-component-bound). The call below 0 is the one error.
+pub(super) fn nested_component_exponent(d: usize) -> String {
+    let mut text = String::from("h(positional p) {\n  a0, b0 = p;\n");
+    for k in 1..d {
+        text += &format!("  a{k}, b{k} = a{};\n", k - 1);
+    }
+    text += &format!("  return 2^a{};\n}}\n", d - 1);
+    let nested = |v: &str| (0..d).fold(v.to_string(), |t, _| format!("({t}, 0)"));
+    text += &format!("b = h({});\nc = h({});\n", nested("3"), nested("-3"));
+    text
+}
+
+#[test]
+fn component_exponents_give_one_error_per_call_below_zero() {
+    // Small instances of the benchmarks in `bench::soundness`.
+    let errors = super::type_errors(&component_exponents(3));
+    assert_eq!(errors.len(), 3, "{errors:#?}");
+    for depth in [1, 2, 5] {
+        let errors = super::type_errors(&nested_component_exponent(depth));
+        assert_eq!(errors.len(), 1, "{depth}: {errors:#?}");
+        assert!(errors[0].contains("int[0..]"), "{depth}: {errors:#?}");
+    }
+}
+
 #[test]
 fn a_literal_component_is_no_negative_int_exponent() {
     // FAIL-random-pow-destructured-literal: the checker accepted each, and the kernel then
@@ -879,22 +919,63 @@ fn a_literal_component_is_no_negative_int_exponent() {
     for h1 in [taken_apart, indexed] {
         for depth in [1, 2, 3] {
             let defs = wrapped(h1, depth);
-            for literal in ["-3", "-1", "3"] {
+            for literal in ["-3", "-1"] {
                 let call = format!("h{depth}(({literal}, 0))");
                 let errors = r_errors(&defs, &call);
                 assert_eq!(errors.len(), 1, "{defs}\n{call}: {errors:?}");
-                assert!(errors[0].contains('^'), "{defs}\n{call}: {errors:?}");
-                // The same call inside a function gets the same verdict: there the class's
-                // needs were checked before, on the carrier `int` the class takes, so `3` is
-                // refused as well; the exponent's bound is not carried through the component
-                // as it is for a parameter (`h1(x) = 2^x` takes `x` in `int[0..]`).
+                // The call is refused on the part of the argument the `^` takes.
+                assert!(errors[0].contains("`p[0]`"), "{defs}\n{call}: {errors:?}");
+                assert!(errors[0].contains("int[0..]"), "{defs}\n{call}: {errors:?}");
+                // The same call inside a function gets the same verdict.
                 let inside = format!("{defs}\ng() = {call};");
                 let errors = r_errors(&inside, "g()");
                 assert_eq!(errors.len(), 1, "{inside}: {errors:?}");
-                assert!(errors[0].contains('^'), "{inside}: {errors:?}");
+                assert!(errors[0].contains("int[0..]"), "{inside}: {errors:?}");
             }
+            // CHK-pow-component-bound: the exponent's bound is carried through the component
+            // into the signature, as `h1(x) = 2^x` takes `x` in `int[0..]`, so a component at
+            // least 0 is accepted, inside a function and outside every function.
+            let call = format!("h{depth}((3, 0))");
+            assert_eq!(runs(&defs, &kind_of(&call), ""), "int\n", "{defs}\n{call}");
+            let inside = format!("{defs}\ng() = {call};");
+            assert_eq!(runs(&inside, &kind_of("g()"), ""), "int\n", "{inside}");
         }
     }
+    // The bound of a component is the component's alone: `a - 5` lies in the class of the
+    // literal `3` of `h1((3, 0))`, which takes its whole carrier `int`, so `0^(a - 5)` stays
+    // refused, as `popCount(a - 5)` does on the class (the need `NoInt` checked when the
+    // class takes its type outside every function).
+    for body in ["0^(a - 5)", "popCount(a - 5)"] {
+        let defs = format!("h1(positional p) {{\n  a, b = p;\n  return {body};\n}}");
+        let word = if body.starts_with('0') {
+            "^"
+        } else {
+            "popCount"
+        };
+        let errors = r_errors(&defs, "h1((3, 0))");
+        assert_eq!(errors.len(), 1, "{defs}: {errors:?}");
+        assert!(errors[0].contains(word), "{defs}: {errors:?}");
+        let inside = format!("{defs}\ng() = h1((3, 0));");
+        assert_eq!(r_errors(&inside, "g()").len(), 1, "{inside}");
+    }
+    // A component read by `popCount` takes its bound the same way.
+    let pop = "h1(positional p) {\n  a, b = p;\n  return popCount(a);\n}";
+    assert_eq!(runs(pop, &kind_of("h1((3, 0))"), ""), "int\n");
+    let errors = r_errors(pop, "h1((-3, 0))");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("`p[0]`"), "{errors:?}");
+    // A test on the parameter, or on the component, narrows it where the `^` is.
+    let whole = "h1(x) = if x >= 0 { 0^x } else { 0 };";
+    assert_eq!(runs(whole, &kind_of("h1(x: -3)"), ""), "int\n");
+    assert_eq!(runs(whole, &kind_of("h1(x: 3)"), ""), "int\n");
+    let narrowed = "h1(positional p) {\n  a, b = p;\n  return if a >= 0 { 0^a } else { 0 };\n}";
+    assert_eq!(runs(narrowed, &kind_of("h1((-3, 0))"), ""), "int\n");
+    // A component of a component, and a name bound to the argument in the caller.
+    let nested = "h1(positional p) {\n  a, b = p;\n  c, d = a;\n  return 2^d;\n}";
+    assert_eq!(runs(nested, &kind_of("h1(((0, 3), 0))"), ""), "int\n");
+    assert_eq!(r_errors(nested, "h1(((0, -3), 0))").len(), 1);
+    let named = "h1(positional p) = 2^p[1];\ng() {\n  t = (0, -2);\n  return h1(t);\n}";
+    assert_eq!(r_errors(named, "g()").len(), 1);
     // A base that is no int takes any int exponent, and a parameter or a literal taken apart
     // inside the function is bounded where the `^` is.
     let rat_base = "h1(positional p) {\n  a, b = p;\n  return 2r^a;\n}";

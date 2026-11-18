@@ -86,9 +86,9 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord,
-    MapWord, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, Piece, PowerUse, Reducer,
-    Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange,
-    atoms, carriers_text, class_id, errs, fresh_name, mask_text,
+    MapWord, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, PathStep, Piece, PowerUse,
+    Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width,
+    WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -2123,6 +2123,12 @@ struct Ck<'t, 'a> {
     /// The needs of the parameters of no declared type passed on as a parameter declared a
     /// partial map, kept in [`Self::ranged_floors`]: each binder and [`KeyUse`] once.
     keyed_seen: HashSet<(usize, Arc<KeyUse>)>,
+    /// The needs of those parameters on a part of their value (`InDomain`'s `path`), kept in
+    /// [`Self::ranged_floors`]: each binder, path and domain once (CHK-pow-component-bound).
+    path_seen: HashSet<(usize, Arc<[PathStep]>, IntDomain)>,
+    /// The value and step of each name bound by destructuring, `a` of `a, b = v` to `v` and
+    /// component 0 of 2, read with [`Self::facts`] to find the parameter part a name is.
+    taken_from: HashMap<usize, (&'a Expr, PathStep)>,
     /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
     /// the operands the call gave, at their parameters, the width left out. The function the
     /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
@@ -2626,6 +2632,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             param_ints: HashMap::new(),
             param_keys: HashMap::new(),
             keyed_seen: HashSet::new(),
+            path_seen: HashSet::new(),
+            taken_from: HashMap::new(),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
@@ -6477,6 +6485,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     param: j,
                     via: None,
                     bits: None,
+                    path: Arc::from([]),
                 },
                 result: None,
                 span,

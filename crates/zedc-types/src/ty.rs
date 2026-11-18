@@ -4388,7 +4388,26 @@ pub enum NeedKind {
         /// the word, with the operands the curried call gave and the width the call gives,
         /// so `domain` is only the width's own `int[0..]` (FAIL-bitword-curry-domain).
         bits: Option<Span>,
+        /// Where in the parameter's value the int lies, outermost step first; empty for the
+        /// whole value. `h(positional p) { a, b = p; return 2^a; }` takes component 0 of the
+        /// two of `p` in `int[0..]`, and `h(positional p) = 2^p[0]` entry 0 of `p`
+        /// (CHK-pow-component-bound).
+        path: Arc<[PathStep]>,
     },
+}
+
+/// A step from a value to a part of it, of [`NeedKind::InDomain`]'s path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PathStep {
+    /// Component `i` of a tuple of `n`, as destructuring into `n` names takes it.
+    Part {
+        /// The component, from 0.
+        i: usize,
+        /// The length of the tuple.
+        n: usize,
+    },
+    /// `[k]` with the literal `k`: component `k` of a tuple, or an entry of a family.
+    Index(usize),
 }
 
 /// What the error of a [`NeedKind::Power`] need is made from: the code it quotes is kept as
@@ -4770,11 +4789,13 @@ impl Need {
                     param,
                     via,
                     bits,
+                    path,
                 } => NeedKind::InDomain {
                     domain: domain.clone(),
                     param: *param,
                     via: via.clone(),
                     bits: *bits,
+                    path: path.clone(),
                 },
                 NeedKind::Into { what, ty } => NeedKind::Into {
                     what: what.clone(),
