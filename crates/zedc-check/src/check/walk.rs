@@ -20853,9 +20853,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         let carried = self.shared_settled(w, t, (&found, &ats), carried, &mut up);
         // For each argument whose carried fixes are all of rejections of literals that
         // nothing gives a carrier, the types they give it ([`Self::carried_lent`]); `None` for
-        // an argument with another fix.
+        // an argument with another fix. A type is lent only to an argument other than the one
+        // whose fix failed, and only to one that carries fixes, so where the fixes lie in one
+        // argument or none the table is never read and is not made. Complexity tradeoff:
+        // [`Self::unfixed_only`] reads every fix of a carry, and in a nest of n operations
+        // each fix rides up every level, as in `((1 + 1) / 1 + 1) / 1 …`, so making the table
+        // at every construct cost O(n^2) in all (ratio 10.69 at 8n against 8.01 before the
+        // table, l01_26a an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time);
+        // the test of one argument is O(carries). Still quadratic: a nest in which another
+        // argument carries a fix at each level beside the one the fixes ride up in, as
+        // `((1 + 1 / 1) / 1 + 1 / 1) / 1 …` at an f64 parameter: 8.54 at 8n (sizes 500 and
+        // 4000), against 9.08 with the table made at every construct (2026-11-18).
+        let one_arg = carried
+            .iter()
+            .all(|(i, _)| Some(*i) == carried.first().map(|c| c.0));
         let mut lent: Vec<Option<Vec<Ty>>> = vec![Some(Vec::new()); w.args.len()];
-        for (i, c) in &carried {
+        for (i, c) in carried.iter().filter(|_| !one_arg) {
             match self.unfixed_only(&c.fixes) {
                 true => lent[*i].iter_mut().for_each(|tys| tys.push(c.ty.clone())),
                 false => lent[*i] = None,
