@@ -660,11 +660,14 @@ fn recursive_pair(seed: u64, idx: usize) -> Option<(Type, Type, Option<Value>)> 
     Some((a, b, witness))
 }
 
+/// Whether the values of one membership vector are in `a`, whether they are in `b`, and one of
+/// them.
+type Membership = (bool, bool, Value);
+
 /// The pair `a`, `b` of system `idx` of `seed`, with each membership vector a finite value has
 /// (`reachable`), as whether its values are in `a`, whether they are in `b`, and one of them;
 /// `None` when the group is rejected.
-#[allow(clippy::type_complexity)]
-fn recursive_classes(seed: u64, idx: usize) -> Option<(Type, Type, Vec<(bool, bool, Value)>)> {
+fn recursive_classes(seed: u64, idx: usize) -> Option<(Type, Type, Vec<Membership>)> {
     let mut g = Lcg((seed << 32) ^ (idx as u64 * 2 + 1));
     for _ in 0..4 {
         g.next(2);
