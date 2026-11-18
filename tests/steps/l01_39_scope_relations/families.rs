@@ -1453,6 +1453,13 @@ fn audit_seed_109_no_wider_set_from_a_narrower_start() {
     no_widenings(109);
 }
 
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 99 (step 8 from a start with a
+/// hole; PRES-again-monotone).
+#[test]
+fn audit_seed_99_no_wider_set_from_a_narrower_start() {
+    no_widenings(99);
+}
+
 /// [`check`] for a case on which the scope and the oracle agree.
 fn exact(name: &str, k: usize, want: &str) {
     check(name, k, want, want);
@@ -2548,3 +2555,22 @@ C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] y=[0..=3] w=[0..=2]
 ";
 
 mod bench;
+
+/// Audit seed 126: the cover gives each name ends at least as tight as the solver alone,
+/// which here are the oracle's (PRES-cover-refusals-where-exact).
+#[test]
+fn audit_seed_126_keeps_the_ends_the_solver_alone_finds() {
+    use zed_tests::step_helpers::l01_38_presburger::solver_alone;
+    let alone = solver_alone(|| audit(126..127));
+    let cover = audit(126..127);
+    assert_eq!(alone.iter().filter(|r| r.ends).count(), 9);
+    for (a, c) in alone.iter().zip(&cover) {
+        assert!(
+            c.ends || !a.ends,
+            "step {}: the solver alone gives {} and the cover {}",
+            c.step,
+            a.got,
+            c.got
+        );
+    }
+}

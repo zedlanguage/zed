@@ -557,3 +557,11 @@ fn three_names_in_a_case(drop: &[usize]) {
         "the scope differed from scratch before the test"
     );
 }
+
+/// The random test on punctured lines at seed 5117989267050643737, which failed at case 3,
+/// step 0 (FAIL-case-wake-punctured-seed): the scope's whole block, projected again when a
+/// name came in with a hole, kept `z = 0`, which the projection from scratch shows has no point.
+#[test]
+fn tests_on_punctured_lines_at_seed_5117989267050643737() {
+    run_at(Aim::Puncture, 5117989267050643737);
+}

@@ -13099,7 +13099,7 @@ impl Scope {
         due.extend(b.released(was_stair, was_ray).cloned());
         let mut moved: BTreeSet<Arc<str>> = BTreeSet::new();
 
-        let due = if covered.is_some() || b.ray_managed {
+        let mut due = if covered.is_some() || b.ray_managed {
             let mut due: BTreeSet<PartAt> = due.into_iter().collect();
             for d in start.diff(&self.names) {
                 if let DiffItem::Update {
@@ -13140,9 +13140,18 @@ impl Scope {
         let mut entry_hole = b.gained_hole(self.names.view());
         b.hole_pending = false;
         if due.is_empty() {
-            b.hole_pending = entry_hole;
-            self.keep(b);
-            return;
+            if !entry_hole {
+                self.keep(b);
+                return;
+            }
+            // A hole made outside any projection with nothing due, as the join of two cases
+            // makes one (a {0} and a {2} give a {0, 2}), projects every part now, so the scope
+            // gives what its projection from scratch gives; keeping the request for a later
+            // projection left `z = 0`, where the whole block has no point
+            // (FAIL-case-wake-punctured-seed, `case_wake::tests_on_punctured_lines_at_seed_
+            // 5117989267050643737`). Cost: one projection of the block per such hole, as the
+            // loop makes when a part gives the hole.
+            due = b.parts.keys().cloned().collect();
         }
         // A threshold-implication component is solved as a whole, exactly ([`threshold::solve`]).
         // Complexity tradeoff: the component is solved again from the start each time one of
