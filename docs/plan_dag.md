@@ -3608,7 +3608,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 ## File conflicts at the same level
 
-Each pair below is at one level, shares a file and is not yet done. No path of needs joins two items at one level, since each level is one more than the highest level among the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 4470 pairs. This section and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items table above (with `--check` it only compares them with it); edit the table and rerun it, not the lists. Two items share a file when a path of one equals a path of the other or lies inside a directory path of the other, one that ends in `/`. Paths are compared as written, less a trailing ` (new)`; files under `tests/` and the files every step touches are not compared. The two items of a row are in the order of their rows in the table, and the shared paths are the longer path of each match.
+Each pair below is at one level, shares a file and is not yet done. No path of needs joins two items at one level, since each level is one more than the highest level among the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 6164 pairs. This section and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items table above (with `--check` it only compares them with it); edit the table and rerun it, not the lists. Two items share a file when a path of one equals a path of the other or lies inside a directory path of the other, one that ends in `/`. Paths are compared as written, less a trailing ` (new)`; files under `tests/` and the files every step touches are not compared. The two items of a row are in the order of their rows in the table, and the shared paths are the longer path of each match.
 
 | Level | Items | Shared paths |
 |---|---|---|
@@ -3617,6 +3617,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.9-tests, SPEC-ffi-library-table | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-ffi-isolate-limits | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SYM-factor-name | `DESIGN.md` |
+| 0 | SPEC-L3.9-tests, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | SPEC-L3.9-tests, XR-ct-enforce | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-packed-align | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, S4-hub-mixed | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3627,6 +3629,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.9-tests, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-L3.9-tests, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, LAYER-audit-open | `DESIGN.md` |
@@ -3642,10 +3645,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.9-tests, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-L3.9-tests, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, WAVE-theory | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-ffi-library-table | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-ffi-isolate-limits | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SYM-factor-name | `DESIGN.md` |
+| 0 | SPEC-L3.21-ac, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | SPEC-L3.21-ac, XR-ct-enforce | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-packed-align | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, S4-hub-mixed | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3656,6 +3662,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.21-ac, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-L3.21-ac, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, LAYER-audit-open | `DESIGN.md` |
@@ -3671,9 +3678,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.21-ac, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-L3.21-ac, SPEC-bit-identities | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-ffi-library-table | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-ffi-isolate-limits | `DESIGN.md` |
 | 0 | WAVE-theory, SYM-factor-name | `DESIGN.md` |
+| 0 | WAVE-theory, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | WAVE-theory, XR-ct-enforce | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-packed-align | `DESIGN.md` |
 | 0 | WAVE-theory, S4-hub-mixed | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3684,6 +3694,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | WAVE-theory, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | WAVE-theory, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | WAVE-theory, PUSH-target-rules | `DESIGN.md` |
 | 0 | WAVE-theory, GEN-index-vs-element | `DESIGN.md` |
 | 0 | WAVE-theory, LAYER-audit-open | `DESIGN.md` |
@@ -3699,30 +3710,41 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | WAVE-theory, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-json-value | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-implies-guard | `DESIGN.md` |
+| 0 | WAVE-theory, SPEC-bit-identities | `DESIGN.md` |
 | 0 | TEST-rt-weakmem, ZEDC-build-out-dir | `crates/zed-native/src/link.rs` |
 | 0 | TEST-rt-weakmem, STUDY-zir-facts-carried | `crates/zed-rt/src/stack.rs`, `crates/zed-rt/src/limits.rs`, `crates/zed-native/src/link.rs`, `crates/zed-rt/Cargo.toml` |
+| 0 | TEST-rt-weakmem, FAIL-build-killed-link-no-working-dir | `crates/zed-native/src/link.rs` |
 | 0 | PRES-sign-free-order-growth, Q1-LOCAL-method | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PRES-holes-steps-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PERF-l139-persist-due | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-sign-free-order-growth, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-sign-free-order-growth, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sign-free-order-growth, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | ROOTS-small-constant, ROOTS-interval-bound | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-small-constant, PROV-scaling-10_5 | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-small-constant, LIMITS-remove-all | `crates/zed-kernel/src/poly/roots.rs` |
+| 0 | ROOTS-small-constant, TEST-kernel-lib-split | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-small-constant, PERF-guarded-function-walk | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-small-constant, FP-ops-order | `crates/zed-kernel/src/poly/roots.rs` |
+| 0 | STUDY-induction-corpus, HULL-elim-text | `docs/plan_dag.md` |
+| 0 | STUDY-induction-corpus, BOARD-redundant-needs | `docs/plan_dag.md` |
+| 0 | STUDY-induction-corpus, SCHED-loop-early | `docs/plan_dag.md` |
+| 0 | STUDY-induction-corpus, LAYER-audit-open | `docs/plan_dag.md` |
 | 0 | SPEC-ffi-library-table, SPEC-ffi-isolate-limits | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SYM-factor-name | `DESIGN.md` |
+| 0 | SPEC-ffi-library-table, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | SPEC-ffi-library-table, XR-ct-enforce | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-packed-align | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, S4-hub-mixed | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3733,6 +3755,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-library-table, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-ffi-library-table, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, LAYER-audit-open | `DESIGN.md` |
@@ -3748,7 +3771,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-library-table, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-ffi-library-table, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SYM-factor-name | `DESIGN.md` |
+| 0 | SPEC-ffi-isolate-limits, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | SPEC-ffi-isolate-limits, XR-ct-enforce | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-packed-align | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, S4-hub-mixed | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3759,6 +3785,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-isolate-limits, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-ffi-isolate-limits, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, LAYER-audit-open | `DESIGN.md` |
@@ -3774,6 +3801,9 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-isolate-limits, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-ffi-isolate-limits, SPEC-bit-identities | `DESIGN.md` |
+| 0 | SYM-factor-name, STUDY-lean-vs-zed | `DESIGN.md` |
+| 0 | SYM-factor-name, XR-ct-enforce | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-packed-align | `DESIGN.md` |
 | 0 | SYM-factor-name, S4-hub-mixed | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-ffi-int-handles | `DESIGN.md` |
@@ -3784,11 +3814,15 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SYM-factor-name, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SYM-factor-name, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SYM-factor-name, PUSH-target-rules | `DESIGN.md` |
 | 0 | SYM-factor-name, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SYM-factor-name, LAYER-audit-open | `DESIGN.md` |
+| 0 | SYM-factor-name, SYNC-copies-refresh-3 | `zed/grammar/words.md` |
+| 0 | SYM-factor-name, SYNC-copies-refresh-4 | `zed/grammar/words.md` |
 | 0 | SYM-factor-name, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-if-no-else-stmt | `DESIGN.md` |
+| 0 | SYM-factor-name, SPEC-build-modes-main-build | `zed/grammar/words.md` |
 | 0 | SYM-factor-name, SPEC-pat-list | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-pat-string-prefix | `DESIGN.md` |
@@ -3799,8 +3833,70 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SYM-factor-name, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-json-value | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SYM-factor-name, SPEC-bit-identities | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, XR-ct-enforce | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-packed-align | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, S4-hub-mixed | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-ffi-int-handles | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-child-oom-status | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-port-close-failure | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-string-slice-text | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, DOC-l116-value-cycle | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-pure-region-port-read | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-declared-step-once | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, PUSH-target-rules | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, GEN-index-vs-element | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, LAYER-audit-open | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-if-no-else-stmt | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-pat-list | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-set-type-written | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-pat-string-prefix | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-pat-record | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-pat-map-key | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-mono-fibers | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-diff-key | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-json-absent-field | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-json-value | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-implies-guard | `DESIGN.md` |
+| 0 | STUDY-lean-vs-zed, SPEC-bit-identities | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-packed-align | `DESIGN.md` |
+| 0 | XR-ct-enforce, S4-hub-mixed | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-ffi-int-handles | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-child-oom-status | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-port-close-failure | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-string-slice-text | `DESIGN.md` |
+| 0 | XR-ct-enforce, DOC-l116-value-cycle | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-pure-region-port-read | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-declared-step-once | `DESIGN.md` |
+| 0 | XR-ct-enforce, PUSH-target-rules | `DESIGN.md` |
+| 0 | XR-ct-enforce, GEN-index-vs-element | `DESIGN.md` |
+| 0 | XR-ct-enforce, LAYER-audit-open | `DESIGN.md` |
+| 0 | XR-ct-enforce, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-if-no-else-stmt | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-pat-list | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-set-type-written | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-pat-string-prefix | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-pat-record | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-pat-map-key | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-mono-fibers | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-diff-key | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-json-absent-field | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-json-value | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-implies-guard | `DESIGN.md` |
+| 0 | XR-ct-enforce, SPEC-bit-identities | `DESIGN.md` |
+| 0 | GROUP-layered-nowitness, SUB-empty-fork-bytes | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PROV-scaling-10_5 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, SUB-fork-place-bytes | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, SUB-fork-place-512 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, TEST-types-unreached-paths | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
@@ -3808,6 +3904,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | GROUP-layered-nowitness, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | HOLES-exact-between, TIGHTEN-k-parts | `crates/zedc-preimage/src/product.rs` |
@@ -3828,6 +3926,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | HOLES-exact-between, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-hull-join-row-after | `crates/zedc-preimage/src/holes.rs`, `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-l139-block-incr | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-l139-persist-due | `crates/zedc-preimage/src/product.rs` |
@@ -3846,18 +3948,24 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TIGHTEN-k-parts, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | Q1-LOCAL-method, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PRES-holes-steps-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PERF-l139-persist-due | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | Q1-LOCAL-method, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | Q1-LOCAL-method, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | Q1-LOCAL-method, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
@@ -3905,6 +4013,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-packed-align, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-packed-align, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-packed-align, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-packed-align, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-packed-align, LAYER-audit-open | `DESIGN.md` |
@@ -3920,6 +4029,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-packed-align, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-packed-align, SPEC-bit-identities | `DESIGN.md` |
 | 0 | MSG-default-unknown-type, PORT-table-param | `crates/zedc-check/src/check/ports.rs` |
 | 0 | MSG-default-unknown-type, MSG-types-as-literals | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, CMP-repair-values | `crates/zedc-check/src/check/mod.rs` |
@@ -3937,9 +4047,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-default-unknown-type, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | MSG-default-unknown-type, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-default-unknown-type, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-default-unknown-type, MSG-too-large-cast-origin | `crates/zedc-check/src/check/` |
+| 0 | MSG-default-unknown-type, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, DIAG-len-args-repair | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/` |
@@ -3953,29 +4066,67 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-default-unknown-type, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | MSG-default-unknown-type, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-default-unknown-type, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, PERF-guarded-function-walk | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | MSG-default-unknown-type, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-default-unknown-type, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-default-unknown-type, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-default-unknown-type, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | MSG-default-unknown-type, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-default-unknown-type, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-default-unknown-type, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-default-unknown-type, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-default-unknown-type, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | SUB-empty-fork-bytes, PROV-scaling-10_5 | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, SUB-fork-place-bytes | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, SUB-fork-place-512 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, KERNEL-bdd-rejoin-bytes | `crates/zed-kernel/src/types/bdd/` |
+| 0 | SUB-empty-fork-bytes, TEST-types-unreached-paths | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | SUB-empty-fork-bytes, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | SUB-empty-fork-bytes, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, FAIL-unit-pieces-time | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | SUB-empty-fork-bytes, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | SUB-empty-fork-bytes, LIMITS-remove-all | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | SUB-empty-fork-bytes, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
+| 0 | SUB-empty-fork-bytes, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-empty-fork-bytes, TEST-kernel-lib-split | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, PERF-guarded-function-walk | `crates/zed-kernel/src/types/` |
+| 0 | SUB-empty-fork-bytes, FP-ops-order | `crates/zed-kernel/src/types/` |
+| 0 | PRINT-below-whole-13, RAT-pow-expect | `crates/zed-kernel/src/num.rs` |
 | 0 | PRINT-below-whole-13, PROV-scaling-10_5 | `crates/zed-kernel/src/num.rs` |
+| 0 | PRINT-below-whole-13, NUM-expect-audit | `crates/zed-kernel/src/num.rs` |
 | 0 | PRINT-below-whole-13, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
 | 0 | PRINT-below-whole-13, LIMITS-remove-all | `crates/zed-kernel/src/num.rs` |
+| 0 | PRINT-below-whole-13, TEST-kernel-lib-split | `crates/zed-kernel/src/num.rs` |
 | 0 | PRINT-below-whole-13, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs` |
 | 0 | PRINT-below-whole-13, FP-ops-order | `crates/zed-kernel/src/num.rs` |
 | 0 | REF-nested-moduli-state, S22-scaling-10_5 | `crates/zedc-preimage/src/preimage_ref.rs` |
@@ -3990,6 +4141,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-sum-chain-cost, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-sum-chain-cost, RP-scaling-10_5 | `crates/zedc-presburger/src/conjuncts.rs` |
+| 0 | PRES-sum-chain-cost, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
@@ -3997,6 +4149,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-sum-chain-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-sum-chain-cost, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | PRES-sum-chain-cost, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-sum-chain-cost, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
@@ -4005,6 +4158,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-holes-steps-cost, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-holes-steps-cost, RP-scaling-10_5 | `crates/zedc-presburger/src/conjuncts.rs` |
+| 0 | PRES-holes-steps-cost, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
@@ -4012,6 +4166,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-holes-steps-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-holes-steps-cost, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | PRES-holes-steps-cost, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-holes-steps-cost, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
@@ -4023,6 +4178,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S4-hub-mixed, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | S4-hub-mixed, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | S4-hub-mixed, PUSH-target-rules | `DESIGN.md` |
 | 0 | S4-hub-mixed, GEN-index-vs-element | `DESIGN.md` |
 | 0 | S4-hub-mixed, LAYER-audit-open | `DESIGN.md` |
@@ -4038,6 +4194,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S4-hub-mixed, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-json-value | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-implies-guard | `DESIGN.md` |
+| 0 | S4-hub-mixed, SPEC-bit-identities | `DESIGN.md` |
 | 0 | PORT-table-param, MSG-types-as-literals | `crates/zedc-check/src/check/ports.rs` |
 | 0 | PORT-table-param, PARSE-ladder-rungs | `crates/zedc-syntax/src/ast/stmts.rs` |
 | 0 | PORT-table-param, PORT-untyped-arg | `crates/zedc-check/src/check/ports.rs` |
@@ -4080,6 +4237,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-block-incr, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/conjuncts.rs` |
+| 0 | PERF-l139-block-incr, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PERF-l139-hopb-wakes | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
@@ -4094,6 +4255,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, SCALE-near-limit-l0139 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
@@ -4104,9 +4266,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PERF-l139-persist-due, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PERF-l139-persist-due, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, S22-scaling-10_5 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PATH-reads-scale | `crates/zedc-preimage/src/product.rs` |
@@ -4122,12 +4289,18 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-hopb-wakes, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | DIAG-exponent-row, SYNC-copies-refresh-2 | `crates/zedc-base/src/rejection.rs` |
 | 0 | HULL-elim-text, BOARD-redundant-needs | `docs/plan_dag.md` |
 | 0 | HULL-elim-text, SCHED-loop-early | `docs/plan_dag.md` |
 | 0 | HULL-elim-text, LAYER-audit-open | `docs/plan_dag.md` |
 | 0 | ROOTS-interval-bound, PROV-scaling-10_5 | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-interval-bound, LIMITS-remove-all | `crates/zed-kernel/src/poly/roots.rs` |
+| 0 | ROOTS-interval-bound, TEST-kernel-lib-split | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-interval-bound, PERF-guarded-function-walk | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | ROOTS-interval-bound, FP-ops-order | `crates/zed-kernel/src/poly/roots.rs` |
 | 0 | LIT-menu-rat-tower, MSG-types-as-literals | `crates/zedc-check/src/walk.rs` |
@@ -4144,6 +4317,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-menu-rat-tower, LIMITS-remove-all | `crates/zedc-check/src/walk.rs` |
 | 0 | LIT-menu-rat-tower, TEST-term-for-uncovered | `crates/zedc-check/src/walk.rs` |
 | 0 | LIT-menu-rat-tower, PERF-guarded-function-walk | `crates/zedc-check/src/walk.rs` |
+| 0 | RAT-pow-expect, PROV-scaling-10_5 | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, NUM-expect-audit | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, LIMITS-remove-all | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, TEST-kernel-lib-split | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs` |
+| 0 | RAT-pow-expect, FP-ops-order | `crates/zed-kernel/src/num.rs` |
 | 0 | MSG-types-as-literals, NARROW-rat-gaps | `crates/zedc-check/src/walk.rs` |
 | 0 | MSG-types-as-literals, CMP-repair-values | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PORT-untyped-arg | `crates/zedc-check/src/check/ports.rs` |
@@ -4160,9 +4340,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-types-as-literals, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | MSG-types-as-literals, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-types-as-literals, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-types-as-literals, MSG-too-large-cast-origin | `crates/zedc-check/src/` |
+| 0 | MSG-types-as-literals, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | MSG-types-as-literals, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | MSG-types-as-literals, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4176,26 +4359,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-types-as-literals, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | MSG-types-as-literals, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-types-as-literals, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, PERF-guarded-function-walk | `crates/zedc-check/src/` |
 | 0 | MSG-types-as-literals, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | MSG-types-as-literals, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-types-as-literals, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-types-as-literals, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-types-as-literals, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | MSG-types-as-literals, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-types-as-literals, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-types-as-literals, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-types-as-literals, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-types-as-literals, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-types-as-literals, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | NARROW-rat-gaps, LIT-forced-carrier | `crates/zedc-check/src/walk.rs` |
 | 0 | NARROW-rat-gaps, DIAG-order-carrier-row | `crates/zedc-check/src/walk.rs` |
 | 0 | NARROW-rat-gaps, DIAG-slash-mixed-carrier | `crates/zedc-check/src/walk.rs` |
@@ -4219,6 +4414,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CMP-repair-values, LIT-op-carrier-headline | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, CHECK-fold-merge-errs | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, DIAG-len-args-repair | `crates/zedc-check/src/check/mod.rs` |
@@ -4228,6 +4424,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CMP-repair-values, TEST-term-for-uncovered | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
@@ -4236,40 +4433,51 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CMP-repair-values, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CMP-repair-values, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CMP-repair-values, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
 | 0 | RADIX-nlog2-10_5, PROV-scaling-10_5 | `crates/zed-kernel/src/num/` |
 | 0 | RADIX-nlog2-10_5, POLY-mul-cost-gaps | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | RADIX-nlog2-10_5, LIMITS-remove-all | `crates/zed-kernel/src/num/` |
+| 0 | RADIX-nlog2-10_5, TEST-kernel-lib-split | `crates/zed-kernel/src/num/` |
 | 0 | RADIX-nlog2-10_5, PERF-guarded-function-walk | `crates/zed-kernel/src/num/` |
 | 0 | RADIX-nlog2-10_5, FP-ops-order | `crates/zed-kernel/src/num/` |
 | 0 | PARSE-ladder-rungs, PRINT-expr-parens-minimal | `crates/zedc-syntax/src/format.rs` |
 | 0 | PARSE-ladder-rungs, PUSH-target-rules | `crates/zedc-syntax/src/ast/builder.rs` |
 | 0 | PRES-ladder-10_5, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-ladder-10_5, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-ladder-10_5, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-ladder-10_5, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-scaling-10_5, PRES-cover-order-rewrites | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-scaling-10_5, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-scaling-10_5, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-scaling-10_5, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-scaling-10_5, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | RP-scaling-10_5, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | RP-scaling-10_5, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/conjuncts.rs` |
+| 0 | STAGE-scaling-10_5, PROOF-run-under-test-bug | `crates/zedc-stage/src/stage.rs` |
 | 0 | S22-scaling-10_5, PATH-reads-scale | `crates/zedc-preimage/` |
 | 0 | S22-scaling-10_5, NARROW-hub-interleaved-scale | `crates/zedc-preimage/` |
 | 0 | S22-scaling-10_5, STAR-satellite-scale | `crates/zedc-preimage/` |
@@ -4284,32 +4492,96 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S22-scaling-10_5, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | S22-scaling-10_5, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | S22-scaling-10_5, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/spans.rs` |
 | 0 | S22-scaling-10_5, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | S22-scaling-10_5, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | S22-scaling-10_5, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | S22-scaling-10_5, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | PROV-scaling-10_5, SUB-fork-place-bytes | `crates/zed-kernel/src/types/` |
+| 0 | PROV-scaling-10_5, SUB-fork-place-512 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROV-scaling-10_5, KERNEL-bdd-rejoin-bytes | `crates/zed-kernel/src/types/bdd/` |
 | 0 | PROV-scaling-10_5, POLY-mul-cost-gaps | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | PROV-scaling-10_5, POLY-support-bench | `crates/zed-kernel/src/poly.rs` |
+| 0 | PROV-scaling-10_5, NUM-expect-audit | `crates/zed-kernel/src/num.rs` |
 | 0 | PROV-scaling-10_5, PERF-canon-flat-strings | `crates/zed-kernel/src/text/names.rs` |
 | 0 | PROV-scaling-10_5, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
 | 0 | PROV-scaling-10_5, BIT-shift-bytes | `crates/zed-kernel/src/bits.rs` |
+| 0 | PROV-scaling-10_5, TEST-types-unreached-paths | `crates/zed-kernel/src/types/` |
 | 0 | PROV-scaling-10_5, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | PROV-scaling-10_5, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PROV-scaling-10_5, PROOF-meet-rows-finite | `crates/zed-kernel/src/types.rs` |
+| 0 | PROV-scaling-10_5, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROV-scaling-10_5, FAIL-unit-pieces-time | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | PROV-scaling-10_5, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/` |
 | 0 | PROV-scaling-10_5, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
 | 0 | PROV-scaling-10_5, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
 | 0 | PROV-scaling-10_5, SPEC-pure-region-port-read | `crates/zed-kernel/src/eval.rs` |
 | 0 | PROV-scaling-10_5, POLY-square-cost-sizes | `crates/zed-kernel/src/poly.rs` |
 | 0 | PROV-scaling-10_5, CHECK-literal-union-cost | `crates/zed-kernel/src/types.rs` |
 | 0 | PROV-scaling-10_5, LIMITS-remove-all | `crates/zed-kernel/src/` |
+| 0 | PROV-scaling-10_5, XR-group-order-5-rounds-1-3 | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/empty.rs` |
 | 0 | PROV-scaling-10_5, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
 | 0 | PROV-scaling-10_5, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | PROV-scaling-10_5, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROV-scaling-10_5, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, FAIL-arrow-lambda-partial-slot | `crates/zed-kernel/src/eval.rs` |
+| 0 | PROV-scaling-10_5, PROOF-run-under-test-bug | `crates/zed-kernel/src/eval.rs` |
+| 0 | PROV-scaling-10_5, TEST-kernel-lib-split | `crates/zed-kernel/src/` |
 | 0 | PROV-scaling-10_5, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/eval/env.rs` |
 | 0 | PROV-scaling-10_5, PERF-guarded-function-walk | `crates/zed-kernel/src/` |
 | 0 | PROV-scaling-10_5, FP-ops-order | `crates/zed-kernel/src/` |
+| 0 | PROV-scaling-10_5, CLIPPY-preimage-mutable-key-type | `crates/zed-kernel/src/term.rs` |
+| 0 | SUB-fork-place-bytes, SUB-fork-place-512 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, KERNEL-bdd-rejoin-bytes | `crates/zed-kernel/src/types/bdd/` |
+| 0 | SUB-fork-place-bytes, TEST-types-unreached-paths | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | SUB-fork-place-bytes, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | SUB-fork-place-bytes, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, FAIL-unit-pieces-time | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | SUB-fork-place-bytes, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | SUB-fork-place-bytes, LIMITS-remove-all | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | SUB-fork-place-bytes, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
+| 0 | SUB-fork-place-bytes, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-bytes, TEST-kernel-lib-split | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, PERF-guarded-function-walk | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-bytes, FP-ops-order | `crates/zed-kernel/src/types/` |
+| 0 | SUB-fork-place-512, TEST-types-unreached-paths | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | SUB-fork-place-512, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | KERNEL-bdd-rejoin-bytes, TEST-types-unreached-paths | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | KERNEL-bdd-rejoin-bytes, FAIL-unit-pieces-time | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | KERNEL-bdd-rejoin-bytes, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | KERNEL-bdd-rejoin-bytes, LIMITS-remove-all | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/` |
+| 0 | KERNEL-bdd-rejoin-bytes, TEST-kernel-lib-split | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, PERF-guarded-function-walk | `crates/zed-kernel/src/types/bdd/` |
+| 0 | KERNEL-bdd-rejoin-bytes, FP-ops-order | `crates/zed-kernel/src/types/bdd/` |
 | 0 | PORT-untyped-arg, PORT-block-name | `crates/zedc-check/src/check/ports.rs` |
 | 0 | PORT-untyped-arg, MSG-cast-no-carrier-first | `crates/zedc-check/src/check/ports.rs` |
 | 0 | PORT-untyped-arg, LIT-forced-carrier | `crates/zedc-check/src/check/ports.rs` |
@@ -4359,18 +4631,28 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DAGVIEW-relayout-stable, DAGVIEW-held-digitless | `tools/dagview/d3dag.ts` |
 | 0 | DAGVIEW-relayout-stable, TOOLS-time-tests-fixes | `tools/dagview/d3dag.ts` |
 | 0 | POLY-mul-cost-gaps, LIMITS-remove-all | `crates/zed-kernel/src/num/fast.rs` |
+| 0 | POLY-mul-cost-gaps, TEST-kernel-lib-split | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | POLY-mul-cost-gaps, PERF-guarded-function-walk | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | POLY-mul-cost-gaps, FP-ops-order | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | POLY-support-bench, POLY-square-cost-sizes | `crates/zed-kernel/src/poly.rs` |
 | 0 | POLY-support-bench, LIMITS-remove-all | `crates/zed-kernel/src/poly.rs` |
+| 0 | POLY-support-bench, TEST-kernel-lib-split | `crates/zed-kernel/src/poly.rs` |
 | 0 | POLY-support-bench, PERF-guarded-function-walk | `crates/zed-kernel/src/poly.rs` |
 | 0 | POLY-support-bench, FP-ops-order | `crates/zed-kernel/src/poly.rs` |
+| 0 | NUM-expect-audit, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
+| 0 | NUM-expect-audit, LIMITS-remove-all | `crates/zed-kernel/src/num.rs` |
+| 0 | NUM-expect-audit, TEST-kernel-lib-split | `crates/zed-kernel/src/num.rs` |
+| 0 | NUM-expect-audit, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs` |
+| 0 | NUM-expect-audit, FP-ops-order | `crates/zed-kernel/src/num.rs` |
 | 0 | PERF-canon-flat-strings, STUDY-zir-facts-carried | `crates/zedc-zir/src/canon/serial.rs` |
 | 0 | PERF-canon-flat-strings, LIMITS-remove-all | `crates/zed-kernel/src/text/names.rs` |
 | 0 | PERF-canon-flat-strings, SPEC-m07-string-serial | `crates/zedc-zir/src/canon/serial.rs` |
+| 0 | PERF-canon-flat-strings, TEST-kernel-lib-split | `crates/zed-kernel/src/text/names.rs` |
 | 0 | PERF-canon-flat-strings, PERF-guarded-function-walk | `crates/zed-kernel/src/text/names.rs` |
 | 0 | PERF-canon-flat-strings, FP-ops-order | `crates/zed-kernel/src/text/names.rs` |
+| 0 | DB-pool, SYNC-copies-refresh-4 | `zed/libzed` |
 | 0 | LIT-f64-pub-expect, LIMITS-remove-all | `crates/zed-kernel/src/num.rs` |
+| 0 | LIT-f64-pub-expect, TEST-kernel-lib-split | `crates/zed-kernel/src/num.rs` |
 | 0 | LIT-f64-pub-expect, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs` |
 | 0 | LIT-f64-pub-expect, FP-ops-order | `crates/zed-kernel/src/num.rs` |
 | 0 | DAGVIEW-first-relayout-x, DAGVIEW-shape-edges | `tools/dagview/d3dag.ts` |
@@ -4389,9 +4671,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-cast-no-carrier-first, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | MSG-cast-no-carrier-first, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-cast-no-carrier-first, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-too-large-cast-origin | `crates/zedc-check/src/check/` |
+| 0 | MSG-cast-no-carrier-first, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | MSG-cast-no-carrier-first, DIAG-len-args-repair | `crates/zedc-check/src/check/` |
 | 0 | MSG-cast-no-carrier-first, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/` |
@@ -4405,26 +4690,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-cast-no-carrier-first, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | MSG-cast-no-carrier-first, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-cast-no-carrier-first, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, PERF-guarded-function-walk | `crates/zedc-check/src/check/` |
 | 0 | MSG-cast-no-carrier-first, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | MSG-cast-no-carrier-first, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-cast-no-carrier-first, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-cast-no-carrier-first, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | MSG-cast-no-carrier-first, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-cast-no-carrier-first, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-cast-no-carrier-first, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-cast-no-carrier-first, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-cast-no-carrier-first, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-ffi-int-handles, SPEC-child-oom-status | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-port-close-failure | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-string-slice-text | `DESIGN.md` |
@@ -4432,6 +4729,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-int-handles, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-ffi-int-handles, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, LAYER-audit-open | `DESIGN.md` |
@@ -4447,9 +4745,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-int-handles, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-ffi-int-handles, SPEC-bit-identities | `DESIGN.md` |
+| 0 | BUILD-slots-random-start, FAIL-unit-pieces-time | `tools/run_tests.sh` |
 | 0 | BUILD-slots-random-start, TEST-kernel-units-short-addresses | `tools/run_tests.sh` |
 | 0 | BUILD-slots-random-start, TOOLS-time-tests-fixes | `tools/run_tests.sh` |
 | 0 | BUILD-slots-random-start, TEST-scaling-cold-and-warm | `tools/run_tests.sh` |
+| 0 | BUILD-slots-random-start, FAIL-tie-group-tests-piece-time | `tools/run_tests.sh` |
+| 0 | BUILD-slots-random-start, TEST-lib-pieces-near-limit | `tools/run_tests.sh` |
 | 0 | BUILD-slots-random-start, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
 | 0 | SPEC-child-oom-status, SPEC-port-close-failure | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-string-slice-text | `DESIGN.md` |
@@ -4457,6 +4759,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-child-oom-status, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-child-oom-status, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, LAYER-audit-open | `DESIGN.md` |
@@ -4472,6 +4775,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-child-oom-status, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-child-oom-status, SPEC-bit-identities | `DESIGN.md` |
 | 0 | LIT-forced-carrier, DIAG-order-carrier-row | `crates/zedc-check/` |
 | 0 | LIT-forced-carrier, DIAG-slash-mixed-carrier | `crates/zedc-check/` |
 | 0 | LIT-forced-carrier, DIAG-union-carrier-row | `crates/zedc-check/` |
@@ -4482,9 +4786,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-forced-carrier, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | LIT-forced-carrier, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | LIT-forced-carrier, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | LIT-forced-carrier, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | LIT-forced-carrier, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | LIT-forced-carrier, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | LIT-forced-carrier, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4498,26 +4805,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-forced-carrier, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | LIT-forced-carrier, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-forced-carrier, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | LIT-forced-carrier, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | LIT-forced-carrier, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-forced-carrier, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-forced-carrier, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-forced-carrier, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | LIT-forced-carrier, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-forced-carrier, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-forced-carrier, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | LIT-forced-carrier, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | LIT-forced-carrier, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-forced-carrier, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, DIAG-slash-mixed-carrier | `crates/zedc-check/` |
 | 0 | DIAG-order-carrier-row, DIAG-union-carrier-row | `crates/zedc-check/` |
 | 0 | DIAG-order-carrier-row, CAST-atom-arg | `crates/zedc-check/` |
@@ -4527,9 +4846,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-order-carrier-row, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | DIAG-order-carrier-row, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-order-carrier-row, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-order-carrier-row, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | DIAG-order-carrier-row, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | DIAG-order-carrier-row, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | DIAG-order-carrier-row, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4543,26 +4865,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-order-carrier-row, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | DIAG-order-carrier-row, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-order-carrier-row, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | DIAG-order-carrier-row, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | DIAG-order-carrier-row, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-order-carrier-row, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-order-carrier-row, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-order-carrier-row, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | DIAG-order-carrier-row, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-order-carrier-row, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-order-carrier-row, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | DIAG-order-carrier-row, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-order-carrier-row, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-order-carrier-row, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, DIAG-union-carrier-row | `crates/zedc-check/` |
 | 0 | DIAG-slash-mixed-carrier, CAST-atom-arg | `crates/zedc-check/` |
 | 0 | DIAG-slash-mixed-carrier, LIT-op-carrier-headline | `crates/zedc-check/` |
@@ -4571,9 +4905,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-slash-mixed-carrier, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | DIAG-slash-mixed-carrier, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-slash-mixed-carrier, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | DIAG-slash-mixed-carrier, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | DIAG-slash-mixed-carrier, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | DIAG-slash-mixed-carrier, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4587,26 +4924,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-slash-mixed-carrier, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | DIAG-slash-mixed-carrier, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-slash-mixed-carrier, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | DIAG-slash-mixed-carrier, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | DIAG-slash-mixed-carrier, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-slash-mixed-carrier, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-slash-mixed-carrier, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | DIAG-slash-mixed-carrier, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-slash-mixed-carrier, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | DIAG-slash-mixed-carrier, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-slash-mixed-carrier, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-slash-mixed-carrier, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, CAST-atom-arg | `crates/zedc-check/` |
 | 0 | DIAG-union-carrier-row, LIT-op-carrier-headline | `crates/zedc-check/` |
 | 0 | DIAG-union-carrier-row, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
@@ -4614,9 +4963,12 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-union-carrier-row, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | DIAG-union-carrier-row, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-union-carrier-row, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | DIAG-union-carrier-row, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | DIAG-union-carrier-row, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | DIAG-union-carrier-row, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | DIAG-union-carrier-row, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4630,35 +4982,50 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-union-carrier-row, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | DIAG-union-carrier-row, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-union-carrier-row, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | DIAG-union-carrier-row, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | DIAG-union-carrier-row, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-union-carrier-row, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-union-carrier-row, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-union-carrier-row, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | DIAG-union-carrier-row, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-union-carrier-row, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-union-carrier-row, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | DIAG-union-carrier-row, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-union-carrier-row, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-union-carrier-row, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, LIT-op-carrier-headline | `crates/zedc-check/` |
 | 0 | CAST-atom-arg, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | CAST-atom-arg, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | CAST-atom-arg, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | CAST-atom-arg, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | CAST-atom-arg, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | CAST-atom-arg, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | CAST-atom-arg, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4672,34 +5039,49 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CAST-atom-arg, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | CAST-atom-arg, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CAST-atom-arg, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | CAST-atom-arg, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | CAST-atom-arg, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CAST-atom-arg, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CAST-atom-arg, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CAST-atom-arg, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | CAST-atom-arg, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CAST-atom-arg, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CAST-atom-arg, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | CAST-atom-arg, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | CAST-atom-arg, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | CAST-atom-arg, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, REPAIR-text-cast-menu-check | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, PROOF-diff-payload-rest-refused | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
 | 0 | LIT-op-carrier-headline, PROOF-part-tokens-slice-lex | `crates/zedc-check/src/check/read.rs` |
 | 0 | LIT-op-carrier-headline, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | LIT-op-carrier-headline, MSG-too-large-cast-origin | `crates/zedc-check/` |
+| 0 | LIT-op-carrier-headline, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | LIT-op-carrier-headline, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | LIT-op-carrier-headline, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -4713,31 +5095,44 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIT-op-carrier-headline, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | LIT-op-carrier-headline, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-op-carrier-headline, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | LIT-op-carrier-headline, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | LIT-op-carrier-headline, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-op-carrier-headline, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-op-carrier-headline, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-op-carrier-headline, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | LIT-op-carrier-headline, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-op-carrier-headline, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIT-op-carrier-headline, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | LIT-op-carrier-headline, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | LIT-op-carrier-headline, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-op-carrier-headline, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-port-close-failure, SPEC-string-slice-text | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, DOC-l116-value-cycle | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-port-close-failure, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, LAYER-audit-open | `DESIGN.md` |
@@ -4753,10 +5148,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-port-close-failure, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-port-close-failure, SPEC-bit-identities | `DESIGN.md` |
 | 0 | DAGVIEW-held-digitless, TOOLS-time-tests-fixes | `tools/dagview/state.ts`, `tools/dagview/` |
 | 0 | REPAIR-text-cast-menu-check, REPAIR-grouped-refusal-message | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs` |
@@ -4768,6 +5167,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REPAIR-text-cast-menu-check, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -4777,16 +5177,24 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REPAIR-text-cast-menu-check, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-text-cast-menu-check, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-text-cast-menu-check, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, CHECK-destructure-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs` |
@@ -4798,6 +5206,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REPAIR-grouped-refusal-message, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -4807,14 +5216,19 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REPAIR-grouped-refusal-message, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | REPAIR-grouped-refusal-message, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | REPAIR-grouped-refusal-message, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PATH-reads-scale, NARROW-hub-interleaved-scale | `crates/zedc-preimage/` |
 | 0 | PATH-reads-scale, STAR-satellite-scale | `crates/zedc-preimage/` |
 | 0 | PATH-reads-scale, LINKED-incremental-scratch-agree | `crates/zedc-preimage/src/product.rs` |
@@ -4828,9 +5242,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PATH-reads-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | PATH-reads-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PATH-reads-scale, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/spans.rs` |
 | 0 | PATH-reads-scale, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PATH-reads-scale, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PATH-reads-scale, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PATH-reads-scale, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | BIT-shift-bytes, LIMITS-remove-all | `crates/zed-kernel/src/bits.rs` |
+| 0 | BIT-shift-bytes, TEST-kernel-lib-split | `crates/zed-kernel/src/bits.rs` |
 | 0 | BIT-shift-bytes, PERF-guarded-function-walk | `crates/zed-kernel/src/bits.rs` |
 | 0 | BIT-shift-bytes, FP-ops-order | `crates/zed-kernel/src/bits.rs` |
 | 0 | NARROW-hub-interleaved-scale, STAR-satellite-scale | `crates/zedc-preimage/` |
@@ -4845,7 +5264,11 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | NARROW-hub-interleaved-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | NARROW-hub-interleaved-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | NARROW-hub-interleaved-scale, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/spans.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | NARROW-hub-interleaved-scale, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | NARROW-hub-interleaved-scale, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | NARROW-hub-interleaved-scale, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, LINKED-incremental-scratch-agree | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, FAMILY-scale-larger | `crates/zedc-preimage/src/product.rs` |
@@ -4858,7 +5281,11 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STAR-satellite-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | STAR-satellite-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | STAR-satellite-scale, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/spans.rs` |
 | 0 | STAR-satellite-scale, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | STAR-satellite-scale, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | STAR-satellite-scale, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | STAR-satellite-scale, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, FAMILY-scale-larger | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, SCOPE-assume-disjunctions-setup | `crates/zedc-preimage/src/product.rs` |
@@ -4869,6 +5296,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LINKED-incremental-scratch-agree, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, SCOPE-assume-disjunctions-setup | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, SCALE-near-limit-l0139 | `crates/zedc-preimage/src/product.rs` |
@@ -4878,6 +5309,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAMILY-scale-larger, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, SCALE-near-limit-l0139 | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
@@ -4886,6 +5321,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
@@ -4893,17 +5332,78 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-ratio-kernel-bdd-print | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | TEST-types-unreached-paths, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | TEST-types-unreached-paths, PERF-types-bounded-shapes-renamed-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, PERF-types-joined-split-several-differing | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, PERF-types-shared-row-bench-2ec6b9418 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, PROOF-diff-exact-skip | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, PROOF-diff-payload-rest-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-unit-pieces-time | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-types-unreached-paths, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TEST-types-unreached-paths-2 | `crates/zedc-types/src/`, `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-types-unreached-paths, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, LIMITS-remove-all | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | TEST-types-unreached-paths, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
+| 0 | TEST-types-unreached-paths, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths, TEST-kernel-lib-split | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, PERF-guarded-function-walk | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, FP-ops-order | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths, LIST-in-bound-check | `crates/zedc-types/src/kernel_type.rs` |
+| 0 | FAIL-ratio-kernel-bdd-print, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | FAIL-ratio-kernel-bdd-print, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | FAIL-ratio-kernel-bdd-print, LIMITS-remove-all | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | FAIL-ratio-kernel-bdd-print, TEST-kernel-lib-split | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | FAIL-ratio-kernel-bdd-print, PERF-guarded-function-walk | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | FAIL-ratio-kernel-bdd-print, FP-ops-order | `crates/zed-kernel/src/types/bdd/bench.rs` |
+| 0 | PERF-parity-cold-verdict, PROOF-diff-exact-skip | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-parity-cold-verdict, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
@@ -4911,9 +5411,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-parity-cold-verdict, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-parity-cold-verdict, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-parity-cold-verdict, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, FP-ops-order | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | CHECK-destructure-order, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-too-large-cast-origin | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs` |
@@ -4925,6 +5430,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-destructure-order, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -4934,23 +5440,175 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-destructure-order, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-destructure-order, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-destructure-order, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PERF-types-joined-split-several-differing | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PERF-types-shared-row-bench-2ec6b9418 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PROOF-diff-exact-skip | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PROOF-diff-payload-rest-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-bounded-shapes-renamed-under9, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, PERF-types-shared-row-bench-2ec6b9418 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, PROOF-diff-exact-skip | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, PROOF-diff-payload-rest-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-joined-split-several-differing, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, PROOF-diff-exact-skip | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, PROOF-diff-payload-rest-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-shared-row-bench-2ec6b9418, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-meet-rows-finite, CHECK-literal-union-cost | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, LIMITS-remove-all | `crates/zed-kernel/src/types.rs` |
+| 0 | PROOF-meet-rows-finite, XR-group-order-5-rounds-1-3 | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types.rs` |
+| 0 | PROOF-meet-rows-finite, TEST-kernel-lib-split | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, PERF-guarded-function-walk | `crates/zed-kernel/src/types.rs` |
 | 0 | PROOF-meet-rows-finite, FP-ops-order | `crates/zed-kernel/src/types.rs` |
+| 0 | PROOF-diff-exact-skip, PROOF-diff-payload-rest-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-exact-skip, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-exact-skip, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-shape-union-sub-incomplete | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, PLACE-value-inside-arg | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, CHECK-fold-merge-errs | `crates/zedc-check/src/check/mod.rs` |
@@ -4960,22 +5618,198 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-diff-payload-rest-refused, LIMITS-remove-all | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-term-for-uncovered | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-diff-payload-rest-refused, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PROOF-diff-payload-rest-refused, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PROOF-diff-payload-rest-refused, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, PERF-types-tuple-shapes-under9 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-shape-union-sub-incomplete, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-print-absorbed-members-twice | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PERF-types-tuple-shapes-under9, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-kernel-print-seed-479643653593087009 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-absorbed-members-twice, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-kernel-print-seed-15344750447356307552 | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-479643653593087009, LIST-in-bound-check | `crates/zed-kernel` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-kernel-print-seed-12530893063770583521 | `crates/zedc-types/src/ty.rs`, `crates/zed-kernel` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-15344750447356307552, LIST-in-bound-check | `crates/zed-kernel` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-cover-partial-arrows-left-out | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-kernel-print-seed-12530893063770583521, LIST-in-bound-check | `crates/zed-kernel` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-partial-arrow-value-type | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-cover-partial-arrows-left-out, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PLACE-value-inside-arg, FAIL-types-partial-arrow-value-type | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, CHECK-fold-merge-errs | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, DIAG-len-args-repair | `crates/zedc-check/src/check/mod.rs` |
@@ -4985,6 +5819,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PLACE-value-inside-arg, TEST-term-for-uncovered | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
@@ -4993,12 +5828,115 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PLACE-value-inside-arg, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PLACE-value-inside-arg, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PLACE-value-inside-arg, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, PROOF-form-verdict-merged-mark | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-too-large-cast-origin | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, CHECK-fold-merge-errs | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, DIAG-len-args-repair | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIMITS-remove-all | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-term-for-uncovered | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FP-ops-order | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk/remap.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FAIL-types-partial-arrow-value-type, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-unit-pieces-time, BENCH-frontier-containment-reach | `crates/zedc-presburger` |
+| 0 | FAIL-unit-pieces-time, TEST-types-unreached-paths-2 | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, TEST-kernel-units-short-addresses | `tools/run_tests.sh`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, PRES-hull-random-refusals | `crates/zedc-presburger` |
+| 0 | FAIL-unit-pieces-time, TOOLS-time-tests-fixes | `tools/run_tests.sh` |
+| 0 | FAIL-unit-pieces-time, LIMITS-remove-all | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, TEST-scaling-cold-and-warm | `tools/run_tests.sh` |
+| 0 | FAIL-unit-pieces-time, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, TEST-kernel-lib-split | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, FAIL-tie-group-tests-piece-time | `tools/run_tests.sh` |
+| 0 | FAIL-unit-pieces-time, PERF-guarded-function-walk | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, FP-ops-order | `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | FAIL-unit-pieces-time, TEST-lib-pieces-near-limit | `tools/run_tests.sh`, `crates/zedc-presburger` |
+| 0 | FAIL-unit-pieces-time, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
+| 0 | PROOF-form-verdict-merged-mark, TYPES-compared-recall-refused | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | PROOF-form-verdict-merged-mark, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | PROOF-part-tokens-slice-lex, TEST-read-type-flaws | `crates/zedc-check/src/check/read.rs` |
 | 0 | PROOF-part-tokens-slice-lex, MSG-too-large-cast-origin | `crates/zedc-check/src/check/read.rs` |
 | 0 | PROOF-part-tokens-slice-lex, CHECK-fold-merge-errs | `crates/zedc-check/src/check/read.rs` |
@@ -5016,6 +5954,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | TEST-read-type-flaws, MSG-too-large-cast-origin | `crates/zedc-check/src/check/read.rs` |
 | 0 | TEST-read-type-flaws, CHECK-fold-merge-errs | `crates/zedc-check/src/check/read.rs` |
@@ -5030,17 +5972,23 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-read-type-flaws, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/read.rs` |
 | 0 | TEST-read-type-flaws, MSG-tuple-generic-headline | `crates/zedc-check/src/check/read.rs` |
 | 0 | PROOF-nearest-name-quadratic, MSG-struct-field-nearest-name | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | PROOF-nearest-name-quadratic, SYNC-copies-refresh-2 | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | PROOF-nearest-name-quadratic, SYNC-copies-refresh-3 | `crates/zedc-resolve/src/resolve.rs` |
 | 0 | PROOF-nearest-name-quadratic, FP-ops-order | `crates/zedc-resolve/src/resolve.rs` |
 | 0 | PROOF-nearest-name-quadratic, TYPEVAR-gap-rejections | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | MSG-struct-field-nearest-name, SYNC-copies-refresh-2 | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | MSG-struct-field-nearest-name, SYNC-copies-refresh-3 | `crates/zedc-resolve/src/resolve.rs` |
 | 0 | MSG-struct-field-nearest-name, FP-ops-order | `crates/zedc-resolve/src/resolve.rs` |
 | 0 | MSG-struct-field-nearest-name, TYPEVAR-gap-rejections | `crates/zedc-resolve/src/resolve.rs` |
 | 0 | SPEC-string-slice-text, DOC-l116-value-cycle | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pure-region-port-read | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-string-slice-text, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, LAYER-audit-open | `DESIGN.md` |
+| 0 | SPEC-string-slice-text, SYNC-copies-refresh-4 | `zed/corpus/11-csv-split.zed` |
 | 0 | SPEC-string-slice-text, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pat-list | `DESIGN.md` |
@@ -5053,13 +6001,48 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-string-slice-text, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-string-slice-text, SPEC-bit-identities | `DESIGN.md` |
 | 0 | BENCH-frontier-containment-reach, PRES-hull-random-refusals | `crates/zedc-presburger` |
+| 0 | BENCH-frontier-containment-reach, TEST-lib-pieces-near-limit | `crates/zedc-presburger` |
 | 0 | BENCH-limit-counts-setup, TOOLS-time-tests-fixes | `tools/bench_limit.sh` |
 | 0 | BENCH-limit-counts-setup, TEST-scaling-cold-and-warm | `tools/bench_limit.sh` |
+| 0 | PRES-cover-order-rewrites, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-cover-order-rewrites, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-again-monotone, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-again-monotone, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-again-monotone, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-again-monotone, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-again-monotone, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | TYPES-compared-recall-refused, TYPES-fits-read-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-compared-recall-refused, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | MSG-too-large-cast-origin, FAIL-check-lambda-into-fn-union | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-too-large-cast-origin, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, CHECK-fold-merge-errs | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, DIAG-len-args-repair | `crates/zedc-check/src/` |
 | 0 | MSG-too-large-cast-origin, DIAG-too-large-with-type-error | `crates/zedc-check/src/` |
@@ -5073,35 +6056,212 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-too-large-cast-origin, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-too-large-cast-origin, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-too-large-cast-origin, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | MSG-too-large-cast-origin, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-too-large-cast-origin, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | MSG-too-large-cast-origin, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | MSG-too-large-cast-origin, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-too-large-cast-origin, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-too-large-cast-origin, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-too-large-cast-origin, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-too-large-cast-origin, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-too-large-cast-origin, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-too-large-cast-origin, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | MSG-too-large-cast-origin, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-too-large-cast-origin, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-too-large-cast-origin, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-too-large-cast-origin, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TYPES-fits-read-refusal, TYPES-fits-read-key-refusal | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-refusal, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TYPES-search-claims-proofs | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-fits-read-key-refusal, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-fn-only-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
 | 0 | TYPES-search-claims-proofs, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | TYPES-search-claims-proofs, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | TYPES-search-claims-proofs, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
 | 0 | TYPES-search-claims-proofs, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | TYPES-search-claims-proofs, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TYPES-search-claims-proofs, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-fn-arrows-bounded-variable | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-only-bounded-variable, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, TEST-types-unreached-paths-2 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-fn-arrows-bounded-variable, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-check-lambda-fn-union-same-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-into-fn-union, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, CHECK-fold-merge-errs | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, DIAG-len-args-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-check-lambda-fn-union-same-names, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-types-unreached-paths-4 | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths-2, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, LIMITS-remove-all | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths-2, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | TEST-types-unreached-paths-2, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
+| 0 | TEST-types-unreached-paths-2, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths-2, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths-2, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-2, TEST-kernel-lib-split | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths-2, PERF-guarded-function-walk | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths-2, FP-ops-order | `crates/zed-kernel/src/types/` |
+| 0 | TEST-types-unreached-paths-2, LIST-in-bound-check | `crates/zedc-types/src/kernel_type.rs` |
+| 0 | TEST-types-unreached-paths-4, TEST-types-bound-pin-sets-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-unreached-paths-4, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-unreached-paths-4, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-unreached-paths-4, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-4, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-4, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-unreached-paths-4, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-4, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-4, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-unreached-paths-4, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-kernel-unreached-paths-4, TEST-kernel-units-short-addresses | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
 | 0 | TEST-kernel-unreached-paths-4, LIMITS-remove-all | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
@@ -5110,20 +6270,45 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-kernel-unreached-paths-4, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | TEST-kernel-unreached-paths-4, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-kernel-unreached-paths-4, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-kernel-unreached-paths-4, TEST-kernel-lib-split | `crates/zed-kernel/src/types/` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-guarded-function-walk | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
 | 0 | TEST-kernel-unreached-paths-4, FP-ops-order | `crates/zed-kernel/src/types/` |
 | 0 | TEST-kernel-units-short-addresses, TOOLS-time-tests-fixes | `tools/run_tests.sh` |
 | 0 | TEST-kernel-units-short-addresses, LIMITS-remove-all | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
 | 0 | TEST-kernel-units-short-addresses, TEST-scaling-cold-and-warm | `tools/run_tests.sh` |
 | 0 | TEST-kernel-units-short-addresses, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-kernel-units-short-addresses, TEST-kernel-lib-split | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-kernel-units-short-addresses, FAIL-tie-group-tests-piece-time | `tools/run_tests.sh` |
 | 0 | TEST-kernel-units-short-addresses, PERF-guarded-function-walk | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
 | 0 | TEST-kernel-units-short-addresses, FP-ops-order | `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/types/bdd/set/tests.rs` |
+| 0 | TEST-kernel-units-short-addresses, TEST-lib-pieces-near-limit | `tools/run_tests.sh` |
 | 0 | TEST-kernel-units-short-addresses, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
+| 0 | TEST-types-bound-pin-sets-adversarial, TEST-types-bound-pin-moves-adversarial | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-sets-adversarial, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-joined-shape-first | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-bound-pin-moves-adversarial, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-moves-adversarial, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | TEST-types-bound-pin-moves-adversarial, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-types-joined-shape-first, FAIL-print-two-variables-one-name | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-joined-shape-first, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-joined-shape-first, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-types-joined-shape-first, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-joined-shape-first, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-joined-shape-first, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-joined-shape-first, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | PRES-hull-random-refusals, TEST-lib-pieces-near-limit | `crates/zedc-presburger` |
 | 0 | PNCX-coloring-crt-scale, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PNCX-coloring-crt-scale, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | FAIL-batch-linked-copies-growth, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
@@ -5131,10 +6316,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAIL-batch-linked-copies-growth, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-batch-linked-copies-growth, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-batch-linked-copies-growth, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-batch-linked-copies-growth, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-batch-linked-copies-growth, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-batch-linked-copies-growth, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TOOLS-time-tests-fixes, TEST-scaling-cold-and-warm | `tools/run_tests.sh`, `tools/bench_limit.sh` |
+| 0 | TOOLS-time-tests-fixes, FAIL-tie-group-tests-piece-time | `tools/run_tests.sh` |
+| 0 | TOOLS-time-tests-fixes, TEST-lib-pieces-near-limit | `tools/run_tests.sh` |
 | 0 | TOOLS-time-tests-fixes, BUILD-parallel-frontend | `tools/fetch_test_deps.sh` |
 | 0 | TOOLS-time-tests-fixes, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
 | 0 | TOOLS-time-tests-fixes, FLAKE-l01-26-random-recheck | `tools/merge_check.sh` |
@@ -5142,6 +6330,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DOC-l116-value-cycle, DOC-lit-follows-exponent-f32 | `crates/zedc-elab/src/elab/` |
 | 0 | DOC-l116-value-cycle, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | DOC-l116-value-cycle, FAIL-partial-slot-generic-pass | `crates/zedc-elab/src/elab/walk.rs` |
+| 0 | DOC-l116-value-cycle, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, FAIL-arrow-lambda-partial-slot | `crates/zedc-elab/src/elab/walk.rs` |
 | 0 | DOC-l116-value-cycle, PUSH-target-rules | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, GEN-index-vs-element | `DESIGN.md` |
@@ -5159,6 +6349,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DOC-l116-value-cycle, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-json-value | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-implies-guard | `DESIGN.md` |
+| 0 | DOC-l116-value-cycle, SPEC-bit-identities | `DESIGN.md` |
 | 0 | CHECK-fold-merge-errs, DIAG-len-args-repair | `crates/zedc-check/src/check/` |
 | 0 | CHECK-fold-merge-errs, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/` |
 | 0 | CHECK-fold-merge-errs, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/` |
@@ -5171,32 +6362,45 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-fold-merge-errs, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-fold-merge-errs, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-fold-merge-errs, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | CHECK-fold-merge-errs, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-fold-merge-errs, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, PERF-guarded-function-walk | `crates/zedc-check/src/check/` |
 | 0 | CHECK-fold-merge-errs, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | CHECK-fold-merge-errs, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-fold-merge-errs, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-fold-merge-errs, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-fold-merge-errs, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-fold-merge-errs, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-fold-merge-errs, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-fold-merge-errs, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | CHECK-fold-merge-errs, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-fold-merge-errs, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-fold-merge-errs, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | CHECK-fold-merge-errs, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | CHECK-fold-merge-errs, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-fold-merge-errs, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | ZEDC-cli-consistency, ZEDC-build-out-dir | `crates/zedc/src/` |
 | 0 | ZEDC-cli-consistency, STUDY-zir-facts-carried | `crates/zedc/src/store/` |
 | 0 | ZEDC-cli-consistency, PORT-push-twice-static | `crates/zedc/src/run.rs` |
 | 0 | ZEDC-cli-consistency, FAIL-reversed-boxes-seed-6952189316955771677 | `crates/zedc/src/store/` |
 | 0 | ZEDC-cli-consistency, SPEC-paren-minimal | `crates/zedc/src/format.rs` |
 | 0 | ZEDC-build-out-dir, STUDY-zir-facts-carried | `crates/zedc/src/store/`, `crates/zed-native/src/link.rs` |
+| 0 | ZEDC-build-out-dir, FAIL-build-killed-link-no-working-dir | `crates/zed-native/src/link.rs` |
 | 0 | ZEDC-build-out-dir, PORT-push-twice-static | `crates/zedc/src/run.rs` |
 | 0 | ZEDC-build-out-dir, FAIL-reversed-boxes-seed-6952189316955771677 | `crates/zedc/src/store/` |
 | 0 | ZEDC-build-out-dir, SPEC-paren-minimal | `crates/zedc/src/format.rs` |
@@ -5211,26 +6415,38 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-len-args-repair, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-len-args-repair, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-len-args-repair, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | DIAG-len-args-repair, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-len-args-repair, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, PERF-guarded-function-walk | `crates/zedc-check/src/` |
 | 0 | DIAG-len-args-repair, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | DIAG-len-args-repair, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-len-args-repair, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-len-args-repair, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-len-args-repair, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-len-args-repair, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-len-args-repair, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-len-args-repair, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-len-args-repair, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | DIAG-len-args-repair, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-len-args-repair, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-len-args-repair, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-len-args-repair, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | DIAG-len-args-repair, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-len-args-repair, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-len-args-repair, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/` |
 | 0 | DIAG-too-large-with-type-error, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
@@ -5241,30 +6457,43 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-too-large-with-type-error, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-too-large-with-type-error, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-too-large-with-type-error, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | DIAG-too-large-with-type-error, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-too-large-with-type-error, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, PERF-guarded-function-walk | `crates/zedc-check/src/` |
 | 0 | DIAG-too-large-with-type-error, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | DIAG-too-large-with-type-error, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-too-large-with-type-error, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-too-large-with-type-error, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-too-large-with-type-error, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-too-large-with-type-error, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-too-large-with-type-error, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | DIAG-too-large-with-type-error, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | DIAG-too-large-with-type-error, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-too-large-with-type-error, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | DIAG-too-large-with-type-error, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | DIAG-too-large-with-type-error, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-too-large-with-type-error, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | DIAG-too-large-with-type-error, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-presburger-unreached-paths, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | TEST-presburger-unreached-paths, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | TEST-presburger-unreached-paths, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | TEST-presburger-unreached-paths, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
@@ -5272,7 +6501,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pure-region-port-read, LIMITS-remove-all | `crates/zed-kernel/src/eval.rs` |
 | 0 | SPEC-pure-region-port-read, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-pure-region-port-read, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, FAIL-arrow-lambda-partial-slot | `crates/zed-kernel/src/eval.rs` |
+| 0 | SPEC-pure-region-port-read, PROOF-run-under-test-bug | `crates/zed-kernel/src/eval.rs` |
+| 0 | SPEC-pure-region-port-read, TEST-kernel-lib-split | `crates/zed-kernel/src/eval.rs` |
 | 0 | SPEC-pure-region-port-read, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs` |
 | 0 | SPEC-pure-region-port-read, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, GEN-index-vs-element | `DESIGN.md` |
@@ -5291,6 +6523,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pure-region-port-read, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-pure-region-port-read, SPEC-bit-identities | `DESIGN.md` |
 | 0 | CHECK-big-literal-key-paths, CHECK-sum-of-summarized-names | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
 | 0 | CHECK-big-literal-key-paths, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
@@ -5300,27 +6533,40 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-big-literal-key-paths, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-big-literal-key-paths, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-big-literal-key-paths, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | CHECK-big-literal-key-paths, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-big-literal-key-paths, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, PERF-guarded-function-walk | `crates/zedc-check/src/check/` |
 | 0 | CHECK-big-literal-key-paths, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | CHECK-big-literal-key-paths, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-big-literal-key-paths, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-big-literal-key-paths, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-big-literal-key-paths, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-big-literal-key-paths, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-big-literal-key-paths, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | CHECK-big-literal-key-paths, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | CHECK-big-literal-key-paths, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-big-literal-key-paths, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | CHECK-big-literal-key-paths, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | CHECK-big-literal-key-paths, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | CHECK-big-literal-key-paths, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-big-literal-key-paths, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | POLY-square-cost-sizes, LIMITS-remove-all | `crates/zed-kernel/src/poly.rs` |
+| 0 | POLY-square-cost-sizes, TEST-kernel-lib-split | `crates/zed-kernel/src/poly.rs` |
 | 0 | POLY-square-cost-sizes, PERF-guarded-function-walk | `crates/zed-kernel/src/poly.rs` |
 | 0 | POLY-square-cost-sizes, FP-ops-order | `crates/zed-kernel/src/poly.rs` |
 | 0 | CHECK-sum-of-summarized-names, CHECK-implicit-call-limits | `crates/zedc-check/src/check/walk.rs` |
@@ -5329,6 +6575,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-sum-of-summarized-names, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -5340,20 +6587,30 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-sum-of-summarized-names, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | CHECK-sum-of-summarized-names, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | CHECK-sum-of-summarized-names, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | CHECK-sum-of-summarized-names, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-sum-of-summarized-names, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, CHECK-binder-call-summary | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
 | 0 | CHECK-implicit-call-limits, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
 | 0 | CHECK-implicit-call-limits, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-implicit-call-limits, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -5363,18 +6620,24 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-implicit-call-limits, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-implicit-call-limits, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-implicit-call-limits, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
+| 0 | CHECK-implicit-call-limits, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-implicit-call-limits, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-implicit-call-limits, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
 | 0 | CHECK-implicit-call-limits, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/arms.rs` |
 | 0 | CHECK-implicit-call-limits, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-implicit-call-limits, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -5384,29 +6647,40 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-binder-call-summary, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CHECK-binder-call-summary, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-literal-union-cost, LIMITS-remove-all | `crates/zed-kernel/src/types.rs` |
+| 0 | CHECK-literal-union-cost, XR-group-order-5-rounds-1-3 | `crates/zed-kernel/src/types.rs` |
 | 0 | CHECK-literal-union-cost, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types.rs` |
+| 0 | CHECK-literal-union-cost, TEST-kernel-lib-split | `crates/zed-kernel/src/types.rs` |
 | 0 | CHECK-literal-union-cost, PERF-guarded-function-walk | `crates/zed-kernel/src/types.rs` |
 | 0 | CHECK-literal-union-cost, FP-ops-order | `crates/zed-kernel/src/types.rs` |
+| 0 | DOC-lit-follows-exponent-f32, FAIL-partial-slot-generic-pass | `crates/zedc-elab/src/elab/walk.rs` |
 | 0 | DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot | `crates/zedc-elab/src/elab/walk.rs` |
 | 0 | DOC-lit-follows-exponent-f32, FP-ops-order | `crates/zedc-elab/src/elab/walk/fp_ops.rs` |
 | 0 | PRES-join-cost-predictor, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-join-cost-predictor, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-join-cost-predictor, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PRES-join-cost-predictor, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-join-cost-predictor, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-join-cost-predictor, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-join-cost-predictor, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | STUDY-zir-facts-carried, FAIL-build-killed-link-no-working-dir | `crates/zed-native/src/link.rs` |
 | 0 | STUDY-zir-facts-carried, SPEC-m07-string-serial | `crates/zedc-zir/src/canon/serial.rs` |
 | 0 | STUDY-zir-facts-carried, FAIL-reversed-boxes-seed-6952189316955771677 | `crates/zedc/src/store/` |
 | 0 | LIMITS-remove-all, TEST-term-for-uncovered | `crates/zedc-check/` |
+| 0 | LIMITS-remove-all, XR-group-order-5-rounds-1-3 | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/empty.rs` |
 | 0 | LIMITS-remove-all, PERF-nested-cover-narrow-per-piece | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | LIMITS-remove-all, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
@@ -5414,82 +6688,142 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LIMITS-remove-all, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIMITS-remove-all, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | LIMITS-remove-all, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | LIMITS-remove-all, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | LIMITS-remove-all, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | LIMITS-remove-all, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, FAIL-arrow-lambda-partial-slot | `crates/zed-kernel/src/eval.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | LIMITS-remove-all, PROOF-run-under-test-bug | `crates/zed-kernel/src/eval.rs` |
+| 0 | LIMITS-remove-all, TEST-kernel-lib-split | `crates/zed-kernel/src/` |
 | 0 | LIMITS-remove-all, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/eval/env.rs` |
+| 0 | LIMITS-remove-all, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIMITS-remove-all, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, PERF-guarded-function-walk | `crates/zed-kernel/`, `crates/zedc-check/` |
 | 0 | LIMITS-remove-all, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, FP-ops-order | `crates/zed-kernel/src/`, `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | LIMITS-remove-all, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIMITS-remove-all, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIMITS-remove-all, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIMITS-remove-all, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIMITS-remove-all, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIMITS-remove-all, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIMITS-remove-all, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIMITS-remove-all, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | LIMITS-remove-all, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIMITS-remove-all, CLIPPY-preimage-mutable-key-type | `crates/zed-kernel/src/term.rs` |
+| 0 | LIMITS-remove-all, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIMITS-remove-all, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | LIMITS-remove-all, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | LIMITS-remove-all, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | LIMITS-remove-all, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIMITS-remove-all, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-print-two-variables-one-name | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-term-for-uncovered, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-term-for-uncovered, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/` |
+| 0 | TEST-term-for-uncovered, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | TEST-term-for-uncovered, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, PERF-guarded-function-walk | `crates/zedc-check/` |
 | 0 | TEST-term-for-uncovered, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | TEST-term-for-uncovered, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | TEST-term-for-uncovered, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-term-for-uncovered, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-term-for-uncovered, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-term-for-uncovered, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-term-for-uncovered, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-term-for-uncovered, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-term-for-uncovered, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | TEST-term-for-uncovered, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-term-for-uncovered, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-term-for-uncovered, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | TEST-term-for-uncovered, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-term-for-uncovered, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | XR-group-order-5-rounds-1-3, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types.rs` |
+| 0 | XR-group-order-5-rounds-1-3, TEST-kernel-lib-split | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/empty.rs` |
+| 0 | XR-group-order-5-rounds-1-3, PERF-guarded-function-walk | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/empty.rs` |
+| 0 | XR-group-order-5-rounds-1-3, FP-ops-order | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-nested-cover-narrow-per-piece, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-nested-cover-narrow-per-piece, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-nested-cover-narrow-per-piece, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | FAIL-print-two-variables-one-name, FAIL-types-meet-key-arrows-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-two-variables-one-name, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-print-two-variables-one-name, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-print-two-variables-one-name, FAIL-finish-split-walk-memo | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-two-variables-one-name, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-print-two-variables-one-name, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-print-two-variables-one-name, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-print-two-variables-one-name, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-types-meet-key-arrows-not-within, FAIL-types-meet-exact-arrows-differing-domains | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-key-arrows-not-within, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-key-arrows-not-within, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-key-arrows-not-within, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-key-arrows-not-within, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-meet-fn-kept-not-within | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-exact-arrows-differing-domains, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-fn-kept-not-within, FAIL-types-partial-arrow-same-atom-keys | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-fn-kept-not-within, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-fn-kept-not-within, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | PERF-kernel-box-union-search, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-kernel-box-union-search, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-kernel-box-union-search, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-kernel-box-union-search, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-kernel-box-union-search, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-kernel-box-union-search, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-kernel-box-union-search, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-headline-piece-in-collection | `DESIGN.md` |
+| 0 | SPEC-lambda-notfound-partial-map, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, PUSH-target-rules | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, GEN-index-vs-element | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, LAYER-audit-open | `DESIGN.md` |
@@ -5505,11 +6839,15 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-lambda-notfound-partial-map, SPEC-bit-identities | `DESIGN.md` |
 | 0 | FAIL-print-meet-unnamed-bound, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/print.rs` |
+| 0 | FAIL-print-meet-unnamed-bound, TEST-kernel-lib-split | `crates/zed-kernel/src/types/print.rs` |
 | 0 | FAIL-print-meet-unnamed-bound, PERF-guarded-function-walk | `crates/zed-kernel/src/types/print.rs` |
 | 0 | FAIL-print-meet-unnamed-bound, FP-ops-order | `crates/zed-kernel/src/types/print.rs` |
 | 0 | SPEC-headline-piece-in-collection, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, SPEC-declared-step-once | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs` |
@@ -5521,9 +6859,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-headline-piece-in-collection, LAYER-audit-open | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, TEST-minmax-struct-menu-compiles | `DESIGN.md`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-headline-piece-in-collection, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
@@ -5540,6 +6882,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-headline-piece-in-collection, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-headline-piece-in-collection, SPEC-bit-identities | `DESIGN.md`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, FAIL-partial-slot-generic-pass | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
@@ -5549,15 +6893,23 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAIL-nested-display-headline-code-quadratic, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-nested-display-headline-code-quadratic, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-nested-display-headline-code-quadratic, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-scaling-cold-and-warm, FAIL-tie-group-tests-piece-time | `tools/run_tests.sh` |
+| 0 | TEST-scaling-cold-and-warm, TEST-lib-pieces-near-limit | `tools/run_tests.sh` |
 | 0 | TEST-scaling-cold-and-warm, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
+| 0 | FAIL-finish-split-walk-memo, XR-map-chain-rounds-4-6 | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
@@ -5566,21 +6918,76 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAIL-finish-split-walk-memo, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-finish-split-walk-memo, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-finish-split-walk-memo, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-finish-split-walk-memo, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-finish-split-walk-memo, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-finish-split-walk-memo, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-finish-split-walk-memo, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | XR-map-chain-rounds-4-6, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-row-hash-tied-digest, PERF-height-bounds-group-benches | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-row-hash-tied-digest, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-row-hash-tied-digest, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-row-hash-tied-digest, TEST-kernel-lib-split | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | PERF-row-hash-tied-digest, PERF-guarded-function-walk | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | PERF-row-hash-tied-digest, FP-ops-order | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | PERF-height-bounds-group-benches, GROUP-order-classes-outside-cpoly | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-height-bounds-group-benches, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-height-bounds-group-benches, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-height-bounds-group-benches, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-height-bounds-group-benches, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-order-classes-outside-cpoly, PERF-diagonal-rows-difference | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-order-classes-outside-cpoly, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-order-classes-outside-cpoly, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-order-classes-outside-cpoly, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-diagonal-rows-difference, TEST-kernel-lib-split | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-diagonal-rows-difference, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | PERF-diagonal-rows-difference, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | FAIL-partial-slot-generic-pass, PROOF-call-written-append-only | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-elab/src/elab/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-partial-slot-generic-pass, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, FAIL-arrow-lambda-partial-slot | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs` |
@@ -5589,32 +6996,66 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-call-written-append-only, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PROOF-call-written-append-only, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PROOF-call-written-append-only, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PROOF-call-written-append-only, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PROOF-call-written-append-only, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PROOF-call-written-append-only, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PROOF-call-written-append-only, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-declared-step-once, PUSH-target-rules | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, GEN-index-vs-element | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, LAYER-audit-open | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-if-no-else-stmt | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-pat-list | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-set-type-written | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-pat-string-prefix | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-pat-record | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-pat-map-key | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-mono-fibers | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-diff-key | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-json-absent-field | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-json-value | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-declared-step-once, SPEC-bit-identities | `DESIGN.md` |
+| 0 | FAIL-types-partial-arrow-same-atom-keys, FAIL-types-meet-curried-is-stack-overflow | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-partial-arrow-same-atom-keys, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-types-meet-curried-is-stack-overflow, TEST-standing-twice-numeric-vars | `crates/zedc-types/src/ty.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-arrow-lambda-nested-cause | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, PROOF-run-under-test-bug | `crates/zed-kernel/src/eval.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, TEST-kernel-lib-split | `crates/zed-kernel/src/eval.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs`, `crates/zed-kernel/src/eval.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, FP-ops-order | `crates/zedc-check/src/check/walk.rs`, `crates/zed-kernel/src/eval.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-arrow-lambda-partial-slot, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-arrow-lambda-partial-slot, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, TEST-arrow-lambda-trial-stale | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
@@ -5622,77 +7063,142 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-arrow-lambda-nested-cause, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-arrow-lambda-nested-cause, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-arrow-lambda-nested-cause, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-arrow-lambda-trial-stale, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-inner-lambda-unnamed-param-arrow, MINMAX-literal-follow | `crates/zedc-check` |
 | 0 | MSG-inner-lambda-unnamed-param-arrow, MINMAX-param-literal-follow | `crates/zedc-check` |
+| 0 | MSG-inner-lambda-unnamed-param-arrow, POW-body-widen-warning-top-agree | `crates/zedc-check` |
 | 0 | MSG-inner-lambda-unnamed-param-arrow, PORT-push-twice-static | `crates/zedc-check` |
 | 0 | MSG-inner-lambda-unnamed-param-arrow, RANGE-open-ending-warn | `crates/zedc-check` |
+| 0 | MSG-first-on-string-repair-own-words, FP-ops-generic-strings | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-first-on-string-repair-own-words, TEST-sig-text-printed-type-matches-calls | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-first-on-string-repair-own-words, PERF-guarded-function-walk | `crates/zedc-check/src/check/` |
 | 0 | MSG-first-on-string-repair-own-words, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-first-on-string-repair-own-words, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-first-on-string-repair-own-words, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | MSG-first-on-string-repair-own-words, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-first-on-string-repair-own-words, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-first-on-string-repair-own-words, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-first-on-string-repair-own-words, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-first-on-string-repair-own-words, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-first-on-string-repair-own-words, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-first-on-string-repair-own-words, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-first-on-string-repair-own-words, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-first-on-string-repair-own-words, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-first-on-string-repair-own-words, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-first-on-string-repair-own-words, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | MSG-first-on-string-repair-own-words, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-first-on-string-repair-own-words, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-first-on-string-repair-own-words, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-first-on-string-repair-own-words, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-first-on-string-repair-own-words, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-first-on-string-repair-own-words, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-first-on-string-repair-own-words, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-one-scope-bodies-seed-shadows, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | FAIL-one-scope-bodies-seed-shadows, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-one-scope-bodies-seed-shadows, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-one-scope-bodies-seed-shadows, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-one-scope-bodies-seed-shadows, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-refused-shape-disjunctions-quadratic, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-refused-shape-disjunctions-quadratic, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-refused-shape-disjunctions-quadratic, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-refused-shape-disjunctions-quadratic, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-refused-shape-disjunctions-quadratic, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-refused-shape-disjunctions-quadratic, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-hull-join-row-after, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PERF-hull-join-row-after, CLIPPY-preimage-mutable-key-type | `crates/zedc-preimage/src/product.rs`, `crates/zedc-preimage/src/spans.rs` |
 | 0 | PERF-hull-join-row-after, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PERF-hull-join-row-after, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-hull-join-row-after, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-hull-join-row-after, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-hull-join-row-after, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | PROOF-run-under-test-bug, TEST-kernel-lib-split | `crates/zed-kernel/src/eval.rs` |
+| 0 | PROOF-run-under-test-bug, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs` |
+| 0 | PROOF-run-under-test-bug, PERF-guarded-function-walk | `crates/zed-kernel/src/eval.rs` |
+| 0 | PROOF-run-under-test-bug, FP-ops-order | `crates/zed-kernel/src/eval.rs` |
+| 0 | TEST-kernel-lib-split, BENCH-env-slots-log-factor | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/eval/env.rs` |
+| 0 | TEST-kernel-lib-split, PERF-guarded-function-walk | `crates/zed-kernel/src/` |
+| 0 | TEST-kernel-lib-split, FP-ops-order | `crates/zed-kernel/src/` |
+| 0 | TEST-kernel-lib-split, CLIPPY-preimage-mutable-key-type | `crates/zed-kernel/src/term.rs` |
 | 0 | BENCH-env-slots-log-factor, PERF-guarded-function-walk | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/eval/env.rs` |
 | 0 | BENCH-env-slots-log-factor, FP-ops-order | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/eval/env.rs` |
+| 0 | FP-ops-generic-strings, PERF-guarded-function-walk | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-generic-strings, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, PERF-guarded-function-walk | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-sig-text-printed-type-matches-calls, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-sig-text-printed-type-matches-calls, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-sig-text-printed-type-matches-calls, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-sig-text-printed-type-matches-calls, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-sig-text-printed-type-matches-calls, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | TEST-sig-text-printed-type-matches-calls, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | PROOF-tied-projection-refusal-names, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PROOF-tied-projection-refusal-names, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-tied-projection-refusal-names, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-tied-projection-refusal-names, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-tied-projection-refusal-names, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | PROOF-solve-omega-path-renaming, FAIL-tie-group-tests-piece-time | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-solve-omega-path-renaming, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-solve-omega-path-renaming, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-solve-omega-path-renaming, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-tie-group-tests-piece-time, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-tie-group-tests-piece-time, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-tie-group-tests-piece-time, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | FAIL-tie-group-tests-piece-time, TEST-lib-pieces-near-limit | `tools/run_tests.sh` |
+| 0 | FAIL-tie-group-tests-piece-time, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
 | 0 | FAIL-dark-cycle-both-ways-growth, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-dark-cycle-both-ways-growth, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-tie-doubled-cycle-deeper-search, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
@@ -5710,6 +7216,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PUSH-target-rules, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-json-value | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-implies-guard | `DESIGN.md` |
+| 0 | PUSH-target-rules, SPEC-bit-identities | `DESIGN.md` |
 | 0 | GEN-index-vs-element, LAYER-audit-open | `DESIGN.md` |
 | 0 | GEN-index-vs-element, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-if-no-else-stmt | `DESIGN.md` |
@@ -5723,31 +7230,50 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | GEN-index-vs-element, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-json-value | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-implies-guard | `DESIGN.md` |
+| 0 | GEN-index-vs-element, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SCHED-loop-early, LAYER-audit-open | `docs/plan_dag.md` |
 | 0 | PERF-guarded-function-walk, PRINT-repair-parens-minimal | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PERF-guarded-function-walk, FP-ops-order | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs`, `crates/zed-kernel/src/` |
 | 0 | PERF-guarded-function-walk, WIDEN-generic-literal-op-int-instance | `crates/zedc-check/src/check/widen.rs` |
+| 0 | PERF-guarded-function-walk, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | PERF-guarded-function-walk, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-guarded-function-walk, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-guarded-function-walk, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-guarded-function-walk, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-guarded-function-walk, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-guarded-function-walk, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-guarded-function-walk, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PERF-guarded-function-walk, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PERF-guarded-function-walk, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-guarded-function-walk, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/` |
+| 0 | PERF-guarded-function-walk, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-guarded-function-walk, CLIPPY-preimage-mutable-key-type | `crates/zed-kernel/src/term.rs` |
+| 0 | PERF-guarded-function-walk, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-guarded-function-walk, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | PERF-guarded-function-walk, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | PERF-guarded-function-walk, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | PERF-guarded-function-walk, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | PERF-guarded-function-walk, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-guarded-function-walk, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, FP-ops-order | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PRINT-repair-parens-minimal, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | PRINT-repair-parens-minimal, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PRINT-repair-parens-minimal, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | PRINT-repair-parens-minimal, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PRINT-repair-parens-minimal, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PRINT-repair-parens-minimal, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | LAYER-audit-open, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-pat-list | `DESIGN.md` |
@@ -5760,48 +7286,163 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LAYER-audit-open, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-json-value | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-implies-guard | `DESIGN.md` |
+| 0 | LAYER-audit-open, SPEC-bit-identities | `DESIGN.md` |
+| 0 | LAYER-steps-check, SYNC-copies-refresh-2 | `crates/zed-tools/src/spec_checks.rs` |
+| 0 | LAYER-steps-check, SPEC-copies-out | `crates/zed-tools/src/` |
+| 0 | LAYER-steps-check, SYNC-held-files-stamp | `crates/zed-tools/src/` |
+| 0 | LAYER-steps-check, SPEC-build-modes-main-build | `crates/zed-tools/src/spec_checks.rs` |
+| 0 | SYNC-copies-refresh-2, SYNC-copies-refresh-3 | `crates/zedc-resolve/src/resolve.rs`, `zed/fences/` |
+| 0 | SYNC-copies-refresh-2, SPEC-copies-out | `crates/zed-tools/src/spec_checks.rs`, `zed/fences/` |
+| 0 | SYNC-copies-refresh-2, SYNC-copies-refresh-4 | `zed/fences/` |
+| 0 | SYNC-copies-refresh-2, SYNC-held-files-stamp | `crates/zed-tools/src/spec_checks.rs` |
+| 0 | SYNC-copies-refresh-2, BUILD-clif-alone-features | `crates/zed-clif/Cargo.toml` |
+| 0 | SYNC-copies-refresh-2, FP-ops-order | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | SYNC-copies-refresh-2, TYPEVAR-gap-rejections | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | SYNC-copies-refresh-2, SPEC-build-modes-main-build | `crates/zed-tools/src/spec_checks.rs`, `zed/fences/` |
+| 0 | SYNC-copies-refresh-3, SPEC-copies-out | `zed/fences/`, `zed/synced-from` |
+| 0 | SYNC-copies-refresh-3, SYNC-copies-refresh-4 | `zed/fences/`, `zed/grammar/words.md`, `zed/synced-from` |
+| 0 | SYNC-copies-refresh-3, SYNC-held-files-stamp | `zed/synced-from` |
+| 0 | SYNC-copies-refresh-3, FP-ops-order | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | SYNC-copies-refresh-3, TYPEVAR-gap-rejections | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | SYNC-copies-refresh-3, SPEC-build-modes-main-build | `zed/fences/`, `zed/grammar/words.md` |
+| 0 | SPEC-copies-out, SYNC-copies-refresh-4 | `zed/fences/`, `zed/compiler/`, `zed/synced-from` |
+| 0 | SPEC-copies-out, SYNC-held-files-stamp | `zed/synced-from`, `crates/zed-tools/` |
+| 0 | SPEC-copies-out, SPEC-build-modes-main-build | `zed/fences/`, `crates/zed-tools/src/spec_checks.rs` |
+| 0 | SYNC-copies-refresh-4, SYNC-held-files-stamp | `zed/synced-from` |
+| 0 | SYNC-copies-refresh-4, SPEC-build-modes-main-build | `zed/grammar/`, `zed/fences/` |
+| 0 | SYNC-copies-refresh-4, SPEC-set-type-written | `zed/grammar/syntax.peg` |
+| 0 | SYNC-copies-refresh-4, SPEC-bit-identities | `zed/prelude/axioms.zed` |
+| 0 | SYNC-held-files-stamp, SPEC-build-modes-main-build | `crates/zed-tools/src/spec_checks.rs` |
 | 0 | FP-ops-order, TYPEVAR-gap-rejections | `crates/zedc-resolve/src/resolve.rs` |
+| 0 | FP-ops-order, FP-ops-split-empty-separator | `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | FP-ops-order, LIT-branch-int-beside-decimal-op | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FP-ops-order, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FP-ops-order, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FP-ops-order, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FP-ops-order, CLIPPY-preimage-mutable-key-type | `crates/zed-kernel/src/term.rs` |
+| 0 | FP-ops-order, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FP-ops-order, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FP-ops-order, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | WIDEN-generic-literal-op-int-instance, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/widen.rs` |
 | 0 | WIDEN-generic-literal-op-int-instance, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/widen.rs` |
 | 0 | WIDEN-generic-literal-op-int-instance, MSG-tuple-generic-headline | `crates/zedc-check/src/check/widen.rs` |
+| 0 | FP-ops-split-empty-separator, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-split-empty-separator, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-split-empty-separator, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-split-empty-separator, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | FP-ops-split-empty-separator, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | MINMAX-literal-follow, MINMAX-param-literal-follow | `crates/zedc-check` |
+| 0 | MINMAX-literal-follow, POW-body-widen-warning-top-agree | `crates/zedc-check` |
+| 0 | MINMAX-literal-follow, PORT-push-twice-static | `crates/zedc-check` |
+| 0 | MINMAX-literal-follow, RANGE-open-ending-warn | `crates/zedc-check` |
+| 0 | MINMAX-param-literal-follow, POW-body-widen-warning-top-agree | `crates/zedc-check` |
 | 0 | MINMAX-param-literal-follow, PORT-push-twice-static | `crates/zedc-check` |
 | 0 | MINMAX-param-literal-follow, RANGE-open-ending-warn | `crates/zedc-check` |
+| 0 | LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, LIT-tuple-branch-carrier-division-fixes | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | LIT-branch-int-beside-decimal-op, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-branch-int-beside-decimal-op, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, LIT-tuple-compare-power-menu | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-cast-inexact-rat-fix, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, LIT-tuple-component-division-at-rat | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-branch-carrier-division-fixes, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, FAIL-top-literal-op-nested-or-component | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-component-division-at-rat, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | LIT-tuple-compare-power-menu, LIT-tuple-compare-names-literal | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-power-menu, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | LIT-tuple-compare-names-literal, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, FAIL-int-or-rat-param-division | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-top-literal-op-nested-or-component, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-top-literal-op-nested-or-component, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-top-literal-op-nested-or-component, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-top-literal-op-nested-or-component, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, MSG-branch-fix-beside-carrier-if | `crates/zedc-check/src/check/mod.rs` |
 | 0 | FAIL-int-or-rat-param-division, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-int-or-rat-param-division, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-int-or-rat-param-division, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-int-or-rat-param-division, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | FAIL-int-or-rat-param-division, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-branch-fix-beside-carrier-if, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-branch-fix-beside-carrier-if, PERF-carried-lent-two-args | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-branch-fix-beside-carrier-if, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-branch-fix-beside-carrier-if, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-branch-fix-beside-carrier-if, MSG-tuple-generic-headline | `crates/zedc-check/src/check/mod.rs` |
+| 0 | MSG-branch-fix-beside-carrier-if, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs` |
+| 0 | POW-body-widen-warning-top-agree, PORT-push-twice-static | `crates/zedc-check` |
+| 0 | POW-body-widen-warning-top-agree, RANGE-open-ending-warn | `crates/zedc-check` |
+| 0 | TEST-lib-pieces-near-limit, TIME-pieces-under-cap-high-load | `tools/run_tests.sh` |
+| 0 | TEST-minmax-struct-menu-compiles, POW-rat-first-repair | `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-minmax-struct-menu-compiles, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | TEST-minmax-struct-menu-compiles, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
@@ -5818,7 +7459,32 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-json-value | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-implies-guard | `DESIGN.md` |
+| 0 | TEST-minmax-struct-menu-compiles, SPEC-bit-identities | `DESIGN.md`, `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | PORT-push-twice-static, RANGE-open-ending-warn | `crates/zedc-check` |
+| 0 | POW-rat-first-repair, PERF-carried-lent-two-args | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | POW-rat-first-repair, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | CLIPPY-preimage-mutable-key-type, PERF-deep-block-ratio | `crates/zedc-preimage/src/product.rs` |
+| 0 | CLIPPY-preimage-mutable-key-type, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | CLIPPY-preimage-mutable-key-type, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
+| 0 | CLIPPY-preimage-mutable-key-type, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-carried-lent-two-args, MSG-many-args-shared-var-square | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-carried-lent-two-args, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-carried-lent-two-args, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-carried-lent-two-args, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-carried-lent-two-args, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | PERF-carried-lent-two-args, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
+| 0 | PERF-deep-block-ratio, IMBL-diff-branch-skip | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-deep-block-ratio, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-deep-block-ratio, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | IMBL-diff-branch-skip, PROOF-deep-block-counts-constant | `crates/zedc-preimage/src/product.rs` |
+| 0 | IMBL-diff-branch-skip, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | IMBL-diff-branch-skip, IMBL-upstream-release | `Cargo.toml` |
+| 0 | PROOF-deep-block-counts-constant, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-list | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-string-prefix | `DESIGN.md` |
@@ -5829,16 +7495,23 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-if-no-else-stmt, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-if-no-else-stmt, SPEC-bit-identities | `DESIGN.md` |
 | 0 | MSG-many-args-shared-var-square, MSG-generic-lambda-result-literal-type | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-many-args-shared-var-square, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-many-args-shared-var-square, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-many-args-shared-var-square, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-many-args-shared-var-square, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
 | 0 | MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-generic-lambda-result-literal-type, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
 | 0 | MSG-generic-lambda-result-literal-type, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/walk/fp_ops.rs` |
+| 0 | MSG-generic-lambda-result-literal-type, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-list-value-printed-by-arrows, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-list-value-printed-by-arrows, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-list-value-printed-by-arrows, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-tuple-generic-headline, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | MSG-tuple-generic-headline, SPEC-bit-identities | `crates/zedc-check/src/check/mod.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-generic-operand-messages-reached, SPEC-bit-identities | `crates/zedc-check/src/check/walk.rs` |
+| 0 | SPEC-build-modes-main-build, SPEC-set-type-written | `zed/grammar/syntax.peg` |
 | 0 | SPEC-pat-list, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-pat-record | `DESIGN.md` |
@@ -5848,6 +7521,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pat-list, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-pat-list, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-set-type-written, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-set-type-written, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-set-type-written, SPEC-pat-map-key | `DESIGN.md` |
@@ -5856,6 +7530,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-set-type-written, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-set-type-written, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-set-type-written, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-set-type-written, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-pat-map-key | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-mono-fibers | `DESIGN.md` |
@@ -5863,27 +7538,35 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pat-string-prefix, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-pat-string-prefix, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-pat-map-key | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-mono-fibers | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-diff-key | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pat-record, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-pat-record, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-pat-map-key, SPEC-mono-fibers | `DESIGN.md` |
 | 0 | SPEC-pat-map-key, SPEC-diff-key | `DESIGN.md` |
 | 0 | SPEC-pat-map-key, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pat-map-key, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pat-map-key, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-pat-map-key, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-mono-fibers, SPEC-diff-key | `DESIGN.md` |
 | 0 | SPEC-mono-fibers, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-mono-fibers, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-mono-fibers, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-mono-fibers, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-diff-key, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-diff-key, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-diff-key, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-diff-key, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-json-absent-field, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-json-absent-field, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-json-absent-field, SPEC-bit-identities | `DESIGN.md` |
 | 0 | SPEC-json-value, SPEC-implies-guard | `DESIGN.md` |
+| 0 | SPEC-json-value, SPEC-bit-identities | `DESIGN.md` |
+| 0 | SPEC-implies-guard, SPEC-bit-identities | `DESIGN.md` |
 | 1 | QUESTIONS-answered, STUDY-linking | `DESIGN.md` |
 | 1 | QUESTIONS-answered, POW-domains | `DESIGN.md` |
 | 1 | QUESTIONS-answered, SPEC-break-barrier-footprint | `DESIGN.md` |
@@ -5906,6 +7589,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | REMAP-fewer-binders, PERF-escape-big-heads-scaling | `crates/zed-kernel/src/types/empty/escape.rs` |
 | 1 | REMAP-fewer-binders, GROUP-order-cpoly-merge | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/escape.rs` |
 | 1 | REMAP-fewer-binders, PERF-set-tied-digest-depth | `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/priority.rs` |
+| 1 | REMAP-fewer-binders, PROOF-join-work-limited-independence | `crates/zed-kernel/src/priority.rs`, `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/types/bdd.rs` |
 | 1 | REMAP-fewer-binders, PERF-family-hash-count-only | `crates/zed-kernel/src/value.rs` |
 | 1 | REMAP-fewer-binders, TIME-kernel-benches-over-cap-high-load | `crates/zed-kernel/src/types/bdd/bench.rs`, `crates/zed-kernel/src/btree/bench.rs`, `crates/zed-kernel/src/text/bench.rs` |
 | 1 | REMAP-fewer-binders, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
@@ -5920,6 +7604,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | TAG-run, META-read-run | `crates/zedc-elab/src/elab/walk.rs` |
 | 1 | TAG-run, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | TAG-run, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | TAG-run, XR-map-chain-rounds-7-9 | `crates/zedc-check/src/check/mod.rs` |
 | 1 | TAG-run, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | TAG-run, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | GROUP-prelude, L1.29e | `crates/zedc-check/src/check/walk/remap.rs` |
@@ -5949,6 +7634,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | L1.29e, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | L1.29e, XR-map-chain-rounds-7-9 | `crates/zedc-check/src/check/mod.rs` |
 | 1 | L1.29e, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | L1.29e, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | REPAIR-through-branch, MSG-too-large-figure | `crates/zedc-check/src/check/walk.rs` |
@@ -5964,6 +7650,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | MSG-too-large-figure, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | MSG-too-large-figure, XR-map-chain-rounds-7-9 | `crates/zedc-check/src/check/mod.rs` |
 | 1 | MSG-too-large-figure, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs`, `crates/zed-rt/src/ports.rs` |
 | 1 | MSG-too-large-figure, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | LIT-generic-class-follows-needs, PROOF-sweep | `crates/zedc-check/src/check/` |
@@ -5971,6 +7658,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | LIT-generic-class-follows-needs, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | LIT-generic-class-follows-needs, XR-map-chain-rounds-7-9 | `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | PROOF-sweep, PRES-shadows-refusal-by-cost | `crates/zedc-presburger/src/presburger.rs` |
@@ -5980,9 +7668,11 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | PROOF-sweep, DISCARD-standalone | `crates/zedc-resolve/src/resolve.rs` |
 | 1 | PROOF-sweep, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | PROOF-sweep, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | PROOF-sweep, XR-map-chain-rounds-7-9 | `crates/zedc-check/src/check/mod.rs` |
 | 1 | PROOF-sweep, PERF-escape-big-heads-scaling | `crates/zed-kernel/src/types/empty/escape.rs` |
 | 1 | PROOF-sweep, GROUP-order-cpoly-merge | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/escape.rs` |
 | 1 | PROOF-sweep, PERF-set-tied-digest-depth | `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/priority.rs` |
+| 1 | PROOF-sweep, PROOF-join-work-limited-independence | `crates/zed-kernel/src/priority.rs`, `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/types/bdd.rs` |
 | 1 | PROOF-sweep, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/run.rs`, `crates/zed-rt/src/ports.rs` |
 | 1 | PROOF-sweep, PERF-family-hash-count-only | `crates/zed-kernel/src/value.rs`, `crates/zed-native/src/tables.rs` |
 | 1 | PROOF-sweep, TIME-kernel-benches-over-cap-high-load | `crates/zed-kernel/src/types/bdd/bench.rs`, `crates/zed-kernel/src/btree/bench.rs`, `crates/zed-kernel/src/text/bench.rs` |
@@ -6000,11 +7690,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | REDUCE-by-function, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
 | 1 | META-read-run, DISCARD-standalone | `crates/zedc-resolve/src/resolve.rs` |
 | 1 | WHERE-loose-atoms, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | XR-map-chain-rounds-7-9, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | SPEC-break-barrier-footprint, SPEC-writer-union-check | `DESIGN.md` |
 | 1 | SPEC-break-barrier-footprint, LOOP-history-one-key | `DESIGN.md` |
 | 1 | SPEC-break-barrier-footprint, DIAG-noalloc-row | `DESIGN.md` |
 | 1 | SPEC-writer-union-check, LOOP-history-one-key | `DESIGN.md` |
 | 1 | SPEC-writer-union-check, DIAG-noalloc-row | `DESIGN.md` |
+| 1 | PERF-set-tied-digest-depth, PROOF-join-work-limited-independence | `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/priority.rs` |
 | 1 | LOOP-history-one-key, DIAG-noalloc-row | `DESIGN.md` |
 | 2 | GROUP-nested, L1.14a | `crates/zedc-check/src/check/walk/remap.rs` |
 | 2 | GROUP-nested, L1.29c | `crates/zedc-check/src/check/walk/remap.rs` |
@@ -6135,6 +7827,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 2 | PERF-alternating-product-bytes, PERF-wide-modulus-cliffs | `crates/zedc-preimage/src/` |
 | 2 | PERF-alternating-product-bytes, PULL-bisect | `crates/zedc-preimage/src/` |
 | 2 | PERF-wide-modulus-cliffs, PULL-bisect | `crates/zedc-preimage/src/` |
+| 2 | PRES-cover-refusals-where-exact, PRES-cover-order-refusals | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 2 | PRES-sign-tie-names, PRES-solve-equation-sign | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | PRES-sign-tie-names, HAS-point-overlap2c-mid | `crates/zedc-presburger/src/presburger.rs` |
 | 2 | PRES-solve-equation-sign, HAS-point-overlap2c-mid | `crates/zedc-presburger/src/presburger.rs` |
@@ -6298,6 +7991,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 5 | PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-unary-arms, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 5 | PRES-monotone-rules, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger.rs` |
 | 6 | IF-union, NAN-cast-atoms | `crates/zedc-check/src/check/` |
 | 6 | SETTLE-rounds, NAN-cast-atoms | `crates/zed-kernel/src/types/bdd.rs` |
 | 7 | L2.5, L1.39g | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec.rs` |
@@ -8085,53 +9779,55 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 
 ## File conflicts across levels
 
-Each line below names a path and the open items that touch it, by level, when they lie at two or more levels. An item touches a path when it lists the path or, for a directory, a path inside it, compared as above. Two items of a line that no path of needs joins may run in parallel, and the merge resolves the overlap; two that needs join run in order. There are 195 lines.
+Each line below names a path and the open items that touch it, by level, when they lie at two or more levels. An item touches a path when it lists the path or, for a directory, a path inside it, compared as above. Two items of a line that no path of needs joins may run in parallel, and the merge resolves the overlap; two that needs join run in order. There are 199 lines.
 
 - `../libzed/`: level 0: STD-lazy-args; level 42: PAR-tree-ops; level 53: OS-intrinsics; level 55: PORT-process; level 69: FFI-isolate; level 70: FFI-sandbox-linux; level 82: RT-port-libzed; level 83: JIT-zed; level 88: GPU-front; level 91: JIT-native-zed; level 93: L41.7; level 94: L41.7b; level 95: L41.7c; level 97: L40.2; level 98: L40.3, L40.3b; level 106: L33.1d; level 111: FFI-sandbox-macos, FFI-sandbox-windows, REL-aarch64, REL-riscv; level 112: REL-macos, REL-windows; level 115: L37.1; level 118: POLISH-errors; level 119: POLISH-ultrareview, POLISH-xreview
 - `../libzed/os/`: level 53: OS-intrinsics; level 82: RT-port-libzed; level 83: JIT-zed; level 91: JIT-native-zed; level 111: REL-aarch64, REL-riscv; level 112: REL-macos, REL-windows
 - `../libzed/style/`: level 93: L41.7; level 94: L41.7b; level 95: L41.7c
 - `../zed/DESIGN.md`: level 0: SPEC-token-result-layer; level 2: SPEC-a103-mutate-set
 - `.cargo/config.toml`: level 0: BUILD-parallel-frontend; level 1: BUILD-new-layout
+- `/home/luke/Work/wt/cd-xr/FAIL-map-chain-needs-quadratic/`: level 0: XR-map-chain-rounds-4-6; level 1: XR-map-chain-rounds-7-9
 - `Cargo.lock`: level 36: L3.14; level 82: L26.1; level 90: RUST-remove; level 92: RUST-remove-clif
-- `Cargo.toml`: level 0: IMBL-upstream-release; level 5: T14-lints; level 36: L3.14; level 52: L7.4; level 53: L28.1; level 82: L26.1; level 86: L27.1; level 90: RUST-remove; level 92: RUST-remove-clif
-- `DESIGN.md`: level 0: DOC-l116-value-cycle, GEN-index-vs-element, LAYER-audit-open, PUSH-target-rules, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, SPEC-child-oom-status, SPEC-diff-key, SPEC-ffi-int-handles, SPEC-ffi-isolate-limits, SPEC-ffi-library-table, SPEC-headline-piece-in-collection, SPEC-if-no-else-stmt, SPEC-implies-guard, SPEC-json-absent-field, SPEC-json-value, SPEC-lambda-notfound-partial-map, SPEC-mono-fibers, SPEC-packed-align, SPEC-pat-list, SPEC-pat-map-key, SPEC-pat-record, SPEC-pat-string-prefix, SPEC-port-close-failure, SPEC-pure-region-port-read, SPEC-set-type-written, SPEC-string-slice-text, SYM-factor-name, TEST-minmax-struct-menu-compiles, WAVE-theory; level 1: DIAG-noalloc-row, LOOP-history-one-key, POW-domains, QUESTIONS-answered, SPEC-break-barrier-footprint, SPEC-writer-union-check, STUDY-linking; level 2: MOD-pre-width, PITFALL-date-library, PITFALL-else-absorbs-new-atom, PITFALL-leading-zero, PITFALL-overload-order, SPEC-concat-int-map, SPEC-crossover-time, SPEC-rank-patch-bounds, SPEC-seq-edits; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8c; level 9: STRUCT-key; level 10: L2.8b; level 15: CONG-transfer, L2.7; level 16: STATIC-assert; level 17: L1.40e, L2.6, RAT-domain, T10; level 19: L1.41, L2.10, SCOPE-warn; level 20: L2.11, L3.2, SPEC-strict-thread-count, SPEC-terminated-arg; level 21: L2.14, L4.1; level 22: COLLATE-data; level 26: L3.7, LOWER-stack; level 27: L3.13, RT-exhaust-report; level 28: BIT-repr, HASH-repr, LEAN-shrink, WIDE-product; level 31: L3.11; level 32: PROP-per-arrow, TRACE-gen-laws; level 33: KEYABLE-reject; level 34: L3.23; level 35: LAYOUT-soa; level 36: UNION-spare; level 39: L3.24, L6.11a, WITNESS-widened; level 40: EQ-tabulate, INDUCT-eq-round, L5.5a, LEAN-descent-infer, SORTED-dense; level 41: LEAN-ematch-round; level 42: ARM-split, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, LAW14-gen; level 44: ROD-data; level 45: INTERN-threaded, MEMO-cross, SLAB-pack; level 47: L6.17; level 49: S.1d; level 52: L7.5, L8.2a, PORT-why, TARGET-native; level 53: EXPORT-unique, FFI-headertest, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 54: FFI-cexport, L10.2a, ROUND-words; level 56: EDGE-class, FFI-token-block-warn, FFI-token-unused-param, READ-arms, SELFINT-design; level 57: L20.1, L7.13a, MEMO-edit; level 58: EDIT-run, L20-grammar-params, L20.1a; level 59: L15.5, L16.3, L17.1, L19.1, L20.2, STAGE-reads; level 60: L15.6, L17.1b; level 61: L15.2c; level 62: REPACK-tile; level 63: L15.7b, L23.5c; level 64: LIST-exact-overlap, NOINST-report; level 66: INDUCT-range-fold; level 67: L22.7a; level 72: L6.17a; level 73: S.1; level 74: NATIVE-cache, S.1h; level 76: S.2-forms; level 77: L21.1, S.3-forms; level 79: L24.5; level 80: L20.4, L24.6, S.6a; level 82: FLOAT-elem, INTEROP-study, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 83: L27.3; level 84: L29.1, L31.2, LIB-linkage; level 85: L31.3, S.8; level 86: HOST-embed, L27.1, L27.2, MCU-period; level 87: L27.2a, L27.2b, L27.2c; level 91: L25.1; level 92: DIAG-json, L25.3, L33.1b, LSP-incr, LSP-version; level 93: L25.4, L25.5, WASM-compiler; level 94: L25.6; level 95: L25.7, PICTURE-type; level 96: L25.9, L30.3a, L30.3b, L30.4; level 97: LIVE-UI-study; level 99: L32.1; level 100: L32.2; level 105: L33.1; level 106: L33.2, L33.3; level 108: L33.1a; level 110: L42.1
+- `Cargo.toml`: level 0: IMBL-diff-branch-skip, IMBL-upstream-release; level 5: T14-lints; level 36: L3.14; level 52: L7.4; level 53: L28.1; level 82: L26.1; level 86: L27.1; level 90: RUST-remove; level 92: RUST-remove-clif
+- `DESIGN.md`: level 0: DOC-l116-value-cycle, GEN-index-vs-element, LAYER-audit-open, PUSH-target-rules, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, SPEC-bit-identities, SPEC-child-oom-status, SPEC-declared-step-once, SPEC-diff-key, SPEC-ffi-int-handles, SPEC-ffi-isolate-limits, SPEC-ffi-library-table, SPEC-headline-piece-in-collection, SPEC-if-no-else-stmt, SPEC-implies-guard, SPEC-json-absent-field, SPEC-json-value, SPEC-lambda-notfound-partial-map, SPEC-mono-fibers, SPEC-packed-align, SPEC-pat-list, SPEC-pat-map-key, SPEC-pat-record, SPEC-pat-string-prefix, SPEC-port-close-failure, SPEC-pure-region-port-read, SPEC-set-type-written, SPEC-string-slice-text, STUDY-lean-vs-zed, SYM-factor-name, TEST-minmax-struct-menu-compiles, WAVE-theory, XR-ct-enforce; level 1: DIAG-noalloc-row, LOOP-history-one-key, POW-domains, QUESTIONS-answered, SPEC-break-barrier-footprint, SPEC-writer-union-check, STUDY-linking; level 2: MOD-pre-width, PITFALL-date-library, PITFALL-else-absorbs-new-atom, PITFALL-leading-zero, PITFALL-overload-order, SPEC-concat-int-map, SPEC-crossover-time, SPEC-rank-patch-bounds, SPEC-seq-edits; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8c; level 9: STRUCT-key; level 10: L2.8b; level 15: CONG-transfer, L2.7; level 16: STATIC-assert; level 17: L1.40e, L2.6, RAT-domain, T10; level 19: L1.41, L2.10, SCOPE-warn; level 20: L2.11, L3.2, SPEC-strict-thread-count, SPEC-terminated-arg; level 21: L2.14, L4.1; level 22: COLLATE-data; level 26: L3.7, LOWER-stack; level 27: L3.13, RT-exhaust-report; level 28: BIT-repr, HASH-repr, LEAN-shrink, WIDE-product; level 31: L3.11; level 32: PROP-per-arrow, TRACE-gen-laws; level 33: KEYABLE-reject; level 34: L3.23; level 35: LAYOUT-soa; level 36: UNION-spare; level 39: L3.24, L6.11a, WITNESS-widened; level 40: EQ-tabulate, INDUCT-eq-round, L5.5a, LEAN-descent-infer, SORTED-dense; level 41: LEAN-ematch-round; level 42: ARM-split, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, LAW14-gen; level 44: ROD-data; level 45: INTERN-threaded, MEMO-cross, SLAB-pack; level 47: L6.17; level 49: S.1d; level 52: L7.5, L8.2a, PORT-why, TARGET-native; level 53: EXPORT-unique, FFI-headertest, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 54: FFI-cexport, L10.2a, ROUND-words; level 56: EDGE-class, FFI-token-block-warn, FFI-token-unused-param, READ-arms, SELFINT-design; level 57: L20.1, L7.13a, MEMO-edit; level 58: EDIT-run, L20-grammar-params, L20.1a; level 59: L15.5, L16.3, L17.1, L19.1, L20.2, STAGE-reads; level 60: L15.6, L17.1b; level 61: L15.2c; level 62: REPACK-tile; level 63: L15.7b, L23.5c; level 64: LIST-exact-overlap, NOINST-report; level 66: INDUCT-range-fold; level 67: L22.7a; level 72: L6.17a; level 73: S.1; level 74: NATIVE-cache, S.1h; level 76: S.2-forms; level 77: L21.1, S.3-forms; level 79: L24.5; level 80: L20.4, L24.6, S.6a; level 82: FLOAT-elem, INTEROP-study, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 83: L27.3; level 84: L29.1, L31.2, LIB-linkage; level 85: L31.3, S.8; level 86: HOST-embed, L27.1, L27.2, MCU-period; level 87: L27.2a, L27.2b, L27.2c; level 91: L25.1; level 92: DIAG-json, L25.3, L33.1b, LSP-incr, LSP-version; level 93: L25.4, L25.5, WASM-compiler; level 94: L25.6; level 95: L25.7, PICTURE-type; level 96: L25.9, L30.3a, L30.3b, L30.4; level 97: LIVE-UI-study; level 99: L32.1; level 100: L32.2; level 105: L33.1; level 106: L33.2, L33.3; level 108: L33.1a; level 110: L42.1
 - `README.md`: level 17: T10; level 88: BOOT-branch; level 90: RUST-remove; level 92: RUST-remove-clif; level 96: L41.8
 - `ZED_PORT_GAPS.md`: level 45: INTERN-threaded, MEMO-cross; level 47: L6.17; level 77: PORT-memo-arenas
 - `bench/ports/`: level 91: L41.1; level 92: L41.2; level 93: L41.3, L41.4, L41.5, L41.6
 - `benches/`: level 0: POLY-square-cost-sizes; level 45: L6.13g; level 52: L7.3n; level 59: L7.15
 - `benches/src/`: level 0: POLY-square-cost-sizes; level 45: L6.13g
-- `crates/`: level 0: BENCH-env-slots-log-factor, BENCH-frontier-containment-reach, BENCH-scope-project-due-blocks, BIT-shift-bytes, CAST-atom-arg, CAST-rat-unreduced-text, CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-literal-union-cost, CHECK-sum-of-summarized-names, CMP-repair-values, DIAG-exponent-row, DIAG-len-args-repair, DIAG-order-carrier-row, DIAG-slash-mixed-carrier, DIAG-too-large-with-type-error, DIAG-union-carrier-row, DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-one-scope-bodies-seed-shadows, FAIL-print-meet-unnamed-bound, FAIL-print-two-variables-one-name, FAIL-ratio-kernel-bdd-print, FAIL-reversed-boxes-seed-6952189316955771677, FAIL-tie-doubled-cycle-deeper-search, FAIL-top-literal-op-nested-or-component, FAIL-types-joined-shape-first, FAIL-types-meet-fn-kept-not-within, FAMILY-scale-larger, FP-ops-order, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, HOLES-exact-between, KERNEL-print-distinct, LAYER-steps-check, LIMITS-remove-all, LINKED-incremental-scratch-agree, LIST-in-bound-check, LIT-branch-int-beside-decimal-op, LIT-f64-pub-expect, LIT-forced-carrier, LIT-menu-rat-tower, LIT-op-carrier-headline, LIVE3-origin-long-path, MALLOC-deep-block-free-lists, MINMAX-param-literal-follow, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-inner-lambda-unnamed-param-arrow, MSG-list-value-printed-by-arrows, MSG-lower-port-repair-kind, MSG-many-args-shared-var-square, MSG-struct-field-nearest-name, MSG-too-large-cast-origin, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-hub-interleaved-scale, NARROW-rat-gaps, PARSE-ladder-rungs, PATH-reads-scale, PERF-canon-flat-strings, PERF-guarded-function-walk, PERF-height-bounds-group-benches, PERF-hull-join-row-after, PERF-kernel-box-union-search, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PERF-row-hash-tied-digest, PERF-tie-rekey-count, PLACE-value-inside-arg, PNCX-coloring-crt-scale, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PORT-block-name, PORT-push-twice-static, PORT-table-param, PORT-untyped-arg, PRES-again-monotone, PRES-c12-proof, PRES-c12-small-cost, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-hull-random-refusals, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PRINT-below-whole-13, PRINT-expr-parens-minimal, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-infix-edge-walk, PROOF-meet-rows-finite, PROOF-nearest-name-quadratic, PROOF-part-tokens-slice-lex, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, PROV-scaling-10_5, PUSH-target-rules, Q1-LOCAL-method, RADIX-nlog2-10_5, RANGE-open-ending-warn, REF-nested-moduli-state, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, ROOTS-interval-bound, ROOTS-small-constant, RP-scaling-10_5, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, SPEC-headline-piece-in-collection, SPEC-m07-string-serial, SPEC-paren-minimal, SPEC-pure-region-port-read, STAGE-scaling-10_5, STAR-satellite-scale, STUDY-zir-facts-carried, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4, TEST-minmax-struct-menu-compiles, TEST-presburger-unreached-paths, TEST-read-type-flaws, TEST-rt-weakmem, TEST-sig-text-printed-type-matches-calls, TEST-term-for-uncovered, TEST-types-bound-pin-moves-adversarial, TEST-types-unreached-paths-4, TIGHTEN-k-parts, TYPES-search-claims-proofs, TYPEVAR-gap-rejections, WIDEN-generic-literal-op-int-instance, ZEDC-build-out-dir, ZEDC-cli-consistency; level 1: DISCARD-standalone, GROUP-order-cpoly-merge, GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, META-read-run, MSG-too-large-figure, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free, PROOF-sweep, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TIME-kernel-benches-over-cap-high-load, TONIC-remap-witness, WHERE-loose-atoms; level 2: CONST-too-large-products-fix, CRANELIFT-nested-if-domtree, GROUP-nested, HAS-point-overlap2c-mid, HEAP-fresh-ratio, KERNEL-family-call, L1.14a, L1.29c, LAYER-L1-forms, MAIN-limits-count, MOD-pre-width, ORACLE-env-nlogn, PERF-alternating-product-bytes, PERF-blame-settlement, PERF-deep-atom-compare, PERF-div-bytes-2p17, PERF-kinds-one-atom-payloads, PERF-listing-complement-meets, PERF-listing-take-by-depth, PERF-long-literal-digits, PERF-pinwheel-end-outside, PERF-refusals-old-size, PERF-two-sat-parity-cycle, PERF-wide-modulus-cliffs, PERF-xor-tuple-compare, PITFALL-leading-zero, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign, PULL-bisect, RANGE-keys-in-printed-type, REFUSAL-front-rest, REFUSAL-list-front-chain-fork, REFUSAL-one-component-shared-meet; level 3: A5-print, GROUP-order-verdicts, L1.19d, MAIN-limits-site, MSG-run-stop-held-values, PERF-l139-under9, PRES-a99-per-call-or-symbol, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or, TEST-mutate-set; level 4: CONST-build-typed-operands, CONST-judge-past-fold, CONST-least-refusal-size, CONST-repair-build-trial, FOR-one-generator, L6.6, RANGE-open-names, STR-types, T2; level 5: CONST-coprime-check-pairs-of-pools, L1.18a, PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds, REDUCE-identity-closure-bodies, S15-calls, T14-lints; level 6: IF-union, NAN-cast-atoms, PRES-cover-bench-regressions, SETTLE-rounds, T14-bring; level 7: L1.39g, L2.12c, L2.5, PRES-cover-wire, PRES-project-exact-solver, RT-internal-fault; level 8: ENGINE-kept-ends, FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, FLOAT-interval, L2.4, L2.8c, L6.3, PERF-preimage-cross-dead-under9, PLAN-shared-regions, PRES-shadow-exact-comment, REFUSAL-reverse-words, TEST-nested-marks-struct-fields; level 9: BLOCKING-initial, BLOCKING-unit, GROUP-e2e, ISSUE1-payload, L1.26b, L6.8, MINMAX-struct-menu, REPAIR-rat-finite-f64, S22-R2, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: L2.8b, L2.8e, LOOP-frames-final, LOWER-dag, PRE-abs-output, ST-formula-parse-keep, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts, ST-formula-print, STAGE-print-with; level 12: LOOP-for-stops, ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7, MSG-shared-print; level 16: L1.40b, SCALE-cover, STATIC-assert, TEST-fuzz; level 17: HAS-point-probe, L1.40e, L1.40f, L2.6, RAT-domain, T10; level 18: HKT-2, L2.12, L2.6b, L2.9, OVERLOAD-name-type; level 19: BUBBLE-msg, CONTIFY, GLAM-diamond, L1.41, L2.10, L2.12b, L2.12e, L2.7a, SCOPE-warn; level 20: L2.12d, L3.2, OR-PAT-check, SCALE-zed, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.22, L3.2b, L4.1, L6.3-rest, STR-views, ZIR-iface-section; level 22: COLLATE-data, L3.3, ZIR-iface-key; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5, MAIN-args-read, SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.13, L3.8, RT-exhaust-report, RT-guard-fault; level 28: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, BIT-repr, HASH-repr, L3.15a, L6.14, LEAN-shrink, RAT-lin, RT-alloc-refusal, TONIC-injective, WIDE-product; level 29: ASSOC-gcd, ASSOC-sets, ASSOC-table, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-monoid, HULL-norm, INT-twos, L3.20, RAT-div, RAT-pin, RAT-point, RAT-split; level 30: ENUM-quotient, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.9; level 31: ASSOC-word, H10-refuse, L3.10, L3.11; level 32: ASSOC-demand, FOLD-zero, HULL-tests, L3.18, MATCH-commute, PROP-per-arrow, SEMIRING-values, ZIR-check-passes; level 33: KEYABLE-reject, L3.12, L3.18a, L3.18b, L6.9; level 34: L3.17, L3.21, L3.23, L6.10; level 35: INLINE-zir, L3.16, L3.23a, L4.2, L5.8, LAYOUT-soa, UNIT-modes; level 36: COST-limit-capacity, L3.14, L4.4, L5.1, UNION-spare; level 37: L3.15, L4.3, L4.5, L4.6, L5.2, L5.3, LAW20-move; level 38: BOUND-L4, CSR-bounds, EVID-dynamic, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L5.6, L5.8a, L6.11a, L6.12, L6.2, LAW19-join, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, ENUM-perm, EQ-tabulate, INDUCT-eq-round, L4.8, L5.13, L5.4b, L5.5a, L5.8b, L5.9, L6.11b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer, SORTED-dense; level 41: FOLD-layers, HKT-1, L5.1d, L5.7, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: ARM-split, FOLD-unique, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L5.7a, L6.12f, L6.14a, LAW14-gen, RECUR-monotone, SORTED-select; level 43: ASSOC-fold, BEND-contract, L6.13, L6.15, L6.5d, MIX-budget; level 44: AUX-homsynth, CONST-fold-budget-failure, COST-patch, HEAP-rank, L6.13a, L6.13b, L6.13c, L6.13e, L6.16, MIX-callsite, ROD-data, SPECULATE, TRIVIAL-or-cnf; level 45: ASSOC-scale, DEEP-native-eq, L6.13g, MEMO-cross, RECLAIM-pulse, RT-layout, SLAB-pack, STR-cursor; level 46: L5.14; level 47: L6.17; level 49: L28.1a, L7.1, L8.1, S.1d; level 50: L10.1, L7.1a, L7.1b, L7.2, ROD-data-mlir, S.1a; level 51: FILES-read-after-write, FINITE-prop, L10.4a, L15.1, L7.2a, L7.3, L8.2, LIT-declared-fix-call-arg, MSG-once-written-variable-type, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, FILE-bytes, GLAM-logspec, L7.3g, L7.3j, L7.3n, L7.4, L7.5, L8.2a, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, PORT-why, PREIMAGE-reindex, QUANT-finite, TARGET-native, TIMEOUT-annot; level 53: BYTES-wide, EXPORT-unique, FFI-fpenv, FFI-headertest, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, INT-128, L10.2, L21.2, L28.1, L7.3e, L7.3l, L7.4b, L7.5a, L7.5b, OOM-wave, OS-intrinsics, RELEASE-dag-ffi, RT-exhaust-wave, STOP-switch, STR-normalize-layer, UNORD-keep; level 54: CLOCK-direct, CODEC-base, FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L21.2b, L7.14, L7.3m, L7.6, LIMITS-child-reset, MLIR-noalias; level 55: CHECKED-float, CODEC-stream, FFI-token-check, L10.4, L11.1, L12.0, L7.11, L7.7, L7.8, LIVE-clocks, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, EDGE-class, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, L11.1a, L11.1b, L11.2, L7.10, L7.12, L7.13, L7.9, MAP-pure-zed, MENU-linear-L10, PASSES-vars-test, READ-arms, SCHED-refined-store; level 57: CODEC-lines, FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, L7.10a, L7.9a, MEMO-edit, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: EDIT-run, FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, L20.1a, L20.1b, L22.1, L7.10b, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads, THIRDHOM-law; level 60: CODEC-grammar, KERNEL-check-tests, L12.2b, L12.2i, L12.3a, L15.6, L16.2, L17.1b, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, MENU-linear-L15, PROOF-alg, TERM-1, TERM-stall; level 61: CODEC-ffi, CODEC-laws, COST-required, GLAM-diamond-iface, GLAM-pin, L12.2c, L14.1, L15.2c, L16.4, L18.1a, L18.2b, L18.2d, L18.2g, L19.2a, L21.0b, L21.0c, L22.8, TERM-verdicts; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f, L23.1, L25.4b, MATH-names, MEM-verdicts, REPACK-tile; level 63: L12.2e, L15.7b, L15.8, L23.2, L23.5c, L33.1f, TOTAL-annot; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, L23.3, L33.1g, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.3a, L22.4, L22.5, L23.4, MSG-limit-repair-units, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, KERNEL-proof, L18.2c, L22.6, L22.7, L23.5, UNITS-compare, UNITS-text-lengths; level 67: L24.1, STOP-releases-rt; level 68: FFI-token-runtime, L24.4, MEMO-single-thread, SIGNALS-rt; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 71: MAIN-limits-strict; level 72: L6.17a; level 73: S.1; level 74: ADVISORY, HULL3-GEN, NATIVE-cache, S.1h, STD-num; level 76: ZLEX-scan; level 77: L21.1; level 78: L21.1c, S.4; level 79: L19.2, L24.2, L24.3; level 80: L19.3, L20.3, L20.4, L24.10, L24.2a, L24.6; level 81: L24.7, S.6; level 82: L22.9, L23.5a, L26.1, L28.4, QUOT-classes, RT-port-libzed, SCHED-schema-types; level 83: L27.3, TARGET-mcu, TOOLS-port; level 84: L29.1, L31.2; level 85: L24.8, L31.3; level 86: CANON-version-reset, L27.1, L27.2, MCU-period; level 87: BEND-gpufold, FFI-inline-proc, GPU-replay, GPU-sizing, L27.1b, L27.2a, L27.2b, L27.2c; level 90: RUST-remove; level 92: DIAG-json, RUST-remove-clif; level 102: L32.4; level 104: L34.5; level 105: L34.8; level 110: PORTABLE-rt, USER-guide; level 111: FFI-sandbox-macos, FFI-sandbox-windows
+- `crates/`: level 0: BENCH-env-slots-log-factor, BENCH-frontier-containment-reach, BENCH-scope-project-due-blocks, BIT-shift-bytes, BUILD-clif-alone-features, CAST-atom-arg, CAST-rat-unreduced-text, CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-literal-union-cost, CHECK-sum-of-summarized-names, CLIPPY-preimage-mutable-key-type, CMP-repair-values, DIAG-exponent-row, DIAG-len-args-repair, DIAG-order-carrier-row, DIAG-slash-mixed-carrier, DIAG-too-large-with-type-error, DIAG-union-carrier-row, DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FAIL-batch-linked-copies-growth, FAIL-build-killed-link-no-working-dir, FAIL-check-lambda-fn-union-same-names, FAIL-check-lambda-into-fn-union, FAIL-dark-cycle-both-ways-growth, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-kernel-print-seed-12530893063770583521, FAIL-kernel-print-seed-15344750447356307552, FAIL-kernel-print-seed-479643653593087009, FAIL-nested-display-headline-code-quadratic, FAIL-one-scope-bodies-seed-shadows, FAIL-partial-slot-generic-pass, FAIL-print-absorbed-members-twice, FAIL-print-meet-unnamed-bound, FAIL-print-two-variables-one-name, FAIL-ratio-kernel-bdd-print, FAIL-reversed-boxes-seed-6952189316955771677, FAIL-tie-doubled-cycle-deeper-search, FAIL-tie-group-tests-piece-time, FAIL-top-literal-op-nested-or-component, FAIL-types-cover-partial-arrows-left-out, FAIL-types-fn-arrows-bounded-variable, FAIL-types-fn-only-bounded-variable, FAIL-types-joined-shape-first, FAIL-types-meet-curried-is-stack-overflow, FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-meet-fn-kept-not-within, FAIL-types-meet-key-arrows-not-within, FAIL-types-partial-arrow-same-atom-keys, FAIL-types-partial-arrow-value-type, FAIL-types-shape-union-sub-incomplete, FAIL-unit-pieces-time, FAMILY-scale-larger, FP-ops-generic-strings, FP-ops-order, FP-ops-split-empty-separator, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, HOLES-exact-between, IMBL-diff-branch-skip, KERNEL-bdd-rejoin-bytes, KERNEL-print-distinct, LAYER-steps-check, LIMITS-remove-all, LINKED-incremental-scratch-agree, LIST-in-bound-check, LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix, LIT-f64-pub-expect, LIT-forced-carrier, LIT-menu-rat-tower, LIT-op-carrier-headline, LIT-tuple-branch-carrier-division-fixes, LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu, LIT-tuple-component-division-at-rat, LIVE3-origin-long-path, MALLOC-deep-block-free-lists, MINMAX-literal-follow, MINMAX-param-literal-follow, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-inner-lambda-unnamed-param-arrow, MSG-list-value-printed-by-arrows, MSG-lower-port-repair-kind, MSG-many-args-shared-var-square, MSG-struct-field-nearest-name, MSG-too-large-cast-origin, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-hub-interleaved-scale, NARROW-rat-gaps, NUM-expect-audit, PARSE-ladder-rungs, PATH-reads-scale, PERF-canon-flat-strings, PERF-carried-lent-two-args, PERF-deep-block-ratio, PERF-diagonal-rows-difference, PERF-guarded-function-walk, PERF-height-bounds-group-benches, PERF-hull-join-row-after, PERF-kernel-box-union-search, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PERF-row-hash-tied-digest, PERF-tie-rekey-count, PERF-types-bounded-shapes-renamed-under9, PERF-types-joined-split-several-differing, PERF-types-shared-row-bench-2ec6b9418, PERF-types-tuple-shapes-under9, PLACE-value-inside-arg, PNCX-coloring-crt-scale, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PORT-block-name, PORT-push-twice-static, PORT-table-param, PORT-untyped-arg, POW-body-widen-warning-top-agree, POW-rat-first-repair, PRES-again-monotone, PRES-c12-proof, PRES-c12-small-cost, PRES-cover-order-rewrites, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-hull-random-refusals, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PRINT-below-whole-13, PRINT-expr-parens-minimal, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-deep-block-counts-constant, PROOF-diff-exact-skip, PROOF-diff-payload-rest-refused, PROOF-form-verdict-merged-mark, PROOF-infix-edge-walk, PROOF-meet-rows-finite, PROOF-nearest-name-quadratic, PROOF-part-tokens-slice-lex, PROOF-run-under-test-bug, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, PROOF-treap-digest-priorities, PROV-scaling-10_5, PUSH-target-rules, Q1-LOCAL-method, RADIX-nlog2-10_5, RANGE-open-ending-warn, RAT-pow-expect, REF-nested-moduli-state, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, ROOTS-interval-bound, ROOTS-small-constant, RP-scaling-10_5, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, SPEC-bit-identities, SPEC-build-modes-main-build, SPEC-copies-out, SPEC-headline-piece-in-collection, SPEC-m07-string-serial, SPEC-paren-minimal, SPEC-pure-region-port-read, STAGE-scaling-10_5, STAR-satellite-scale, STUDY-zir-facts-carried, SUB-empty-fork-bytes, SUB-fork-place-512, SUB-fork-place-bytes, SYNC-copies-refresh-2, SYNC-copies-refresh-3, SYNC-held-files-stamp, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-kernel-lib-split, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4, TEST-lib-pieces-near-limit, TEST-minmax-struct-menu-compiles, TEST-presburger-unreached-paths, TEST-read-type-flaws, TEST-rt-weakmem, TEST-sig-text-printed-type-matches-calls, TEST-standing-twice-numeric-vars, TEST-term-for-uncovered, TEST-types-bound-pin-moves-adversarial, TEST-types-bound-pin-sets-adversarial, TEST-types-unreached-paths, TEST-types-unreached-paths-2, TEST-types-unreached-paths-4, TIGHTEN-k-parts, TYPES-compared-recall-refused, TYPES-fits-read-key-refusal, TYPES-fits-read-refusal, TYPES-search-claims-proofs, TYPEVAR-gap-rejections, WIDEN-generic-literal-op-int-instance, XR-group-order-5-rounds-1-3, XR-map-chain-rounds-4-6, ZEDC-build-out-dir, ZEDC-cli-consistency; level 1: DISCARD-standalone, GROUP-order-cpoly-merge, GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, META-read-run, MSG-too-large-figure, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free, PROOF-join-work-limited-independence, PROOF-sweep, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TIME-kernel-benches-over-cap-high-load, TONIC-remap-witness, WHERE-loose-atoms, XR-map-chain-rounds-7-9; level 2: CONST-too-large-products-fix, CRANELIFT-nested-if-domtree, GROUP-nested, HAS-point-overlap2c-mid, HEAP-fresh-ratio, KERNEL-family-call, L1.14a, L1.29c, LAYER-L1-forms, MAIN-limits-count, MOD-pre-width, ORACLE-env-nlogn, PERF-alternating-product-bytes, PERF-blame-settlement, PERF-deep-atom-compare, PERF-div-bytes-2p17, PERF-kinds-one-atom-payloads, PERF-listing-complement-meets, PERF-listing-take-by-depth, PERF-long-literal-digits, PERF-pinwheel-end-outside, PERF-refusals-old-size, PERF-two-sat-parity-cycle, PERF-wide-modulus-cliffs, PERF-xor-tuple-compare, PITFALL-leading-zero, PRES-cover-order-refusals, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign, PULL-bisect, RANGE-keys-in-printed-type, REFUSAL-front-rest, REFUSAL-list-front-chain-fork, REFUSAL-one-component-shared-meet; level 3: A5-print, GROUP-order-verdicts, L1.19d, MAIN-limits-site, MSG-run-stop-held-values, PERF-l139-under9, PRES-a99-per-call-or-symbol, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or, TEST-mutate-set; level 4: CONST-build-typed-operands, CONST-judge-past-fold, CONST-least-refusal-size, CONST-repair-build-trial, FOR-one-generator, L6.6, PRES-pugh-xr-land, RANGE-open-names, STR-types, T2; level 5: CONST-coprime-check-pairs-of-pools, L1.18a, PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-monotone-rules, PRES-pugh-xr-rounds, REDUCE-identity-closure-bodies, S15-calls, T14-lints; level 6: IF-union, NAN-cast-atoms, PRES-cover-bench-regressions, SETTLE-rounds, T14-bring; level 7: L1.39g, L2.12c, L2.5, PRES-cover-wire, PRES-project-exact-solver, RT-internal-fault; level 8: ENGINE-kept-ends, FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, FLOAT-interval, L2.4, L2.8c, L6.3, PERF-preimage-cross-dead-under9, PLAN-shared-regions, PRES-shadow-exact-comment, REFUSAL-reverse-words, TEST-nested-marks-struct-fields; level 9: BLOCKING-initial, BLOCKING-unit, GROUP-e2e, ISSUE1-payload, L1.26b, L6.8, MINMAX-struct-menu, REPAIR-rat-finite-f64, S22-R2, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: L2.8b, L2.8e, LOOP-frames-final, LOWER-dag, PRE-abs-output, ST-formula-parse-keep, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts, ST-formula-print, STAGE-print-with; level 12: LOOP-for-stops, ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7, MSG-shared-print; level 16: L1.40b, SCALE-cover, STATIC-assert, TEST-fuzz; level 17: HAS-point-probe, L1.40e, L1.40f, L2.6, RAT-domain, T10; level 18: HKT-2, L2.12, L2.6b, L2.9, OVERLOAD-name-type; level 19: BUBBLE-msg, CONTIFY, GLAM-diamond, L1.41, L2.10, L2.12b, L2.12e, L2.7a, SCOPE-warn; level 20: L2.12d, L3.2, OR-PAT-check, SCALE-zed, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.22, L3.2b, L4.1, L6.3-rest, STR-views, ZIR-iface-section; level 22: COLLATE-data, L3.3, ZIR-iface-key; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5, MAIN-args-read, SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.13, L3.8, RT-exhaust-report, RT-guard-fault; level 28: ASSOC-gf2, ASSOC-lattice, ASSOC-mod, ASSOC-select, BIT-repr, HASH-repr, L3.15a, L6.14, LEAN-shrink, RAT-lin, RT-alloc-refusal, TONIC-injective, WIDE-product; level 29: ASSOC-gcd, ASSOC-sets, ASSOC-table, HULL-binom, HULL-conic, HULL-elim, HULL-key, HULL-lp, HULL-monoid, HULL-norm, INT-twos, L3.20, RAT-div, RAT-pin, RAT-point, RAT-split; level 30: ENUM-quotient, HULL-atoms, HULL-gf2, HULL-int, HULL-pos, HULL-trop, L3.9; level 31: ASSOC-word, H10-refuse, L3.10, L3.11; level 32: ASSOC-demand, FOLD-zero, HULL-tests, L3.18, MATCH-commute, PROP-per-arrow, SEMIRING-values, ZIR-check-passes; level 33: KEYABLE-reject, L3.12, L3.18a, L3.18b, L6.9; level 34: L3.17, L3.21, L3.23, L6.10; level 35: INLINE-zir, L3.16, L3.23a, L4.2, L5.8, LAYOUT-soa, UNIT-modes; level 36: COST-limit-capacity, L3.14, L4.4, L5.1, UNION-spare; level 37: L3.15, L4.3, L4.5, L4.6, L5.2, L5.3, LAW20-move; level 38: BOUND-L4, CSR-bounds, EVID-dynamic, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L5.6, L5.8a, L6.11a, L6.12, L6.2, LAW19-join, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, ENUM-perm, EQ-tabulate, INDUCT-eq-round, L4.8, L5.13, L5.4b, L5.5a, L5.8b, L5.9, L6.11b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer, SORTED-dense; level 41: FOLD-layers, HKT-1, L5.1d, L5.7, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: ARM-split, FOLD-unique, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L5.7a, L6.12f, L6.14a, LAW14-gen, RECUR-monotone, SORTED-select; level 43: ASSOC-fold, BEND-contract, L6.13, L6.15, L6.5d, MIX-budget; level 44: AUX-homsynth, CONST-fold-budget-failure, COST-patch, HEAP-rank, L6.13a, L6.13b, L6.13c, L6.13e, L6.16, MIX-callsite, ROD-data, SPECULATE, TRIVIAL-or-cnf; level 45: ASSOC-scale, DEEP-native-eq, L6.13g, MEMO-cross, RECLAIM-pulse, RT-layout, SLAB-pack, STR-cursor; level 46: L5.14; level 47: L6.17; level 49: L28.1a, L7.1, L8.1, S.1d; level 50: L10.1, L7.1a, L7.1b, L7.2, ROD-data-mlir, S.1a; level 51: FILES-read-after-write, FINITE-prop, L10.4a, L15.1, L7.2a, L7.3, L8.2, LIT-declared-fix-call-arg, MSG-once-written-variable-type, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, FILE-bytes, GLAM-logspec, L7.3g, L7.3j, L7.3n, L7.4, L7.5, L8.2a, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, PORT-why, PREIMAGE-reindex, QUANT-finite, TARGET-native, TIMEOUT-annot; level 53: BYTES-wide, EXPORT-unique, FFI-fpenv, FFI-headertest, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, INT-128, L10.2, L21.2, L28.1, L7.3e, L7.3l, L7.4b, L7.5a, L7.5b, OOM-wave, OS-intrinsics, RELEASE-dag-ffi, RT-exhaust-wave, STOP-switch, STR-normalize-layer, UNORD-keep; level 54: CLOCK-direct, CODEC-base, FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L21.2b, L7.14, L7.3m, L7.6, LIMITS-child-reset, MLIR-noalias; level 55: CHECKED-float, CODEC-stream, FFI-token-check, L10.4, L11.1, L12.0, L7.11, L7.7, L7.8, LIVE-clocks, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, EDGE-class, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, L11.1a, L11.1b, L11.2, L7.10, L7.12, L7.13, L7.9, MAP-pure-zed, MENU-linear-L10, PASSES-vars-test, READ-arms, SCHED-refined-store; level 57: CODEC-lines, FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, L7.10a, L7.9a, MEMO-edit, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: EDIT-run, FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, L20.1a, L20.1b, L22.1, L7.10b, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads, THIRDHOM-law; level 60: CODEC-grammar, KERNEL-check-tests, L12.2b, L12.2i, L12.3a, L15.6, L16.2, L17.1b, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, MENU-linear-L15, PROOF-alg, TERM-1, TERM-stall; level 61: CODEC-ffi, CODEC-laws, COST-required, GLAM-diamond-iface, GLAM-pin, L12.2c, L14.1, L15.2c, L16.4, L18.1a, L18.2b, L18.2d, L18.2g, L19.2a, L21.0b, L21.0c, L22.8, TERM-verdicts; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f, L23.1, L25.4b, MATH-names, MEM-verdicts, REPACK-tile; level 63: L12.2e, L15.7b, L15.8, L23.2, L23.5c, L33.1f, TOTAL-annot; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, L23.3, L33.1g, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.3a, L22.4, L22.5, L23.4, MSG-limit-repair-units, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, KERNEL-proof, L18.2c, L22.6, L22.7, L23.5, UNITS-compare, UNITS-text-lengths; level 67: L24.1, STOP-releases-rt; level 68: FFI-token-runtime, L24.4, MEMO-single-thread, SIGNALS-rt; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 71: MAIN-limits-strict; level 72: L6.17a; level 73: S.1; level 74: ADVISORY, HULL3-GEN, NATIVE-cache, S.1h, STD-num; level 76: ZLEX-scan; level 77: L21.1; level 78: L21.1c, S.4; level 79: L19.2, L24.2, L24.3; level 80: L19.3, L20.3, L20.4, L24.10, L24.2a, L24.6; level 81: L24.7, S.6; level 82: L22.9, L23.5a, L26.1, L28.4, QUOT-classes, RT-port-libzed, SCHED-schema-types; level 83: L27.3, TARGET-mcu, TOOLS-port; level 84: L29.1, L31.2; level 85: L24.8, L31.3; level 86: CANON-version-reset, L27.1, L27.2, MCU-period; level 87: BEND-gpufold, FFI-inline-proc, GPU-replay, GPU-sizing, L27.1b, L27.2a, L27.2b, L27.2c; level 90: RUST-remove; level 92: DIAG-json, RUST-remove-clif; level 102: L32.4; level 104: L34.5; level 105: L34.8; level 110: PORTABLE-rt, USER-guide; level 111: FFI-sandbox-macos, FFI-sandbox-windows
 - `crates/zed-cert/`: level 34: L3.21; level 40: L5.13, L5.9; level 41: L5.7; level 55: L7.8; level 59: L15.5, L16.1; level 60: KERNEL-check-tests, L15.6, L22.2, PROOF-alg; level 64: L23.3; level 65: L22.4, L22.5; level 66: KERNEL-proof, L22.7
 - `crates/zed-cert/src/`: level 34: L3.21; level 40: L5.13, L5.9; level 41: L5.7; level 59: L15.5, L16.1; level 60: KERNEL-check-tests, L15.6, L22.2, PROOF-alg; level 64: L23.3; level 65: L22.4, L22.5; level 66: KERNEL-proof, L22.7
 - `crates/zed-cert/src/lib.rs`: level 60: L22.2; level 64: L23.3; level 65: L22.4, L22.5; level 66: L22.7
-- `crates/zed-clif/`: level 90: RUST-remove; level 92: RUST-remove-clif
+- `crates/zed-clif/`: level 0: BUILD-clif-alone-features, SYNC-copies-refresh-2; level 90: RUST-remove; level 92: RUST-remove-clif
 - `crates/zed-gpu/`: level 86: L27.1; level 87: BEND-gpufold, GPU-replay, GPU-sizing
-- `crates/zed-kernel`: level 0: LIST-in-bound-check; level 2: KERNEL-family-call, PERF-blame-settlement, PERF-deep-atom-compare, PERF-kinds-one-atom-payloads, PERF-listing-complement-meets, PERF-listing-take-by-depth, PERF-pinwheel-end-outside, PERF-refusals-old-size, PERF-two-sat-parity-cycle, PERF-xor-tuple-compare, REFUSAL-list-front-chain-fork, REFUSAL-one-component-shared-meet
-- `crates/zed-kernel/`: level 0: BENCH-env-slots-log-factor, BIT-shift-bytes, CHECK-literal-union-cost, FAIL-arrow-lambda-partial-slot, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, FP-ops-order, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, LIMITS-remove-all, LIT-f64-pub-expect, PERF-canon-flat-strings, PERF-guarded-function-walk, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PRINT-below-whole-13, PROOF-meet-rows-finite, PROV-scaling-10_5, RADIX-nlog2-10_5, ROOTS-interval-bound, ROOTS-small-constant, SPEC-pure-region-port-read, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4; level 1: GROUP-order-cpoly-merge, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, REMAP-fewer-binders, TIME-kernel-benches-over-cap-high-load; level 2: MAIN-limits-count, ORACLE-env-nlogn, PERF-div-bytes-2p17, REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts, MSG-run-stop-held-values; level 4: CONST-judge-past-fold, CONST-least-refusal-size, L6.6, STR-types, T2; level 5: L1.18a, REDUCE-identity-closure-bodies, T14-lints; level 6: NAN-cast-atoms, SETTLE-rounds; level 7: L1.39g, L2.5; level 8: L2.4, REFUSAL-reverse-words; level 9: L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, STAGE-print-with; level 15: L2.7; level 16: SCALE-cover; level 17: L1.40e; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b, L4.1, STR-views; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 25: L6.4; level 26: L3.7; level 27: L3.8; level 28: BIT-repr, L3.15a; level 29: INT-twos, L3.20; level 34: L3.21; level 35: L4.2; level 36: L4.4, L5.1; level 37: L3.15, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L5.8b, L6.5; level 41: HKT-1, NO-RUN-audit; level 42: FOLD-unique; level 43: L6.5d, MIX-budget; level 44: CONST-fold-budget-failure, L6.16; level 45: STR-cursor; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.3j, L7.4, L7.5, L9.1, PREIMAGE-reindex; level 53: BYTES-wide, INT-128, L10.2, L21.2; level 54: L10.3, L7.6; level 55: CHECKED-float, L11.1; level 56: CODEC-utf8; level 57: L7.9a, STR-layer-views; level 58: L15.2, MOD-residue; level 59: L15.4, L15.5, L19.1, L20.2; level 62: MATH-names; level 63: L12.2e; level 64: UNITS-info-prelude; level 65: MSG-limit-repair-units; level 66: L22.7; level 68: L24.4; level 74: STD-num; level 77: L21.1; level 79: L19.2; level 85: L24.8; level 86: L27.2
-- `crates/zed-kernel/src/`: level 0: BENCH-env-slots-log-factor, BIT-shift-bytes, CHECK-literal-union-cost, FAIL-arrow-lambda-partial-slot, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, FP-ops-order, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, LIT-f64-pub-expect, PERF-canon-flat-strings, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PRINT-below-whole-13, PROOF-meet-rows-finite, PROV-scaling-10_5, RADIX-nlog2-10_5, ROOTS-interval-bound, ROOTS-small-constant, SPEC-pure-region-port-read, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4; level 1: GROUP-order-cpoly-merge, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, REMAP-fewer-binders, TIME-kernel-benches-over-cap-high-load; level 2: MAIN-limits-count, ORACLE-env-nlogn, PERF-div-bytes-2p17, REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts, MSG-run-stop-held-values; level 4: L6.6, STR-types, T2; level 5: L1.18a, REDUCE-identity-closure-bodies, T14-lints; level 6: NAN-cast-atoms, SETTLE-rounds; level 7: L1.39g, L2.5; level 8: L2.4, REFUSAL-reverse-words; level 9: L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, STAGE-print-with; level 15: L2.7; level 16: SCALE-cover; level 17: L1.40e; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b, L4.1, STR-views; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 25: L6.4; level 26: L3.7; level 27: L3.8; level 28: BIT-repr, L3.15a; level 29: INT-twos, L3.20; level 34: L3.21; level 35: L4.2; level 36: L4.4, L5.1; level 37: L3.15, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L5.8b, L6.5; level 41: HKT-1, NO-RUN-audit; level 42: FOLD-unique; level 43: L6.5d, MIX-budget; level 44: CONST-fold-budget-failure, L6.16; level 45: STR-cursor; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.3j, L7.4, L7.5, L9.1, PREIMAGE-reindex; level 53: BYTES-wide, INT-128, L10.2, L21.2; level 54: L10.3, L7.6; level 55: CHECKED-float, L11.1; level 56: CODEC-utf8; level 57: L7.9a, STR-layer-views; level 58: L15.2, MOD-residue; level 59: L15.4, L15.5, L19.1, L20.2; level 62: MATH-names; level 63: L12.2e; level 64: UNITS-info-prelude; level 65: MSG-limit-repair-units; level 66: L22.7; level 68: L24.4; level 74: STD-num; level 77: L21.1; level 79: L19.2; level 85: L24.8; level 86: L27.2
-- `crates/zed-kernel/src/eval.rs`: level 0: BENCH-env-slots-log-factor, FAIL-arrow-lambda-partial-slot, SPEC-pure-region-port-read; level 1: POW-domains; level 2: ORACLE-env-nlogn; level 4: L6.6; level 8: L2.4; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 28: BIT-repr; level 29: INT-twos; level 35: L4.2; level 36: L5.1; level 37: L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L6.5; level 41: HKT-1, NO-RUN-audit; level 43: L6.5d, MIX-budget; level 50: L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.5; level 59: L19.1; level 79: L19.2
+- `crates/zed-kernel`: level 0: FAIL-kernel-print-seed-12530893063770583521, FAIL-kernel-print-seed-15344750447356307552, FAIL-kernel-print-seed-479643653593087009, LIST-in-bound-check; level 2: KERNEL-family-call, PERF-blame-settlement, PERF-deep-atom-compare, PERF-kinds-one-atom-payloads, PERF-listing-complement-meets, PERF-listing-take-by-depth, PERF-pinwheel-end-outside, PERF-refusals-old-size, PERF-two-sat-parity-cycle, PERF-xor-tuple-compare, REFUSAL-list-front-chain-fork, REFUSAL-one-component-shared-meet
+- `crates/zed-kernel/`: level 0: BENCH-env-slots-log-factor, BIT-shift-bytes, CHECK-literal-union-cost, CLIPPY-preimage-mutable-key-type, FAIL-arrow-lambda-partial-slot, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, FAIL-unit-pieces-time, FP-ops-order, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, KERNEL-bdd-rejoin-bytes, LIMITS-remove-all, LIT-f64-pub-expect, NUM-expect-audit, PERF-canon-flat-strings, PERF-diagonal-rows-difference, PERF-guarded-function-walk, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PRINT-below-whole-13, PROOF-diff-exact-skip, PROOF-meet-rows-finite, PROOF-run-under-test-bug, PROV-scaling-10_5, RADIX-nlog2-10_5, RAT-pow-expect, ROOTS-interval-bound, ROOTS-small-constant, SPEC-pure-region-port-read, SUB-empty-fork-bytes, SUB-fork-place-512, SUB-fork-place-bytes, TEST-kernel-lib-split, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4, TEST-types-unreached-paths, TEST-types-unreached-paths-2, XR-group-order-5-rounds-1-3; level 1: GROUP-order-cpoly-merge, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, PROOF-join-work-limited-independence, REMAP-fewer-binders, TIME-kernel-benches-over-cap-high-load; level 2: MAIN-limits-count, ORACLE-env-nlogn, PERF-div-bytes-2p17, REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts, MSG-run-stop-held-values; level 4: CONST-judge-past-fold, CONST-least-refusal-size, L6.6, STR-types, T2; level 5: L1.18a, REDUCE-identity-closure-bodies, T14-lints; level 6: NAN-cast-atoms, SETTLE-rounds; level 7: L1.39g, L2.5; level 8: L2.4, REFUSAL-reverse-words; level 9: L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, STAGE-print-with; level 15: L2.7; level 16: SCALE-cover; level 17: L1.40e; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b, L4.1, STR-views; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 25: L6.4; level 26: L3.7; level 27: L3.8; level 28: BIT-repr, L3.15a; level 29: INT-twos, L3.20; level 34: L3.21; level 35: L4.2; level 36: L4.4, L5.1; level 37: L3.15, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L5.8b, L6.5; level 41: HKT-1, NO-RUN-audit; level 42: FOLD-unique; level 43: L6.5d, MIX-budget; level 44: CONST-fold-budget-failure, L6.16; level 45: STR-cursor; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.3j, L7.4, L7.5, L9.1, PREIMAGE-reindex; level 53: BYTES-wide, INT-128, L10.2, L21.2; level 54: L10.3, L7.6; level 55: CHECKED-float, L11.1; level 56: CODEC-utf8; level 57: L7.9a, STR-layer-views; level 58: L15.2, MOD-residue; level 59: L15.4, L15.5, L19.1, L20.2; level 62: MATH-names; level 63: L12.2e; level 64: UNITS-info-prelude; level 65: MSG-limit-repair-units; level 66: L22.7; level 68: L24.4; level 74: STD-num; level 77: L21.1; level 79: L19.2; level 85: L24.8; level 86: L27.2
+- `crates/zed-kernel/src/`: level 0: BENCH-env-slots-log-factor, BIT-shift-bytes, CHECK-literal-union-cost, CLIPPY-preimage-mutable-key-type, FAIL-arrow-lambda-partial-slot, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, FAIL-unit-pieces-time, FP-ops-order, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, KERNEL-bdd-rejoin-bytes, LIT-f64-pub-expect, NUM-expect-audit, PERF-canon-flat-strings, PERF-diagonal-rows-difference, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, POLY-mul-cost-gaps, POLY-square-cost-sizes, POLY-support-bench, PRINT-below-whole-13, PROOF-diff-exact-skip, PROOF-meet-rows-finite, PROOF-run-under-test-bug, PROV-scaling-10_5, RADIX-nlog2-10_5, RAT-pow-expect, ROOTS-interval-bound, ROOTS-small-constant, SPEC-pure-region-port-read, SUB-empty-fork-bytes, SUB-fork-place-512, SUB-fork-place-bytes, TEST-kernel-lib-split, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4, TEST-types-unreached-paths, TEST-types-unreached-paths-2, XR-group-order-5-rounds-1-3; level 1: GROUP-order-cpoly-merge, LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base, PERF-escape-big-heads-scaling, PERF-family-hash-count-only, PERF-set-tied-digest-depth, POW-domains, PROOF-join-work-limited-independence, REMAP-fewer-binders, TIME-kernel-benches-over-cap-high-load; level 2: MAIN-limits-count, ORACLE-env-nlogn, PERF-div-bytes-2p17, REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts, MSG-run-stop-held-values; level 4: L6.6, STR-types, T2; level 5: L1.18a, REDUCE-identity-closure-bodies, T14-lints; level 6: NAN-cast-atoms, SETTLE-rounds; level 7: L1.39g, L2.5; level 8: L2.4, REFUSAL-reverse-words; level 9: L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, STAGE-print-with; level 15: L2.7; level 16: SCALE-cover; level 17: L1.40e; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b, L4.1, STR-views; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 25: L6.4; level 26: L3.7; level 27: L3.8; level 28: BIT-repr, L3.15a; level 29: INT-twos, L3.20; level 34: L3.21; level 35: L4.2; level 36: L4.4, L5.1; level 37: L3.15, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L5.8b, L6.5; level 41: HKT-1, NO-RUN-audit; level 42: FOLD-unique; level 43: L6.5d, MIX-budget; level 44: CONST-fold-budget-failure, L6.16; level 45: STR-cursor; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.3j, L7.4, L7.5, L9.1, PREIMAGE-reindex; level 53: BYTES-wide, INT-128, L10.2, L21.2; level 54: L10.3, L7.6; level 55: CHECKED-float, L11.1; level 56: CODEC-utf8; level 57: L7.9a, STR-layer-views; level 58: L15.2, MOD-residue; level 59: L15.4, L15.5, L19.1, L20.2; level 62: MATH-names; level 63: L12.2e; level 64: UNITS-info-prelude; level 65: MSG-limit-repair-units; level 66: L22.7; level 68: L24.4; level 74: STD-num; level 77: L21.1; level 79: L19.2; level 85: L24.8; level 86: L27.2
+- `crates/zed-kernel/src/eval.rs`: level 0: BENCH-env-slots-log-factor, FAIL-arrow-lambda-partial-slot, PROOF-run-under-test-bug, SPEC-pure-region-port-read; level 1: POW-domains; level 2: ORACLE-env-nlogn; level 4: L6.6; level 8: L2.4; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints; level 18: L2.6b; level 19: L2.10; level 20: L3.2; level 21: L3.2b; level 22: L3.3; level 23: L3.4, L6.6-history, L6.7; level 24: L3.5; level 28: BIT-repr; level 29: INT-twos; level 35: L4.2; level 36: L5.1; level 37: L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.6; level 40: ENUM-perm, EQ-tabulate, L6.5; level 41: HKT-1, NO-RUN-audit; level 43: L6.5d, MIX-budget; level 50: L7.2; level 51: FILES-read-after-write, L7.3; level 52: L7.3g, L7.5; level 59: L19.1; level 79: L19.2
 - `crates/zed-kernel/src/exact.rs`: level 24: L3.5; level 37: L3.15; level 57: L7.9a
 - `crates/zed-kernel/src/family.rs`: level 22: L3.3; level 23: L3.4; level 35: L4.2; level 37: L5.2; level 39: L5.6; level 50: L7.1a
 - `crates/zed-kernel/src/limits.rs`: level 2: MAIN-limits-count; level 3: MSG-run-stop-held-values
-- `crates/zed-kernel/src/num.rs`: level 0: LIT-f64-pub-expect, PRINT-below-whole-13; level 1: LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base; level 54: L10.3
+- `crates/zed-kernel/src/num.rs`: level 0: LIT-f64-pub-expect, NUM-expect-audit, PRINT-below-whole-13, RAT-pow-expect; level 1: LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base; level 54: L10.3
 - `crates/zed-kernel/src/num/`: level 0: POLY-mul-cost-gaps, RADIX-nlog2-10_5; level 2: PERF-div-bytes-2p17; level 44: CONST-fold-budget-failure
 - `crates/zed-kernel/src/print.rs`: level 8: L2.4; level 19: L2.10; level 23: L3.4; level 27: L3.8
 - `crates/zed-kernel/src/provenance.rs`: level 8: L2.4; level 20: L3.2; level 22: L3.3; level 23: L6.7; level 51: L7.3; level 54: L7.6; level 59: L15.4; level 86: L27.2
-- `crates/zed-kernel/src/term.rs`: level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
+- `crates/zed-kernel/src/term.rs`: level 0: CLIPPY-preimage-mutable-key-type; level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
 - `crates/zed-kernel/src/text.rs`: level 39: L5.6; level 44: L6.16; level 45: STR-cursor
-- `crates/zed-kernel/src/types.rs`: level 0: CHECK-literal-union-cost, PERF-row-hash-tied-digest, PROOF-meet-rows-finite; level 1: LIT-power-expression; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 17: L1.40e; level 26: L3.7; level 37: L5.2; level 49: L7.1; level 50: L7.1b, L7.2; level 52: L7.4, L9.1; level 53: L10.2; level 54: L10.3
-- `crates/zed-kernel/src/types/`: level 0: FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4; level 1: GROUP-order-cpoly-merge, PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 2: REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
-- `crates/zed-kernel/src/types/bdd.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-set-tied-digest-depth; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5
+- `crates/zed-kernel/src/types.rs`: level 0: CHECK-literal-union-cost, PERF-row-hash-tied-digest, PROOF-meet-rows-finite, XR-group-order-5-rounds-1-3; level 1: LIT-power-expression; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 17: L1.40e; level 26: L3.7; level 37: L5.2; level 49: L7.1; level 50: L7.1b, L7.2; level 52: L7.4, L9.1; level 53: L10.2; level 54: L10.3
+- `crates/zed-kernel/src/types/`: level 0: FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, FAIL-unit-pieces-time, GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, KERNEL-bdd-rejoin-bytes, PERF-diagonal-rows-difference, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, PROOF-diff-exact-skip, SUB-empty-fork-bytes, SUB-fork-place-512, SUB-fork-place-bytes, TEST-kernel-units-short-addresses, TEST-kernel-unreached-paths-4, TEST-types-unreached-paths, TEST-types-unreached-paths-2; level 1: GROUP-order-cpoly-merge, PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, PROOF-join-work-limited-independence, TIME-kernel-benches-over-cap-high-load; level 2: REFUSAL-front-rest; level 3: A5-print, GROUP-order-verdicts; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
+- `crates/zed-kernel/src/types/bdd.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-set-tied-digest-depth, PROOF-join-work-limited-independence; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5
+- `crates/zed-kernel/src/types/bdd/`: level 0: FAIL-ratio-kernel-bdd-print, FAIL-unit-pieces-time, KERNEL-bdd-rejoin-bytes, PERF-row-hash-tied-digest, TEST-kernel-units-short-addresses; level 1: PERF-set-tied-digest-depth, PROOF-join-work-limited-independence, TIME-kernel-benches-over-cap-high-load
 - `crates/zed-kernel/src/types/bdd/bench.rs`: level 0: FAIL-ratio-kernel-bdd-print; level 1: TIME-kernel-benches-over-cap-high-load
-- `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest; level 1: GROUP-order-cpoly-merge; level 2: REFUSAL-front-rest; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7
+- `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-layered-nowitness, GROUP-order-classes-outside-cpoly, PERF-diagonal-rows-difference, PERF-height-bounds-group-benches, PERF-kernel-box-union-search, PERF-nested-cover-narrow-per-piece, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, PROOF-diff-exact-skip, SUB-fork-place-512; level 1: GROUP-order-cpoly-merge; level 2: REFUSAL-front-rest; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7
 - `crates/zed-kernel/src/types/empty/escape.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-escape-big-heads-scaling
 - `crates/zed-kernel/src/types/print.rs`: level 0: FAIL-print-meet-unnamed-bound, PERF-row-hash-tied-digest; level 3: A5-print; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/rec.rs`: level 7: L2.5; level 25: L6.4
 - `crates/zed-kernel/src/types/rec/group.rs`: level 0: PERF-row-hash-tied-digest, TEST-kernel-units-short-addresses; level 3: GROUP-order-verdicts
 - `crates/zed-kernel/src/value.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-family-hash-count-only; level 3: MSG-run-stop-held-values; level 8: L2.4; level 23: L3.4; level 37: L5.2; level 40: L5.8b; level 50: L7.1a; level 52: L7.3j, L7.4; level 55: L11.1; level 59: L20.2; level 65: MSG-limit-repair-units
 - `crates/zed-kernel/src/words.rs`: level 19: L2.10; level 20: L3.2; level 53: L21.2; level 66: L22.7; level 68: L24.4; level 77: L21.1; level 85: L24.8
-- `crates/zed-native/`: level 0: STUDY-zir-facts-carried, TEST-rt-weakmem, ZEDC-build-out-dir; level 1: PERF-family-hash-count-only; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 3: MAIN-limits-site; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: L1.39g, RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: BIT-repr, L3.15a, L6.14, RT-alloc-refusal, WIDE-product; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8, LAYOUT-soa; level 36: L3.14, L5.1, UNION-spare; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, ROD-data, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 63: L33.1f; level 64: L33.1g; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
-- `crates/zed-native/src/`: level 0: TEST-rt-weakmem, ZEDC-build-out-dir; level 1: PERF-family-hash-count-only; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: L3.15a, L6.14, RT-alloc-refusal; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8; level 36: L3.14, L5.1; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
+- `crates/zed-native/`: level 0: FAIL-build-killed-link-no-working-dir, STUDY-zir-facts-carried, TEST-rt-weakmem, ZEDC-build-out-dir; level 1: PERF-family-hash-count-only; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 3: MAIN-limits-site; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: L1.39g, RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: BIT-repr, L3.15a, L6.14, RT-alloc-refusal, WIDE-product; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8, LAYOUT-soa; level 36: L3.14, L5.1, UNION-spare; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, ROD-data, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 63: L33.1f; level 64: L33.1g; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
+- `crates/zed-native/src/`: level 0: FAIL-build-killed-link-no-working-dir, TEST-rt-weakmem, ZEDC-build-out-dir; level 1: PERF-family-hash-count-only; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: L3.15a, L6.14, RT-alloc-refusal; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8; level 36: L3.14, L5.1; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
 - `crates/zed-native/src/codegen.rs`: level 2: CRANELIFT-nested-if-domtree; level 8: PLAN-shared-regions; level 18: L2.9; level 27: L3.13; level 28: L6.14; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2; level 36: L3.14, L5.1; level 37: L3.15, L4.6, L5.2; level 39: L5.6; level 41: FOLD-layers; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, SPECULATE; level 45: L6.13g, SLAB-pack; level 50: L7.2; level 53: INT-128; level 59: L19.1; level 61: L18.2b, L18.2d; level 62: L18.2e; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 79: L19.2, L24.2, L24.3; level 80: L24.2a
 - `crates/zed-native/src/hooks.rs`: level 4: STR-types; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13; level 28: L6.14; level 34: L3.17; level 35: L3.16, L4.2; level 36: L3.14; level 37: L3.15, L4.6; level 39: L5.6; level 40: L5.13, L5.9; level 43: L6.13; level 44: L6.13a, L6.13c, L6.16; level 45: RT-layout, SLAB-pack, STR-cursor; level 50: L7.2; level 51: L7.3; level 52: FILE-bytes; level 53: FLOAT-sum-policy, L21.2; level 57: CODEC-lines; level 59: L19.1; level 61: L18.2b; level 77: L21.1; level 85: L24.8
 - `crates/zed-native/src/tables.rs`: level 1: PERF-family-hash-count-only; level 8: PLAN-shared-regions; level 18: L2.9; level 27: L3.13; level 28: L6.14; level 34: L3.23; level 35: L3.16, L3.23a, L5.8; level 36: L3.14; level 39: L5.6; level 61: L18.2b, L19.2a; level 79: L19.2, L24.2
@@ -8150,31 +9846,31 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-rt/src/sched.rs`: level 36: L3.14; level 37: L3.15; level 41: FOLD-layers; level 43: BEND-contract; level 44: SPECULATE; level 52: GLAM-logspec
 - `crates/zed-rt/src/stack.rs`: level 0: TEST-rt-weakmem; level 49: L28.1a; level 110: PORTABLE-rt
 - `crates/zed-rt/src/union_find.rs`: level 40: L5.9; level 82: QUOT-classes
-- `crates/zed-tools/`: level 0: LAYER-steps-check; level 16: SCALE-cover, TEST-fuzz; level 20: SCALE-zed; level 22: COLLATE-data; level 61: L16.4; level 74: S.1h; level 83: TARGET-mcu, TOOLS-port; level 110: USER-guide
-- `crates/zed-tools/src/`: level 0: LAYER-steps-check; level 16: SCALE-cover, TEST-fuzz; level 20: SCALE-zed; level 61: L16.4; level 74: S.1h; level 83: TARGET-mcu; level 110: USER-guide
+- `crates/zed-tools/`: level 0: LAYER-steps-check, SPEC-build-modes-main-build, SPEC-copies-out, SYNC-copies-refresh-2, SYNC-held-files-stamp; level 16: SCALE-cover, TEST-fuzz; level 20: SCALE-zed; level 22: COLLATE-data; level 61: L16.4; level 74: S.1h; level 83: TARGET-mcu, TOOLS-port; level 110: USER-guide
+- `crates/zed-tools/src/`: level 0: LAYER-steps-check, SPEC-build-modes-main-build, SYNC-copies-refresh-2; level 16: SCALE-cover, TEST-fuzz; level 20: SCALE-zed; level 61: L16.4; level 74: S.1h; level 83: TARGET-mcu; level 110: USER-guide
 - `crates/zed-tools/src/bin/`: level 16: SCALE-cover; level 61: L16.4; level 74: S.1h
 - `crates/zed-tools/src/scaling_coverage.rs`: level 16: SCALE-cover; level 20: SCALE-zed
-- `crates/zedc-base/src/axioms.rs`: level 27: L3.8; level 28: ASSOC-lattice, TONIC-injective; level 32: SEMIRING-values; level 42: L5.7a; level 61: L14.1
+- `crates/zedc-base/src/axioms.rs`: level 0: SPEC-bit-identities; level 27: L3.8; level 28: ASSOC-lattice, TONIC-injective; level 32: SEMIRING-values; level 42: L5.7a; level 61: L14.1
 - `crates/zedc-base/src/cost.rs`: level 34: L3.23; level 35: L3.23a; level 36: COST-limit-capacity; level 38: EVID-dynamic; level 40: L6.19; level 42: L5.10, L6.14a; level 43: BEND-contract; level 44: COST-patch; level 45: L6.13g; level 56: L7.10; level 57: L7.10a; level 58: L18.1; level 60: L18.2a; level 61: COST-required, L18.1a, L18.2g; level 62: L18.2f; level 86: L27.1
 - `crates/zedc-base/src/interp.rs`: level 8: L2.4; level 19: L2.10; level 20: L3.2; level 22: L3.3
-- `crates/zedc-base/src/rejection.rs`: level 0: DIAG-exponent-row; level 9: GROUP-e2e; level 10: L2.8b; level 18: HKT-2; level 19: L2.7a; level 20: L2.12d; level 33: KEYABLE-reject; level 39: L5.4c; level 41: HKT-1; level 52: PORT-concurrency, QUANT-finite; level 53: IMPL-consume-unless; level 55: L12.0; level 59: L12.2a, L33.1e; level 61: L12.2c, L18.2d, L21.0b; level 62: L12.2d, L18.2e, L18.2f; level 64: L12.2f, L15.8b, UNITS-info-prelude; level 65: L12.2k, UNITS-assumed-args; level 66: UNITS-compare
-- `crates/zedc-check`: level 0: MINMAX-param-literal-follow, MSG-inner-lambda-unnamed-param-arrow, PORT-push-twice-static, RANGE-open-ending-warn; level 9: MINMAX-struct-menu
-- `crates/zedc-check/`: level 0: CAST-atom-arg, CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, DIAG-len-args-repair, DIAG-order-carrier-row, DIAG-slash-mixed-carrier, DIAG-too-large-with-type-error, DIAG-union-carrier-row, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIMITS-remove-all, LIT-branch-int-beside-decimal-op, LIT-forced-carrier, LIT-menu-rat-tower, LIT-op-carrier-headline, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-too-large-cast-origin, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-rat-gaps, PERF-guarded-function-walk, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, TEST-term-for-uncovered, WIDEN-generic-literal-op-int-instance; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, MSG-too-large-figure, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms; level 2: CONST-too-large-products-fix, GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms, PERF-long-literal-digits; level 3: ST-walk-bound-test; level 4: CONST-build-typed-operands, CONST-judge-past-fold, CONST-least-refusal-size, CONST-repair-build-trial, RANGE-open-names, STR-types; level 5: CONST-coprime-check-pairs-of-pools, REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: CONST-fold-budget-failure, TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8, TERM-verdicts; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f, MEM-verdicts; level 63: L12.2e, L15.7b, L15.8, TOTAL-annot; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 71: MAIN-limits-strict; level 77: L21.1; level 86: L27.2
-- `crates/zedc-check/src/`: level 0: CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, DIAG-len-args-repair, DIAG-too-large-with-type-error, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIT-branch-int-beside-decimal-op, LIT-menu-rat-tower, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-rat-gaps, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, WIDEN-generic-literal-op-int-instance; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms; level 2: GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms, PERF-long-literal-digits; level 3: ST-walk-bound-test; level 4: RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f; level 63: L12.2e, L15.7b, L15.8; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 77: L21.1; level 86: L27.2
-- `crates/zedc-check/src/check/`: level 0: CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-tuple-generic-headline, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, WIDEN-generic-literal-op-int-instance; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms; level 2: GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms; level 3: ST-walk-bound-test; level 4: RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f; level 63: L12.2e, L15.7b, L15.8; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 77: L21.1; level 86: L27.2
+- `crates/zedc-base/src/rejection.rs`: level 0: DIAG-exponent-row, SYNC-copies-refresh-2; level 9: GROUP-e2e; level 10: L2.8b; level 18: HKT-2; level 19: L2.7a; level 20: L2.12d; level 33: KEYABLE-reject; level 39: L5.4c; level 41: HKT-1; level 52: PORT-concurrency, QUANT-finite; level 53: IMPL-consume-unless; level 55: L12.0; level 59: L12.2a, L33.1e; level 61: L12.2c, L18.2d, L21.0b; level 62: L12.2d, L18.2e, L18.2f; level 64: L12.2f, L15.8b, UNITS-info-prelude; level 65: L12.2k, UNITS-assumed-args; level 66: UNITS-compare
+- `crates/zedc-check`: level 0: MINMAX-literal-follow, MINMAX-param-literal-follow, MSG-inner-lambda-unnamed-param-arrow, PORT-push-twice-static, POW-body-widen-warning-top-agree, RANGE-open-ending-warn; level 9: MINMAX-struct-menu
+- `crates/zedc-check/`: level 0: CAST-atom-arg, CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, DIAG-len-args-repair, DIAG-order-carrier-row, DIAG-slash-mixed-carrier, DIAG-too-large-with-type-error, DIAG-union-carrier-row, FAIL-arrow-lambda-partial-slot, FAIL-check-lambda-fn-union-same-names, FAIL-check-lambda-into-fn-union, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-partial-slot-generic-pass, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FAIL-types-partial-arrow-value-type, FP-ops-generic-strings, FP-ops-order, FP-ops-split-empty-separator, LIMITS-remove-all, LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix, LIT-forced-carrier, LIT-menu-rat-tower, LIT-op-carrier-headline, LIT-tuple-branch-carrier-division-fixes, LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu, LIT-tuple-component-division-at-rat, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-too-large-cast-origin, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-rat-gaps, PERF-carried-lent-two-args, PERF-guarded-function-walk, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, POW-rat-first-repair, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-bit-identities, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, TEST-term-for-uncovered, WIDEN-generic-literal-op-int-instance, XR-map-chain-rounds-4-6; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, MSG-too-large-figure, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms, XR-map-chain-rounds-7-9; level 2: CONST-too-large-products-fix, GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms, PERF-long-literal-digits; level 3: ST-walk-bound-test; level 4: CONST-build-typed-operands, CONST-judge-past-fold, CONST-least-refusal-size, CONST-repair-build-trial, RANGE-open-names, STR-types; level 5: CONST-coprime-check-pairs-of-pools, REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: CONST-fold-budget-failure, TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8, TERM-verdicts; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f, MEM-verdicts; level 63: L12.2e, L15.7b, L15.8, TOTAL-annot; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 71: MAIN-limits-strict; level 77: L21.1; level 86: L27.2
+- `crates/zedc-check/src/`: level 0: CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, DIAG-len-args-repair, DIAG-too-large-with-type-error, FAIL-arrow-lambda-partial-slot, FAIL-check-lambda-fn-union-same-names, FAIL-check-lambda-into-fn-union, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-partial-slot-generic-pass, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FAIL-types-partial-arrow-value-type, FP-ops-generic-strings, FP-ops-order, FP-ops-split-empty-separator, LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix, LIT-menu-rat-tower, LIT-tuple-branch-carrier-division-fixes, LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu, LIT-tuple-component-division-at-rat, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-tuple-generic-headline, MSG-types-as-literals, NARROW-rat-gaps, PERF-carried-lent-two-args, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, POW-rat-first-repair, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-bit-identities, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, WIDEN-generic-literal-op-int-instance, XR-map-chain-rounds-4-6; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms, XR-map-chain-rounds-7-9; level 2: GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms, PERF-long-literal-digits; level 3: ST-walk-bound-test; level 4: RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, NO-RUN-audit, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-status, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f; level 63: L12.2e, L15.7b, L15.8; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 77: L21.1; level 86: L27.2
+- `crates/zedc-check/src/check/`: level 0: CHECK-big-literal-key-paths, CHECK-binder-call-summary, CHECK-destructure-order, CHECK-fold-merge-errs, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, CMP-repair-values, FAIL-arrow-lambda-partial-slot, FAIL-check-lambda-fn-union-same-names, FAIL-check-lambda-into-fn-union, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-partial-slot-generic-pass, FAIL-print-two-variables-one-name, FAIL-top-literal-op-nested-or-component, FAIL-types-partial-arrow-value-type, FP-ops-generic-strings, FP-ops-order, FP-ops-split-empty-separator, LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix, LIT-tuple-branch-carrier-division-fixes, LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu, LIT-tuple-component-division-at-rat, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-cast-no-carrier-first, MSG-default-unknown-type, MSG-first-on-string-repair-own-words, MSG-generic-lambda-result-literal-type, MSG-list-value-printed-by-arrows, MSG-many-args-shared-var-square, MSG-tuple-generic-headline, PERF-carried-lent-two-args, PLACE-value-inside-arg, PORT-block-name, PORT-table-param, PORT-untyped-arg, POW-rat-first-repair, PRINT-repair-parens-minimal, PROOF-call-written-append-only, PROOF-diff-payload-rest-refused, PROOF-part-tokens-slice-lex, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-bit-identities, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached, TEST-minmax-struct-menu-compiles, TEST-read-type-flaws, TEST-sig-text-printed-type-matches-calls, WIDEN-generic-literal-op-int-instance, XR-map-chain-rounds-4-6; level 1: GROUP-prelude, L1.29e, LIT-generic-class-follows-needs, POW-domains, PUSH-bubble-nested, REDUCE-by-function, REDUCE-family-entries, REMAP-fewer-binders, REPAIR-through-branch, TAG-run, TONIC-remap-witness, WHERE-loose-atoms, XR-map-chain-rounds-7-9; level 2: GROUP-nested, L1.14a, L1.29c, LAYER-L1-forms; level 3: ST-walk-bound-test; level 4: RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union, NAN-cast-atoms; level 7: L2.5; level 8: FLOAT-interval; level 9: BLOCKING-initial, BLOCKING-unit, ISSUE1-payload, L1.26b, L6.8, REPAIR-rat-finite-f64, STRUCT-key, T11-ty, TEST-default-ints-match; level 10: LOOP-frames-final, T11-check; level 11: FAIL-map-chain-needs-quadratic, LOOP-break-checkpoints, LOOP-stop-counts; level 15: L1.40b-sparse, L2.7, MSG-shared-print; level 16: L1.40b, STATIC-assert; level 17: L2.6, RAT-domain; level 18: HKT-2, L2.12, L2.6b, OVERLOAD-name-type; level 19: BUBBLE-msg, GLAM-diamond, L2.10, L2.12b, L2.12e, L2.7a; level 20: L2.12d, L3.2, OR-PAT-check, ZIR-iface-view; level 21: AUTHOR-oneparam, BLOCKING-prelude-calls, L3.2b, L4.1, STR-views; level 24: SCHED-scc-unit; level 25: L3.6, L6.4; level 26: L3.7, ZIP-keyspace-loops-recursion; level 27: L3.8; level 31: L3.10; level 32: ASSOC-demand, L3.18, PROP-per-arrow; level 33: KEYABLE-reject, L3.18a, L3.18b, L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: BOUND-L4, L5.4, L6.11; level 39: BOUND-L5, L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening, WITNESS-widened; level 40: DESCENT-sum, EQ-tabulate, INDUCT-eq-round, L5.4b, L6.12a, L6.12g, L6.19, L6.5, LEAN-descent-infer; level 41: HKT-1, L6.12b, L6.12d, L6.12e, L6.5c, L6.8a, LEAN-ematch-round, RUNG2-recurrence; level 42: INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, L5.10, L6.12f, RECUR-monotone; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 49: L7.1, S.1d; level 50: L7.1a, L7.1b, L7.2; level 51: FINITE-prop, L10.4a, L7.3, L8.2, LIT-declared-fix-call-arg, PORT-key-static; level 52: CODEC-kind, DYN-port, EMPTY-level-swap, L7.3g, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, PORT-concurrency, QUANT-finite, TIMEOUT-annot; level 53: BYTES-wide, FFI-release-zed, FFI-thread, FLOAT-sum-policy, IMPL-consume-unless, IMPL-reached-effects, L10.2, L21.2, L7.3l, L7.4b, STOP-switch; level 54: FFI-cexport, FFI-held, FFI-one-thread-warn, FFI-release-failure, L10.2a, L10.3, L7.14, L7.3m; level 55: CHECKED-float, FFI-token-check, L10.4, L11.1, L12.0, PORT-process, SCHED-eval-before-check; level 56: BIT-checker-ranges, CODEC-utf8, FFI-token-block-warn, FFI-token-state-param, FFI-token-unused-param, MAP-pure-zed, PASSES-vars-test, SCHED-refined-store; level 57: FPWARN, KNOWN-mix, L11.2a, L12.1, L20.1, STR-layer-views, THEORY-partial, ZIR-iface-bodies; level 58: FACT-unify, FLOAT-pitfall-lints, L10.3d, L12.2, L13.1, L15.2, L18.1, MOD-residue, TOKEN-types; level 59: FACT-claims, FACT-prelude, L12.2a, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L20.2, L33.1e, LAW-shape, MAIN-limits-units, STAGE-reads; level 60: CODEC-grammar, L12.2b, L12.2i, L16.2, L18.2a, L21.0, L22.2, LAW-shape-eq, LOOP-fuel-loop-value, TERM-1, TERM-stall; level 61: CODEC-laws, COST-required, GLAM-diamond-iface, L12.2c, L14.1, L15.2c, L18.1a, L18.2b, L18.2d, L18.2g, L21.0c, L22.8; level 62: L12.2d, L12.2h, L14.1c, L15.7, L18.2e, L18.2f; level 63: L12.2e, L15.7b, L15.8; level 64: L12.2f, L12.2j, L15.8a, L15.8b, L22.3, LIST-exact-overlap, NOINST-report, TERM-2a, UNITS-info-prelude; level 65: L12.2k, L22.4, L22.5, STORE-check-off, TERM-2b, UNITS-assumed-args; level 66: INDUCT-range-fold, L18.2c, L22.6, L22.7, UNITS-compare, UNITS-text-lengths; level 68: L24.4; level 69: FFI-isolate; level 70: FFI-sandbox-linux, STRICT-build; level 77: L21.1; level 86: L27.2
 - `crates/zedc-check/src/check/blocking.rs`: level 9: BLOCKING-initial, BLOCKING-unit; level 21: BLOCKING-prelude-calls
 - `crates/zedc-check/src/check/exhaust.rs`: level 15: L2.7; level 18: L2.12; level 20: OR-PAT-check
 - `crates/zedc-check/src/check/ladder.rs`: level 39: L6.12; level 40: L6.12g
-- `crates/zedc-check/src/check/mod.rs`: level 0: CMP-repair-values, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-print-two-variables-one-name, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-many-args-shared-var-square, PLACE-value-inside-arg, PRINT-repair-parens-minimal, PROOF-diff-payload-rest-refused, TEST-arrow-lambda-trial-stale, TEST-sig-text-printed-type-matches-calls; level 1: PUSH-bubble-nested; level 7: L2.5; level 9: L6.8, T11-ty; level 10: LOOP-frames-final, T11-check; level 11: LOOP-break-checkpoints; level 15: L2.7; level 17: L2.6; level 18: HKT-2, L2.12, L2.6b; level 19: BUBBLE-msg, L2.10; level 20: L3.2; level 21: L3.2b, L4.1; level 25: L3.6, L6.4; level 26: L3.7; level 27: L3.8; level 31: L3.10; level 32: L3.18; level 33: L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening; level 40: L6.12g, L6.19, L6.5; level 41: HKT-1, L6.5c, L6.8a; level 42: L5.10; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 51: LIT-declared-fix-call-arg; level 53: L10.2, L21.2; level 56: CODEC-utf8, PASSES-vars-test; level 57: L20.1; level 59: L20.2; level 60: L22.2; level 61: L22.8; level 64: L22.3; level 65: L22.4, L22.5; level 66: L22.6, L22.7; level 68: L24.4; level 77: L21.1; level 86: L27.2
+- `crates/zedc-check/src/check/mod.rs`: level 0: CMP-repair-values, FAIL-arrow-lambda-partial-slot, FAIL-finish-split-walk-memo, FAIL-int-or-rat-param-division, FAIL-print-two-variables-one-name, FAIL-types-partial-arrow-value-type, LIT-branch-int-beside-decimal-op, LIT-cast-inexact-rat-fix, LIT-tuple-compare-names-literal, LIT-tuple-compare-power-menu, MSG-arrow-lambda-nested-cause, MSG-branch-fix-beside-carrier-if, MSG-many-args-shared-var-square, PERF-carried-lent-two-args, PLACE-value-inside-arg, PRINT-repair-parens-minimal, PROOF-diff-payload-rest-refused, SPEC-bit-identities, TEST-arrow-lambda-trial-stale, TEST-sig-text-printed-type-matches-calls, XR-map-chain-rounds-4-6; level 1: PUSH-bubble-nested, XR-map-chain-rounds-7-9; level 7: L2.5; level 9: L6.8, T11-ty; level 10: LOOP-frames-final, T11-check; level 11: LOOP-break-checkpoints; level 15: L2.7; level 17: L2.6; level 18: HKT-2, L2.12, L2.6b; level 19: BUBBLE-msg, L2.10; level 20: L3.2; level 21: L3.2b, L4.1; level 25: L3.6, L6.4; level 26: L3.7; level 27: L3.8; level 31: L3.10; level 32: L3.18; level 33: L6.9; level 34: L6.10; level 36: L4.4, L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L5.5, L6.12, L6.2, RANGE-loop-key-widening; level 40: L6.12g, L6.19, L6.5; level 41: HKT-1, L6.5c, L6.8a; level 42: L5.10; level 43: L6.5d; level 44: TRIVIAL-or-cnf; level 51: LIT-declared-fix-call-arg; level 53: L10.2, L21.2; level 56: CODEC-utf8, PASSES-vars-test; level 57: L20.1; level 59: L20.2; level 60: L22.2; level 61: L22.8; level 64: L22.3; level 65: L22.4, L22.5; level 66: L22.6, L22.7; level 68: L24.4; level 77: L21.1; level 86: L27.2
 - `crates/zedc-check/src/check/overload.rs`: level 17: L2.6; level 18: L2.12, L2.6b; level 19: BUBBLE-msg; level 64: LIST-exact-overlap
-- `crates/zedc-check/src/check/walk.rs`: level 0: CHECK-binder-call-summary, CHECK-destructure-order, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, FAIL-arrow-lambda-partial-slot, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-top-literal-op-nested-or-component, FP-ops-order, LIT-branch-int-beside-decimal-op, MSG-arrow-lambda-nested-cause, MSG-generic-lambda-result-literal-type, MSG-many-args-shared-var-square, PRINT-repair-parens-minimal, PROOF-call-written-append-only, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached; level 1: POW-domains, REDUCE-by-function, REDUCE-family-entries, REPAIR-through-branch, WHERE-loose-atoms; level 3: ST-walk-bound-test; level 4: RANGE-open-names; level 11: FAIL-map-chain-needs-quadratic; level 20: OR-PAT-check; level 24: SCHED-scc-unit; level 39: RANGE-loop-key-widening
-- `crates/zedc-check/src/check/walk/fp_ops.rs`: level 0: FP-ops-order, MSG-generic-lambda-result-literal-type, TEST-generic-operand-messages-reached; level 26: ZIP-keyspace-loops-recursion
-- `crates/zedc-check/src/check/walk/remap.rs`: level 1: GROUP-prelude, REMAP-fewer-binders, TONIC-remap-witness; level 2: GROUP-nested
+- `crates/zedc-check/src/check/walk.rs`: level 0: CHECK-binder-call-summary, CHECK-destructure-order, CHECK-implicit-call-limits, CHECK-sum-of-summarized-names, FAIL-arrow-lambda-partial-slot, FAIL-check-lambda-fn-union-same-names, FAIL-check-lambda-into-fn-union, FAIL-int-or-rat-param-division, FAIL-nested-display-headline-code-quadratic, FAIL-partial-slot-generic-pass, FAIL-top-literal-op-nested-or-component, FAIL-types-partial-arrow-value-type, FP-ops-order, LIT-branch-int-beside-decimal-op, LIT-tuple-branch-carrier-division-fixes, LIT-tuple-component-division-at-rat, MSG-arrow-lambda-nested-cause, MSG-generic-lambda-result-literal-type, MSG-many-args-shared-var-square, PERF-carried-lent-two-args, POW-rat-first-repair, PRINT-repair-parens-minimal, PROOF-call-written-append-only, REPAIR-grouped-refusal-message, REPAIR-text-cast-menu-check, SPEC-bit-identities, SPEC-headline-piece-in-collection, TEST-arrow-lambda-trial-stale, TEST-generic-operand-messages-reached; level 1: POW-domains, REDUCE-by-function, REDUCE-family-entries, REPAIR-through-branch, WHERE-loose-atoms; level 3: ST-walk-bound-test; level 4: RANGE-open-names; level 11: FAIL-map-chain-needs-quadratic; level 20: OR-PAT-check; level 24: SCHED-scc-unit; level 39: RANGE-loop-key-widening
+- `crates/zedc-check/src/check/walk/fp_ops.rs`: level 0: FAIL-types-partial-arrow-value-type, FP-ops-generic-strings, FP-ops-order, FP-ops-split-empty-separator, MSG-generic-lambda-result-literal-type, TEST-generic-operand-messages-reached; level 26: ZIP-keyspace-loops-recursion
+- `crates/zedc-check/src/check/walk/remap.rs`: level 0: FAIL-types-partial-arrow-value-type; level 1: GROUP-prelude, REMAP-fewer-binders, TONIC-remap-witness; level 2: GROUP-nested
 - `crates/zedc-check/src/check/witness.rs`: level 36: L4.4; level 37: L4.5
-- `crates/zedc-elab/src/`: level 0: DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FP-ops-order; level 1: GROUP-prelude, META-read-run, TAG-run; level 3: TEST-mutate-set; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union; level 8: L2.4, L6.3; level 9: GROUP-e2e, L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, LOOP-stop-counts; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.6b; level 19: GLAM-diamond, L2.10; level 20: L3.2, ZIR-iface-view; level 21: AUTHOR-oneparam, L3.2b, L4.1, L6.3-rest, STR-views; level 22: L3.3; level 23: L3.4; level 24: L3.5, SCHED-scc-unit; level 25: L6.4; level 27: L3.8; level 28: L3.15a; level 31: L3.10; level 32: ASSOC-demand; level 34: L6.10; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.5, L5.8a, L6.2; level 40: L6.5; level 41: HKT-1, L6.8a; level 43: L6.5d; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: L15.1, L7.2a, L7.3, L8.2; level 52: EMPTY-level-swap, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, TIMEOUT-annot; level 53: L10.2, L7.3l; level 54: L10.2a, L10.3, L7.3m; level 55: CHECKED-float, L11.1; level 56: MAP-pure-zed; level 57: FPWARN, L20.1, STR-layer-views, THEORY-partial; level 58: FACT-unify, L15.2, L20.1a, L22.1, TOKEN-types; level 59: L16.1, L17.1, L20.2; level 60: L16.2, L21.0, L22.2, LOOP-fuel-loop-value, TERM-1; level 61: GLAM-diamond-iface, L21.0c; level 64: L22.3; level 65: L22.3a, L22.4; level 68: L24.4; level 77: L21.1; level 82: L26.1; level 86: L27.2
+- `crates/zedc-elab/src/`: level 0: DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FAIL-partial-slot-generic-pass, FP-ops-order; level 1: GROUP-prelude, META-read-run, TAG-run; level 3: TEST-mutate-set; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union; level 8: L2.4, L6.3; level 9: GROUP-e2e, L1.26b; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, LOOP-stop-counts; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.6b; level 19: GLAM-diamond, L2.10; level 20: L3.2, ZIR-iface-view; level 21: AUTHOR-oneparam, L3.2b, L4.1, L6.3-rest, STR-views; level 22: L3.3; level 23: L3.4; level 24: L3.5, SCHED-scc-unit; level 25: L6.4; level 27: L3.8; level 28: L3.15a; level 31: L3.10; level 32: ASSOC-demand; level 34: L6.10; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.5, L5.8a, L6.2; level 40: L6.5; level 41: HKT-1, L6.8a; level 43: L6.5d; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: L15.1, L7.2a, L7.3, L8.2; level 52: EMPTY-level-swap, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, TIMEOUT-annot; level 53: L10.2, L7.3l; level 54: L10.2a, L10.3, L7.3m; level 55: CHECKED-float, L11.1; level 56: MAP-pure-zed; level 57: FPWARN, L20.1, STR-layer-views, THEORY-partial; level 58: FACT-unify, L15.2, L20.1a, L22.1, TOKEN-types; level 59: L16.1, L17.1, L20.2; level 60: L16.2, L21.0, L22.2, LOOP-fuel-loop-value, TERM-1; level 61: GLAM-diamond-iface, L21.0c; level 64: L22.3; level 65: L22.3a, L22.4; level 68: L24.4; level 77: L21.1; level 82: L26.1; level 86: L27.2
 - `crates/zedc-elab/src/elab.rs`: level 8: L2.4, L6.3; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, LOOP-stop-counts; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.6b; level 19: GLAM-diamond, L2.10; level 20: L3.2; level 21: L3.2b, L4.1, L6.3-rest; level 22: L3.3; level 23: L3.4; level 24: L3.5; level 25: L6.4; level 27: L3.8; level 28: L3.15a; level 31: L3.10; level 32: ASSOC-demand; level 34: L6.10; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.5, L5.8a, L6.2; level 40: L6.5; level 41: HKT-1, L6.8a; level 43: L6.5d; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: L15.1, L7.2a, L7.3, L8.2; level 52: EMPTY-level-swap, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, TIMEOUT-annot; level 53: L10.2, L7.3l; level 54: L10.3, L7.3m; level 55: CHECKED-float, L11.1; level 56: MAP-pure-zed; level 57: L20.1, THEORY-partial; level 58: FACT-unify, L15.2, L20.1a, L22.1, TOKEN-types; level 59: L16.1, L17.1, L20.2; level 60: L16.2, L21.0, L22.2, LOOP-fuel-loop-value, TERM-1; level 61: GLAM-diamond-iface, L21.0c; level 64: L22.3; level 65: L22.3a, L22.4; level 68: L24.4; level 77: L21.1; level 82: L26.1; level 86: L27.2
-- `crates/zedc-elab/src/elab/`: level 0: DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FP-ops-order; level 1: GROUP-prelude, META-read-run; level 3: TEST-mutate-set; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union; level 9: GROUP-e2e, L1.26b; level 21: AUTHOR-oneparam, STR-views; level 24: SCHED-scc-unit; level 54: L10.2a; level 57: FPWARN, STR-layer-views
-- `crates/zedc-elab/src/elab/walk.rs`: level 0: FAIL-arrow-lambda-partial-slot; level 1: GROUP-prelude, META-read-run; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 6: IF-union; level 9: L1.26b; level 21: STR-views; level 24: SCHED-scc-unit; level 57: FPWARN, STR-layer-views
+- `crates/zedc-elab/src/elab/`: level 0: DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FAIL-partial-slot-generic-pass, FP-ops-order; level 1: GROUP-prelude, META-read-run; level 3: TEST-mutate-set; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union; level 9: GROUP-e2e, L1.26b; level 21: AUTHOR-oneparam, STR-views; level 24: SCHED-scc-unit; level 54: L10.2a; level 57: FPWARN, STR-layer-views
+- `crates/zedc-elab/src/elab/walk.rs`: level 0: FAIL-arrow-lambda-partial-slot, FAIL-partial-slot-generic-pass; level 1: GROUP-prelude, META-read-run; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 6: IF-union; level 9: L1.26b; level 21: STR-views; level 24: SCHED-scc-unit; level 57: FPWARN, STR-layer-views
 - `crates/zedc-lattice/`: level 1: POW-domains; level 5: PRES-cover-bench-holes-cut; level 8: FLOAT-interval; level 10: PRE-abs-output; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer; level 17: RAT-domain; level 25: L3.6; level 26: L3.7; level 33: L3.18a; level 38: L6.11; level 39: L6.11a; level 40: L6.11b
 - `crates/zedc-lattice/src/`: level 1: POW-domains; level 8: FLOAT-interval; level 10: PRE-abs-output; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer; level 17: RAT-domain; level 25: L3.6; level 26: L3.7; level 33: L3.18a; level 38: L6.11; level 39: L6.11a; level 40: L6.11b
 - `crates/zedc-lattice/src/cell.rs`: level 14: L1.40a; level 25: L3.6; level 26: L3.7
@@ -8182,20 +9878,20 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc-lattice/src/interval.rs`: level 10: PRE-abs-output; level 25: L3.6
 - `crates/zedc-lattice/src/iterate.rs`: level 38: L6.11; level 39: L6.11a; level 40: L6.11b
 - `crates/zedc-lattice/src/lattice.rs`: level 14: L1.40a; level 15: CONG-transfer
-- `crates/zedc-preimage/`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAMILY-scale-larger, HOLES-exact-between, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, NARROW-hub-interleaved-scale, PATH-reads-scale, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, REF-nested-moduli-state, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, STAR-satellite-scale, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: S15-calls; level 7: PRES-project-exact-solver; level 8: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9; level 9: S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
-- `crates/zedc-preimage/src/`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAMILY-scale-larger, HOLES-exact-between, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, REF-nested-moduli-state, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: S15-calls; level 7: PRES-project-exact-solver; level 8: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9; level 9: S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
+- `crates/zedc-preimage/`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, CLIPPY-preimage-mutable-key-type, FAMILY-scale-larger, HOLES-exact-between, IMBL-diff-branch-skip, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, NARROW-hub-interleaved-scale, PATH-reads-scale, PERF-deep-block-ratio, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, PROOF-deep-block-counts-constant, REF-nested-moduli-state, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, STAR-satellite-scale, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 4: PRES-pugh-xr-land; level 5: PRES-monotone-rules, S15-calls; level 7: PRES-project-exact-solver; level 8: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9; level 9: S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
+- `crates/zedc-preimage/src/`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, CLIPPY-preimage-mutable-key-type, FAMILY-scale-larger, HOLES-exact-between, IMBL-diff-branch-skip, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-deep-block-ratio, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, PROOF-deep-block-counts-constant, REF-nested-moduli-state, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 4: PRES-pugh-xr-land; level 5: PRES-monotone-rules, S15-calls; level 7: PRES-project-exact-solver; level 8: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9; level 9: S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
 - `crates/zedc-preimage/src/preimage.rs`: level 0: PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1; level 2: MOD-pre-width; level 5: S15-calls; level 7: PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9; level 9: S22-R2; level 10: PRE-abs-output; level 13: L1.40; level 15: L2.7; level 19: L2.10; level 25: L3.6; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L15.3; level 63: L15.8
-- `crates/zedc-preimage/src/product.rs`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAMILY-scale-larger, HOLES-exact-between, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 8: FAIL-linked-holes-seed-90, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 59: L12.3, L15.3; level 63: L15.8
-- `crates/zedc-presburger/`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, PERF-l139-block-incr, PERF-l139-persist-due, PERF-tie-rekey-count, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, Q1-LOCAL-method, RP-scaling-10_5, TEST-presburger-unreached-paths; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign; level 3: PRES-a99-per-call-or-symbol, ST-relation-shared-disjunctions; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, PRES-shadow-exact-comment; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 17: HAS-point-probe; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 58: MOD-residue; level 74: HULL3-GEN
-- `crates/zedc-presburger/src/`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, PERF-l139-block-incr, PERF-l139-persist-due, PERF-tie-rekey-count, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, Q1-LOCAL-method, RP-scaling-10_5, TEST-presburger-unreached-paths; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign; level 3: PRES-a99-per-call-or-symbol, ST-relation-shared-disjunctions; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, PRES-shadow-exact-comment; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 58: MOD-residue; level 74: HULL3-GEN
-- `crates/zedc-presburger/src/presburger.rs`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, PERF-l139-persist-due, PERF-tie-rekey-count, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-scaling-10_5, PRES-sign-free-order-growth, PROOF-solve-omega-path-renaming, Q1-LOCAL-method; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-sign-tie-names, PRES-solve-equation-sign; level 5: PRES-pugh-xr-rounds; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PRES-shadow-exact-comment; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 74: HULL3-GEN
-- `crates/zedc-presburger/src/presburger/`: level 0: FAIL-one-scope-bodies-seed-shadows, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-floor-grow, PRES-fused-bound, PRES-join-cost-predictor, PRES-pair-scan-cost, PRES-scaling-10_5; level 2: PRES-cover-refusals-where-exact; level 3: PRES-a99-per-call-or-symbol; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 58: MOD-residue
-- `crates/zedc-presburger/src/presburger/exact.rs`: level 2: PRES-cover-refusals-where-exact; level 3: PRES-a99-per-call-or-symbol; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions
-- `crates/zedc-resolve/`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a, RANGE-keys-in-printed-type; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 24: MAIN-args-read, SCHED-scc-unit; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
-- `crates/zedc-resolve/src/`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 24: MAIN-args-read, SCHED-scc-unit; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
-- `crates/zedc-resolve/src/resolve.rs`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
-- `crates/zedc-stage/src/`: level 0: STAGE-scaling-10_5; level 8: L2.4, L6.3; level 15: L1.40c; level 17: L2.6; level 20: L3.2; level 25: L6.4; level 27: L3.8; level 39: L6.12; level 42: SORTED-select; level 44: MIX-callsite; level 55: L11.1, SCHED-eval-before-check; level 57: KNOWN-mix, L12.1, ZIR-iface-bodies; level 58: L13.1, L15.2, L18.1; level 59: L15.4, L17.1, L19.1, STAGE-reads; level 60: TERM-stall; level 61: GLAM-pin, L19.2a; level 79: L19.2; level 80: L19.3
-- `crates/zedc-stage/src/stage.rs`: level 8: L2.4, L6.3; level 15: L1.40c; level 17: L2.6; level 20: L3.2; level 25: L6.4; level 27: L3.8; level 39: L6.12; level 42: SORTED-select; level 44: MIX-callsite; level 55: L11.1, SCHED-eval-before-check; level 57: L12.1, ZIR-iface-bodies; level 58: L13.1, L15.2, L18.1; level 59: L15.4, L17.1, L19.1, STAGE-reads; level 60: TERM-stall; level 61: GLAM-pin, L19.2a; level 79: L19.2; level 80: L19.3
+- `crates/zedc-preimage/src/product.rs`: level 0: BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, CLIPPY-preimage-mutable-key-type, FAMILY-scale-larger, HOLES-exact-between, IMBL-diff-branch-skip, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-deep-block-ratio, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-refused-shape-disjunctions-quadratic, PRES-again-monotone, PROOF-deep-block-counts-constant, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 4: PRES-pugh-xr-land; level 5: PRES-monotone-rules; level 8: FAIL-linked-holes-seed-90, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 59: L12.3, L15.3; level 63: L15.8
+- `crates/zedc-presburger/`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, FAIL-tie-group-tests-piece-time, PERF-l139-block-incr, PERF-l139-persist-due, PERF-tie-rekey-count, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-cover-order-rewrites, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, Q1-LOCAL-method, RP-scaling-10_5, TEST-presburger-unreached-paths; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-cover-order-refusals, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign; level 3: PRES-a99-per-call-or-symbol, ST-relation-shared-disjunctions; level 4: PRES-pugh-xr-land; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-monotone-rules, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, PRES-shadow-exact-comment; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 17: HAS-point-probe; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 58: MOD-residue; level 74: HULL3-GEN
+- `crates/zedc-presburger/src/`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, FAIL-tie-group-tests-piece-time, PERF-l139-block-incr, PERF-l139-persist-due, PERF-tie-rekey-count, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-cover-order-rewrites, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, Q1-LOCAL-method, RP-scaling-10_5, TEST-presburger-unreached-paths; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-cover-order-refusals, PRES-cover-refusals-where-exact, PRES-sign-tie-names, PRES-solve-equation-sign; level 3: PRES-a99-per-call-or-symbol, ST-relation-shared-disjunctions; level 4: PRES-pugh-xr-land; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-monotone-rules, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, PRES-shadow-exact-comment; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 58: MOD-residue; level 74: HULL3-GEN
+- `crates/zedc-presburger/src/presburger.rs`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, FAIL-tie-group-tests-piece-time, PERF-l139-persist-due, PERF-tie-rekey-count, PRES-cover-order-rewrites, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-scaling-10_5, PRES-sign-free-order-growth, PROOF-solve-omega-path-renaming, Q1-LOCAL-method; level 1: PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free; level 2: HAS-point-overlap2c-mid, PRES-sign-tie-names, PRES-solve-equation-sign; level 4: PRES-pugh-xr-land; level 5: PRES-monotone-rules, PRES-pugh-xr-rounds; level 7: PRES-cover-wire, PRES-project-exact-solver; level 8: FAIL-or-if-projection-not-exact, PRES-shadow-exact-comment; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 74: HULL3-GEN
+- `crates/zedc-presburger/src/presburger/`: level 0: FAIL-one-scope-bodies-seed-shadows, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-floor-grow, PRES-fused-bound, PRES-join-cost-predictor, PRES-pair-scan-cost, PRES-scaling-10_5; level 2: PRES-cover-order-refusals, PRES-cover-refusals-where-exact; level 3: PRES-a99-per-call-or-symbol; level 4: PRES-pugh-xr-land; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 58: MOD-residue
+- `crates/zedc-presburger/src/presburger/exact.rs`: level 2: PRES-cover-order-refusals, PRES-cover-refusals-where-exact; level 3: PRES-a99-per-call-or-symbol; level 4: PRES-pugh-xr-land; level 5: PRES-cover-bench-chains-abs, PRES-cover-bench-deep-accounts, PRES-cover-bench-deep-long-accounts, PRES-cover-bench-deep-paired, PRES-cover-bench-guards-beyond, PRES-cover-bench-holes-cut, PRES-cover-bench-many-calls, PRES-cover-bench-named-tiers, PRES-cover-bench-named-wide, PRES-cover-bench-split-moved, PRES-cover-bench-tied-disjunctions, PRES-cover-bench-unary-arms, PRES-cover-bench-wide-pairs, PRES-pugh-xr-rounds; level 6: PRES-cover-bench-regressions
+- `crates/zedc-resolve/`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, SYNC-copies-refresh-2, SYNC-copies-refresh-3, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a, RANGE-keys-in-printed-type; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 24: MAIN-args-read, SCHED-scc-unit; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
+- `crates/zedc-resolve/src/`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, SYNC-copies-refresh-2, SYNC-copies-refresh-3, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 24: MAIN-args-read, SCHED-scc-unit; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
+- `crates/zedc-resolve/src/resolve.rs`: level 0: FP-ops-order, MSG-struct-field-nearest-name, PROOF-nearest-name-quadratic, SYNC-copies-refresh-2, SYNC-copies-refresh-3, TYPEVAR-gap-rejections; level 1: DISCARD-standalone, META-read-run, REDUCE-by-function; level 2: L1.14a; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 7: L2.12c; level 8: L6.3; level 9: GROUP-e2e; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.12; level 19: L2.10; level 20: L3.2, OR-PAT-check; level 21: L4.1, L6.3-rest; level 25: L6.4; level 36: L5.1; level 39: L5.5; level 49: L7.1; level 51: L15.1, MSG-once-written-variable-type; level 52: L8.2a, PORT-ack-name; level 53: FFI-headertest, INT-128, L21.2; level 55: L11.1; level 57: FPWARN, L20.1; level 58: L15.2, L22.1; level 59: L12.2a; level 61: L14.1; level 62: MATH-names; level 63: TOTAL-annot; level 64: L22.3; level 68: L24.4; level 77: L21.1; level 80: L20.3; level 82: L22.9, L26.1; level 86: L27.2
+- `crates/zedc-stage/src/`: level 0: PROOF-run-under-test-bug, STAGE-scaling-10_5; level 8: L2.4, L6.3; level 15: L1.40c; level 17: L2.6; level 20: L3.2; level 25: L6.4; level 27: L3.8; level 39: L6.12; level 42: SORTED-select; level 44: MIX-callsite; level 55: L11.1, SCHED-eval-before-check; level 57: KNOWN-mix, L12.1, ZIR-iface-bodies; level 58: L13.1, L15.2, L18.1; level 59: L15.4, L17.1, L19.1, STAGE-reads; level 60: TERM-stall; level 61: GLAM-pin, L19.2a; level 79: L19.2; level 80: L19.3
+- `crates/zedc-stage/src/stage.rs`: level 0: PROOF-run-under-test-bug; level 8: L2.4, L6.3; level 15: L1.40c; level 17: L2.6; level 20: L3.2; level 25: L6.4; level 27: L3.8; level 39: L6.12; level 42: SORTED-select; level 44: MIX-callsite; level 55: L11.1, SCHED-eval-before-check; level 57: L12.1, ZIR-iface-bodies; level 58: L13.1, L15.2, L18.1; level 59: L15.4, L17.1, L19.1, STAGE-reads; level 60: TERM-stall; level 61: GLAM-pin, L19.2a; level 79: L19.2; level 80: L19.3
 - `crates/zedc-syntax/`: level 0: PARSE-ladder-rungs, PORT-table-param, PRINT-expr-parens-minimal, PUSH-target-rules; level 2: LAYER-L1-forms, PITFALL-leading-zero; level 9: L1.26b; level 21: L4.1; level 24: MAIN-args-read; level 32: L3.18; level 36: L5.1; level 38: L5.4; level 39: L5.5; level 49: L7.1, L8.1; level 50: L10.1, L7.2; level 51: L15.1, L7.3; level 52: L7.4, L8.2b, L8.2c, L9.1, PORT-ack-name; level 53: FFI-release-zed, FFI-thread, FLOAT-sum-policy; level 54: CODEC-base, FFI-held; level 55: FFI-token-check, L12.0; level 57: L20.1; level 58: L10.3d, L20.1a, L22.1; level 60: L12.2i, TERM-1; level 61: L14.1; level 68: SIGNALS-rt; level 80: L20.4
 - `crates/zedc-syntax/src/`: level 0: PORT-table-param, PRINT-expr-parens-minimal, PUSH-target-rules; level 2: LAYER-L1-forms, PITFALL-leading-zero; level 9: L1.26b; level 21: L4.1; level 24: MAIN-args-read; level 32: L3.18; level 36: L5.1; level 38: L5.4; level 39: L5.5; level 49: L7.1, L8.1; level 50: L10.1, L7.2; level 51: L15.1, L7.3; level 52: L7.4, L8.2b, L8.2c, L9.1, PORT-ack-name; level 53: FFI-release-zed, FFI-thread, FLOAT-sum-policy; level 54: CODEC-base, FFI-held; level 55: FFI-token-check, L12.0; level 57: L20.1; level 58: L10.3d, L20.1a, L22.1; level 60: L12.2i, TERM-1; level 61: L14.1; level 68: SIGNALS-rt; level 80: L20.4
 - `crates/zedc-syntax/src/ast/`: level 0: PORT-table-param, PUSH-target-rules; level 2: LAYER-L1-forms; level 21: L4.1; level 24: MAIN-args-read; level 32: L3.18; level 36: L5.1; level 38: L5.4; level 39: L5.5; level 49: L7.1, L8.1; level 50: L10.1, L7.2; level 51: L15.1, L7.3; level 52: L7.4, L8.2b, L9.1; level 53: FFI-release-zed, FFI-thread; level 54: FFI-held; level 55: FFI-token-check, L12.0; level 57: L20.1; level 58: L20.1a, L22.1; level 60: TERM-1; level 61: L14.1; level 68: SIGNALS-rt
@@ -8205,7 +9901,8 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc-syntax/src/ast/types.rs`: level 2: LAYER-L1-forms; level 49: L8.1; level 50: L10.1; level 57: L20.1; level 58: L22.1; level 60: TERM-1; level 61: L14.1
 - `crates/zedc-syntax/src/format.rs`: level 0: PRINT-expr-parens-minimal; level 21: L4.1; level 36: L5.1; level 38: L5.4; level 39: L5.5; level 49: L7.1, L8.1; level 50: L10.1; level 51: L15.1; level 52: L9.1; level 57: L20.1; level 58: L22.1
 - `crates/zedc-syntax/src/parse/`: level 52: L8.2c; level 53: FLOAT-sum-policy; level 54: CODEC-base; level 58: L10.3d; level 80: L20.4
-- `crates/zedc-types/src/ty.rs`: level 0: FAIL-print-two-variables-one-name, FAIL-types-joined-shape-first, FAIL-types-meet-fn-kept-not-within, PROOF-diff-payload-rest-refused, TEST-types-bound-pin-moves-adversarial, TEST-types-unreached-paths-4, TYPES-search-claims-proofs; level 2: RANGE-keys-in-printed-type; level 4: RANGE-open-names, STR-types; level 5: L1.18a; level 7: L2.5; level 8: TEST-nested-marks-struct-fields; level 9: L6.8, T11-ty; level 10: T11-check; level 17: L1.40e; level 18: HKT-2; level 20: L3.2; level 21: L4.1; level 26: L3.7; level 33: L6.9; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L6.2; level 41: L6.8a; level 53: L10.2; level 57: L20.1; level 58: L22.1; level 77: L21.1; level 80: L20.3
+- `crates/zedc-types/src/`: level 0: FAIL-kernel-print-seed-12530893063770583521, FAIL-kernel-print-seed-15344750447356307552, FAIL-kernel-print-seed-479643653593087009, FAIL-print-absorbed-members-twice, FAIL-print-two-variables-one-name, FAIL-types-cover-partial-arrows-left-out, FAIL-types-fn-arrows-bounded-variable, FAIL-types-fn-only-bounded-variable, FAIL-types-joined-shape-first, FAIL-types-meet-curried-is-stack-overflow, FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-meet-fn-kept-not-within, FAIL-types-meet-key-arrows-not-within, FAIL-types-partial-arrow-same-atom-keys, FAIL-types-partial-arrow-value-type, FAIL-types-shape-union-sub-incomplete, LIST-in-bound-check, PERF-types-bounded-shapes-renamed-under9, PERF-types-joined-split-several-differing, PERF-types-shared-row-bench-2ec6b9418, PERF-types-tuple-shapes-under9, PROOF-diff-exact-skip, PROOF-diff-payload-rest-refused, PROOF-form-verdict-merged-mark, TEST-standing-twice-numeric-vars, TEST-types-bound-pin-moves-adversarial, TEST-types-bound-pin-sets-adversarial, TEST-types-unreached-paths, TEST-types-unreached-paths-2, TEST-types-unreached-paths-4, TYPES-compared-recall-refused, TYPES-fits-read-key-refusal, TYPES-fits-read-refusal, TYPES-search-claims-proofs; level 2: RANGE-keys-in-printed-type; level 4: RANGE-open-names, STR-types; level 5: L1.18a; level 7: L2.5; level 8: TEST-nested-marks-struct-fields; level 9: L6.8, T11-ty; level 10: T11-check; level 17: L1.40e; level 18: HKT-2; level 20: L3.2; level 21: L4.1; level 26: L3.7; level 33: L6.9; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L6.2; level 41: L6.8a; level 53: L10.2; level 57: L20.1; level 58: L22.1; level 77: L21.1; level 80: L20.3
+- `crates/zedc-types/src/ty.rs`: level 0: FAIL-kernel-print-seed-12530893063770583521, FAIL-kernel-print-seed-15344750447356307552, FAIL-kernel-print-seed-479643653593087009, FAIL-print-absorbed-members-twice, FAIL-print-two-variables-one-name, FAIL-types-cover-partial-arrows-left-out, FAIL-types-fn-arrows-bounded-variable, FAIL-types-fn-only-bounded-variable, FAIL-types-joined-shape-first, FAIL-types-meet-curried-is-stack-overflow, FAIL-types-meet-exact-arrows-differing-domains, FAIL-types-meet-fn-kept-not-within, FAIL-types-meet-key-arrows-not-within, FAIL-types-partial-arrow-same-atom-keys, FAIL-types-partial-arrow-value-type, FAIL-types-shape-union-sub-incomplete, PERF-types-bounded-shapes-renamed-under9, PERF-types-joined-split-several-differing, PERF-types-shared-row-bench-2ec6b9418, PERF-types-tuple-shapes-under9, PROOF-diff-exact-skip, PROOF-diff-payload-rest-refused, PROOF-form-verdict-merged-mark, TEST-standing-twice-numeric-vars, TEST-types-bound-pin-moves-adversarial, TEST-types-bound-pin-sets-adversarial, TEST-types-unreached-paths-4, TYPES-compared-recall-refused, TYPES-fits-read-key-refusal, TYPES-fits-read-refusal, TYPES-search-claims-proofs; level 2: RANGE-keys-in-printed-type; level 4: RANGE-open-names, STR-types; level 5: L1.18a; level 7: L2.5; level 8: TEST-nested-marks-struct-fields; level 9: L6.8, T11-ty; level 10: T11-check; level 17: L1.40e; level 18: HKT-2; level 20: L3.2; level 21: L4.1; level 26: L3.7; level 33: L6.9; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4, L6.11; level 39: L5.4a, L5.4c, L6.2; level 41: L6.8a; level 53: L10.2; level 57: L20.1; level 58: L22.1; level 77: L21.1; level 80: L20.3
 - `crates/zedc-zir/`: level 0: MSG-lower-port-repair-kind, PERF-canon-flat-strings, SPEC-m07-string-serial, STUDY-zir-facts-carried; level 4: L6.6; level 5: L1.18a, REDUCE-identity-closure-bodies; level 6: T14-bring; level 8: ENGINE-kept-ends, L2.4, PLAN-shared-regions; level 10: LOWER-dag; level 18: L2.9; level 19: CONTIFY, L1.41, L2.10; level 20: L3.2; level 21: ZIR-iface-section; level 23: L3.4; level 27: L3.13, L3.8; level 28: L6.14, WIDE-product; level 29: L3.20; level 31: ASSOC-word, L3.11; level 32: FOLD-zero, ZIR-check-passes; level 33: L3.12; level 34: L3.17; level 35: INLINE-zir, L3.16, L4.2, UNIT-modes; level 36: L3.14, L5.1; level 37: L5.3; level 38: EVID-dynamic, L5.4; level 39: L5.4a, L5.6; level 40: L6.5; level 41: L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: HEAP-rank, L6.13b, SPECULATE; level 45: L6.13g, SLAB-pack, STR-cursor; level 49: L7.1; level 50: L7.2; level 51: FILES-read-after-write, L7.3; level 52: DYN-port, L7.4, L9.1; level 53: FLOAT-sum-policy, IMPL-reached-effects, UNORD-keep; level 54: L10.3, L7.14, L7.6; level 55: CHECKED-float, CODEC-stream, L7.7, L7.8; level 56: EDGE-class, L7.10; level 57: FPWARN, L7.10a; level 58: L10.3d, L7.10b; level 59: L15.4, L15.5; level 60: L18.2a, L22.2; level 61: L14.1, L18.2b, L18.2d; level 62: L18.2e, L18.2f, L23.1, REPACK-tile; level 63: L23.5c, L33.1f; level 64: L33.1g; level 65: L22.4, L23.4; level 66: L18.2c; level 67: L24.1; level 68: MEMO-single-thread; level 74: NATIVE-cache; level 82: L23.5a; level 86: CANON-version-reset, L27.1
 - `crates/zedc-zir/src/`: level 0: MSG-lower-port-repair-kind, PERF-canon-flat-strings, SPEC-m07-string-serial; level 4: L6.6; level 5: L1.18a, REDUCE-identity-closure-bodies; level 6: T14-bring; level 8: ENGINE-kept-ends, L2.4, PLAN-shared-regions; level 10: LOWER-dag; level 18: L2.9; level 19: CONTIFY, L1.41, L2.10; level 20: L3.2; level 21: ZIR-iface-section; level 23: L3.4; level 27: L3.13, L3.8; level 28: L6.14, WIDE-product; level 29: L3.20; level 31: ASSOC-word, L3.11; level 32: FOLD-zero, ZIR-check-passes; level 33: L3.12; level 34: L3.17; level 35: INLINE-zir, L3.16, L4.2, UNIT-modes; level 36: L3.14, L5.1; level 37: L5.3; level 38: EVID-dynamic, L5.4; level 39: L5.4a, L5.6; level 40: L6.5; level 41: L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: HEAP-rank, L6.13b, SPECULATE; level 45: L6.13g, SLAB-pack, STR-cursor; level 49: L7.1; level 50: L7.2; level 51: FILES-read-after-write, L7.3; level 52: DYN-port, L7.4, L9.1; level 53: FLOAT-sum-policy, IMPL-reached-effects, UNORD-keep; level 54: L10.3, L7.14, L7.6; level 55: CHECKED-float, CODEC-stream, L7.7, L7.8; level 56: EDGE-class, L7.10; level 57: FPWARN, L7.10a; level 58: L10.3d, L7.10b; level 59: L15.4, L15.5; level 60: L18.2a, L22.2; level 61: L14.1, L18.2b, L18.2d; level 62: L18.2e, L18.2f, L23.1, REPACK-tile; level 63: L23.5c, L33.1f; level 64: L33.1g; level 65: L22.4, L23.4; level 66: L18.2c; level 67: L24.1; level 68: MEMO-single-thread; level 74: NATIVE-cache; level 82: L23.5a; level 86: CANON-version-reset, L27.1
 - `crates/zedc-zir/src/canon/`: level 0: PERF-canon-flat-strings, SPEC-m07-string-serial; level 4: L6.6; level 8: ENGINE-kept-ends, L2.4; level 23: L3.4; level 27: L3.8; level 29: L3.20; level 36: L5.1; level 49: L7.1; level 55: L7.7; level 59: L15.5; level 60: L22.2; level 86: CANON-version-reset
@@ -8241,18 +9938,18 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc/src/store/eq.rs`: level 16: L1.40b; level 60: L12.3a
 - `crates/zedc/src/testing.rs`: level 10: L2.8e; level 27: L3.8; level 56: L7.12; level 63: L15.8
 - `crates/zedc/src/unit.rs`: level 7: L2.12c; level 20: ZIR-iface-view; level 22: ZIR-iface-key; level 24: MAIN-args-read; level 53: FFI-headertest; level 61: L21.0b; level 62: L25.4b
-- `docs/`: level 0: BOARD-redundant-needs, DOC-ladder-study-b56-1, HULL-elim-text, LAYER-audit-open, SCHED-loop-early, SETS-study; level 1: QUESTIONS-answered; level 17: T10; level 20: L2.11; level 21: L2.11-browser; level 56: SELFINT-design; level 66: KERNEL-proof; level 82: INTEROP-study, L26.1, L31.1, QUOT-classes, TERM-3; level 83: L27.3; level 84: PE-claims, PE-proof, PERF-parity; level 86: L27.1, L27.2; level 87: BOOT-release; level 90: RUST-remove; level 91: L40.1b; level 92: L33.1b, RUST-remove-clif; level 93: L30.1, WASM-compiler; level 96: L40.1; level 99: L32.1; level 106: L33.2, L33.3; level 110: L42.1, USER-guide; level 111: L36.1, REL-aarch64, REL-riscv; level 112: L36.2, REL-macos, REL-windows; level 113: L36.3; level 115: L37.1; level 116: META-self-check
+- `docs/`: level 0: BOARD-redundant-needs, DOC-ladder-study-b56-1, HULL-elim-text, LAYER-audit-open, SCHED-loop-early, SETS-study, STUDY-induction-corpus; level 1: QUESTIONS-answered; level 17: T10; level 20: L2.11; level 21: L2.11-browser; level 56: SELFINT-design; level 66: KERNEL-proof; level 82: INTEROP-study, L26.1, L31.1, QUOT-classes, TERM-3; level 83: L27.3; level 84: PE-claims, PE-proof, PERF-parity; level 86: L27.1, L27.2; level 87: BOOT-release; level 90: RUST-remove; level 91: L40.1b; level 92: L33.1b, RUST-remove-clif; level 93: L30.1, WASM-compiler; level 96: L40.1; level 99: L32.1; level 106: L33.2, L33.3; level 110: L42.1, USER-guide; level 111: L36.1, REL-aarch64, REL-riscv; level 112: L36.2, REL-macos, REL-windows; level 113: L36.3; level 115: L37.1; level 116: META-self-check
 - `docs/formal/`: level 84: PE-proof; level 112: L36.2
 - `docs/layout.md`: level 17: T10; level 82: L26.1; level 83: L27.3; level 86: L27.1, L27.2; level 90: RUST-remove; level 92: RUST-remove-clif; level 93: L30.1, WASM-compiler
-- `docs/plan_dag.md`: level 0: BOARD-redundant-needs, HULL-elim-text, LAYER-audit-open, SCHED-loop-early; level 1: QUESTIONS-answered
+- `docs/plan_dag.md`: level 0: BOARD-redundant-needs, HULL-elim-text, LAYER-audit-open, SCHED-loop-early, STUDY-induction-corpus; level 1: QUESTIONS-answered
 - `docs/release.md`: level 87: BOOT-release; level 111: REL-aarch64, REL-riscv; level 112: REL-macos, REL-windows
 - `docs/stdlib-catalog.md`: level 20: L2.11; level 21: L2.11-browser; level 82: QUOT-classes, TERM-3
 - `editors/vscode/`: level 93: L30.1; level 94: L30.2; level 95: L30.3; level 96: L30.3a, L30.4; level 97: L30.5; level 98: L30.6, L34.11; level 102: L32.4; level 104: L34.2, L34.4; level 105: L34.3, L34.6, L34.7, L35.1
 - `rust-bootstrap`: level 88: BOOT-branch; level 89: BOOT-guide
-- `tools/`: level 0: BENCH-limit-counts-setup, BUILD-parallel-frontend, BUILD-slots-random-start, DAGVIEW-first-relayout-x, DAGVIEW-held-digitless, DAGVIEW-relayout-stable, DAGVIEW-rows-under9, DAGVIEW-shape-edges, FLAKE-l01-26-random-recheck, TEST-kernel-units-short-addresses, TEST-scaling-cold-and-warm, TIME-pieces-under-cap-high-load, TOOLS-time-tests-fixes; level 42: L5.14a; level 74: S.1c; level 79: S.5; level 82: TERM-3; level 87: BOOT-release; level 89: BOOT-guide; level 96: L30.3b; level 106: L33.1d; level 119: POLISH-ultrareview, POLISH-xreview
+- `tools/`: level 0: BENCH-limit-counts-setup, BUILD-parallel-frontend, BUILD-slots-random-start, DAGVIEW-first-relayout-x, DAGVIEW-held-digitless, DAGVIEW-relayout-stable, DAGVIEW-rows-under9, DAGVIEW-shape-edges, FAIL-tie-group-tests-piece-time, FAIL-unit-pieces-time, FLAKE-l01-26-random-recheck, TEST-kernel-units-short-addresses, TEST-lib-pieces-near-limit, TEST-scaling-cold-and-warm, TIME-pieces-under-cap-high-load, TOOLS-time-tests-fixes; level 42: L5.14a; level 74: S.1c; level 79: S.5; level 82: TERM-3; level 87: BOOT-release; level 89: BOOT-guide; level 96: L30.3b; level 106: L33.1d; level 119: POLISH-ultrareview, POLISH-xreview
 - `tools/fetch_test_deps.sh`: level 0: BUILD-parallel-frontend; level 82: TERM-3
-- `zed/`: level 0: DB-pool, SPEC-set-type-written, SPEC-string-slice-text, SYM-factor-name; level 1: GROUP-prelude, STUDY-linking; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 9: L1.26b; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L2.11, L3.2; level 21: CORPUS-oracle, L4.1, STR-views; level 22: COLLATE-data, CORPUS-input-errors; level 25: L3.19; level 26: LOWER-stack; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L4.7, L5.4, L6.11; level 39: L3.24, L5.4a, L5.4c, L6.11a, TEST-corpus-06-variant-domains; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract, L5.12; level 44: COST-patch, L5.11, L6.16; level 45: L6.13g, L6.18; level 46: L5.14; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L28.1a, L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes, L8.2c; level 53: BYTES-wide, INT-128, L21.2, L28.1, L7.3l, L8.3, LAWS-stream, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, MLIR-noalias, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, L7.13, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L11.3, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L10.5, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, L7.15; level 60: CODEC-grammar, COMPILE-data, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L16.4, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L14.2, L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L15.9, L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, STUDY-codegen-checker-opts, UNITS-text-lengths; level 67: L12.4; level 72: L6.17a; level 74: S.1c, S.1h, STD-num, STD-seq, STD-text; level 75: S.2, STD-blake3; level 76: S.2-forms, S.3, ZLEX-scan; level 77: L21.1, PORT-memo-arenas, S.3-forms, S.3a; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.3, L20.4, L24.10, L24.6, S.5b; level 81: CODEC-json, L24.7, LIB-schema, S.6; level 82: FLOAT-elem, L2.13, L20.3c, L22.9, PORT-pointer-keys, QUOT-classes, RT-port-libzed, SCHED-schema-types, TERM-3; level 83: AD-forward, JIT-zed, L19.4, L22.9a, L27.3, STD-full, STUDY-relax-backend, SYM-bool-formulas, TOOLS-port; level 84: AD-reverse, L20.5, L29.1, LIB-linkage, PE-claims, PE-proof, SYM-bool-bit-words; level 85: AD-hvp, L22.10, L24.8, L31.3, S.8; level 86: CHECK-fast-grow, L27.1, L27.2, L31.4; level 87: GPU-compiler-kernels; level 88: GPU-front; level 91: JIT-native-zed, L25.1; level 92: L25.2, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LIB-compress, LIB-crypto, LIB-linalg, LIB-numerics, LIB-serial, LIB-time, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, LIB-audio, LIB-data, LIB-geometry, LIB-graphics, LIB-optimize, LIB-text, TERM-2; level 95: L25.7, L30.3, LIB-cli, LIB-docs, LIB-net, LIB-stats, PICTURE-type; level 96: L30.3a, L30.4, LIB-dbclient, LIB-ml; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.2, L34.4, L34.5, LIB-charts; level 105: L33.1, L34.3, L34.6, L34.7, L34.8, L35.1; level 106: L33.3; level 108: L33.1a, L33.3b; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors; level 119: POLISH-ultrareview, POLISH-xreview
-- `zed/compiler/`: level 1: STUDY-linking; level 20: L2.11; level 26: LOWER-stack; level 49: L28.1a; level 53: L28.1; level 54: MLIR-noalias; level 66: STUDY-codegen-checker-opts; level 72: L6.17a; level 74: S.1h; level 75: S.2; level 76: S.2-forms, S.3, ZLEX-scan; level 77: PORT-memo-arenas, S.3-forms; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.4, L24.10, L24.6, S.5b; level 81: L24.7, S.6; level 82: L2.13, RT-port-libzed; level 83: JIT-zed, L27.3, STUDY-relax-backend; level 84: L29.1, PE-claims, PE-proof; level 85: L24.8, S.8; level 86: CHECK-fast-grow; level 88: GPU-front; level 91: JIT-native-zed, L25.1; level 92: L25.2, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, TERM-2; level 95: L25.7, L30.3; level 96: L30.3a, L30.4; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 104: L34.2, L34.4; level 105: L34.3, L34.6, L34.7, L35.1; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors
+- `zed/`: level 0: DB-pool, SPEC-bit-identities, SPEC-build-modes-main-build, SPEC-copies-out, SPEC-set-type-written, SPEC-string-slice-text, SYM-factor-name, SYNC-copies-refresh-2, SYNC-copies-refresh-3, SYNC-copies-refresh-4, SYNC-held-files-stamp; level 1: GROUP-prelude, STUDY-linking; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 9: L1.26b; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L2.11, L3.2; level 21: CORPUS-oracle, L4.1, STR-views; level 22: COLLATE-data, CORPUS-input-errors; level 25: L3.19; level 26: LOWER-stack; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L4.7, L5.4, L6.11; level 39: L3.24, L5.4a, L5.4c, L6.11a, TEST-corpus-06-variant-domains; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract, L5.12; level 44: COST-patch, L5.11, L6.16; level 45: L6.13g, L6.18; level 46: L5.14; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L28.1a, L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes, L8.2c; level 53: BYTES-wide, INT-128, L21.2, L28.1, L7.3l, L8.3, LAWS-stream, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, MLIR-noalias, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, L7.13, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L11.3, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L10.5, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, L7.15; level 60: CODEC-grammar, COMPILE-data, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L16.4, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L14.2, L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L15.9, L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, STUDY-codegen-checker-opts, UNITS-text-lengths; level 67: L12.4; level 72: L6.17a; level 74: S.1c, S.1h, STD-num, STD-seq, STD-text; level 75: S.2, STD-blake3; level 76: S.2-forms, S.3, ZLEX-scan; level 77: L21.1, PORT-memo-arenas, S.3-forms, S.3a; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.3, L20.4, L24.10, L24.6, S.5b; level 81: CODEC-json, L24.7, LIB-schema, S.6; level 82: FLOAT-elem, L2.13, L20.3c, L22.9, PORT-pointer-keys, QUOT-classes, RT-port-libzed, SCHED-schema-types, TERM-3; level 83: AD-forward, JIT-zed, L19.4, L22.9a, L27.3, STD-full, STUDY-relax-backend, SYM-bool-formulas, TOOLS-port; level 84: AD-reverse, L20.5, L29.1, LIB-linkage, PE-claims, PE-proof, SYM-bool-bit-words; level 85: AD-hvp, L22.10, L24.8, L31.3, S.8; level 86: CHECK-fast-grow, L27.1, L27.2, L31.4; level 87: GPU-compiler-kernels; level 88: GPU-front; level 91: JIT-native-zed, L25.1; level 92: L25.2, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LIB-compress, LIB-crypto, LIB-linalg, LIB-numerics, LIB-serial, LIB-time, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, LIB-audio, LIB-data, LIB-geometry, LIB-graphics, LIB-optimize, LIB-text, TERM-2; level 95: L25.7, L30.3, LIB-cli, LIB-docs, LIB-net, LIB-stats, PICTURE-type; level 96: L30.3a, L30.4, LIB-dbclient, LIB-ml; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.2, L34.4, L34.5, LIB-charts; level 105: L33.1, L34.3, L34.6, L34.7, L34.8, L35.1; level 106: L33.3; level 108: L33.1a, L33.3b; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors; level 119: POLISH-ultrareview, POLISH-xreview
+- `zed/compiler/`: level 0: SPEC-copies-out; level 1: STUDY-linking; level 20: L2.11; level 26: LOWER-stack; level 49: L28.1a; level 53: L28.1; level 54: MLIR-noalias; level 66: STUDY-codegen-checker-opts; level 72: L6.17a; level 74: S.1h; level 75: S.2; level 76: S.2-forms, S.3, ZLEX-scan; level 77: PORT-memo-arenas, S.3-forms; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.4, L24.10, L24.6, S.5b; level 81: L24.7, S.6; level 82: L2.13, RT-port-libzed; level 83: JIT-zed, L27.3, STUDY-relax-backend; level 84: L29.1, PE-claims, PE-proof; level 85: L24.8, S.8; level 86: CHECK-fast-grow; level 88: GPU-front; level 91: JIT-native-zed, L25.1; level 92: L25.2, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, TERM-2; level 95: L25.7, L30.3; level 96: L30.3a, L30.4; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 104: L34.2, L34.4; level 105: L34.3, L34.6, L34.7, L35.1; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors
 - `zed/compiler/MLIR.md`: level 1: STUDY-linking; level 49: L28.1a; level 53: L28.1; level 54: MLIR-noalias; level 66: STUDY-codegen-checker-opts; level 83: STUDY-relax-backend; level 84: L29.1
 - `zed/compiler/clif/`: level 83: JIT-zed; level 91: JIT-native-zed
 - `zed/compiler/lower/`: level 84: L29.1; level 91: JIT-native-zed
@@ -8260,12 +9957,13 @@ Each line below names a path and the open items that touch it, by level, when th
 - `zed/corpus/`: level 0: SPEC-string-slice-text; level 4: STR-types; level 21: CORPUS-oracle; level 22: CORPUS-input-errors; level 25: L3.19; level 38: L4.7; level 39: TEST-corpus-06-variant-domains; level 43: L5.12; level 44: L5.11; level 45: L6.18; level 46: L5.14; level 53: L8.3; level 56: L7.13; level 58: L11.3; level 59: L10.5, L7.15; level 60: L13.2; level 61: L16.4; level 63: L14.2; level 67: L12.4; level 79: L19.2; level 83: L19.4, L27.3; level 84: L20.5; level 85: L24.8; level 87: GPU-compiler-kernels; level 95: L25.7
 - `zed/corpus/30-client-server/`: level 84: L20.5; level 85: L24.8
 - `zed/corpus/rust/`: level 44: L5.11; level 46: L5.14
-- `zed/fences/`: level 4: STR-types; level 9: L1.26b; level 39: L3.24; level 53: LAWS-stream; level 60: COMPILE-data, TERM-1; level 63: L15.8; level 65: L15.9; level 85: L22.10
+- `zed/fences/`: level 0: SPEC-build-modes-main-build, SPEC-copies-out, SYNC-copies-refresh-2, SYNC-copies-refresh-3; level 4: STR-types; level 9: L1.26b; level 39: L3.24; level 53: LAWS-stream; level 60: COMPILE-data, TERM-1; level 63: L15.8; level 65: L15.9; level 85: L22.10
+- `zed/grammar/`: level 0: SPEC-build-modes-main-build, SPEC-set-type-written, SYM-factor-name, SYNC-copies-refresh-3; level 9: L1.26b; level 52: L8.2c; level 60: TERM-1
 - `zed/grammar/cases.txt`: level 9: L1.26b; level 52: L8.2c; level 60: TERM-1
 - `zed/lib/`: level 81: LIB-schema; level 82: PORT-pointer-keys, SCHED-schema-types; level 83: AD-forward; level 84: AD-reverse, LIB-linkage; level 85: AD-hvp; level 93: LIB-compress, LIB-crypto, LIB-linalg, LIB-numerics, LIB-serial, LIB-time, WASM-compiler; level 94: LIB-audio, LIB-data, LIB-geometry, LIB-graphics, LIB-optimize, LIB-text; level 95: LIB-cli, LIB-docs, LIB-net, LIB-stats, PICTURE-type; level 96: LIB-dbclient, LIB-ml; level 104: LIB-charts; level 105: L33.1; level 106: L33.3; level 108: L33.1a
-- `zed/prelude/`: level 1: GROUP-prelude; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L3.2; level 21: L4.1, STR-views; level 22: COLLATE-data; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L5.4, L6.11; level 39: L5.4a, L5.4c, L6.11a; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract; level 44: COST-patch, L6.16; level 45: L6.13g; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes; level 53: BYTES-wide, INT-128, L21.2, L7.3l, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e; level 60: CODEC-grammar, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, UNITS-text-lengths; level 72: L6.17a; level 74: S.1c; level 76: S.3; level 77: L21.1, S.3a; level 79: L19.2, L24.5; level 80: L19.3, L20.3; level 81: CODEC-json; level 82: FLOAT-elem, L20.3c, L22.9, QUOT-classes, TERM-3; level 83: L22.9a, SYM-bool-formulas; level 84: L29.1, SYM-bool-bit-words; level 85: L24.8, L31.3; level 86: L27.1, L27.2; level 92: L25.3; level 93: L25.4, L25.5; level 94: L25.6, TERM-2; level 97: L30.5; level 98: L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.4, L34.5; level 105: L34.3, L34.6, L34.8, L35.1; level 108: L33.3b
+- `zed/prelude/`: level 0: SPEC-bit-identities; level 1: GROUP-prelude; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L3.2; level 21: L4.1, STR-views; level 22: COLLATE-data; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L5.4, L6.11; level 39: L5.4a, L5.4c, L6.11a; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract; level 44: COST-patch, L6.16; level 45: L6.13g; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes; level 53: BYTES-wide, INT-128, L21.2, L7.3l, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e; level 60: CODEC-grammar, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, UNITS-text-lengths; level 72: L6.17a; level 74: S.1c; level 76: S.3; level 77: L21.1, S.3a; level 79: L19.2, L24.5; level 80: L19.3, L20.3; level 81: CODEC-json; level 82: FLOAT-elem, L20.3c, L22.9, QUOT-classes, TERM-3; level 83: L22.9a, SYM-bool-formulas; level 84: L29.1, SYM-bool-bit-words; level 85: L24.8, L31.3; level 86: L27.1, L27.2; level 92: L25.3; level 93: L25.4, L25.5; level 94: L25.6, TERM-2; level 97: L30.5; level 98: L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.4, L34.5; level 105: L34.3, L34.6, L34.8, L35.1; level 108: L33.3b
 - `zed/prelude/agent.zed`: level 92: L25.3; level 93: L25.4, L25.5; level 94: L25.6, TERM-2; level 98: L34.9
-- `zed/prelude/axioms.zed`: level 29: INT-twos; level 32: SEMIRING-values; level 38: CSR-bounds; level 42: L5.7a
+- `zed/prelude/axioms.zed`: level 0: SPEC-bit-identities; level 29: INT-twos; level 32: SEMIRING-values; level 38: CSR-bounds; level 42: L5.7a
 - `zed/prelude/cost.zed`: level 40: L6.19; level 41: PRELUDE-words; level 43: BEND-contract; level 44: COST-patch; level 45: L6.13g; level 58: L18.1; level 86: L27.1
 - `zed/prelude/csv.zed`: level 80: L20.3; level 81: CODEC-json; level 82: L20.3c
 - `zed/prelude/draw/`: level 101: L32.3; level 104: L34.4
