@@ -296,11 +296,10 @@ fn shared_morphism_constraints_beside_a_refused_member(n: usize, empty: bool) {
         1,
         |m| {
             Type::forget_emptiness();
-            for (t, want) in inputs[&m].iter().zip([
-                Verdict::Refused(Refusal::Fork),
-                Verdict::Empty,
-                Verdict::Empty,
-            ]) {
+            for (t, want) in inputs[&m]
+                .iter()
+                .zip([Verdict::Empty, Verdict::Empty, Verdict::Empty])
+            {
                 if empty {
                     assert_eq!(t.is_empty(), want == Verdict::Empty);
                 } else {

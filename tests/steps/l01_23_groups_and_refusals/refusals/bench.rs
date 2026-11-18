@@ -129,15 +129,25 @@ fn a_no_witness_refusal_is_reached_in_the_size_of_the_keys() {
 }
 
 #[test]
-fn a_fork_refusal_is_reached_in_the_size_of_the_pairs() {
+fn pairs_less_many_excluded_pairs_are_decided_in_their_size() {
     // Θ(n) excluded pairs. Measured on c881d28c, before REFUSAL-fork-linear: 63M, 221M, 805M and
     // 3209M instructions at n 8, 16, 32 and 64, order n^2: the search for a value before the
     // refusal narrowed the box into each excluded pair and tested every other pair there. Now
     // (REFUSAL-fork-linear) 30.2M and 255.9M instructions at n 8 and 64, 8.5 times.
     // TEST-bench-move-l0123 (author P169), finding: at n 384 and 3072 the first runs took 1712.8M
     // and 20,570.9M instructions, 12.0 times (bytes 233.2M and 2092.1M, 9.0 times; 1x took
-    // 445625650 ns at load 34.4), above the limit of 10.5, so the test stays at its old size n 8.
-    refusal_scales("Fork, by n excluded pairs", 8, Refusal::Fork, fork_by);
+    // 445625650 ns at load 34.4), above the limit of 10.5, so the test stayed at its old size n 8.
+    // GROUP-order-fork-cuts-together: the type is Empty at every n of 2 or more (see
+    // `pairs_less_many_excluded_pairs_are_empty`), and the fork is now held by the union of its
+    // cuts, so the bench times the decision.
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("Fork held by its cuts, by n excluded pairs", 8, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_rsfb{}", tag.fetch_add(1, Relaxed));
+            assert_eq!(fork_by(n, &tag).verdict(), Verdict::Empty, "at {n}");
+        })
+    });
 }
 
 #[test]

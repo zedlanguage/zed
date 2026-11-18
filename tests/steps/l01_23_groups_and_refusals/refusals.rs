@@ -206,7 +206,6 @@ fn morphism_between() -> Type {
 fn each_refusal_names_its_cause() {
     for (t, why) in [
         (erdos_cover(), Refusal::Residues),
-        (fork_empty(), Refusal::Fork),
         (nfa(), Refusal::Fork),
         (morphism_split(), Refusal::MorphismSplit),
         (box_cover(), Refusal::TupleSplit),
@@ -216,6 +215,8 @@ fn each_refusal_names_its_cause() {
         assert_eq!(t.verdict(), Verdict::Refused(why), "{t}");
     }
     // Decided checks of the same kinds.
+    Type::forget_emptiness();
+    assert_eq!(fork_empty().verdict(), Verdict::Empty);
     assert_eq!(
         (&period(2, 0) - &period(4, 0)).verdict(),
         Verdict::Inhabited
@@ -2214,7 +2215,7 @@ const PREFIX_CHAIN_SEEDS: std::ops::Range<u64> = 0..1024;
 /// moves the seed out of this list. Seed 744 left it when FAIL-codex-r3-order-seed read a
 /// union's arms as a set in a group's canonical form: its search now meets the tuple types in
 /// another order and finds a value.
-const PREFIX_CHAIN_FORK_SEEDS: &[u64] = &[19, 68, 476];
+const PREFIX_CHAIN_FORK_SEEDS: &[u64] = &[];
 
 /// Random small prefix-chain family `chain`: a list of `int` (with cofinite heads) or of `bool`
 /// less the union of 2 to 4 chains of 1 to 4 conses, each of whose steps may also be `nil`.
@@ -3237,9 +3238,8 @@ fn codex_r3_order_seed_10489595623140704143_trial_26() {
         assert!(t.contains(&witness), "reverse={reverse}");
         Type::forget_emptiness();
         let v = t.verdict();
-        // The type holds `[1, 3]`: any answer but Empty is sound. Whether the search finds that
-        // value is not asserted here; that both orders agree is.
-        assert_ne!(v, Verdict::Empty, "reverse={reverse}");
+        // The type holds `[1, 3]`, and both orders find a value (REFUSAL-list-front-chain-fork).
+        assert_eq!(v, Verdict::Inhabited, "reverse={reverse}");
         assert!(!t.is_empty(), "is_empty reverse={reverse}");
         seen.push((ts, t, v));
     }
@@ -3749,11 +3749,11 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         Verdict::Empty
                     };
                     if case == "clstaggerholesout" {
-                        // The prefix chains leave this case to the search (Gemini R4); in the
-                        // combined tree the front sweep decides it.
+                        // The prefix chains decide this case via partner merge (XR-group-order-5),
+                        // agreeing with the list oracle and the front sweep.
                         assert_eq!(
                             t.chain_verdict(),
-                            None,
+                            Some(want),
                             "chains {case} n={n} ZED_TEST_SEED={seed}"
                         );
                         assert_eq!(
@@ -3803,7 +3803,14 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
         }
     }
 
-    // Random small prefix-chain families over int (including cofinite heads) and bool.
+    // Random small prefix-chain families: the same seeds and the same check as the twin without
+    // `_gemini` (REFUSAL-list-front-chain-fork), 20 of `PREFIX_CHAIN_SEEDS`, a range that
+    // `bench::every_random_prefix_chain_agrees_with_the_oracle` checks whole, each decided as the
+    // oracle finds. This test drew its own families until then and let a refusal pass.
+    for chain in pick_seeds(&mut pick, "random prefix chains", PREFIX_CHAIN_SEEDS, 20) {
+        check_random_prefix_chain(chain, &next_tag(), &format!("ZED_TEST_SEED={seed}"));
+    }
+
     // Fix X18: heads exclude/include literals from 0..4, and `rand_int_samples` includes
     // every literal 0..4 plus one fresh integer 4 so every equivalence class of the head
     // predicates is sampled.
@@ -3814,8 +3821,8 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
         Value::Int(3),
         Value::Int(4),
     ];
-    // 20 and 20 random cases from a seed new each run (author P169): 60 and 60 from one fixed
-    // seed until TEST-bench-move-l0123.
+    // 20 random in-class cases from a seed new each run (author P169): 60 from one fixed seed
+    // until TEST-bench-move-l0123.
     let mut rng = || pick.next_u64();
     let head_for = |bits: u64, is_bool: bool| -> Type {
         if is_bool {
@@ -3845,67 +3852,6 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             }
         }
     };
-    for _ in 0..20 {
-        Type::forget_emptiness();
-        let is_bool = (rng() & 1) != 0;
-        let all = if is_bool { Type::bool() } else { Type::int() };
-        let samples: &[Value] = if is_bool {
-            &bool_samples
-        } else {
-            &rand_int_samples
-        };
-        let tag = next_tag();
-        let mut defs = vec![def(
-            &format!("L{tag}"),
-            Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
-        )];
-        let num_chains = 2 + (rng() % 3) as usize;
-        let mut endpoints = Vec::new();
-        let mut max_depth = 1usize;
-        for c in 0..num_chains {
-            let depth = 1 + (rng() % 4) as usize;
-            max_depth = max_depth.max(depth);
-            let allow_nil = (rng() & 1) != 0;
-            for k in 1..=depth {
-                let h = head_for(rng(), is_bool);
-                let prev = if k == 1 { 0 } else { defs.len() - 1 };
-                let step = cons(Expr::Type(h), r(prev));
-                let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
-                    Expr::Union(vec![nil(), step])
-                } else {
-                    step
-                };
-                defs.push(def(&format!("C{c}_{k}{tag}"), body));
-            }
-            endpoints.push(defs.len() - 1);
-        }
-        let ts = Group::new(defs).unwrap().instance(vec![]);
-        let u = endpoints
-            .iter()
-            .map(|&i| &ts[i])
-            .fold(Type::empty(), |u, t| &u | t);
-        let l = list_named(all, &tag);
-        let t = &l - &u;
-        let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
-        let want = if inhab {
-            Verdict::Inhabited
-        } else {
-            Verdict::Empty
-        };
-        if let Some(sv) = t.sweep_verdict() {
-            assert_eq!(sv, want, "sweep random chain ZED_TEST_SEED={seed}");
-        }
-        Type::forget_emptiness();
-        match t.verdict() {
-            Verdict::Empty => assert!(!inhab, "random chain ZED_TEST_SEED={seed}"),
-            Verdict::Inhabited => assert!(inhab, "random chain ZED_TEST_SEED={seed}"),
-            Verdict::Refused(_) => {}
-        }
-        assert!(
-            !(t.is_empty() && inhab),
-            "is_empty random chain ZED_TEST_SEED={seed}"
-        );
-    }
 
     // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
     // leaf heads over 0..4, sampled over 0..=4): must be decided (Empty or Inhabited, never
@@ -6378,16 +6324,16 @@ fn r8_escape_laminar_boundary_declines_crossing_atoms() {
     assert_eq!(laminar.chain_verdict(), Some(Verdict::Inhabited));
     assert_eq!(laminar.verdict(), Verdict::Inhabited);
 
-    // Outside laminar boundary: `{0, 1}` and `{1, 2}` cross (`in_place_tree` declines to `None`),
-    // and the base search still decides both inhabited (`[1, 7]`) and empty (`+ {0, 2}`).
+    // Outside laminar boundary: `{0, 1}` and `{1, 2}` cross; partner merge (`U1`/`U2`,
+    // XR-group-order-5) decides both inhabited (`[1, 7]`) and empty (`+ {0, 2}`).
     let cross_inhab = &p - &(&f01 | &f12);
     Type::forget_emptiness();
-    assert_eq!(cross_inhab.chain_verdict(), None);
+    assert_eq!(cross_inhab.chain_verdict(), Some(Verdict::Inhabited));
     assert_eq!(cross_inhab.verdict(), Verdict::Inhabited);
 
     let cross_empty = &p - &(&(&f01 | &f12) | &f02);
     Type::forget_emptiness();
-    assert_eq!(cross_empty.chain_verdict(), None);
+    assert_eq!(cross_empty.chain_verdict(), Some(Verdict::Empty));
     assert_eq!(cross_empty.verdict(), Verdict::Empty);
 }
 
@@ -8019,11 +7965,20 @@ fn morphisms_with_many_required_keys_are_refused_for_want_of_a_witness() {
     });
 }
 
-/// Small instance of `bench::a_fork_refusal_is_reached_in_the_size_of_the_pairs`: pairs of
-/// lists of integers less the pairs excluded for each of 2 to `n` are refused at the fork.
+/// Small instance of `bench::pairs_less_many_excluded_pairs_are_decided_in_their_size`:
+/// `fork_by(n)` is Empty for every `n` of 2 or more, since for each `i` its two pairs together
+/// take out every pair whose second list has parity `i % 2`, and the parities 1 and 0 hold every
+/// list. `fork_by(2)` is decided by `Π_sym` (XR-group-order-5); 3, 4 and 8, refused at the fork
+/// before GROUP-order-fork-cuts-together, once a fork is held by the union of its cuts.
 #[test]
-fn pairs_less_many_excluded_pairs_are_refused_at_the_fork() {
-    refused_at(&[2, 3, 4, 8], Refusal::Fork, "_rsf", fork_by);
+fn pairs_less_many_excluded_pairs_are_empty() {
+    big(|| {
+        for n in [2, 3, 4, 8] {
+            Type::forget_emptiness();
+            let t = fork_by(n, &format!("_rsf{n}"));
+            assert_eq!(t.verdict(), Verdict::Empty, "_rsf at {n}");
+        }
+    });
 }
 
 /// Small instance of `bench::a_fork_emptied_by_one_list_type_is_decided_in_its_size` and
@@ -8039,6 +7994,49 @@ fn a_fork_emptied_by_one_list_type_is_decided() {
         Type::forget_emptiness();
         let t = one_list_type_empties_a_fork(n, false, &format!("_f1r{n}"));
         assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    }
+}
+
+/// The pairs of `#a` and a list, less the pairs of `#a` and a list of even length and those of
+/// `#a` and a list of odd length, with the components in the order written or reversed. The
+/// two list types are each on a cycle and differ, a fork in the second component (COMPLEXITY.md
+/// K35), and only the two together hold it, so no one of them equals the rest
+/// (GROUP-order-fork-cuts-together). With `written_union` the component is the union of the two
+/// as written, else the lists of integers. Empty for every list has an even or an odd length.
+fn cuts_together_empty_a_fork(written_union: bool, reversed: bool, tag: &str) -> Type {
+    let a = Type::atom("a");
+    let pair = |y: Type| {
+        if reversed {
+            Type::tuple(vec![y, a.clone()])
+        } else {
+            Type::tuple(vec![a.clone(), y])
+        }
+    };
+    let even = period_named(2, 0, &format!("{tag}_e"));
+    let odd = period_named(2, 1, &format!("{tag}_o"));
+    let whole = if written_union {
+        &even | &odd
+    } else {
+        list_named(Type::int(), tag)
+    };
+    &(&pair(whole) - &pair(even)) - &pair(odd)
+}
+
+/// GROUP-order-fork-cuts-together: a fork held only by two recursive cuts together, whose union
+/// is written as the component, is Empty in both orders of the components. Over the lists of
+/// integers the same box stays refused at the fork in both orders: whether the even and the odd
+/// lists together hold every list is NFA universality (the fork comment in `narrow_tuples`).
+#[test]
+fn a_fork_emptied_by_two_list_types_together_is_decided_in_both_orders() {
+    for reversed in [false, true] {
+        Type::forget_emptiness();
+        let t = cuts_together_empty_a_fork(false, reversed, &format!("_f2u{}", u8::from(reversed)));
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
+    }
+    for reversed in [false, true] {
+        Type::forget_emptiness();
+        let t = cuts_together_empty_a_fork(true, reversed, &format!("_f2t{}", u8::from(reversed)));
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
     }
 }
 
@@ -8544,7 +8542,7 @@ fn a_tuple_with_an_empty_component_is_empty_beside_a_fork() {
     }
     Type::forget_emptiness();
     let t = Type::tuple(vec![fork.clone(), Type::int()]);
-    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
+    assert_eq!(t.verdict(), Verdict::Empty, "{t}");
 }
 
 /// Small instance of `bench::a_tuple_with_an_empty_component_is_empty_in_either_order` and
@@ -8723,3 +8721,636 @@ fn chains_to_two_carriers_of_one_cycle_with_other_heads_agree_with_the_oracle() 
 }
 
 mod bench;
+
+// Append to: `tests/steps/l01_23_groups_and_refusals/refusals.rs`
+// Round 3 cross-review suite (`XR-group-order-5` & `REFUSAL-list-front-chain-fork`):
+// official prefix-chain test, carrier merge tests, both seats' single-bucket escape benches,
+// and K80 / `fork_empty` order-invariance tests.
+
+#[test]
+fn the_random_prefix_chains_once_refused_with_fork_are_inhabited() {
+    for chain in [19, 68, 476, 744] {
+        let (t, verdict, empty, inhabited) = random_prefix_chain(chain, &format!("_fork{chain}"));
+        assert!(inhabited, "{t}");
+        assert_eq!(verdict, Verdict::Inhabited, "random chain {chain}: {t}");
+        assert!(!empty, "{t}");
+    }
+}
+
+#[test]
+fn xr_r2_q2b_carrier_merge_unprojected_head_and_prefix_chains() {
+    let h12 = &lit(1) | &lit(2);
+    let l_a = Group::new(vec![def(
+        "XR_La",
+        Expr::Union(vec![nil(), cons(Expr::Type(h12.clone()), r(0))]),
+    )])
+    .unwrap()
+    .instance(vec![])
+    .remove(0);
+
+    let g_b = Group::new(vec![
+        def(
+            "XR_Lb",
+            Expr::Union(vec![nil(), cons(Expr::Type(h12.clone()), r(0))]),
+        ),
+        def(
+            "XR_C1_tail",
+            Expr::Union(vec![nil(), cons(Expr::Type(h12.clone()), r(0))]),
+        ),
+        def(
+            "XR_C1",
+            Expr::Union(vec![nil(), cons(Expr::Type(lit(1)), r(1))]),
+        ),
+        def("XR_C2_tail", cons(Expr::Type(lit(1)), r(0))),
+        def("XR_C2", cons(Expr::Type(lit(2)), r(3))),
+        def(
+            "XR_C3_tail",
+            Expr::Union(vec![nil(), cons(Expr::Type(lit(2)), r(0))]),
+        ),
+        def("XR_C3", cons(Expr::Type(lit(2)), r(5))),
+    ])
+    .unwrap()
+    .instance(vec![]);
+
+    Type::forget_emptiness();
+    let diff_inh = &l_a - &(&g_b[2] | &g_b[4]);
+    assert_eq!(
+        diff_inh.verdict(),
+        Verdict::Inhabited,
+        "cross-group inhabited"
+    );
+    assert!(!diff_inh.is_empty());
+
+    Type::forget_emptiness();
+    let diff_emp = &diff_inh - &g_b[6];
+    assert_eq!(diff_emp.verdict(), Verdict::Empty, "cross-group empty");
+    assert!(diff_emp.is_empty());
+
+    let h1299 = &h12 | &lit(99);
+    let g_wide = Group::new(vec![
+        def(
+            "XR_Lwide",
+            Expr::Union(vec![nil(), cons(Expr::Type(h1299), r(0))]),
+        ),
+        def("XR_CW", cons(Expr::Type(lit(1)), r(0))),
+    ])
+    .unwrap()
+    .instance(vec![]);
+    assert_ne!(l_a, g_wide[0]);
+
+    let c_small = Group::new(vec![
+        def(
+            "XR_Lsmall2",
+            Expr::Union(vec![nil(), cons(Expr::Type(h12), r(0))]),
+        ),
+        def("XR_CS", cons(Expr::Type(lit(1)), r(0))),
+    ])
+    .unwrap()
+    .instance(vec![]);
+    Type::forget_emptiness();
+    assert_eq!((&g_wide[1] - &c_small[1]).verdict(), Verdict::Inhabited);
+    Type::forget_emptiness();
+    assert_eq!((&c_small[1] - &g_wide[1]).verdict(), Verdict::Empty);
+
+    let mut prng = Rng::new(0x2026_1117_002B);
+    let bool_tys = [
+        Type::lit(&Value::Bool(false)).unwrap(),
+        Type::lit(&Value::Bool(true)).unwrap(),
+    ];
+    let head_for = |bits: u64, is_bool: bool| -> Type {
+        if is_bool {
+            match bits % 3 {
+                0 => bool_tys[0].clone(),
+                1 => bool_tys[1].clone(),
+                _ => Type::bool(),
+            }
+        } else {
+            let mask = (bits % 7) + 1;
+            if bits & 8 != 0 {
+                let mut ty = Type::int();
+                for i in 0..3 {
+                    if (mask >> i) & 1 == 0 {
+                        ty = &ty - &lit(i as i64);
+                    }
+                }
+                ty
+            } else {
+                let mut ty = Type::empty();
+                for i in 0..3 {
+                    if (mask >> i) & 1 != 0 {
+                        ty = &ty | &lit(i as i64);
+                    }
+                }
+                ty
+            }
+        }
+    };
+
+    for chain in [19u64, 68, 476] {
+        for trial in 0..8usize {
+            let mut pick = Rng::new(chain);
+            let mut rng = || pick.next_u64();
+            Type::forget_emptiness();
+            let tag = format!("_xrr2_q2b_{chain}_{trial}");
+            let is_bool = (rng() & 1) != 0;
+            let all = if is_bool { Type::bool() } else { Type::int() };
+            let mut defs = vec![def(
+                &format!("L{tag}"),
+                if trial & 1 == 1 {
+                    Expr::Union(vec![cons(Expr::Type(all.clone()), r(0)), nil()])
+                } else {
+                    Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))])
+                },
+            )];
+            let num_chains = 2 + (rng() % 3) as usize;
+            let mut endpoints = Vec::new();
+            for c in 0..num_chains {
+                let depth = 1 + (rng() % 4) as usize;
+                let allow_nil = (rng() & 1) != 0;
+                for k in 1..=depth {
+                    let h = head_for(rng(), is_bool);
+                    let prev = if k == 1 { 0 } else { defs.len() - 1 };
+                    let step = cons(Expr::Type(h), r(prev));
+                    let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                        if trial & 2 != 0 {
+                            Expr::Union(vec![step, nil()])
+                        } else {
+                            Expr::Union(vec![nil(), step])
+                        }
+                    } else {
+                        step
+                    };
+                    defs.push(def(&format!("C{c}_{k}{tag}"), body));
+                }
+                endpoints.push(defs.len() - 1);
+            }
+            let mut perm: Vec<usize> = (0..defs.len()).collect();
+            for i in (1..perm.len()).rev() {
+                let j = (prng.next_u64() as usize) % (i + 1);
+                perm.swap(i, j);
+            }
+            let (pdefs, inv) = permute_defs(defs, &perm);
+            let ts = Group::new(pdefs).unwrap().instance(vec![]);
+            let mut ep_order: Vec<usize> = (0..endpoints.len()).collect();
+            for i in (1..ep_order.len()).rev() {
+                let j = (prng.next_u64() as usize) % (i + 1);
+                ep_order.swap(i, j);
+            }
+            let u = ep_order
+                .into_iter()
+                .map(|idx| &ts[inv[endpoints[idx]]])
+                .fold(Type::empty(), |acc, x| &acc | x);
+            let l = list_named(all, &tag);
+            let t_perm = &l - &u;
+            assert_eq!(
+                t_perm.verdict(),
+                Verdict::Inhabited,
+                "seed {chain} trial {trial} failed order invariance"
+            );
+        }
+    }
+}
+
+fn xr_r2_build_single_bucket_escape(n: usize, tag: &str) -> Type {
+    let big = Type::lit(&Value::int("9223372036854775808".parse().unwrap())).unwrap();
+    let p = cons_of(&lit(1) | &big, cons_of(Type::int(), Type::atom("nil")));
+    let g1 = Group::new(vec![
+        def(
+            &format!("L1{tag}"),
+            Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+        ),
+        def(&format!("Tka{tag}"), cons(Expr::Type(lit(1)), r(0))),
+        def(&format!("Dka{tag}"), cons(Expr::Type(big.clone()), r(1))),
+        def(
+            &format!("Tkb{tag}"),
+            cons(Expr::Type(&Type::int() - &lit(1)), r(0)),
+        ),
+        def(&format!("Dkb{tag}"), cons(Expr::Type(big), r(3))),
+    ])
+    .expect("single-bucket group 1")
+    .instance(vec![]);
+
+    let mut defs = Vec::with_capacity(2 * n + 4);
+    defs.push(def(
+        &format!("L2{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(Type::int()), r(0))]),
+    ));
+    let mut endpoints = Vec::with_capacity(n + 1);
+    for q in 1..=n {
+        let tail_idx = defs.len();
+        defs.push(def(
+            &format!("Tq_{q}{tag}"),
+            cons(Expr::Type(lit(q as i64)), r(0)),
+        ));
+        let head_idx = defs.len();
+        defs.push(def(
+            &format!("Cq_{q}{tag}"),
+            cons(Expr::Type(lit(1)), r(tail_idx)),
+        ));
+        endpoints.push(head_idx);
+    }
+    let mut lits: Vec<Type> = (1..=n).map(|q| lit(q as i64)).collect();
+    while lits.len() > 1 {
+        let mut next = Vec::with_capacity(lits.len().div_ceil(2));
+        let mut it = lits.into_iter();
+        while let Some(a) = it.next() {
+            match it.next() {
+                Some(b) => next.push(&a | &b),
+                None => next.push(a),
+            }
+        }
+        lits = next;
+    }
+    let not_one_to_n = &Type::int() - &lits[0];
+    let cov_tail = defs.len();
+    defs.push(def(
+        &format!("Tcov{tag}"),
+        cons(Expr::Type(not_one_to_n), r(0)),
+    ));
+    let cov_head = defs.len();
+    defs.push(def(
+        &format!("Dcov{tag}"),
+        cons(Expr::Type(Type::int()), r(cov_tail)),
+    ));
+    endpoints.push(cov_head);
+    let ts = Group::new(defs)
+        .expect("single-bucket group 2")
+        .instance(vec![]);
+    let mut layer: Vec<Type> = vec![g1[2].clone(), g1[4].clone()];
+    layer.extend(endpoints.into_iter().map(|i| ts[i].clone()));
+    while layer.len() > 1 {
+        let mut next = Vec::with_capacity(layer.len().div_ceil(2));
+        let mut it = layer.into_iter();
+        while let Some(a) = it.next() {
+            match it.next() {
+                Some(b) => next.push(&a | &b),
+                None => next.push(a),
+            }
+        }
+        layer = next;
+    }
+    &p - &layer[0]
+}
+
+/// Q2(f) Bench 1 (Gemini R2): `n = 512` vs `8n = 4096` distinct cofinite partners in one `U1` bucket.
+/// Negative controls: fails at `4091b22e5` (`Refused(Fork)`) and fails `T(8n)/T(n)` on `q2n+` (`36.1x`).
+#[test]
+fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
+    let n = 512usize;
+    let (s_runs, l_runs) = scaling::Meter::new().runs();
+    let small: Vec<Type> = (0..s_runs)
+        .map(|i| xr_r2_build_single_bucket_escape(n, &format!("_xrb_s_{i}")))
+        .collect();
+    let large: Vec<Type> = (0..l_runs)
+        .map(|i| xr_r2_build_single_bucket_escape(8 * n, &format!("_xrb_l_{i}")))
+        .collect();
+    let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    scaling::check_order(
+        "Q2(f) escape single-bucket cofinite intersection",
+        n,
+        1,
+        |k| {
+            Type::forget_emptiness();
+            let t = if k == n {
+                &small[si.fetch_add(1, Relaxed)]
+            } else {
+                &large[li.fetch_add(1, Relaxed)]
+            };
+            assert_eq!(t.verdict(), Verdict::Empty, "single-bucket at {k}");
+        },
+    );
+}
+
+fn xr_bucket(n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), &format!("_xrb{tag}"));
+    let mut a_lits: Vec<Type> = (0..n as i64).map(lit).collect();
+    while a_lits.len() > 1 {
+        let mut next = Vec::with_capacity(a_lits.len().div_ceil(2));
+        let mut it = a_lits.into_iter();
+        while let Some(x) = it.next() {
+            match it.next() {
+                Some(y) => next.push(&x | &y),
+                None => next.push(x),
+            }
+        }
+        a_lits = next;
+    }
+    let a = a_lits.pop().unwrap_or_else(Type::empty);
+    let not_a = &Type::int() - &a;
+    let p = cons_of(Type::int(), cons_of(Type::int(), Type::atom("nil")));
+    let mut row_list: Vec<Type> = (0..n as i64)
+        .map(|k| {
+            cons_of(
+                not_a.clone(),
+                cons_of(&Type::int() - &lit(1000 + k), l.clone()),
+            )
+        })
+        .collect();
+    while row_list.len() > 1 {
+        let mut next = Vec::with_capacity(row_list.len().div_ceil(2));
+        let mut it = row_list.into_iter();
+        while let Some(x) = it.next() {
+            match it.next() {
+                Some(y) => next.push(&x | &y),
+                None => next.push(x),
+            }
+        }
+        row_list = next;
+    }
+    &p - &row_list[0]
+}
+
+/// Q2(f) Bench 2 (Claude R2): `n` rows sharing a size-`n` anchor `A = {0, .., n-1}` (`n = 64` vs `8n = 512`).
+/// Negative controls: fails at `4091b22e5` (`>24x`), fails on `q2n+` (`36x`), and fails on `g2` (`>24x`)
+/// because `ns.ints(&r[0])`, `pl[1].minus(&h0)`, `orig_live`, `U1`, and `ids` cloned and hashed
+/// `BTreeSet<Value>` of size `n` once per row (`Theta(n^2)`). Passes in `O(n log n)` once `Ints`
+/// wraps `Rc<BTreeSet<Value>>` with precomputed hash and memoized place-1 `minus`.
+#[test]
+fn xr_r2_bench_escape_bucket_scales() {
+    let inputs = scaling::inputs(64, |m| xr_bucket(m, &format!("b{m}")));
+    scaling::check_order(
+        "Q2(f) escape shared-anchor bucket (chain_verdict)",
+        64,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
+        },
+    );
+}
+
+#[test]
+fn xr_r2_q2d_k80_both_orders_and_forked_box_outside_cpoly() {
+    let l = list(Type::int());
+    let pair = |a: &Type, b: &Type, rev: bool| {
+        if rev {
+            Type::tuple(vec![b.clone(), a.clone()])
+        } else {
+            Type::tuple(vec![a.clone(), b.clone()])
+        }
+    };
+    let (ones, twos) = (list(lit(1)), list(lit(2)));
+    let (even, odd) = (period(2, 0), period(2, 1));
+
+    for rev in [false, true] {
+        Type::forget_emptiness();
+        let fe = [
+            pair(&ones, &even, rev),
+            pair(&twos, &odd, rev),
+            pair(&(&l - &ones), &even, rev),
+            pair(&(&l - &twos), &odd, rev),
+        ]
+        .iter()
+        .fold(pair(&l, &l, rev), |t, x| &t - x);
+        assert_eq!(fe.verdict(), Verdict::Empty, "fork_empty rev={rev}");
+    }
+
+    for rev in [false, true] {
+        let fpl =
+            &(&pair(&l, &l, rev) - &pair(&ones, &even, rev)) - &pair(&(&l - &ones), &odd, rev);
+        let oot = &(&pair(&(&ones | &twos), &l, rev) - &pair(&ones, &even, rev))
+            - &pair(&twos, &odd, rev);
+        let jnd = &fpl | &(&pair(&twos, &even, rev) - &pair(&twos, &l, rev));
+        for (label, t) in [
+            ("forked_pair_left", fpl),
+            ("ones_or_twos", oot),
+            ("joined", jnd),
+        ] {
+            Type::forget_emptiness();
+            assert_eq!(
+                t.verdict(),
+                Verdict::Inhabited,
+                "K80 {label} rev={rev} must stay Inhabited"
+            );
+        }
+    }
+
+    let l12 = list(&lit(1) | &lit(2));
+    let l23 = list(&lit(2) | &lit(3));
+    let mut verdicts = Vec::new();
+    for rev in [false, true] {
+        for swap_sub in [false, true] {
+            Type::forget_emptiness();
+            let base = pair(&(&ones | &twos), &(&l12 | &l23), rev);
+            let s1 = pair(&ones, &l12, rev);
+            let s2 = pair(&twos, &l23, rev);
+            let t = if swap_sub {
+                &(&base - &s2) - &s1
+            } else {
+                &(&base - &s1) - &s2
+            };
+            verdicts.push((rev, swap_sub, t.verdict()));
+        }
+    }
+    let first = verdicts[0].2;
+    for &(rev, swap_sub, v) in &verdicts[1..] {
+        assert_eq!(
+            v, first,
+            "forked box outside C_poly changed verdict at rev={rev}, swap_sub={swap_sub}: {verdicts:?}"
+        );
+    }
+}
+
+/// Q2(b) of XR-group-order-5 (Claude seat), the carrier merge of the prefix-chain planner. The
+/// positive list has items in {1}, so a head is read as its meet with {1}. The subtrahend
+/// `C = nil | cons(1, M)` ends in a second carrier `M = nil | cons(h, M)`:
+/// - `same`: h = {1, 5}. M holds [5] and the positive carrier does not, but their heads agree
+///   on {1}: every list of ones is in C, Empty.
+/// - `exact`: h = {1}. M equals the positive carrier: Empty.
+/// - `other`: h = {5}. [1, 1] is in no arm of C: Inhabited.
+///
+/// Each expected answer is checked against the list oracle first.
+#[test]
+fn xr_r2_carriers_equal_on_the_positive_alphabet_are_decided_as_the_oracle_says() {
+    let samples = [Value::Int(0), Value::Int(1), Value::Int(5)];
+    let one = lit(1);
+    let mut out = Vec::new();
+    for (name, h, want) in [
+        ("same", &lit(1) | &lit(5), Verdict::Empty),
+        ("exact", lit(1), Verdict::Empty),
+        ("other", lit(5), Verdict::Inhabited),
+    ] {
+        Type::forget_emptiness();
+        let tag = format!("_xr2car_{name}");
+        let defs = vec![
+            def(
+                &format!("M{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(h), r(0))]),
+            ),
+            def(
+                &format!("C{tag}"),
+                Expr::Union(vec![nil(), cons(Expr::Type(one.clone()), r(0))]),
+            ),
+        ];
+        let ts = Group::new(defs).unwrap().instance(vec![]);
+        let t = &list_named(one.clone(), &tag) - &ts[1];
+        let inhabited = list_oracle_inhabited(&t, &samples, 4);
+        assert_eq!(inhabited, want == Verdict::Inhabited, "oracle {name}: {t}");
+        let v = t.verdict();
+        if v != want {
+            out.push(format!("{name}: {v:?}, want {want:?}: {t}"));
+        }
+    }
+    assert!(out.is_empty(), "{}", out.join("\n"));
+}
+
+/// Where `chain_verdict` answers a case that older tests pinned as declined, the answer agrees
+/// with the list oracle: the `clstaggerholesout` prefix chain at n = 1 and 2, and the
+/// crossing-atom cases of the r8 laminar test.
+#[test]
+fn xr_r2_new_chain_answers_agree_with_the_oracle() {
+    let mut out = Vec::new();
+    for n in 1..=2usize {
+        Type::forget_emptiness();
+        let t = rfx_case("clstaggerholesout", n, &format!("_xr2chs{n}"));
+        let samples: Vec<Value> = (0..=(2 * n as i64 + 3)).map(Value::Int).collect();
+        let want = if list_oracle_inhabited(&t, &samples, 2 * n + 1) {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        let c = t.chain_verdict();
+        if c.is_some() && c != Some(want) {
+            out.push(format!("clstaggerholesout {n}: {c:?} vs {want:?}"));
+        }
+    }
+    let l = list_named(Type::int(), "_xr2r8");
+    let p = cons_of(
+        &(&lit(0) | &lit(1)) | &lit(2),
+        cons_of(lit(7), Type::atom("nil")),
+    );
+    let f = |s: Type| cons_of(&Type::int() - &s, l.clone());
+    let (f01, f12, f02) = (
+        f(&lit(0) | &lit(1)),
+        f(&lit(1) | &lit(2)),
+        f(&lit(0) | &lit(2)),
+    );
+    let samples: Vec<Value> = (0..=8).map(Value::Int).collect();
+    for (name, t) in [
+        ("cross_inhab", &p - &(&f01 | &f12)),
+        ("cross_empty", &p - &(&(&f01 | &f12) | &f02)),
+    ] {
+        Type::forget_emptiness();
+        let want = if list_oracle_inhabited(&t, &samples, 3) {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        let c = t.chain_verdict();
+        if c.is_some() && c != Some(want) {
+            out.push(format!("r8 {name}: {c:?} vs {want:?}"));
+        }
+    }
+    assert!(out.is_empty(), "{}", out.join("\n"));
+}
+
+#[test]
+fn xr_r2_escape_bucket_is_decided_inhabited() {
+    for n in [2, 4, 8] {
+        Type::forget_emptiness();
+        let t = xr_bucket(n, &format!("d{n}"));
+        assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "chain n={n}");
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "verdict n={n}");
+    }
+}
+
+/// A flat-difference chain of four members with every tuple widened to `w` components: the
+/// extra components are `#a | #b`, the first box is `(#a, #b, #a | #b, ..)`, and with `columns`
+/// each extra place j also has the box with `#a` at j and `#a | #b` elsewhere: every cell is
+/// flat. Inhabited: `#a` ends the chain.
+fn xr_wide_chain(w: usize, columns: bool, tag: &str) -> Type {
+    let m = 4;
+    let a = || Expr::Type(Type::atom("a"));
+    let b = || Expr::Type(Type::atom("b"));
+    let pad = || Expr::Union(vec![a(), b()]);
+    let mut defs = Vec::new();
+    for i in 0..m {
+        let mut first = vec![r(i), r(i + 1)];
+        first.extend((2..w).map(|_| pad()));
+        let mut second = vec![
+            Expr::Union(vec![b(), r(i + 1)]),
+            Expr::Union(vec![b(), r(i)]),
+        ];
+        second.extend((2..w).map(|_| pad()));
+        let mut box0 = vec![a(), b()];
+        box0.extend((2..w).map(|_| pad()));
+        let mut boxes = vec![Expr::Tuple(box0)];
+        if columns {
+            for j in 2..w {
+                boxes.push(Expr::Tuple(
+                    (0..w).map(|k| if k == j { a() } else { pad() }).collect(),
+                ));
+            }
+        }
+        let body = Expr::Union(vec![
+            Expr::Tuple(first),
+            Expr::Diff(Box::new(Expr::Tuple(second)), Box::new(Expr::Union(boxes))),
+        ]);
+        defs.push(def(&format!("XRW{tag}_{i}"), body));
+    }
+    let mut end = vec![r(m), r(m)];
+    end.extend((2..w).map(|_| pad()));
+    defs.push(def(
+        &format!("XRW{tag}_end"),
+        Expr::Union(vec![Expr::Tuple(end), a()]),
+    ));
+    Group::new(defs).unwrap().instance(vec![]).remove(0)
+}
+
+#[test]
+fn xr_r2_wide_chain_is_inhabited() {
+    for (w, columns) in [(3, false), (6, false), (3, true), (6, true)] {
+        Type::forget_emptiness();
+        let t = xr_wide_chain(w, columns, &format!("d{w}{columns}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "w={w} columns={columns}");
+    }
+}
+
+#[test]
+fn xr_r2_bench_wide_chain_scales() {
+    let inputs = scaling::inputs(8, |w| xr_wide_chain(w, false, &format!("b{w}")));
+    scaling::check_order("XR2 wide chain, width n, one box", 8, 1, |w| {
+        Type::forget_emptiness();
+        assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
+    });
+}
+
+/// Width n and n boxes: the input has n² components, so power 2 is the input size.
+#[test]
+fn xr_r2_bench_wide_chain_many_boxes_scales() {
+    let inputs = scaling::inputs(8, |w| xr_wide_chain(w, true, &format!("c{w}")));
+    scaling::check_order("XR2 wide chain, width n, n boxes", 8, 2, |w| {
+        Type::forget_emptiness();
+        assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
+    });
+}
+
+/// [`xr_bucket`] with the anchor `A = {0}` of size 1: the same n rows in one bucket, with a
+/// constant cost per row. The control for the size of `A` in `xr_r2_bench_escape_bucket_scales`.
+fn xr_bucket_small_anchor(n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), &format!("_xrs{tag}"));
+    let not_a = &Type::int() - &lit(0);
+    let p = cons_of(Type::int(), cons_of(Type::int(), Type::atom("nil")));
+    let rows = (0..n as i64).fold(Type::empty(), |u, k| {
+        &u | &cons_of(
+            not_a.clone(),
+            cons_of(&Type::int() - &lit(1000 + k), l.clone()),
+        )
+    });
+    &p - &rows
+}
+
+#[test]
+fn xr_r2_bench_escape_bucket_small_anchor_scales() {
+    let inputs = scaling::inputs(16, |m| xr_bucket_small_anchor(m, &format!("s{m}")));
+    scaling::check_order(
+        "XR2 escape bucket, anchor of size 1 (chain_verdict)",
+        16,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
+        },
+    );
+}

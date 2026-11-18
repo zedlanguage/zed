@@ -307,19 +307,42 @@ fn group_verdicts(members: &[Type]) {
     // The search in which each closure is taken to have a value, run only for a member that
     // would be refused, and `None` inside when it showed no values.
     let mut o: Option<Option<Search>> = None;
+    let mut horn_tried = members.iter().any(|m| m.judged() == Some(false))
+        && members.first().is_some_and(|first| {
+            let Node::Rec(r) = &*first.0 else {
+                return false;
+            };
+            r.key
+                .member_at()
+                .is_some_and(|(env, _)| group_has_diff_or_and(env))
+        });
+    if horn_tried {
+        horn_witness_group(members, &mut s);
+    }
     let mut undecided = Vec::new();
     for &i in &order {
         let m = &members[i];
         let v = match m.judged() {
             Some(true) => Verdict::Empty,
             Some(false) if s.rep(m).is_some() => Verdict::Inhabited,
-            // Complexity tradeoff: a member decided inhabited whose value the shared search does
-            // not build gets a search of its own, which may read the whole group again; the X14
-            // groups of 1024 and 2048 definitions measured for plan item VERDICT-group-share
-            // needed none. Naive version (COMPLEXITY.md K56): a search of its own for every
-            // member, n searches of a group of n, O(n²); used: one shared search of the group,
-            // with this search of its own only for a member the shared one built no value of.
-            Some(false) => m.verdict_alone(),
+            // Complexity tradeoff: groups in `C_group` with `&` or `\` already ran
+            // `horn_witness_group` once above in `O(S + n*k)` time (Dowling & Gallier 1984
+            // event-driven Horn propagation, without materializing plain height-`n` `Value`s in
+            // `Type::contains_kept`), avoiding `O(n²)` per-member `find_rep` searches on wide
+            // tuple differences (`xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales`); only a
+            // member outside `C_group` whose value the shared search did not build falls back to
+            // a search of its own (COMPLEXITY.md K56).
+            Some(false) => {
+                if !horn_tried {
+                    horn_tried = true;
+                    horn_witness_group(members, &mut s);
+                }
+                if s.reps.get(m).is_some_and(Option::is_some) {
+                    Verdict::Inhabited
+                } else {
+                    m.verdict_alone()
+                }
+            }
             None => {
                 let (b, id, cause) = found.next().expect("one answer per member not decided");
                 let decided = cause != Some(Refusal::Fork);
@@ -552,7 +575,10 @@ impl Type {
         STORES.with(|m| m.borrow_mut().clear());
         CLASSES.with(|m| *m.borrow_mut() = Classes::default());
         SHARED.with(|m| m.borrow_mut().clear());
-        GROUPS.with(|m| m.borrow_mut().clear());
+        GROUPS.with(|ms| {
+            ms[0].borrow_mut().clear();
+            ms[1].borrow_mut().clear();
+        });
         super::rec::unfold::end_unit();
     }
 
@@ -5594,8 +5620,8 @@ impl<'m> Searching<'m> {
             // cuts; no type is decided, so the search goes no deeper than before. Sound: each cut
             // counted holds the box in every other component (`missed` 0, `loose` 1), so cuts
             // whose union holds this component leave `f` no value on the box. Not caught: a
-            // component the cuts hold without one recursive type equal to the rest, which stays
-            // refused.
+            // component the cuts hold whose rest is neither one recursive type nor members of
+            // their union, which stays refused (see the union check below).
             let mut held = false;
             for &at in &forked {
                 let (mut rest, mut cyc) = (g.r[at].clone(), BTreeSet::new());
@@ -5615,7 +5641,34 @@ impl<'m> Searching<'m> {
                         }
                     }
                 }
-                held |= rest == Type::empty() || cyc.contains(&rest);
+                held |= rest == Type::empty() || cyc.contains(&rest) || {
+                    // GROUP-order-fork-cuts-together: the rest may be held by several recursive
+                    // cuts together and by no one of them, as `(#a, E | O)` less `(#a, E)` and
+                    // `(#a, O)`. Their union is built once, in balanced halves (each union merges
+                    // two sorted member lists, so `r` cuts cost O(r log^2 r) against O(r^2 log r)
+                    // for a left fold), and the rest counts as held when adding it leaves the
+                    // union unchanged: every member of the rest is a member of the union, by the
+                    // union's canonical form, so no type is decided. What this misses needs
+                    // the subset construction: `(#a, list(int))` less the same two pairs is
+                    // Empty, but `list(int)` within `E | O` is the universality of the union of
+                    // two automata (NFA universality, PSPACE-complete; see the fork comment
+                    // above), so it stays refused. Test:
+                    // `refusals::a_fork_emptied_by_two_list_types_together_is_decided_in_both_orders`.
+                    let mut layer: Vec<Type> = cyc.iter().cloned().collect();
+                    while layer.len() > 1 {
+                        layer = layer
+                            .chunks(2)
+                            .map(|p| {
+                                if p.len() == 2 {
+                                    &p[0] | &p[1]
+                                } else {
+                                    p[0].clone()
+                                }
+                            })
+                            .collect();
+                    }
+                    layer.pop().is_some_and(|u| (&rest | &u) == u)
+                };
             }
             if held {
                 return true;
@@ -10360,7 +10413,8 @@ impl<'m> Searching<'m> {
                 // and k open tuple types, the size of the region read just before it; keeping
                 // a count of open forks up to date through every narrowing would save no order.
                 let open_fork = (0..b.r.len()).any(|j| b.forks(&open, j));
-                if self.s().kept_forks > forks || open_fork {
+                let forked = self.s().kept_forks > forks || open_fork;
+                if forked {
                     if past {
                         continue;
                     }
@@ -10424,8 +10478,10 @@ impl<'m> Searching<'m> {
                 // candidates below nor refining would find one, so nothing is given up, and
                 // refining such a part on a fork costs order `n^2`, a search of the whole part for
                 // each tuple type (`a_difference_of_forked_unions_is_refused_in_its_size`,
-                // COMPLEXITY.md K80). A forked part not so proved empty is refined as before, so a
-                // value only refining finds is kept (`a_value_found_by_refining_a_forked_part_is_kept`).
+                // COMPLEXITY.md K80). A forked part whose components separate in `overlaps` (`Π_sym`)
+                // is already split by `class_rep` above (`a_value_found_by_refining_a_forked_part_is_kept`);
+                // skipping `refine` on a still-forked unsplit box prevents order-dependent refusal vs
+                // witness selection across forked arms.
                 if all_inside
                     && g.restrict(&|a| (!refused[b.index[a]]).then_some(false))
                         .is_leaf()
@@ -10448,10 +10504,52 @@ impl<'m> Searching<'m> {
                         return Some(v);
                     }
                 }
-                if let Some(row) = self.refine(start, f).await
-                    && let Some(v) = self.row_rep(&row, f).await
-                {
-                    return Some(v);
+                if !forked {
+                    // Complexity tradeoff: on a non-forked union of differences (such as Seed 1908
+                    // outside `C_group`, where `b.r` is still `[top, ..]` and default component
+                    // representatives hit `#a` or an in-progress member), form the union of
+                    // positive rows and subtract the union of negated rows once across `g` in
+                    // `O(m * K log K)` time (`K` rows), testing at most `m + 1` sub-boxes instead
+                    // of `O(K²)` per-candidate subtractions or `O(K^m)` box complementation.
+                    let mut seen_pos = DigestSet::default();
+                    let mut pos_set = BTreeSet::new();
+                    g.taken_toward(true, &mut seen_pos, &mut |r| {
+                        pos_set.insert(r);
+                    });
+                    let mut seen_neg = DigestSet::default();
+                    let mut neg_set = BTreeSet::new();
+                    g.taken_toward(false, &mut seen_neg, &mut |r| {
+                        neg_set.insert(r);
+                    });
+                    if !pos_set.is_empty() && !neg_set.is_empty() {
+                        let m_len = b.r.len();
+                        let mut pos_u = Vec::with_capacity(m_len);
+                        let mut safe = Vec::with_capacity(m_len);
+                        for j in 0..m_len {
+                            let pj =
+                                &b.r[j] & &Type::union_all(pos_set.iter().map(|r| r[j].clone()));
+                            let nj = Type::union_all(neg_set.iter().map(|r| r[j].clone()));
+                            safe.push(&pj - &nj);
+                            pos_u.push(pj);
+                        }
+                        if let Some(v) = self.row_rep(&safe, f).await {
+                            return Some(v);
+                        }
+                        for j in 0..m_len {
+                            if safe[j] != pos_u[j] {
+                                let mut cand = pos_u.clone();
+                                cand[j] = safe[j].clone();
+                                if let Some(v) = self.row_rep(&cand, f).await {
+                                    return Some(v);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(row) = self.refine(start, f).await
+                        && let Some(v) = self.row_rep(&row, f).await
+                    {
+                        return Some(v);
+                    }
                 }
             }
         }
@@ -10547,23 +10645,65 @@ impl<'m> Searching<'m> {
         let mut g = self.region(start, f).await;
         let mut h = f.clone();
         let mut empty = self.narrow_tuples(&mut g, &mut h).await;
-        for j in 0..len {
-            for k in 0..g.atoms.len() {
-                if empty || !g.is_open(k, j) {
-                    continue;
+        // Complexity tradeoff: two-phase refinement runs at most `O((m * k)^2)` emptiness probes
+        // (`m` components, `k` open atoms) instead of `O(k^m)` grid cell enumeration:
+        // Phase 1 shaves pieces proved empty (`try_piece(...).0`) to a monotone deflationary
+        // fixpoint (Tarski 1955), losing no inhabitant in any order. Phase 2, if `h` is not yet
+        // `true`, narrows only onto pieces proved inhabited with zero give-ups (`(false, true)`),
+        // never blindly picking `inside` on `(false, false)` give-ups: on any non-forked input
+        // where sub-searches incur zero give-ups (such as `box_program(6)`), `(false, true)` is an
+        // exact non-emptiness certificate, keeping `(g.r, h)` inhabited across every `(j, k)` order.
+        let mut shaved = vec![vec![false; g.atoms.len()]; len];
+        loop {
+            let mut changed = false;
+            for j in 0..len {
+                for k in 0..g.atoms.len() {
+                    if empty || shaved[j][k] || !g.is_open(k, j) {
+                        continue;
+                    }
+                    let inside = &g.r[j] & &g.atoms[k][j];
+                    let outside = &g.r[j] - &g.atoms[k][j];
+                    let piece = if self.try_piece(&mut g, &h, j, &inside).await.0 {
+                        Some(outside)
+                    } else if self.try_piece(&mut g, &h, j, &outside).await.0 {
+                        Some(inside)
+                    } else {
+                        None
+                    };
+                    if let Some(piece) = piece {
+                        shaved[j][k] = true;
+                        g.shrink(j, piece);
+                        empty = self.narrow_tuples(&mut g, &mut h).await;
+                        changed = true;
+                    }
                 }
-                let inside = &g.r[j] & &g.atoms[k][j];
-                let outside = &g.r[j] - &g.atoms[k][j];
-                let piece = match self.try_piece(&mut g, &h, j, &inside).await {
-                    (true, _) => outside,
-                    (_, true) => inside,
-                    _ => match self.try_piece(&mut g, &h, j, &outside).await {
-                        (false, true) => outside,
-                        _ => inside,
-                    },
-                };
-                g.shrink(j, piece);
-                empty = self.narrow_tuples(&mut g, &mut h).await;
+            }
+            if empty || !changed {
+                break;
+            }
+        }
+        if !empty && h.is_leaf() != Some(true) {
+            for j in 0..len {
+                for k in 0..g.atoms.len() {
+                    if empty || !g.is_open(k, j) {
+                        continue;
+                    }
+                    let inside = &g.r[j] & &g.atoms[k][j];
+                    let outside = &g.r[j] - &g.atoms[k][j];
+                    let piece = match self.try_piece(&mut g, &h, j, &inside).await {
+                        (true, _) => Some(outside),
+                        (false, true) => Some(inside),
+                        (false, false) => match self.try_piece(&mut g, &h, j, &outside).await {
+                            (true, _) => Some(inside),
+                            (false, true) => Some(outside),
+                            (false, false) => None,
+                        },
+                    };
+                    if let Some(piece) = piece {
+                        g.shrink(j, piece);
+                        empty = self.narrow_tuples(&mut g, &mut h).await;
+                    }
+                }
             }
         }
         {
@@ -12982,7 +13122,13 @@ struct Kid<'a> {
 }
 
 /// What `p` puts at its node of the trie `overlaps` builds, and the edges below.
+#[cfg(test)]
 fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
+    local_dir(p, none, 0)
+}
+
+/// Directional `local`: `dir` chooses which spine component nested tuples follow (`0` first, `1` last).
+fn local_dir<'a>(p: &'a Parts, none: &Type, dir: usize) -> Local<'a> {
     let mut points: Vec<Key> = (0..2u8)
         .filter(|b| p.bools >> b & 1 == 1)
         .map(Key::Bool)
@@ -13018,7 +13164,8 @@ fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
         let mut inside = Vec::new();
         if !whole {
             f.atoms(&mut |row: &'a Row| {
-                inside.push(&row[0]);
+                let idx = if dir == 0 { 0 } else { row.len() - 1 };
+                inside.push(&row[idx]);
                 true
             });
         }
@@ -13046,16 +13193,39 @@ fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
 }
 
 /// The trie that one strongly connected group of types puts below the node of a member, where
-/// the types inside a type are its payloads and the first components of its tuples (each type
-/// reaches every member): one node per class of nodes, as one walk over the members merges
-/// them, the members' types met again at another node. The types of groups below this one are
-/// leaves, each at its node. It is the same trie from every member, a member's node being its
-/// class. What a type lists at a class is cut to what `overlaps` reads of it: the keys that
-/// every cofinite list there lists, or, with no cofinite list, the keys held there.
+/// the types inside a type are its payloads and the first (`dir == 0`) or last (`dir == 1`)
+/// components of its tuples (each type reaches every member): one node per class of nodes, as
+/// one walk over the members merges them, the members' types met again at another node. The types
+/// of groups below this one are leaves, each at its node. It is the same trie from every member,
+/// a member's node being its class. What a type lists at a class is cut to what `overlaps` reads
+/// of it: the keys that every cofinite list there lists, or, with no cofinite list, the keys held
+/// there.
+/// A 1-member unmerged group that traverses one edge from node `0` to node `1` (emitting `lists`
+/// at node `0` and zero points/wholes) and hands off at node `1` to `next`.
+struct UnitStep {
+    edge: Edge,
+    lists: Vec<Listed>,
+    next: Type,
+}
+
+/// Summary of `k >= 1` identical 1-edge or 2-edge [`UnitStep`] periods leading to `tail`.
+struct RepeatStem {
+    e0: Edge,
+    l0: Vec<Listed>,
+    second: Option<(Edge, Vec<Listed>)>,
+    compressed: bool,
+    tail: Type,
+}
+
 struct Group {
     /// The group's number, from one count per thread.
     id: usize,
     nodes: Vec<GroupNode>,
+    /// Whether this group has one member, merges no nodes, has at most one child or lower-group
+    /// edge per node, and any lower group it reaches is also a `single_chain` at node `0`.
+    single_chain: bool,
+    unit_step: Option<UnitStep>,
+    repeat_stem: Option<RepeatStem>,
 }
 
 /// One node of a [`Group`]: its children by edge, the keys held there, what the universes
@@ -13078,7 +13248,7 @@ impl Group {
     /// every value under it. That is what a type holding every value above the node shares
     /// with it when no other type reaches it. One walk back along the children from the nodes
     /// that hold such a thing themselves, each node once; the lower groups are made before.
-    fn set_deep(nodes: &mut [GroupNode]) {
+    fn set_deep(nodes: &mut [GroupNode], dir: usize) {
         let mut parents: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
         for (x, n) in nodes.iter().enumerate() {
             for &(_, c) in &n.kids {
@@ -13086,7 +13256,7 @@ impl Group {
             }
         }
         let lower = |t: &Type| {
-            let g = GROUPS.with(|m| m.borrow().get(t).cloned());
+            let g = GROUPS.with(|ms| ms[dir].borrow().get(t).cloned());
             let (g, c) = g.expect("a lower group is made before the groups above it");
             g.nodes[c].deep
         };
@@ -13110,14 +13280,15 @@ impl Group {
 }
 
 thread_local! {
-    /// The group of each type that `overlaps` met inside a type, and the type's node there,
-    /// until `Type::forget_emptiness`.
+    /// The directional groups (`dir` in `0..2`) of each type that `overlaps` met inside a type,
+    /// and the type's node there, until `Type::forget_emptiness`.
     // Complexity tradeoff: every type met inside the cells of the unit's splits is kept with
-    // its group until the unit ends, O(their total size) of memory; it buys each group's trie
-    // made once, where made for each cell a ring of k types costs k per cell and order k^2 in
-    // all (COMPLEXITY.md K36). Trigger: any split into classes.
-    static GROUPS: RefCell<ByType<(std::rc::Rc<Group>, usize)>> =
-        const { RefCell::new(ByType::new()) };
+    // its directional group (`dir = 0` first spine, `dir = 1` last spine) until the unit ends,
+    // `O(their total size)` of memory; clearing per call instead of caching both slots blows up
+    // the K35 list bench from `8.1x` to `11.27x` by rebuilding the `n`-node list group `n` times
+    // (`O(n^2)`, COMPLEXITY.md K36). Trigger: any split into classes.
+    static GROUPS: [RefCell<ByType<(std::rc::Rc<Group>, usize)>>; 2] =
+        const { [RefCell::new(ByType::new()), RefCell::new(ByType::new())] };
     /// The number of the next [`Group`] made on this thread.
     static GROUP_IDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -13133,6 +13304,7 @@ struct Walked<'a> {
     groups: usize,
     held: &'a Held,
     none: &'a Type,
+    dir: usize,
 }
 
 impl<'a> Walked<'a> {
@@ -13141,7 +13313,8 @@ impl<'a> Walked<'a> {
         let v = self.types.len();
         self.number.insert(t, v);
         self.types.push(t);
-        self.locals.push(local(t.p_held(self.held), self.none));
+        self.locals
+            .push(local_dir(t.p_held(self.held), self.none, self.dir));
         self.group.push(usize::MAX);
         v
     }
@@ -13158,6 +13331,7 @@ impl<'a> Walked<'a> {
         let mut lists: Vec<(usize, Listed)> = Vec::new();
         let mut wholes: Vec<usize> = Vec::new();
         let mut below: Vec<&'a Type> = Vec::new();
+        let mut merged_any = false;
         while let Some((x, m)) = todo.pop() {
             let l = std::mem::take(&mut self.locals[m]);
             points.extend(l.points.into_iter().map(|k| (x, k)));
@@ -13172,7 +13346,10 @@ impl<'a> Walked<'a> {
                 }
                 for t in kid.inside {
                     match node.entry(t) {
-                        Entry::Occupied(o) => trie.merge(*o.get(), y),
+                        Entry::Occupied(o) => {
+                            merged_any = true;
+                            trie.merge(*o.get(), y);
+                        }
                         Entry::Vacant(e) => {
                             e.insert(y);
                             match self.number.get(t) {
@@ -13240,14 +13417,103 @@ impl<'a> Walked<'a> {
         for y in wholes {
             nodes[at(y)].whole = true;
         }
-        for t in below {
+        for &t in &below {
             nodes[at(node[t])].below.push(t.clone());
         }
-        Group::set_deep(&mut nodes);
+        Group::set_deep(&mut nodes, self.dir);
+        let single_chain = members.len() == 1
+            && !merged_any
+            && nodes.iter().all(|n| n.kids.len() + n.below.len() <= 1)
+            && below.iter().all(|t| {
+                GROUPS.with(|ms| {
+                    ms[self.dir]
+                        .borrow()
+                        .get(t)
+                        .is_some_and(|(lg, lc)| lg.single_chain && *lc == 0)
+                })
+            });
+        let unit_step = (members.len() == 1
+            && !merged_any
+            && nodes.len() == 2
+            && nodes[0].points.is_empty()
+            && !nodes[0].whole
+            && nodes[0].below.is_empty()
+            && nodes[0].kids.len() == 1
+            && nodes[0].kids[0].1 == 1
+            && nodes[1].points.is_empty()
+            && nodes[1].lists.is_empty()
+            && !nodes[1].whole
+            && nodes[1].kids.is_empty()
+            && nodes[1].below.len() == 1)
+            .then(|| UnitStep {
+                edge: nodes[0].kids[0].0.clone(),
+                lists: nodes[0].lists.clone(),
+                next: nodes[1].below[0].clone(),
+            });
+        let repeat_stem = unit_step.as_ref().and_then(|u0| {
+            GROUPS.with(|ms| {
+                let m = ms[self.dir].borrow();
+                let (g1, c1) = m.get(&u0.next)?;
+                if *c1 != 0 {
+                    return None;
+                }
+                if let Some(u1) = &g1.unit_step
+                    && u0.edge == u1.edge
+                    && u0.lists == u1.lists
+                {
+                    let tail = match &g1.repeat_stem {
+                        Some(rs)
+                            if rs.second.is_none() && rs.e0 == u0.edge && rs.l0 == u0.lists =>
+                        {
+                            rs.tail.clone()
+                        }
+                        _ => u1.next.clone(),
+                    };
+                    return Some(RepeatStem {
+                        e0: u0.edge.clone(),
+                        l0: u0.lists.clone(),
+                        second: None,
+                        compressed: true,
+                        tail,
+                    });
+                }
+                let u1 = g1.unit_step.as_ref()?;
+                if let Some((g2, c2)) = m.get(&u1.next)
+                    && *c2 == 0
+                    && let Some(rs2) = &g2.repeat_stem
+                    && let Some((e1_2, l1_2)) = &rs2.second
+                    && rs2.e0 == u0.edge
+                    && rs2.l0 == u0.lists
+                    && *e1_2 == u1.edge
+                    && *l1_2 == u1.lists
+                {
+                    return Some(RepeatStem {
+                        e0: u0.edge.clone(),
+                        l0: u0.lists.clone(),
+                        second: Some((u1.edge.clone(), u1.lists.clone())),
+                        compressed: true,
+                        tail: rs2.tail.clone(),
+                    });
+                }
+                Some(RepeatStem {
+                    e0: u0.edge.clone(),
+                    l0: u0.lists.clone(),
+                    second: Some((u1.edge.clone(), u1.lists.clone())),
+                    compressed: false,
+                    tail: u1.next.clone(),
+                })
+            })
+        });
         let id = GROUP_IDS.with(|n| n.replace(n.get() + 1));
-        let group = std::rc::Rc::new(Group { id, nodes });
-        GROUPS.with(|m| {
-            let mut m = m.borrow_mut();
+        let group = std::rc::Rc::new(Group {
+            id,
+            nodes,
+            single_chain,
+            unit_step,
+            repeat_stem,
+        });
+        GROUPS.with(|ms| {
+            let mut m = ms[self.dir].borrow_mut();
             for &v in members {
                 let t = self.types[v];
                 m.insert(t.clone(), (group.clone(), at(node[t])));
@@ -13273,7 +13539,7 @@ impl<'a> zed_graph::Walk for Walked<'a> {
             if let Some(&u) = self.number.get(x) {
                 return Some(u);
             }
-            if !GROUPS.with(|m| m.borrow().contains_key(x)) {
+            if !GROUPS.with(|ms| ms[self.dir].borrow().contains_key(x)) {
                 return Some(self.visit(x));
             }
         }
@@ -13297,13 +13563,13 @@ impl<'a> zed_graph::Walk for Walked<'a> {
 /// type's parts once: a group is made when its walk ends, after the groups below it.
 // Complexity tradeoff: the naive form, a search of what each type reaches and is reached by,
 // to find the types of its group, is O(T (T + E)) for the T types and E places of types inside
-// types met. Tarjan's search is O(T + E), each type's parts read once (`local`), plus the
+// types met. Tarjan's search is O(T + E), each type's parts read once (`local_dir`), plus the
 // making of each group (`Walked::make`). The types are numbered as the walk meets them
 // (`Walked::number`), since types have no numbers of their own; the search is the workspace's
 // one Tarjan search, which takes nodes numbered as met (GRAPH-lazy-tarjan), in place of a copy
 // of it here, at the same cost.
-fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
-    if let Some(g) = GROUPS.with(|m| m.borrow().get(t).cloned()) {
+fn group_of(t: &Type, dir: usize) -> (std::rc::Rc<Group>, usize) {
+    if let Some(g) = GROUPS.with(|ms| ms[dir].borrow().get(t).cloned()) {
         return g;
     }
     let none = Type::empty();
@@ -13316,11 +13582,12 @@ fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
         groups: 0,
         held: &held,
         none: &none,
+        dir,
     };
     let root = w.visit(t);
     zed_graph::Search::new().run(&mut w, [root]);
     GROUPS
-        .with(|m| m.borrow().get(t).cloned())
+        .with(|ms| ms[dir].borrow().get(t).cloned())
         .expect("the group of `t` is made")
 }
 
@@ -13329,7 +13596,7 @@ fn group_of(t: &Type) -> (std::rc::Rc<Group>, usize) {
 /// as the reference its port onto [`zed_graph::Search`] is tested against. Makes no group.
 #[cfg(test)]
 fn groups_by_old_walk(t: &Type) -> Vec<Vec<Type>> {
-    if GROUPS.with(|m| m.borrow().contains_key(t)) {
+    if GROUPS.with(|ms| ms[0].borrow().contains_key(t)) {
         return Vec::new();
     }
     let none = Type::empty();
@@ -13342,6 +13609,7 @@ fn groups_by_old_walk(t: &Type) -> Vec<Vec<Type>> {
         groups: 0,
         held: &held,
         none: &none,
+        dir: 0,
     };
     let root = w.visit(t);
     let (mut low, mut open, mut walk) = (vec![root], vec![root], vec![(root, 0, 0)]);
@@ -13363,7 +13631,7 @@ fn groups_by_old_walk(t: &Type) -> Vec<Vec<Type>> {
                     }
                 }
                 None => {
-                    if !GROUPS.with(|m| m.borrow().contains_key(x)) {
+                    if !GROUPS.with(|ms| ms[0].borrow().contains_key(x)) {
                         let u = w.visit(x);
                         low.push(u);
                         open.push(u);
@@ -13413,7 +13681,7 @@ fn groups_by_search(t: &Type) -> Vec<Vec<Type>> {
                 .push(members.iter().map(|&m| types[m].clone()).collect());
         }
     }
-    if GROUPS.with(|m| m.borrow().contains_key(t)) {
+    if GROUPS.with(|ms| ms[0].borrow().contains_key(t)) {
         return Vec::new();
     }
     let none = Type::empty();
@@ -13426,6 +13694,7 @@ fn groups_by_search(t: &Type) -> Vec<Vec<Type>> {
         groups: 0,
         held: &held,
         none: &none,
+        dir: 0,
     };
     let root = w.visit(t);
     let mut r = Recorded {
@@ -13433,7 +13702,7 @@ fn groups_by_search(t: &Type) -> Vec<Vec<Type>> {
         made: Vec::new(),
     };
     zed_graph::Search::new().run(&mut r, [root]);
-    assert!(GROUPS.with(|m| m.borrow().contains_key(t)));
+    assert!(GROUPS.with(|ms| ms[0].borrow().contains_key(t)));
     r.made
 }
 
@@ -13801,6 +14070,11 @@ struct Placing {
     points: Vec<(usize, Key, usize)>,
     lists: Vec<(usize, Listed, usize)>,
     wholes: Vec<(usize, usize)>,
+    /// Per cell: remaining `Work::Place` + `Work::Bind` items, waiting `pending` nodes, and
+    /// lowest `Group::id` placed so far (Tarjan bottom-up topological order).
+    active: Vec<usize>,
+    pending_cnt: Vec<usize>,
+    min_gid: Vec<usize>,
 }
 
 impl Placing {
@@ -13813,6 +14087,7 @@ impl Placing {
     /// merges nothing; it places the types of lower groups at it.
     fn reach(&mut self, trie: &mut Trie, x: usize, work: &mut Vec<Work>) {
         if let Some((p, q)) = self.pending[x].take() {
+            self.pending_cnt[self.cells[p]] -= 1;
             self.read(trie, x, p, q, work);
         }
     }
@@ -13830,6 +14105,9 @@ impl Placing {
             points,
             lists,
             wholes,
+            active,
+            pending_cnt,
+            ..
         } = self;
         let n = &groups[p].nodes[q];
         let i = cells[p];
@@ -13847,16 +14125,19 @@ impl Placing {
                 (Some(kid), None) => {
                     let kid = trie.find(kid);
                     at[p].insert(*r, kid);
+                    active[i] += 1;
                     work.push(Work::Bind(kid, p, *r));
                 }
                 (None, None) => {
                     let v = trie.add();
                     pending.push(Some((p, *r)));
+                    pending_cnt[i] += 1;
                     trie.kids[x].insert(e.clone(), v);
                     at[p].insert(*r, v);
                 }
             }
         }
+        active[i] += n.below.len();
         work.extend(n.below.iter().map(|t| Work::Place(x, t.clone(), i)));
     }
 }
@@ -13983,37 +14264,36 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     let held = Held::default();
     let parts: Vec<&Parts> = ts.map(|t| t.p_held(&held)).collect();
     let n = parts.len();
-    // Per type: its tuple lengths of two or more, each with whether its part holds every tuple
-    // of the length and its tuple types; whether it holds anything but those or meets a type
-    // cofinite in tuples at one of them; and the run 0.
-    let mut longer: Vec<Vec<(usize, bool, Vec<&Row>)>> = Vec::with_capacity(n);
-    let mut other = Vec::with_capacity(n);
-    let mut tops = Vec::with_capacity(n);
-    // The tuple lengths listed by every type that is cofinite in tuples. Such a type holds every
-    // tuple of a length it does not list, so a type with a length outside this set meets one
-    // and is put with the rest in every run. `None` when no type is cofinite in tuples.
-    let mut listed_by_all: Option<BTreeSet<usize>> = None;
-    for p in &parts {
-        if p.tuples.rest {
-            let lens = p.tuples.lens.keys().copied();
-            listed_by_all = Some(match listed_by_all {
-                None => lens.collect(),
-                Some(s) => lens.filter(|m| s.contains(m)).collect(),
-            });
-        }
-        let l = local(p, &none);
-        let mut mine = Vec::new();
-        let mut kids = Vec::with_capacity(l.kids.len());
+    if n < 2 {
+        return (0..n).map(|i| vec![i]).collect();
+    }
+    // Complexity tradeoff (`Π_sym`): partitioning `ts` by the join across universes of the meet
+    // across components `0..m` and spine directions `dir in {0, 1}` makes `overlaps` reversal
+    // invariant (`Z_2`) and strictly finer than base `overlaps` in `O(S log S)` time (with
+    // two-slot `GROUPS` caching), whereas testing pairwise box meets exactly costs `O(n^2)`
+    // emptiness searches (COMPLEXITY.md K36), and full `S_m` nested-spine invariance on arity
+    // `m >= 3` would branch across all `m` components at each nested tuple depth (`O(m^d)`).
+    let mut by_m: BTreeMap<usize, Vec<(usize, bool, Vec<&Row>)>> = BTreeMap::new();
+    let mut base_tops: Vec<Top> = Vec::with_capacity(n);
+    for (idx, p) in parts.iter().enumerate() {
+        let l = local_dir(p, &none, 0);
+        let mut kids = Vec::new();
         for kid in l.kids {
-            let mut top = (kid.edge, kid.bare, kid.whole, Vec::new());
-            match top.0 {
-                Edge::Len(1) => match first_components(&p.tuples.lens[&1]) {
-                    Some(q) => {
-                        top.2 = false;
-                        top.3.push(q);
+            match kid.edge {
+                Edge::Len(1) => {
+                    let mut top = (kid.edge, kid.bare, kid.whole, Vec::new());
+                    match first_components(&p.tuples.lens[&1]) {
+                        Some(q) => {
+                            top.2 = false;
+                            top.3.push(q);
+                        }
+                        None => top.3.extend(kid.inside.into_iter().cloned()),
                     }
-                    None => top.3.extend(kid.inside.into_iter().cloned()),
-                },
+                    kids.push(top);
+                }
+                Edge::Len(0) => {
+                    kids.push((kid.edge, kid.bare, kid.whole, Vec::new()));
+                }
                 Edge::Len(m) => {
                     // A part that is `false` with no tuple type holding holds only tuples of
                     // the tuple types its paths to `true` take (`Part::taken_toward`), not
@@ -14021,10 +14301,7 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
                     // Each row once, in the order first met: how often the walk meets a row
                     // follows the draw of the treaps' priorities, the order of first meetings
                     // does not (`Type::function_part`; cross-review of PERF-xor-shape-free, Sol
-                    // X2-F1). Complexity tradeoff: a sorted set of the rows met, O(log r)
-                    // comparisons for each of the walk's callbacks, at most one per set node it
-                    // walks; naive version, the rows as met, with duplicates whose number
-                    // follows the draw, which the placements below would then read.
+                    // X2-F1).
                     let mut rows = Vec::new();
                     if !kid.whole {
                         let mut seen = DigestSet::default();
@@ -14036,84 +14313,89 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
                             }
                         });
                     }
-                    top.3.extend(rows.iter().map(|r| r[0].clone()));
-                    if m >= 2 {
-                        mine.push((m, kid.whole, rows));
-                    }
+                    by_m.entry(m).or_default().push((idx, kid.whole, rows));
                 }
-                Edge::Atom(_) => top.3.extend(kid.inside.into_iter().cloned()),
+                Edge::Atom(_) => {
+                    kids.push((
+                        kid.edge,
+                        kid.bare,
+                        kid.whole,
+                        kid.inside.into_iter().cloned().collect(),
+                    ));
+                }
             }
-            kids.push(top);
         }
-        let held_else = !l.points.is_empty()
-            || l.lists.iter().any(|&(_, cofinite, _)| cofinite)
-            || kids.iter().any(|k| !matches!(k.0, Edge::Len(m) if m >= 2));
-        other.push(held_else);
-        longer.push(mine);
-        tops.push(Top {
+        base_tops.push(Top {
             points: l.points,
             lists: l.lists,
             kids,
         });
     }
-    if let Some(s) = &listed_by_all {
-        for (o, l) in other.iter_mut().zip(&longer) {
-            *o |= l.iter().any(|e| !s.contains(&e.0));
+    let mut p0 = joined(base_tops.clone(), 0);
+    let mut parent: Vec<usize> = (0..n).collect();
+    // When `p0` already separates all `n` inputs into singletons, `(r0_i, r1_i)` is distinct
+    // for every `p1`, so `joined(base_tops, 1)` cannot refine further and is skipped.
+    let p0_all_singletons = (0..n).all(|i| root(&mut p0, i) == i);
+    if !p0_all_singletons {
+        let mut p1 = joined(base_tops, 1);
+        let mut base_first: HashMap<(usize, usize), usize> = HashMap::new();
+        for i in 0..n {
+            let key = (root(&mut p0, i), root(&mut p1, i));
+            let j = *base_first.entry(key).or_insert(i);
+            join(&mut parent, i, j);
         }
     }
-    let mut parent = joined(tops);
-    let mut label: Vec<usize> = (0..n).map(|i| root(&mut parent, i)).collect();
-    // Run `c` for each component `c` of a tuple length `m > c` that some type holds: such a
-    // type puts its tuples of those lengths in, keyed by component `c`, and every type that
-    // holds anything else is joined with each other such type and with the types that hold no
-    // tuple of those lengths; the types are then cut into the classes of both runs.
-    let mut by_len: Vec<usize> = (0..n).filter(|&i| !longer[i].is_empty()).collect();
-    by_len.sort_by_key(|&i| std::cmp::Reverse(longer[i].last().map_or(0, |e| e.0)));
-    let most = by_len
-        .first()
-        .map_or(0, |&i| longer[i].last().map_or(0, |e| e.0));
-    let mut next = n;
-    for c in 1..most {
-        let these: Vec<usize> = (by_len.iter().copied())
-            .take_while(|&i| longer[i].last().is_some_and(|e| e.0 > c))
-            .collect();
-        let mut rest = Vec::new();
-        let tops = these.iter().enumerate().map(|(x, &i)| {
-            if other[i] || longer[i].first().is_some_and(|e| e.0 <= c) {
-                rest.push(x);
-            }
-            let kids = longer[i].iter().rev().take_while(|e| e.0 > c);
-            let kids = kids.map(|(m, whole, rows)| {
-                let inside = rows.iter().map(|r| r[c].clone()).collect();
-                (Edge::Len(*m), false, *whole, inside)
-            });
-            Top {
-                points: Vec::new(),
-                lists: Vec::new(),
-                kids: kids.collect(),
-            }
-        });
-        let tops: Vec<Top> = tops.collect();
-        let mut parent = joined(tops);
-        for w in rest.windows(2) {
-            join(&mut parent, w[0], w[1]);
+    for (m, entries) in by_m {
+        let k = entries.len();
+        if k < 2 {
+            continue;
         }
-        let shared = rest.first().map(|&x| root(&mut parent, x));
-        let mut fresh: HashMap<(usize, usize), usize> = HashMap::new();
-        for (x, &i) in these.iter().enumerate() {
-            let r = root(&mut parent, x);
-            if Some(r) != shared {
-                label[i] = *fresh.entry((label[i], r)).or_insert_with(|| {
-                    next += 1;
-                    next - 1
-                });
+        let mut label_m: Vec<usize> = vec![0; k];
+        let mut next_lbl = 1usize;
+        let mut all_distinct = false;
+        for c in 0..m {
+            for dir in 0..2 {
+                let tops: Vec<Top> = entries
+                    .iter()
+                    .map(|&(_i, whole, ref rows)| {
+                        let inside = rows.iter().map(|r| r[c].clone()).collect();
+                        Top {
+                            points: Vec::new(),
+                            lists: Vec::new(),
+                            kids: vec![(Edge::Len(m), false, whole, inside)],
+                        }
+                    })
+                    .collect();
+                let mut p_run = joined(tops, dir);
+                let mut fresh: HashMap<(usize, usize), usize> = HashMap::new();
+                for x in 0..k {
+                    let r = root(&mut p_run, x);
+                    label_m[x] = *fresh.entry((label_m[x], r)).or_insert_with(|| {
+                        let id = next_lbl;
+                        next_lbl += 1;
+                        id
+                    });
+                }
+                if fresh.len() == k {
+                    all_distinct = true;
+                    break;
+                }
             }
+            if all_distinct {
+                break;
+            }
+        }
+        let mut m_first: HashMap<usize, usize> = HashMap::new();
+        for (x, &(i, _, _)) in entries.iter().enumerate() {
+            let j = *m_first.entry(label_m[x]).or_insert(i);
+            join(&mut parent, i, j);
         }
     }
     let mut index: HashMap<usize, usize> = HashMap::new();
     let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (i, l) in label.into_iter().enumerate() {
-        let g = *index.entry(l).or_insert_with(|| {
+    for i in 0..n {
+        let r = root(&mut parent, i);
+        let g = *index.entry(r).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
         });
@@ -14125,6 +14407,7 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
 /// What one type puts at the root of a run of [`overlaps`]: its keys and lists there, and per
 /// edge below, whether it holds the bare atom of the name, whether it holds every value there,
 /// and the types inside.
+#[derive(Clone)]
 struct Top {
     points: Vec<Key>,
     lists: Vec<Listed>,
@@ -14133,8 +14416,8 @@ struct Top {
 
 /// A type that holds the first component of every one-tuple of the part `f` of one-tuples, when
 /// one is read off `f` in time linear in it: when `f` is a meet of tuple types and complements
-/// of tuple types (`Part::clause`), those of the first tuple type it takes less those of the
-/// ones it refuses ([`within_outside`]); otherwise those of the tuple types `T` that `f` takes
+/// of tuple types (`Part::clause`), those of the meet of the tuple types it takes less those of
+/// the ones it refuses ([`within_outside`]); otherwise those of the tuple types `T` that `f` takes
 /// toward `true`, and those of what `f` holds with `T` false, when that is such a meet. A
 /// one-tuple of `f` lies in a tuple type of `T`, or `f` holds it with every tuple type of `T`
 /// false, which is the meet. `None` when the meet is no such part.
@@ -14159,25 +14442,39 @@ fn first_components(f: &Part<Row>) -> Option<Type> {
 }
 
 /// A type that holds the first component of every one-tuple in the one-tuple types `takes` and
-/// in none of `refused`: the first take's, or every value, less those of `refused`. A one-tuple
-/// is in a one-tuple type exactly when its component is in the type's.
+/// in none of `refused`: the meet of `takes`'s components, or every value, less those of
+/// `refused`. A one-tuple is in a one-tuple type exactly when its component is in the type's.
 fn within_outside(takes: &[Row], refused: &[Row]) -> Type {
-    let within = takes.first().map_or_else(Type::top, |r| r[0].clone());
+    let within = Type::meet_all(takes.iter().map(|r| r[0].clone()));
     let outside = Type::union_all(refused.iter().map(|r| r[0].clone()));
     &within - &outside
 }
 
 /// One run of [`overlaps`]: the types of `tops` placed in one trie from its root; the
 /// union-find of their indices, joined where two share a key.
-fn joined(tops: Vec<Top>) -> Vec<usize> {
+fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
     let mut trie = Trie::new();
-    let mut s = Placing::default();
+    let num_cells = tops.len();
+    let mut s = Placing {
+        active: vec![0; num_cells],
+        pending_cnt: vec![0; num_cells],
+        min_gid: vec![usize::MAX; num_cells],
+        ..Placing::default()
+    };
     s.sync(&trie);
-    let mut parent: Vec<usize> = (0..tops.len()).collect();
+    let mut parent: Vec<usize> = (0..num_cells).collect();
     // The groups placed for each cell, by cell and group number, with their placements. A
     // type of a group placed for the cell is placed: met again, its node and the new one are
     // merged.
     let mut placed: HashMap<(usize, usize), usize> = HashMap::new();
+    // Complexity tradeoff: when `n` cells share a height-`n` chain of 1-member groups (such as
+    // `G_i = #cons(int, G_i) | #cons(1, R_{i-1})` with `R_k = #cons(int, R_{k-1})` under `dir = 1`
+    // in `by_place_from_the_end`, COMPLEXITY.md K35), placing `(i, g.id)` per cell and chain step
+    // costs `Theta(n^2)` placements (`18.0x` at `64 -> 512`). Recording `(y_root, g.id) -> (j, y)`
+    // once a deep `single_chain` root is read lets any later cell `i` with zero other active/pending
+    // branches and `min_gid[i] > g.id` (Tarjan topological order, Tarjan 1972) join `j` in `O(1)`
+    // with zero lost merges and an identical partition (`O(S log S)` in all).
+    let mut shared_chain: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
     let mut work: Vec<Work> = Vec::new();
     for (i, l) in tops.into_iter().enumerate() {
         s.points.extend(l.points.into_iter().map(|k| (0, k, i)));
@@ -14192,12 +14489,56 @@ fn joined(tops: Vec<Top>) -> Vec<usize> {
             if whole {
                 s.wholes.push((y, i));
             }
+            s.active[i] += inside.len();
             work.extend(inside.into_iter().map(|t| Work::Place(y, t, i)));
         }
         while let Some(w) = work.pop() {
             match w {
                 Work::Place(y, t, i) => {
-                    let (g, c) = group_of(&t);
+                    s.active[i] -= 1;
+                    let (g, c) = group_of(&t, dir);
+                    let y_root = trie.find(y);
+                    if c == 0 && s.active[i] == 0 && s.pending_cnt[i] == 0 && s.min_gid[i] > g.id {
+                        if g.single_chain
+                            && g.nodes[0].deep
+                            && let Some(&(j, orig_y)) = shared_chain.get(&(y_root, g.id))
+                            && trie.find(orig_y) == y_root
+                        {
+                            join(&mut parent, i, j);
+                            continue;
+                        }
+                        if let Some(rs) = &g.repeat_stem
+                            && rs.compressed
+                            && s.pending[y_root].is_none()
+                            && let Some(&y1_raw) = trie.kids[y_root].get(&rs.e0)
+                        {
+                            let y1 = trie.find(y1_raw);
+                            let cycles = match &rs.second {
+                                None => y1 == y_root,
+                                Some((e1, _)) => {
+                                    s.pending[y1].is_none()
+                                        && trie.kids[y1]
+                                            .get(e1)
+                                            .copied()
+                                            .is_some_and(|y2_raw| trie.find(y2_raw) == y_root)
+                                }
+                            };
+                            if cycles {
+                                s.min_gid[i] = g.id;
+                                s.lists
+                                    .extend(rs.l0.iter().cloned().map(|li| (y_root, li, i)));
+                                if let Some((_, l1)) = &rs.second {
+                                    s.lists.extend(l1.iter().cloned().map(|li| (y1, li, i)));
+                                }
+                                s.active[i] += 1;
+                                work.push(Work::Place(y_root, rs.tail.clone(), i));
+                                continue;
+                            }
+                        }
+                    }
+                    if g.id < s.min_gid[i] {
+                        s.min_gid[i] = g.id;
+                    }
                     let p = *placed.entry((i, g.id)).or_insert_with(|| {
                         s.groups.push(g);
                         s.cells.push(i);
@@ -14208,13 +14549,22 @@ fn joined(tops: Vec<Top>) -> Vec<usize> {
                         Some(&z) => work.push(Work::Merge(z, y)),
                         None => {
                             s.at[p].insert(c, y);
+                            s.active[i] += 1;
                             work.push(Work::Bind(y, p, c));
                         }
                     }
                 }
                 Work::Bind(y, p, q) => {
+                    let cell_i = s.cells[p];
+                    s.active[cell_i] -= 1;
                     let y = trie.find(y);
                     s.reach(&mut trie, y, &mut work);
+                    let y = trie.find(y);
+                    if q == 0 && s.groups[p].single_chain && s.groups[p].nodes[0].deep {
+                        shared_chain
+                            .entry((y, s.groups[p].id))
+                            .or_insert((cell_i, y));
+                    }
                     s.read(&mut trie, y, p, q, &mut work);
                 }
                 Work::Merge(a, b) => {
@@ -14456,6 +14806,9 @@ fn judge(env: &Arc<Env>) -> Judgment {
         refused[i] = first.is_none()
             && (low.answers[i] == Answer::Refused || high.answers[i] == Answer::Refused);
     }
+    if wide.contains(&true) && answers.contains(&None) {
+        exact_flat_diff_decide(env, &mut answers, &mut refused);
+    }
     let why = refused
         .contains(&true)
         .then(|| Why::new(n, b, origin, runs, wide));
@@ -14464,6 +14817,1390 @@ fn judge(env: &Arc<Env>) -> Judgment {
         refused,
         why,
     }
+}
+
+/// Whether `t` holds only flat values (scalars, bare atoms, 0-tuples, structs).
+fn is_flat_type(t: &Type) -> bool {
+    let p = t.p();
+    !p.atoms.cofinite
+        && p.atoms.payloads.is_empty()
+        && !p.tuples.rest
+        && p.tuples
+            .lens
+            .iter()
+            .all(|(&len, f)| len == 0 || f.is_leaf() == Some(false))
+        && p.morphisms.is_leaf() == Some(false)
+}
+
+/// The exact flat projection `[[t]] \cap Val_flat`, when `!t.p().atoms.cofinite`.
+fn flat_part(t: &Type) -> Option<Type> {
+    let p = t.p();
+    if p.atoms.cofinite {
+        return None;
+    }
+    Some(Type::with(|q| {
+        q.bools = p.bools;
+        q.ints = p.ints.clone();
+        q.rats = p.rats.clone();
+        q.floats = p.floats.clone();
+        q.f32s = p.f32s.clone();
+        q.strings = p.strings.clone();
+        q.structs = p.structs;
+        let f0 = p.tuples.get(0);
+        if f0.is_leaf() != Some(false) {
+            q.tuples.lens.insert(0, f0);
+        }
+        q.atoms = p.atoms.clone();
+        for name in p.atoms.payloads.iter() {
+            let bare = p.atoms.get(name).bare;
+            q.atoms.set(
+                name,
+                super::AtomPart {
+                    bare,
+                    payload: Type::empty(),
+                },
+            );
+        }
+    }))
+}
+
+/// A non-flat projection inside `[[t]] \cap Val_nonflat` that is exact on emptiness (equal to
+/// `[[t]] \cap Val_nonflat` when `!p.atoms.cofinite`, and containing a witness payload atom
+/// `#nf_k(())` when `p.atoms.cofinite`, with zero bare atoms or 0-tuples in all cases).
+fn nonflat_part(t: &Type) -> Type {
+    let p = t.p();
+    Type::with(|q| {
+        q.tuples = p.tuples.clone();
+        if q.tuples.rest {
+            q.tuples.lens.insert(0, Part::leaf(false));
+        } else {
+            q.tuples.lens.remove(&0);
+        }
+        q.morphisms = p.morphisms.clone();
+        if p.atoms.cofinite {
+            for (name, a) in p.atoms.names.iter() {
+                if a.payload != Type::empty() {
+                    q.atoms.set(
+                        name,
+                        super::AtomPart {
+                            bare: false,
+                            payload: a.payload.clone(),
+                        },
+                    );
+                }
+            }
+            let mut k = 0usize;
+            let fresh: std::sync::Arc<str> = loop {
+                let cand: std::sync::Arc<str> = format!("nf_{k}").into();
+                if !p.atoms.names.contains_key(&cand) {
+                    break cand;
+                }
+                k += 1;
+            };
+            q.atoms.set(
+                &fresh,
+                super::AtomPart {
+                    bare: false,
+                    payload: Type::payloads(),
+                },
+            );
+        } else {
+            q.atoms = p.atoms.clone();
+            for (name, a) in p.atoms.names.iter() {
+                if a.bare {
+                    q.atoms.set(
+                        name,
+                        super::AtomPart {
+                            bare: false,
+                            payload: a.payload.clone(),
+                        },
+                    );
+                }
+            }
+        }
+    })
+}
+
+/// Depth-0 check whether the top-level universes of `ts` have empty intersection.
+fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
+    if ts.len() < 2 {
+        return false;
+    }
+    let flat_meet_nonempty = {
+        let mut iter = ts.iter();
+        if let Some(first) = iter.next().and_then(flat_part) {
+            let mut acc = Some(first);
+            for t in iter {
+                match (acc, flat_part(t)) {
+                    (Some(a), Some(b)) => acc = Some(&a & &b),
+                    _ => {
+                        acc = None;
+                        break;
+                    }
+                }
+            }
+            match acc {
+                Some(m) => !m.is_empty(),
+                None => true,
+            }
+        } else {
+            ts.iter().all(|t| {
+                let p = t.p();
+                p.atoms.cofinite || p.has_scalars() || p.has_bare_atoms() || p.structs
+            })
+        }
+    };
+    if flat_meet_nonempty {
+        return false;
+    }
+    if ts.iter().all(|t| t.p().morphisms.is_leaf() != Some(false)) {
+        return false;
+    }
+    let share_payload_atom = {
+        let p0 = ts[0].p();
+        if p0.atoms.cofinite {
+            ts[1..]
+                .iter()
+                .all(|t| t.p().atoms.cofinite || !t.p().atoms.payloads.is_empty())
+        } else {
+            p0.atoms.payloads.iter().any(|name| {
+                ts[1..].iter().all(|t| {
+                    let pt = t.p();
+                    if pt.atoms.cofinite {
+                        pt.atoms
+                            .names
+                            .get(name)
+                            .is_none_or(|a| a.payload != Type::empty())
+                    } else {
+                        pt.atoms.payloads.contains(name)
+                    }
+                })
+            })
+        }
+    };
+    if share_payload_atom {
+        return false;
+    }
+    let all_rest = ts.iter().all(|t| t.p().tuples.rest);
+    if all_rest {
+        return false;
+    }
+    if let Some(anchor) = ts.iter().find(|t| !t.p().tuples.rest) {
+        let pa = anchor.p();
+        let share_len = pa.tuples.lens.iter().any(|(&len, fa)| {
+            len >= 1
+                && fa.is_leaf() != Some(false)
+                && ts.iter().all(|t| {
+                    let pt = t.p();
+                    if pt.tuples.rest {
+                        pt.tuples
+                            .lens
+                            .get(&len)
+                            .is_none_or(|ft| ft.is_leaf() != Some(false))
+                    } else {
+                        pt.tuples
+                            .lens
+                            .get(&len)
+                            .is_some_and(|ft| ft.is_leaf() != Some(false))
+                    }
+                })
+        });
+        if share_len {
+            return false;
+        }
+    }
+    true
+}
+
+/// The universes a type's parts may hold, one bit each: booleans, the five literal carriers,
+/// atoms, tuples, structs and morphisms, the split of [`Parts::scalars_only`]. A bit may be
+/// set for an empty part; a value of the type always has its universe's bit set.
+fn universe_mask(t: &Type) -> u16 {
+    let p = t.p();
+    let lits = |l: &Lits| l.cofinite || !l.values.is_empty();
+    [
+        p.bools != 0,
+        lits(&p.ints),
+        lits(&p.rats),
+        lits(&p.floats),
+        lits(&p.strings),
+        lits(&p.f32s),
+        !p.atoms.is_default(),
+        !p.tuples.is_default(),
+        p.structs,
+        p.morphisms.is_leaf() != Some(false),
+    ]
+    .iter()
+    .enumerate()
+    .fold(0, |m, (i, &b)| m | (u16::from(b) << i))
+}
+
+/// The union of [`universe_mask`] of the cells at component `j` over the rows of the tuple part
+/// `f`, with whether a cell is a recursive type by name: every value of `f` has its component
+/// `j` in a universe of it when `f` is false with every row false (each value then lies in one
+/// row it holds), else `None`. A recursive cell is unfolded one step only when `unfold`, else
+/// it counts as every universe.
+fn component_carrier(f: &Part<Row>, j: usize, unfold: bool) -> Option<(u16, bool)> {
+    if f.eval3(&|_| Some(false)) != Some(false) {
+        return None;
+    }
+    let (mut u, mut rec) = (0, false);
+    f.atoms(&mut |row| {
+        let c = &row[j];
+        rec |= c.is_recursive();
+        u |= if c.is_recursive() && !unfold {
+            u16::MAX
+        } else {
+            universe_mask(c)
+        };
+        true
+    });
+    Some((u, rec))
+}
+
+/// Whether `ts` have provably empty intersection by their top-level universes, or, when only
+/// tuples of shared lengths `m >= 1` meet there, because at one component of each such length
+/// the universe masks ([`component_carrier`]) of the types have no bit in common; no cycle is
+/// followed (deciding seed 1865 the same in both component orders).
+// Complexity tradeoff (GROUP-order-cpoly-merge): the depth-0 test reads the top parts of `ts`;
+// the component test reads, for each shared length `m`, each cell of each type's rows at most
+// twice per component, `O(\sum_m m R_m)` part reads and bit operations for `R_m` rows, with no
+// type built, and a recursive cell is unfolded one step only on the second read. Round 3 of
+// XR-group-order-5 (Gemini) built conjunctive projection types per component instead, capped
+// at 4 conjuncts per node (a size switch the no-thresholds rule forbids) and building a union
+// type per row; that version separated values within one universe (`1` from `2`), which the
+// masks do not, and no test of the l01_23 groups needs it (measured: the full l01_23 and
+// zed-kernel suites pass with the masks). Exact emptiness of a meet of cyclic types is
+// tree-automata intersection, EXPTIME-complete in the number of conjuncts (Seidl 1994), left to
+// the search; directional single-spine `overlaps` merged `M0` with `int` when reversed on seed
+// 1865.
+fn disjoint_top_carriers(ts: &[Type]) -> bool {
+    if ts.len() < 2 {
+        return false;
+    }
+    if disjoint_top_carriers_depth0(ts) {
+        return true;
+    }
+    // Check whether non-tuple universes already overlap; if so, depth-1 tuple projections alone
+    // cannot prove `ts` disjoint.
+    let no_tuple_ts: Vec<Type> = ts
+        .iter()
+        .map(|t| {
+            let p = t.p();
+            Type::with(|q| {
+                q.bools = p.bools;
+                q.ints = p.ints.clone();
+                q.rats = p.rats.clone();
+                q.floats = p.floats.clone();
+                q.f32s = p.f32s.clone();
+                q.strings = p.strings.clone();
+                q.structs = p.structs;
+                let f0 = p.tuples.get(0);
+                if f0.is_leaf() != Some(false) {
+                    q.tuples.lens.insert(0, f0);
+                }
+                q.atoms = p.atoms.clone();
+                q.morphisms = p.morphisms.clone();
+            })
+        })
+        .collect();
+    if !disjoint_top_carriers_depth0(&no_tuple_ts) {
+        return false;
+    }
+    if ts.iter().any(|t| t.p().tuples.rest) {
+        return false;
+    }
+    let p0 = ts[0].p();
+    let shared_lens: Vec<usize> = p0
+        .tuples
+        .lens
+        .iter()
+        .filter_map(|(&m, f0)| {
+            (m >= 1
+                && f0.is_leaf() != Some(false)
+                && ts[1..].iter().all(|t| {
+                    t.p()
+                        .tuples
+                        .lens
+                        .get(&m)
+                        .is_some_and(|ft| ft.is_leaf() != Some(false))
+                }))
+            .then_some(m)
+        })
+        .collect();
+    for m in shared_lens {
+        let separated = (0..m).any(|c| {
+            // The meet of the masks at `c`, and whether some type has no recursive cell there.
+            let meet = |unfold| {
+                ts.iter().try_fold((u16::MAX, false), |(acc, plain), t| {
+                    let p = t.p();
+                    let ft = p.tuples.lens.get(&m)?;
+                    component_carrier(ft, c, unfold).map(|(u, rec)| (acc & u, plain || !rec))
+                })
+            };
+            // Recursive cells are unfolded one step only when another type's cells at `c` are
+            // all read without unfolding.
+            match meet(false) {
+                Some((0, _)) => true,
+                Some((_, true)) => meet(true).is_some_and(|(u, _)| u == 0),
+                _ => false,
+            }
+        });
+        if !separated {
+            return false;
+        }
+    }
+    true
+}
+
+/// If `r_ty`'s `m`-tuple part (restricted to rows whose components can overlap `xs_tys`) is false
+/// outside its rows and every cell of those surviving rows is flat, returns that isolated `m`-tuple
+/// `Type`.
+fn flat_tuple_subtrahend(r_ty: &Type, xs_tys: &[Type]) -> Option<Type> {
+    let m = xs_tys.len();
+    let p = r_ty.p();
+    if p.tuples.rest {
+        return None;
+    }
+    let Some(f) = p.tuples.lens.get(&m) else {
+        return Some(Type::empty());
+    };
+    if f.is_leaf() == Some(false) {
+        return Some(Type::empty());
+    }
+    let f_rel = f.restrict(&|row| {
+        let disj = (0..m).any(|j| disjoint_top_carriers(&[xs_tys[j].clone(), row[j].clone()]));
+        disj.then_some(false)
+    });
+    if f_rel.is_leaf() == Some(false) {
+        return Some(Type::empty());
+    }
+    if f_rel.eval3(&|_| Some(false)) != Some(false) {
+        return None;
+    }
+    let mut all_flat = true;
+    f_rel.atoms(&mut |row| {
+        if row.iter().any(|cell| !is_flat_type(cell)) {
+            all_flat = false;
+            return false;
+        }
+        true
+    });
+    if !all_flat {
+        return None;
+    }
+    Some(Type::with(|q| {
+        q.tuples.lens.insert(m, f_rel);
+    }))
+}
+
+/// Exact 2-layer BES (`Inh` and `NonFlat`) decision for groups in `C_group` (no overlapping
+/// multi-recursive `And`, and `Diff` subtrahends either empty or flat / flat-tuple).
+// Complexity tradeoff: decides emptiness of recursive groups in `C_group` in `O(S)` BES size
+// (plus finite flat-box sub-checks on non-recursive subtrahends) by tracking `Inh(X)` (`[[X]] !=
+// \emptyset`) and `NonFlat(X)` (`[[X]] \cap Val_nonflat != \emptyset`) in a monotone two-layer
+// Boolean equation system solved in linear time (`bes::decide`, following Dowling & Gallier 1984
+// linear-time Horn / least-fixed-point reachability and Lu & Cleary 1998 regular type emptiness),
+// whereas general intersection/complementation of recursive tree automata is EXPTIME-complete.
+fn exact_flat_diff_decide(
+    env: &Arc<Env>,
+    answers: &mut [Option<bool>],
+    refused: &mut [bool],
+) -> Option<()> {
+    enum Step<'a> {
+        Visit(&'a Arc<rec::Node>),
+        Make(&'a Arc<rec::Node>, usize),
+    }
+    let bodies = &env.group().0.bodies;
+    let n = bodies.len();
+    let mut b = Bes::new();
+    // Nodes `0..n` are `Inh(member i)`; nodes `n..2*n` are `NonFlat(member i)`.
+    for _ in 0..(2 * n) {
+        b.add(Kind::Bot, vec![]);
+    }
+    let top_node = b.add(Kind::Top, vec![]);
+    let bot_node = b.add(Kind::Bot, vec![]);
+
+    let mut eval_cache: HashMap<u32, Type> = HashMap::new();
+    let mut eval_cached = |node: &Arc<rec::Node>| -> Type {
+        eval_cache
+            .entry(node.class)
+            .or_insert_with(|| eval(node, env))
+            .clone()
+    };
+
+    let mut seen: HashMap<u32, (u32, u32)> = HashMap::new();
+    let mut todo: Vec<Step<'_>> = Vec::new();
+    let mut done: Vec<(u32, u32)> = Vec::new();
+
+    for (def, body) in bodies.iter().enumerate() {
+        todo.push(Step::Visit(body));
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Visit(e) => {
+                    let root = Arc::ptr_eq(e, body);
+                    if let rec::Shape::Ref(i, _) = e.e {
+                        let pair = (i as u32, (n + i) as u32);
+                        if root {
+                            b.set(def as u32, Kind::Or, vec![pair.0]);
+                            b.set((n + def) as u32, Kind::Or, vec![pair.1]);
+                        } else {
+                            done.push(pair);
+                        }
+                        continue;
+                    }
+                    if let Some(&pair) = seen.get(&e.class) {
+                        if root {
+                            b.set(def as u32, Kind::Or, vec![pair.0]);
+                            b.set((n + def) as u32, Kind::Or, vec![pair.1]);
+                        } else {
+                            done.push(pair);
+                        }
+                        continue;
+                    }
+                    if !e.recursive {
+                        let t = eval_cached(e);
+                        // `a \ r` lies in `a`, and a meet in each operand: an operand already
+                        // proved empty makes the node empty without searching the whole (Seed 1558).
+                        let operand_empty = match &e.e {
+                            rec::Shape::Diff(a, _) => eval_cached(a).verdict() == Verdict::Empty,
+                            rec::Shape::And(xs) => xs
+                                .iter()
+                                .any(|x| eval_cached(x).verdict() == Verdict::Empty),
+                            _ => false,
+                        };
+                        let v = if operand_empty {
+                            Verdict::Empty
+                        } else {
+                            t.verdict()
+                        };
+                        let pair = match v {
+                            Verdict::Empty => (bot_node, bot_node),
+                            Verdict::Refused(_) => return None,
+                            Verdict::Inhabited => {
+                                let nf_t = nonflat_part(&t);
+                                let nf = match nf_t.verdict() {
+                                    Verdict::Empty => bot_node,
+                                    Verdict::Inhabited => top_node,
+                                    Verdict::Refused(_) => return None,
+                                };
+                                (top_node, nf)
+                            }
+                        };
+                        seen.insert(e.class, pair);
+                        if root {
+                            b.set(def as u32, Kind::Or, vec![pair.0]);
+                            b.set((n + def) as u32, Kind::Or, vec![pair.1]);
+                        } else {
+                            done.push(pair);
+                        }
+                        continue;
+                    }
+                    match &e.e {
+                        rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => {
+                            if !val.recursive && eval_cached(val).verdict() == Verdict::Inhabited {
+                                let pair = (top_node, top_node);
+                                seen.insert(e.class, pair);
+                                if root {
+                                    b.set(def as u32, Kind::Top, vec![]);
+                                    b.set((n + def) as u32, Kind::Top, vec![]);
+                                } else {
+                                    done.push(pair);
+                                }
+                            } else {
+                                return None;
+                            }
+                        }
+                        rec::Shape::Morphism(l, u, val) => {
+                            let (lt, ut) = (eval_cached(l), eval_cached(u));
+                            match (lt.subtype_verdict(&ut), lt.verdict()) {
+                                (Verdict::Refused(_), _) | (_, Verdict::Refused(_)) => return None,
+                                (Verdict::Inhabited, _) => {
+                                    let pair = (bot_node, bot_node);
+                                    seen.insert(e.class, pair);
+                                    if root {
+                                        b.set(def as u32, Kind::Bot, vec![]);
+                                        b.set((n + def) as u32, Kind::Bot, vec![]);
+                                    } else {
+                                        done.push(pair);
+                                    }
+                                }
+                                (Verdict::Empty, Verdict::Empty) => {
+                                    let pair = (top_node, top_node);
+                                    seen.insert(e.class, pair);
+                                    if root {
+                                        b.set(def as u32, Kind::Top, vec![]);
+                                        b.set((n + def) as u32, Kind::Top, vec![]);
+                                    } else {
+                                        done.push(pair);
+                                    }
+                                }
+                                (Verdict::Empty, Verdict::Inhabited) => {
+                                    todo.push(Step::Make(e, 1));
+                                    todo.push(Step::Visit(val));
+                                }
+                            }
+                        }
+                        rec::Shape::Union(xs) | rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
+                            todo.push(Step::Make(e, xs.len()));
+                            todo.extend(xs.iter().rev().map(Step::Visit));
+                        }
+                        rec::Shape::And(xs) => {
+                            let tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                            if disjoint_top_carriers(&tys) {
+                                let pair = (bot_node, bot_node);
+                                seen.insert(e.class, pair);
+                                if root {
+                                    b.set(def as u32, Kind::Bot, vec![]);
+                                    b.set((n + def) as u32, Kind::Bot, vec![]);
+                                } else {
+                                    done.push(pair);
+                                }
+                                continue;
+                            }
+                            let mut rec_keys = BTreeSet::new();
+                            for x in xs {
+                                if x.recursive {
+                                    let key = match &x.e {
+                                        rec::Shape::Ref(i, a) if a.is_empty() => (0u8, *i as u32),
+                                        _ => (1u8, x.class),
+                                    };
+                                    rec_keys.insert(key);
+                                }
+                            }
+                            if rec_keys.len() >= 2 {
+                                return None;
+                            }
+                            todo.push(Step::Make(e, xs.len()));
+                            todo.extend(xs.iter().rev().map(Step::Visit));
+                        }
+                        rec::Shape::Diff(a, _) => {
+                            todo.push(Step::Make(e, 1));
+                            todo.push(Step::Visit(a));
+                        }
+                        rec::Shape::Not(_)
+                        | rec::Shape::Param(_)
+                        | rec::Shape::Type(_)
+                        | rec::Shape::Ref(..) => return None,
+                    }
+                }
+                Step::Make(e, k) => {
+                    let root = Arc::ptr_eq(e, body);
+                    let parts = done.split_off(done.len() - k);
+                    let pair = match &e.e {
+                        rec::Shape::Union(_) => {
+                            let mut inhs: Vec<u32> = parts.iter().map(|p| p.0).collect();
+                            let mut nfs: Vec<u32> = parts.iter().map(|p| p.1).collect();
+                            inhs.sort_unstable();
+                            inhs.dedup();
+                            nfs.sort_unstable();
+                            nfs.dedup();
+                            (b.add(Kind::Or, inhs), b.add(Kind::Or, nfs))
+                        }
+                        rec::Shape::Tuple(xs) => {
+                            if xs.is_empty() {
+                                (top_node, bot_node)
+                            } else {
+                                let inhs: Vec<u32> = parts.iter().map(|p| p.0).collect();
+                                let u = b.add(Kind::And, inhs);
+                                (u, u)
+                            }
+                        }
+                        rec::Shape::Atom(_, xs) => {
+                            if xs.is_empty() {
+                                (top_node, bot_node)
+                            } else {
+                                let inhs: Vec<u32> = parts.iter().map(|p| p.0).collect();
+                                let u = b.add(Kind::And, inhs);
+                                (u, u)
+                            }
+                        }
+                        rec::Shape::Morphism(..) => {
+                            let u = b.add(Kind::Mor, vec![parts[0].0]);
+                            (u, u)
+                        }
+                        rec::Shape::And(xs) => {
+                            // At most 1 distinct recursive operand, and carriers overlap.
+                            let mut closed_meet = Type::top();
+                            let mut rec_idx = None;
+                            for (idx, x) in xs.iter().enumerate() {
+                                if x.recursive {
+                                    rec_idx = Some(idx);
+                                } else {
+                                    closed_meet = &closed_meet & &eval_cached(x);
+                                }
+                            }
+                            let idx = rec_idx?;
+                            if closed_meet.verdict() == Verdict::Empty {
+                                (bot_node, bot_node)
+                            } else if closed_meet == Type::top() {
+                                parts[idx]
+                            } else if is_flat_type(&closed_meet) {
+                                let x_flat = flat_part(&eval_cached(&xs[idx]))?;
+                                let m = &x_flat & &closed_meet;
+                                let inh = if m.is_empty() { bot_node } else { top_node };
+                                (inh, bot_node)
+                            } else {
+                                return None;
+                            }
+                        }
+                        rec::Shape::Diff(a, r) => {
+                            let r_ty = eval_cached(r);
+                            let r_empty = match &r.e {
+                                rec::Shape::Diff(ra, _) if !r.recursive => {
+                                    eval_cached(ra).verdict() == Verdict::Empty
+                                }
+                                rec::Shape::And(rxs) if !r.recursive => rxs
+                                    .iter()
+                                    .any(|x| eval_cached(x).verdict() == Verdict::Empty),
+                                _ => false,
+                            };
+                            let r_verdict = if r_empty {
+                                Verdict::Empty
+                            } else {
+                                r_ty.verdict()
+                            };
+                            match r_verdict {
+                                Verdict::Empty => parts[0],
+                                Verdict::Refused(_) => return None,
+                                Verdict::Inhabited if is_flat_type(&r_ty) => {
+                                    let a_flat = flat_part(&eval_cached(a))?;
+                                    let rem = &a_flat - &r_ty;
+                                    let inh = if !rem.is_empty() {
+                                        top_node
+                                    } else {
+                                        parts[0].1
+                                    };
+                                    (inh, parts[0].1)
+                                }
+                                Verdict::Inhabited => {
+                                    let rec::Shape::Tuple(xs) = &a.e else {
+                                        return None;
+                                    };
+                                    let m = xs.len();
+                                    if m == 0 {
+                                        return None;
+                                    }
+                                    let xs_tys: Vec<Type> =
+                                        xs.iter().map(|x| eval_cached(x)).collect();
+                                    let r_ty_m = flat_tuple_subtrahend(&r_ty, &xs_tys)?;
+                                    let mut flats = Vec::with_capacity(m);
+                                    let mut xs_inh = Vec::with_capacity(m);
+                                    let mut xs_nf = Vec::with_capacity(m);
+                                    for (j, x) in xs.iter().enumerate() {
+                                        flats.push(flat_part(&xs_tys[j])?);
+                                        let pair = match &x.e {
+                                            rec::Shape::Ref(i, _) => (*i as u32, (n + *i) as u32),
+                                            _ => *seen.get(&x.class)?,
+                                        };
+                                        xs_inh.push(pair.0);
+                                        xs_nf.push(pair.1);
+                                    }
+                                    let flat_diff = &Type::tuple(flats) - &r_ty_m;
+                                    match flat_diff.verdict() {
+                                        Verdict::Refused(_) => return None,
+                                        Verdict::Inhabited => {
+                                            let u = b.add(Kind::And, xs_inh);
+                                            (u, u)
+                                        }
+                                        Verdict::Empty => {
+                                            let any_nf = b.add(Kind::Or, xs_nf);
+                                            xs_inh.push(any_nf);
+                                            let u = b.add(Kind::And, xs_inh);
+                                            (u, u)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => return None,
+                    };
+                    seen.insert(e.class, pair);
+                    if root {
+                        b.set(def as u32, Kind::Or, vec![pair.0]);
+                        b.set((n + def) as u32, Kind::Or, vec![pair.1]);
+                    } else {
+                        done.push(pair);
+                    }
+                }
+            }
+        }
+    }
+
+    b.seal();
+    let dec = decide(&b);
+    for i in 0..n {
+        if answers[i].is_none() {
+            match dec.answers[i] {
+                Answer::Empty => {
+                    answers[i] = Some(true);
+                    refused[i] = false;
+                }
+                Answer::Inhabited => {
+                    answers[i] = Some(false);
+                    refused[i] = false;
+                }
+                Answer::Refused => {}
+            }
+        }
+    }
+    Some(())
+}
+
+/// Builds witnesses in `s` by event-driven Horn propagation for members of `members` whose
+/// group judged them `Inhabited`: one slot for a value of each node and one for a nonflat
+/// value of it, one rule per way a node's value is built from its operands' values.
+// Complexity tradeoff: with `N` nodes in the group's bodies (the shared `rec::Node` DAG) and
+// `P` premises over all rules (at most the total arity, O(N)), each slot is seeded and popped
+// once and each premise decremented once, O(N + P) hash and queue steps, plus one `s.rep` per
+// closed node and one `s.show` per rule fired. Method: the linear-time Horn satisfiability
+// algorithm of Dowling and Gallier (1984), one counter of unmet premises per rule. Naive
+// alternative (XR-group-order-5 round 2, g2): build plain values and test each with
+// `member_known`, which walks the value and took Θ(n³) (over 60 s) on a chain of n members
+// whose values nest.
+fn horn_witness_group(members: &[Type], s: &mut Search) {
+    enum Action {
+        Id,
+        Tuple(usize),
+        Atom(std::sync::Arc<str>, usize),
+        DiffNf(usize),
+        Closure(Morphism),
+    }
+    struct Rule {
+        premises: Vec<usize>,
+        rem: usize,
+        out_inh: Option<usize>,
+        out_nf: Option<usize>,
+        action: Action,
+    }
+
+    let Some(first) = members.first() else {
+        return;
+    };
+    let Node::Rec(r) = &*first.0 else {
+        return;
+    };
+    let Some((env, _)) = r.key.member_at() else {
+        return;
+    };
+    let bodies = &env.group().0.bodies;
+    let n = bodies.len();
+    if n != members.len() {
+        return;
+    }
+
+    // Slots `0..n` are `inh(member i)`; slots `n..2*n` are `nf(member i)`.
+    let mut vals: Vec<Option<usize>> = vec![None; 2 * n];
+    // For `DiffNf` auxiliary slots: which component `j` supplied the non-flat witness.
+    let mut nf_choice: HashMap<usize, (usize, usize)> = HashMap::new();
+    let mut rules: Vec<Rule> = Vec::new();
+    let mut watchers: Vec<Vec<usize>> = vec![Vec::new(); 2 * n];
+    // Direct `DiffNf` component watchers: slot -> list of `(aux_slot, comp_index)`.
+    let mut nf_arm_watchers: Vec<Vec<(usize, usize)>> = vec![Vec::new(); 2 * n];
+    let mut queue: std::collections::VecDeque<(usize, usize)> = std::collections::VecDeque::new();
+
+    let alloc_slot = |vals: &mut Vec<Option<usize>>,
+                      watchers: &mut Vec<Vec<usize>>,
+                      nf_arm_watchers: &mut Vec<Vec<(usize, usize)>>|
+     -> usize {
+        let id = vals.len();
+        vals.push(None);
+        watchers.push(Vec::new());
+        nf_arm_watchers.push(Vec::new());
+        id
+    };
+
+    let seed_slot = |slot: usize,
+                     rep: usize,
+                     vals: &mut [Option<usize>],
+                     queue: &mut std::collections::VecDeque<(usize, usize)>| {
+        if vals[slot].is_none() {
+            vals[slot] = Some(rep);
+            queue.push_back((slot, rep));
+        }
+    };
+
+    for (i, m) in members.iter().enumerate() {
+        if let Some(Some(rep)) = s.reps.get(m).copied() {
+            seed_slot(i, rep, &mut vals, &mut queue);
+            let loc = s.local(rep);
+            let is_nf = match &s.shown[loc] {
+                Rep::Value(v) => match v {
+                    Value::Atom(a) => !a.is_bare(),
+                    Value::Tuple(xs) => !xs.is_empty(),
+                    _ => false,
+                },
+                Rep::Tuple(vs) => !vs.is_empty(),
+                Rep::Atom(..) | Rep::Closure(_) => true,
+                Rep::List { len, .. } => *len != BigUint::ZERO,
+                Rep::Struct | Rep::Of { .. } => false,
+            };
+            if is_nf {
+                seed_slot(n + i, rep, &mut vals, &mut queue);
+            }
+        }
+    }
+
+    let mut eval_cache: HashMap<u32, Type> = HashMap::new();
+    let mut eval_cached = |node: &Arc<rec::Node>| -> Type {
+        eval_cache
+            .entry(node.class)
+            .or_insert_with(|| eval(node, env))
+            .clone()
+    };
+
+    enum Step<'a> {
+        Visit(&'a Arc<rec::Node>),
+        Make(&'a Arc<rec::Node>, usize),
+    }
+    let mut seen: HashMap<u32, (usize, usize)> = HashMap::new();
+    let mut todo: Vec<Step<'_>> = Vec::new();
+    let mut done: Vec<(usize, usize)> = Vec::new();
+
+    let add_rule = |premises: Vec<usize>,
+                    out_inh: Option<usize>,
+                    out_nf: Option<usize>,
+                    action: Action,
+                    rules: &mut Vec<Rule>,
+                    watchers: &mut [Vec<usize>]| {
+        let rid = rules.len();
+        let mut unique_p = premises.clone();
+        unique_p.sort_unstable();
+        unique_p.dedup();
+        let rem = unique_p.len();
+        for &p in &unique_p {
+            watchers[p].push(rid);
+        }
+        rules.push(Rule {
+            premises,
+            rem,
+            out_inh,
+            out_nf,
+            action,
+        });
+    };
+
+    for (def, body) in bodies.iter().enumerate() {
+        if members[def].judged() != Some(false) {
+            continue;
+        }
+        todo.push(Step::Visit(body));
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Visit(e) => {
+                    let root = Arc::ptr_eq(e, body);
+                    if let rec::Shape::Ref(i, _) = e.e {
+                        let pair = (i, n + i);
+                        if root {
+                            add_rule(
+                                vec![pair.0],
+                                Some(def),
+                                None,
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                            add_rule(
+                                vec![pair.1],
+                                None,
+                                Some(n + def),
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                        } else {
+                            done.push(pair);
+                        }
+                        continue;
+                    }
+                    if let Some(&pair) = seen.get(&e.class) {
+                        if root {
+                            add_rule(
+                                vec![pair.0],
+                                Some(def),
+                                None,
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                            add_rule(
+                                vec![pair.1],
+                                None,
+                                Some(n + def),
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                        } else {
+                            done.push(pair);
+                        }
+                        continue;
+                    }
+                    if !e.recursive {
+                        let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                        let s_nf = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                        let t = eval_cached(e);
+                        let operand_empty = match &e.e {
+                            rec::Shape::Diff(a, _) => eval_cached(a).verdict() == Verdict::Empty,
+                            rec::Shape::And(xs) => xs
+                                .iter()
+                                .any(|x| eval_cached(x).verdict() == Verdict::Empty),
+                            _ => false,
+                        };
+                        if !operand_empty {
+                            if let Some(r_inh) = s.rep(&t) {
+                                seed_slot(s_inh, r_inh, &mut vals, &mut queue);
+                            }
+                            let nf_t = nonflat_part(&t);
+                            if let Some(r_nf) = s.rep(&nf_t) {
+                                seed_slot(s_nf, r_nf, &mut vals, &mut queue);
+                            }
+                        }
+                        seen.insert(e.class, (s_inh, s_nf));
+                        if root {
+                            add_rule(
+                                vec![s_inh],
+                                Some(def),
+                                None,
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                            add_rule(
+                                vec![s_nf],
+                                None,
+                                Some(n + def),
+                                Action::Id,
+                                &mut rules,
+                                &mut watchers,
+                            );
+                        } else {
+                            done.push((s_inh, s_nf));
+                        }
+                        continue;
+                    }
+                    match &e.e {
+                        rec::Shape::Morphism(l, u, val)
+                            if !l.recursive && !u.recursive && val.recursive =>
+                        {
+                            let (lt, ut) = (eval_cached(l), eval_cached(u));
+                            if lt.subtype_verdict(&ut) == Verdict::Empty {
+                                if lt.verdict() == Verdict::Empty {
+                                    let s_inh =
+                                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                    let t = eval_cached(e);
+                                    if let Some(r_mor) = s.rep(&t) {
+                                        seed_slot(s_inh, r_mor, &mut vals, &mut queue);
+                                    }
+                                    seen.insert(e.class, (s_inh, s_inh));
+                                    if root {
+                                        add_rule(
+                                            vec![s_inh],
+                                            Some(def),
+                                            Some(n + def),
+                                            Action::Id,
+                                            &mut rules,
+                                            &mut watchers,
+                                        );
+                                    } else {
+                                        done.push((s_inh, s_inh));
+                                    }
+                                } else if lt.verdict() == Verdict::Inhabited {
+                                    todo.push(Step::Make(e, 1));
+                                    todo.push(Step::Visit(val));
+                                } else {
+                                    let s_inh =
+                                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                    seen.insert(e.class, (s_inh, s_inh));
+                                    if !root {
+                                        done.push((s_inh, s_inh));
+                                    }
+                                }
+                            } else {
+                                let s_inh =
+                                    alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                seen.insert(e.class, (s_inh, s_inh));
+                                if !root {
+                                    done.push((s_inh, s_inh));
+                                }
+                            }
+                        }
+                        rec::Shape::Morphism(..) => {
+                            let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                            let t = eval_cached(e);
+                            if let Some(r_mor) = s.rep(&t) {
+                                seed_slot(s_inh, r_mor, &mut vals, &mut queue);
+                            }
+                            seen.insert(e.class, (s_inh, s_inh));
+                            if root {
+                                add_rule(
+                                    vec![s_inh],
+                                    Some(def),
+                                    Some(n + def),
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            } else {
+                                done.push((s_inh, s_inh));
+                            }
+                        }
+                        rec::Shape::Union(xs)
+                        | rec::Shape::Tuple(xs)
+                        | rec::Shape::Atom(_, xs)
+                        | rec::Shape::And(xs) => {
+                            todo.push(Step::Make(e, xs.len()));
+                            todo.extend(xs.iter().rev().map(Step::Visit));
+                        }
+                        rec::Shape::Diff(a, _) => {
+                            todo.push(Step::Make(e, 1));
+                            todo.push(Step::Visit(a));
+                        }
+                        _ => {
+                            let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                            if !root {
+                                done.push((s_inh, s_inh));
+                            }
+                        }
+                    }
+                }
+                Step::Make(e, k) => {
+                    let root = Arc::ptr_eq(e, body);
+                    let parts = done.split_off(done.len() - k);
+                    let s_inh = if root {
+                        def
+                    } else {
+                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers)
+                    };
+                    let s_nf = if root {
+                        n + def
+                    } else {
+                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers)
+                    };
+                    match &e.e {
+                        rec::Shape::Union(_) => {
+                            for &(pi, pnf) in &parts {
+                                add_rule(
+                                    vec![pi],
+                                    Some(s_inh),
+                                    None,
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                                add_rule(
+                                    vec![pnf],
+                                    None,
+                                    Some(s_nf),
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            }
+                        }
+                        rec::Shape::Tuple(xs) => {
+                            if xs.is_empty() {
+                                let unit_rep = s.show(Rep::Tuple(vec![]));
+                                seed_slot(s_inh, unit_rep, &mut vals, &mut queue);
+                            } else {
+                                let inhs: Vec<usize> = parts.iter().map(|p| p.0).collect();
+                                add_rule(
+                                    inhs,
+                                    Some(s_inh),
+                                    Some(s_nf),
+                                    Action::Tuple(xs.len()),
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            }
+                        }
+                        rec::Shape::Atom(name, xs) => {
+                            if xs.is_empty() {
+                                let t = eval_cached(e);
+                                if let Some(bare_rep) = s.rep(&t) {
+                                    seed_slot(s_inh, bare_rep, &mut vals, &mut queue);
+                                }
+                            } else {
+                                let inhs: Vec<usize> = parts.iter().map(|p| p.0).collect();
+                                add_rule(
+                                    inhs,
+                                    Some(s_inh),
+                                    Some(s_nf),
+                                    Action::Atom(name.as_str().into(), xs.len()),
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            }
+                        }
+                        rec::Shape::Morphism(..) => {
+                            let t = eval_cached(e);
+                            let mut found_m = None;
+                            let mut seen_m = DigestSet::default();
+                            t.p().morphisms.taken_toward(true, &mut seen_m, &mut |m| {
+                                if found_m.is_none() {
+                                    found_m = Some(m.clone());
+                                }
+                            });
+                            if let Some(m_mor) = found_m {
+                                add_rule(
+                                    vec![parts[0].0],
+                                    Some(s_inh),
+                                    Some(s_nf),
+                                    Action::Closure(m_mor),
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            }
+                        }
+                        rec::Shape::And(xs) => {
+                            let tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                            if !disjoint_top_carriers(&tys) {
+                                let mut rec_keys = BTreeSet::new();
+                                let mut closed_meet = Type::top();
+                                let mut rec_idx = None;
+                                for (idx, x) in xs.iter().enumerate() {
+                                    if x.recursive {
+                                        let key = match &x.e {
+                                            rec::Shape::Ref(i, a) if a.is_empty() => {
+                                                (0u8, *i as u32)
+                                            }
+                                            _ => (1u8, x.class),
+                                        };
+                                        rec_keys.insert(key);
+                                        rec_idx = Some(idx);
+                                    } else {
+                                        closed_meet = &closed_meet & &tys[idx];
+                                    }
+                                }
+                                if rec_keys.len() == 1
+                                    && let Some(idx) = rec_idx
+                                {
+                                    if closed_meet == Type::top() {
+                                        add_rule(
+                                            vec![parts[idx].0],
+                                            Some(s_inh),
+                                            None,
+                                            Action::Id,
+                                            &mut rules,
+                                            &mut watchers,
+                                        );
+                                        add_rule(
+                                            vec![parts[idx].1],
+                                            None,
+                                            Some(s_nf),
+                                            Action::Id,
+                                            &mut rules,
+                                            &mut watchers,
+                                        );
+                                    } else if is_flat_type(&closed_meet)
+                                        && let Some(xf) = flat_part(&tys[idx])
+                                        && let Some(rep) = s.rep(&(&xf & &closed_meet))
+                                    {
+                                        seed_slot(s_inh, rep, &mut vals, &mut queue);
+                                    }
+                                }
+                            }
+                        }
+                        rec::Shape::Diff(a, r) => {
+                            let r_ty = eval_cached(r);
+                            let r_empty = match &r.e {
+                                rec::Shape::Diff(ra, _) if !r.recursive => {
+                                    eval_cached(ra).verdict() == Verdict::Empty
+                                }
+                                rec::Shape::And(rxs) if !r.recursive => rxs
+                                    .iter()
+                                    .any(|x| eval_cached(x).verdict() == Verdict::Empty),
+                                _ => false,
+                            };
+                            if r_empty || r_ty.verdict() == Verdict::Empty {
+                                add_rule(
+                                    vec![parts[0].0],
+                                    Some(s_inh),
+                                    None,
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                                add_rule(
+                                    vec![parts[0].1],
+                                    None,
+                                    Some(s_nf),
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            } else if is_flat_type(&r_ty) {
+                                if let Some(af) = flat_part(&eval_cached(a))
+                                    && let Some(rep) = s.rep(&(&af - &r_ty))
+                                {
+                                    seed_slot(s_inh, rep, &mut vals, &mut queue);
+                                }
+                                add_rule(
+                                    vec![parts[0].1],
+                                    Some(s_inh),
+                                    Some(s_nf),
+                                    Action::Id,
+                                    &mut rules,
+                                    &mut watchers,
+                                );
+                            } else if let rec::Shape::Tuple(xs) = &a.e
+                                && !xs.is_empty()
+                            {
+                                let xs_tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                                if let Some(r_ty_m) = flat_tuple_subtrahend(&r_ty, &xs_tys) {
+                                    let flats: Option<Vec<Type>> =
+                                        xs_tys.iter().map(flat_part).collect();
+                                    let mut seeded = false;
+                                    if let Some(flats) = flats
+                                        && let Some(rep) = s.rep(&(&Type::tuple(flats) - &r_ty_m))
+                                    {
+                                        seed_slot(s_inh, rep, &mut vals, &mut queue);
+                                        seed_slot(s_nf, rep, &mut vals, &mut queue);
+                                        seeded = true;
+                                    }
+                                    if !seeded {
+                                        let aux_nf = alloc_slot(
+                                            &mut vals,
+                                            &mut watchers,
+                                            &mut nf_arm_watchers,
+                                        );
+                                        let mut premises = Vec::with_capacity(xs.len() + 1);
+                                        for (j, x) in xs.iter().enumerate() {
+                                            let xp = match &x.e {
+                                                rec::Shape::Ref(i, _) => (*i, n + *i),
+                                                _ => match seen.get(&x.class) {
+                                                    Some(&p) => p,
+                                                    None => continue,
+                                                },
+                                            };
+                                            premises.push(xp.0);
+                                            nf_arm_watchers[xp.1].push((aux_nf, j));
+                                        }
+                                        if premises.len() == xs.len() {
+                                            premises.push(aux_nf);
+                                            add_rule(
+                                                premises,
+                                                Some(s_inh),
+                                                Some(s_nf),
+                                                Action::DiffNf(xs.len()),
+                                                &mut rules,
+                                                &mut watchers,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    seen.insert(e.class, (s_inh, s_nf));
+                    if !root {
+                        done.push((s_inh, s_nf));
+                    }
+                }
+            }
+        }
+    }
+
+    // Propagate to the least fixed point. `add_rule` set each rule's `rem` to its number of
+    // distinct premises and no slot has been popped yet, so every seeded slot (seeded during
+    // construction or later) is popped exactly once and decrements each rule that reads it:
+    // a rule fires if and only if all its premises are seeded. Cost: O(premises + slots).
+    while let Some((slot, rep)) = queue.pop_front() {
+        let arms = std::mem::take(&mut nf_arm_watchers[slot]);
+        for (aux, j) in arms {
+            if !nf_choice.contains_key(&aux) {
+                nf_choice.insert(aux, (j, rep));
+                seed_slot(aux, rep, &mut vals, &mut queue);
+            }
+        }
+        let rids = std::mem::take(&mut watchers[slot]);
+        for rid in rids {
+            if rules[rid].rem == 0 {
+                continue;
+            }
+            rules[rid].rem -= 1;
+            if rules[rid].rem == 0 {
+                let built = match &rules[rid].action {
+                    Action::Id => vals[rules[rid].premises[0]],
+                    Action::Tuple(m) => {
+                        let vs: Vec<usize> = rules[rid].premises[..*m]
+                            .iter()
+                            .map(|&p| vals[p].expect("ready"))
+                            .collect();
+                        Some(s.show(Rep::Tuple(vs)))
+                    }
+                    Action::Atom(name, m) => {
+                        let vs: Vec<usize> = rules[rid].premises[..*m]
+                            .iter()
+                            .map(|&p| vals[p].expect("ready"))
+                            .collect();
+                        let tup = s.show(Rep::Tuple(vs));
+                        Some(s.show(Rep::Atom(name.clone(), tup)))
+                    }
+                    Action::DiffNf(m) => {
+                        let aux = rules[rid].premises[*m];
+                        nf_choice.get(&aux).map(|&(j_nf, rep_nf)| {
+                            let mut vs: Vec<usize> = rules[rid].premises[..*m]
+                                .iter()
+                                .map(|&p| vals[p].expect("ready"))
+                                .collect();
+                            vs[j_nf] = rep_nf;
+                            s.show(Rep::Tuple(vs))
+                        })
+                    }
+                    Action::Closure(m_mor) => Some(s.show(Rep::Closure(m_mor.clone()))),
+                };
+                if let Some(new_rep) = built {
+                    if let Some(oi) = rules[rid].out_inh {
+                        seed_slot(oi, new_rep, &mut vals, &mut queue);
+                    }
+                    if let Some(onf) = rules[rid].out_nf {
+                        seed_slot(onf, new_rep, &mut vals, &mut queue);
+                    }
+                }
+            }
+        }
+    }
+
+    // Each value in `vals` is in its slot's type by the rule that built it: every rule above
+    // builds a value of its node from values of its operands (a tuple or atom from its
+    // components, a union from an arm, a meet from its one recursive conjunct when the others
+    // are `top` (`rec_keys`), a difference from a value outside a flat subtrahend, a nonflat
+    // component taking the tuple outside it), so a member's value is in the least fixed point.
+    // It is kept with no test: a test by `member_known` walks the value against every member,
+    // Θ(n²) for a chain of n members whose values nest.
+    for (i, m) in members.iter().enumerate() {
+        if s.reps.get(m).is_some_and(Option::is_some) {
+            continue;
+        }
+        if let Some(rep) = vals[i] {
+            let c = s.class(rep);
+            s.members.insert((c, m.clone()), Some(true));
+            s.reps.insert(m.clone(), Some(rep));
+        }
+    }
+}
+
+/// Whether any body of `env`'s group mentions `&` or `\`.
+fn group_has_diff_or_and(env: &Arc<Env>) -> bool {
+    let mut stack: Vec<&rec::Node> = env.group().0.bodies.iter().map(|b| &**b).collect();
+    let mut seen: HashSet<u32> = HashSet::new();
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n.class) {
+            continue;
+        }
+        match &n.e {
+            rec::Shape::And(_) | rec::Shape::Diff(..) => return true,
+            rec::Shape::Union(xs) | rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
+                stack.extend(xs.iter().map(|c| &**c));
+            }
+            rec::Shape::Morphism(l, u, v) => stack.extend([&**l, &**u, &**v]),
+            rec::Shape::Not(a) => stack.push(a),
+            rec::Shape::Param(_) | rec::Shape::Type(_) | rec::Shape::Ref(..) => {}
+        }
+    }
+    false
 }
 
 /// A node's emptiness from its answers with the leaves `Bot` (`low`) and `Top` (`high`), when

@@ -2041,3 +2041,107 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
     eprintln!("{decided} decided, {refused} refused");
     assert!(decided > 2000, "only {decided} decided");
 }
+||||||| parent of f566de82b (kernel: merge the round-3 kernels of XR-group-order-5 without their bounds; a fork held by the union of its cuts is decided; prefix-chain twins checked alike)
+
+
+// Append to: `crates/zed-kernel/src/types/empty/tests.rs`
+// Round 3 cross-review kernel unit tests for Q3 (`overlaps` comparison, 1-tuple meet fix, and S_3 permutation check).
+
+#[test]
+fn xr_r2_q3_pi_sym_strictly_refines_mirrored_overlaps() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let triple = |a: Type, b: Type, c: Type| Type::tuple(vec![a, b, c]);
+
+    Type::forget_emptiness();
+    let w1 = [
+        &Type::atom("a") | &pair(pair(lit(1), lit(2)), lit(1)),
+        &Type::atom("b") | &pair(pair(lit(1), lit(3)), lit(1)),
+    ];
+    assert_eq!((&w1[0] & &w1[1]).verdict(), Verdict::Empty);
+    assert_eq!(overlaps(w1.iter()), vec![vec![0], vec![1]]);
+
+    Type::forget_emptiness();
+    let w2 = [
+        &Type::atom("a") | &triple(lit(1), lit(2), lit(1)),
+        &Type::atom("b") | &triple(lit(1), lit(3), lit(1)),
+    ];
+    assert_eq!((&w2[0] & &w2[1]).verdict(), Verdict::Empty);
+    assert_eq!(overlaps(w2.iter()), vec![vec![0], vec![1]]);
+
+    Type::forget_emptiness();
+    let five = |a: Type, b: Type, c: Type, d: Type, e: Type| Type::tuple(vec![a, b, c, d, e]);
+    let w3 = [
+        &pair(lit(1), lit(2)) | &five(lit(1), lit(2), lit(2), lit(2), lit(1)),
+        &pair(lit(2), lit(1)) | &five(lit(1), lit(2), lit(3), lit(2), lit(1)),
+    ];
+    assert_eq!((&w3[0] & &w3[1]).verdict(), Verdict::Empty);
+    assert_eq!(overlaps(w3.iter()), vec![vec![0], vec![1]]);
+}
+
+#[test]
+fn xr_r2_q3_one_tuple_meet_reversal_symmetry() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let one = |a: Type| Type::tuple(vec![a]);
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let s = Type::atom("s");
+
+    for k in 1..=20i64 {
+        Type::forget_emptiness();
+        let c0_w = &one(&pair(lit(k), lit(100 + k)) | &s) & &one(pair(lit(200 + k), lit(k)));
+        let c1_w = one(s.clone());
+        assert_eq!((&c0_w & &c1_w).verdict(), Verdict::Empty);
+        let ts_w = [c0_w, c1_w];
+        let g_w = overlaps(ts_w.iter());
+
+        Type::forget_emptiness();
+        let c0_r = &one(&pair(lit(100 + k), lit(k)) | &s) & &one(pair(lit(k), lit(200 + k)));
+        let c1_r = one(s.clone());
+        let ts_r = [c0_r, c1_r];
+        let g_r = overlaps(ts_r.iter());
+
+        assert_eq!(g_w, g_r, "1-tuple meet reversal asymmetry at k={k}");
+        assert_eq!(
+            g_w,
+            vec![vec![0], vec![1]],
+            "1-tuple meet failed to intersect out #s at k={k}"
+        );
+    }
+}
+
+#[test]
+fn xr_r2_q3_three_tuple_non_reversal_permutation_boundary() {
+    let triple = |a: Type, b: Type, c: Type| Type::tuple(vec![a, b, c]);
+    let (a, b, x, y) = (
+        Type::atom("a"),
+        Type::atom("b"),
+        Type::atom("x"),
+        Type::atom("y"),
+    );
+
+    Type::forget_emptiness();
+    let id_order = [
+        triple(
+            y.clone(),
+            triple(x.clone(), a.clone(), x.clone()),
+            y.clone(),
+        ),
+        triple(
+            y.clone(),
+            triple(x.clone(), b.clone(), x.clone()),
+            y.clone(),
+        ),
+    ];
+    assert_eq!((&id_order[0] & &id_order[1]).verdict(), Verdict::Empty);
+    let g_id = overlaps(id_order.iter());
+
+    Type::forget_emptiness();
+    let perm_12 = [
+        triple(y.clone(), y.clone(), triple(x.clone(), x.clone(), a)),
+        triple(y.clone(), y, triple(x.clone(), x, b)),
+    ];
+    let g_perm = overlaps(perm_12.iter());
+
+    assert_eq!(g_id, vec![vec![0, 1]]);
+    assert_eq!(g_perm, vec![vec![0], vec![1]]);
+}

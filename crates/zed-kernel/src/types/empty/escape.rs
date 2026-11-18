@@ -81,19 +81,57 @@
 // `find_prefix_chains` returns `None` on a type of this class.
 
 use std::collections::{BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 use super::super::{Lits, Parts, Row, Type};
 use super::shared::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
+use crate::digest::Digest;
 use crate::value::Value;
 
 /// A set of integers: `vals` when not `cof`, else the integers less `vals`.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+// Complexity tradeoff: `n` rows sharing a width-`w` head `not_a` (`xr_bucket`) previously cloned,
+// hashed and compared `BTreeSet<Value>` of size `w` once per row in `Nodes::ints`, `orig_live`,
+// `U1` partner bucketing and `ids`, costing `Theta(n * w)`. Wrapping `vals` in `Rc` with a
+// precomputed 64-bit `Digest` makes `Clone` and `Hash` `O(1)`, and `PartialEq` `O(1)` whenever
+// hashes differ or `Rc::ptr_eq` holds (such as shared `Nodes::heads` and memoized place-1 cells).
+#[derive(Clone, Debug)]
 struct Ints {
     cof: bool,
-    vals: BTreeSet<Value>,
+    hash: u64,
+    vals: Rc<BTreeSet<Value>>,
+}
+
+impl PartialEq for Ints {
+    #[inline]
+    fn eq(&self, o: &Ints) -> bool {
+        self.cof == o.cof
+            && self.hash == o.hash
+            && (Rc::ptr_eq(&self.vals, &o.vals) || *self.vals == *o.vals)
+    }
+}
+
+impl Eq for Ints {}
+
+impl Hash for Ints {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
 }
 
 impl Ints {
+    fn new(cof: bool, vals: BTreeSet<Value>) -> Ints {
+        let mut d = Digest::default();
+        cof.hash(&mut d);
+        vals.hash(&mut d);
+        Ints {
+            cof,
+            hash: d.finish(),
+            vals: Rc::new(vals),
+        }
+    }
+
     /// The integer set of `t`, if `t` holds integers and nothing else. Wide integers
     /// (`Value::Big`) are kept as values too: the escape only compares and hashes them (round 10).
     fn of(t: &Type) -> Option<Ints> {
@@ -110,10 +148,7 @@ impl Ints {
                 _ => return None,
             }
         }
-        Some(Ints {
-            cof: p.ints.cofinite,
-            vals,
-        })
+        Some(Ints::new(p.ints.cofinite, vals))
     }
 
     fn is_empty(&self) -> bool {
@@ -141,43 +176,32 @@ impl Ints {
 
     fn meet(&self, o: &Ints) -> Ints {
         match (self.cof, o.cof) {
-            (false, _) => Ints {
-                cof: false,
-                vals: self
-                    .vals
+            (false, _) => Ints::new(
+                false,
+                self.vals
                     .iter()
                     .filter(|x| o.cof != o.vals.contains(x))
                     .cloned()
                     .collect(),
-            },
+            ),
             (true, false) => o.meet(self),
-            (true, true) => Ints {
-                cof: true,
-                vals: self.vals.union(&o.vals).cloned().collect(),
-            },
+            (true, true) => Ints::new(true, self.vals.union(&o.vals).cloned().collect()),
         }
     }
 
     /// `self \ o`.
     fn minus(&self, o: &Ints) -> Ints {
         match (self.cof, o.cof) {
-            (false, _) => Ints {
-                cof: false,
-                vals: self
-                    .vals
+            (false, _) => Ints::new(
+                false,
+                self.vals
                     .iter()
                     .filter(|x| o.cof == o.vals.contains(x))
                     .cloned()
                     .collect(),
-            },
-            (true, false) => Ints {
-                cof: true,
-                vals: self.vals.union(&o.vals).cloned().collect(),
-            },
-            (true, true) => Ints {
-                cof: false,
-                vals: o.vals.difference(&self.vals).cloned().collect(),
-            },
+            ),
+            (true, false) => Ints::new(true, self.vals.union(&o.vals).cloned().collect()),
+            (true, true) => Ints::new(false, o.vals.difference(&self.vals).cloned().collect()),
         }
     }
 
@@ -191,6 +215,69 @@ impl Ints {
             .map(Value::Int)
             .find(|x| !self.vals.contains(x))
             .expect("a cofinite set has a natural number")
+    }
+
+    fn contains(&self, v: &Value) -> bool {
+        self.cof != self.vals.contains(v)
+    }
+
+    fn pick_in(&self, dom: &Ints) -> Value {
+        if !self.cof {
+            return self.vals.iter().next().expect("not empty").clone();
+        }
+        (0..)
+            .map(Value::Int)
+            .find(|x| !self.vals.contains(x) && dom.contains(x))
+            .expect("an intersection of two cofinite sets has a natural number")
+    }
+
+    /// Intersects a non-empty slice of `Ints` in `O(S log S)` time where `S = \sum_r (1 + |s_r.vals|)`.
+    // Complexity tradeoff: folding `Ints::meet` left-to-right across `k` cofinite partners in one
+    // `U1` bucket (`\bigcap_{q=1}^k (\mathbb{Z} \setminus \{q\})`) clones an excluded set of size
+    // `q` at step `q`, costing `Theta(k^2)` (`xr_r2_bench_escape_single_bucket_scales_n_log_n`).
+    // Cloning the smallest finite set once (or, when all sets are cofinite, the largest excluded
+    // set once) and mutating that single `BTreeSet` in place costs `O(S log S)`.
+    fn intersect_many(sets: &[&Ints]) -> Ints {
+        debug_assert!(!sets.is_empty());
+        if sets.len() == 1 {
+            return (*sets[0]).clone();
+        }
+        if let Some((min_idx, min_fin)) = sets
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.cof)
+            .min_by_key(|(_, s)| s.vals.len())
+        {
+            let mut vals = (*min_fin.vals).clone();
+            for (idx, s) in sets.iter().enumerate() {
+                if idx == min_idx || vals.is_empty() {
+                    continue;
+                }
+                if s.cof {
+                    for v in s.vals.iter() {
+                        vals.remove(v);
+                    }
+                } else {
+                    vals.retain(|x| s.vals.contains(x));
+                }
+            }
+            Ints::new(false, vals)
+        } else {
+            let (max_idx, max_cof) = sets
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, s)| s.vals.len())
+                .expect("non-empty cofinite slice");
+            let mut vals = (*max_cof.vals).clone();
+            for (idx, s) in sets.iter().enumerate() {
+                if idx != max_idx {
+                    for v in s.vals.iter() {
+                        vals.insert(v.clone());
+                    }
+                }
+            }
+            Ints::new(true, vals)
+        }
     }
 }
 
@@ -228,7 +315,7 @@ struct Nodes {
     of: ByType<usize>,
     stop: Option<std::sync::Arc<str>>,
     link: std::sync::Arc<str>,
-    carrier: Option<(Type, usize)>,
+    carrier: Option<(Type, usize, Type)>,
     alphabet: Option<BTreeSet<Value>>,
     heads: ByType<Option<Ints>>,
 }
@@ -332,10 +419,7 @@ impl Nodes {
                         .cloned()
                         .collect()
                 };
-                Some(Ints {
-                    cof: p.ints.cofinite,
-                    vals,
-                })
+                Some(Ints::new(p.ints.cofinite, vals))
             }
         };
         self.heads.insert(t.clone(), value.clone());
@@ -367,8 +451,20 @@ impl Nodes {
                 }
                 let head = self.ints(&h)?;
                 if next == cur {
-                    // The carrier: a self-loop holding the empty list, the only one.
-                    if s.is_none() || self.carrier.is_some() {
+                    // The carrier: a self-loop holding the empty list.
+                    if s.is_none() {
+                        return None;
+                    }
+                    // Complexity tradeoff: merging self-loop carriers across distinct recursive
+                    // groups by comparing unprojected `h.p().ints` in O(|vals|) avoids unfolding
+                    // or intersecting DFA states across groups (O(|Q_1| * |Q_2|)), following
+                    // Hopcroft & Karp (1971) bisimulation / language equivalence on single-state
+                    // Kleene-star list tails `L_H = #nil | #cons(H, L_H)`.
+                    if let Some((_, existing_i, ref existing_h)) = self.carrier {
+                        if existing_h.p().ints.cmp(&h.p().ints).is_eq() {
+                            self.of.insert(cur, existing_i);
+                            break existing_i;
+                        }
                         return None;
                     }
                     let i = self.nodes.len();
@@ -380,7 +476,7 @@ impl Nodes {
                         ht: 0,
                     });
                     self.of.insert(cur.clone(), i);
-                    self.carrier = Some((cur, i));
+                    self.carrier = Some((cur, i, h));
                     break i;
                 }
                 path.push((cur, s.is_some(), head));
@@ -422,10 +518,7 @@ impl Nodes {
             let i = self.nodes.len();
             self.nodes.push(Node {
                 stop: true,
-                head: Ints {
-                    cof: false,
-                    vals: BTreeSet::new(),
-                },
+                head: Ints::new(false, BTreeSet::new()),
                 next: None,
                 carrier: false,
                 ht: 0,
@@ -600,7 +693,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     let stop = ns.stop.clone()?;
     let nodes = &ns.nodes;
     let anc = Ancestors::new(nodes);
-    let h_car: Option<Ints> = ns.carrier.as_ref().map(|&(_, i)| nodes[i].head.clone());
+    let h_car: Option<Ints> = ns.carrier.as_ref().map(|&(_, i, _)| nodes[i].head.clone());
 
     // The positive chain: the one taken row whose tail is not the carrier, if any.
     let mut chain: Option<usize> = None;
@@ -660,164 +753,450 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         return None;
     }
 
-    // The refused rows by length: a hint for the checker for each one dropped.
-    let mut hints: Vec<(Row, ChainHint)> = Vec::new();
-    let mut roots: Vec<Root> = Vec::new();
-    for (k, (h0, s)) in neg.into_iter().enumerate() {
-        let row = refused[k].clone();
-        let hs = nodes[s].ht;
-        let steps = l0 - 1;
-        let holds = if steps < hs {
-            nodes[anc.at(s, steps, nodes)].stop
-        } else {
-            let term = ns.terminal(s, &anc);
-            steps == hs || nodes[term].carrier
-        };
-        if !holds {
-            let hint = if steps < hs {
-                ChainHint::Len
+    // Complexity tradeoff: bounded 2-pass distributive partner merge `(U1)` and unit-clause
+    // domain narrowing `(U2)` before laminar 2-SAT (Aspvall, Plass and Tarjan, "A linear-time
+    // algorithm for testing the truth of certain quantified boolean formulas", Inform. Process.
+    // Lett. 8(3), 1979, pp. 121-123), evaluated at `l0` and at the carrier-truncation lengths
+    // `l_next` and `l_trunc`. Place-1 subtractions `pl[1].minus(h0)` are memoized by `h0` (`O(1)`
+    // hash and `Rc::ptr_eq` equality), and bucket intersections use `Ints::intersect_many`, giving
+    // `O(S log S)` work where `S` is the written size of distinct integer sets plus clauses;
+    // naive per-row subtraction and pairwise `meet` folding cost `Theta(n^2)`.
+    let solve_at_len = |target_len: usize,
+                        mut pl: Vec<Ints>,
+                        longer_after: bool,
+                        all_held_from_l0: bool,
+                        counts: &mut (usize, usize)|
+     -> Option<ChainPlan> {
+        let mut hints: Vec<(Row, ChainHint)> = Vec::new();
+        let mut roots: Vec<Root> = Vec::new();
+        let mut p1_cache: HashMap<Ints, Option<Option<Ints>>, Digests> = HashMap::default();
+        for (k, &(ref h0, s)) in neg.iter().enumerate() {
+            let row = refused[k].clone();
+            let hs = nodes[s].ht;
+            let steps = target_len - 1;
+            let holds = if steps < hs {
+                nodes[anc.at(s, steps, nodes)].stop
             } else {
-                ChainHint::Miss(hs + 1)
+                let term = ns.terminal(s, &anc);
+                steps == hs || nodes[term].carrier
             };
-            hints.push((row, hint));
-            continue;
-        }
-        let mut r = Root {
-            row,
-            s,
-            kill: None,
-            atoms: Vec::new(),
-        };
-        if pl[1].disjoint(&h0) {
-            r.kill = Some(1);
-        } else if !pl[1].subset(&h0) {
-            r.atoms.push((1, pl[1].minus(&h0)));
-        }
-        roots.push(r);
-    }
-
-    cells_windows(nodes, &anc, &pl, &mut roots, l0, counts);
-
-    // E2, and the rows left.
-    let mut e2 = true;
-    let mut live: Vec<Root> = Vec::new();
-    for mut r in roots {
-        if let Some(j) = r.kill {
-            hints.push((r.row, ChainHint::Miss(j - 1)));
-            continue;
-        }
-        let term = ns.terminal(r.s, &anc);
-        if !(nodes[r.s].ht < l0 && nodes[term].carrier) {
-            e2 = false;
-        }
-        r.atoms.sort_unstable_by_key(|a| a.0);
-        live.push(r);
-    }
-    let exact = !longer || (e1 && e2);
-    if live.iter().any(|r| r.atoms.is_empty()) {
-        return exact.then_some(ChainPlan::Empty);
-    }
-    let wide = live.iter().any(|r| r.atoms.len() > 2);
-
-    // The atoms, one variable each, and their forest at each place.
-    let mut ids: HashMap<(usize, Ints), usize> = HashMap::new();
-    let mut atom: Vec<(usize, Ints)> = Vec::new();
-    let mut clause: Vec<[usize; 2]> = Vec::with_capacity(live.len());
-    for r in &live {
-        let mut two = [0; 2];
-        for (k, (j, a)) in r.atoms.iter().take(2).enumerate() {
-            let n = atom.len();
-            let id = *ids.entry((*j, a.clone())).or_insert_with(|| {
-                atom.push((*j, a.clone()));
-                n
+            if !holds {
+                let hint = if steps < hs {
+                    ChainHint::Len
+                } else {
+                    ChainHint::Miss(hs + 1)
+                };
+                hints.push((row, hint));
+                continue;
+            }
+            let mut r = Root {
+                row,
+                s,
+                kill: None,
+                atoms: Vec::new(),
+            };
+            let p1_cell = p1_cache.entry(h0.clone()).or_insert_with(|| {
+                if pl[1].disjoint(h0) {
+                    Some(None)
+                } else if !pl[1].subset(h0) {
+                    Some(Some(pl[1].minus(h0)))
+                } else {
+                    None
+                }
             });
-            two[k] = id;
+            match p1_cell {
+                Some(None) => r.kill = Some(1),
+                Some(Some(diff)) => r.atoms.push((1, diff.clone())),
+                None => {}
+            }
+            roots.push(r);
         }
-        if r.atoms.len() == 1 {
-            two[1] = two[0];
+
+        cells_windows(nodes, &anc, &pl, &mut roots, target_len, counts);
+
+        // E2, and the rows left.
+        let mut e2 = true;
+        let mut orig_live: Vec<(Row, Vec<(usize, Ints)>)> = Vec::new();
+        let mut clauses_work: Vec<Vec<(usize, Ints)>> = Vec::new();
+        for mut r in roots {
+            if let Some(j) = r.kill {
+                hints.push((r.row, ChainHint::Miss(j - 1)));
+                continue;
+            }
+            let term = ns.terminal(r.s, &anc);
+            if !(nodes[r.s].ht < target_len && nodes[term].carrier) {
+                e2 = false;
+            }
+            r.atoms.sort_unstable_by_key(|a| a.0);
+            orig_live.push((r.row, r.atoms.clone()));
+            clauses_work.push(r.atoms);
         }
-        clause.push(two);
-    }
-    let mut at_place: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (i, (j, _)) in atom.iter().enumerate() {
-        at_place.entry(*j).or_default().push(i);
-    }
-    let mut parent: Vec<Option<usize>> = vec![None; atom.len()];
-    for list in at_place.values() {
-        forest(list, &atom, &mut parent)?;
+        let exact = (!longer_after || (e1 && e2)) && all_held_from_l0;
+        if clauses_work.iter().any(Vec::is_empty) {
+            return exact.then_some(ChainPlan::Empty);
+        }
+
+        // Complexity tradeoff (GROUP-order-cpoly-merge): the distributive partner merge (U1) and
+        // unit-clause domain narrowing (U2) run to a fixed point, then the clauses left go to
+        // laminar 2-SAT (Aspvall, Plass and Tarjan 1979). U1 is Boolean distributivity,
+        // `\bigwedge_q ((j_1, A) \lor (j_2, B_q)) \iff (j_1, A) \lor (j_2, \bigcap_q B_q)`, and U2
+        // is unit propagation: a clause of one atom `(j, U)` narrows `pl[j]` to `pl[j] \cap U`.
+        // Both rewrite the clauses into an equivalent set, so every clause stays exact: no clause
+        // is cut to its first two atoms (round 3 of XR-group-order-5 cut them, which made a unit
+        // or an emptied clause prove nothing), and a clause of three or more atoms is narrowed
+        // like the others; only the 2-SAT below reads the first two atoms of a clause still wide
+        // and then answers no Empty (`wide`). Each pass costs `O(S log S)` (`S` the clauses'
+        // atoms plus the written size of their sets; the groups are found by hashing, the
+        // intersections by `Ints::intersect_many`), and a pass that changes anything removes at
+        // least one clause (a merge replaces two or more by one; a narrowing removes each unit it
+        // reads, since `pl[j] \subseteq U` afterward), so there are at most `C + 1` passes for `C`
+        // clauses: `O(C S log S)` in the worst case, `O(S log S)` when the cascade is a bounded
+        // number of passes deep, as on every family measured (`refusals::bench::xr_r2_bench_*`).
+        // Naive: the round 3 patch stopped after two passes, a fixed bound that the
+        // no-thresholds rule forbids and that left deeper cascades to the general search; the
+        // general method is the product of the excluded chains, `O(2^n)` states.
+        let mut strengthened = false;
+        loop {
+            loop {
+                let mut changed = false;
+                for side in 0..2 {
+                    let mut drop_mask = vec![false; clauses_work.len()];
+                    let mut merged_new = Vec::new();
+                    {
+                        let mut groups: HashMap<(usize, &Ints, usize), Vec<usize>, Digests> =
+                            HashMap::default();
+                        for (idx, atoms) in clauses_work.iter().enumerate() {
+                            if atoms.len() == 2 {
+                                let (fixed, other) = if side == 0 {
+                                    (&atoms[0], atoms[1].0)
+                                } else {
+                                    (&atoms[1], atoms[0].0)
+                                };
+                                groups
+                                    .entry((fixed.0, &fixed.1, other))
+                                    .or_default()
+                                    .push(idx);
+                            }
+                        }
+                        for ((jf, af, jo), idxs) in groups {
+                            if idxs.len() < 2 {
+                                continue;
+                            }
+                            let partner_pos = if side == 0 { 1 } else { 0 };
+                            let partners: Vec<&Ints> = idxs
+                                .iter()
+                                .map(|&idx| &clauses_work[idx][partner_pos].1)
+                                .collect();
+                            let inter = Ints::intersect_many(&partners);
+                            for &idx in &idxs {
+                                drop_mask[idx] = true;
+                            }
+                            let mut new_atoms = vec![(jf, af.clone())];
+                            if !inter.is_empty() {
+                                new_atoms.push((jo, inter));
+                                new_atoms.sort_unstable_by_key(|x| x.0);
+                            }
+                            merged_new.push(new_atoms);
+                        }
+                    }
+                    if !merged_new.is_empty() {
+                        changed = true;
+                        let mut next_work = Vec::with_capacity(clauses_work.len());
+                        for (idx, item) in clauses_work.into_iter().enumerate() {
+                            if !drop_mask[idx] {
+                                next_work.push(item);
+                            }
+                        }
+                        next_work.extend(merged_new);
+                        clauses_work = next_work;
+                    }
+                }
+
+                let mut narrowed_places: HashMap<usize, Ints> = HashMap::new();
+                {
+                    let mut unit_by_place: HashMap<usize, Vec<&Ints>> = HashMap::new();
+                    for atoms in &clauses_work {
+                        if atoms.len() == 1 {
+                            let (j, ref u) = atoms[0];
+                            unit_by_place
+                                .entry(j)
+                                .or_insert_with(|| vec![&pl[j]])
+                                .push(u);
+                        }
+                    }
+                    for (j, sets) in unit_by_place {
+                        narrowed_places.insert(j, Ints::intersect_many(&sets));
+                    }
+                }
+                if narrowed_places.is_empty() {
+                    if changed {
+                        continue;
+                    }
+                    break;
+                }
+                for (&j, new_pl) in &narrowed_places {
+                    if new_pl.is_empty() {
+                        return (exact && !strengthened).then_some(ChainPlan::Empty);
+                    }
+                    pl[j] = new_pl.clone();
+                }
+                let mut next_work = Vec::with_capacity(clauses_work.len());
+                for atoms in clauses_work {
+                    let mut killed = false;
+                    let mut updated = Vec::with_capacity(atoms.len());
+                    for (j, a) in atoms {
+                        if narrowed_places.contains_key(&j) {
+                            if pl[j].subset(&a) {
+                                killed = true;
+                                break;
+                            }
+                            if pl[j].cof {
+                                let vals: BTreeSet<Value> = a
+                                    .vals
+                                    .iter()
+                                    .filter(|x| !pl[j].vals.contains(*x))
+                                    .cloned()
+                                    .collect();
+                                if a.cof || !vals.is_empty() {
+                                    updated.push((j, Ints::new(a.cof, vals)));
+                                }
+                            } else {
+                                let m = pl[j].meet(&a);
+                                if !m.is_empty() {
+                                    updated.push((j, m));
+                                }
+                            }
+                        } else {
+                            updated.push((j, a));
+                        }
+                    }
+                    if killed {
+                        continue;
+                    }
+                    if updated.is_empty() {
+                        return (exact && !strengthened).then_some(ChainPlan::Empty);
+                    }
+                    next_work.push(updated);
+                }
+                clauses_work = next_work;
+            }
+            if strengthened || !clauses_work.iter().any(|a| a.len() > 2) {
+                break;
+            }
+            // The exact fixed point left a clause of three or more atoms, which 2-SAT cannot
+            // read. For the witness only, keep the first two atoms of each such clause: that
+            // strengthens the system (each kept clause implies the clause written), so a model
+            // of it is a model of the written clauses, checked again against `orig_live`
+            // below; but an empty answer of it proves nothing, so `strengthened` turns every
+            // Empty below into a refusal. Its fixed point runs once more, at the same cost.
+            strengthened = true;
+            for atoms in &mut clauses_work {
+                atoms.truncate(2);
+            }
+        }
+
+        let wide = strengthened;
+
+        // The atoms, one variable each, and their forest at each place.
+        let mut ids: HashMap<(usize, Ints), usize, Digests> = HashMap::default();
+        let mut atom: Vec<(usize, Ints)> = Vec::new();
+        let mut clause: Vec<[usize; 2]> = Vec::with_capacity(clauses_work.len());
+        for atoms in &clauses_work {
+            let mut two = [0; 2];
+            for (k, (j, a)) in atoms.iter().take(2).enumerate() {
+                let n = atom.len();
+                let id = *ids.entry((*j, a.clone())).or_insert_with(|| {
+                    atom.push((*j, a.clone()));
+                    n
+                });
+                two[k] = id;
+            }
+            if atoms.len() == 1 {
+                two[1] = two[0];
+            }
+            clause.push(two);
+        }
+        let mut at_place: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, (j, _)) in atom.iter().enumerate() {
+            at_place.entry(*j).or_default().push(i);
+        }
+        let mut parent: Vec<Option<usize>> = vec![None; atom.len()];
+        for list in at_place.values() {
+            forest(list, &atom, &mut parent)?;
+        }
+
+        let mut sat = TwoSat {
+            vars: 0,
+            clauses: Vec::new(),
+            meets: HashMap::new(),
+        };
+        let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
+        let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
+        for (i, (j, _)) in atom.iter().enumerate() {
+            if let Some(pa) = parent[i] {
+                sat.clauses.push((z[i] ^ 1, z[pa]));
+            }
+            kids.entry((*j, parent[i])).or_default().push(i);
+        }
+        let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
+        groups.sort_unstable();
+        for g in groups {
+            // At most one: the ladder `s_i` = "one of the first i is true".
+            let mut prev: Option<usize> = None;
+            for &a in &g {
+                let s = sat.fresh();
+                sat.clauses.push((z[a] ^ 1, s));
+                if let Some(ps) = prev {
+                    sat.clauses.push((ps ^ 1, s));
+                    sat.clauses.push((ps ^ 1, z[a] ^ 1));
+                }
+                prev = Some(s);
+            }
+        }
+        for c in &clause {
+            sat.clauses.push((z[c[0]], z[c[1]]));
+        }
+        let Some(model) = sat.solve() else {
+            return (exact && !wide).then_some(ChainPlan::Empty);
+        };
+
+        // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
+        let depth = |mut a: usize| {
+            let mut d = 0;
+            while let Some(pa) = parent[a] {
+                d += 1;
+                a = pa;
+            }
+            d
+        };
+        let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
+        for (i, (j, _)) in atom.iter().enumerate() {
+            if model[z[i] / 2] {
+                let d = depth(i);
+                let e = deepest.entry(*j).or_insert((d, i));
+                if d >= e.0 {
+                    *e = (d, i);
+                }
+            }
+        }
+        let mut vals_picked = Vec::with_capacity(target_len + 1);
+        vals_picked.push(Value::Int(0)); // unused index 0
+        let mut heads = Vec::with_capacity(target_len);
+        for (j, x) in pl.iter().enumerate().skip(1) {
+            let v = deepest
+                .get(&j)
+                .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick_in(x));
+            heads.push(Type::lit(&v)?);
+            vals_picked.push(v);
+        }
+        for (row, orig_atoms) in orig_live {
+            let mut missed_at = None;
+            for (j, a) in orig_atoms {
+                if a.contains(&vals_picked[j]) {
+                    missed_at = Some(j);
+                    break;
+                }
+            }
+            let j = missed_at?;
+            hints.push((row, ChainHint::Miss(j - 1)));
+        }
+        Some(ChainPlan::Inhabited {
+            stop: stop.clone(),
+            link: link.clone(),
+            heads,
+            hints,
+        })
+    };
+
+    if let Some(plan) = solve_at_len(l0, pl.clone(), longer, true, counts) {
+        return Some(plan);
     }
 
-    let mut sat = TwoSat {
-        vars: 0,
-        clauses: Vec::new(),
-        meets: HashMap::new(),
-    };
-    let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
-    let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
-    for (i, (j, _)) in atom.iter().enumerate() {
-        if let Some(pa) = parent[i] {
-            sat.clauses.push((z[i] ^ 1, z[pa]));
-        }
-        kids.entry((*j, parent[i])).or_default().push(i);
-    }
-    let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
-    groups.sort_unstable();
-    for g in groups {
-        // At most one: the ladder `s_i` = "one of the first i is true".
-        let mut prev: Option<usize> = None;
-        for &a in &g {
-            let s = sat.fresh();
-            sat.clauses.push((z[a] ^ 1, s));
-            if let Some(ps) = prev {
-                sat.clauses.push((ps ^ 1, s));
-                sat.clauses.push((ps ^ 1, z[a] ^ 1));
+    if longer && e1 {
+        let holds_l0 = |s: usize| -> bool {
+            let hs = nodes[s].ht;
+            let steps = l0 - 1;
+            if steps < hs {
+                nodes[anc.at(s, steps, nodes)].stop
+            } else {
+                let term = ns.terminal(s, &anc);
+                steps == hs || nodes[term].carrier
             }
-            prev = Some(s);
+        };
+        let h_active = neg
+            .iter()
+            .filter(|&&(_, s)| holds_l0(s))
+            .map(|&(_, s)| nodes[s].ht)
+            .max()
+            .unwrap_or(0);
+        let h_max = neg.iter().map(|&(_, s)| nodes[s].ht).max().unwrap_or(0);
+        let l_next = (h_active + 1).max(l0);
+        let l_trunc = (h_max + 1).max(l0);
+        let mut cands = Vec::with_capacity(2);
+        if l_next > l0 && l_next < l_trunc {
+            cands.push(l_next);
         }
-    }
-    for c in &clause {
-        sat.clauses.push((z[c[0]], z[c[1]]));
-    }
-    let Some(model) = sat.solve() else {
-        return (exact && !wide).then_some(ChainPlan::Empty);
-    };
-
-    // The list: at each place a value of the deepest true atom, else any value of `p_j`.
-    let depth = |mut a: usize| {
-        let mut d = 0;
-        while let Some(pa) = parent[a] {
-            d += 1;
-            a = pa;
+        if l_trunc > l0 {
+            cands.push(l_trunc);
         }
-        d
-    };
-    let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
-    for (i, (j, _)) in atom.iter().enumerate() {
-        if model[z[i] / 2] {
-            let d = depth(i);
-            let e = deepest.entry(*j).or_insert((d, i));
-            if d >= e.0 {
-                *e = (d, i);
+        let mut pl_ext = pl;
+        let mut v = cur;
+        let mut ok = true;
+        for cand_len in cands {
+            while pl_ext.len() - 1 < cand_len || !nodes[v].stop {
+                if nodes[v].carrier {
+                    let c = h_car.as_ref()?;
+                    if c.is_empty() {
+                        ok = false;
+                        break;
+                    }
+                    pl_ext.push(c.clone());
+                } else if let Some(nx) = nodes[v].next {
+                    let mut h = nodes[v].head.clone();
+                    if car_pos && let Some(c) = &h_car {
+                        h = h.meet(c);
+                    }
+                    if h.is_empty() {
+                        ok = false;
+                        break;
+                    }
+                    pl_ext.push(h);
+                    v = nx;
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                break;
+            }
+            let actual_len = pl_ext.len() - 1;
+            let longer_after = nodes[v].next.is_some() || nodes[v].carrier;
+            let all_held = actual_len == l_trunc
+                && neg.iter().all(|&(_, s)| {
+                    let term = ns.terminal(s, &anc);
+                    if !nodes[term].carrier {
+                        return false;
+                    }
+                    let mut u = s;
+                    let mut step = 0usize;
+                    while let Some(nx) = nodes[u].next {
+                        if step + 1 >= l0 && !nodes[u].stop {
+                            return false;
+                        }
+                        u = nx;
+                        step += 1;
+                    }
+                    true
+                });
+            if let Some(plan) =
+                solve_at_len(actual_len, pl_ext.clone(), longer_after, all_held, counts)
+            {
+                return Some(plan);
             }
         }
     }
-    let mut heads = Vec::with_capacity(l0);
-    for (j, x) in pl.iter().enumerate().skip(1) {
-        let v = deepest
-            .get(&j)
-            .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick());
-        heads.push(Type::lit(&v)?);
-    }
-    for (r, c) in live.into_iter().zip(&clause) {
-        let a = if model[z[c[0]] / 2] { c[0] } else { c[1] };
-        hints.push((r.row, ChainHint::Miss(atom[a].0 - 1)));
-    }
-    Some(ChainPlan::Inhabited {
-        stop,
-        link,
-        heads,
-        hints,
-    })
+    None
 }
 
 /// The parent of each atom of one place in the laminar forest of the atoms `list`, or `None`
@@ -836,7 +1215,7 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
     // The first cofinite atom (in the chain) that excludes each value.
     let mut first_out: HashMap<Value, usize> = HashMap::new();
     for (k, &i) in cof.iter().enumerate() {
-        for x in &atom[i].1.vals {
+        for x in atom[i].1.vals.iter() {
             first_out.entry(x.clone()).or_insert(k);
         }
     }
@@ -849,7 +1228,7 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
     let mut owner: HashMap<Value, usize> = HashMap::new();
     for i in fin {
         let mut up: Option<Option<usize>> = None;
-        for x in &atom[i].1.vals {
+        for x in atom[i].1.vals.iter() {
             let o = owner.get(x).copied().or_else(|| deepest_cof(x));
             match up {
                 None => up = Some(o),
@@ -858,7 +1237,7 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
             }
         }
         parent[i] = up.flatten();
-        for x in &atom[i].1.vals {
+        for x in atom[i].1.vals.iter() {
             owner.insert(x.clone(), i);
         }
     }
@@ -1599,20 +1978,19 @@ mod windows_tests {
         };
         for case in 0..600u64 {
             let sigma = 1 + rnd(if case % 2 == 0 { 3 } else { 12 }) as i64;
-            let set = |rnd: &mut dyn FnMut(u64) -> u64| Ints {
-                cof: rnd(5) < 2,
-                vals: (0..rnd(4))
-                    .map(|_| Value::Int(rnd(sigma as u64) as i64))
-                    .collect(),
+            let set = |rnd: &mut dyn FnMut(u64) -> u64| {
+                Ints::new(
+                    rnd(5) < 2,
+                    (0..rnd(4))
+                        .map(|_| Value::Int(rnd(sigma as u64) as i64))
+                        .collect(),
+                )
             };
             let n = 2 + rnd(if case % 3 == 0 { 400 } else { 60 }) as usize;
             let chain = case % 4 == 0;
             let mut nodes = vec![Node {
                 stop: false,
-                head: Ints {
-                    cof: false,
-                    vals: BTreeSet::new(),
-                },
+                head: Ints::new(false, BTreeSet::new()),
                 next: None,
                 carrier: false,
                 ht: 0,
@@ -1630,10 +2008,7 @@ mod windows_tests {
                 });
             }
             let l0 = nodes.iter().map(|v| v.ht).max().unwrap() + rnd(4) as usize;
-            let mut pl = vec![Ints {
-                cof: false,
-                vals: BTreeSet::new(),
-            }];
+            let mut pl = vec![Ints::new(false, BTreeSet::new())];
             for _ in 1..=l0 {
                 pl.push(set(&mut rnd));
             }

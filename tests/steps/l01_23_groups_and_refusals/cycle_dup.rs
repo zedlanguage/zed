@@ -907,8 +907,9 @@ fn small_groups_with_shared_parts_are_inhabited() {
 /// `bench::shared_morphism_constraints_scale_without_a_group_query` and
 /// `bench::shared_morphism_constraints_scale_beside_a_refused_member`: the group of
 /// [`arm_family`] is empty in every member, asked by its verdict, by `is_empty`, inside a
-/// tuple and as the result of a morphism type; beside a refused fork, `Node` is refused and
-/// not empty, and the other members are empty. `m = 0` is left out: `Thunk` would then meet an
+/// tuple and as the result of a morphism type; with the forked member, `Node`, whose body
+/// joins `fork_empty`, is empty too (XR-group-order-5), as are the other members.
+/// `m = 0` is left out: `Thunk` would then meet an
 /// empty union, another input.
 #[test]
 fn small_shared_morphism_constraints_are_decided() {
@@ -933,11 +934,7 @@ fn small_shared_morphism_constraints_are_decided() {
             assert_eq!(value.verdict(), Verdict::Empty, "m = {m}");
         }
         let types = arm_family(true, m).instance(vec![]);
-        let want = [
-            Verdict::Refused(Refusal::Fork),
-            Verdict::Empty,
-            Verdict::Empty,
-        ];
+        let want = [Verdict::Empty, Verdict::Empty, Verdict::Empty];
         for empty in [false, true] {
             Type::forget_emptiness();
             for (t, want) in types.iter().zip(want) {

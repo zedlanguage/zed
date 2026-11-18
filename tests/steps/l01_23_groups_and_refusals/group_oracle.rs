@@ -1453,10 +1453,9 @@ const LISTED_LAYER: &[Listed] = &[
     (1485, 4, 'U', Refusal::NoWitness),
     (1498, 5, 'I', Refusal::NoWitness),
 ];
-/// Meets and differences: one system, `R0 = (R0, R2) | (((#b | R1), (#b | R2)) \ (#b, #b))`,
-/// `R1 = (int, R2) | #stop | (int, R0)`, `R2 = (R0, R0)`, whose `R0` and `R2` the pool shows
-/// inhabited from every choice, refused `Fork`.
-const LISTED_CELLS: &[Listed] = &[(1140, 0, 'I', Refusal::Fork), (1140, 2, 'I', Refusal::Fork)];
+/// Meets and differences: seed 1140 (`R0`, `R2` shown inhabited by the pool) is now decided
+/// `Inhabited` by `C_group` / `Π_sym` (XR-group-order-5).
+const LISTED_CELLS: &[Listed] = &[];
 
 // The seed of each family asked every run because its system has both a member the pool shows
 // empty and one it shows inhabited, so that each sweep meets both answers, which
@@ -3636,6 +3635,18 @@ fn the_cells_of_seeds_500_1000_agree_exactly_in_every_order() {
     order_sweep_asserts(500..1000);
 }
 
+// The three ranges below found order differences before GROUP-order-cpoly-merge (cells 1140,
+// 1558, 1696 and 1908 with tuple components reversed).
+#[test]
+fn the_cells_of_seeds_1000_1500_agree_exactly_in_every_order() {
+    order_sweep_asserts(1000..1500);
+}
+
+#[test]
+fn the_cells_of_seeds_1500_2000_agree_exactly_in_every_order() {
+    order_sweep_asserts(1500..2000);
+}
+
 #[test]
 fn the_cells_of_seeds_2000_2500_agree_exactly_in_every_order() {
     order_sweep_asserts(2000..2500);
@@ -3644,6 +3655,11 @@ fn the_cells_of_seeds_2000_2500_agree_exactly_in_every_order() {
 #[test]
 fn the_cells_of_seeds_2500_3000_agree_exactly_in_every_order() {
     order_sweep_asserts(2500..3000);
+}
+
+#[test]
+fn the_cells_of_seeds_3000_3500_agree_exactly_in_every_order() {
+    order_sweep_asserts(3000..3500);
 }
 
 #[test]
@@ -3800,4 +3816,1023 @@ fn fork_by_two_shows_no_value_in_the_oracle() {
         "{:?}",
         left.seen[5]
     );
+}
+
+// The tests of the cross-review XR-group-order-5 (GROUP-order-cpoly-merge): the red tests of
+// GROUP-order-verdicts-5, and the tests of its rounds 1 to 3.
+
+#[test]
+fn cells_whose_tuple_parts_differ_in_order_agree_across_orders() {
+    for seed in [1140, 1558, 1696, 1908] {
+        verdicts_agree_across_orders("cells", gen_cells, &[seed], (false, true));
+    }
+}
+
+fn xr_atom_a() -> E {
+    E::Atom("a")
+}
+
+fn xr_atom_b() -> E {
+    E::Atom("b")
+}
+
+fn xr_or(x: E, y: E) -> E {
+    E::Union(vec![x, y])
+}
+
+/// `R0 = (R0, R1) | (((#b | R1), (#b | R0)) \ (#a, #b))` with the given `R1`; `(#b, #b)` is in
+/// `R0` and `#a` is in `R1`.
+fn xr_fork_outside(r1: E) -> Vec<E> {
+    let r0 = xr_or(
+        tup(vec![E::Ref(0), E::Ref(1)]),
+        diff(
+            tup(vec![
+                xr_or(xr_atom_b(), E::Ref(1)),
+                xr_or(xr_atom_b(), E::Ref(0)),
+            ]),
+            tup(vec![xr_atom_a(), xr_atom_b()]),
+        ),
+    );
+    vec![r0, r1]
+}
+
+fn xr_inhabited_both_ways(sys: &[E], tag: &str) {
+    let rev: Vec<E> = sys.iter().map(reversed).collect();
+    let written = alone(&kernel(sys, tag));
+    let back = alone(&kernel(&rev, &format!("{tag}r")));
+    let all = Some(Verdict::Inhabited);
+    assert!(
+        written.iter().chain(&back).all(|&v| v == all),
+        "{}\n  as written {written:?}\n  reversed {back:?}",
+        show_system(sys)
+    );
+}
+
+/// Case A (minimized from seed 1140; also seed 1696): as written R0 is Refused(Fork) on 4091b22e5.
+#[test]
+fn a_value_outside_a_forked_recursion_is_found_in_either_order() {
+    let r1 = xr_or(tup(vec![E::Int, E::Ref(1)]), xr_atom_a());
+    xr_inhabited_both_ways(&xr_fork_outside(r1), "forkout");
+}
+
+/// Case G: R0 is Refused(Fork) in both orders on 4091b22e5.
+#[test]
+fn a_value_outside_a_forked_recursion_of_two_members_is_found() {
+    let r1 = xr_or(tup(vec![E::Ref(1), E::Ref(1)]), xr_atom_a());
+    xr_inhabited_both_ways(&xr_fork_outside(r1), "forkout2");
+}
+
+/// Q3 (`fork_empty`): empty in both orders once `overlaps` uses `Pi_sym`.
+/// Negative controls: fails on `4091b22e5` and on `q2n+` (`Refused(Fork)`).
+#[test]
+fn xr_q3_fork_empty_is_empty_when_read_back_to_front() {
+    Type::forget_emptiness();
+    assert_eq!(super::refusals::fork_empty().verdict(), Verdict::Empty);
+    Type::forget_emptiness();
+    assert!(super::refusals::fork_empty().is_empty());
+}
+
+fn xr_permuted(e: &E, p: &[Vec<usize>]) -> E {
+    let all = |xs: &[E]| xs.iter().map(|x| xr_permuted(x, p)).collect::<Vec<_>>();
+    let one = |x: &E| Box::new(xr_permuted(x, p));
+    match e {
+        E::Tup(xs) => E::Tup(
+            p[xs.len()]
+                .iter()
+                .map(|&k| xr_permuted(&xs[k], p))
+                .collect(),
+        ),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+fn xr_perms(g: &mut Rng, max: usize) -> Vec<Vec<usize>> {
+    (0..max)
+        .map(|m| {
+            let mut v: Vec<usize> = (0..m).collect();
+            for i in (1..m).rev() {
+                let j = g.below(i + 1);
+                v.swap(i, j);
+            }
+            v
+        })
+        .collect()
+}
+
+fn xr_pad3(e: &E) -> E {
+    let all = |xs: &[E]| xs.iter().map(xr_pad3).collect::<Vec<_>>();
+    let one = |x: &E| Box::new(xr_pad3(x));
+    match e {
+        E::Tup(xs) if xs.len() == 2 => E::Tup(vec![xr_pad3(&xs[0]), xr_pad3(&xs[1]), E::Atom("c")]),
+        E::Tup(xs) => E::Tup(all(xs)),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+fn xr_pad4(e: &E) -> E {
+    let all = |xs: &[E]| xs.iter().map(xr_pad4).collect::<Vec<_>>();
+    let one = |x: &E| Box::new(xr_pad4(x));
+    match e {
+        E::Tup(xs) if xs.len() == 2 => E::Tup(vec![
+            xr_pad4(&xs[0]),
+            xr_pad4(&xs[1]),
+            E::Atom("c"),
+            E::Atom("d"),
+        ]),
+        E::Tup(xs) => E::Tup(all(xs)),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+fn xr_r2_sweep(
+    name: &str,
+    make: fn(&mut Rng) -> Vec<E>,
+    seeds: &[u64],
+    orders: usize,
+) -> (Vec<String>, Vec<String>) {
+    let mut differ = Vec::new();
+    let mut wrong = Vec::new();
+    for &seed in seeds {
+        let sys = make(&mut Rng::new(seed));
+        let tag = format!("{name}{seed}");
+        let want = alone(&kernel(&sys, &tag));
+        let tr = truth(&sys, CAP);
+        let check = |vs: &[Option<Verdict>], at: &[usize], label: &str, wrong: &mut Vec<String>| {
+            for (k, &v) in vs.iter().enumerate() {
+                let i = at[k];
+                let bad = match (&tr.seen[i], v) {
+                    (Seen::Member(_), Some(Verdict::Empty)) => true,
+                    (Seen::None, Some(Verdict::Inhabited)) => tr.exhaustive,
+                    _ => false,
+                };
+                if bad {
+                    wrong.push(format!("{tag}{label} R{i}: {v:?} vs {:?}", tr.seen[i]));
+                }
+            }
+        };
+        let n = sys.len();
+        check(&want, &(0..n).collect::<Vec<_>>(), "", &mut wrong);
+        let mut g = Rng::new(seed ^ 0x5EED_0002);
+        for k in 0..orders {
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = g.below(i + 1);
+                order.swap(i, j);
+            }
+            let p = xr_perms(&mut g, 5);
+            let moved_sys: Vec<E> = (moved(&sys, &order).iter())
+                .map(|e| xr_permuted(&shuffled(e, &mut g), &p))
+                .collect();
+            let got = alone(&kernel(&moved_sys, &format!("{tag}_q{k}")));
+            check(&got, &order, &format!("_q{k}"), &mut wrong);
+            let back: Vec<_> = order.iter().map(|&i| want[i]).collect();
+            let class = |vs: &[Option<Verdict>]| -> Vec<u8> {
+                vs.iter().map(|&v| verdict_class(v, true)).collect()
+            };
+            if class(&got) != class(&back) {
+                differ.push(format!(
+                    "{tag}: {back:?} in the order {order:?} perms {p:?}: {got:?}\n  {}",
+                    show_system(&sys)
+                ));
+            }
+        }
+    }
+    (differ, wrong)
+}
+
+#[test]
+fn xr_r2_problem_seeds_agree_exactly_in_every_order() {
+    let (differ, wrong) = xr_r2_sweep("xr2p", gen_cells, &[1140, 1558, 1696, 1908], 8);
+    assert!(
+        differ.is_empty() && wrong.is_empty(),
+        "{} differ, {} wrong:\n{}\n{}",
+        differ.len(),
+        wrong.len(),
+        differ.join("\n"),
+        wrong.join("\n")
+    );
+}
+
+#[test]
+fn xr_r2_triples_agree_under_every_permutation() {
+    let a = xr_fork_outside(xr_or(tup(vec![E::Int, E::Ref(1)]), xr_atom_a()));
+    let s1140 = gen_cells(&mut Rng::new(1140));
+    let perms3 = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let mut out = Vec::new();
+    for (name, sys) in [("a", &a), ("s1140", &s1140)] {
+        let padded: Vec<E> = sys.iter().map(xr_pad3).collect();
+        let t = truth(&padded, CAP * RERUN);
+        let want: Vec<Option<Verdict>> = t
+            .seen
+            .iter()
+            .map(|s| match s {
+                Seen::Member(_) => Some(Verdict::Inhabited),
+                _ => None,
+            })
+            .collect();
+        for q in perms3 {
+            let p = vec![vec![], vec![0], vec![0, 1], q.to_vec(), vec![0, 1, 2, 3]];
+            let sys2: Vec<E> = padded.iter().map(|e| xr_permuted(e, &p)).collect();
+            let got = alone(&kernel(
+                &sys2,
+                &format!("xr2t{name}{}{}{}", q[0], q[1], q[2]),
+            ));
+            if got != want {
+                out.push(format!("{name} {q:?}: {got:?} want {want:?}"));
+            }
+        }
+    }
+    assert!(out.is_empty(), "{}", out.join("\n"));
+}
+
+#[test]
+fn xr_r2_quads_agree_under_every_permutation() {
+    let a = xr_fork_outside(xr_or(tup(vec![E::Int, E::Ref(1)]), xr_atom_a()));
+    let s1140 = gen_cells(&mut Rng::new(1140));
+    let mut perms4 = Vec::new();
+    for i in 0..4 {
+        for j in 0..4 {
+            for k in 0..4 {
+                for l in 0..4 {
+                    let q = [i, j, k, l];
+                    if (0..4).all(|x| q.contains(&x)) {
+                        perms4.push(q);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (name, sys) in [("a", &a), ("s1140", &s1140)] {
+        let padded: Vec<E> = sys.iter().map(xr_pad4).collect();
+        let t = truth(&padded, CAP * RERUN);
+        let want: Vec<Option<Verdict>> = t
+            .seen
+            .iter()
+            .map(|s| match s {
+                Seen::Member(_) => Some(Verdict::Inhabited),
+                _ => None,
+            })
+            .collect();
+        for q in &perms4 {
+            let p = vec![vec![], vec![0], vec![0, 1], vec![0, 1, 2], q.to_vec()];
+            let sys2: Vec<E> = padded.iter().map(|e| xr_permuted(e, &p)).collect();
+            let got = alone(&kernel(
+                &sys2,
+                &format!("xr2q{name}{}{}{}{}", q[0], q[1], q[2], q[3]),
+            ));
+            if got != want {
+                out.push(format!("{name} {q:?}: {got:?} want {want:?}"));
+            }
+        }
+    }
+    assert!(
+        out.is_empty(),
+        "{} of 48 differ:\n{}",
+        out.len(),
+        out.join("\n")
+    );
+}
+
+fn xr_case_g(_: &mut Rng) -> Vec<E> {
+    xr_fork_outside(xr_or(tup(vec![E::Ref(1), E::Ref(1)]), xr_atom_a()))
+}
+
+#[test]
+fn xr_r2_case_g_is_inhabited_in_every_order() {
+    let sys = xr_case_g(&mut Rng::new(0));
+    let written = alone(&kernel(&sys, "xr2g"));
+    assert_eq!(written, vec![Some(Verdict::Inhabited); 2]);
+    let (differ, wrong) = xr_r2_sweep("xr2g", xr_case_g, &[0], 8);
+    assert!(
+        differ.is_empty() && wrong.is_empty(),
+        "{} differ, {} wrong",
+        differ.len(),
+        wrong.len()
+    );
+}
+
+fn xr_case_a(_: &mut Rng) -> Vec<E> {
+    xr_fork_outside(xr_or(tup(vec![E::Int, E::Ref(1)]), xr_atom_a()))
+}
+
+/// Case A, the smallest form of seed 1696: `R1 = (int, R1) | #a` with a value outside a forked
+/// recursion; red at 324d41466 (the Claude seat of XR-group-order-5).
+#[test]
+fn xr_case_a_is_inhabited_in_every_order() {
+    let sys = xr_case_a(&mut Rng::new(0));
+    let written = alone(&kernel(&sys, "xr2a"));
+    assert_eq!(written, vec![Some(Verdict::Inhabited); 2]);
+    let (differ, wrong) = xr_r2_sweep("xr2a", xr_case_a, &[0], 8);
+    assert!(
+        differ.is_empty() && wrong.is_empty(),
+        "{} differ, {} wrong",
+        differ.len(),
+        wrong.len()
+    );
+}
+
+/// Q2(g): Seed 1865 of the `gen_cells` family, written, in `[2, 3, 1, 0, 4]` with pairs reversed,
+/// and across 16 random permutations of definitions, union/meet arms, and tuple components.
+/// Negative controls: fails on `4091b22e5`, fails on `q2n+`, and fails on `g2`.
+#[test]
+fn xr_r2_seed_1865_agrees_after_reversal() {
+    let sys = gen_cells(&mut Rng::new(1865));
+    let order = [2, 3, 1, 0, 4];
+    let want = alone(&kernel(&sys, "xr1865"));
+    assert_eq!(
+        want,
+        vec![
+            Some(Verdict::Inhabited),
+            Some(Verdict::Empty),
+            Some(Verdict::Empty),
+            Some(Verdict::Inhabited),
+            Some(Verdict::Empty),
+        ]
+    );
+    let p = vec![vec![], vec![0], vec![1, 0], vec![0, 1, 2], vec![3, 1, 0, 2]];
+    let moved_sys: Vec<E> = moved(&sys, &order)
+        .iter()
+        .map(|e| xr_permuted(e, &p))
+        .collect();
+    let got = alone(&kernel(&moved_sys, "xr1865m"));
+    let back: Vec<_> = order.iter().map(|&i| want[i]).collect();
+    assert_eq!(
+        got,
+        back,
+        "{}\n{}",
+        show_system(&sys),
+        show_system(&moved_sys)
+    );
+
+    let (differ, wrong) = xr_r2_sweep("xr3_1865_", gen_cells, &[1865], 16);
+    assert!(
+        differ.is_empty() && wrong.is_empty(),
+        "seed 1865 order check: {differ:?} {wrong:?}"
+    );
+}
+
+/// Q2(a): Zero-tuple exactness in `flat_part` and `nonflat_part` (`p.tuples.get(0)`, `rest`, cofinite).
+/// Negative controls: `g2` fails on `4091b22e5` (`Refused(Fork)`), and `g1` fails on `q2n+` (unsound `Empty`).
+#[test]
+fn xr_r2_q2a_flat_part_and_nonflat_part_zero_tuple_exactness() {
+    let unit_ty = Type::tuple(vec![]);
+    let unit_val = zed_kernel::Value::Tuple(vec![].into());
+    let u_tuples = Type::universe(zed_kernel::types::Universe::Tuple);
+    assert!(u_tuples.contains(&unit_val), "Universe::Tuple must hold ()");
+
+    Type::forget_emptiness();
+    let g1 = Group::new(vec![Def {
+        name: "XRQ2aFlatUnit".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::And(vec![
+                Expr::Union(vec![
+                    Expr::Type(u_tuples.clone()),
+                    Expr::Tuple(vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])]),
+                ]),
+                Expr::Type(unit_ty.clone()),
+            ]),
+            Expr::Tuple(vec![Expr::Ref(0, vec![]), Expr::Ref(0, vec![])]),
+        ]),
+    }])
+    .expect("g1 admitted")
+    .instance(vec![]);
+    assert!(g1[0].contains(&unit_val), "g1[0] must contain ()");
+    assert_eq!(
+        g1[0].verdict(),
+        Verdict::Inhabited,
+        "Q2(a) soundness check: g1[0] holds () and must never be judged Empty"
+    );
+
+    let t_ge1 = &u_tuples - &unit_ty;
+    assert!(!t_ge1.contains(&unit_val), "tuple \\ () must not hold ()");
+    let pair_units = zed_kernel::Value::Tuple(vec![unit_val.clone(), unit_val].into());
+    assert!(
+        t_ge1.contains(&pair_units),
+        "tuple \\ () must hold ((), ())"
+    );
+
+    for rev in [false, true] {
+        Type::forget_emptiness();
+        let mk_pair = |x: Expr, y: Expr| {
+            if rev {
+                Expr::Tuple(vec![y, x])
+            } else {
+                Expr::Tuple(vec![x, y])
+            }
+        };
+        let g2 = Group::new(vec![
+            Def {
+                name: format!("XRQ2aNonFlatR0_{rev}"),
+                params: vec![],
+                body: Expr::Union(vec![
+                    mk_pair(Expr::Ref(0, vec![]), Expr::Ref(1, vec![])),
+                    Expr::Diff(
+                        Box::new(mk_pair(
+                            Expr::Union(vec![Expr::Type(Type::atom("a")), Expr::Ref(1, vec![])]),
+                            Expr::Union(vec![Expr::Type(Type::atom("b")), Expr::Ref(0, vec![])]),
+                        )),
+                        Box::new(mk_pair(
+                            Expr::Type(Type::atom("a")),
+                            Expr::Type(Type::atom("b")),
+                        )),
+                    ),
+                ]),
+            },
+            Def {
+                name: format!("XRQ2aNonFlatR1_{rev}"),
+                params: vec![],
+                body: Expr::Union(vec![
+                    mk_pair(Expr::Ref(1, vec![]), Expr::Ref(1, vec![])),
+                    Expr::Type(t_ge1.clone()),
+                ]),
+            },
+        ])
+        .expect("g2 admitted")
+        .instance(vec![]);
+        assert_eq!(
+            g2[0].verdict(),
+            Verdict::Inhabited,
+            "Q2(a) nonflat_part witness check failed at rev={rev}"
+        );
+    }
+
+    // Cofinite-atom check: `!#a` holds `#b` (flat) and `#c(1)` (non-flat).
+    let not_a = !Type::atom("a");
+    let g_cof = Group::new(vec![Def {
+        name: "XRQ2aCofiniteAtom".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![Expr::Ref(0, vec![]), Expr::Ref(0, vec![])]),
+            Expr::Diff(
+                Box::new(Expr::Tuple(vec![
+                    Expr::Type(not_a),
+                    Expr::Union(vec![Expr::Type(Type::atom("b")), Expr::Ref(0, vec![])]),
+                ])),
+                Box::new(Expr::Tuple(vec![
+                    Expr::Type(Type::atom("b")),
+                    Expr::Type(Type::atom("b")),
+                ])),
+            ),
+        ]),
+    }])
+    .expect("g_cof admitted")
+    .instance(vec![]);
+    Type::forget_emptiness();
+    assert_eq!(g_cof[0].verdict(), Verdict::Inhabited);
+}
+
+fn xr_r2_permute_expr(e: &E, perm_2: &[usize; 2], perm_3: &[usize; 3], arm_shift: usize) -> E {
+    let rec = |x: &E| xr_r2_permute_expr(x, perm_2, perm_3, arm_shift);
+    match e {
+        E::Int | E::Bool | E::Top | E::Empty | E::Atom(_) | E::Ref(_) => e.clone(),
+        E::Mor(l, u, v) => E::Mor(Box::new(rec(l)), Box::new(rec(u)), Box::new(rec(v))),
+        E::Diff(a, b) => E::Diff(Box::new(rec(a)), Box::new(rec(b))),
+        E::And(xs) => {
+            let mut ys: Vec<E> = xs.iter().map(rec).collect();
+            if !ys.is_empty() {
+                let s = arm_shift % ys.len();
+                ys.rotate_left(s);
+                if arm_shift & 1 == 1 {
+                    ys.reverse();
+                }
+            }
+            E::And(ys)
+        }
+        E::Union(xs) => {
+            let mut ys: Vec<E> = xs.iter().map(rec).collect();
+            if !ys.is_empty() {
+                let s = arm_shift % ys.len();
+                ys.rotate_left(s);
+                if arm_shift & 1 == 1 {
+                    ys.reverse();
+                }
+            }
+            E::Union(ys)
+        }
+        E::Tup(xs) => {
+            let ys: Vec<E> = xs.iter().map(rec).collect();
+            match ys.len() {
+                2 => E::Tup(vec![ys[perm_2[0]].clone(), ys[perm_2[1]].clone()]),
+                3 => E::Tup(vec![
+                    ys[perm_3[0]].clone(),
+                    ys[perm_3[1]].clone(),
+                    ys[perm_3[2]].clone(),
+                ]),
+                _ => E::Tup(ys),
+            }
+        }
+    }
+}
+
+#[test]
+fn xr_r2_q2e_full_permutation_invariance_components_defs_and_arms() {
+    let sys_3tup_inh = vec![
+        E::Union(vec![
+            E::Tup(vec![E::Ref(0), E::Ref(1), E::Ref(1)]),
+            diff(
+                E::Tup(vec![
+                    E::Union(vec![E::Atom("b"), E::Ref(1)]),
+                    E::Union(vec![E::Atom("b"), E::Ref(0)]),
+                    E::Union(vec![E::Atom("a"), E::Ref(1)]),
+                ]),
+                E::Tup(vec![E::Atom("a"), E::Atom("b"), E::Atom("a")]),
+            ),
+        ]),
+        E::Union(vec![
+            E::Tup(vec![E::Int, E::Ref(1), E::Atom("a")]),
+            E::Atom("a"),
+        ]),
+    ];
+    let sys_3tup_emp = vec![
+        E::Union(vec![
+            E::Tup(vec![E::Ref(0), E::Ref(1), E::Ref(0)]),
+            diff(
+                E::Tup(vec![
+                    E::Union(vec![E::Atom("a"), E::Ref(1)]),
+                    E::Union(vec![E::Atom("b"), E::Ref(0)]),
+                    E::Union(vec![E::Atom("a"), E::Ref(1)]),
+                ]),
+                E::Tup(vec![E::Atom("a"), E::Atom("b"), E::Atom("a")]),
+            ),
+        ]),
+        E::Tup(vec![E::Int, E::Ref(0), E::Atom("a")]),
+    ];
+
+    let s3_perms: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for (tag_base, sys, want) in [
+        ("s3_inh", &sys_3tup_inh, Verdict::Inhabited),
+        ("s3_emp", &sys_3tup_emp, Verdict::Empty),
+    ] {
+        for (p_idx, perm3) in s3_perms.iter().enumerate() {
+            for def_rev in [false, true] {
+                for arm_shift in 0..3 {
+                    Type::forget_emptiness();
+                    let def_perm = if def_rev { vec![1, 0] } else { vec![0, 1] };
+                    let moved_sys = moved(sys, &def_perm);
+                    let permuted: Vec<E> = moved_sys
+                        .iter()
+                        .map(|e| xr_r2_permute_expr(e, &[0, 1], perm3, arm_shift))
+                        .collect();
+                    let tag = format!("xrr2_{tag_base}_{p_idx}_{def_rev}_{arm_shift}");
+                    let got = alone(&kernel(&permuted, &tag));
+                    assert_eq!(
+                        got,
+                        vec![Some(want), Some(want)],
+                        "{tag_base} perm3={perm3:?} def_rev={def_rev} arm_shift={arm_shift}: got {got:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    let case_g = vec![
+        xr_fork_outside(xr_or(tup(vec![E::Ref(1), E::Ref(1)]), xr_atom_a()))[0].clone(),
+        xr_or(tup(vec![E::Ref(1), E::Ref(1)]), xr_atom_a()),
+    ];
+    let mut systems: Vec<(String, Vec<E>)> = vec![
+        ("case_g".into(), case_g),
+        ("seed_1140".into(), gen_cells(&mut Rng::new(1140))),
+        ("seed_1558".into(), gen_cells(&mut Rng::new(1558))),
+        ("seed_1696".into(), gen_cells(&mut Rng::new(1696))),
+        ("seed_1865".into(), gen_cells(&mut Rng::new(1865))),
+        ("seed_1908".into(), gen_cells(&mut Rng::new(1908))),
+    ];
+    for seed in 0..120u64 {
+        systems.push((format!("gen_{seed}"), gen_cells(&mut Rng::new(seed))));
+    }
+
+    let mut prng = Rng::new(0x5EED_2026_1117);
+    let mut checked = 0usize;
+    for (name, sys) in &systems {
+        let base_ks = kernel(sys, &format!("xrr2_base_{name}"));
+        if base_ks.iter().all(Option::is_none) {
+            continue;
+        }
+        checked += 1;
+        let base_vs = alone(&base_ks);
+        let n = sys.len();
+        for trial in 0..6 {
+            let mut dperm: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = (prng.next_u64() as usize) % (i + 1);
+                dperm.swap(i, j);
+            }
+            let p2 = if trial % 2 == 1 { [1, 0] } else { [0, 1] };
+            let p3 = s3_perms[trial % 6];
+            let moved_sys = moved(sys, &dperm);
+            let perm_sys: Vec<E> = moved_sys
+                .iter()
+                .map(|e| xr_r2_permute_expr(e, &p2, &p3, trial + 1))
+                .collect();
+            Type::forget_emptiness();
+            let got_vs = alone(&kernel(&perm_sys, &format!("xrr2_p_{name}_{trial}")));
+            for new_pos in 0..n {
+                let orig_idx = dperm[new_pos];
+                let eq_class = match (base_vs[orig_idx], got_vs[new_pos]) {
+                    (None, None) => true,
+                    (Some(Verdict::Empty), Some(Verdict::Empty)) => true,
+                    (Some(Verdict::Inhabited), Some(Verdict::Inhabited)) => true,
+                    (Some(Verdict::Refused(_)), Some(Verdict::Refused(_))) => true,
+                    _ => false,
+                };
+                assert!(
+                    eq_class,
+                    "{name} trial {trial} def {orig_idx}: base {:?} vs permuted {:?} (dperm={dperm:?}, p2={p2:?})",
+                    base_vs[orig_idx], got_vs[new_pos]
+                );
+            }
+        }
+    }
+    assert!(
+        checked >= 50,
+        "expected >= 50 admitted systems, got {checked}"
+    );
+}
+
+fn xr_r2_build_long_tuple_cgroup(m: usize, inhabited: bool, tag: &str) -> Vec<Type> {
+    const ARITY: usize = 6;
+    let mut defs = Vec::with_capacity(m + 1);
+    for i in 0..m {
+        let rec_tup: Vec<Expr> = (0..ARITY)
+            .map(|c| Expr::Ref((i + c) % (m + 1), vec![]))
+            .collect();
+        let pos_tup: Vec<Expr> = (0..ARITY)
+            .map(|c| {
+                Expr::Union(vec![
+                    Expr::Type(Type::atom(if c % 2 == 0 { "a" } else { "b" })),
+                    Expr::Type(Type::atom("c")),
+                    Expr::Ref((i + 1 + (c % 2)) % (m + 1), vec![]),
+                ])
+            })
+            .collect();
+        let mut sub_rows = Vec::new();
+        for r in 0..4 {
+            let row_cells: Vec<Expr> = (0..ARITY)
+                .map(|c| {
+                    let atom_name = if (r + c) % 2 == 0 { "a" } else { "c" };
+                    Expr::Type(Type::atom(atom_name))
+                })
+                .collect();
+            sub_rows.push(Expr::Tuple(row_cells));
+        }
+        if !inhabited {
+            let cover_all_flat: Vec<Expr> = (0..ARITY)
+                .map(|_| {
+                    Expr::Union(vec![
+                        Expr::Type(Type::atom("a")),
+                        Expr::Type(Type::atom("b")),
+                        Expr::Type(Type::atom("c")),
+                    ])
+                })
+                .collect();
+            sub_rows.push(Expr::Tuple(cover_all_flat));
+        }
+        let body = Expr::Union(vec![
+            Expr::Tuple(rec_tup),
+            Expr::Diff(
+                Box::new(Expr::Tuple(pos_tup)),
+                Box::new(Expr::Union(sub_rows)),
+            ),
+        ]);
+        defs.push(Def {
+            name: format!("XRLongTup{tag}_{m}_{i}"),
+            params: vec![],
+            body,
+        });
+    }
+    let end_body = if inhabited {
+        Expr::Union(vec![
+            Expr::Tuple((0..ARITY).map(|_| Expr::Ref(m, vec![])).collect()),
+            Expr::Type(Type::atom("a")),
+        ])
+    } else {
+        Expr::Tuple(
+            std::iter::once(Expr::Type(Type::int()))
+                .chain((1..ARITY).map(|_| Expr::Ref(0, vec![])))
+                .collect(),
+        )
+    };
+    defs.push(Def {
+        name: format!("XRLongTup{tag}_{m}_end"),
+        params: vec![],
+        body: end_body,
+    });
+    Group::new(defs).expect("long tuple group").instance(vec![])
+}
+
+#[test]
+fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    for inhabited in [true, false] {
+        let n = 8usize;
+        let (s_runs, l_runs) = scaling::Meter::new().runs();
+        let small: Vec<Vec<Type>> = (0..s_runs)
+            .map(|r| xr_r2_build_long_tuple_cgroup(n, inhabited, &format!("_s_{inhabited}_{r}")))
+            .collect();
+        let large: Vec<Vec<Type>> = (0..l_runs)
+            .map(|r| {
+                xr_r2_build_long_tuple_cgroup(8 * n, inhabited, &format!("_l_{inhabited}_{r}"))
+            })
+            .collect();
+        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let want = if inhabited {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        scaling::check_order(
+            if inhabited {
+                "Q2 C_group 6-tuples with many diffs (inhabited)"
+            } else {
+                "Q2 C_group 6-tuples with many diffs (empty)"
+            },
+            n,
+            1,
+            |k| {
+                Type::forget_emptiness();
+                let ts = if k == n {
+                    &small[si.fetch_add(1, Relaxed)]
+                } else {
+                    &large[li.fetch_add(1, Relaxed)]
+                };
+                for t in ts {
+                    assert_eq!(t.verdict(), want);
+                }
+            },
+        );
+    }
+}
+
+#[test]
+fn xr_r2_q2d_outside_narrow_cgroup_seed1908_nested_pair_agrees_across_orders() {
+    let c_pair = tup(vec![E::Atom("c"), E::Atom("c")]);
+    let sub = E::Union(vec![
+        tup(vec![E::Atom("a"), E::Atom("a")]),
+        tup(vec![c_pair.clone(), c_pair]),
+    ]);
+    let sys = vec![
+        E::Union(vec![
+            diff(
+                tup(vec![
+                    E::Union(vec![E::Atom("b"), E::Ref(1)]),
+                    E::Union(vec![E::Atom("b"), E::Ref(1)]),
+                ]),
+                sub.clone(),
+            ),
+            diff(
+                tup(vec![
+                    E::Union(vec![E::Atom("a"), E::Ref(0)]),
+                    E::Union(vec![E::Atom("a"), E::Ref(1)]),
+                ]),
+                sub,
+            ),
+        ]),
+        E::Union(vec![
+            E::Mor(Box::new(E::Int), Box::new(E::Int), Box::new(E::Ref(1))),
+            E::Atom("a"),
+        ]),
+    ];
+
+    Type::forget_emptiness();
+    let v_written = alone(&kernel(&sys, "xrr2_q2d_w"));
+    assert_eq!(
+        v_written,
+        vec![Some(Verdict::Inhabited), Some(Verdict::Inhabited)]
+    );
+    Type::forget_emptiness();
+    let sys_rev: Vec<E> = sys.iter().map(reversed).collect();
+    let v_reversed = alone(&kernel(&sys_rev, "xrr2_q2d_r"));
+    Type::forget_emptiness();
+    let sys_moved = moved(&sys, &[1, 0]);
+    let v_moved = alone(&kernel(&sys_moved, "xrr2_q2d_m"));
+    Type::forget_emptiness();
+    let sys_moved_rev: Vec<E> = sys_moved.iter().map(reversed).collect();
+    let v_moved_rev = alone(&kernel(&sys_moved_rev, "xrr2_q2d_mr"));
+
+    assert_eq!(
+        v_written, v_reversed,
+        "written vs reversed: {v_written:?} vs {v_reversed:?}"
+    );
+    assert_eq!(
+        v_moved[1], v_written[0],
+        "moved vs written: {v_moved:?} vs {v_written:?}"
+    );
+    assert_eq!(
+        v_moved_rev[1], v_written[0],
+        "moved_rev vs written: {v_moved_rev:?} vs {v_written:?}"
+    );
+}
+
+/// Helper for Q2(b) Round 3 bench: an `m + 1`-member forked-difference chain where every member
+/// `0..m` has no plain `union_rows` (`s.rep` returns `None`), forcing `horn_witness_group` to
+/// construct height-`(m - i)` witnesses `((...(#a, #b)..., #b))` across the entire chain.
+fn xr_r3_build_forked_witness_chain(m: usize, tag: &str) -> Vec<Type> {
+    let mut defs = Vec::with_capacity(m + 1);
+    for i in 0..m {
+        // `R_i = (R_i, R_{i+1}) | (((R_{i+1}, #b | R_i)) \ (#a, #a))`
+        // For `i < m - 1`, `R_{i+1}` has ONLY non-flat 2-tuples (`flat_part` empty!), so `R_i`'s
+        // witness MUST propagate `nf(R_{i+1})` up the chain of height `m - i`!
+        let pos = if i + 1 == m {
+            Expr::Tuple(vec![
+                Expr::Union(vec![Expr::Type(Type::atom("b")), Expr::Ref(i + 1, vec![])]),
+                Expr::Union(vec![Expr::Type(Type::atom("b")), Expr::Ref(i, vec![])]),
+            ])
+        } else {
+            Expr::Tuple(vec![
+                Expr::Ref(i + 1, vec![]),
+                Expr::Union(vec![Expr::Type(Type::atom("b")), Expr::Ref(i, vec![])]),
+            ])
+        };
+        let body = Expr::Union(vec![
+            Expr::Tuple(vec![Expr::Ref(i, vec![]), Expr::Ref(i + 1, vec![])]),
+            Expr::Diff(
+                Box::new(pos),
+                Box::new(Expr::Tuple(vec![
+                    Expr::Type(Type::atom("a")),
+                    Expr::Type(Type::atom("b")),
+                ])),
+            ),
+        ]);
+        defs.push(Def {
+            name: format!("XRR3WitChain{tag}_{m}_{i}"),
+            params: vec![],
+            body,
+        });
+    }
+    defs.push(Def {
+        name: format!("XRR3WitChain{tag}_{m}_end"),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![Expr::Ref(m, vec![]), Expr::Ref(m, vec![])]),
+            Expr::Type(Type::atom("a")),
+        ]),
+    });
+    Group::new(defs)
+        .expect("forked witness chain admitted")
+        .instance(vec![])
+}
+
+/// Q2(b) Bench: measures `horn_witness_group` building height-`m` witnesses across `n = 128` vs
+/// `8n = 1024` chained forked-difference members (`s.rep` cannot use `union_rows`, so every
+/// witness goes through `horn_witness_group`!).
+/// Negative controls:
+/// - Fails at `4091b22e5` (`Refused(Fork)` on members `0..m`);
+/// - Fails on `q2n+` (the 2-stage queue bug leaves `vals[0..m-1]` `None`, falling back to `Refused(Fork)`);
+/// - Fails `T(8n)/T(n) < 10.5` on `g2` (`d.member_known` materializes height-`m` plain `Value`s in `Theta(n^3)`).
+#[test]
+fn xr_r3_q2b_witness_builder_forked_long_chain_scales() {
+    let inputs = scaling::inputs(128, |m| {
+        xr_r3_build_forked_witness_chain(m, &format!("_{m}"))
+    });
+    scaling::check_order(
+        "Q2(b) horn_witness_group height-n forked chain",
+        128,
+        1,
+        |m| {
+            Type::forget_emptiness();
+            for t in &inputs[&m] {
+                assert_eq!(t.verdict(), Verdict::Inhabited);
+            }
+        },
+    );
+}
+
+/// Q2(c): One `refine` + candidate-exclusion rule that decides BOTH:
+/// 1. `box_program(6)`'s six-box cover of `(#a | #b | #c)^3` across all 6 permutations of `S_3`
+///    components and 6 permutations of the 6 boxes (36 orders, all `Verdict::Inhabited`;
+///    negative control: `g2` fails with `Refused(TupleSplit)`);
+/// 2. Adversarial Seed 1908 OUTSIDE `C_group` (`sub = (#a, #a) | ((int, #a), (int, #a))` with
+///    `R1 = (int, R1) | #a`, so the non-flat row `((int, #a), (int, #a))` overlaps `R1` and forces
+///    `exact_flat_diff_decide` to decline to `find_rep`/`refine`) across all 8 combinations of
+///    definition order, component reversal, and union-arm order (all `Inhabited`; negative
+///    controls: `4091b22e5` and `q2n+` fail with `Refused(NoWitness)` when reversed!).
+#[test]
+fn xr_r3_q2c_refine_decides_six_box_cover_and_adversarial_1908_in_every_order() {
+    // Part 1: Six-box cover of `(#a | #b | #c)^3` across all S_3 component permutations x box orders.
+    let (a, b, c) = (Type::atom("a"), Type::atom("b"), Type::atom("c"));
+    let abc = &(&a | &b) | &c;
+    let ab = &a | &b;
+    let ac = &a | &c;
+    let bc = &b | &c;
+    let raw_boxes: [[Type; 3]; 6] = [
+        [ab.clone(), ab.clone(), ab.clone()],
+        [ac.clone(), ac.clone(), ac.clone()],
+        [bc.clone(), ab.clone(), ac.clone()],
+        [bc.clone(), c.clone(), ac.clone()],
+        [c, ab.clone(), bc.clone()],
+        [ac, bc, ab],
+    ];
+    let s3: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let cube = Type::tuple(vec![abc.clone(), abc.clone(), abc]);
+    for perm in &s3 {
+        for rot in 0..6 {
+            Type::forget_emptiness();
+            let mut order: Vec<usize> = (0..6).collect();
+            order.rotate_left(rot);
+            if rot & 1 == 1 {
+                order.reverse();
+            }
+            let mut sub = Type::empty();
+            for &bi in &order {
+                let bx = &raw_boxes[bi];
+                let t = Type::tuple(vec![
+                    bx[perm[0]].clone(),
+                    bx[perm[1]].clone(),
+                    bx[perm[2]].clone(),
+                ]);
+                sub = &sub | &t;
+            }
+            let diff_ty = &cube - &sub;
+            assert_eq!(
+                diff_ty.verdict(),
+                Verdict::Inhabited,
+                "six-box cover lost verdict at perm={perm:?} rot={rot}"
+            );
+        }
+    }
+
+    // Part 2: Seed 1908 with overlapping non-flat subtrahend `((int, #a), (int, #a))` (outside `C_group`).
+    let nf_pair = tup(vec![E::Int, E::Atom("a")]);
+    let sub = E::Union(vec![
+        tup(vec![E::Atom("a"), E::Atom("a")]),
+        tup(vec![nf_pair.clone(), nf_pair]),
+    ]);
+    let sys = vec![
+        E::Union(vec![
+            diff(
+                tup(vec![
+                    E::Union(vec![E::Atom("b"), E::Ref(1)]),
+                    E::Union(vec![E::Atom("b"), E::Ref(1)]),
+                ]),
+                sub.clone(),
+            ),
+            diff(
+                tup(vec![
+                    E::Union(vec![E::Atom("a"), E::Ref(0)]),
+                    E::Union(vec![E::Atom("a"), E::Ref(1)]),
+                ]),
+                sub,
+            ),
+        ]),
+        E::Union(vec![tup(vec![E::Int, E::Ref(1)]), E::Atom("a")]),
+    ];
+
+    for def_rev in [false, true] {
+        for comp_rev in [false, true] {
+            for arm_shift in [0usize, 1usize] {
+                Type::forget_emptiness();
+                let dperm = if def_rev { vec![1, 0] } else { vec![0, 1] };
+                let p2 = if comp_rev { [1, 0] } else { [0, 1] };
+                let moved_sys = moved(&sys, &dperm);
+                let perm_sys: Vec<E> = moved_sys
+                    .iter()
+                    .map(|e| xr_r2_permute_expr(e, &p2, &[0, 1, 2], arm_shift))
+                    .collect();
+                let got = alone(&kernel(
+                    &perm_sys,
+                    &format!("xrr3_q2c_{def_rev}_{comp_rev}_{arm_shift}"),
+                ));
+                assert_eq!(
+                    got,
+                    vec![Some(Verdict::Inhabited), Some(Verdict::Inhabited)],
+                    "adversarial 1908 failed at def_rev={def_rev} comp_rev={comp_rev} arm_shift={arm_shift}: {got:?}"
+                );
+            }
+        }
+    }
 }
