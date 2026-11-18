@@ -67,7 +67,7 @@ use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    GUARDED_OFF, QUESTION_WORK, SOLVER_UNIT,
+    GUARDED_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -259,14 +259,18 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // ([`shared_cells`]), with what the reading left of the part's allowance `k·L`, and its
     // work added to the reading's, so that `w` below is at most `k·L` as before (`tried` takes
     // at most what it holds). The symbols it shows get their exact sets; the rest are covered
-    // alone below, with its points. A part with one symbol to cover is left to its cover: with
-    // nothing to share, the phase would only add questions where [`direct`] asks none
-    // (`tests::fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing`). A symbol
-    // the forward certificate answered (above) is not asked again, and counts toward neither.
+    // alone below, with its points. A symbol the forward certificate answered (above) is not
+    // asked again. The step runs only where two or more symbols are left to cover: this is a
+    // structural condition, not a tuned threshold, since a reading shared by one symbol saves
+    // no reading, and the phase would only add questions where [`direct`] asks none
+    // (`tests::fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing`). Its work
+    // goes into `once[i].1`, the `w` charged below, from an allowance of `k·L` less what the
+    // certificates and the reading spent (`allowed`), so the bound `4·k·L` below is unchanged;
+    // a certified symbol's share of `w` comes off a fast allowance it no longer uses.
     // Complexity tradeoff: see [`shared_cells`].
     let mut shared: Vec<HashMap<Atom, IntervalSet>> = vec![HashMap::new(); parts.len()];
     for (i, p) in parts.iter().enumerate() {
-        if once[i].0.is_some() || !p.factors.is_empty() || asked[i] < 2 {
+        if SHARED_OFF.get() || once[i].0.is_some() || !p.factors.is_empty() || asked[i] < 2 {
             continue;
         }
         let want: BTreeMap<&Atom, IntervalSet> = (sorted.iter())

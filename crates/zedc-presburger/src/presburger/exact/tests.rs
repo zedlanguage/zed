@@ -3308,3 +3308,41 @@ fn a_block_of_a_boxed_sum_is_read_once_in_linear_work() {
     let ratio = used[1] as f64 / used[0] as f64;
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times");
 }
+
+/// One part where the forward certificate answers some symbols and the shared step reads the
+/// rest (`exact_each`): the counter of [`guards_f`] at k = 16, asked for `i`, `m` and every
+/// `t(j)`. The certificate answers `i`; the reading declines on the chain; the shared step
+/// covers the symbols left. The answers equal those with the shared step off, and the work of
+/// the call stays within `4·k·L` for its k symbols and limit L (the bound in `exact_each`), on
+/// both sides.
+#[test]
+fn a_part_certified_in_part_shares_the_rest_alike() {
+    let f = guards_f(16, 12, false, true);
+    let mut names = vec!["i".to_string(), "m".to_string()];
+    names.extend((1..=16).map(|j| format!("t{j}")));
+    let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
+    let top = IntervalSet::top();
+    let certified: Vec<&String> = (names.iter())
+        .filter(|s| certify(&f, s, &top).is_some())
+        .collect();
+    let run = |off: bool| {
+        SHARED_OFF.set(off);
+        EXACT_WORK.set(0);
+        EXACT_QUESTIONS.set(0);
+        let got = project_each_exact(&f, &syms).unwrap().0;
+        SHARED_OFF.set(false);
+        (got, EXACT_WORK.replace(0), EXACT_QUESTIONS.replace(0))
+    };
+    let (on, work_on, asked_on) = run(false);
+    let (off, work_off, asked_off) = run(true);
+    println!(
+        "certified {certified:?}; work on {work_on}, off {work_off}; questions on {asked_on}, \
+         off {asked_off}"
+    );
+    assert_eq!(on, off);
+    let bound = 4 * syms.len() as u64 * EXACT_LIMIT;
+    assert!(
+        work_on <= bound && work_off <= bound,
+        "{work_on}, {work_off}, bound {bound}"
+    );
+}
