@@ -1615,7 +1615,7 @@ fn cell(
         let rows = joined(&rows, s);
         let product = |k: &Con| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)));
         let how = projection::method();
-        let plain = !rows.iter().any(product) && how == Method::Pugh;
+        let plain = !rows.iter().any(product) && matches!(how, Method::Pugh | Method::Liaproj);
         let quick = if plain {
             work.eliminate(&rows, &|a| a == s)?
         } else {
@@ -1624,10 +1624,15 @@ fn cell(
         if let Some(left) = quick {
             c = c.join(&bounded(&left, s));
         } else if plain {
-            // The exact projection of the implicant: its parts with no holes or with an end are
-            // the cell's; those with holes and no end go to the cover, which joins them with
-            // the other cells' (`projection::ranges`).
-            let parts = projection::pugh(&rows, s, work)?;
+            // The disjunct of the implicant's projection that holds `m` (`projection::liaproj`),
+            // or with `Method::Pugh` the whole projection: its parts with no holes or with an
+            // end are the cell's; those with holes and no end go to the cover, which joins
+            // them with the other cells' (`projection::ranges`).
+            let parts = if how == Method::Pugh {
+                projection::pugh(&rows, s, work)?
+            } else {
+                vec![projection::liaproj(&rows, s, m, work)?]
+            };
             let (set, left) = projection::ranges(&parts, work)?;
             c = c.join(&set);
             let (closed, open): (Vec<Strided>, Vec<Strided>) = (parts.into_iter())

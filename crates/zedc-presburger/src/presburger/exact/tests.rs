@@ -790,6 +790,13 @@ fn the_pendants_part_of_row_3_refuses_b_for_its_refused_question() {
     ]);
     let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
     assert_eq!(b, Err(Refusal::Growth), "{b:?}");
+    // By model-based projection the cells hold the disjuncts that hold their points, and no
+    // question is refused: the exact set (2026-11-18, PRES-cover-refusals-where-exact).
+    METHOD.set(Some(Method::Liaproj));
+    let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
+    METHOD.set(None);
+    let want = IntervalSet::from_pieces(vec![(End::of(-4), End::of(15))]);
+    assert_eq!(b, Ok(want), "{b:?}");
 }
 
 /// The questions of the cover on a stride, as the remainder reading writes one (`y == 2·q

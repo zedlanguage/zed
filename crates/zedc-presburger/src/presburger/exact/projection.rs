@@ -14,6 +14,10 @@
 //!   over its inequalities, `E·d == 0` over its equalities and the symbol's step `d_s` below
 //!   (or above) zero; with `g = |d_s|`, one point of the implicant in each residue of the
 //!   symbol modulo `g` gives a ray of values from that point on. About `g + 1` questions.
+//! - [`liaproj`]: the one disjunct of the implicant's projection that holds the cell's point,
+//!   by model-based projection (Komuravelli, Gurfinkel and Chaki, "SMT-based model checking
+//!   for recursive programs", CAV 2014, LIAProj), with Pugh's dark shadow chosen by the point
+//!   where no divisibility literal holds the variable.
 //!
 //! Both are measured against each other and against the old cell in
 //! docs/handoff/PRES-pugh-findings.md; they are switched by [`METHOD`] for that comparison.
@@ -37,6 +41,9 @@ pub enum Method {
     Pugh,
     /// The old cell and the recession rays of the implicant (`rays`).
     Rays,
+    /// The disjunct of the implicant's projection that holds the point, by model-based
+    /// projection (`liaproj`).
+    Liaproj,
 }
 
 thread_local! {
@@ -46,7 +53,11 @@ thread_local! {
     pub static METHOD: Cell<Option<Method>> = const { Cell::new(None) };
 }
 
-/// The method in force: [`METHOD`] where set, else Pugh's.
+/// The method in force: [`METHOD`] where set, else Pugh's. Model-based projection
+/// ([`Method::Liaproj`]) is not the default: on the 38 tests of
+/// PRES-cover-bench-regressions it passes 15 where Pugh passes 12, fails the same 22 for the
+/// same causes (questions, memory), and asks 6 questions where
+/// `an_unbounded_conjunction_needs_one_cell` allows 2 (2026-11-18).
 pub fn method() -> Method {
     METHOD.get().unwrap_or(Method::Pugh)
 }
@@ -78,6 +89,382 @@ pub(super) fn pugh(rows: &[Con], s: &Atom, work: &mut Work) -> Result<Vec<Stride
         &mut out,
     )?;
     Ok(out)
+}
+
+/// A divisibility literal `d | lin`, `d >= 2`, of [`liaproj`].
+struct Div {
+    d: Int,
+    lin: Lin,
+}
+
+fn lcm(a: &Int, b: &Int) -> Int {
+    &a.div_floor(&a.gcd(b)) * b
+}
+
+/// The values of `s` of the one disjunct, chosen by the point `m` of the conjunction `rows`,
+/// of the projection of `rows` onto `s`: the model-based projection for linear integer
+/// arithmetic, `LIAProj`, of Komuravelli, Gurfinkel and Chaki ("SMT-based model checking for
+/// recursive programs", CAV 2014, section "Model Based Projection for Linear Integer
+/// Arithmetic"; arXiv 1405.4028), which keeps of Cooper's quantifier elimination for each atom
+/// the one disjunct that `m` satisfies. `m` satisfies `rows`; `rows` hold no product atom.
+/// Every value of the answer has a point of `rows`, and `m`'s value of `s` is one of them.
+///
+/// Each atom `x` other than `s` is removed in turn:
+/// - with an equation `a·x + t == 0` (the least `|a|` of all equations, so a unit coefficient
+///   when there is one): `|a|·x` is replaced by `-sign(a)·t` in every literal scaled by `|a|`,
+///   and `|a| | t` is added; this step is exact.
+/// - else, with `L` the lcm of `x`'s coefficients, every literal is scaled so that `x` comes
+///   as `±y`, `y = L·x`, and `L | y` is added; `D` is the lcm of `L` and the moduli of the
+///   divisibility literals over `y`. With lower and upper bounds, `y` is replaced by
+///   `l + i`, `l` the greatest lower bound at `m`, `i = (m(y) - m(l)) mod D` (Cooper's disjunct
+///   `l + i` that holds `m`); with bounds on one side only, those bounds are dropped and `y`
+///   is `m(y) mod D` in the divisibility literals (Cooper's infinite disjunct).
+///
+/// Left are bounds on `s` and literals `d | c·s + e`, each a residue class of `s` modulo
+/// `d / gcd(d, c)`, which `m` satisfies: the answer is the bounds and one residue class
+/// modulo the lcm of those.
+///
+/// Complexity tradeoff: naive version, the exact projection of the implicant ([`pugh`]):
+/// every splinter of each dark shadow, exponential in the atoms removed (the repaired unit's
+/// `x`, `exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`, past the whole
+/// limit). Used: one disjunct per atom, each literal rewritten once, so O(n·r·t) operations on
+/// integers for n atoms, r rows and t terms a row, the rows never more than at the start plus
+/// one divisibility literal per atom. The integers grow: each step scales a literal by at
+/// most `L` (or `|a|`), so a coefficient after n steps is at most the product of the
+/// coefficients' lcms, and the step of the answer divides that product; each row is divided
+/// by the gcd of its coefficients after each step, which keeps unit coefficients at 1. The
+/// cost moves to the cover: one cell holds one disjunct, so the cover asks once for each
+/// disjunct it needs, at most (choices of bound per atom) times (residues modulo the step).
+pub(super) fn liaproj(
+    rows: &[Con],
+    s: &Atom,
+    m: &Model,
+    work: &mut Work,
+) -> Result<Strided, Refusal> {
+    let mut rows: Vec<Con> = rows.to_vec();
+    let mut divs: Vec<Div> = Vec::new();
+    loop {
+        let size: u64 = (rows.iter().map(|k| &k.lin))
+            .chain(divs.iter().map(|k| &k.lin))
+            .map(|l| l.terms.len() as u64 + 1)
+            .sum();
+        work.read(size)?;
+        normalized(&mut rows, &mut divs); // An equation over an atom other than `s`, the one of least coefficient.
+        let eq = (rows.iter().enumerate())
+            .filter(|(_, k)| k.rel == Rel::Eq)
+            .flat_map(|(i, k)| {
+                (k.lin.terms.iter())
+                    .filter(|(a, _)| *a != s)
+                    .map(move |(a, c)| (c.abs(), i, a))
+            })
+            .min_by(|p, q| p.0.cmp(&q.0))
+            .map(|(k, i, a)| (k, i, a.clone()));
+        if let Some((k, i, x)) = eq {
+            let e = rows.swap_remove(i);
+            let a = e.lin.terms[&x].clone();
+            let mut t = e.lin;
+            t.terms.remove(&x);
+            // `a·x + t == 0`: `k·x == -sign(a)·t`, `k = |a|`, and `k | t`.
+            let kx = if a.is_negative() {
+                t.clone()
+            } else {
+                t.times(-1)
+            };
+            let put = |l: &Lin| {
+                let mut l = l.clone();
+                let b = l.terms.remove(&x).expect("a literal over x");
+                let mut l = l.times(k.clone());
+                l.plus_assign(&kx.times(b));
+                l
+            };
+            for r in rows.iter_mut().filter(|r| r.lin.terms.contains_key(&x)) {
+                r.lin = put(&r.lin);
+            }
+            for v in divs.iter_mut().filter(|v| v.lin.terms.contains_key(&x)) {
+                v.lin = put(&v.lin);
+                v.d = &v.d * &k;
+            }
+            if k > Int::ONE {
+                divs.push(Div { d: k, lin: t });
+            }
+            continue;
+        }
+        let Some(x) = (rows.iter().map(|k| &k.lin))
+            .chain(divs.iter().map(|k| &k.lin))
+            .flat_map(|l| l.terms.keys())
+            .filter(|a| *a != s)
+            .min()
+            .cloned()
+        else {
+            break;
+        };
+        if !divs.iter().any(|v| v.lin.terms.contains_key(&x)) {
+            rows = dark(rows, &x, m);
+            continue;
+        }
+        let coef = |l: &Lin| l.terms.get(&x).cloned();
+        let big_l = (rows.iter().map(|k| &k.lin))
+            .chain(divs.iter().map(|k| &k.lin))
+            .filter_map(coef)
+            .fold(Int::ONE, |l, c| lcm(&l, &c.abs()));
+        let y_at = &big_l * &value(&Lin::atom(x.clone()), m);
+        // A literal `c·x + r` scaled by `L / |c|`: `sign(c)·y + rest`, the sign and the rest.
+        let scaled = |l: &Lin, c: &Int| {
+            let mut r = l.clone();
+            r.terms.remove(&x);
+            (c.is_positive(), r.times(big_l.div_floor(&c.abs())))
+        };
+        let (with, without): (Vec<Con>, Vec<Con>) =
+            (rows.into_iter()).partition(|k| k.lin.terms.contains_key(&x));
+        let mut big_d = big_l.clone();
+        let mut over_y = Vec::new();
+        let mut others = Vec::new();
+        for v in divs {
+            if let Some(c) = coef(&v.lin) {
+                let d = &v.d * &big_l.div_floor(&c.abs());
+                big_d = lcm(&big_d, &d);
+                over_y.push((d, scaled(&v.lin, &c)));
+            } else {
+                others.push(v);
+            }
+        }
+        let ge: Vec<(bool, Lin)> = (with.iter())
+            .map(|k| {
+                debug_assert_eq!(k.rel, Rel::Ge, "an equation over x is removed first");
+                scaled(&k.lin, &coef(&k.lin).expect("a row over x"))
+            })
+            .collect();
+        let (has_lo, has_hi) = (ge.iter().any(|g| g.0), ge.iter().any(|g| !g.0));
+        // `y + rest >= 0` is the lower bound `y >= -rest`: the greatest at `m` has the least
+        // `m(rest)`.
+        let term = if has_lo && has_hi {
+            let rest = (ge.iter().filter(|g| g.0))
+                .map(|g| &g.1)
+                .min_by(|p, q| value(p, m).cmp(&value(q, m)))
+                .expect("a lower bound");
+            let l = rest.times(-1);
+            let i = (&y_at - &value(&l, m)).mod_floor(&big_d);
+            l.plus(&Lin::constant(i))
+        } else {
+            Lin::constant(y_at.mod_floor(&big_d))
+        };
+        let at = |(pos, rest): &(bool, Lin)| term.times(if *pos { 1 } else { -1 }).plus(rest);
+        rows = without;
+        if has_lo && has_hi {
+            rows.extend(ge.iter().map(|g| Con {
+                lin: at(g),
+                rel: Rel::Ge,
+            }));
+        }
+        divs = others;
+        divs.extend(over_y.iter().map(|(d, g)| Div {
+            d: d.clone(),
+            lin: at(g),
+        }));
+        divs.push(Div {
+            d: big_l,
+            lin: term,
+        });
+    }
+    let v = value(&Lin::atom(s.clone()), m);
+    let step = (divs.iter()).fold(Int::ONE, |step, k| {
+        let c = k.lin.terms.get(s).expect("a literal over s alone");
+        lcm(&step, &k.d.div_floor(&k.d.gcd(c)))
+    });
+    let set = bounded(&rows, s);
+    debug_assert!(
+        set.contains_end(&fin(&v)),
+        "the point is not one of its rows"
+    );
+    let end = |e: &End| match e {
+        End::Fin(n) => Some(Int::from(n)),
+        _ => None,
+    };
+    let (lo, hi) = set.pieces().next().expect("the point's value");
+    Ok(Strided {
+        lo: end(lo),
+        hi: end(hi),
+        res: v.mod_floor(&step),
+        step,
+    })
+}
+
+/// The rows of [`liaproj`] read as bounds on `x`: `out` the rows without `x`, `lower` and
+/// `upper` the bounds `c·x + t >= 0` as `(|c|, t)`, and where there are both, the pair of
+/// [`dark`].
+struct Shadow {
+    out: Vec<Con>,
+    lower: Vec<(Int, Lin)>,
+    upper: Vec<(Int, Lin)>,
+    pair: Option<Pair>,
+}
+
+/// The greatest lower bound `lower[i]` and the least upper bound `upper[j]` at the point,
+/// the slack `(a - 1)·(b - 1)` of their dark shadow, and whether the point lies in it.
+struct Pair {
+    i: usize,
+    j: usize,
+    slack: Int,
+    inside: bool,
+}
+
+fn shadow(rows: &[Con], x: &Atom, m: &Model) -> Shadow {
+    let mut out = Vec::new();
+    let mut lower: Vec<(Int, Lin)> = Vec::new();
+    let mut upper: Vec<(Int, Lin)> = Vec::new();
+    for k in rows {
+        let Some(c) = k.lin.terms.get(x) else {
+            out.push(k.clone());
+            continue;
+        };
+        debug_assert_eq!(k.rel, Rel::Ge, "an equation over x is removed first");
+        let mut t = k.lin.clone();
+        t.terms.remove(x);
+        if c.is_positive() {
+            lower.push((c.clone(), t));
+        } else {
+            upper.push((c.abs(), t));
+        }
+    }
+    if lower.is_empty() || upper.is_empty() {
+        return Shadow {
+            out,
+            lower,
+            upper,
+            pair: None,
+        };
+    }
+    // A lower bound `a·x >= -t` is `x >= -t/a`: the greatest at `m` has the least `t/a`;
+    // an upper bound `b·x <= t` is `x <= t/b`: the least has the least `t/b`. Compared as
+    // `t_1·a_2 < t_2·a_1`, the first of equal ones kept.
+    let least = |bounds: &[(Int, Lin)]| {
+        let at: Vec<Int> = bounds.iter().map(|(_, t)| value(t, m)).collect();
+        (0..bounds.len())
+            .min_by(|&i, &j| (&at[i] * &bounds[j].0).cmp(&(&at[j] * &bounds[i].0)))
+            .expect("a bound")
+    };
+    let (i, j) = (least(&lower), least(&upper));
+    let (a, tl) = &lower[i];
+    let (b, tu) = &upper[j];
+    let slack = &(a - &Int::ONE) * &(b - &Int::ONE);
+    // `a·β - b·α - (a - 1)·(b - 1)` at `m`, with `α = -tl`, `β = tu`.
+    let gap = &(&(&value(tu, m) * a) + &(&value(tl, m) * b)) - &slack;
+    Shadow {
+        pair: Some(Pair {
+            i,
+            j,
+            slack,
+            inside: !gap.is_negative(),
+        }),
+        out,
+        lower,
+        upper,
+    }
+}
+
+/// `rows` without `x`, which no divisibility literal holds and no equation of `rows` holds,
+/// where `m` lies in the dark shadow of the greatest lower bound `a·x >= α` and the least
+/// upper bound `b·x <= β` of `x` at `m` (Pugh, "The Omega test", 1991, "dark shadow"):
+/// the rows without `x`, each other lower bound at most `α/a` (`a·α_j <= a_j·α`), each other
+/// upper bound at least `β/b`, and `a·β - b·α >= (a - 1)·(b - 1)`, which leaves an integer
+/// `x` between `α/a` and `β/b` and so above every lower bound and below every upper bound.
+/// With bounds on one side only, the rows without `x`, since some `x` then holds every row.
+/// Where `m` is in a splinter, outside that dark shadow, `rows` and the equation of the
+/// splinter that holds `m`, `a·x == α + i` with `i = a·m(x) - m(α)` (Pugh's splinters,
+/// `0 <= i < a` there, since `a·β - b·α < (a - 1)·(b - 1)` and `α <= a·m(x) <= a·β/b`),
+/// for the step of an equation to remove `x`.
+fn dark(rows: Vec<Con>, x: &Atom, m: &Model) -> Vec<Con> {
+    let Shadow {
+        mut out,
+        lower,
+        upper,
+        pair,
+    } = shadow(&rows, x, m);
+    let Some(Pair {
+        i,
+        j,
+        slack,
+        inside,
+    }) = pair
+    else {
+        return out;
+    };
+    let (a, tl) = &lower[i];
+    let (b, tu) = &upper[j];
+    if !inside {
+        let mut lin = Lin::atom(x.clone()).times(a.clone()).plus(tl);
+        lin.constant = &lin.constant - &value(&lin, m);
+        let mut rows = rows;
+        rows.push(Con { lin, rel: Rel::Eq });
+        return rows;
+    }
+    // `a·β - b·α >= (a - 1)·(b - 1)` with `α = -tl`, `β = tu`.
+    let pair = tu.times(a.clone()).plus(&tl.times(b.clone()));
+    let pair = pair.plus(&Lin::constant(-&slack));
+    out.push(Con {
+        lin: pair,
+        rel: Rel::Ge,
+    });
+    // Another lower bound `-t_k/a_k <= -tl/a`: `a·t_k - a_k·tl >= 0`; another upper bound
+    // `t_k/b_k >= tu/b`: `b·t_k - b_k·tu >= 0`.
+    for (_, (c, t)) in lower.iter().enumerate().filter(|&(k, _)| k != i) {
+        out.push(Con {
+            lin: t.times(a.clone()).minus(&tl.times(c.clone())),
+            rel: Rel::Ge,
+        });
+    }
+    for (_, (c, t)) in upper.iter().enumerate().filter(|&(k, _)| k != j) {
+        out.push(Con {
+            lin: t.times(b.clone()).minus(&tu.times(c.clone())),
+            rel: Rel::Ge,
+        });
+    }
+    out
+}
+
+/// `rows` and `divs` of [`liaproj`] with each literal divided by the gcd of its coefficients
+/// (an inequality's constant rounded down, a divisibility literal's modulus and constant
+/// divided too, its coefficients first taken modulo its modulus), and literals with no atom,
+/// which hold at the point, dropped.
+fn normalized(rows: &mut Vec<Con>, divs: &mut Vec<Div>) {
+    rows.retain_mut(|k| {
+        let g = (k.lin.terms.values()).fold(Int::ZERO, |g, c| g.gcd(c));
+        if g.is_zero() {
+            debug_assert!(holds_at(k, &k.lin.constant), "a row the point fails");
+            return false;
+        }
+        if g > Int::ONE {
+            debug_assert!(k.rel == Rel::Ge || k.lin.constant.mod_floor(&g).is_zero());
+            for c in k.lin.terms.values_mut() {
+                *c = c.div_floor(&g);
+            }
+            k.lin.constant = k.lin.constant.div_floor(&g);
+        }
+        true
+    });
+    divs.retain_mut(|v| {
+        let d = v.d.clone();
+        for c in v.lin.terms.values_mut() {
+            *c = c.mod_floor(&d);
+        }
+        v.lin.terms.retain(|_, c| !c.is_zero());
+        v.lin.constant = v.lin.constant.mod_floor(&d);
+        let g = (v.lin.terms.values())
+            .chain([&v.lin.constant])
+            .fold(d.clone(), |g, c| g.gcd(c));
+        if g > Int::ONE {
+            for c in v.lin.terms.values_mut() {
+                *c = c.div_floor(&g);
+            }
+            v.lin.constant = v.lin.constant.div_floor(&g);
+            v.d = v.d.div_floor(&g);
+        }
+        if v.lin.terms.is_empty() {
+            debug_assert!(v.lin.constant.is_zero(), "a divisibility the point fails");
+            return false;
+        }
+        v.d > Int::ONE
+    });
 }
 
 /// `a mod^ b` of Pugh's equality step: `a - b·floor(a/b + 1/2)`, in `(-b/2, b/2]`.
