@@ -817,6 +817,16 @@ fn a_literal_component_is_not_summed() {
                  h1(positional p) = (3 * p[0]);\n\
                  h2(positional p, positional q) = h0(p);";
     assert_eq!(r_errors(found, "h0((-2.5, (3, 3, -2)))").len(), 1);
+    // Through one and two calls that pass the pair on.
+    let h1 = "h1(positional p) {\n  a, b = p;\n  return sum(a);\n}";
+    for depth in [2, 3] {
+        let defs = wrapped(h1, depth);
+        for call in [format!("h{depth}((2.5, 1))"), format!("h{depth}((3, 1))")] {
+            assert_eq!(r_errors(&defs, &call).len(), 1, "{call}");
+        }
+        let ok = kind_of(&format!("h{depth}(([1, 2], 3))"));
+        assert_eq!(runs(&defs, &ok, ""), "int\n", "{depth}");
+    }
     // A family or a tuple there is summed.
     assert_eq!(runs(defs, &kind_of("h(([1, 2], 3))"), ""), "int\n");
     assert_eq!(runs(defs, &kind_of("h(((1, 2), 3))"), ""), "int\n");
