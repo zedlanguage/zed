@@ -10445,7 +10445,13 @@ impl<'m> Searching<'m> {
     /// there are no such classes; `Some(None)` when no piece has a value found.
     async fn class_rep(&'m self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<usize>> {
         let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
-        let (j, classes, _) = classes(b, &open, false)?;
+        // The regions of flat keys too (BENCH-region-split-late-failure): every cell holds a
+        // region whole or shares no value with it, so a value found in a region's piece is a
+        // value of the part, as for a class. Without them, `n` rows `(a | i, a | i)` sharing the
+        // atom `a` made one class, and the candidates after this narrowed one tuple type each
+        // against every cell: order n² (57.2 times the instructions per 8 times `n` on
+        // `diagonal_rows_less_rows_failing_on_the_last_region_scale`, load 37).
+        let (j, classes, _) = classes(b, &open, true)?;
         let mut found = None;
         let mut each = Each::Seek {
             len,
@@ -12496,7 +12502,7 @@ fn empty_by_classes(g: &Region, f: &Part<Row>, open: &[usize]) -> bool {
 /// When no component falls into two classes and `keys` is set, the first in the same order
 /// whose open cells hold only flat keys gives the pieces of [`key_pieces`] instead, with `true`
 /// as the last field; a tuple type is then in several pieces, and the caller only narrows
-/// each (`Each::Narrow`).
+/// each (`Each::Narrow`) or seeks a value in each (`Each::Seek`, in `class_rep`).
 // Complexity tradeoff (GROUP-order-classes-outside-cpoly, COMPLEXITY.md K35b): the first
 // component that splits, in written order, made the verdict depend on the order of the
 // components: on `((#a|#b), (L12|#c))` less five pairs, splitting the first component forked

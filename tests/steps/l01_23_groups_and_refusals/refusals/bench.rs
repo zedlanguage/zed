@@ -1620,6 +1620,40 @@ fn diagonal_rows_less_rows_sharing_an_atom_are_empty_in_their_size() {
     });
 }
 
+/// [`diagonal`] with the last row of `u` made `(a | n-1, a | n)`. The row `(n-1, n-1)` of `x` is
+/// then left, and the last region of the split (the key `n - 1`, held by the last cell alone)
+/// is the one that narrowing does not prove empty (BENCH-region-split-late-failure).
+fn diagonal_last_fails(n: usize) -> (Type, Type) {
+    let (x, _) = diagonal(n);
+    let cell = |i: usize| &Type::atom("hbone") | &lit(i as i64);
+    let u = (0..n).fold(Type::empty(), |u, i| {
+        let row = match i + 1 == n {
+            true => Type::tuple(vec![cell(i), cell(i + 1)]),
+            false => Type::tuple(vec![cell(i), cell(i)]),
+        };
+        &u | &row
+    });
+    (x, u)
+}
+
+#[test]
+fn diagonal_rows_less_rows_failing_on_the_last_region_scale() {
+    // BENCH-region-split-late-failure: the split by regions narrows every region and then
+    // drops all of that work when the last one fails, and the old steps run.
+    big(|| {
+        let pairs = scaling::inputs(32, diagonal_last_fails);
+        scaling::check(
+            "n diagonal rows less n rows sharing an atom, the last region not empty",
+            32,
+            |n| {
+                Type::forget_emptiness();
+                let (x, u) = &pairs[&n];
+                assert!(!(x - u).is_empty());
+            },
+        );
+    });
+}
+
 /// [`diagonal`] at the sizes of `XR_N` (default 8 to 256), printing the work of each, for
 /// reading the growth by eye with `--nocapture`.
 #[test]
