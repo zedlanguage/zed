@@ -228,7 +228,14 @@ Closed in this round:
   least fixed point, passes it: no draw needs that pass (open, below).
 - `bes.rs` `delete_cascade`, a node of `u_set` with `need` 0 (old 638-639): proof at the site
   (such a node's `hi` was made false by the last pass of `bounds`, so it is not in `u_set`); the
-  arm is now `unreachable!`. The test reaches `delete_cascade` (52 of the 40,000 systems) and
+  arm is now `unreachable!`. The proof was then traced through `decide` line by line and
+  written out at the site without the bottom-up ordering argument: each such child has
+  `lo == hi == false` (else `reaches_refused` refuses `r_scc`), which makes both `lo[v]` and
+  `hi[v]` false in the last `bounds`. The proofs at `sweep.rs` 1194 (`walk` is called only from
+  `list_sweep_value`, on a `Sweep` of its own, so `pick` never writes this `walked`),
+  `print.rs` 139 (`refer` answers one `Seg::Node`), 309, 916 (`meet_of_literals` is true only
+  of a list or an `&` of two such) and `uses.rs` 114 (callers match a `Branch` first) were
+  re-derived in the same round and hold. The test reaches `delete_cascade` (52 of the 40,000 systems) and
   never panics there.
 
 Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,

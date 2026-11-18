@@ -641,14 +641,25 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
                 .count() as u32,
         };
         sc.need[v] = need;
-        // `v` is in `u_set`, so `hi[v]` holds. `need` is 0 only when a child of an `And` or
-        // `Mor` node, or every child of an `Or` node, lies outside `u_set` with `hi` false.
-        // Such a child is decided (outside the component, or in it with `lo == hi`), and the
-        // last pass of `bounds` that wrote `hi[v]`, a greatest fixed point, read it as not
-        // inhabited (`base`, or its own value in that pass, which is its `hi`), so it made
-        // `hi[v]` false. (A child in another undecided component of `decide`'s step 4 was
-        // decided before `v`'s, as the components are taken bottom up.) So `need` is at least
-        // 1, and a node of `u_set` dies only when a tuple cycle loses its last seed, below.
+        // `need` is 0 only when `v` is an `And` or `Mor` node with a child `w`, or an `Or` node
+        // all of whose children `w`, lie outside `u_set` with `hi[w]` false. Each such `w` has
+        // `lo[w] == hi[w]`: inside `r_scc` by the filter that made `u_set`; outside it, else
+        // `reaches_refused` in `decide` held and `r_scc` was refused, not cascaded. So
+        // `lo[w] == hi[w] == false`, and no write to `lo` or `hi` falls between the last
+        // `bounds` over `v` (on `r_scc`, or on the whole component when `r_scc` is all of it)
+        // and this call: the components are taken bottom up and each is finished before the
+        // next, and `refusal` writes neither. In that `bounds`:
+        // - `hi[v]` is the last greatest fixed point (`narrow` false, reading `hi` outside its
+        //   `sub`). At its fixed point a live `And`/`Mor` has every child live and a live `Or`
+        //   one child live, a child inside `sub` read as its own value (its `hi`), outside as
+        //   `hi`. So `hi[v]` is false.
+        // - `lo[v]` is the least fixed point seeded by the narrowed greatest one (`tmp`), both
+        //   reading `lo` outside `sub`. In the narrowed pass a cut edge reads as not inhabited,
+        //   so the children `w` read false there too and `tmp[v]` is false; in the least pass
+        //   an `And`/`Mor` with a child never set, or an `Or` with no child set, is never set.
+        //   So `lo[v]` is false.
+        // Then `lo[v] == hi[v]` and `v` is not in `u_set`: `need` is at least 1, and a node of
+        // `u_set` dies only when a tuple cycle loses its last seed, below.
         if need == 0 {
             unreachable!("a node of `u_set` has a child that may be inhabited")
         }
