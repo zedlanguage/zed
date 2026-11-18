@@ -746,6 +746,7 @@ pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("stack", 18),
     ("decides", 22),
     ("require", 24),
+    ("cryptosafe", 33),
 ];
 
 /// The facts a process takes at its start that `main` takes as annotations (DESIGN.md

@@ -217,6 +217,8 @@ const PENDING: &[(&str, &str)] = &[
     ("fpstrict", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
+    ("cryptosafe", "L33.1e"),
+    ("ctDivRem", "L33.1e"),
     ("f16", "L1.18a"),
     ("bf16", "L1.18a"),
     ("f32Bits", "L1.18a"),
@@ -447,6 +449,7 @@ fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet()
         "fpstrict",
         "fpsafe",
         "approx",
+        "cryptosafe",
     ] {
         let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
         let Err(out) = zedc::run::load(src.as_bytes()) else {
