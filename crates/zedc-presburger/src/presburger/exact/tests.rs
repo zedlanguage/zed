@@ -1768,7 +1768,10 @@ fn read_once_formulas_project_to_the_values_of_their_points() {
             let got = sets
                 .get(&a(n))
                 .cloned()
-                .unwrap_or_else(|| IntervalSet::range(End::NegInf, End::PosInf))
+                .unwrap_or_else(|| match has {
+                    true => IntervalSet::range(End::NegInf, End::PosInf),
+                    false => IntervalSet::empty(),
+                })
                 .meet(&IntervalSet::of(-B, B));
             if got != want {
                 wrong.push(format!("round {round} {n}: {got} not {want}: {f}"));
