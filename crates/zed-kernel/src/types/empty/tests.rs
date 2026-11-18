@@ -122,10 +122,10 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
 }
 
 /// `inverse` against a scan, and `residue_length` against a scan of the lengths from 1 on
-/// every choice of at most two classes of `all` and three of `none` with periods 1 to 6,
+/// every choice of at most two classes of `all` and four of `none` with periods 1 to 6,
 /// from a fixed sequence: a length it gives is in every class of `all` and in none of
-/// `none`; it gives one whenever the shares of `none` sum to less than one; and it gives one
-/// only when the scan finds one.
+/// `none`; it gives one whenever the rule (`residues_meet`) finds that one exists; and it
+/// gives one only when the scan finds one.
 #[test]
 fn the_residue_length_agrees_with_a_scan() {
     for m in 1..40u64 {
@@ -144,7 +144,9 @@ fn the_residue_length_agrees_with_a_scan() {
     };
     let (mut exists, mut given) = (0, 0);
     for _ in 0..20_000 {
-        let (a, b) = (next(3), next(4));
+        // Up to four classes of `none`: the case of KERNEL-witness-length-miss has four, and
+        // with up to three the scan drew no miss of the choice by expectations alone.
+        let (a, b) = (next(3), next(5));
         let mut classes: Vec<(u64, u64)> = (0..a + b)
             .map(|_| {
                 let p = 1 + next(6);
@@ -166,9 +168,29 @@ fn the_residue_length_agrees_with_a_scan() {
     assert_eq!(residue_agrees(&[(2, 1)], &[(3, 0)]), (true, true));
 }
 
+/// Lengths 1 and 0 modulo 3 and 1 and 2 modulo 6 taken out leave those 5 modulo 6: the shares
+/// sum to one and (3, 1) meets (6, 1), so the rule finds a length. The choice by the expected
+/// number of classes alone ties on 2 and on 3, takes 0 on both, and the length 0 is in (3, 0)
+/// (KERNEL-witness-length-miss). Larger: the same four classes with each period times a prime
+/// `r` from 5 to 47 and residues times `r`, with `all` fixing 0 modulo `r`.
+#[test]
+fn a_length_is_given_when_two_classes_taken_out_meet_and_their_shares_sum_to_one() {
+    let none = [(3, 1), (6, 1), (3, 0), (6, 2)];
+    assert!(residues_meet(&[], &none) == Lengths::Some);
+    let n = residue_length(&[], &none).expect("a length 5 modulo 6");
+    assert_eq!(&n % 6u32, BigUint::from(5u32));
+    assert_eq!(residue_agrees(&[], &none), (true, true));
+    for r in [5u64, 7, 11, 13, 47] {
+        let none: Vec<(u64, u64)> = none.iter().map(|&(p, k)| (p * r, k * r)).collect();
+        let n = residue_length(&[(r, 0)], &none).expect("a length 5r modulo 6r");
+        assert_eq!(&n % (6 * r), BigUint::from(5 * r), "r = {r}");
+    }
+}
+
 /// Checks `residue_length` on the lengths in every class of `all` and in no class of `none`:
-/// a length given is one, and one is given when one exists and the shares of `none` sum below
-/// one. Gives whether a length exists and whether one was given.
+/// a length given is one, the rule (`residues_meet`) agrees with the scan where it decides,
+/// and a length is given whenever the rule finds one. Gives whether a length exists and
+/// whether one was given.
 fn residue_agrees(all: &[(u64, u64)], none: &[(u64, u64)]) -> (bool, bool) {
     {
         let fits = |n: u64| {
@@ -192,6 +214,17 @@ fn residue_agrees(all: &[(u64, u64)], none: &[(u64, u64)]) -> (bool, bool) {
             .sum();
         if sum < 1.0 && scanned.is_some() {
             assert!(found.is_some(), "{all:?} {none:?}: shares {sum}");
+        }
+        match residues_meet(all, none) {
+            Lengths::Some => {
+                assert!(
+                    scanned.is_some(),
+                    "{all:?} {none:?}: the rule finds a length"
+                );
+                assert!(found.is_some(), "{all:?} {none:?}: the rule finds a length");
+            }
+            Lengths::None => assert!(scanned.is_none(), "{all:?} {none:?}: the rule finds none"),
+            Lengths::Refused => {}
         }
         (scanned.is_some(), found.is_some())
     }

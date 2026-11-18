@@ -76,7 +76,7 @@ use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
@@ -1957,20 +1957,42 @@ fn residue_classes(all: &[(u64, u64)], none: &[(u64, u64)]) -> (Lengths, Vec<(u6
     (Lengths::Refused, Vec::new())
 }
 
-/// A length in the lengths of `all` and in none of `none`, sought by the method of conditional
-/// expectations: the residue modulo each prime power of the periods is chosen in turn, the one
-/// for which the negated classes expected to hold the length are fewest, the residues not yet
-/// chosen taken as uniform among those `all` allows. When the shares sum to less than one a
-/// length is always found; otherwise one may be missed, and the caller checks it. The work is
-/// the residues tried times the classes times the primes, and the length is at most the lcm of
-/// the periods, a number of as many digits as the periods have together.
+/// A class of lengths on the primes where it is finer than the lengths of `all`: (index of the
+/// prime, power, residue) in the order of the primes.
+type Fine = Vec<(usize, u64, u64)>;
+
+/// A class `(power, residue)` modulo a power of one prime, with its value.
+type ResidueValue = ((u64, u64), BigInt);
+
+/// A length in the lengths of `all` and in none of `none`, chosen by the method of conditional
+/// expectations with a pessimistic estimator (Raghavan 1988): the residue modulo the largest
+/// power of each prime of the periods is chosen in turn, the residues not yet chosen taken as
+/// uniform among those `all` allows, each prime on its own. The estimator is
+/// `g(n) = Σ_c [n ∈ c] − [n ∈ a ∩ b]` over the classes `c` of `none`, with `a` and `b` two
+/// classes of `none` that meet, or with no pair when the shares sum below one: Hunter's bound
+/// (Hunter 1976) on a tree of one edge. Each residue is the one for which the expectation of `g`
+/// is least, counted exactly in integers.
+///
+/// Proof that a length is found whenever the rule (`shares`, on the classes
+/// `residue_classes` gives) finds one: `g(n) ≥ [n is in some class of none]` for every `n`,
+/// since `g(n) = 0` when no class holds `n`, `g(n) = Σ ≥ 1` when some class holds it and `a ∩ b`
+/// does not, and `g(n) = Σ − 1 ≥ 1` when `a ∩ b` holds it, as then `a` and `b` both do. The
+/// rule answers `Some` when the shares sum below one, and then `E[g] < 1` with no pair; or
+/// when they sum to one and two classes `a` and `b` meet, and then `E[g] = 1 − share(a ∩ b)`,
+/// below one because `a ∩ b` meets the lengths of `all`: on each prime the classes are balls of
+/// the `r`-adic integers, and balls that meet two by two share a point, so the classes of
+/// `all`, `a` and `b` share a residue on each prime and, by the Chinese remainder theorem, a
+/// length. The expectation of `g` given the residues chosen so far is the average over the
+/// next residue of the expectation given that one too, so its least is at most the average,
+/// and the expectation never rises. Once every residue is chosen `g(n)` is an integer below
+/// one, so at most 0, and no class of `none` holds `n`. The counts are exact (`BigUint`), so
+/// no rounding can rise past one: the former choice in `f64`, by the expected number of
+/// classes alone, took the tied residue 0 for `none = [(3, 1), (6, 1), (3, 0), (6, 2)]` on
+/// both 2 and 3, and the length 0 is in `(3, 0)` (KERNEL-witness-length-miss).
+///
+/// When the rule refuses, a length may still be found, and the caller checks it. The length is
+/// at most the lcm of the periods, a number of as many digits as the periods have together.
 fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
-    let power = |period: u64, r: u64| {
-        prime_powers(period)
-            .into_iter()
-            .find(|&(p, _)| p == r)
-            .map_or(1, |(_, q)| q)
-    };
     // For each prime: the largest power in the periods, and the power and residue `all` fix.
     let mut primes: BTreeMap<u64, (u64, u64, u64)> = BTreeMap::new();
     for &(period, _) in all.iter().chain(none) {
@@ -1987,54 +2009,161 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
             }
         }
     }
-    // The chance that the class `(period, at)` holds the residue on the prime `r`.
-    let chance = |(period, at): (u64, u64), r: u64, chosen: Option<u64>| {
-        let (_, q0, a0) = primes[&r];
-        let q = power(period, r);
-        match chosen {
-            Some(d) => f64::from(u8::from(at % q == d % q)),
-            None if q <= q0 => f64::from(u8::from(at % q == a0 % q)),
-            None if at % q0 == a0 => q0 as f64 / q as f64,
-            None => 0.0,
+    let index: BTreeMap<u64, usize> = primes.keys().enumerate().map(|(i, &r)| (r, i)).collect();
+    let primes: Vec<(u64, u64, u64, u64)> = primes
+        .into_iter()
+        .map(|(r, (top, q0, a0))| (r, top, q0, a0))
+        .collect();
+    // A class of `none` on the primes where it is finer than `all`, as (index of the prime,
+    // power, residue) in the order of `primes`; `None` when no length of `all` is in it. On the
+    // other primes it holds every residue `all` allows, so it is the same for every choice there.
+    let fine = |(period, at): (u64, u64)| -> Option<Fine> {
+        let mut out = Vec::new();
+        for (r, q) in prime_powers(period) {
+            let i = index[&r];
+            let (_, _, q0, a0) = primes[i];
+            if q <= q0 {
+                if at % q != a0 % q {
+                    return None;
+                }
+            } else if at % q0 != a0 {
+                return None;
+            } else {
+                out.push((i, q, at % q));
+            }
         }
+        Some(out)
     };
-    let mut chosen: BTreeMap<u64, u64> = BTreeMap::new();
-    for (&r, &(top, q0, a0)) in &primes {
-        let expected = |d: u64| -> f64 {
-            none.iter()
-                .map(|&c| {
-                    primes
-                        .keys()
-                        .map(|&p| {
-                            chance(
-                                c,
-                                p,
-                                if p == r {
-                                    Some(d)
-                                } else {
-                                    chosen.get(&p).copied()
-                                },
-                            )
-                        })
-                        .product::<f64>()
-                })
-                .sum()
+    // How many times the lengths of `all` outnumber those of the class `c`, on the primes from
+    // the `from`th on: at most the lcm of two periods.
+    let ratio = |c: &[(usize, u64, u64)], from: usize| -> u128 {
+        c.iter()
+            .filter(|&&(i, ..)| i >= from)
+            .map(|&(i, q, _)| u128::from(q / primes[i].2))
+            .product()
+    };
+    // The terms of `g`, each with its sign (`true` for `+`); a class no length of `all` is in
+    // adds 0 and is left out.
+    let mut terms: Vec<(bool, Fine)> = none
+        .iter()
+        .filter_map(|&c| fine(c))
+        .map(|c| (true, c))
+        .collect();
+    // The choices on every prime, and the sum of the classes' shares of them, stopped once it is
+    // past them: each share is at least 1 over its period, and `n` shares summing to at most one
+    // have periods summing to at least `n²` (Cauchy and Schwarz), so at most the square root of
+    // twice the definitions are added.
+    let whole: BigUint = primes
+        .iter()
+        .map(|&(_, top, q0, _)| BigUint::from(top / q0))
+        .product();
+    let mut sum = BigUint::ZERO;
+    for (_, c) in &terms {
+        sum += &whole / ratio(c, 0);
+        if sum > whole {
+            break;
+        }
+    }
+    if sum == whole {
+        // Two classes that meet, and their meet, which `all` meets by the proof above. A class
+        // listed twice meets itself. Complexity tradeoff: otherwise every pair is tried for the
+        // one whose meet is largest, O(classes² × primes of a period); the shares sum to one, so
+        // the classes number at most the square root of the definitions, and the work is linear
+        // in them. Any pair would do for the proof; the largest lowers the estimate most.
+        let meet = |a: &[(usize, u64, u64)], b: &[(usize, u64, u64)]| {
+            let (mut i, mut j, mut out) = (0, 0, Vec::new());
+            while i < a.len() || j < b.len() {
+                match (a.get(i), b.get(j)) {
+                    (Some(&x), Some(&y)) if x.0 == y.0 => {
+                        let m = x.1.min(y.1);
+                        if x.2 % m != y.2 % m {
+                            return None;
+                        }
+                        out.push(if x.1 >= y.1 { x } else { y });
+                        (i, j) = (i + 1, j + 1);
+                    }
+                    (Some(&x), Some(&y)) if x.0 < y.0 => {
+                        out.push(x);
+                        i += 1;
+                    }
+                    (Some(&x), None) => {
+                        out.push(x);
+                        i += 1;
+                    }
+                    (_, Some(&y)) => {
+                        out.push(y);
+                        j += 1;
+                    }
+                    (None, None) => unreachable!("the loop stops when both are done"),
+                }
+            }
+            Some(out)
         };
-        // Complexity tradeoff: every residue modulo the largest power of `r` is tried, each
-        // against every negated class on every prime. A period is the number of definitions on
-        // its cycle, so the power is at most the size of the type and the work is polynomial in
-        // it, up to its cube; trying only the residues the negated classes name, and one other,
-        // would drop a factor. This runs only when the rule refuses.
-        let d = (0..top / q0)
-            .map(|i| a0 + i * q0)
-            .min_by(|&a, &b| expected(a).total_cmp(&expected(b)))
-            .expect("a residue is tried");
-        chosen.insert(r, d);
+        let mut sorted: Vec<&Fine> = terms.iter().map(|(_, c)| c).collect();
+        sorted.sort();
+        let pair = match sorted.windows(2).find(|w| w[0] == w[1]) {
+            Some(w) => Some(w[0].clone()),
+            None => {
+                let mut best: Option<(u128, Fine)> = None;
+                for (i, a) in sorted.iter().enumerate() {
+                    for b in &sorted[..i] {
+                        if let Some(m) = meet(a, b) {
+                            let r = ratio(&m, 0);
+                            if best.as_ref().is_none_or(|(least, _)| r < *least) {
+                                best = Some((r, m));
+                            }
+                        }
+                    }
+                }
+                best.map(|(_, m)| m)
+            }
+        };
+        if let Some(m) = pair {
+            terms.push((false, m));
+        }
+    }
+    // The terms finer than `all` on each prime; only they tell its residues apart.
+    let mut on: Vec<Vec<usize>> = vec![Vec::new(); primes.len()];
+    for (t, (_, c)) in terms.iter().enumerate() {
+        for &(i, ..) in c {
+            on[i].push(t);
+        }
+    }
+    let mut alive = vec![true; terms.len()];
+    let mut rest = whole;
+    let mut chosen: Vec<u64> = Vec::with_capacity(primes.len());
+    for (k, &(r, top, q0, a0)) in primes.iter().enumerate() {
+        // Complexity tradeoff: the expectation of `g` given a residue, less what every residue
+        // shares, is the sum over the terms finer than `all` on this prime that hold it of the
+        // term's choices left, `rest` over its ratio on the primes after this one. The least is
+        // found on the tree of their residue classes (`least_residue`), not by trying every
+        // residue: O(terms on the prime × (digits of the power + primes of a period)) operations,
+        // one of them a division of a number of at most the digits of the lcm per term, so
+        // O(classes × primes of a period) such divisions and O(classes × primes of a period²)
+        // small operations in all, against
+        // O(primes² × residues × classes) for the former choice in `f64`, which tried every
+        // residue against every class on every prime and whose rounding could not be trusted
+        // near one.
+        rest /= top / q0;
+        let mut nodes: BTreeMap<(u64, u64), BigInt> = BTreeMap::new();
+        for &t in &on[k] {
+            let (plus, c) = &terms[t];
+            let &(_, q, res) = c.iter().find(|&&(i, ..)| i == k).expect("the term is on k");
+            if alive[t] {
+                let w = BigInt::from(&rest / ratio(c, k + 1));
+                *nodes.entry((q, res)).or_default() += if *plus { w } else { -w };
+            }
+        }
+        let (_, d) = least_residue(r, q0, a0, nodes.into_iter().collect());
+        for &t in &on[k] {
+            let &(_, q, res) = terms[t].1.iter().find(|&&(i, ..)| i == k).expect("on k");
+            alive[t] &= d % q == res;
+        }
+        chosen.push(d);
     }
     // The length below the lcm with the chosen residues, by the Chinese remainder theorem.
     let (mut n, mut m) = (BigUint::ZERO, BigUint::from(1u32));
-    for (&r, &d) in &chosen {
-        let q = primes[&r].0;
+    for (&(_, q, _, _), &d) in primes.iter().zip(&chosen) {
         let below = |x: &BigUint| u64::try_from(x % q).expect("a residue is below q");
         let inv = inverse(below(&m), q).unwrap_or(0);
         let gap = (d % q + q - below(&n)) % q;
@@ -2043,6 +2172,43 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
         m *= q;
     }
     if n == BigUint::ZERO { m } else { n }
+}
+
+/// The residue `d`, equal to `res` modulo `q`, for which the sum of the values of the classes
+/// `(power, residue)` of `nodes` that hold `d` is least, with that sum: the classes are those
+/// modulo powers of the prime `p` above `q`, inside the class of `res`. Classes modulo powers of
+/// one prime are nested or apart, so they form a tree: the residues modulo `q * p` that no class
+/// lies in hold none of them, and each other one is searched on its own. Every class is passed
+/// down once per power of `p` below its own, so the work is the classes times the digits of
+/// the largest power, and the residues no class holds are never listed.
+fn least_residue(p: u64, q: u64, res: u64, nodes: Vec<ResidueValue>) -> (BigInt, u64) {
+    if nodes.is_empty() {
+        return (BigInt::ZERO, res);
+    }
+    let q1 = q * p;
+    let mut groups: BTreeMap<u64, (BigInt, Vec<ResidueValue>)> = BTreeMap::new();
+    for ((qn, rn), v) in nodes {
+        let g = groups.entry(rn % q1).or_default();
+        match qn == q1 {
+            true => g.0 += v,
+            false => g.1.push(((qn, rn), v)),
+        }
+    }
+    let mut best = ((groups.len() as u64) < p).then(|| {
+        let free = (0..p)
+            .map(|j| res + j * q)
+            .find(|s| !groups.contains_key(s))
+            .expect("fewer groups than residues");
+        (BigInt::ZERO, free)
+    });
+    for (s, (own, inner)) in groups {
+        let (v, d) = least_residue(p, q1, s, inner);
+        let v = v + own;
+        if best.as_ref().is_none_or(|(b, _)| v < *b) {
+            best = Some((v, d));
+        }
+    }
+    best.expect("a residue is found")
 }
 
 /// The rule by shares, by prime powers, so the lcm of the periods, exponential in them, is
@@ -2140,20 +2306,27 @@ fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
         all.to_vec()
     };
     // Complexity tradeoff: the length is one choice by conditional expectations, not the least
-    // length, and when the shares of the negated classes sum to one or more (they meet, or a
-    // split on one prime was needed) the choice can fall in a negated class; then no length is
-    // given, and a list of the type is not shown, though the rule proves one exists. The type
-    // itself is still inhabited by the rule (`Search::decide`); a tuple or atom holding such a
-    // list can get no value, and its verdict is then `Refused(NoWitness)`. The least length,
-    // found by sieving the steps from 1 (the former `least_length`), costs the steps passed,
-    // up to the lcm of the periods, exponential in the number of cycles: the meet of
-    // `period(p, p - 1)` over the first nine primes took 31 s. Tests:
-    // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
-    // `the_meet_of_prime_cycles_scales`; COMPLEXITY.md K34. A complete solution would search
-    // the residues modulo each prime power with backtracking, exponential in the primes in the
-    // worst case, since the covering problem for residues is NP-hard. Used (COMPLEXITY.md
-    // K34): O(residues tried × classes × primes²), polynomial in the periods, the length a
-    // `BigUint` never walked.
+    // length. Whenever the rule finds a length (`lengths == Lengths::Some`) the choice gives
+    // one, by the proof at `greedy_length`; only when the rule refuses can it miss, and then no
+    // length is given and a tuple or atom holding such a list gets `Refused(NoWitness)`. The
+    // least length, found by sieving the steps from 1 (the former `least_length`), costs the
+    // steps passed, up to the lcm of the periods, exponential in the number of cycles: the
+    // meet of `period(p, p - 1)` over the first nine primes took 31 s. A search of the residues
+    // modulo each prime power with backtracking (the fix KERNEL-witness-length-miss proposed)
+    // would also find the lengths the rule refuses, but is exponential in the primes in the
+    // worst case, since the covering problem for residues is NP-hard; the estimator needs no
+    // backtracking and finds a length wherever the rule finds one. Tests:
+    // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length`,
+    // `the_meet_of_prime_cycles_scales`, `periodic_lists_agree_with_their_lengths` and its run
+    // at a fixed seed, and `empty::tests::the_residue_length_agrees_with_a_scan`;
+    // COMPLEXITY.md K34. Used: O(classes × primes of a period) divisions of numbers of at most
+    // the digits of the lcm and O(classes × primes of a period²) small operations, plus
+    // O(classes² × primes of a period) for the meeting pair when the shares sum to exactly one;
+    // the check `fits` takes one remainder of the length per class, the same order. When the
+    // rule finds a length this is O(n log n) in the definitions `n`: classes whose shares sum to
+    // at most one have periods summing to at least the classes squared (Cauchy–Schwarz), so
+    // they number at most `sqrt(2n)`, and the lcm has at most `sqrt(2n) log n` digits, its
+    // distinct periods summing to at most `n`. The length is a `BigUint`, never walked.
     Some(greedy_length(&classes, none)).filter(fits)
 }
 

@@ -38,33 +38,90 @@ fn period(p: usize, k: usize) -> Type {
     Group::new(defs).unwrap().instance(vec![]).remove(0)
 }
 
+/// Checks the verdict and `is_empty` of `t` against `empty`, the answer of its lengths.
+fn check_lengths(t: &Type, empty: bool, run: &str) -> Verdict {
+    Type::forget_emptiness();
+    let v = t.verdict();
+    match &v {
+        Verdict::Empty => assert!(empty, "{t} is inhabited ({run})"),
+        Verdict::Inhabited => assert!(!empty, "{t} is empty ({run})"),
+        // A union of meets that take out different classes may be refused at a fork whether
+        // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
+        // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
+        Verdict::Refused(why) => {
+            assert_eq!(*why, Refusal::Fork, "{t} (empty: {empty}) ({run})")
+        }
+    }
+    // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
+    // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
+    // inhabited for it too.
+    assert_eq!(t.is_empty(), v == Verdict::Empty, "{t} ({run})");
+    v
+}
+
 #[test]
 fn periodic_lists_agree_with_their_lengths() {
     // Ran 600 types from seed 3; now 300 from a new seed each run, printed
     // (TEST-bench-move-l0123, author P169).
     let (mut r, seed) = Rng::fresh("periodic lists");
+    let seen = periodic_lists(&mut r, &format!("ZED_TEST_SEED={seed}"));
+    println!("verdicts {seen:?}");
+    // Each answer from a type built to give it, on every run (PROOF-test-count-thresholds):
+    // no length is both even and odd, so `period(2, 0) & period(2, 1)` is empty; the empty list
+    // has length 0, which is 0 modulo 2 and modulo 3, so `period(2, 0) & period(3, 0)` holds it.
+    let none = &period(2, 0) & &period(2, 1);
+    assert_eq!(
+        check_lengths(&none, true, "built"),
+        Verdict::Empty,
+        "{none}"
+    );
+    let nil = &period(2, 0) & &period(3, 0);
+    assert_eq!(
+        check_lengths(&nil, false, "built"),
+        Verdict::Inhabited,
+        "{nil}"
+    );
+    // The lengths 1 and 0 modulo 3 and 1 and 2 modulo 6 taken out leave those 5 modulo 6. The
+    // shares of the four classes sum to one, and two of them meet, so a length is left; the
+    // choice of a length by its expected classes alone ties on both primes, took 0 and gave
+    // no value (KERNEL-witness-length-miss, ZED_TEST_SEED=16903030027676086283).
+    let mut five = period(1, 0);
+    for (p, k) in [(3, 1), (6, 1), (3, 0), (6, 2)] {
+        five = &five - &period(p, k);
+    }
+    let five = Type::tuple(vec![five, Type::int()]);
+    assert_eq!(
+        check_lengths(&five, false, "built"),
+        Verdict::Inhabited,
+        "{five}"
+    );
+    // The small instance of `bench::a_list_of_cycles_less_many_scales`: the classes 1 and 2
+    // modulo 4, 9 and 25 taken out, whose shares sum to 0.80, leave lengths, 0 among them.
+    let mut less = period(1, 0);
+    for p in [2, 3, 5] {
+        less = &(&less - &period(p * p, 1)) - &period(p * p, 2);
+    }
+    let less = Type::tuple(vec![less, Type::int()]);
+    assert_eq!(
+        check_lengths(&less, false, "built"),
+        Verdict::Inhabited,
+        "{less}"
+    );
+}
+
+/// The run of `periodic_lists_agree_with_their_lengths` that drew a type whose length the
+/// kernel chose by expectations alone and missed (KERNEL-witness-length-miss).
+#[test]
+fn periodic_lists_agree_with_their_lengths_at_a_seed_that_missed_a_length() {
+    let seed = 16903030027676086283;
+    periodic_lists(&mut Rng::new(seed), &format!("ZED_TEST_SEED={seed}"));
+}
+
+/// 300 random Boolean combinations of `period` types, alone or paired with an integer, each
+/// checked by `check_lengths`; gives how many had each verdict.
+fn periodic_lists(r: &mut Rng, run: &str) -> BTreeMap<String, usize> {
     let ps = [1, 2, 3, 4, 6, 12];
     let mut seen = BTreeMap::new();
-    // Checks the verdict and `is_empty` of `t` against `empty`, the answer of its lengths.
-    let check = |t: &Type, empty: bool, run: &str| -> Verdict {
-        Type::forget_emptiness();
-        let v = t.verdict();
-        match &v {
-            Verdict::Empty => assert!(empty, "{t} is inhabited ({run})"),
-            Verdict::Inhabited => assert!(!empty, "{t} is empty ({run})"),
-            // A union of meets that take out different classes may be refused at a fork whether
-            // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
-            // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
-            Verdict::Refused(why) => {
-                assert_eq!(*why, Refusal::Fork, "{t} (empty: {empty}) ({run})")
-            }
-        }
-        // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
-        // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
-        // inhabited for it too.
-        assert_eq!(t.is_empty(), v == Verdict::Empty, "{t} ({run})");
-        v
-    };
     for _ in 0..300 {
         let p = ps[r.below(ps.len())];
         let k = r.below(p);
@@ -95,17 +152,10 @@ fn periodic_lists_agree_with_their_lengths() {
             0 => Type::tuple(vec![t, Type::int()]),
             _ => t,
         };
-        let v = check(&t, empty, &format!("ZED_TEST_SEED={seed}"));
+        let v = check_lengths(&t, empty, run);
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
-    println!("verdicts {seen:?}");
-    // Each answer from a type built to give it, on every run (PROOF-test-count-thresholds):
-    // no length is both even and odd, so `period(2, 0) & period(2, 1)` is empty; the empty list
-    // has length 0, which is 0 modulo 2 and modulo 3, so `period(2, 0) & period(3, 0)` holds it.
-    let none = &period(2, 0) & &period(2, 1);
-    assert_eq!(check(&none, true, "built"), Verdict::Empty, "{none}");
-    let nil = &period(2, 0) & &period(3, 0);
-    assert_eq!(check(&nil, false, "built"), Verdict::Inhabited, "{nil}");
+    seen
 }
 
 #[derive(Clone)]

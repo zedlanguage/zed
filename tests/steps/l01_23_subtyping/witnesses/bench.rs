@@ -68,6 +68,45 @@ fn the_meet_of_prime_cycles_scales() {
 }
 
 #[test]
+fn a_list_of_cycles_less_many_scales() {
+    // KERNEL-witness-length-miss: a list less the classes 1 and 2 modulo `p²` for each of the
+    // first `k` primes `p`, whose shares sum to less than one (twice the sum of `1 / p²`, below
+    // 0.91), so a length is shown, chosen by conditional expectations on each prime in turn. The
+    // first 14 and 25 primes are 16_514 and 131_592 definitions, 7.97 times as many; the
+    // length is a big integer at either size. 8.15 times the instructions, 1x 0.11 s by `ns`,
+    // load 31; the first 26 and 47 primes (151_994 and 1_219_172 definitions) ran past the 26 s
+    // stop.
+    let (a, b) = (14, 25);
+    let primes = first_primes(b);
+    let defs = |k: usize| primes[..k].iter().map(|p| 2 * p * p).sum::<usize>();
+    let (n, m) = (defs(a), defs(b));
+    assert_eq!((n, m), (16_514, 131_592));
+    let less = |k: usize| {
+        (primes[..k].iter()).fold(period(1, 0), |t, &p| {
+            &(&t - &period(p * p, 1)) - &period(p * p, 2)
+        })
+    };
+    let (small, large) = (less(a), less(b));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        &format!(
+            "a list less two classes modulo the square of each of the first {a} and {b} primes: \
+             {n} and {m} definitions, {:.2} times",
+            m as f64 / n as f64
+        ),
+        1,
+        || run(&small),
+        || run(&large),
+    );
+}
+
+#[test]
 fn a_union_of_cycles_less_one_scales() {
     // Each class of the union is tested by one lookup in the residues covered modulo its
     // period, built once per period over its divisors: O(n log n) in the definitions. The naive
