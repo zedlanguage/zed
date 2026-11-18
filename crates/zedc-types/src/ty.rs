@@ -22998,6 +22998,20 @@ mod tests {
             "built fit with functions",
         );
         assert_eq!(by_fns, Cover::ByFns, "built fit with functions");
+        // `(int) -> int` beside `(bool) -> int` holds `(x0: int | bool) -> int` only together:
+        // each takes one of the two, and no result holds a function. The draws above never
+        // gave this kind (llvm-cov over the whole local suite, TEST-types-unreached-paths-2).
+        let together = fn_cover(
+            &[
+                (vec![p(1, false)], p(1, false)),
+                (vec![p(2, false)], p(1, false)),
+            ],
+            &[p(3, false)],
+            p(1, false),
+            0,
+            "built fit together",
+        );
+        assert_eq!(together, Cover::Together, "built fit together");
         let neither = fn_cover(
             &[(vec![p(1, false)], p(1, false))],
             &[p(2, false)],

@@ -1023,3 +1023,65 @@ fn lists_values_of_agrees_with_listing_the_meet() {
     }
     assert!(yes > 1000 && no > 1000, "{yes} {no}");
 }
+
+/// The members of the order, `==`, `Debug` and `Display` families that only delegate, which no
+/// caller in the workspace calls directly (llvm-cov over the whole local suite,
+/// TEST-types-unreached-paths-2): `partial_cmp` of literal sets is `Some` of `cmp`, as `Ord`
+/// requires; `==` of two arrows is their three types equal; the text `{:?}` writes for a node
+/// or a morphism type is the text a type holding it writes for it, which `debug_samples` holds
+/// to the derived `Debug`s; and a refusal's `Display` is its message.
+#[test]
+fn the_delegating_orders_and_texts_of_types_agree_with_what_they_delegate_to() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+    let ints = |t: &Type| match &*t.0 {
+        Node::Parts(p, _) => p.ints.clone(),
+        Node::Rec(_) => panic!("{t:?} is not recursive"),
+    };
+    let sets = [
+        lit(0),
+        lit(1),
+        &lit(0) | &lit(1),
+        Type::int(),
+        Type::string(),
+    ]
+    .map(|t| ints(&t));
+    for a in &sets {
+        for b in &sets {
+            assert_eq!(a.partial_cmp(b), Some(a.cmp(b)), "{a:?}, {b:?}");
+        }
+    }
+    let arrows = [
+        Morphism::new(Type::int(), Type::int(), Type::string()),
+        Morphism::new(Type::empty(), Type::int(), Type::string()),
+        Morphism::new(Type::int(), Type::int(), Type::bool()),
+    ];
+    for a in &arrows {
+        for b in &arrows {
+            let same =
+                a.guarantee == b.guarantee && a.permission == b.permission && a.value == b.value;
+            assert_eq!(**a == **b, same, "{a:?}, {b:?}");
+        }
+    }
+    for t in [Type::int(), Type::tuple(vec![lit(0), Type::string()])] {
+        assert_eq!(format!("{t:?}"), format!("Type({:?})", *t.0));
+    }
+    let m = Type::exact(Type::int(), Type::string());
+    assert!(
+        format!("{m:?}").contains(&format!("{:?}", arrows[0])),
+        "{m:?} writes {:?}",
+        arrows[0]
+    );
+    use Refusal::*;
+    let all = [
+        Fork,
+        Residues,
+        TupleSplit,
+        SharedCells(1),
+        MorphismSplit,
+        NoWitness,
+        Group,
+    ];
+    for r in all {
+        assert_eq!(r.to_string(), r.message(), "{r:?}");
+    }
+}

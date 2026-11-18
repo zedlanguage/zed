@@ -2842,3 +2842,47 @@ fn a_morphism_choice_on_a_list_condition_covering_everything_is_decidable() {
     assert!(merged.subtype(&all) && all.subtype(&merged));
     assert!(merged.decidable());
 }
+
+/// The members of the order and `Debug` families of parts, expressions and diagrams that only
+/// delegate, which no caller in the workspace calls directly (llvm-cov over the whole local
+/// suite, TEST-types-unreached-paths-2): `partial_cmp` is `Some` of `cmp` and `==` is `cmp`
+/// giving `Equal`, as `Ord` requires; and the text `{:?}` writes for each is the text the part
+/// holding it writes for it, which `debug_samples` holds to the derived `Debug`s.
+#[test]
+fn the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to() {
+    let lit = |i: u64| Part::literal(atom(i));
+    let xor = |p: Part<Row>, q: Part<Row>| {
+        p.zip(&q.not(), Op::And)
+            .zip(&p.not().zip(&q, Op::And), Op::Or)
+    };
+    let kept = xor(lit(0), lit(2)).zip(&xor(lit(1), lit(3)), Op::And);
+    let Part::Expr(e) = &kept else {
+        panic!("{kept:?} is kept as an expression")
+    };
+    let parts = [lit(0), lit(1), lit(0).zip(&lit(1), Op::Or), kept.clone()];
+    for p in &parts {
+        for q in &parts {
+            assert_eq!(p.partial_cmp(q), Some(p.cmp(q)), "{p:?}, {q:?}");
+            assert_eq!(p == q, p.cmp(q) == Ordering::Equal, "{p:?}, {q:?}");
+        }
+    }
+    let bdds: Vec<Bdd<Row>> = (0..3).map(|i| Bdd::literal(atom(i))).collect();
+    for b in &bdds {
+        for c in &bdds {
+            assert_eq!(b.partial_cmp(c), Some(b.cmp(c)), "{b:?}, {c:?}");
+        }
+    }
+    let other = xor(lit(4), lit(5));
+    let Part::Expr(f) = &other else {
+        panic!("{other:?} is kept as an expression")
+    };
+    for (x, y) in [(e, e), (e, f), (f, e)] {
+        let (px, py) = (Part::Expr(x.clone()), Part::Expr(y.clone()));
+        assert_eq!(x.partial_cmp(y), Some(x.cmp(y)), "{px:?}, {py:?}");
+    }
+    // The diagram of one literal is its node with the leaves `true` and `false` below it.
+    assert_eq!(
+        format!("{:?}", lit(0)),
+        format!("Bdd(Node({:?}, true, false))", atom(0))
+    );
+}
