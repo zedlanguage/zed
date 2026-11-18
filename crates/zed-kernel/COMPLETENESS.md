@@ -247,6 +247,13 @@ expression on 2000 random pairs, leaves mixed in, at all 64 assignments; with `a
 `false` it fails. `xor::halves` proves at the site, from its callers' contract (two or more
 atoms), that neither operand is a leaf, so the claim does not rest on its `debug_assert`.
 
+`bdd.rs` 385 and 391 (numbered at 847a31d3e, `chain_without` of a part that is no list, and of
+an atom not on the chain) are now `unreachable!`, with the proof at the site: every caller
+passes a chain of `Operands::Chain` (made only when `is_long_chain` holds) and an atom that
+`chain_takes` found with the polarity passed. The arm that returned a leaf for the literal
+fixed to the passed-over value is unreachable by the same reading and is folded into the same
+`unreachable!`. All 551 kernel library tests pass.
+
 The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
 the test removed from the walk, every `decide` test still passed, since a `lo` that is too small
 stays sound and the later passes recover it. The test

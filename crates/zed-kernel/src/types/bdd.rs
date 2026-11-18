@@ -380,20 +380,26 @@ impl<A: Literal> Bdd<A> {
 
     /// The chain under `op` without its literal on `atom`, which it takes when `taken`, in
     /// `O(log k)` for its `k` literals: the chain restricted on its one block.
+    ///
+    /// Every caller (`choice_of_as_kept`, `Connect::choice_of`) passes a chain of
+    /// `Operands::Chain`, which `Part::operands` makes only when `is_long_chain` holds, so `self`
+    /// is a list; and an `atom` with `chain_takes(op, atom) == Some(taken)` (the `within` or
+    /// `both` filters, with `taken` turned for the chain that refuses it). `chain_takes` gives
+    /// `p == (op == Op::Or)` for the stored polarity `p`, so `p == (taken == (op == Op::Or))`,
+    /// which is `!value` below: the literal is there and is not the one fixed to `value`.
     fn chain_without(&self, op: Op, atom: &A, taken: bool) -> Bdd<A> {
         let Bdd::List(c, v) = self else {
-            return self.clone();
+            unreachable!("`chain_without` of a part that is no chain of two or more literals")
         };
         debug_assert!(c.len == 1, "a chain is one block");
         // The literal is left out by fixing it to the value `op` passes over.
         let value = taken != (op == Op::Or);
         match set::get(Some(&c.block), atom) {
-            None => self.clone(),
-            Some(p) if p == value => Bdd::Leaf(*v),
-            Some(p) => {
+            Some(p) if p != value => {
                 let block = set::remove(&c.block, &(atom.clone(), p));
                 Bdd::assemble(vec![(*v, block)], &Bdd::Leaf(!*v))
             }
+            _ => unreachable!("`chain_without` of an atom the chain does not take as `taken`"),
         }
     }
 
