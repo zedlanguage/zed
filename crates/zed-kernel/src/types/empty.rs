@@ -10645,65 +10645,34 @@ impl<'m> Searching<'m> {
         let mut g = self.region(start, f).await;
         let mut h = f.clone();
         let mut empty = self.narrow_tuples(&mut g, &mut h).await;
-        // Complexity tradeoff: two-phase refinement runs at most `O((m * k)^2)` emptiness probes
-        // (`m` components, `k` open atoms) instead of `O(k^m)` grid cell enumeration:
-        // Phase 1 shaves pieces proved empty (`try_piece(...).0`) to a monotone deflationary
-        // fixpoint (Tarski 1955), losing no inhabitant in any order. Phase 2, if `h` is not yet
-        // `true`, narrows only onto pieces proved inhabited with zero give-ups (`(false, true)`),
-        // never blindly picking `inside` on `(false, false)` give-ups: on any non-forked input
-        // where sub-searches incur zero give-ups (such as `box_program(6)`), `(false, true)` is an
-        // exact non-emptiness certificate, keeping `(g.r, h)` inhabited across every `(j, k)` order.
-        let mut shaved = vec![vec![false; g.atoms.len()]; len];
-        loop {
-            let mut changed = false;
-            for j in 0..len {
-                for k in 0..g.atoms.len() {
-                    if empty || shaved[j][k] || !g.is_open(k, j) {
-                        continue;
-                    }
-                    let inside = &g.r[j] & &g.atoms[k][j];
-                    let outside = &g.r[j] - &g.atoms[k][j];
-                    let piece = if self.try_piece(&mut g, &h, j, &inside).await.0 {
-                        Some(outside)
-                    } else if self.try_piece(&mut g, &h, j, &outside).await.0 {
-                        Some(inside)
-                    } else {
-                        None
-                    };
-                    if let Some(piece) = piece {
-                        shaved[j][k] = true;
-                        g.shrink(j, piece);
-                        empty = self.narrow_tuples(&mut g, &mut h).await;
-                        changed = true;
-                    }
+        // Complexity tradeoff (COMPLEXITY.md K133): one pass over the `m * k` pairs (`m`
+        // components, `k` open tuple types), each cut at once, on the box the cuts before it
+        // shrank, to the side `cut_piece` proves (the other side empty, or this one inhabited),
+        // else blindly to `inside`, as on main before GROUP-order-cpoly-merge: at most `2 m k`
+        // searches. Tried and rejected (order2's option 2b): defer an unproved pair instead of
+        // the blind cut and retry the deferred pairs while some cut happened since their last
+        // try. On `the_verdict_of_random_3_cnf_is_refused_in_its_size` (seed 7) that ran 2126
+        // searches from `try_piece` at 128 bits against 86 here, each reading about the same
+        // region (about 256 tuple types per `tuples_on` call either way), so 231 times the
+        // time per 8 times the bits against 39 here, over the limit of 84 (load 41 to 55). The
+        // cost was the number of searches, not the size of what each one reads. What the
+        // blind cut gives up: a value only `outside` holds, which `refine` then misses; the
+        // cut is sound, since `refine` only proposes a box whose row `row_rep` checks. Lost
+        // with it: random 3-CNF of seed 2 at 16 bits, Inhabited under 2b, is refused here as
+        // on main (`random_3_cnf_seed_2_is_refused_at_8_bits_and_16`). The blind cuts make
+        // the box depend on the order of the pairs, under 2b too, whose last pairs were cut
+        // the same way.
+        for j in 0..len {
+            for k in 0..g.atoms.len() {
+                if empty || !g.is_open(k, j) {
+                    continue;
                 }
-            }
-            if empty || !changed {
-                break;
-            }
-        }
-        if !empty && h.is_leaf() != Some(true) {
-            for j in 0..len {
-                for k in 0..g.atoms.len() {
-                    if empty || !g.is_open(k, j) {
-                        continue;
-                    }
-                    let inside = &g.r[j] & &g.atoms[k][j];
-                    let outside = &g.r[j] - &g.atoms[k][j];
-                    let piece = match self.try_piece(&mut g, &h, j, &inside).await {
-                        (true, _) => Some(outside),
-                        (false, true) => Some(inside),
-                        (false, false) => match self.try_piece(&mut g, &h, j, &outside).await {
-                            (true, _) => Some(inside),
-                            (false, true) => Some(outside),
-                            (false, false) => None,
-                        },
-                    };
-                    if let Some(piece) = piece {
-                        g.shrink(j, piece);
-                        empty = self.narrow_tuples(&mut g, &mut h).await;
-                    }
-                }
+                let piece = match self.cut_piece(&mut g, &h, j, k).await {
+                    Some(piece) => piece,
+                    None => &g.r[j] & &g.atoms[k][j],
+                };
+                g.shrink(j, piece);
+                empty = self.narrow_tuples(&mut g, &mut h).await;
             }
         }
         {
@@ -10715,6 +10684,29 @@ impl<'m> Searching<'m> {
             s.open_forks = open_forks;
         }
         (!empty && h.is_leaf() == Some(true)).then_some(g.r)
+    }
+
+    /// For [`Searching::refine`]: the piece of component `j` to keep for the tuple type `k`,
+    /// the side of `k` (inside or outside) whose other side the search proves empty or which
+    /// it shows inhabited; nothing when neither is proved. At most two searches.
+    async fn cut_piece(
+        &'m self,
+        g: &mut Region,
+        h: &Part<Row>,
+        j: usize,
+        k: usize,
+    ) -> Option<Type> {
+        let inside = &g.r[j] & &g.atoms[k][j];
+        let outside = &g.r[j] - &g.atoms[k][j];
+        match self.try_piece(g, h, j, &inside).await {
+            (true, _) => Some(outside),
+            (false, true) => Some(inside),
+            (false, false) => match self.try_piece(g, h, j, &outside).await {
+                (true, _) => Some(inside),
+                (false, true) => Some(outside),
+                (false, false) => None,
+            },
+        }
     }
 
     /// For [`Searching::refine`]: whether the search proves the box `g` with component `j` cut

@@ -204,26 +204,29 @@ fn r3_verdicts(vars: usize, seed: u64) -> (Verdict, Verdict) {
 
 /// Small instance of `bench::the_verdict_of_random_3_cnf_is_refused_in_its_size` and
 /// `bench::the_subtype_verdict_of_random_3_cnf_is_refused_in_its_size`
-/// (TEST-bench-move-l0123, author P170): random 3-CNF over 16 bits, seed 3, the benchmark's
+/// (TEST-bench-move-l0123, author P170): random 3-CNF over 16 bits, seed 7, the benchmarks'
 /// small instance, is refused at shared cells of component 0 by `verdict` and by
 /// `subtype_verdict`.
 #[test]
 fn random_3_cnf_is_refused_at_shared_cells() {
     let refused = Verdict::Refused(Refusal::SharedCells(0));
-    assert_eq!(r3_verdicts(16, 3), (refused.clone(), refused));
+    assert_eq!(r3_verdicts(16, 7), (refused.clone(), refused));
 }
 
 /// Seed 2, the benchmarks' instance until GROUP-order-cpoly-merge: over 8 bits no tuple meets
 /// every clause (counted by trying all 256) and the verdict is a refusal at shared cells; over
-/// 16 bits 5 tuples meet every clause (all 65,536 tried), and the merged kernel finds one, so
-/// both verdicts are `Inhabited`. Before the merge they were refused there too.
+/// 16 bits 5 tuples meet every clause (all 65,536 tried), yet both verdicts are refused there
+/// too: `refine` cuts a pair it proves neither way to `inside`, and loses a value only
+/// `outside` holds (the tradeoff at `Searching::refine`, COMPLEXITY.md K133). Deferring those
+/// cuts found a value here, at 231 times the time per 8 times the bits on the benchmarks (plan
+/// row REFUSAL-r3-seed2-16-inhabited).
 #[test]
-fn random_3_cnf_seed_2_is_refused_at_8_bits_and_inhabited_at_16() {
+fn random_3_cnf_seed_2_is_refused_at_8_bits_and_16() {
     let refused = Verdict::Refused(Refusal::SharedCells(0));
     assert_eq!(models(8, 2), 0);
-    assert_eq!(r3_verdicts(8, 2), (refused.clone(), refused));
+    assert_eq!(r3_verdicts(8, 2), (refused.clone(), refused.clone()));
     assert_eq!(models(16, 2), 5);
-    assert_eq!(r3_verdicts(16, 2), (Verdict::Inhabited, Verdict::Inhabited));
+    assert_eq!(r3_verdicts(16, 2), (refused.clone(), refused));
 }
 
 // Measured at 8d0bfe954 with the classes of values (COMPLEXITY.md K111; instructions of
@@ -231,10 +234,9 @@ fn random_3_cnf_seed_2_is_refused_at_8_bits_and_inhabited_at_16() {
 // under a limit of 123. Before, a value read in from each group that built it was tested
 // against each type under a number of its own (Θ(n³) tests): 145M and 20.3G, 140 times.
 
-// The benchmarks use seed 3, refused at shared cells at 16 and 128 bits by both verdicts
-// (checked on branch wt/order2, 2026-11-18). Of seeds 0 to 39 at 16 bits, 18 are refused and
-// the rest Inhabited; seed 2, used until GROUP-order-cpoly-merge, is Inhabited at 16 (see the
-// test above). Measured at 8d0bfe954 for seed 2: 61.0M instructions at n = 8 and 3.82G at
+// The benchmarks use seed 7, refused at shared cells at 16 and 128 bits by both verdicts (the
+// assert of `refusal_scales`): 39.2 times the time per 8 times the bits, limit 84 (branch
+// wt/order2, 2026-11-18, load 41 to 55). Seed 2 was used until GROUP-order-cpoly-merge. Measured at 8d0bfe954 for seed 2: 61.0M instructions at n = 8 and 3.82G at
 // n = 64, 62.6 times, under a limit of 141.
 
 mod bench;
