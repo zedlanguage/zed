@@ -39,6 +39,11 @@ pub(crate) struct Run {
     pub ev: Evaluator,
     /// The words passed by `rt_arg` for the next hook; the buffer is kept between hooks.
     args: Vec<Word>,
+    /// The words a call by name stored at the address [`rt_args`] gave, the first
+    /// [`Run::slots_len`] of them; kept between calls, never emptied, grown only by [`rt_args`].
+    slots: Vec<Word>,
+    /// How many words of [`Run::slots`] the last [`rt_args`] asked for.
+    slots_len: usize,
     outs: Vec<Word>,
     pending: Word,
     pub err: Option<String>,
@@ -91,6 +96,8 @@ impl State {
             heap,
             ev,
             args: Vec::new(),
+            slots: Vec::new(),
+            slots_len: 0,
             outs: Vec::new(),
             pending: Word::err(),
             err: None,
@@ -217,13 +224,19 @@ pub(crate) fn addresses() -> Vec<*const u8> {
     ]
 }
 
-/// The address of the buffer of the next hook's words, made `n` words long, for native code
-/// to store them in as `rt_arg` would pass them one at a time: each [`Word`] two `i64`s, tag
-/// first. The next hook call must be the one that reads them: any hook may move the buffer.
+/// The address of the buffer of a call by name's words ([`Run::slots`]), at least `n` words
+/// long, for native code to store all `n` in as `rt_arg` would pass them one at a time: each
+/// [`Word`] two `i64`s, tag first. Read by the next hook, [`rt_named`] or [`rt_direct`] and its
+/// placed entry; only this hook moves the buffer.
 // Complexity tradeoff: `rt_arg` costs a hook call per word, about 30 instructions and the
 // borrow of the run; here one call per node and two stores per word. Used by a call by name
 // ([`rt_named`]), whose p arguments made it 8 times the cost of a direct call at p = 320
 // (`a_placed_call_costs_about_a_direct_call_in_native_code`, row CALL-callee-places-native).
+// The buffer is filled only when it grows, O(largest n) over the run, since the call site
+// stores every word before any is read. Emptying it and filling n words again at each call, as
+// before, cost about 12 instructions a word under nightly-2026-11-18 (`clear` and
+// `Vec::resize`), 3.9K a call at p = 320, which made the placed call 1.59 times the direct
+// one's run (row CALL-direct-buffer-proof).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -231,9 +244,12 @@ pub(crate) fn addresses() -> Vec<*const u8> {
 )]
 extern "C" fn rt_args(n: i64) -> i64 {
     with(|_, s| {
-        s.args.clear();
-        s.args.resize(n as usize, Word::err());
-        s.args.as_mut_ptr() as i64
+        let n = n as usize;
+        if s.slots.len() < n {
+            s.slots.resize(n, Word::err());
+        }
+        s.slots_len = n;
+        s.slots.as_mut_ptr() as i64
     })
 }
 
@@ -253,9 +269,9 @@ pub(crate) struct Named {
 /// parameter, and a function with a fill called through its fill on the parameters, a `false`
 /// in each defaulted one the call leaves out, then a flag for each defaulted one, `true` where
 /// left out. The body is called as a direct call calls it, on what the node borrows, with a
-/// reference to each argument it consumes. In every other case nothing is changed, the words
-/// included, and the kernel runs the call on them (`rt_node` next), which gives the same
-/// value or error (row CALL-callee-places-native).
+/// reference to each argument it consumes. In every other case the words are copied to the
+/// buffer of [`rt_arg`] and the kernel runs the call on them (`rt_node` next), which gives the
+/// same value or error (row CALL-callee-places-native).
 // Complexity tradeoff: the kernel's call (`rt_node`) builds the term of the function and of
 // each argument and runs it, O(p + a) for p parameters and a arguments and a large constant,
 // and the function's body runs in the kernel. Here the call's sorted names and the function's
@@ -272,12 +288,15 @@ pub(crate) struct Named {
 )]
 extern "C" fn rt_named(id: i64) -> Named {
     with(|t, s| {
-        let ins = std::mem::take(&mut s.args);
-        let r = place_named(t, s, id as usize, &ins);
-        s.args = ins;
-        if !matches!(r, Ok(None)) {
+        let ins = std::mem::take(&mut s.slots);
+        let ins_n = &ins[..s.slots_len];
+        let r = place_named(t, s, id as usize, ins_n);
+        if matches!(r, Ok(None)) {
+            // The kernel runs the call on these words (`rt_node`, through `with_args`).
             s.args.clear();
+            s.args.extend_from_slice(ins_n);
         }
+        s.slots = ins;
         match r {
             Ok(Some(call)) => Named {
                 call,
@@ -304,8 +323,7 @@ const LEFT: u32 = u32::MAX;
 /// of `f`'s lambda ([`Tables::placed`]) and of the merge's byte offsets ([`Merged::offs`]), from
 /// which the entry reads each parameter among the arguments the call site stored with
 /// [`rt_args`]; else a call of 0, and the call goes through [`rt_named`], which makes the merge.
-/// A lambda with no placed entry misses. The buffer is kept either way: the entry empties it
-/// with [`rt_direct_read`] after it has read the arguments.
+/// A lambda with no placed entry misses. The buffer is kept either way.
 // Complexity tradeoff: through `rt_named` a call passes its p arguments three times, into the
 // runtime's buffer, into the placed order ([`call_placed`]) and into the body, where a call to
 // the function by its name passes them once; the placed call ran 2.6 times the instructions of
@@ -354,19 +372,18 @@ extern "C" fn rt_direct(id: i64, tag: i64, bits: i64) -> Named {
 }
 
 /// Called by a placed entry ([`Tables::placed`]) once it has read its arguments from the
-/// buffer of [`rt_args`], as the first hook it calls: empties the buffer for the next
-/// [`rt_arg`], as [`rt_named`] empties it for a placed call, and counts the call
-/// ([`Run::placed_calls`]).
+/// buffer of [`rt_args`], as the first hook it calls: counts the call
+/// ([`Run::placed_calls`]) and, in debug builds, checks the reads.
 ///
 /// Why the entry reads the words the call site stored: the call site (`Gen::named`) stores
 /// them at the address [`rt_args`] gave and calls [`rt_direct`], which changes neither the
 /// buffer nor its length; on a hit the code between `rt_direct`'s return and this hook is a
 /// compare, a branch, an add and the indirect call, in `Gen::named_direct`, then the entry's
 /// jump to its first block and its loads, in `Gen::function` and `Gen::placed`, and none of it
-/// calls a hook. A hook in between could move the buffer ([`rt_args`] resizes it) or
-/// overwrite it ([`rt_args`], [`rt_arg`], [`rt_named`]), so debug builds check that no hook ran
-/// between [`rt_direct`] and this one: every hook goes through [`with`], which counts it.
-/// The buffer is emptied here, after the loads, not in [`rt_direct`] before them.
+/// calls a hook. A hook in between could move the buffer ([`rt_args`] grows it) or have
+/// native code overwrite it (the stores after [`rt_args`] of a nested call by name), so debug
+/// builds check that no hook ran between [`rt_direct`] and this one: every hook goes through
+/// [`with`], which counts it. Nothing empties the buffer ([`Run::slots`]).
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -383,7 +400,6 @@ extern "C" fn rt_direct_read() {
             );
             fail(s, e, None);
         }
-        s.args.clear();
         s.placed_calls += 1;
     });
 }

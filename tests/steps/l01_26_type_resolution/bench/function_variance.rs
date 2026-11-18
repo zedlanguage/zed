@@ -584,8 +584,12 @@ fn placing_p_named_arguments_in_native_code_scales() {
 /// compiling included (row CALL-callee-places-native; before it, the placed call ran in the
 /// kernel). While the merge kept for the call's node is for the closure's list, the call site
 /// goes straight to the lambda's placed entry, which reads each argument where the call site
-/// stored it, one load of its offset more than a direct call. Measured: 815M instructions
-/// against 777M (1.049); the run alone about 7.27K instructions a call against 6.70K (1.085).
+/// stored it, one load of its offset more than a direct call. Measured on 1.99.1: 815M
+/// instructions against 777M (1.049); the run alone about 7.27K instructions a call against
+/// 6.70K (1.085). On nightly-2026-11-18 this test gave 1.233 (run alone 10.2K against 6.44K),
+/// all of it `rt_args` emptying and refilling its buffer at each call; with the buffer kept
+/// (row CALL-direct-buffer-proof), 1061M against 1069M (0.993), the run alone 6.32K a call
+/// against 6.44K.
 /// When each call went through `rt_named`, which passes the arguments three times, the run
 /// alone was 17.4K a call (2.60) and this test 1.97.
 #[test]

@@ -355,7 +355,7 @@ impl<M: Module> Gen<'_, M> {
     /// Lambda `i`'s placed entry: it takes the closure's word and the addresses of the
     /// arguments of a call by name, as its call site stored them, and of the byte offsets of a
     /// merge ([`crate::hooks`]' `rt_direct`), reads each parameter at its offset, then calls
-    /// `rt_direct_read`, which empties the buffer (row CALL-direct-buffer-proof), gives a
+    /// `rt_direct_read`, which counts the call (row CALL-direct-buffer-proof), gives a
     /// reference to each the body consumes, as a call the runtime places gives it, and runs the
     /// body inline (row CALL-callee-places-native).
     // Complexity tradeoff: a call through a function that calls the body on the parameters
@@ -376,8 +376,8 @@ impl<M: Module> Gen<'_, M> {
                 let bits = fx.b.ins().load(I64, flags, at, 8);
                 ws.push((tag, bits));
             }
-            // The first hook call, after every load from the buffer: it empties the buffer,
-            // and in debug builds checks that no hook ran since `rt_direct` (its proof).
+            // The first hook call, after every load from the buffer: it counts the call, and
+            // in debug builds checks that no hook ran since `rt_direct` (its proof).
             cg.call(fx, "rt_direct_read", &[]);
             let mut kept = Vec::with_capacity(l.params);
             for (w, m) in ws.into_iter().zip(&l.modes) {
@@ -716,7 +716,7 @@ impl<M: Module> Gen<'_, M> {
     // native code. The arguments are stored straight into the runtime's buffer (`rt_args`),
     // two stores each, where one `rt_arg` hook call each made the placed call 8.4 times the
     // run cost of a direct call at p = 320; a call the runtime does not place runs in the
-    // kernel on the same buffer (`rt_named` leaves it). Through `rt_named` the arguments
+    // kernel on a copy of the buffer (`rt_named` makes it). Through `rt_named` the arguments
     // pass three times and the placed call ran 2.6 times the instructions of the direct one;
     // so first, where some lambda has a placed entry of this many parameters, `rt_direct`
     // checks in O(1) that the merge kept for the node is for the closure's list, and the call
