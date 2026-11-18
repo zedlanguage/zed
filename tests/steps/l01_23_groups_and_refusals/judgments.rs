@@ -2477,6 +2477,11 @@ fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
         "(#box(int -> rat) -> _) & ((#box(String) -> int) | ())",
         "(#box(String) -> _) & ((#box(int -> rat) -> int) | ())",
         "(#box(_) -> int) & ((rat -> int) | ())",
+        // One key type, results that share no value: the function giving `#a` at each `int`
+        // is not an `int -> String`, nor an `int ->? String`, nor in a union of such.
+        "((int -> #a) -> rat) & (((int -> String) -> rat) | ())",
+        "((int -> #a) -> rat) & (((int ->? String) -> rat) | ())",
+        "((int -> #a) -> rat) & ((((int -> String) | (int ->? bool)) ->? rat) | ())",
     ]
     .into_iter()
     .map(|text| (text, parse_type(text).unwrap()))
@@ -2495,11 +2500,109 @@ fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
             // The same in a payload, where the permission takes functions.
             "(#box(int -> rat) -> _) & ((#box(int -> rat) -> f64) | ())",
             "(#box(int -> rat) -> _) & (((#box(String) | #box(_ ->? rat)) ->? f64) | ())",
+            // Results that share `#a`; a result of the unknown on either side; a union that
+            // holds `int -> #a` beside a function type whose results share no value with it.
+            "((int -> #a) -> rat) & (((int -> #a | String) ->? rat) | ())",
+            "((int -> _) -> rat) & (((int -> String) -> rat) | ())",
+            "((int -> #a) -> rat) & (((int -> _) -> rat) | ())",
+            "((int -> #a) -> rat) & ((((int -> #a) | (f64 ->? String)) ->? rat) | ())",
         ]
         .into_iter()
         .filter(|text| parse_type(text).unwrap().is_empty())
         .map(|text| format!("`{text}` reads as `Never`")),
     );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The meet of a function whose exact arrow takes data with one that takes only functions there
+/// is empty, also where that data holds the unknown or a function inside: a function of both
+/// would have a domain holding a value that is not a function, within a permission of
+/// functions. FAIL-types-meet-fn-fn-domains, found by the parens draw `A .. (A & (A | B)) -> ()`
+/// with `A = #pair(bool, _) -> bool`: `Domains::witness` proved data only through the kernel
+/// type of the parameter type, which a type holding `_` or a function inside has none of, so
+/// each was kept as the overload of both arrows, while the same with `int` in place of `_` was
+/// `Never`.
+#[test]
+fn a_meet_of_a_data_domain_holding_the_unknown_with_function_domains_is_empty() {
+    use zedc::check::read::parse_type;
+    let mut wrong: Vec<String> = [
+        "(#pair(bool, _) -> bool) & (((#b -> _) ->? _) | ())",
+        "(#pair(bool, _) -> bool) & (((#b -> int) ->? _) | ())",
+        "(#pair(bool, _) -> int) & (((int -> int) -> int) | ())",
+        "(#box(_) -> int) & (((int -> int) -> int) | ())",
+        "((_, int) -> bool) & (((int -> int) ->? _) | ())",
+        "(_ -> bool) & (((#b -> _) ->? _) | ())",
+        // A function inside the data, not at its outer level.
+        "(#box(int -> rat) -> int) & (((int -> int) -> int) | ())",
+        "((int -> rat, bool) -> int) & (((int -> int) ->? int) | ())",
+        // The other order.
+        "((((int -> int) ->? _) | ()) & (#pair(bool, _) -> bool))",
+    ]
+    .into_iter()
+    .map(|text| (text, parse_type(text).unwrap()))
+    .filter(|(_, t)| !t.is_empty())
+    .map(|(text, t)| format!("`{text}` reads as `{t}`, not `Never`"))
+    .collect();
+    // Controls, each with a function of both sides: no exact arrow on the data side (the
+    // function of no key); a permission that takes the data as well; the same data.
+    wrong.extend(
+        [
+            "(#pair(bool, _) ->? bool) & (((#b -> _) ->? _) | ())",
+            "(_ ->? bool) & (((#b -> _) ->? _) | ())",
+            "(#pair(bool, _) -> bool) & (((#_ | (#b -> _)) ->? _) | ())",
+            "(_ -> bool) & ((_ ->? _) | ())",
+            "(#pair(bool, _) -> bool) & ((#pair(bool, _) ->? int) | ())",
+            "(#box(int -> rat) -> int) & (((#box(_) | (int -> int)) ->? int) | ())",
+        ]
+        .into_iter()
+        .filter(|text| parse_type(text).unwrap().is_empty())
+        .map(|text| format!("`{text}` reads as `Never`")),
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The meet of two functions over function types of one key type whose results share no
+/// value is empty, so a meet that holds it is within each side. FAIL-types-meet-fn-fn-domains,
+/// found by the parens draw `C .. (C & (C | D)) -> bool` with `C = (int -> #a) -> (() ->
+/// String)` and `D = (int -> String) -> (rat -> rat)`: the domains of the functions built
+/// were compared, both `int`, and not their results, so `C & D` was kept as the overload of
+/// both and was not found within `C`. Controls: a meet whose results share a value is not
+/// `Never`, nor within a function type over another domain.
+#[test]
+fn a_meet_of_functions_over_functions_of_results_sharing_no_value_is_within_each_side() {
+    use zedc::check::read::parse_type;
+    let within = |x: &str, y: &str| {
+        let (x, y) = (parse_type(x).unwrap(), parse_type(y).unwrap());
+        x.subtype(&y)
+    };
+    let c = "((int .. (int & (int | rat)) -> #a) -> (() .. (() | ()) -> String))";
+    let d = "((int -> String) -> (rat .. (rat | rat) -> rat))";
+    let fn_c = format!("{c} -> bool");
+    let drawn = format!("{c} .. ({c} & ({c} | {d})) -> bool");
+    let mut wrong = Vec::new();
+    for (x, y) in [
+        (format!("({c} & ({d} | ()))"), c),
+        (format!("({c} & ({d} | ()))"), d),
+        (format!("{c} | ({c} & ({d} | ()))"), c),
+        (format!("({c} & ({c} | {d}))"), c),
+        (drawn.clone(), &fn_c),
+        (fn_c.clone(), &drawn),
+    ] {
+        if !within(&x, y) {
+            wrong.push(format!("`{x}` is not found within `{y}`"));
+        }
+    }
+    // The function of domain `int -> #a` giving a `rat` at each key is of both sides, and
+    // not of the function types over `int -> String`.
+    let shared = "((int -> #a) -> rat) & (((int -> #a | String) ->? rat) | ())";
+    for y in ["((int -> String) -> rat)", "((int -> String) ->? rat)"] {
+        if within(shared, y) {
+            wrong.push(format!("`{shared}` is found within `{y}`"));
+        }
+    }
+    if parse_type(shared).unwrap().is_empty() {
+        wrong.push(format!("`{shared}` reads as `Never`"));
+    }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 

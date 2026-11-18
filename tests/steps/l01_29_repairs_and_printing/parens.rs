@@ -742,10 +742,15 @@ fn kernel_generated_arrow(rng: &mut Rng, depth: usize) -> (Built, bool) {
         // meet is the functions with `a ⊆ dom ⊆ a & (a | v)` and values in `b`. The upper bound
         // holds `a`, as a program's `L .. U` must: where `a` is not within it, the meet is
         // empty, which the kernel cannot always show (`a` a payload holding a function), and
-        // the reader refuses the text. An `a` that holds a function is drawn too: the reader
-        // proves `((int -> rat) ->? _) & ((String -> bool) -> int)` empty, both sides taking
-        // functions of different domains (before FAIL-types-meet-fn-fn-domains, it kept both
-        // arrows and such an `a` was not drawn).
+        // the reader refuses the text. An `a` that holds a function is not drawn: where the
+        // reader does not prove a meet of functions empty, it keeps both arrows, a meet within
+        // neither side, so `a & (a | v)` is not found within `a` (FAIL-types-meet-fn-kept-not-
+        // within: `(#pair(#b, _) -> f64) & (_ -> ())`, a domain of the unknown; `(rat ->?
+        // #pair(int, ())) & ((rat .. (rat | int) -> bool) -> ((),))`, a function type of two
+        // domain bounds). It proves many such meets empty: functions of different domains,
+        // `((int -> rat) ->? _) & ((String -> bool) -> int)`, or of results that share no
+        // value, `((int -> #a) -> _) & ((int -> String) -> rat)` (FAIL-types-meet-fn-fn-domains).
+        9 if at.contains("->") => return leaf(rng),
         9 => arrow(
             &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(&a.t | &v.t, b.t.clone()),
             format!("{at} .. ({at} & ({at} | {vt})) -> {bt}"),
@@ -1547,25 +1552,5 @@ fn an_intersection_of_functions_in_a_tuple_equals_its_print_read_back() {
             t.subtype(&back) && back.subtype(&t),
             "{text}: {t} and {back}"
         );
-    }
-}
-
-
-#[test]
-fn zz_probe_fn_meet_draw() {
-    for x in [
-        "(#pair(bool, _) -> bool) & (((#b -> _) ->? _) | ())",
-        "(#pair(bool, int) -> bool) & (((#b -> _) ->? _) | ())",
-        "(#pair(bool, _) -> bool) & (((#b -> int) ->? _) | ())",
-        "(#pair(bool, int) -> bool) & (((#b -> int) ->? _) | ())",
-        "(int -> bool) & (((#b -> _) ->? _) | ())",
-        "(_ -> bool) & (((#b -> _) ->? _) | ())",
-        "(#box(_) -> int) & ((rat -> int) | ())",
-        "(#pair(bool, _) -> int) & ((rat -> int) | ())",
-        "(#pair(bool, _) -> int) & (((int -> int) -> int) | ())",
-        "(#box(_) -> int) & (((int -> int) -> int) | ())",
-    ] {
-        let t = parse_type(x).unwrap();
-        eprintln!("{x}  =  {t}   empty: {}", t.is_empty());
     }
 }

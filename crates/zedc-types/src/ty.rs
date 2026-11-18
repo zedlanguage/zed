@@ -15978,7 +15978,7 @@ fn piece_keys<'t>(t: &'t Ty, out: &mut Vec<Key<'t>>) -> bool {
 ///   induction; a product is monotone in each factor.
 /// - A function type `g`, not a family, read from above: every function (the kernel's morphism
 ///   universe), which holds each function of `g`; a family, every value. Read from below:
-///   every function where [`Domains::witness`] proves `g` holds a function `f` with no
+///   every function where [`Domains::holds_fn`] proves `g` holds a function `f` with no
 ///   variable (so at every instance of the variables), `f` being the `v'` of each function
 ///   `v`; else no value. The kernel holds no closer bound on a function it can compare: it
 ///   keeps a function it builds only as some value of a morphism type, so it never shows one
@@ -16068,7 +16068,7 @@ impl Approx {
             true if t.fns.iter().any(|g| g.data) => KType::top(),
             true if !t.fns.is_empty() => KType::universe(Universe::Morphism),
             true => KType::empty(),
-            false if Domains::witness(t).0 => KType::universe(Universe::Morphism),
+            false if Domains::holds_fn(t) => KType::universe(Universe::Morphism),
             false => KType::empty(),
         };
         let vars = (up && !t.vars.is_empty()).then(KType::top);
@@ -16100,6 +16100,11 @@ struct Domains {
     /// unknown or a function, and [`Domains::meet`] meets a parameter type with it only where
     /// that type is [`Domains::plain`].
     exact: bool,
+    /// For each arrow, in order, what [`Domains::witness`] proves of each of its parameter
+    /// types where the arrow is exact; empty for a partial arrow. Read by
+    /// [`Domains::kinds_apart`] and [`Domains::fns_apart`] for each pair of functions met, so
+    /// made once for each function.
+    held: Vec<Vec<(bool, bool)>>,
 }
 
 impl Domains {
@@ -16140,11 +16145,23 @@ impl Domains {
             (true, _, [a]) => Some(a.params.clone()),
             (true, ..) => None,
         };
+        let held = (s.arrows.iter().zip(&kernels))
+            .map(|(a, ks)| match a.partial {
+                true => Vec::new(),
+                false => (a.params.iter().zip(ks))
+                    .map(|(p, k)| {
+                        let below = k.clone().unwrap_or_else(|| approx.of(p, false));
+                        Domains::witness(p, &below)
+                    })
+                    .collect(),
+            })
+            .collect();
         Domains {
             permission,
             guaranteed,
             within,
             exact,
+            held,
         }
     }
 
@@ -16280,19 +16297,20 @@ impl Domains {
     /// function: a parameter type takes a function only through a function or family of its
     /// own, a variable, the unknown, or a morphism in its set, which [`KType::function_part`]
     /// finds (it finds every part that may hold one); a type with none takes no function.
-    /// Where `w` is data (a scalar, an atom or a tuple of data): a type whose set the kernel
-    /// proves empty ([`KType::is_empty`], whose yes is a proof) and which has no tuple,
-    /// variable or unknown takes only functions, and no function is data. So no domain is
-    /// within `q`'s permission and holds `s`'s guarantee, and no function is of both.
+    /// Where `w` is data (a scalar, an atom or a tuple, whatever it holds inside): a type whose
+    /// set the kernel proves empty ([`KType::is_empty`], whose yes is a proof) and which has no
+    /// tuple, variable or unknown takes only functions, and no function is data. So no domain
+    /// is within `q`'s permission and holds `s`'s guarantee, and no function is of both.
     // Complexity tradeoff: naive, each exact arrow of `s` against each arrow of `q`, O(a^2)
     // pairs. Used: what each parameter of `q` takes is read once over its arrows, O(a) walks of
     // the parameter types ([`KType::function_part`] is linear in a type), then each exact
-    // arrow of `s` once, with one kernel verdict on the data of each of its parameter types,
-    // O(a) verdicts, only where some parameter of `q` takes no function or only functions.
+    // arrow of `s` once, reading the witnesses [`Domains::of`] made once for `s`
+    // (`Domains::held`), not one kernel verdict for each parameter type of each pair as before
+    // (FAIL-types-meet-fn-fn-domains).
     // Given up: a function type whose arrows are not one exact arrow or all partial is not
     // proved inhabited ([`Domains::inhabited_fn`]), and a parameter type of `q` holding a tuple
     // part that may hold a function is read as taking functions.
-    fn kinds_apart(s: &Sig, q: &Sig) -> bool {
+    fn kinds_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
         let n = q.params.len();
         let open = |t: &Ty| !t.vars.is_empty() || t.dynamic;
         let no_fn: Vec<bool> = (0..n)
@@ -16314,11 +16332,13 @@ impl Domains {
         if !no_fn.iter().chain(&no_data).any(|&b| b) {
             return false;
         }
-        (s.arrows.iter().filter(|a| !a.partial)).any(|a| {
-            let ws: Vec<(bool, bool)> = a.params.iter().map(Domains::witness).collect();
-            ws.iter().all(|&(f, d)| f || d)
-                && (ws.iter().enumerate()).any(|(j, &(f, d))| (f && no_fn[j]) || (d && no_data[j]))
-        })
+        (s.arrows.iter().zip(&ds.held))
+            .filter(|(a, _)| !a.partial)
+            .any(|(_, ws)| {
+                ws.iter().all(|&(f, d)| f || d)
+                    && (ws.iter().enumerate())
+                        .any(|(j, &(f, d))| (f && no_fn[j]) || (d && no_data[j]))
+            })
     }
 
     /// Whether the function type `g` is read through its arrows alone: one parameter with no
@@ -16376,18 +16396,29 @@ impl Domains {
     /// outside the union of every `U_h` is in some `A` and outside each `U_h`, so that `A`'s
     /// `w` is in no `h`. Where `q` takes one function type `h` at `j`, a value of `G_h` outside
     /// the meet of the `A`s is outside some `A`, whose `w` is not in `h`.
+    ///
+    /// By results. Let `A` hold a key and `R` have a kernel type, and let `r` be a value of `R`
+    /// outside the union `V` of the results of every arrow `b` of every `h`, each with a
+    /// kernel type (a partial arrow's lookup type, which holds its value type). Where `w`'s
+    /// domain `A` lies within `U_h`, a key of `A` is in some `b`'s parameter type, and `w`'s
+    /// value there, `r`, is not in `b`'s result; where it does not, `w`'s domain is not
+    /// permitted. So `w` is in no `h`. A value of the union of such `R`s outside `V` is in some
+    /// `R`, which is that `w`'s `r`. Before, `((int -> #a) -> _) & ((int -> String) -> rat)`,
+    /// two domains of one key type whose results share no value, was kept as the overload of
+    /// both, so the parens draw `C .. (C & (C | D)) -> bool` read as another type.
     // Complexity tradeoff: naive, each built function against each function type of `q` at
     // `j`, one or two kernel comparisons per pair, O(a^2) comparisons for a arrows a side, as
     // F222's naive version was (5.5 s at 2048 arrows). Used: at each parameter, the `A`s and
     // the parameter types of `q`'s function types each joined into one kernel type, and one
-    // comparison of the unions, then one of `G_h` with the meet of the `A`s; O(a) types read
-    // and two comparisons of unions of O(a) rows (COMPLEXITY.md F234). Given up: a function
+    // comparison of the unions, then one of `G_h` with the meet of the `A`s, then one of the
+    // `R`s with the results, each `A` given one verdict; O(a) types read and three
+    // comparisons of unions of O(a) rows (COMPLEXITY.md F234). Given up: a function
     // type whose parameter type holds a function, a variable or `_` (no kernel type for `A`,
     // `U_h` or `G_h`), one of several arrows, a parameter type of `q` that may take a function
     // another way, a value outside one `U_h` and another `w` outside another, and a `G_h`
     // against the `A`s where `q` takes several function types: none is compared, and the meet
     // is kept, which is sound, only less narrow.
-    fn fns_apart(s: &Sig, q: &Sig) -> bool {
+    fn fns_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
         let closed = |u: &Ty| u.vars.is_empty() && !u.dynamic && u.set.function_part().is_none();
         // The kernel type of a function of `g` to build, `A`, where `g` is as in the proof.
         let built = |g: &Sig| match (g.params.as_slice(), g.arrows.as_slice()) {
@@ -16408,6 +16439,9 @@ impl Domains {
                 .map(|h| &**h)
                 .collect();
             let (mut permits, mut guarantees) = (Vec::new(), Vec::new());
+            // The results of every arrow of every `h`, each with a kernel type; `None` where
+            // one has none.
+            let mut results = Some(Vec::new());
             for h in &hs {
                 if !Domains::by_arrows(h, false) {
                     return false;
@@ -16420,47 +16454,80 @@ impl Domains {
                         guarantees.push(k.clone());
                     }
                     permits.push(k);
+                    results = results.zip(b.result.exact_kernel()).map(|(mut v, r)| {
+                        v.push(r);
+                        v
+                    });
                 }
             }
-            // The domains of the functions built at `j`, from the exact arrows of `s` whose
-            // parameter types each hold a value.
-            let doms: Vec<KType> = (s.arrows.iter())
-                .filter(|a| !a.partial && a.params.len() > j)
-                .flat_map(|a| {
-                    let ks: Vec<KType> = a.params[j].fns.iter().filter_map(|g| built(g)).collect();
-                    let held = !ks.is_empty()
-                        && (a.params.iter()).all(|p| {
-                            let (f, d) = Domains::witness(p);
-                            f || d
-                        });
+            // The functions built at `j`, from the exact arrows of `s` whose parameter types
+            // each hold a value: each one's `A`, and its `R` where it has a kernel type.
+            let built_at_j: Vec<(KType, Option<KType>)> = (s.arrows.iter().zip(&ds.held))
+                .filter(|(a, _)| !a.partial && a.params.len() > j)
+                .flat_map(|(a, ws)| {
+                    let ks: Vec<_> = (a.params[j].fns.iter())
+                        .filter_map(|g| built(g).map(|k| (k, g.arrows[0].result.exact_kernel())))
+                        .collect();
+                    let held = !ks.is_empty() && ws.iter().all(|&(f, d)| f || d);
                     if held { ks } else { Vec::new() }
                 })
                 .collect();
-            if doms.is_empty() {
+            if built_at_j.is_empty() {
                 return false;
             }
+            let doms = || built_at_j.iter().map(|(k, _)| k.clone());
             let outside = |x: KType, y: KType| x.subtype_verdict(&y) == Verdict::Inhabited;
-            outside(
-                KType::union_all(doms.iter().cloned()),
-                KType::union_all(permits),
-            ) || (hs.len() == 1
-                && !guarantees.is_empty()
-                && outside(KType::union_all(guarantees), KType::meet_all(doms)))
+            // The `R`s of the built functions whose `A` holds a key.
+            let values = || {
+                (built_at_j.iter())
+                    .filter(|(k, _)| k.verdict() == Verdict::Inhabited)
+                    .filter_map(|(_, r)| r.clone())
+            };
+            outside(KType::union_all(doms()), KType::union_all(permits))
+                || (hs.len() == 1
+                    && !guarantees.is_empty()
+                    && outside(KType::union_all(guarantees), KType::meet_all(doms())))
+                || results.is_some_and(|rs| {
+                    values().next().is_some()
+                        && outside(KType::union_all(values()), KType::union_all(rs))
+                })
         })
     }
 
-    /// Whether `t` is proved to hold a function, and whether it is proved to hold data, each
-    /// with no variable: a function of a signature of its own with no variable that
-    /// [`Domains::inhabited_fn`] proves inhabited; a value of its data the kernel builds
-    /// ([`Verdict::Inhabited`] on [`Ty::exact_data`], which leaves out its functions, variables
-    /// and unknown), where its set holds no morphism or tuple part that may hold one
-    /// ([`KType::function_part`]), so that the value built is data.
-    fn witness(t: &Ty) -> (bool, bool) {
-        let f = (t.fns.iter()).any(|g| !g.data && g.bits().is_empty() && Domains::inhabited_fn(g));
-        let d = t.set.function_part().is_none()
-            && t.exact_data()
-                .is_some_and(|k| k.verdict() == Verdict::Inhabited);
-        (f, d)
+    /// Whether `t` is proved to hold a function, and whether it is proved to hold data (a
+    /// value that is not a function, whatever it holds inside), each with no variable, given
+    /// `below`, `t` read from below ([`Approx`], or its kernel type where it has one): a
+    /// function as [`Domains::holds_fn`]; a value of `below` the kernel builds outside every
+    /// function ([`Verdict::Inhabited`] on `below` less the morphism universe).
+    ///
+    /// Proof of the second. Let `v` be that value, in `below` and not a function (the kernel's
+    /// difference is exact, `KType::minus`). By the claim at [`Approx`], `t` holds a value `v'`
+    /// that is `v` with each function in it, at any depth, replaced by another, so `v'` holds a
+    /// function exactly where `v` does: not at its outer level, so `v'` is data. `v` is built
+    /// by the kernel and holds no variable, and each function put in its place is one of a
+    /// signature with no variable ([`Domains::holds_fn`]), so `v'` holds none, at every
+    /// instance of the variables.
+    ///
+    /// Before (FAIL-types-meet-fn-fn-domains), data was proved only from [`Ty::exact_data`],
+    /// which gives no kernel type for a type holding `_` at any depth, and only where the set
+    /// held no part that may hold a function: `(#pair(bool, _) -> bool) & ((#b -> _) ->? _)`
+    /// was kept, though `#pair(bool, _)` holds data and the right side takes only functions,
+    /// while `(#pair(bool, int) -> bool) & ((#b -> _) ->? _)` was `Never`.
+    // Complexity tradeoff: before, a kernel verdict on [`Ty::exact_data`] at each call, made for
+    // each parameter type of each pair of functions met. Used: `below`, which [`Domains::of`]
+    // makes once for each function through the [`Approx`] shared by the whole meet (each type
+    // read once), one difference with the morphism universe, linear in `below`, and one
+    // verdict, as before; the result is kept in `Domains::held`, so made once for each
+    // function, not for each pair.
+    fn witness(t: &Ty, below: &KType) -> (bool, bool) {
+        let d = (below - &KType::universe(Universe::Morphism)).verdict() == Verdict::Inhabited;
+        (Domains::holds_fn(t), d)
+    }
+
+    /// Whether `t` is proved to hold a function with no variable: a function of a signature of
+    /// its own with no variable that [`Domains::inhabited_fn`] proves inhabited.
+    fn holds_fn(t: &Ty) -> bool {
+        (t.fns.iter()).any(|g| !g.data && g.bits().is_empty() && Domains::inhabited_fn(g))
     }
 
     /// Whether the function type `g` is proved to hold a function: where each arrow is partial,
@@ -16526,10 +16593,10 @@ impl Domains {
     ) -> Option<Sig> {
         if ds.outside(dq)
             || dq.outside(ds)
-            || Domains::kinds_apart(s, q)
-            || Domains::kinds_apart(q, s)
-            || Domains::fns_apart(s, q)
-            || Domains::fns_apart(q, s)
+            || Domains::kinds_apart((s, ds), q)
+            || Domains::kinds_apart((q, dq), s)
+            || Domains::fns_apart((s, ds), q)
+            || Domains::fns_apart((q, dq), s)
         {
             return None;
         }

@@ -186,6 +186,70 @@ fn a_meet_of_overloads_over_function_domains_scales() {
     );
 }
 
+/// An overload of `n` exact arrows over the data `#pair(#ki, _)`, and one over `#box(#ki ->
+/// int)`, each met with an overload of `n` arrows over the functions `#ji -> int`, are empty,
+/// made in time near linear in `n`: what each parameter type of an exact arrow holds is proved
+/// once for each function from its reading from below, which the meet makes anyway, by one
+/// kernel verdict (`Domains::witness`, FAIL-types-meet-fn-fn-domains, COMPLEXITY.md F234).
+/// Small instance: `a_meet_of_a_data_domain_holding_the_unknown_with_function_domains_is_empty`.
+#[test]
+fn a_meet_of_overloads_over_data_holding_the_unknown_with_function_domains_scales() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let overload = |m: usize, arrow: &dyn Fn(usize) -> String| {
+        let text = (0..m).map(arrow).collect::<Vec<_>>().join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let n = 2048;
+    let sides = scaling::inputs(n, |m| {
+        [
+            overload(m, &|i| format!("(#pair(#k{i}, _) -> int)")),
+            overload(m, &|i| format!("(#box(#k{i} -> int) -> int)")),
+            overload(m, &|i| format!("((#j{i} -> int) ->? int)")),
+        ]
+    });
+    scaling::check(
+        "the meets of an overload of n arrows over data holding the unknown or a function",
+        n,
+        |m| {
+            let [unknown, boxed, fns]: &[Ty; 3] = &sides[&m];
+            assert!(unknown.meet(fns).fns.is_empty());
+            assert!(boxed.meet(fns).fns.is_empty());
+        },
+    );
+}
+
+/// An overload of `n` exact arrows over the functions `int -> #ki` met with one of `n` partial
+/// arrows over `int -> #ji` is empty, the results sharing no value, made in time near linear
+/// in `n`: the results of the built functions and those of the other side's function types
+/// are each joined into one kernel type and compared once (`Domains::fns_apart`,
+/// FAIL-types-meet-fn-fn-domains, COMPLEXITY.md F234). Small instance:
+/// `a_meet_of_functions_over_function_domains_that_differ_is_empty`.
+#[test]
+fn a_meet_of_overloads_over_functions_of_results_sharing_no_value_scales() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let overload = |m: usize, arrow: &dyn Fn(usize) -> String| {
+        let text = (0..m).map(arrow).collect::<Vec<_>>().join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let n = 2048;
+    let sides = scaling::inputs(n, |m| {
+        [
+            overload(m, &|i| format!("((int -> #k{i}) -> int)")),
+            overload(m, &|i| format!("((int -> #j{i}) ->? int)")),
+        ]
+    });
+    scaling::check(
+        "the meet of overloads of n arrows over functions of results sharing no value",
+        n,
+        |m| {
+            let [exact, partial]: &[Ty; 2] = &sides[&m];
+            assert!(exact.meet(partial).fns.is_empty());
+        },
+    );
+}
+
 /// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
 /// another function of the same type at each depth, decided in time linear in `n`: each
 /// function is compared with the one at its depth (FAIL-types-tuple-subtype, COMPLEXITY.md
