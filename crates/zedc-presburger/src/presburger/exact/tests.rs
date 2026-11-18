@@ -297,6 +297,65 @@ fn random_formulas_project_to_the_values_of_their_points() {
     assert!(refused.len() <= 3, "seed {seed}: {refused:#?}");
 }
 
+/// Conjunctions of random rows over one or two of x, y and z, so that their atoms often fall
+/// into groups that share no atom, some groups with no point, project to the sets that trying
+/// each point gives. `read_once` projects each group onto its own atoms alone
+/// (PRES-cover-bench-disjoint-reduced) and empties every set where some group has no point.
+#[test]
+fn conjunctions_of_separate_groups_project_to_the_values_of_their_points() {
+    let seed =
+        crate::seed::seed("conjunctions_of_separate_groups_project_to_the_values_of_their_points");
+    let mut rng = Rng(seed | 1);
+    let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
+    let (mut wrong, mut refused, mut rounds, mut empty) = (Vec::new(), Vec::new(), 0, 0);
+    for round in 0..400 {
+        let rows: Vec<Formula> = (0..2 + rng.below(4))
+            .map(|_| {
+                let i = rng.below(3) as usize;
+                let j = rng.below(3) as usize;
+                let mut terms = vec![(
+                    NAMES[i],
+                    rng.int(1, 3) * if rng.below(2) == 0 { 1 } else { -1 },
+                )];
+                if j != i && rng.below(2) == 0 {
+                    terms.push((NAMES[j], rng.int(-3, 3)));
+                }
+                let k = rng.int(-6, 6);
+                if rng.below(4) == 0 {
+                    eq(&terms, k)
+                } else {
+                    ge(&terms, k)
+                }
+            })
+            .collect();
+        let f = boxed(Formula::and(rows));
+        let wants: Vec<IntervalSet> = NAMES.iter().map(|n| brute(&f, n)).collect();
+        empty += wants[0].is_empty() as usize;
+        rounds += 1;
+        match project_each_exact(&f, &syms) {
+            Ok((got, _)) => {
+                for (k, n) in NAMES.iter().enumerate() {
+                    match &got[k] {
+                        Ok(g) if g == &wants[k] => {}
+                        Ok(g) => {
+                            wrong.push(format!("round {round} {n}: {g} not {}: {f}", wants[k]))
+                        }
+                        Err(e) => refused.push(format!("round {round} {n}: {e:?}")),
+                    }
+                }
+            }
+            Err(e) => refused.push(format!("round {round}: {e:?}")),
+        }
+    }
+    println!("seed {seed}: {rounds} conjunctions, {empty} with no point");
+    assert!(
+        empty > 0 && empty < rounds,
+        "seed {seed}: both kinds must occur"
+    );
+    assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+    assert!(refused.is_empty(), "seed {seed}: {refused:#?}");
+}
+
 /// The answers and refusals of a call do not depend on the order of its symbols, nor on a
 /// symbol named twice: random formulas as above, at limits from a few questions' work to
 /// the full one, each symbol answered alike for `[x, y, z]`, `[z, y, x]` and `[y, x, z, y]`.
@@ -2428,4 +2487,53 @@ fn pushed_down_boxes_do_not_escape_their_ancestors() {
             }
         }
     }
+}
+
+/// The work of one call asking every atom of a conjunction of n separate groups grows with n,
+/// not n^2 (PRES-cover-bench-disjoint-reduced, PRES-cover-bench-many-calls): each group is a
+/// cycle `x_i >= y_i >= z_i >= x_i - 1` in `0..=9`, which `forest` declines, so before each
+/// atom's projection eliminated the rows of all n groups. Counted in [`EXACT_WORK`], so the
+/// load of the machine plays no part; the answers are checked as well. Run at a limit of
+/// 100,000, which one reading of the part passes from 16 groups on, each symbol's cover well
+/// within it: before, the reading had the limit once for the whole part, so it declined and
+/// each symbol was covered over the whole part again (`exact_each`, the allowance of `once`), as
+/// `disjoint::bench` did past 213 groups at the limit of 3,100,000.
+#[test]
+fn the_work_of_one_call_on_separate_groups_grows_linearly() {
+    let work = |n: usize| {
+        let mut rows = Vec::new();
+        let mut syms = Vec::new();
+        for i in 0..n {
+            let (x, y, z) = (format!("x{i}"), format!("y{i}"), format!("z{i}"));
+            rows.push(ge(&[(x.as_str(), 1), (y.as_str(), -1)], 0));
+            rows.push(ge(&[(y.as_str(), 1), (z.as_str(), -1)], 0));
+            rows.push(ge(&[(z.as_str(), 1), (x.as_str(), -1)], 1));
+            for s in [&x, &y, &z] {
+                rows.push(ge(&[(s.as_str(), 1)], 0));
+                rows.push(ge(&[(s.as_str(), -1)], 9));
+                syms.push(a(s));
+            }
+        }
+        // Two arms, the second with each atom also at most 4, so the groups meet in one
+        // part (`split` keeps them together) and each arm is one conjunction of n groups.
+        let narrow: Vec<Formula> = (syms.iter())
+            .map(|s| member(s, &IntervalSet::of(0, 4)))
+            .chain(rows.iter().cloned())
+            .collect();
+        let f = Formula::or(vec![Formula::and(rows), Formula::and(narrow)]);
+        EXACT_WORK.set(0);
+        let (got, _) = project_each_exact(&f, &syms).unwrap();
+        for g in got {
+            assert_eq!(g.unwrap(), IntervalSet::of(0, 9));
+        }
+        EXACT_WORK.replace(0)
+    };
+    EXACT_LIMIT_SET.set(Some(100_000));
+    let (small, large) = (work(16), work(128));
+    EXACT_LIMIT_SET.set(None);
+    println!("work at 16 groups: {small}, at 128: {large}");
+    assert!(
+        large <= 9 * small,
+        "work {small} at 16 groups, {large} at 128"
+    );
 }

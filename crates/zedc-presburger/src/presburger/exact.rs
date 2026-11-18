@@ -56,7 +56,7 @@
 // path and is kept out of the tree until row PRES-cover-wire puts it there
 // (/home/luke/Work/wt/failing-tests/FAIL-or-if-projection-not-exact.rs).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use zedc_int::int::Int;
@@ -171,13 +171,34 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         .collect();
     // Each part read once over blocks answered for all its atoms at once (`read_once`), within
     // an allowance of its own as [`direct`]; where it declines, its symbols are covered below
-    // as before, with the same points and the same work.
-    let once: Vec<Option<ReadOnce>> = (parts.iter())
-        .map(|p| {
+    // as before, with the same points and the same work. The allowance is the limit once for
+    // each distinct symbol asked of the part, at least once: the covers below, which run where
+    // it declines, have the limit each, one cover per such symbol (and up to twice the limit
+    // with their fast path, [`tried`]), so this admits no more work than they do. Every set
+    // `read_once` answers is the exact projection, as is every set a cover answers, so where
+    // both answer the answers are the same; a symbol whose cover would be refused may get its
+    // exact set here instead. EXACT_LIMIT itself, the limit of each symbol, is unchanged.
+    // Complexity tradeoff: before, an allowance of the limit for the whole part, so a part
+    // whose one reading passed it, though linear (14,600 units for each group of four rows of
+    // `disjoint::bench`, past 3,100,000 from 213 groups), went to the covers, each reading the
+    // whole part again: O(k·r) for k symbols over r rows, 1,607,657,400 units and 46 s at
+    // 224 groups against 2,802,000 units and 0.2 s at 192. Used: one reading, O(r) at that
+    // size; the covers run only where it declines for another reason (COMPLEXITY.md row
+    // PRES-cover-bench-disjoint-reduced).
+    let mut asked: Vec<u64> = vec![0; parts.len()];
+    for s in syms.iter().collect::<BTreeSet<&Atom>>() {
+        if let Some(i) = part_of.get(s).copied().or((!many).then_some(0)) {
+            asked[i] += 1;
+        }
+    }
+    let once: Vec<Option<ReadOnce>> = (parts.iter().zip(&asked))
+        .map(|(p, &k)| {
             if !p.factors.is_empty() {
                 return None;
             }
-            tried(&mut { limit }, solver, |w| read_once(&p.f, w))
+            tried(&mut limit.saturating_mul(k.max(1)), solver, |w| {
+                read_once(&p.f, w)
+            })
         })
         .collect();
     let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
@@ -1523,17 +1544,50 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 if atoms.is_empty() {
                     return Ok(None);
                 }
-                if let Some(sets) = forest(rows, work)? {
-                    own[i] = sets;
-                } else {
-                    for a in atoms.keys() {
-                        let Some(p) = projected(rows, a, work)? else {
-                            return Ok(None);
-                        };
-                        own[i].insert((*a).clone(), p);
+                // The block's rows split into groups that share no atom (`row_groups`), each
+                // projected onto each of its own atoms alone. Proof that the sets are those of
+                // the block: a point of the block is a point of each group, and points of groups
+                // over disjoint atoms join into one point of the block; so the values of an
+                // atom `a` with a point of the block are those with a point of `a`'s group when
+                // every other group has a point, else none. Each projection here is exact
+                // (`forest`, or the exact shadow of `projected`), as it was over the whole block,
+                // so each set is the one exact projection, the same set the whole block gave.
+                // Complexity tradeoff: [`projected`] of the whole block for each of its atoms,
+                // O(r) each and O(r a) for r rows and a atoms: 512 atoms over 512 rows of 128
+                // groups of four in each arm of `disjoint::bench`'s join, O(k^2). Used: one
+                // union-find over the rows' atoms, O(t α) for t terms, then each group
+                // projected onto its own atoms, O(r_g a_g) for a group of r_g rows and a_g
+                // atoms; a block of one group costs what it did (COMPLEXITY.md row
+                // PRES-cover-bench-disjoint-reduced).
+                let mut all = true;
+                for group in row_groups(rows, work)? {
+                    let sets = if let Some(sets) = forest(&group, work)? {
+                        sets
+                    } else {
+                        let mut sets = HashMap::new();
+                        for a in (group.iter().flat_map(|c| c.lin.terms.keys()))
+                            .map(|a| (a, ()))
+                            .collect::<BTreeMap<&Atom, ()>>()
+                            .keys()
+                        {
+                            let Some(p) = projected(&group, a, work)? else {
+                                return Ok(None);
+                            };
+                            sets.insert((*a).clone(), p);
+                        }
+                        sets
+                    };
+                    // A group has a point exactly where its projections are not empty: the
+                    // shadow of a group with no point is the false row, every set empty.
+                    all &= sets.values().any(|p| !p.is_empty());
+                    own[i].extend(sets);
+                }
+                if !all {
+                    for p in own[i].values_mut() {
+                        *p = IntervalSet::empty();
                     }
                 }
-                own[i].values().any(|p| !p.is_empty())
+                all
             }
             Node::And(_, cs) => cs.iter().all(|&c| sat[c]),
             Node::Or(cs) => cs.iter().any(|&c| sat[c]),
@@ -3040,6 +3094,63 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
         .filter(|k| (k.lin.terms.keys().next()).is_some_and(|a| root(&mut parent, index[a]) == top))
         .cloned()
         .collect()
+}
+
+/// The rows of the conjunction `rows` in groups that share no atom, each group in the order of
+/// its first row and its rows in their order, so the same on every run; one group, all of
+/// `rows`, where some row reads no atom (it holds or fails whatever the atoms are, and so
+/// belongs with no group in particular). Each term read is charged.
+// Complexity tradeoff: union-find over the atoms with path halving, O(t α) for t terms, as
+// [`joined`], which keeps the one group of a given atom; this keeps every group, for
+// [`read_once`], which projects each group onto its own atoms.
+fn row_groups(rows: &[Con], work: &mut Work) -> Result<Vec<Vec<Con>>, Refusal> {
+    work.read(rows.iter().map(|c| c.lin.terms.len() as u64).sum())?;
+    if rows.iter().any(|c| c.lin.terms.is_empty()) {
+        return Ok(vec![rows.to_vec()]);
+    }
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    let mut parent: Vec<usize> = Vec::new();
+    fn root(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    for k in rows {
+        let mut first = None;
+        for a in k.lin.terms.keys() {
+            let n = parent.len();
+            let i = *index.entry(a).or_insert(n);
+            if i == n {
+                parent.push(n);
+            }
+            match first {
+                None => first = Some(i),
+                Some(f) => {
+                    let (x, y) = (root(&mut parent, f), root(&mut parent, i));
+                    parent[x.max(y)] = x.min(y);
+                }
+            }
+        }
+    }
+    let mut of: HashMap<usize, usize> = HashMap::new();
+    let mut groups: Vec<Vec<Con>> = Vec::new();
+    for k in rows {
+        let a = k
+            .lin
+            .terms
+            .keys()
+            .next()
+            .expect("every row reads an atom here");
+        let r = root(&mut parent, index[a]);
+        let g = *of.entry(r).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[g].push(k.clone());
+    }
+    Ok(groups)
 }
 
 // The tests are a file of their own: they name the solver (`presburger.rs`), which calls this
