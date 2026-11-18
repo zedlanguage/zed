@@ -2931,3 +2931,51 @@ fn connecting_keeps_the_value_of_the_unfolded_expression() {
     }
     assert!(folded > 1000, "{folded} folded");
 }
+
+/// The sorted set of the literals `x_k`, `k < m`, each with value `true`.
+fn literals(m: u64) -> Arc<set::Set<Row>> {
+    let mut keys: Vec<_> = (0..m).map(|k| (atom(k), true)).collect();
+    keys.sort();
+    set::from_sorted(keys).expect("non-empty")
+}
+
+#[test]
+fn the_rest_of_two_sequences_orders_the_shorter_first() {
+    let (long, short) = (literals(3), literals(2));
+    let ends = |a: &set::Set<Row>, b: &set::Set<Row>| {
+        let mut rest = Rest::new(a, b);
+        let mut keys = 0;
+        loop {
+            match rest.next(|_, _| false) {
+                Ok(_) => keys += 1,
+                Err(o) => return (keys, o),
+            }
+        }
+    };
+    assert_eq!(ends(&long, &short), (2, Ordering::Greater));
+    assert_eq!(ends(&short, &long), (2, Ordering::Less));
+    // One node on both sides is passed over whole.
+    assert_eq!(ends(&short, &short), (0, Ordering::Equal));
+}
+
+#[test]
+fn leaves_are_opposite_only_to_the_other_leaf() {
+    let (t, f, l) = (Bdd::<Row>::Leaf(true), Bdd::Leaf(false), meet(0, 2));
+    assert!(Part::lists_opposite(&t, &f));
+    assert!(!Part::lists_opposite(&t, &t));
+    assert!(!Part::lists_opposite(&l, &f));
+    assert!(!Part::lists_opposite(&t, &l));
+}
+
+#[test]
+fn expressions_are_equal_exactly_when_they_compare_equal() {
+    let (a, b) = (Part::literal(atom(0)), Part::literal(atom(1)));
+    let (Part::Expr(e), Part::Expr(f)) = (
+        Part::connect(Op::Or, a.clone(), Part::not_expr(b.clone())),
+        Part::connect(Op::And, a, b),
+    ) else {
+        panic!("connect makes expressions")
+    };
+    assert!(*e == *e.clone());
+    assert!(*e != *f);
+}

@@ -85,6 +85,9 @@ pub(super) struct Tables<A: Literal> {
 }
 
 impl<A: Literal> Tables<A> {
+    /// Never run at run time, so coverage counts it unreached: its only callers are the
+    /// `const { … }` initializers of the thread-local tables `TUPLES` and `MORPHISMS` (module
+    /// `types`), which the compiler evaluates.
     pub(super) const fn new() -> Tables<A> {
         Tables {
             sets: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),

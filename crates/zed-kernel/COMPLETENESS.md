@@ -254,6 +254,14 @@ passes a chain of `Operands::Chain` (made only when `is_long_chain` holds) and a
 fixed to the passed-over value is unreachable by the same reading and is folded into the same
 `unreachable!`. All 551 kernel library tests pass.
 
+`bdd.rs` 88-94 (numbered at 847a31d3e, `Tables::new`) runs only at compile time, in the
+`const { … }` initializers of `TUPLES` and `MORPHISMS`; the note is at the site. 1017-1018
+(`lists_opposite` of leaves) are reached by `leaves_are_opposite_only_to_the_other_leaf`, which
+fails with the leaf arm made `p == q`. 2657-2658 (`Rest::next` when one sequence ends first) are
+reached by `the_rest_of_two_sequences_orders_the_shorter_first`, which fails with the two arms'
+orders swapped. 2738-2740 (`Expr`'s `eq`) are reached by
+`expressions_are_equal_exactly_when_they_compare_equal`.
+
 The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
 the test removed from the walk, every `decide` test still passed, since a `lo` that is too small
 stays sound and the later passes recover it. The test
