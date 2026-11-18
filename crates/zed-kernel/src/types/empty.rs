@@ -2326,7 +2326,9 @@ fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
     // backtracking and finds a length wherever the rule finds one. Tests:
     // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length`,
     // `the_meet_of_prime_cycles_scales`, `periodic_lists_agree_with_their_lengths` and its run
-    // at a fixed seed, and `empty::tests::the_residue_length_agrees_with_a_scan`;
+    // at a fixed seed, `empty::tests::the_residue_length_agrees_with_a_scan` and
+    // `the_three_sat_reduction_at_residue_length_is_correct` (the reduction checked on 3-SAT
+    // formulas against brute force, both ways);
     // COMPLEXITY.md K34. Used: O(classes × primes of a period) divisions of numbers of at most
     // the digits of the lcm and O(classes × primes of a period²) small operations, plus
     // O(classes² × primes of a period) for the meeting pair when the shares sum to exactly one;

@@ -1473,3 +1473,112 @@ fn every_value_found_lies_within_its_types_height_bounds() {
     }
     assert!(checked > 100, "only {checked} values measured");
 }
+
+/// Checks the 3-SAT reduction in the comment at `residue_length`: variable `i` gets the prime
+/// `PRIMES[i]` with its residues 2 and above taken out, so a length's residue 0 or 1 is the
+/// variable's value (1 is true), and each clause takes out the one class modulo the product of
+/// its three primes where all its literals are false. On fixed and pseudo-random formulas over
+/// four variables, a length exists exactly when the formula is satisfiable (scanned up to the
+/// product of the primes, where every class repeats); each length decodes to a satisfying
+/// assignment and each satisfying assignment encodes, by the Chinese remainder theorem, to a
+/// length; and `residue_length` gives no length for an unsatisfiable formula and, when it gives
+/// one, a length that decodes to a satisfying assignment.
+#[test]
+fn the_three_sat_reduction_at_residue_length_is_correct() {
+    const PRIMES: [u64; 4] = [3, 5, 7, 11];
+    let product: u64 = PRIMES.iter().product();
+    // A literal is (variable, positive).
+    type Clause = [(usize, bool); 3];
+    let satisfies = |f: &[Clause], v: u32| {
+        f.iter()
+            .all(|c| c.iter().any(|&(i, pos)| ((v >> i) & 1 == 1) == pos))
+    };
+    let reduce = |f: &[Clause]| {
+        let mut none = Vec::new();
+        for &p in &PRIMES {
+            none.extend((2..p).map(|r| (p, r)));
+        }
+        for c in f {
+            let m: u64 = c.iter().map(|&(i, _)| PRIMES[i]).product();
+            // All literals false: residue 0 for a positive literal, 1 for a negative one.
+            let at = (0..m)
+                .find(|&n| c.iter().all(|&(i, pos)| n % PRIMES[i] == u64::from(!pos)))
+                .expect("the Chinese remainder theorem gives one");
+            none.push((m, at));
+        }
+        none
+    };
+    let decode = |n: u64| (0..4).fold(0u32, |v, i| v | (((n % PRIMES[i]) as u32) << i));
+    let encode = |v: u32| {
+        (0..product)
+            .find(|&n| (0..4).all(|i| n % PRIMES[i] == u64::from((v >> i) & 1)))
+            .expect("the Chinese remainder theorem gives one")
+    };
+    let mut formulas: Vec<Vec<Clause>> = vec![
+        // Satisfiable: x0 or x1 or x2.
+        vec![[(0, true), (1, true), (2, true)]],
+        // Unsatisfiable: all eight clauses over x0, x1, x2.
+        (0..8)
+            .map(|s: usize| [(0, s & 1 == 1), (1, s & 2 == 2), (2, s & 4 == 4)])
+            .collect(),
+        // Satisfiable only by x0 = x1 = x2 = true: seven of the eight.
+        (1..8)
+            .map(|s: usize| [(0, s & 1 == 1), (1, s & 2 == 2), (2, s & 4 == 4)])
+            .collect(),
+    ];
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |k: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % k
+    };
+    for _ in 0..200 {
+        let clauses = 10 + next(51) as usize;
+        let f = (0..clauses)
+            .map(|_| {
+                let vars = [0usize, 1, 2, 3];
+                let skip = next(4) as usize;
+                let mut c = [(0, false); 3];
+                let mut k = 0;
+                for (j, &i) in vars.iter().enumerate() {
+                    if j != skip {
+                        c[k] = (i, next(2) == 1);
+                        k += 1;
+                    }
+                }
+                c
+            })
+            .collect();
+        formulas.push(f);
+    }
+    let (mut sat, mut unsat) = (0, 0);
+    for f in &formulas {
+        let none = reduce(f);
+        let fits = |n: u64| none.iter().all(|&(p, at)| n % p != at);
+        let satisfiable = (0..16).any(|v| satisfies(f, v));
+        let lengths: Vec<u64> = (0..product).filter(|&n| fits(n)).collect();
+        assert_eq!(!lengths.is_empty(), satisfiable, "{f:?}");
+        for &n in &lengths {
+            assert!(satisfies(f, decode(n)), "{f:?}: length {n}");
+        }
+        for v in (0..16).filter(|&v| satisfies(f, v)) {
+            assert!(fits(encode(v)), "{f:?}: assignment {v:04b}");
+        }
+        match residue_length(&[], &none) {
+            Some(n) => {
+                let n = u64::try_from(&n % product).expect("below the product");
+                assert!(fits(n) && satisfies(f, decode(n)), "{f:?}: given {n}");
+            }
+            None => assert!(
+                !satisfiable || residues_meet(&[], &none) == Lengths::Refused,
+                "{f:?}"
+            ),
+        }
+        if satisfiable { sat += 1 } else { unsat += 1 }
+    }
+    assert!(
+        sat >= 20 && unsat >= 20,
+        "{sat} satisfiable, {unsat} unsatisfiable"
+    );
+}
