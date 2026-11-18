@@ -585,8 +585,9 @@ pub(super) fn listed(
 /// The recession rays of the implicant `rows` at `s`, for each sign: a direction `d` of the
 /// rows (`A·d >= 0`, `E·d == 0`) with `d_s <= -1` (or `>= 1`), asked of the solver; with
 /// `g = |d_s|`, for each residue of `s` modulo `g` a point of the rows, from which `d` runs
-/// without end. Each question is charged `size` and the rows' own terms. A refusal of a
-/// question gives no ray for that sign.
+/// without end. Each question is charged `size` and the rows' own terms, and the solver's
+/// work on it ([`asked`]). A refusal of a question gives no ray for that sign (or residue);
+/// past the work limit, `rays` is refused.
 pub(super) fn rays(
     rows: &[Con],
     s: &Atom,
@@ -620,7 +621,7 @@ pub(super) fn rays(
         }));
         work.read(size + row_terms)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-        let Ok(Some(d)) = (work.solver.satisfiable)(&Formula::and(ask)) else {
+        let Some(d) = asked(work, &Formula::and(ask))? else {
             continue;
         };
         let g = d.get(s).cloned().unwrap_or_else(|| Int::from(0)).abs();
@@ -641,7 +642,7 @@ pub(super) fn rays(
                 },
                 rel: Rel::Eq,
             }));
-            if let Ok(Some(p)) = (work.solver.satisfiable)(&Formula::and(ask)) {
+            if let Some(p) = asked(work, &Formula::and(ask))? {
                 let v = p.get(s).cloned().unwrap_or_else(|| Int::from(0));
                 let (lo, hi) = if down {
                     (None, Some(v))
@@ -659,6 +660,19 @@ pub(super) fn rays(
         }
     }
     Ok(out)
+}
+
+/// A question of [`rays`], asked as the cover asks its own (`Work::ask`): the solver's work
+/// on it charged to `work`. `None` where it has no point or the solver refuses it for another
+/// cause, as the residue questions of the cover read such a refusal; past the work limit,
+/// refused with [`Refusal::Questions`] (PRES-rays-unmetered: the solver's work here was not
+/// charged, only the fixed reads above).
+fn asked(work: &mut Work, q: &Formula) -> Result<Option<Model>, Refusal> {
+    match work.ask(q) {
+        Ok(m) => Ok(m),
+        Err(e) if work.used > work.limit => Err(e),
+        Err(_) => Ok(None),
+    }
 }
 
 // The four helpers below are used by the cover (`exact.rs`) as well as here. They are written

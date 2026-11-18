@@ -110,6 +110,50 @@ fn a_small_shadow_charges_its_generated_rows() {
     );
 }
 
+/// The questions of `rays` charge the solver's work on them, not only their fixed reads
+/// (PRES-rays-unmetered): `x >= y >= 0` has one ray, up from 0, and the charge is more than
+/// the reads; with a limit of the reads alone, `rays` is refused, where before this row it
+/// answered with the solver's work uncounted.
+#[test]
+fn the_questions_of_rays_charge_the_solvers_work() {
+    let rows: Vec<Con> = [
+        ge(&[("x", 3), ("y", -2)], 0),
+        ge(&[("y", 5), ("z", -7)], 1),
+        ge(&[("z", 1)], 0),
+        ge(&[("x", 2), ("z", -3)], 0),
+    ]
+    .into_iter()
+    .map(|f| match &f {
+        Formula::Con(c) => c.clone(),
+        _ => unreachable!(),
+    })
+    .collect();
+    let size = 1;
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let got = projection::rays(&rows, &a("x"), size, &mut work).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!((&got[0].lo, &got[0].hi), (&Some(Int::from(0)), &None));
+    // The rows' terms with their constants; two sign questions, then one question for each
+    // residue modulo the ray's step.
+    let terms: u64 = rows.iter().map(|k| k.lin.terms.len() as u64 + 1).sum();
+    let g = got[0].step.to_i128().unwrap() as u64;
+    let reads = SOLVER_UNIT * (2 * (size + terms) + g * (size + terms + 2));
+    assert!(work.used > reads, "used {} reads {reads}", work.used);
+    let mut work = Work {
+        used: 0,
+        limit: reads,
+        solver: SOLVER,
+    };
+    assert_eq!(
+        projection::rays(&rows, &a("x"), size, &mut work),
+        Err(Refusal::Questions)
+    );
+}
+
 /// An insertion after refusal must not update the row index or contradiction flag.
 /// Only the enclosing metered caller may interpret the incomplete solver state.
 #[test]
