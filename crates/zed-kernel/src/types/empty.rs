@@ -12436,6 +12436,19 @@ impl At<'_> {
 
 /// An operand of a connective in [`Shape`]: a literal, or a node read as itself or as its
 /// complement.
+///
+/// A node operand is never a leaf, so `read_two_sat` reads `Shape::Leaf` only at the root.
+/// Proof. `shape` makes node operands in two places. (1) A diagram node's branch, which the arm
+/// order in `shape` uses as an operand only when `leaf` gave it `None`, so it is not a leaf.
+/// (2) An operand of an expression `Form::Or(a, b)` or `Form::And(a, b)`; `Part::view` gives
+/// such a form only for a `Part::expr`, and `Form::Not` of an expression is read through to
+/// that expression. The expressions bdd.rs builds with `Or` or `And` (read there, no edits):
+/// `zipped` builds `Form::Or` only after `zip_at_once` and `xor_at_once` answer `None`, which
+/// they do for no leaf operand; the union at the end of the union of parts is built after
+/// `union_as_kept`, which starts with `zip_at_once`; and `xor::meet` builds `Form::And` of a
+/// literal and an exclusive or holding at least one atom. None of them has a leaf operand.
+/// This proof rests on reading those sites; a constructor in bdd.rs that folds a leaf operand
+/// away would make it a compiler check (asked of cover4 in wt/pause/cover7-bdd-request.md).
 #[derive(Clone, Copy)]
 enum Operand<'p> {
     Literal(Literal2),
@@ -12546,16 +12559,15 @@ fn read_two_sat(
             Shape::Literal(l) => s.clauses.push((l, l)),
             Shape::And(x, y) => holds.extend([x, y]),
             Shape::Or(x, y) => {
-                // The operands of the `or` and of the `or`s under it, the `false` ones left out.
-                let (mut out, mut under, mut always) = (Vec::new(), vec![x, y], false);
+                // The operands of the `or` and of the `or`s under it. No operand is a leaf
+                // (proof at `Operand`), so each `or` gives at least two literals and `out`
+                // never ends with fewer than two.
+                let (mut out, mut under) = (Vec::new(), vec![x, y]);
                 while let Some(d) = under.pop() {
                     let l = match d {
                         Operand::Literal(l) => l,
                         Operand::Node(at, pos) => match shape(at, pos, literal)? {
-                            Shape::Leaf(b) => {
-                                always |= b;
-                                continue;
-                            }
+                            Shape::Leaf(_) => unreachable!("an operand is not a leaf"),
                             Shape::Literal(l) => l,
                             Shape::Or(x, y) => {
                                 under.extend([x, y]);
@@ -12569,11 +12581,9 @@ fn read_two_sat(
                         break;
                     }
                 }
-                match (always, &out[..]) {
-                    (true, _) => {}
-                    (false, []) => s.contradiction(),
-                    (false, &[a]) => s.clauses.push((a, a)),
-                    (false, &[a, b]) => s.clauses.push((a, b)),
+                match out[..] {
+                    [] | [_] => unreachable!("an `or` of two operands gives two literals"),
+                    [a, b] => s.clauses.push((a, b)),
                     _ => return None,
                 }
             }
@@ -12583,8 +12593,7 @@ fn read_two_sat(
         let l = match x {
             Operand::Literal(l) => l,
             Operand::Node(at, pos) => match shape(at, pos, literal)? {
-                Shape::Leaf(true) => continue,
-                Shape::Leaf(false) => g ^ 1,
+                Shape::Leaf(_) => unreachable!("an operand is not a leaf"),
                 Shape::Literal(l) => l,
                 Shape::And(x, y) => s.meet(at.key(pos), [x, y], &mut forces),
                 Shape::Or(..) => return None,
