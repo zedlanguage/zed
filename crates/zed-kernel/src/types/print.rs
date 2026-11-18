@@ -304,8 +304,8 @@ fn put(segs: &mut Vec<Seg>, t: Text, at: At) {
             // A text of class `Of` is made only by `Printer::node`, one `Seg::Node`; `group`
             // and `joined` pass a single item on unchanged; and a list's text takes
             // `first[0].class` only in the cases of its `class` table where the text written
-            // is that one item put at `At::Any` with nothing before or after it (a block
-            // with no text adds nothing and leaves `at` as it was).
+            // is that one item put at `At::Any` with nothing before or after it
+            // (every block of a list has a literal, `Bdd::list`, so none is without text).
             _ => unreachable!("a text of class Of is one node"),
         },
         c if at.admits(c) => segs.extend(t.segs),
@@ -1603,9 +1603,11 @@ impl Printer<'_> {
                     false => Class::Diff,
                 }),
                 // A block of value `false` before no value leaves no value.
-                (false, false) => next.map(|n| match (taken.is_empty(), first.len()) {
+                // Its block is a set of one literal or more (`Bdd::list`): each refused one is in
+                // `first` (or in the meet there) and each taken one in `taken`, so the two are not
+                // both empty, and the text after it is not the text of this block.
+                (false, false) => next.map(|_| match (taken.is_empty(), first.len()) {
                     (false, _) => Class::Diff,
-                    (true, 0) => n,
                     (true, 1) if every && k + 1 == m => first[0].class,
                     (true, _) => Class::And,
                 }),

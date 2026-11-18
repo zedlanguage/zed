@@ -558,3 +558,42 @@ fn xor_part() -> Part<Row> {
     let c = Part::literal(Row::new(vec![lit(2)]));
     (a.zip(&c.not(), Op::And)).zip(&a.not().zip(&c, Op::And), Op::Or)
 }
+
+/// A type printed apart (`Type::surfaces_apart`, `Printer::write_out`) is written out where it
+/// stands, parenthesized when its place does not admit its text, never by a name of its own,
+/// even when another type printed with it names the same part.
+#[test]
+fn a_type_printed_apart_is_written_out_and_parenthesized_by_its_place() {
+    use super::super::TextPlace as At;
+    let d = &Type::int() - &lit(1);
+    let pair = Type::tuple(vec![d.clone(), d.clone()]);
+    let print = |ts: &[(Type, At)], apart: &[bool]| {
+        let s = Type::surfaces_apart(ts, apart, None);
+        (s.defs, s.roots)
+    };
+    let part1 = vec![("Part1".to_string(), "int \\ 1".to_string())];
+    assert_eq!(
+        print(&[(d.clone(), At::Union)], &[true]),
+        (vec![], vec!["(int \\ 1)".into()])
+    );
+    assert_eq!(
+        print(&[(d.clone(), At::Any)], &[true]),
+        (vec![], vec!["int \\ 1".into()])
+    );
+    let both = [(pair.clone(), At::Any), (d.clone(), At::Union)];
+    assert_eq!(
+        print(&both, &[false, true]),
+        (
+            part1.clone(),
+            vec!["(Part1, Part1)".into(), "(int \\ 1)".into()]
+        )
+    );
+    assert_eq!(
+        print(&both, &[false, false]),
+        (part1.clone(), vec!["(Part1, Part1)".into(), "Part1".into()])
+    );
+    assert_eq!(
+        print(&[(pair, At::Union)], &[true]),
+        (part1, vec!["(Part1, Part1)".into()])
+    );
+}

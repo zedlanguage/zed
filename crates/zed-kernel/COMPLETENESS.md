@@ -160,5 +160,12 @@ the exclusive-or component (`Choices::index` makes a component only with a cell)
 lists and meets of its own); `rec/group.rs` `regular`; `types.rs` `part_boxes` (the second pass
 reads only operands the first found to have boxes).
 
-`print.rs` `write_out`'s entry (old 2083-2096) is its parenthesizing branch, not a guard: still
-open, it needs a root printed apart whose class its place does not admit.
+`print.rs` `write_out` (old 2083-2096): no kernel test printed a type apart (only zedc-types
+calls `Type::surfaces_apart`). Test `print::tests::a_type_printed_apart_is_written_out_and_parenthesized_by_its_place`:
+`int \ 1` apart at a union's place is `(int \ 1)`, at any place `int \ 1`; beside `(Part1,
+Part1)` it is written out, not named `Part1`, where printed not apart it is `Part1`.
+
+`print.rs` `list`, the arm for a block of value `false` with no text: removed. A block is a
+set of one literal or more (`Bdd::list`), each refused literal goes to `first` (or the meet
+there) and each taken one to `taken`, so the two are never both empty; the arm could not be
+reached, and no test can reach `put` with such a block. The proof is at the site and in `put`.
