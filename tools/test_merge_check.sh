@@ -135,13 +135,18 @@ chmod +x tools/run_tests.sh
 git add -A
 git commit -q --allow-empty -m base
 git tag -f base >/dev/null
-# Commits a change to the file $1 on the base (a line ${2:-// changed}) and prints the
-# selection's last line.
-groups_after() {
+# Commits a change to the file $1 on the base (a line ${2:-// changed}).
+change_on_base() {
   git checkout -q --detach base
   echo "${2:-// changed}" >>"$1"
   git add -A
   git commit -q -m "change $1"
+}
+# Commits a change as change_on_base does and prints the selection's last line. A case that runs
+# the full check itself calls change_on_base alone: a --groups run whose output is dropped costs a
+# whole merge_check call (MERGE-selftest-time).
+groups_after() {
+  change_on_base "$@"
   "$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: (groups|no package)'
 }
 short() { local g; for g in "$@"; do printf ' %s short-%s' "$g" "$g"; done; }
@@ -239,7 +244,7 @@ check "a file moved from one package to another selects both" \
 # under its name full-<piece>; its main.rs selects every piece; neither selects the package t.
 # A change that reaches t through its dependencies selects every piece (MERGE-full-by-dependency).
 full_run() {
-  groups_after "$1" >/dev/null
+  change_on_base "$1"
   "$check_script" --base base 2>&1 | command grep -a -E '^(run_tests|merge check: (groups|tests/full|passed))'
 }
 check "a file in a piece's folder of tests/full selects that piece alone, run with --full" \
@@ -263,7 +268,7 @@ check "a crate the package of tests/full does not depend on selects no piece" \
   "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
   "$(full_run crates/c/src/lib.rs | command grep -a -E '^merge check: (groups|tests/full)')"
 check "a failing run of tests/full stops the check with exit 1" "merge check: FAILED: tests/full (above)
-1" "$(groups_after tests/full/w/mod.rs >/dev/null
+1" "$(change_on_base tests/full/w/mod.rs
     STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
 # The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
@@ -271,7 +276,7 @@ check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.
   "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
 merge check: tools/test_merge_check.sh select and record passed
 merge check: passed
-0" "$(groups_after tools/run_tests.sh '# changed' >/dev/null
+0" "$(change_on_base tools/run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
     echo "${PIPESTATUS[0]}")"
 check "a failing part of tools/test_merge_check.sh refuses the branch with exit 1" \
