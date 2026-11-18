@@ -2826,6 +2826,32 @@ fn guards_renamed_and_shuffled_are_certified_alike() {
 /// reading had the whole limit there and would pass the limit had nothing been taken.
 #[test]
 fn a_certificate_that_declines_late_leaves_the_rest_only_what_is_left() {
+    late_decline(|spent, read| spent + read / 2);
+}
+
+/// As above, with the certificate taking more than 90% of the limit (the limit is its work
+/// times 20/19): the reading and the fast paths get only the last 5%, and the fast work of the
+/// call is the certificate's and at most that remainder. Negative control: with the certificate
+/// off, the reading alone takes more than the remainder.
+#[test]
+fn a_certificate_that_declines_after_most_of_the_limit_leaves_only_the_remainder() {
+    let (limit, spent, _, fast_on, fast_off) = late_decline(|spent, _| spent + spent / 19);
+    assert!(spent * 10 > limit * 9, "the certificate took {spent} of {limit}");
+    let rest = limit - spent;
+    assert!(
+        fast_on - spent <= rest + 1,
+        "after the certificate, {} passes the remainder {rest}",
+        fast_on - spent
+    );
+    assert!(
+        fast_off > rest + 1,
+        "control: the reading alone took {fast_off}, within the remainder {rest}"
+    );
+}
+
+/// The shared body: the limit is `limit_of(certificate's work, reading's work)`; returns the
+/// limit, the certificate's work, the reading's on what is left, and the fast work on and off.
+fn late_decline(limit_of: fn(u64, u64) -> u64) -> (u64, u64, u64, u64, u64) {
     let f = guards_f(16, 12, false, true);
     let h = IntervalSet::of(4, 12);
     assert_eq!(project(&f, "i"), IntervalSet::of(5, 12));
@@ -2845,7 +2871,7 @@ fn a_certificate_that_declines_late_leaves_the_rest_only_what_is_left() {
     );
     let (_, read) = alone(&reading, u64::MAX);
     assert!(spent > 0 && read > 0, "certificate {spent}, reading {read}");
-    let limit = spent + read / 2;
+    let limit = limit_of(spent, read);
     let (read_answered, read_left) = alone(&reading, limit - spent);
     assert!(
         !read_answered,
@@ -2885,6 +2911,7 @@ fn a_certificate_that_declines_late_leaves_the_rest_only_what_is_left() {
         spent + fast_off > fast_on && spent + fast_off > limit,
         "control: {spent} + {fast_off} is within the limit {limit}"
     );
+    (limit, spent, read_left, fast_on, fast_off)
 }
 
 fn certify(f: &Formula, s: &str, h: &IntervalSet) -> Option<IntervalSet> {
