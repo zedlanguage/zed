@@ -81,6 +81,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         ck.main_limits(unit);
         ck.judge_proved();
         ck.powers_over_main_limit();
+        ck.sweep_unchecked_uses();
     }
     // A function marked `@nonblocking` that can block (DESIGN.md sec:ports), decided from the
     // fact found once for every function: one lookup per mark.
@@ -127,6 +128,7 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     ck.env.insert(id, given);
     ck.bounds();
     ck.walk(rest);
+    ck.sweep_unchecked_uses();
     // Before `finish` puts the classes' types in the signatures recorded at calls.
     ck.settle_calls();
     ck.finish();
@@ -5219,7 +5221,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // recorded, which no later step would check (FAIL-random-f64-destructured-family;
                 // the test of `carriers_only`, FAIL-random-int-destructured-accepted). O(1).
                 let piece = Piece::Var(v.clone());
-                if self.carriers_only(&piece) {
+                if self.carriers_only(&piece) && !proto_flag("ZED_PROTO_NOFIX") {
                     let shown = self.show(&piece.ty());
                     self.sum_refused(&shown, span);
                     continue;
@@ -6219,6 +6221,68 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// It is written here, beside [`Self::lit_takes`], and not in `mod.rs` beside the classes,
     /// since a call from `mod.rs` into this file would close an import cycle between the two
     /// (step S.1f).
+    /// PROTOTYPE (STUDY-checker-kernel-one-rule): the obligation sweep. Every use recorded on
+    /// a class ([`Self::need`]) is an obligation; it is discharged when it is checked on the
+    /// class's type (`generalize`, `resolve_top_parts`, `powers_bound`) or moved into a
+    /// signature (`generalize`, the class's type its own variable). A use still on a class
+    /// whose type is known when the walk ends was never checked: this checks it now, so a
+    /// path that forgets one cannot accept the program. Only when the walk found no error:
+    /// a refused program needs no backstop, and the uses kept on purpose at
+    /// `resolve_top_parts` would otherwise report their errors twice.
+    /// Complexity: one pass over the classes and their uses, O(classes + uses).
+    pub(super) fn sweep_unchecked_uses(&mut self) {
+        let mut left = Vec::new();
+        let mut unresolved = 0usize;
+        for k in 0..self.classes.len() {
+            if self.find(k) != k || self.classes[k].uses.is_empty() {
+                continue;
+            }
+            match self.classes[k].resolved.clone() {
+                Some(t) if t != Ty::var(format!("${k}").into()) => {
+                    for (_, n) in &self.classes[k].uses {
+                        left.push((n.clone(), t.clone()));
+                    }
+                }
+                Some(_) => {}
+                None => unresolved += self.classes[k].uses.len(),
+            }
+        }
+        let clean = self.errors.is_empty() && self.info.errors.is_empty();
+        let before = self.errors.len() + self.info.errors.len();
+        if clean && !proto_flag("ZED_PROTO_NOSWEEP") {
+            for (n, t) in &left {
+                self.check_on(n, t, n.span, None);
+            }
+        }
+        if let Some(path) = std::env::var_os("ZED_PROTO_SWEEP_LOG") {
+            use std::io::Write;
+            let after = self.errors.len() + self.info.errors.len();
+            let kinds: Vec<String> = left
+                .iter()
+                .map(|(n, t)| {
+                    let k = format!("{:?}", n.kind);
+                    let name: String = k.chars().take_while(|c| c.is_alphanumeric()).collect();
+                    format!("{name}@{}", self.show(t))
+                })
+                .collect();
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = writeln!(
+                    f,
+                    "left={} unresolved={} clean={} new_errors={} kinds={:?}",
+                    left.len(),
+                    unresolved,
+                    clean,
+                    after - before,
+                    kinds
+                );
+            }
+        }
+    }
+
     fn resolve_top_parts(&mut self, from: usize) -> Vec<&'a Expr> {
         let mut unmet = Vec::new();
         let mut now = Vec::new();
@@ -6310,7 +6374,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             // the class has no type yet then.
             let (bounds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
                 .into_iter()
-                .partition(|(_, n)| matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_)));
+                .partition(|(_, n)| {
+                    !proto_flag("ZED_PROTO_NOFIX")
+                        && matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_))
+                });
             self.classes[r].uses = kept;
             now.extend(bounds.into_iter().map(|(_, n)| (n, ty.clone())));
         }
@@ -28086,4 +28153,10 @@ fn steps_text(path: &[PathStep]) -> String {
             PathStep::Index(k) => format!("[{k}]"),
         })
         .collect()
+}
+
+/// PROTOTYPE (STUDY-checker-kernel-one-rule): an experiment switch, set when the environment
+/// variable `name` is `1`.
+fn proto_flag(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| v == "1")
 }
