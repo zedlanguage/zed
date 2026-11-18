@@ -29,6 +29,7 @@ mod helpers;
 mod hull;
 mod if_shortcut;
 mod let_terms;
+mod listed_shortcuts;
 mod loops;
 mod named_test;
 mod pendants;

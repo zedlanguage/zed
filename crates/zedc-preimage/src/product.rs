@@ -173,6 +173,45 @@ impl fmt::Debug for IntsListed {
     }
 }
 
+/// Whether the shortcuts of [`IntsListed`] ([`Product::kept_by_listed`],
+/// [`Product::ints_all_listed`]) and the count in [`fills`] are taken: always, except on a
+/// thread inside `listed_shortcuts::off` (built with the feature `preimage-ref`), which the test that compares the two ways uses
+/// (TEST-ints-listed-shortcut-off).
+fn listed_shortcuts_on() -> bool {
+    #[cfg(feature = "preimage-ref")]
+    return listed_shortcuts::on();
+    #[cfg(not(feature = "preimage-ref"))]
+    true
+}
+
+/// A switch that turns off, on this thread, the shortcuts `listed_shortcuts_on` guards, so
+/// that a test can check each program both ways and require the same result
+/// (TEST-ints-listed-shortcut-off). Off, a reduction finds the finite set's members in the
+/// interval by `kept_in` and always meets the interval with their points (`fills` answers
+/// `false`), and a test lists a name's members (`listed`). Built only with the feature
+/// `preimage-ref`.
+#[cfg(feature = "preimage-ref")]
+#[doc(hidden)]
+pub mod listed_shortcuts {
+    use std::cell::Cell;
+
+    thread_local! {
+        static OFF: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// `f` run with the shortcuts off on this thread.
+    pub fn off<T>(f: impl FnOnce() -> T) -> T {
+        let was = OFF.replace(true);
+        let out = f();
+        OFF.set(was);
+        out
+    }
+
+    pub(super) fn on() -> bool {
+        !OFF.get()
+    }
+}
+
 /// Whether a product's reduction between its own domains ([`Product::reduce_domains`]) is
 /// known to change nothing: set when a reduction returns `false`, cleared by every
 /// [`DerefMut`](std::ops::DerefMut) of the product. Copied with the domains, and ignored by
@@ -449,6 +488,9 @@ impl Product {
     // the interval in `i0`, `O(d log p)` for the `d` paths a test changed. Given up: nothing;
     // otherwise the caller lists the members as before.
     fn ints_all_listed(&self) -> Option<IntervalSet> {
+        if !listed_shortcuts_on() {
+            return None;
+        }
         let (i0, v0) = self.listed.0.as_ref()?;
         let FiniteSet::Set(vs) = &self.cell.finite.element else {
             return None;
@@ -472,6 +514,9 @@ impl Product {
     // changed, and the count of `x`'s integers, `O(log p)` for the nodes the test made.
     // Given up: nothing; a product whose sets do not meet the conditions is walked as before.
     fn kept_by_listed(&self, vs: &TreapSet<Value>) -> Option<TreapSet<Value>> {
+        if !listed_shortcuts_on() {
+            return None;
+        }
         let (i0, v0) = self.listed.0.as_ref()?;
         let x = self.ints();
         if !vs.ptr_eq(v0) || !x.is_subset(i0) {
@@ -788,6 +833,9 @@ fn cut(vs: &TreapSet<Value>, lo: &End, hi: &End) -> TreapSet<Value> {
 // apart, each narrowing an interval of about `k` pieces, cost `O(k^2)`. Used: the count of
 // `x`'s integers, kept in its nodes, against `vs.len()`, for a set `vs` known to lie in `x`.
 fn fills(vs: &TreapSet<Value>, x: &IntervalSet, inside: bool) -> bool {
+    if !listed_shortcuts_on() {
+        return false;
+    }
     let (Some(Value::Int(f)), Some(Value::Int(l))) = (vs.first(), vs.last()) else {
         return false;
     };
