@@ -411,7 +411,10 @@ export function buildGraph(inp: Inputs): BoardState {
     const ls = last?.state;
     const lines = logs.get(r.id) ?? [];
     let s: NodeState = "unstarted";
-    if (r.title.startsWith("Done:")) s = "done";
+    // A done row's title starts with the word "Done": most write "Done: ...", some "Done (<agent>,
+    // <date>): ...", "Done by <agent> ..." or "Done in <commit> ..." (as the plan tool's conflicts.rs
+    // reads them; DAGVIEW-done-rows-active).
+    if (/^Done\b/.test(r.title)) s = "done";
     // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
     // "done" means its own attempt ended, and the item may still be rejected and repaired.
     else if ((ls === "fixed" || ls === "done") && !/:(impl|repair|verify|probe)#/.test(last!.by ?? last!.agent ?? "")) s = "done";

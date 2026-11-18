@@ -290,6 +290,19 @@ test("an item the ledger lists as open stays unstarted though the log mentions i
   assert.equal(by(buildNodes(inputs(log, led))).get("A")!.state, "unstarted");
 });
 
+test("a plan row whose title starts with the word Done is done, whatever follows it and whatever the ledger says", () => {
+  // DAGVIEW-done-rows-active: "Done (xr-cover1, 2026-11-18): ..." showed as active after a "started" line.
+  const led = '{"id":"A","state":"started"}\n';
+  for (const title of ["Done: x", "Done (xr-cover1, 2026-11-18): x", "Done by bundle-types7 (2026-11-17): x", "Done in 1ecadc5bf: x"]) {
+    const inp = inputs("", led);
+    inp.plan = inp.plan.map((r) => (r.id === "A" ? { ...r, title } : r));
+    assert.equal(by(buildNodes(inp)).get("A")!.state, "done", title);
+  }
+  const inp = inputs("", led);
+  inp.plan = inp.plan.map((r) => (r.id === "A" ? { ...r, title: "Doneness of the walk" } : r));
+  assert.equal(by(buildNodes(inp)).get("A")!.state, "active");
+});
+
 test("a waiting or deferred item is never ready, though everything it needs is done", () => {
   const met = '{"id":"A","state":"fixed"}\n{"id":"LR2","state":"fixed"}\n';
   for (const st of ["waiting", "deferred"]) {
