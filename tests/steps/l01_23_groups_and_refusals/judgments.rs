@@ -728,12 +728,21 @@ fn a_meet_with_a_union_of_functions_keeps_both_sides() {
             .unwrap()
             .is_empty()
     );
+    // One exact domain and values that share none: no function is of both sides, so the meet
+    // is empty, and within the overload of the two arrows, which an intersection of function
+    // types alone writes and which is not empty. Until FAIL-types-meet-fn-kept-not-within the
+    // meet was that overload, `(true, true)` here.
     assert_eq!(
         both(
             "(rat -> #b) & ((rat -> ()) | String)",
             "(rat -> #b) & (rat -> ())"
         ),
-        (true, true)
+        (true, false)
+    );
+    assert!(
+        parse_type("(rat -> #b) & ((rat -> ()) | String)")
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
         both(
@@ -2482,6 +2491,13 @@ fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
         "((int -> #a) -> rat) & (((int -> String) -> rat) | ())",
         "((int -> #a) -> rat) & (((int ->? String) -> rat) | ())",
         "((int -> #a) -> rat) & ((((int -> String) | (int ->? bool)) ->? rat) | ())",
+        // Two exact domains that differ: `int -> _` holds the function giving `#a` at each
+        // `int`, which `int -> String` and `int -> #a` hold not, so no function has both
+        // domains (DESIGN.md sec:type_language, "two exact arrows over different domains share
+        // no value"). Until FAIL-types-meet-fn-kept-not-within these two were controls here,
+        // kept as the overload of both arrows.
+        "((int -> _) -> rat) & (((int -> String) -> rat) | ())",
+        "((int -> #a) -> rat) & (((int -> _) -> rat) | ())",
     ]
     .into_iter()
     .map(|text| (text, parse_type(text).unwrap()))
@@ -2503,8 +2519,8 @@ fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
             // Results that share `#a`; a result of the unknown on either side; a union that
             // holds `int -> #a` beside a function type whose results share no value with it.
             "((int -> #a) -> rat) & (((int -> #a | String) ->? rat) | ())",
-            "((int -> _) -> rat) & (((int -> String) -> rat) | ())",
-            "((int -> #a) -> rat) & (((int -> _) -> rat) | ())",
+            "((int -> String) -> rat) & (((int -> _) ->? rat) | ())",
+            "((int -> _) -> rat) & (((int -> _) -> _) | ())",
             "((int -> #a) -> rat) & ((((int -> #a) | (f64 ->? String)) ->? rat) | ())",
         ]
         .into_iter()
@@ -2537,6 +2553,11 @@ fn a_meet_of_a_data_domain_holding_the_unknown_with_function_domains_is_empty() 
         "((int -> rat, bool) -> int) & (((int -> int) ->? int) | ())",
         // The other order.
         "((((int -> int) ->? _) | ()) & (#pair(bool, _) -> bool))",
+        // The same data on both sides, and values that share none: a function of both gives
+        // a `bool` and an `int` at each `#pair(bool, _)` (DESIGN.md sec:type_language, point
+        // (2) of "Relation to semantic subtyping"). Until FAIL-types-meet-fn-kept-not-within
+        // this was a control here, kept as the overload of both arrows.
+        "(#pair(bool, _) -> bool) & ((#pair(bool, _) ->? int) | ())",
     ]
     .into_iter()
     .map(|text| (text, parse_type(text).unwrap()))
@@ -2551,7 +2572,7 @@ fn a_meet_of_a_data_domain_holding_the_unknown_with_function_domains_is_empty() 
             "(_ ->? bool) & (((#b -> _) ->? _) | ())",
             "(#pair(bool, _) -> bool) & (((#_ | (#b -> _)) ->? _) | ())",
             "(_ -> bool) & ((_ ->? _) | ())",
-            "(#pair(bool, _) -> bool) & ((#pair(bool, _) ->? int) | ())",
+            "(#pair(bool, _) -> bool) & ((#pair(bool, _) ->? (bool | int)) | ())",
             "(#box(int -> rat) -> int) & (((#box(_) | (int -> int)) ->? int) | ())",
         ]
         .into_iter()
@@ -2602,6 +2623,148 @@ fn a_meet_of_functions_over_functions_of_results_sharing_no_value_is_within_each
     }
     if parse_type(shared).unwrap().is_empty() {
         wrong.push(format!("`{shared}` reads as `Never`"));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// The meet `a & (a | v)` is within `a` for each pair below, drawn as the parens test of
+/// l01_29 draws its types (`kernel_generated`, depth 2 and 3) and kept, before
+/// FAIL-types-meet-fn-kept-not-within, as an overload of arrows of both sides, a meet within
+/// neither, where the meet of two functions is empty or one side. The pairs cover: a domain of
+/// the unknown; a result `Never`; function domains holding the unknown; function types of two
+/// domain bounds `L .. U`; partial arrows met with partial arrows; values narrowed where one
+/// side's arrow takes all the other's keys; `#pair` data beside a function type; a function of
+/// no exact arrow met with several keyed functions; and a function proved to exist through
+/// its curried results. Controls: `a & v` is not `Never` where both sides hold a common
+/// function, and the meet is not within a function type over another domain.
+#[test]
+fn a_meet_of_functions_kept_before_is_within_each_side() {
+    use zedc::check::read::parse_type;
+    let pairs = [
+        (
+            "((#a) -> (#a)) ->? ((bool) -> (#b))",
+            "((()) ->? (#b)) .. (((()) ->? (#b)) | (((rat),))) -> ((f64) | (_))",
+        ),
+        (
+            "((_) .. ((_) | (#a)) -> (())) .. (((_) .. ((_) | (#a)) -> (())) | ((f64) .. ((f64) | (())) -> (f64))) -> (((#a),))",
+            "((bool) .. ((bool) & ((bool) | (f64))) -> (f64)) .. (((bool) .. ((bool) & ((bool) | (f64))) -> (f64)) | (#box((())))) -> (#box((f64)))",
+        ),
+        (
+            "((#a) ->? (rat)) -> ((#a) .. ((#a) | (#a)) -> (String))",
+            "((#a) ->? (#b)) .. (((#a) ->? (#b)) | (#box((rat)))) -> (_)",
+        ),
+        (
+            "((()) .. ((()) | (#b)) -> (#b)) .. (((()) .. ((()) | (#b)) -> (#b)) | ((#a) .. ((#a) | (bool)) -> (f64))) -> (_)",
+            "((#b) ->? (int)) .. (((#b) ->? (int)) | ((#a) -> (#b))) -> ((f64) ->? (rat))",
+        ),
+        ("((#b) ->? (bool)) ->? (())", "((bool) ->? (int)) ->? (int)"),
+        (
+            "((bool) ->? (f64)) ->? ((()) -> (int))",
+            "((int) ->? (f64)) ->? ((f64) .. ((f64) & ((f64) | (rat))) -> (#b))",
+        ),
+        (
+            "(#box((_))) .. ((#box((_))) & ((#box((_))) | (#pair((#a), (String))))) -> (((f64),))",
+            "((()) | (_)) .. (((()) | (_)) | (())) -> (int)",
+        ),
+        (
+            "(((#b), (_), (String))) .. ((((#b), (_), (String))) & ((((#b), (_), (String))) | (String))) -> (((()), (String)))",
+            "((f64) .. ((f64) | (_)) -> (bool)) .. (((f64) .. ((f64) | (_)) -> (bool)) | (#box((#a)))) -> ((f64) .. ((f64) | (bool)) -> (_))",
+        ),
+        (
+            "((()) ->? (_)) ->? (((f64), (#a), (())))",
+            "((int) ->? (rat)) ->? ((_) & (int))",
+        ),
+        (
+            "((()) .. ((()) | (f64)) -> (#b)) .. (((()) .. ((()) | (f64)) -> (#b)) | (#box((String)))) -> ((bool) | (int))",
+            "((f64) -> (String)) ->? ((_) & (()))",
+        ),
+        (
+            "((f64) .. ((f64) & ((f64) | (#a))) -> (int)) .. (((f64) .. ((f64) & ((f64) | (#a))) -> (int)) | ((String) -> (_))) -> (((f64), (())))",
+            "((f64) ->? (_)) .. (((f64) ->? (_)) | (#a)) -> (_)",
+        ),
+        (
+            "((f64) .. ((f64) | (f64)) -> (_)) ->? ((_) ->? (int))",
+            "((_) .. ((_) | (int)) -> (rat)) .. (((_) .. ((_) | (int)) -> (rat)) | ((rat) ->? (f64))) -> ((_) ->? (String))",
+        ),
+        (
+            "((f64) ->? (String)) ->? (String)",
+            "((()) ->? (#a)) ->? ((#b) .. ((#b) & ((#b) | (String))) -> (#a))",
+        ),
+        (
+            "(#pair((bool), (bool))) .. ((#pair((bool), (bool))) | ((#b) .. ((#b) & ((#b) | (bool))) -> (#a))) -> (_)",
+            "((#b) -> (String)) .. (((#b) -> (String)) | ((#a) | (_))) -> (#pair((#b), (f64)))",
+        ),
+        (
+            "((_) ->? (())) .. (((_) ->? (())) | (#pair((rat), (#b)))) -> ((bool) .. ((bool) & ((bool) | (#a))) -> (_))",
+            "((_) .. ((_) & ((_) | (f64))) -> (_)) -> ((_) ->? (rat))",
+        ),
+        (
+            "((rat) ->? (bool)) ->? (String)",
+            "((rat) .. ((rat) | (String)) -> (int)) -> (_)",
+        ),
+        (
+            "((rat) ->? (f64)) ->? ((#b) .. ((#b) | (int)) -> (#b))",
+            "((_) ->? (rat)) ->? (((bool), (f64), (bool)))",
+        ),
+        (
+            "((rat) .. ((rat) | (bool)) -> (bool)) ->? (#box((int)))",
+            "((rat) ->? (_)) ->? (())",
+        ),
+        (
+            "(((_) ->? (String)), (f64))",
+            "(((bool) .. ((bool) | (int)) -> (_)), ((String) | (_)))",
+        ),
+        (
+            "((()) .. ((()) | (String)) -> (int)) -> ((#b) .. ((#b) | (f64)) -> (#a))",
+            "((rat) ->? (#a)) -> ((#b) -> (#a))",
+        ),
+        (
+            "((String) .. ((String) & ((String) | (#b))) -> (String)) | ((_) ->? (#a))",
+            "((int) ->? (_)) .. (((int) ->? (_)) | (())) -> ((String) | (#a))",
+        ),
+        // The two draws named at the parens test's guard, written as there.
+        ("#pair(#b, _) -> f64", "_ -> ()"),
+        (
+            "rat ->? #pair(int, ())",
+            "(rat .. (rat | int) -> bool) -> ((),)",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (a, v) in pairs {
+        let (at, vt) = (parse_type(a).unwrap(), parse_type(v).unwrap());
+        let m = at.meet(&at.union(&vt));
+        if !m.subtype(&at) {
+            wrong.push(format!(
+                "`{a}` & (`{a}` | `{v}`) = `{m}` is not found within `{a}`"
+            ));
+        }
+        let mv = at.meet(&vt);
+        if !mv.subtype(&at) || !mv.subtype(&vt) {
+            wrong.push(format!(
+                "`{a}` & `{v}` = `{mv}` is not found within each side"
+            ));
+        }
+    }
+    // Controls: a meet holding a common function is not `Never`, nor within a function type
+    // over another domain.
+    for (text, other) in [
+        (
+            "((f64 -> int) -> (f64, ())) & ((f64 ->? _) -> (f64, ()))",
+            "(String -> int) -> (f64, ())",
+        ),
+        ("(#k -> #v | #w) & (#k ->? #v)", "#j -> #v"),
+        (
+            "(rat -> (_, f64, rat)) -> int",
+            "(int -> (_, f64, rat)) -> int",
+        ),
+    ] {
+        let (t, o) = (parse_type(text).unwrap(), parse_type(other).unwrap());
+        if t.is_empty() {
+            wrong.push(format!("`{text}` reads as `Never`"));
+        }
+        if t.subtype(&o) {
+            wrong.push(format!("`{text}` is found within `{other}`"));
+        }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }

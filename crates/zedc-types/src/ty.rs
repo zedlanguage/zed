@@ -13029,7 +13029,15 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
             };
             let ds = Domains::of(s, &mut approx);
             for (q, dq) in qs {
-                let m = match s == *q {
+                // Equal signatures have equal digests (`Hash for Sig` hashes the digest, and a
+                // set of functions relies on it), so unequal digests answer `==` at once.
+                // Complexity tradeoff: `==` alone walks the two signatures as deep as they
+                // agree, and a meet of functions over functions nested `n` deep, met again one
+                // level down at each level ([`Domains::keys_apart`]), walked O(n) at each level,
+                // O(n^2) in all (30.8 times the work at 8n). The digest is made once for each
+                // signature and kept ([`Sig::digest`]), so the test costs O(1) after the first.
+                let equal = s.digest() == q.digest() && s == *q;
+                let m = match equal {
                     true => Some(s.clone()),
                     false => Domains::meet(self, (s, &ds), (q, dq)).await.map(Arc::new),
                 };
@@ -16094,6 +16102,14 @@ struct Domains {
     /// [`Domains::kinds_apart`] and [`Domains::fns_apart`] for each pair of functions met, so
     /// made once for each function.
     held: Vec<Vec<(bool, bool)>>,
+    /// Whether its guarantee read from below holds only values of the guarantee: no
+    /// parameter type of an exact arrow holds a function type at any depth outside functions
+    /// ([`Domains::no_fn_type`]).
+    below_in: bool,
+    /// The union of the tuples of the parameter types of each exact arrow whose parameter
+    /// types each hold a value ([`Domains::witness`]), each read from above ([`Approx`]); none
+    /// where there is no such arrow. Read by [`Domains::shapes_apart`].
+    keyed_up: Option<KType>,
 }
 
 impl Domains {
@@ -16134,7 +16150,7 @@ impl Domains {
             (true, _, [a]) => Some(a.params.clone()),
             (true, ..) => None,
         };
-        let held = (s.arrows.iter().zip(&kernels))
+        let held: Vec<Vec<(bool, bool)>> = (s.arrows.iter().zip(&kernels))
             .map(|(a, ks)| match a.partial {
                 true => Vec::new(),
                 false => (a.params.iter().zip(ks))
@@ -16145,13 +16161,79 @@ impl Domains {
                     .collect(),
             })
             .collect();
+        let below_in = (s.arrows.iter())
+            .filter(|a| !a.partial)
+            .all(|a| a.params.iter().all(Domains::no_fn_type));
+        let keyed: Vec<KType> = (s.arrows.iter().zip(&kernels).zip(&held))
+            .filter(|((a, _), ws)| !a.partial && ws.iter().all(|&(f, d)| f || d))
+            .map(|((a, ks), _)| {
+                let ks = (a.params.iter().zip(ks))
+                    .map(|(p, k)| k.clone().unwrap_or_else(|| approx.of(p, true)));
+                KType::tuple(ks.collect())
+            })
+            .collect();
+        let keyed_up = (!keyed.is_empty()).then(|| KType::union_all(keyed));
         Domains {
             permission,
             guaranteed,
             within,
             exact,
             held,
+            below_in,
+            keyed_up,
         }
+    }
+
+    /// Whether `t` holds no function type or family at any depth outside functions (in its
+    /// rows' components and its payload shapes' items and fields).
+    fn no_fn_type(t: &Ty) -> bool {
+        let mut seen = HashSet::new();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if !t.fns.is_empty() {
+                return false;
+            }
+            for r in &t.tuples {
+                if seen.insert(r.node()) {
+                    stack.extend(r.iter());
+                }
+            }
+            for s in t.payload_shapes() {
+                if seen.insert(s.node()) {
+                    stack.extend(s.items.iter().chain(s.fields.values()));
+                }
+            }
+        }
+        true
+    }
+
+    /// A kernel type of exactly the values of `t`: its [`Ty::exact_kernel`], or, where that
+    /// gives none, as for a type holding `_` at some depth, its reads from above and from below
+    /// ([`Approx`]) where `t` holds no function type at any depth outside functions
+    /// ([`Domains::no_fn_type`]) and the two reads are equal. None else.
+    ///
+    /// Proof. `upper(t)` holds every value of `t` (the claim at [`Approx`]). With no function
+    /// type in `t`, `lower(t)` lies within `t`: by the same induction, a function in a value of
+    /// `lower(t)` comes only from a `_` it reads (a function type is read from below as a
+    /// function only through [`Domains::holds_fn`], and `t` has none; [`Ty::exact_kernel`]
+    /// gives no function), and `_` holds that function itself, so `v' = v`. So `lower(t) ⊆ t ⊆
+    /// upper(t)`, and where the two reads are equal (the kernel's order, equal only for one
+    /// structure, so for one set of values) each is `t`'s values exactly, at every instance of
+    /// its variables. Before (FAIL-types-meet-fn-kept-not-within), [`Domains::fns_apart`] read
+    /// only [`Ty::exact_kernel`], which gives none for `_`, so `((_ -> bool) ->? #a) & ((bool
+    /// -> rat) -> ())` was kept as both arrows, not `Never`.
+    // Complexity tradeoff: the two reads walk `t` once each through `approx`, which reads each
+    // type once for each polarity, and one comparison of two kernel types, linear in their
+    // size; the walk of [`Domains::no_fn_type`] is linear in `t` too.
+    fn kernel_of(t: &Ty, approx: &mut Approx) -> Option<KType> {
+        if let Some(k) = t.exact_kernel() {
+            return Some(k);
+        }
+        if !Domains::no_fn_type(t) {
+            return None;
+        }
+        let up = approx.of(t, true);
+        (approx.of(t, false) == up).then_some(up)
     }
 
     /// Whether `t` holds, at any depth outside functions (in its rows' components and its
@@ -16241,7 +16323,14 @@ impl Domains {
     /// types are exact, a value of it outside the permission read from above is outside the
     /// permission; where they are not, the guarantee is compared only with a permission that
     /// holds no value with a function in it ([`KType::function_part`] finds none), against
-    /// which the claim at [`Approx`] gives a value of the guarantee outside it.
+    /// which the claim at [`Approx`] gives a value of the guarantee outside it, or where no
+    /// parameter type of an exact arrow holds a function type at any depth outside functions
+    /// (`below_in`): then the guarantee read from below lies within the guarantee (the proof at
+    /// [`Domains::kernel_of`]: a function in a value read from below comes only from a `_`,
+    /// which holds it), so a value of it outside the permission read from above is a value of
+    /// the guarantee outside the permission. Before (FAIL-types-meet-fn-kept-not-within), a
+    /// guarantee holding `_` against a permission that takes a function was never compared,
+    /// and such meets were kept within neither side.
     // Complexity tradeoff: one comparison for each exact arrow, made first, cost O(a) kernel
     // comparisons against a permission of O(a) rows, O(a^2) (measured: 5.5 s for 2048 arrows
     // each side, 9 times that of 1024). Used: one comparison of the union of the guarantees,
@@ -16264,10 +16353,39 @@ impl Domains {
         let Some(g) = &self.guaranteed else {
             return false;
         };
-        if !self.exact && other.permission.function_part().is_some() {
+        if !self.exact && !self.below_in && other.permission.function_part().is_some() {
             return false;
         }
         g.subtype_verdict(&other.permission) == Verdict::Inhabited
+    }
+
+    /// Whether the keyed exact arrows of `self` (`keyed_up`) are each proved to take a value
+    /// outside the permission of `other`, by the shapes of the values alone: the kernel proves
+    /// the meet of both read from above empty. Then no function is of both.
+    ///
+    /// Proof. Let `a` be one of those arrows. Each of its parameter types holds a value with no
+    /// variable ([`Domains::witness`]), so their tuple `w` is in the domain of every function of
+    /// `self`'s signature, at every instance of its variables. `w` is in `a`'s tuple read from
+    /// above, which holds every value of the tuple of `a`'s parameter types (the claim at
+    /// [`Approx`]; a function is read there as every function), so in `keyed_up`. A function of
+    /// both signatures has `w` in its domain, so `w` is in `other`'s permission, so in its
+    /// read from above, `other.permission`. So `w` is in the meet of the two reads, which the
+    /// kernel proves empty ([`Verdict::Empty`] is a proof): no such function. This holds where
+    /// both sides hold functions inside tuples or payloads, which [`Domains::outside`] does
+    /// not compare: a tuple of two items holding a function is not one of three, nor a
+    /// payload, nor `()`. Before (FAIL-types-meet-fn-kept-not-within), `(((bool -> bool, f64
+    /// -> _)) -> String) & (((rat, #a -> int, (bool,))) -> String)` was kept as both arrows.
+    // Complexity tradeoff: naive, each keyed arrow's tuple met with the permission, O(a)
+    // kernel meets of a union of O(a) rows, O(a^2). Used: one meet of the union of the keyed
+    // tuples with the permission, whose cost is that of the kernel's meet of two unions of
+    // O(a) rows, the reads made once for each function by [`Domains::of`] through the
+    // [`Approx`] shared by the meet. Given up: where only some keyed arrows are apart from the
+    // permission, the union's meet is not empty and the meet is kept, which is sound.
+    fn shapes_apart(&self, other: &Domains) -> bool {
+        let Some(k) = &self.keyed_up else {
+            return false;
+        };
+        (k & &other.permission).verdict() == Verdict::Empty
     }
 
     /// Whether a value of the guarantee of `s` is proved outside the permission of `q`, two
@@ -16284,21 +16402,25 @@ impl Domains {
     /// witnesses hold no variable, so this holds at every instance of `s`'s variables. It is in
     /// the permission of `q` only if some arrow of `q` takes `w` at `j`. Where `w` is a
     /// function: a parameter type takes a function only through a function or family of its
-    /// own, a variable, the unknown, or a morphism in its set, which [`KType::function_part`]
-    /// finds (it finds every part that may hold one); a type with none takes no function.
+    /// own, a variable, the unknown, or a morphism in its set, which [`KType::functions_leaf`]
+    /// rules out where it answers `Some(false)` (the set holds no function; a function inside
+    /// one of its tuples or payloads is not itself a function); a type with none takes no
+    /// function. Before (FAIL-types-meet-fn-kept-not-within), the set was read through
+    /// [`KType::function_part`], which finds a function at any depth, so a parameter type
+    /// holding `#pair(bool, bool)`, whose payload the kernel reads as possibly holding one,
+    /// was read as taking functions.
     /// Where `w` is data (a scalar, an atom or a tuple, whatever it holds inside): a type whose
     /// set the kernel proves empty ([`KType::is_empty`], whose yes is a proof) and which has no
     /// tuple, variable or unknown takes only functions, and no function is data. So no domain
     /// is within `q`'s permission and holds `s`'s guarantee, and no function is of both.
     // Complexity tradeoff: naive, each exact arrow of `s` against each arrow of `q`, O(a^2)
-    // pairs. Used: what each parameter of `q` takes is read once over its arrows, O(a) walks of
-    // the parameter types ([`KType::function_part`] is linear in a type), then each exact
+    // pairs. Used: what each parameter of `q` takes is read once over its arrows, O(a) reads of
+    // the parameter types ([`KType::functions_leaf`] is O(1)), then each exact
     // arrow of `s` once, reading the witnesses [`Domains::of`] made once for `s`
     // (`Domains::held`), not one kernel verdict for each parameter type of each pair as before
     // (FAIL-types-meet-fn-fn-domains).
-    // Given up: a function type whose arrows are not one exact arrow or all partial is not
-    // proved inhabited ([`Domains::inhabited_fn`]), and a parameter type of `q` holding a tuple
-    // part that may hold a function is read as taking functions.
+    // Given up: a function type [`Domains::inhabited_fn`] does not prove inhabited is not
+    // a witness.
     fn kinds_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
         let n = q.params.len();
         let open = |t: &Ty| !t.vars.is_empty() || t.dynamic;
@@ -16306,7 +16428,7 @@ impl Domains {
             .map(|j| {
                 (q.arrows.iter()).all(|a| {
                     let t = &a.params[j];
-                    t.fns.is_empty() && !open(t) && t.set.function_part().is_none()
+                    t.fns.is_empty() && !open(t) && t.set.functions_leaf() == Some(false)
                 })
             })
             .collect();
@@ -16361,34 +16483,49 @@ impl Domains {
     ///
     /// Proof. Let `a` be an exact arrow of `s` whose parameter types each hold a value
     /// ([`Domains::witness`]), and `j` a parameter where `a`'s type holds a function type `g`
-    /// of one parameter and one arrow, exact, `A -> R`, with no variable, read through its
-    /// arrows alone ([`Domains::by_arrows`] with `built`, so the function below is of `g`), `A`
-    /// with a kernel type
-    /// ([`Ty::exact_kernel`]: its values exactly, with no variable, function or `_`) and `R`
-    /// holding a value `r` ([`Domains::inhabited_fn`]). Let `w` be the function giving `r` at
-    /// each key of `A`, and no key else: its domain is `A`, so it is of `g`. The tuple of the
+    /// of one parameter with no variable, read through its arrows alone ([`Domains::by_arrows`]
+    /// with `built`, so a function with `g`'s parameter whose domain and values its arrows
+    /// allow is of `g`). The function `w` built from `g` is one of two. (i) Where every arrow
+    /// of `g` is partial, the function of no key: its domain, empty, holds each exact arrow's
+    /// parameter type (there is none) and lies within every union, and it has no value to
+    /// check, so it is of `g`; its `A` is empty. (ii) Where the meet `R` of the value types of
+    /// all of `g`'s arrows, each with a kernel type of its values exactly
+    /// ([`Domains::kernel_of`]), holds a value `r` (the kernel answering `Inhabited`), and `A`
+    /// is the union of the parameter types of `g`'s exact arrows, or of all its arrows where
+    /// every one is partial, each with such a kernel type: `w` gives `r` at each key of `A`,
+    /// and no key else. Its domain `A` holds each exact arrow's parameter type and lies within
+    /// the union of all of them, and at a key in an arrow's parameter type its value `r` is in
+    /// that arrow's value type, so in its result; so `w` is of `g`. The tuple of the
     /// witnesses, `w` at `j`, is in `a`'s parameter types, so in the domain of every function of
     /// `s`, at every instance of `s`'s variables. It is in the permission of `q` only if some
     /// arrow `b` of `q` takes `w` at `j`, through the type `u` there. Where `u` has no
-    /// variable, no `_` and no part of its set that may hold a function
-    /// ([`KType::function_part`], which finds every one), it takes `w` only through a function
+    /// variable, no `_` and a set that holds no function ([`KType::functions_leaf`] answering
+    /// `Some(false)`: a function inside a tuple or payload of the set is not itself a function,
+    /// so `(#b -> #a) | #pair(bool, bool)` qualifies), it takes `w` only through a function
     /// type `h` of its own. Where `h` has one parameter with no default or declared range,
     /// every function of `h` has a domain within the union of `h`'s parameter types and
     /// holding each exact arrow's ([`Domains::by_arrows`]); so `h` does not hold `w`
     /// where `A` holds a value outside that union `U_h`, or the union `G_h` of the exact
     /// arrows' parameter types holds a value outside `A`, each a value the kernel builds and
     /// checks ([`KType::subtype_verdict`] answering `Inhabited`), with `U_h` and `G_h` given
-    /// kernel types too. Where every such `h` of every arrow of `q` is so, no function is of
+    /// kernel types of their values exactly too ([`Domains::kernel_of`]). Where every such `h` of every arrow of `q` is so, no function is of
     /// both signatures, since its domain would hold the tuple and lie within `q`'s permission.
     ///
     /// The `w` of each `a` and `g` are compared at once. A value of the union of their `A`s
     /// outside the union of every `U_h` is in some `A` and outside each `U_h`, so that `A`'s
     /// `w` is in no `h`. Where `q` takes one function type `h` at `j`, a value of `G_h` outside
-    /// the meet of the `A`s is outside some `A`, whose `w` is not in `h`.
+    /// the meet of the `A`s is outside some `A`, whose `w` is not in `h`. Where some `w` is the
+    /// function of no key (i) and every `h` has an exact arrow whose parameter type holds a
+    /// key (the kernel answering `Inhabited`), that `w`'s domain holds no key of `G_h`, so it
+    /// is in no `h`. Before, `((f64 -> int) -> (f64, ())) & ((f64 ->? _) -> (f64, ()))`, where
+    /// the second side takes the function of no key and the first takes two function types
+    /// that each need a key of `f64` or `String`, was kept as both arrows, within neither side
+    /// (FAIL-types-meet-fn-kept-not-within).
     ///
-    /// By results. Let `A` hold a key and `R` have a kernel type, and let `r` be a value of `R`
-    /// outside the union `V` of the results of every arrow `b` of every `h`, each with a
-    /// kernel type (a partial arrow's lookup type, which holds its value type). Where `w`'s
+    /// By results. Let `A` hold a key and `R` have a kernel type of its values exactly, and let
+    /// `r` be a value of `R` outside the union `V` of the results of every arrow `b` of every
+    /// `h`, each with such a kernel type (a partial arrow's lookup type, which holds its value
+    /// type). Where `w`'s
     /// domain `A` lies within `U_h`, a key of `A` is in some `b`'s parameter type, and `w`'s
     /// value there, `r`, is not in `b`'s result; where it does not, `w`'s domain is not
     /// permitted. So `w` is in no `h`. A value of the union of such `R`s outside `V` is in some
@@ -16400,23 +16537,49 @@ impl Domains {
     // F222's naive version was (5.5 s at 2048 arrows). Used: at each parameter, the `A`s and
     // the parameter types of `q`'s function types each joined into one kernel type, and one
     // comparison of the unions, then one of `G_h` with the meet of the `A`s, then one of the
-    // `R`s with the results, each `A` given one verdict; O(a) types read and three
-    // comparisons of unions of O(a) rows (COMPLEXITY.md F234). Given up: a function
-    // type whose parameter type holds a function, a variable or `_` (no kernel type for `A`,
-    // `U_h` or `G_h`), one of several arrows, a parameter type of `q` that may take a function
-    // another way, a value outside one `U_h` and another `w` outside another, and a `G_h`
-    // against the `A`s where `q` takes several function types: none is compared, and the meet
-    // is kept, which is sound, only less narrow.
+    // `R`s with the results, each `A` given one verdict, and one verdict for each `G_h`; O(a)
+    // types read and three comparisons of unions of O(a) rows (COMPLEXITY.md F234); each
+    // built `w` reads its `g`'s arrows once, a meet and a union of O(a) kernel types;
+    // [`Domains::kernel_of`] reads each type once through one [`Approx`] for the call, linear
+    // in the types read. Given up: a function type whose parameter type holds a function type
+    // or a payload shape with fields (no kernel type for `A`, `U_h` or `G_h`), a `g` whose
+    // value types share no value the kernel finds, a parameter type of `q` that may take a
+    // function another way, a value outside one `U_h` and another `w` outside another, and a
+    // `G_h` holding a key against the `A`s where `q` takes several function types and no `w`
+    // is the function of no key: none is compared, and the meet is kept, which is sound, only
+    // less narrow.
     fn fns_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
-        let closed = |u: &Ty| u.vars.is_empty() && !u.dynamic && u.set.function_part().is_none();
+        let closed =
+            |u: &Ty| u.vars.is_empty() && !u.dynamic && u.set.functions_leaf() == Some(false);
+        let mut approx = Approx::default();
         // The kernel type of a function of `g` to build, `A`, where `g` is as in the proof.
-        let built = |g: &Sig| match (g.params.as_slice(), g.arrows.as_slice()) {
-            ([p], [arrow]) if p.default.is_none() && p.range.is_none() && !arrow.partial => {
-                let ok =
-                    Domains::by_arrows(g, true) && g.bits().is_empty() && Domains::inhabited_fn(g);
-                ok.then(|| arrow.params[0].exact_kernel()).flatten()
+        // Each is its domain `A` and, where it has a kernel type, the type `R` of its values.
+        let built = |g: &Sig, approx: &mut Approx| -> Vec<(KType, Option<KType>)> {
+            if !Domains::by_arrows(g, true) || !g.holds_no_var() {
+                return Vec::new();
             }
-            _ => None,
+            let partial = g.arrows.iter().all(|b| b.partial);
+            let mut out = Vec::new();
+            if partial {
+                out.push((KType::empty(), None));
+            }
+            let values: Option<Vec<KType>> = (g.arrows.iter())
+                .map(|b| Domains::kernel_of(&b.value(), approx))
+                .collect();
+            let Some(r) = values.map(KType::meet_all) else {
+                return out;
+            };
+            if r.verdict() != Verdict::Inhabited {
+                return out;
+            }
+            let domain: Option<Vec<KType>> = (g.arrows.iter())
+                .filter(|b| partial || !b.partial)
+                .map(|b| Domains::kernel_of(&b.params[0], approx))
+                .collect();
+            if let Some(a) = domain {
+                out.push((KType::union_all(a), Some(r)));
+            }
+            out
         };
         (0..q.params.len()).any(|j| {
             // What `q` takes at `j`: function types only, each read from above.
@@ -16431,23 +16594,29 @@ impl Domains {
             // The results of every arrow of every `h`, each with a kernel type; `None` where
             // one has none.
             let mut results = Some(Vec::new());
+            // Whether each `h`'s guarantee holds a key.
+            let mut every_keyed = true;
             for h in &hs {
                 if !Domains::by_arrows(h, false) {
                     return false;
                 }
+                let mut keyed = false;
                 for b in &h.arrows {
-                    let Some(k) = b.params[0].exact_kernel() else {
+                    let Some(k) = Domains::kernel_of(&b.params[0], &mut approx) else {
                         return false;
                     };
                     if !b.partial {
+                        keyed = keyed || k.verdict() == Verdict::Inhabited;
                         guarantees.push(k.clone());
                     }
                     permits.push(k);
-                    results = results.zip(b.result.exact_kernel()).map(|(mut v, r)| {
+                    let r = Domains::kernel_of(&b.result, &mut approx);
+                    results = results.zip(r).map(|(mut v, r)| {
                         v.push(r);
                         v
                     });
                 }
+                every_keyed = every_keyed && keyed;
             }
             // The functions built at `j`, from the exact arrows of `s` whose parameter types
             // each hold a value: each one's `A`, and its `R` where it has a kernel type.
@@ -16455,7 +16624,7 @@ impl Domains {
                 .filter(|(a, _)| !a.partial && a.params.len() > j)
                 .flat_map(|(a, ws)| {
                     let ks: Vec<_> = (a.params[j].fns.iter())
-                        .filter_map(|g| built(g).map(|k| (k, g.arrows[0].result.exact_kernel())))
+                        .flat_map(|g| built(g, &mut approx))
                         .collect();
                     let held = !ks.is_empty() && ws.iter().all(|&(f, d)| f || d);
                     if held { ks } else { Vec::new() }
@@ -16472,7 +16641,13 @@ impl Domains {
                     .filter(|(k, _)| k.verdict() == Verdict::Inhabited)
                     .filter_map(|(_, r)| r.clone())
             };
-            outside(KType::union_all(doms()), KType::union_all(permits))
+            // The function of no key, built where some `g` has only partial arrows, is in no
+            // `h` whose guarantee holds a key.
+            let none_built = built_at_j
+                .iter()
+                .any(|(k, _)| k.verdict() == Verdict::Empty);
+            (none_built && every_keyed)
+                || outside(KType::union_all(doms()), KType::union_all(permits))
                 || (hs.len() == 1
                     && !guarantees.is_empty()
                     && outside(KType::union_all(guarantees), KType::meet_all(doms())))
@@ -16481,6 +16656,111 @@ impl Domains {
                         && outside(KType::union_all(values()), KType::union_all(rs))
                 })
         })
+    }
+
+    /// Whether a function of both `s` and `q`, two signatures of the same parameters, is
+    /// proved to have a key outside `q`'s permission: the first exact arrow of `s` whose
+    /// parameter types each hold a value ([`Domains::witness`]) has a parameter type whose
+    /// meet with `q`'s `within` there is proved empty ([`Ty::is_empty`]). This decides
+    /// parameter types [`Domains::outside`], [`Domains::shapes_apart`] and
+    /// [`Domains::fns_apart`] read only through kernel types, which a function over a function
+    /// domain has none of: the meet of the two parameter types is a meet of functions again,
+    /// decided by these same tests one level down.
+    ///
+    /// Proof. Let `w` be the tuple of the arrow's witnesses, values with no variable, in `s`'s
+    /// guarantee at every instance of its variables. A function of both has `w` in its domain,
+    /// which lies within `q`'s permission, the product of `within` ([`Domains::of`]), so `w_j`
+    /// is in both the parameter type `p_j` and `within_j`. Where neither holds a variable,
+    /// [`Ty::meet`] leaves out only what it proves shares no value, so the meet holds `w_j`
+    /// and is not empty. So where it is proved empty, no function is of both. Before
+    /// (FAIL-types-meet-fn-kept-not-within), `(((int -> String) -> _) -> String) & ((((()) ->
+    /// String) -> (#b, f64)) -> String)` was kept as both arrows, within neither side.
+    // Complexity tradeoff: naive, each exact arrow of `s` against `within`, O(a) meets of a
+    // type with a union of O(a) types, O(a^2). Used: the first keyed exact arrow only, one
+    // meet for each parameter, each of one type with a union of O(a) types, each meet made
+    // once by `pairs` and frames of its own on the walk's stack ([`Pairs::alone`]), so a
+    // function over functions nested `n` deep costs one meet at each level. A parameter type
+    // and `within` that hold more than one function type between them to pair are not met:
+    // [`Pairs::fns_met`] tries each pair of one parameter list, so a parameter type holding m
+    // function types met with a `within` of 2m was O(m^2), 0.33 s to 6.5 s from m = 32 to 256
+    // where the meet before this check took 0.24 to 6.3 ms (2026-11-18; TYPES-meet-fns-
+    // indexed). Given up: a key outside the permission found only from another exact arrow, a
+    // parameter type holding a variable, and these: not compared, and the meet is kept, which
+    // is sound.
+    async fn keys_apart<'m>(
+        pairs: &'m Pairs<'m, (MeetAt, MeetAt), Ty>,
+        (s, ds): (&Sig, &Domains),
+        dq: &Domains,
+    ) -> bool {
+        let Some(within) = &dq.within else {
+            return false;
+        };
+        let keyed = (s.arrows.iter().zip(&ds.held))
+            .find(|(a, ws)| !a.partial && ws.iter().all(|&(f, d)| f || d));
+        let Some((a, _)) = keyed else {
+            return false;
+        };
+        for (p, u) in a.params.iter().zip(within) {
+            if p.holds_vars() || u.holds_vars() || p.fns.len() * u.fns.len() > 1 {
+                continue;
+            }
+            if pairs.alone(p.clone(), u.clone()).await.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether a function of both `s` and `q`, two signatures of the same parameters, is
+    /// proved to have no value at a key it must hold: an exact arrow `A -> R` of `s` whose
+    /// parameter types each hold a value ([`Domains::witness`]) and whose result `R` shares no
+    /// value with the value types of all of `q`'s arrows.
+    ///
+    /// Proof. Both are read through their arrows alone ([`Domains::by_arrows`]: one parameter
+    /// with no default or declared range) and hold no variable. Let `f` be of both and `x` a
+    /// key in `A`, which holds one; `x` is in `f`'s domain (`s`'s guarantee), which lies within
+    /// `q`'s permission, the union of its arrows' parameter types, so some arrow `b` of `q` has
+    /// `x` in its parameter type, and `f(x)` is in `b`'s value type ([`Arrow::value`]) and in
+    /// `R`. So `R` and the union `V` of `q`'s value types share `f(x)`. Where [`Ty::meet`] of
+    /// the union of such `R`s with `V` is proved empty ([`Ty::is_empty`]; the meet leaves out
+    /// only what it proves shares no value, neither side holding a variable), no `R` shares a
+    /// value with `V`, and no function is of both. A family's keys, hull or density only
+    /// narrow its values or domain, so they leave this true. Before
+    /// (FAIL-types-meet-fn-kept-not-within), `((String | #a) ->? Never) & (String -> #box(bool))`
+    /// was kept as both arrows, within neither side, though no function gives a value at
+    /// `String` and none there.
+    // Complexity tradeoff: naive, each exact arrow of `s` against each arrow of `q`, O(a^2)
+    // meets. Used: the results of `s`'s exact arrows joined into one union, and the value
+    // types of `q`'s arrows into another, and one meet of the two, O(a) unions and one meet of
+    // types of size O(a). Two unions that hold more than one function type between them to
+    // pair are not met: [`Pairs::fns_met`] tries each pair of one parameter list, so m results
+    // `#ki -> int` met with m values `#ji -> int` took 0.19 s, 0.72 s and 5.1 s at m = 64, 128
+    // and 256, where the meet before this check took 5.6 to 24.5 ms (2026-11-18;
+    // TYPES-meet-fns-indexed). Given up: a result that shares no value with `V` beside another
+    // that does, a result that shares values only with arrows over keys `A` does not hold, and
+    // these: not compared, and the meet is kept, which is sound.
+    async fn results_apart<'m>(
+        pairs: &'m Pairs<'m, (MeetAt, MeetAt), Ty>,
+        (s, ds): (&Sig, &Domains),
+        q: &Sig,
+    ) -> bool {
+        let read = |g: &Sig| Domains::by_arrows(g, false) && g.holds_no_var();
+        if !read(s) || !read(q) {
+            return false;
+        }
+        let rs: Vec<&Ty> = (s.arrows.iter().zip(&ds.held))
+            .filter(|(a, ws)| !a.partial && ws.iter().all(|&(f, d)| f || d))
+            .map(|(a, _)| &a.result)
+            .collect();
+        if rs.is_empty() {
+            return false;
+        }
+        let vs: Vec<Ty> = q.arrows.iter().map(|b| b.value().into_owned()).collect();
+        let (r, v) = (Ty::union_all(rs), Ty::union_all(&vs));
+        if r.fns.len() * v.fns.len() > 1 {
+            return false;
+        }
+        pairs.alone(r, v).await.is_empty()
     }
 
     /// Whether `t` is proved to hold a function, and whether it is proved to hold data (a
@@ -16516,26 +16796,85 @@ impl Domains {
     /// Whether `t` is proved to hold a function with no variable: a function of a signature of
     /// its own with no variable that [`Domains::inhabited_fn`] proves inhabited.
     fn holds_fn(t: &Ty) -> bool {
-        (t.fns.iter()).any(|g| !g.data && g.bits().is_empty() && Domains::inhabited_fn(g))
+        (t.fns.iter()).any(|g| !g.data && g.holds_no_var() && Domains::inhabited_fn(g))
     }
 
     /// Whether the function type `g` is proved to hold a function: where each arrow is partial,
     /// the function of no key, whose domain is empty, so within each permission, and which
-    /// has no value to bound; where it has one arrow, exact, `P -> R`, and `R` holds a value
-    /// `r` (the unknown, or one the kernel builds), the function giving `r` at each key of
-    /// `P`. Other signatures are not claimed: arrows of overlapping domains may bound one key
-    /// by results that share no value.
+    /// has no value to bound; else, where some value `r` is in the value type of every arrow
+    /// ([`Arrow::value`]; the unknown in all of them, or a value the kernel builds in the meet
+    /// of those that are not the unknown), the function giving `r` at each key of the union
+    /// `G` of the exact arrows' parameter types, and no key else. Its domain `G` holds each
+    /// exact arrow's parameter types and lies within the union of all of them, and its value
+    /// at each key is in the value type of each arrow over that key. So `L .. U -> V`, the
+    /// arrows `L -> V` and `U ->? V`, holds a function where `V` holds a value. Other
+    /// signatures are not claimed: arrows of overlapping domains may bound one key by value
+    /// types that share no value, and a value shared by some arrows only is not enough.
+    /// Before (FAIL-types-meet-fn-kept-not-within), only one exact arrow was claimed, so
+    /// `(Never ->? Never) & ((bool .. (rat | bool) -> rat) -> int)` was kept as both arrows,
+    /// not `Never`.
+    ///
+    /// Where one value type alone is not the unknown (or all that are not are equal types)
+    /// and has no kernel type, it holds a value
+    /// `r` in two more cases. (a) It holds no function type at any depth outside functions
+    /// ([`Domains::no_fn_type`]) and its read from below ([`Approx`]) holds a value the kernel
+    /// builds: that read lies within the type (the proof at [`Domains::kernel_of`]). (b) It
+    /// is function types alone (no variable, unknown, set or row), one of which, with no
+    /// variable, holds a function by this same test. Before (FAIL-types-meet-fn-kept-not-within),
+    /// `(rat -> (_, f64, rat))` and `(#a -> _ -> bool)` were not claimed, so their meets with
+    /// `Never ->? Never` were kept, not `Never`.
+    // Complexity tradeoff: one kernel meet of the value types of `g`'s arrows and one verdict,
+    // linear in their size, where one exact arrow cost one verdict on its result. Case (b)
+    // follows function types in results on a work list, each signature entered once by its
+    // address, not by recursion, so a function type curried `n` deep costs O(n) and no more of
+    // the thread's stack than one level (the rule at [`Pairs::alone`]); case (a) reads the one
+    // value type once from below, linear in its size. Given up: a union of a function type
+    // and data among the value types, and several value types without kernel types: not
+    // claimed, which only leaves a meet kept.
     fn inhabited_fn(g: &Sig) -> bool {
-        let r = |t: &Ty| {
-            t.dynamic
-                || t.exact_kernel()
-                    .is_some_and(|k| k.verdict() == Verdict::Inhabited)
-        };
-        match g.arrows.as_slice() {
-            [] => false,
-            [a] if !a.partial => r(&a.result),
-            arrows => arrows.iter().all(|a| a.partial),
+        let mut seen: HashSet<*const Sig> = HashSet::new();
+        let mut work = vec![g];
+        while let Some(g) = work.pop() {
+            if !seen.insert(std::ptr::from_ref(g)) || g.arrows.is_empty() {
+                continue;
+            }
+            if g.arrows.iter().all(|a| a.partial) {
+                return true;
+            }
+            let values: Vec<_> = (g.arrows.iter().map(Arrow::value))
+                .filter(|v| !v.dynamic)
+                .collect();
+            let kernels: Option<Vec<KType>> = values.iter().map(|v| v.exact_kernel()).collect();
+            if let Some(ks) = kernels {
+                if ks.is_empty() || KType::meet_all(ks).verdict() == Verdict::Inhabited {
+                    return true;
+                }
+                continue;
+            }
+            // Value types equal as types (`==` compares their structure) are one set of values,
+            // as in `L .. U -> V`, whose two arrows share `V`.
+            let Some(v) = values.first().filter(|v| values.iter().all(|w| w == *v)) else {
+                continue;
+            };
+            if Domains::no_fn_type(v) {
+                let below = Approx::default().of(v, false);
+                if below.verdict() == Verdict::Inhabited {
+                    return true;
+                }
+                continue;
+            }
+            // The function types of that value type, read from the arrow's result, which
+            // differs from it only by the `#notFound` of a partial arrow's miss, in its set.
+            let fns_alone = v.vars.is_empty() && v.tuples.is_empty() && v.set.is_empty();
+            let Some(b) = g.arrows.iter().find(|b| !b.value().dynamic) else {
+                continue;
+            };
+            if fns_alone {
+                let fns = b.result.fns.iter();
+                work.extend(fns.filter(|h| !h.data && h.holds_no_var()).map(|h| &**h));
+            }
         }
+        false
     }
 
     /// The meet of `s` and `q`, two signatures of the same parameters with what their arrows
@@ -16582,10 +16921,16 @@ impl Domains {
     ) -> Option<Sig> {
         if ds.outside(dq)
             || dq.outside(ds)
+            || ds.shapes_apart(dq)
+            || dq.shapes_apart(ds)
             || Domains::kinds_apart((s, ds), q)
             || Domains::kinds_apart((q, dq), s)
             || Domains::fns_apart((s, ds), q)
             || Domains::fns_apart((q, dq), s)
+            || Domains::results_apart(pairs, (s, ds), q).await
+            || Domains::results_apart(pairs, (q, dq), s).await
+            || Domains::keys_apart(pairs, (s, ds), dq).await
+            || Domains::keys_apart(pairs, (q, dq), ds).await
         {
             return None;
         }
@@ -16602,11 +16947,109 @@ impl Domains {
                 // A `within` holding the unknown meets plain types only ([`Domains::plain`]);
                 // a parameter type left as it is still holds its meet with `within`, so the
                 // arrow bounds every value it bounded, less narrowly.
+                // One that is not plain and holds no variable is met all the same, and takes
+                // the meet where the meet is proved empty ([`Ty::is_empty`], and [`Ty::meet`]
+                // leaves out only what it proves shares no value, both sides free of
+                // variables): the arrow then bounds no key of a function of both, whose domain
+                // lies within `within`, so the meet's proof below holds with it. Before
+                // (FAIL-types-meet-fn-kept-not-within), `((String -> int) ->? String) & ((int
+                // -> int) ->? #b)` kept both arrows, within neither side, though `(String ->
+                // int) & (int -> int)` is `Never`. It takes the meet too where the meet is
+                // proved within the parameter type ([`Ty::subtype`], every value with no
+                // variable bound): the meet holds every key of both types, so the arrow still
+                // bounds every key of a function of both it bounded, and it bounds no key
+                // outside its own type, so it lies within its side.
+                // Complexity tradeoff: naive, every such parameter type met with `within`, whose
+                // functions are paired with its own by [`Pairs::fns_met`], one [`Domains::meet`]
+                // for each pair: for a side of `a` partial arrows over function types met with
+                // one whose `within` is a union of `a` function types, O(a^2) (3.9 times the
+                // time for each doubling of `a` in
+                // `a_meet_of_overloads_over_function_domains_scales`, which then took over 60 s at
+                // a = 2048 against 0.33 s before). Used: the meet where the two hold at most
+                // one function type between them to pair (`p.fns.len() * u.fns.len() <= 1`, the
+                // case of one pair as at [`Pairs::meets`]), one [`Domains::meet`] for each
+                // arrow, O(a) in all, and one comparison with the type. Given up: a parameter
+                // type and `within` that hold more than one function type between them to pair,
+                // left as they are, which is sound (each arrow bounds every key it bounded), only
+                // not within each side. Rejected, each measured from m = 32 to 256 function types
+                // a side (2026-11-18): narrowing such a type where it is the only one of its side,
+                // 56 ms to 5.0 s for one partial arrow over a union of m met with another (0.1 to
+                // 0.3 ms before); taking `within` where [`Ty::subtype`] proves it within the type,
+                // 129 ms to 20.3 s (0.2 to 6.3 ms before), for a partial arrow over a union of 2m
+                // met with an exact arrow over m of them. The first pays [`Pairs::fns_met`]'s
+                // pairing of each function type of one side with each of the other's, O(m^2);
+                // where the second's time goes in [`Ty::subtype`] was not profiled
+                // (TYPES-meet-fns-indexed).
                 for (p, u) in a.params.iter_mut().zip(within) {
-                    if exact || Domains::plain(p) {
-                        *p = pairs.alone(p.clone(), u.clone()).await;
+                    let plain = exact || Domains::plain(p);
+                    if !plain && (p.holds_vars() || p.fns.len() * u.fns.len() > 1) {
+                        continue;
+                    }
+                    let met = pairs.alone(p.clone(), u.clone()).await;
+                    if plain || met.is_empty() || met.subtype(p) {
+                        *p = met;
                     }
                 }
+            }
+        }
+        // A side whose arrows are all partial, each narrowed to a parameter type proved empty
+        // ([`Ty::is_empty`]), permits no key a function of both may have: each arrow's types
+        // hold its keys within the other side's permission (narrowed or not, as [`Ty::meet`]
+        // holds every value of the meet), and there are none, so a function of both has an
+        // empty domain. Where the other side has an exact arrow whose parameter types each
+        // hold a value ([`Domains::witness`]), every function of it has a key, so none is of
+        // both. Before (FAIL-types-meet-fn-kept-not-within), the emptiness was found only
+        // here, after the tests above, and such meets of disjoint domains were kept as both
+        // arrows. Cost: one pass over the arrows, reading what each test above already made.
+        let (own, other) = m.arrows.split_at(n);
+        let emptied = |arrows: &[Arrow]| {
+            !arrows.is_empty()
+                && (arrows.iter()).all(|a| a.partial && a.params.iter().any(Ty::is_empty))
+        };
+        let keyed = |g: &Sig, d: &Domains| {
+            (g.arrows.iter().zip(&d.held))
+                .any(|(a, ws)| !a.partial && ws.iter().all(|&(f, d)| f || d))
+        };
+        if (emptied(own) && keyed(q, dq)) || (emptied(other) && keyed(s, ds)) {
+            return None;
+        }
+        // Each arrow's value type is met with the union of the other side's value types, where
+        // both are read through their arrows alone and hold no variable: a function of both
+        // has its value at each key of its domain, which lies within the other side's
+        // permission, in the value type of some arrow of the other side there, so in that
+        // union ([`Domains::results_apart`] reads the same fact). Before
+        // (FAIL-types-meet-fn-kept-not-within), `(_ ->? String) & (bool .. (int | bool) -> _)`
+        // kept `bool -> _`, which is not within `_ ->? String`, though a function of both gives
+        // a `String` at `bool`.
+        // Complexity tradeoff: naive, each arrow's value type met with each value type of the
+        // other side, O(a^2) meets. Used: one union of each side's value types, O(a), and one
+        // meet of each arrow's value type with the other side's union; the cost of each such
+        // meet is measured in `meets_of_many_arrows_narrow_values_in_linear_time`
+        // (COMPLEXITY.md F234). A value type and union that hold more than one function type
+        // between them to pair are not met, since [`Pairs::fns_met`] tries each pair: m arrows
+        // each over a value of one function type met with a union of m would be O(m^2)
+        // (TYPES-meet-fns-indexed). Given up: a side not read through its arrows alone, or
+        // holding a variable, and these: their values are left as they are, which is sound,
+        // only less narrow.
+        let read = |g: &Sig| Domains::by_arrows(g, false) && g.holds_no_var();
+        if read(s) && read(q) {
+            let union = |g: &Sig| {
+                let vs: Vec<Ty> = g.arrows.iter().map(|b| b.value().into_owned()).collect();
+                Ty::union_all(&vs)
+            };
+            let (vs, vq) = (union(s), union(q));
+            for (i, a) in m.arrows.iter_mut().enumerate() {
+                let other = if i < n { &vq } else { &vs };
+                let value = a.value();
+                if value.fns.len() * other.fns.len() > 1 {
+                    continue;
+                }
+                let value = pairs.alone(value.into_owned(), other.clone()).await;
+                let params = std::mem::take(&mut a.params);
+                *a = match a.partial {
+                    true => Arrow::partial_of(params, value),
+                    false => Arrow::exact(params, value),
+                };
             }
         }
         // Two arrows over equal parameter types are one arrow whose result is the meet of
@@ -17539,6 +17982,20 @@ impl Sig {
     /// The bits of its variables, made from its facts at the first call.
     fn bits(&self) -> VarBits {
         *self.facts.3.get_or_init(|| VarBits::of_facts(self.facts()))
+    }
+
+    /// Whether it holds no variable at any depth: `bits().is_empty()`, since each variable
+    /// sets one bit, read from its facts.
+    // Complexity tradeoff (FAIL-types-meet-fn-kept-not-within): naive version,
+    // `bits().is_empty()`, which hashes every variable of `facts().names`, the variables of
+    // every level below, once per signature asked: O(n^2) for a nest of n curried lambdas
+    // each binding one (15.8 times the work at 8n in
+    // `an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales`). Used: the
+    // emptiness of the two sets, O(1) once the facts are made, and they are made by merging the
+    // smaller set into the larger, O(n log n) for the nest.
+    fn holds_no_var(&self) -> bool {
+        let f = self.facts();
+        f.classes.is_empty() && f.names.is_empty()
     }
 
     /// The signatures of the functions it holds at any depth for which `lacks` holds, each

@@ -250,6 +250,133 @@ fn a_meet_of_overloads_over_functions_of_results_sharing_no_value_scales() {
     );
 }
 
+/// The paths added for FAIL-types-meet-fn-kept-not-within (COMPLEXITY.md F234), each in time
+/// near linear in `n`: an overload of `n` exact arrows `#ki -> #vi | #w` met with one of `n`
+/// partial arrows `#ki ->? #vi` is one function of `n` exact arrows, each value type met once
+/// with the union of the other side's (`Domains::meet`); an overload of `n` arrows over the
+/// functions `#ki .. (#ki | #ji) -> int`, two arrows each, met with one over `#ji -> int` is
+/// empty, the domain of each function built from both arrows (`Domains::fns_apart`); one of
+/// `n` arrows over pairs `(#ki -> int, #ki)` met with one over triples is empty, the shapes
+/// read from above compared once (`Domains::shapes_apart`); a function over functions nested
+/// `n` deep over `int` met with the same over `()` is empty, one meet of parameter types at
+/// each level (`Domains::keys_apart`); a partial arrow over a union of `2n` functions met with
+/// an exact arrow over `n` of them, and `n` arrows over function values met with `n` others,
+/// are kept, the unions not paired (`Domains::keys_apart`, `Domains::results_apart`); and
+/// `Never ->? Never` met with a function over a function curried `n` deep is empty, the curried
+/// function proved to exist on a work list (`Domains::inhabited_fn`). Small instances:
+/// `judgments::a_meet_of_functions_kept_before_is_within_each_side`.
+#[test]
+fn meets_of_many_arrows_narrow_values_in_linear_time() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let overload = |m: usize, arrow: &dyn Fn(usize) -> String| {
+        let text = (0..m).map(arrow).collect::<Vec<_>>().join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let curried = |m: usize| {
+        let nest = vec!["int"; m + 1].join(" -> ");
+        parse_type(&format!("({nest}) -> Never")).expect("a curried function")
+    };
+    // `((... ((key -> String) -> int) ...) -> int)`, `m` levels over the key.
+    let deep = |m: usize, key: &str| {
+        let mut text = format!("{key} -> String");
+        for _ in 0..m {
+            text = format!("({text}) -> int");
+        }
+        parse_type(&text).expect("a function over functions")
+    };
+    let n = 2048;
+    let sides = scaling::inputs(n, |m| {
+        [
+            overload(m, &|i| format!("(#k{i} -> #v{i} | #w)")),
+            overload(m, &|i| format!("(#k{i} ->? #v{i})")),
+            overload(m, &|i| {
+                format!("((#k{i} .. (#k{i} | #j{i}) -> int) -> int)")
+            }),
+            overload(m, &|i| format!("((#j{i} -> int) -> int)")),
+            overload(m, &|i| format!("(((#k{i} -> int, #k{i})) -> int)")),
+            overload(m, &|i| format!("(((#k{i} -> int, #k{i}, ())) -> int)")),
+        ]
+    });
+    scaling::check("meets of n arrows narrowing values", n, |m| {
+        let [exact, partial, ..]: &[Ty; 6] = &sides[&m];
+        let met = exact.meet(partial);
+        assert_eq!(met.fns.len(), 1);
+        assert_eq!(met.fns[0].arrows.len(), m);
+        assert!(met.fns[0].arrows.iter().all(|a| !a.partial));
+    });
+    scaling::check("meets of n arrows over two-bound domains", n, |m| {
+        let [_, _, bounded, apart, ..]: &[Ty; 6] = &sides[&m];
+        assert!(bounded.meet(apart).fns.is_empty());
+    });
+    scaling::check("meets of n arrows over tuples holding functions", n, |m| {
+        let [.., pairs, triples]: &[Ty; 6] = &sides[&m];
+        assert!(pairs.meet(triples).fns.is_empty());
+    });
+    // Unions of many function types on both sides of a meet `Domains::meet` makes of parameter
+    // or value types: each pair is tried (`Pairs::fns_met`), so these are not met, and the
+    // meet is kept. Before, `keys_apart` and `results_apart` met them: 0.33 s to 6.5 s and 0.19
+    // s to 5.1 s from m = 32 or 64 to 256 (2026-11-18; TYPES-meet-fns-indexed).
+    let union = |m: usize, key: &str| {
+        let u = (0..m)
+            .map(|i| format!("(#{key}{i} -> int)"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("({u})")
+    };
+    let n = 1024;
+    let unions = scaling::inputs(n, |m| {
+        [
+            parse_type(&format!("{} ->? int", union(2 * m, "k"))).expect("an arrow"),
+            parse_type(&format!("{} -> int", union(m, "k"))).expect("an arrow"),
+            parse_type(&format!("{} ->? int", union(m, "j"))).expect("an arrow"),
+            overload(m, &|i| format!("(#k{i} -> (#k{i} -> int))")),
+            overload(m, &|i| format!("(#k{i} -> (#j{i} -> int))")),
+        ]
+    });
+    scaling::check("a meet of arrows over unions of n functions", n, |m| {
+        let [wide, narrow, ..]: &[Ty; 5] = &unions[&m];
+        assert_eq!(wide.meet(narrow).fns.len(), 1);
+    });
+    scaling::check(
+        "a meet of partial arrows over unions of n functions",
+        n,
+        |m| {
+            // Each parameter type is narrowed only where one pair is to be met; kept is sound.
+            let [wide, _, other, ..]: &[Ty; 5] = &unions[&m];
+            assert!(wide.meet(other).fns.len() <= 1);
+        },
+    );
+    scaling::check("a meet of n arrows over functions as values", n, |m| {
+        // Empty is the exact answer, the values' domains differing; kept is sound.
+        let [.., own, other]: &[Ty; 5] = &unions[&m];
+        assert!(own.meet(other).fns.len() <= 1);
+    });
+    // Nested types are read and met on frames of their own, but kept smaller, as the texts
+    // grow with the depth.
+    let depth = 128;
+    let nests = scaling::inputs(depth, |m| {
+        [
+            deep(m, "int"),
+            deep(m, "()"),
+            curried(m),
+            parse_type("Never ->? Never").expect("no key"),
+        ]
+    });
+    scaling::check(
+        "a meet of functions over functions nested n deep",
+        depth,
+        |m| {
+            let [ints, units, ..]: &[Ty; 4] = &nests[&m];
+            assert!(ints.meet(units).fns.is_empty());
+        },
+    );
+    scaling::check("a meet with a function curried n deep", depth, |m| {
+        let [.., nest, none]: &[Ty; 4] = &nests[&m];
+        assert!(nest.meet(none).fns.is_empty());
+    });
+}
+
 /// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
 /// another function of the same type at each depth, decided in time linear in `n`: each
 /// function is compared with the one at its depth (FAIL-types-tuple-subtype, COMPLEXITY.md

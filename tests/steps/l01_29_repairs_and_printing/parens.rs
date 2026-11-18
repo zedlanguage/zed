@@ -742,15 +742,17 @@ fn kernel_generated_arrow(rng: &mut Rng, depth: usize) -> (Built, bool) {
         // meet is the functions with `a ⊆ dom ⊆ a & (a | v)` and values in `b`. The upper bound
         // holds `a`, as a program's `L .. U` must: where `a` is not within it, the meet is
         // empty, which the kernel cannot always show (`a` a payload holding a function), and
-        // the reader refuses the text. An `a` that holds a function is not drawn: where the
+        // the reader refuses the text. An `a` that holds a function is drawn too: where the
         // reader does not prove a meet of functions empty, it keeps both arrows, a meet within
-        // neither side, so `a & (a | v)` is not found within `a` (FAIL-types-meet-fn-kept-not-
-        // within: `(#pair(#b, _) -> f64) & (_ -> ())`, a domain of the unknown; `(rat ->?
-        // #pair(int, ())) & ((rat .. (rat | int) -> bool) -> ((),))`, a function type of two
-        // domain bounds). It proves many such meets empty: functions of different domains,
-        // `((int -> rat) ->? _) & ((String -> bool) -> int)`, or of results that share no
-        // value, `((int -> #a) -> _) & ((int -> String) -> rat)` (FAIL-types-meet-fn-fn-domains).
-        9 if at.contains("->") => return leaf(rng),
+        // neither side, so `a & (a | v)` was not found within `a`, and such an `a` was not
+        // drawn until the reader proved these meets empty or one side
+        // (FAIL-types-meet-fn-kept-not-within: `(#pair(#b, _) -> f64) & (_ -> ())`, a domain of
+        // the unknown; `(rat ->? #pair(int, ())) & ((rat .. (rat | int) -> bool) -> ((),))`, a
+        // function type of two domain bounds; more in
+        // `judgments::a_meet_of_functions_kept_before_is_within_each_side` of l01_23).
+        // Not drawn: an `a` whose meet with `a | v` pairs more than one function type
+        // ([`pairs_several_functions`]).
+        9 if pairs_several_functions(at, vt) => return leaf(rng),
         9 => arrow(
             &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(&a.t | &v.t, b.t.clone()),
             format!("{at} .. ({at} & ({at} | {vt})) -> {bt}"),
@@ -995,6 +997,34 @@ fn kernel_read_back(text: &str, printed: &str, wrong: &mut Vec<String>) -> bool 
         wrong.push(format!("`{text}`: {w}"));
     }
     false
+}
+
+/// Whether the reader's meet of a partial arrow over `a | v` with an exact arrow over `a`
+/// pairs more than one function type: the kernel prints `a .. (a & (a | v)) -> b` as
+/// `((a | v) ->? b) & (a -> b)`, whose meet is `a -> b` only where the reader narrows `a | v`
+/// to `a`, and it narrows a parameter type holding a function only where the two types hold
+/// at most one function type between them to pair (COMPLEXITY.md F234; FAIL-types-meet-fn-
+/// kept-not-within). Seed 76 drew `a` = `((rat) ->? (_)) | ((#a) ->? (_))`, and the reader
+/// left `(rat | (#a ->? _) | (rat ->? _) | (#a -> bool)) ->? rat` unnarrowed, within neither
+/// side. Narrowing these too is row TYPES-meet-fns-indexed.
+fn pairs_several_functions(at: &str, vt: &str) -> bool {
+    let fns = |t: &str| parse_type(t).map_or(0, |t| t.fns.len());
+    fns(at) * fns(&format!("{at} | {vt}")) > 1
+}
+
+/// The draws leave out seed 76's `a` and draw an `a` of one function type, or none.
+#[test]
+fn the_draws_leave_out_only_meets_pairing_several_functions() {
+    let seed76 = "(((rat) ->? (_)) | ((#a) ->? (_)))";
+    let v = "((rat) | ((#a) .. ((#a) & ((#a) | (bool))) -> (bool)))";
+    assert!(pairs_several_functions(seed76, v));
+    assert!(pairs_several_functions(
+        "((int) -> (int))",
+        "((bool) -> (int))"
+    ));
+    assert!(!pairs_several_functions("((int) -> (int))", "(bool)"));
+    assert!(!pairs_several_functions("(int)", "((bool) -> (int))"));
+    assert!(!pairs_several_functions("(int)", "(bool)"));
 }
 
 /// Each type of [`KERNEL_FORMS`] prints its form and reads back.
