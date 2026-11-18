@@ -6,6 +6,7 @@
 
 mod bench;
 mod cases;
+mod complexity_tables;
 mod fail_steps_name_layers;
 mod fail_steps_name_plus_sign;
 mod scaling;
