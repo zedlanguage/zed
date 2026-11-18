@@ -60,6 +60,10 @@ deb aarch64 $g/libstdc++-15-dev-arm64-cross_15.2.0-4ubuntu4cross1_all.deb 9bd8da
 # paths below name the pin.
 pin=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$(dirname "$0")/../rust-toolchain.toml")
 [ -n "$pin" ] || { echo "rust-toolchain.toml names no channel"; exit 1; }
+# The components the pin file names, comma-separated (clippy,rustfmt,llvm-tools): rustup installs
+# any that are missing before it runs a command under the pin, which the image below, run with no
+# network, cannot do, so the image is built with them.
+components=$(sed -n 's/^components = \[\(.*\)\]$/\1/p' "$(dirname "$0")/../rust-toolchain.toml" | tr -d '" ')
 host=x86_64-unknown-linux-gnu
 component 2026-11-18/rustc-nightly-$host 579543c68dd2bd8384b5a814dbfa6e9a9699747540f960a616be827a32892219
 component 2026-11-18/rust-std-nightly-$host cea426225a818c536a0b152f6f7132a24d46599803df59957274b9004d116b3a
@@ -104,7 +108,7 @@ FROM $image
 COPY rustup-init /usr/local/bin/rustup-init
 RUN apk add --no-cache libgcc && \\
     rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.98.0 && \\
-    /root/.cargo/bin/rustup toolchain install --profile minimal $pin
+    /root/.cargo/bin/rustup toolchain install --profile minimal $pin${components:+ --component $components}
 ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 IMAGE
 CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error build -q \
