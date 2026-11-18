@@ -7949,9 +7949,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     // values a type lists, and six trials of one word's application to `x`, each the cost of
     // that application ([`Self::word_applied`]); none of it in a trial, where the cast's
     // rejection alone is wanted.
+    // A class of `x` not yet resolved, as a parameter with no written type, may still take
+    // `rat`, `f64` or `f32`, which the checker does not prove whole: the cast removes them from
+    // it, as a word restricts a class to the carriers it takes, so a call that passes `0.5`
+    // is rejected at the call, and a class left with no carrier rejects the cast here. Before
+    // this the cast read `x.ty.set` alone, and `f(positional x) = int(x)` with `f(0.5)` was
+    // accepted and stopped at run time. Complexity: one walk of the pieces of `x.ty`, and a
+    // restriction of each class among them, O(α(N)) for the find in a union of N classes.
     fn int_not_whole(&mut self, x: &Arg<'a>, values: Option<&WordOperand>, span: Span) {
         let parts = [KType::rat(), KType::f64(), KType::f32()];
-        if parts.iter().all(|t| (&x.ty.set & t).lists_nothing()) {
+        let floats = Carrier::Rat.bit() | Carrier::F64.bit() | Carrier::F32.bit();
+        let classes: Vec<usize> = (x.ty.pieces_lazily())
+            .filter_map(|p| self.class_of(&p))
+            .filter(|&k| self.classes[k].mask & floats != 0)
+            .collect();
+        let concrete = !parts.iter().all(|t| (&x.ty.set & t).lists_nothing());
+        if classes.is_empty() && !concrete {
             return;
         }
         let listed = values.and_then(|v| match v {
@@ -7960,6 +7973,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let whole = |v: &Value| value_kept("int", v);
         if listed.as_ref().is_some_and(|vs| vs.iter().all(whole)) {
+            return;
+        }
+        let mut refused = false;
+        for k in classes {
+            refused |= !self.restrict(k, EVERY & !floats, "`int`", span);
+        }
+        if !refused && !concrete {
             return;
         }
         let at = x.at.unwrap_or(span);

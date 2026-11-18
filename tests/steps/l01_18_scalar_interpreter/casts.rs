@@ -6,7 +6,7 @@
 use super::x;
 use num_bigint::BigUint;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::step_helpers::l01_16_elaboration::errors;
+use zed_tests::step_helpers::l01_16_elaboration::{elab, errors};
 
 #[test]
 fn reading_a_quantity_from_a_form_field() {
@@ -71,6 +71,36 @@ fn a_float_to_int_must_be_whole() {
         "{msg}"
     );
     assert!(msg.ends_with(" [int(x)]"), "{msg}");
+}
+
+/// `int(x)` of a parameter with no written type is judged over the parameter's domain, as
+/// `int(x)` with `x: f64` is (DESIGN.md sec:corner_cases, "Casts are domain proofs"): the cast
+/// takes no `rat`, `f64` or `f32` the checker does not prove whole, so a call with `0.5` is
+/// rejected, and a call with an `int` or a text is not. Before the fix the checker accepted
+/// each program below that passes `0.5`, typed `r` as `int` or `int | #invalid`, and the run
+/// stopped at "`int` applied to `f64`, which is not whole" (seed 7289870353889267556 of
+/// l01_26 `accepted_random_programs_raise_no_type_error`).
+#[test]
+fn an_int_cast_of_a_parameter_takes_no_float() {
+    for p in [
+        "f(positional x) = int(x);\nr = f(0.5);\n",
+        "f(positional x) = int(if 0 == x { 2 } else { x });\nr = f(0.5);\n",
+        "r = (v0 -> int(v0))(0.5);\n",
+        "r = (v0 -> int(if 0 == v0 { 2 } else { v0 }))(0.5);\n",
+        "r = (v0 -> int(if v0 > 1 { 2.0 } else { v0 }))(0.5);\n",
+        "f(positional x) = int(x);\nr = f(2r);\n",
+        "f(positional x) = int(x);\nr = f(2.0f32);\n",
+    ] {
+        assert!(elab(p).is_err(), "accepted: {p}");
+    }
+    for p in [
+        "f(positional x) = int(x);\nr = f(3);\n",
+        "f(positional x) = int(x);\nr = f(\"7\");\n",
+        "r = (v0 -> int(if 0 == v0 { 2 } else { v0 }))(5);\n",
+        "f(positional x) = int(round(x));\nr = f(0.5);\n",
+    ] {
+        assert_eq!(elab(p).err(), None, "{p}");
+    }
 }
 
 #[test]
