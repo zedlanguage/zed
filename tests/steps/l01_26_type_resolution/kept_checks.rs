@@ -1,7 +1,8 @@
 //! What the `@cryptosafe` rule for a secret `if` needs from the checker (DESIGN.md
 //! sec:security, the first transformation; plan row XR-ct-enforce). Both arms of a secret
 //! `if` run and a `ctselect` keeps one, so each arm is compiled without the facts its
-//! selector gives it, and a check the selector would prove, such as `d != 0` before
+//! selector gives it, and a check the selector would prove, such as `d != 0` (with `d`
+//! public, since a secret divisor is rejected) before
 //! `x div d`, is kept. The arm's failure can then happen only when the arm is not kept,
 //! where the `ctselect` throws it away, so the function's type is still the one checked
 //! with the facts. These tests pin the two types that rule tells apart, with the step
@@ -53,5 +54,19 @@ fn the_arm_on_the_least_value_has_the_atom() {
     assert_eq!(
         sig(ARM_ON_LEAST_VALUE, "f"),
         "(x: int, held: bool) -> int | #divByZero"
+    );
+}
+
+/// The form the spec's example now takes: the selector is a secret `s` joined to a test of a
+/// public divisor, since a division by a secret divisor is rejected outright. The checker
+/// narrows `d` through `&&`, so the arm typed with the selector's facts has no `#divByZero`.
+const SECRET_AND_PUBLIC_GUARD: &str =
+    "f(x: int, d: int, s: bool) = if s && d != 0 { x div d } else { 0 };\n";
+
+#[test]
+fn a_guard_joined_to_a_secret_by_and_still_proves_the_check() {
+    assert_eq!(
+        sig(SECRET_AND_PUBLIC_GUARD, "f"),
+        "(x: int, d: int, s: bool) -> int"
     );
 }
