@@ -8,6 +8,9 @@ mod bench;
 mod checks;
 mod constants;
 mod corpus;
+// What Cranelift emits for the forms `@cryptosafe` lowers to (step L33.1f, XR-ct-enforce).
+#[cfg(target_arch = "x86_64")]
+mod ct_lowering;
 mod decisions;
 mod deep_calls;
 mod drops;

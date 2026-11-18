@@ -303,7 +303,7 @@ rows! {
     ExponentialBaseDiffers => "Exponential whose base differs from the logarithm's",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
     // No diagnostic uses the next six rows yet: plan row L33.1e emits them.
-    SecretPosition => "Read at a secret position",
+    SecretPosition => "Read or write at a secret position",
     SecretLoopEnd => "Loop whose end depends on a secret",
     SecretVariableTime => "Variable-time operation on a secret",
     SecretAllocationSize => "Allocation sized by a secret",
