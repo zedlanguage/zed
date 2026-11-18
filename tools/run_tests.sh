@@ -959,6 +959,12 @@ export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_thres
 # ranged from 8.1 to 10.49 in 4 runs (2026-11-16). A correctness run keeps a fresh draw, so each
 # run also checks that the output does not depend on it. ZED_TREAP_SEED, when set, is kept.
 [ "$run_kind" = test ] || export ZED_TREAP_SEED=${ZED_TREAP_SEED:-0}
+# insta finds the workspace root, under which it reads and writes snapshots, by running `cargo
+# metadata` in each test binary; when that fails (a toolchain the pin names but rustup lacks, as on
+# 2026-11-17 during the switch to the nightly) it falls back to the tests crate's directory, and
+# every snapshot test reports its snapshot as new, under tests/tests/steps/. The root given here
+# keeps a toolchain fault out of the snapshot tests and saves one cargo run per test binary.
+export INSTA_WORKSPACE_ROOT=$root
 cores=$(nproc)
 # The spec checkout the tests read (zed_tests::spec::locate, MERGE-spec-reads-map), by the rule
 # tools/spec_groups.sh --dir prints. --trace names a read under it spec:<path>, relative to it,
