@@ -3,7 +3,9 @@
 use crate::slack_scale::*;
 use zed_tests::scaling;
 use zedc::store::interval::IntervalSet;
-use zedc::store::presburger::{ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable};
+use zedc::store::presburger::{
+    ROW_SUMS_OFF, Refusal, decide, project_each, project_each_solver, satisfiable,
+};
 
 #[test]
 fn ss_decide_scales() {
@@ -270,7 +272,8 @@ fn untied_projection_uses_the_endpoint_report() {
     scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
-        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        let got =
+            project_each_solver(if m == k { &small } else { &large }, &y0).expect("projection");
         assert!(got.0[0].as_ref().expect("set").contains(9000));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
         ROW_SUMS_OFF.with(|o| o.set(false));
@@ -291,7 +294,8 @@ fn tied_projection_endpoint_reports_scale_past_512() {
     // The solver alone, as in the untied test above.
     scaling::check_order("I22 tied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
-        let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
+        let got =
+            project_each_solver(if m == k { &small } else { &large }, &y0).expect("projection");
         assert_eq!(got.0[0], Ok(pt_set(&[1000])));
         ROW_SUMS_OFF.with(|o| o.set(false));
     });
@@ -330,14 +334,14 @@ fn ss_project_each_costs_at_most_four_decides() {
     };
     let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
     let reported = least(&mut meter, &|| {
-        drop(std::hint::black_box(project_each(&f, &y0)))
+        drop(std::hint::black_box(project_each_solver(&f, &y0)))
     });
-    let (p, _) = project_each(&f, &y0).expect("ss 64 project");
+    let (p, _) = project_each_solver(&f, &y0).expect("ss 64 project");
     HULL_BISECT.with(|c| c.set(true));
     let halved = least(&mut meter, &|| {
-        drop(std::hint::black_box(project_each(&f, &y0)))
+        drop(std::hint::black_box(project_each_solver(&f, &y0)))
     });
-    let (q, _) = project_each(&f, &y0).expect("ss 64 project, halving");
+    let (q, _) = project_each_solver(&f, &y0).expect("ss 64 project, halving");
     HULL_BISECT.with(|c| c.set(false));
     // The endpoint report is never coarser than the halving on this formula.
     assert!(
@@ -395,7 +399,7 @@ fn many_linked_rows_project_each_fails_the_order_check() {
     // `many_linked_rows_project_each_scales_with_the_method` checks.
     scaling::check_instructions_only("project_each: many linked rows", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
-        drop(project_each(if m == k { &s } else { &l }, &y0));
+        drop(project_each_solver(if m == k { &s } else { &l }, &y0));
         ROW_SUMS_OFF.with(|o| o.set(false));
     });
 }
