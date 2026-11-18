@@ -3190,6 +3190,23 @@ fn forest_edges(relation: &Conjuncts, name: &str) -> Vec<(Arc<Formula>, bool, Ed
     out
 }
 
+/// The side of the repair of the potential that a test has [`put_in`] run alone (0 forward,
+/// 1 backward), or `None` when the two sides take turns, as always without feature `counts`.
+/// A function rather than a `let` of a literal `None`, which `alone.unwrap_or(0)` would make
+/// a clippy error (`unnecessary_literal_unwrap`) without the feature.
+#[cfg(feature = "counts")]
+fn side_alone() -> Option<usize> {
+    super::preimage::counts::PUT_IN_SIDE
+        .get()
+        .map(|fw| usize::from(!fw))
+}
+
+/// See the function of the same name with feature `counts`.
+#[cfg(not(feature = "counts"))]
+fn side_alone() -> Option<usize> {
+    None
+}
+
 /// The search of [`Scope::repair`]: puts each edge of `pending` in the potential `pot` of
 /// tree `t` of the forest ([`Potential`]). A name `pot` lacks takes a value and a component of
 /// its own from an edge only when every edge at it is among `added`, ranked before the
@@ -3354,12 +3371,7 @@ fn put_in(
                 Repair::new(true, v, u, gamma.clone()),
                 Repair::new(false, u, v, gamma),
             ];
-            #[cfg(feature = "counts")]
-            let alone = super::preimage::counts::PUT_IN_SIDE
-                .get()
-                .map(|fw| usize::from(!fw));
-            #[cfg(not(feature = "counts"))]
-            let alone: Option<usize> = None;
+            let alone = side_alone();
             let mut turn = alone.unwrap_or(0);
             let ended = loop {
                 match sides[turn].step(relation, t, &waiting, pot, cu)? {
