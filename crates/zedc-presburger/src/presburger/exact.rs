@@ -171,7 +171,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // Each part read once over blocks answered for all its atoms at once (`read_once`), within
     // an allowance of its own as [`direct`]; where it declines, its symbols are covered below
     // as before, with the same points and the same work.
-    let once: Vec<Option<(bool, HashMap<Atom, IntervalSet>)>> = (parts.iter())
+    let once: Vec<Option<ReadOnce>> = (parts.iter())
         .map(|p| {
             if !p.factors.is_empty() {
                 return None;
@@ -1260,6 +1260,9 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
     }
 }
 
+/// What [`read_once`] gives: whether `f` has a point, and its projection onto each atom.
+type ReadOnce = (bool, HashMap<Atom, IntervalSet>);
+
 /// The exact projection of `f` onto every atom it reads at once, with whether `f` has a point;
 /// `None` where `f` is not read once over blocks, or a block's elimination is not exact. `f`
 /// has no product atom. Read with signs as [`direct`] reads it, `f` is a tree of conjunctions,
@@ -1281,10 +1284,7 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
 // Used: two passes over the nodes, O(n), and each block eliminated once for each of its own
 // atoms, charged as [`direct`] charges it; a part shared, an atom read by two blocks, or an
 // elimination not exact sends every symbol to the covers as before.
-fn read_once(
-    f: &Formula,
-    work: &mut Work,
-) -> Result<Option<(bool, HashMap<Atom, IntervalSet>)>, Refusal> {
+fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> {
     enum Node {
         Block(Vec<Con>),
         // A conjunction's one block of rows, if any, and its other parts; the block joins
