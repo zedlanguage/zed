@@ -137,7 +137,9 @@ use formula::{Ends, one_bound};
 pub use joining::TWO_AT_A_TIME;
 pub use joining::{Joining, Mark, member, within};
 use nesting::nesting;
-pub use refusal::{Each, One, Refusal, Split, Tie, Written, free_names, names_in};
+pub use refusal::{
+    Classed, Each, EachClassed, One, Refusal, Split, Tie, Written, free_names, names_in,
+};
 pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;
 use slack::{
@@ -18832,6 +18834,13 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
 // `l01_29_repairs_and_printing::refused_warning::the_reads_of_one_scope_ask_the_solver_each_question_once`;
 // COMPLEXITY.md row PERF-census-resettle-repeats.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    project_each_classed(f, syms).map(|e| e.met())
+}
+
+/// [`project_each`] with each set kept as ranges met with one class ([`Classed`]) where the
+/// exact projection has that form, the values not listed; [`EachClassed::met`] gives the sets
+/// of [`project_each`]. The memo keeps these answers, for both.
+pub fn project_each_classed(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
     if memo_off() || PROJECTIONS.with(|m| m.borrow().is_none()) {
         return project_each_asked(f, syms);
     }
@@ -18849,7 +18858,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 }
 
 /// The answers of [`project_each`], by formula and symbols.
-type Projections = FxHashMap<(Formula, Vec<Atom>), Result<Each, Refusal>>;
+type Projections = FxHashMap<(Formula, Vec<Atom>), Result<EachClassed, Refusal>>;
 
 thread_local! {
     /// The answers of [`project_each`] while a [`ProjectionMemo`] is open.
@@ -18896,7 +18905,7 @@ fn memo_off() -> bool {
 
 /// [`project_each`] with no memo: the solver's answer made exact by the cover of module
 /// `exact` ([`project_each_exact`]).
-fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
     project_each_with(f, syms, true)
 }
 
@@ -18905,13 +18914,13 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// projection, or refused past the cover's work limit (`meter::EXACT_LIMIT`). With no memo;
 /// the cover's own tests and benchmarks call it.
 pub fn project_each_exact(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, true)
+    project_each_with(f, syms, true).map(|e| e.met())
 }
 
 /// The solver's answer alone, with no cover and no memo: each set holds every value of its
 /// symbol with a point, and may hold more. For the benchmarks that time what the cover adds.
 pub fn project_each_solver(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, false)
+    project_each_with(f, syms, false).map(|e| e.met())
 }
 
 /// The steps of the solver the cover asks, handed to it with each call ([`meter::Solver`]):
@@ -18933,7 +18942,7 @@ const SOLVER: meter::Solver = meter::Solver {
 // the solver refuses with each equation in the sign of [`equation`]. Test:
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
-fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Refusal> {
+fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClassed, Refusal> {
     // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
     // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
     // already used by decide visits each part/term through its incidence queues, O(n)
@@ -19001,7 +19010,7 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     };
     let conjuncts = f.conjunct_list();
     if forced::empty(f, &conjuncts) {
-        return Ok(no_points(syms));
+        return Ok(EachClassed::plain(no_points(syms)));
     }
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
@@ -19024,12 +19033,12 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     // module `exact` makes it the exact set.
     let solver = || {
         if !cover {
-            return solver_found();
+            return solver_found().map(EachClassed::plain);
         }
         if !meter::EXACT_OFF.get()
             && let Some(each) = certified_domains(f, syms)
         {
-            return Ok(each);
+            return Ok(EachClassed::plain(each));
         }
         // `f` is `cover_input` of the formula given (above): the cover charges its work row by
         // row, and the work of a row depends on the sign it is written in, so with the signs as
@@ -19040,7 +19049,10 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
-            return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
+            return Ok(EachClassed::plain((
+                syms.iter().map(|a| Ok(b.project(a))).collect(),
+                Vec::new(),
+            )));
         }
         match row_sums::read(&conjuncts) {
             Ok(s) => {
@@ -19053,7 +19065,10 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
                         None => IntervalSet::range(End::NegInf, End::PosInf),
                     },
                 };
-                return Ok((syms.iter().map(|a| Ok(at(a))).collect(), Vec::new()));
+                return Ok(EachClassed::plain((
+                    syms.iter().map(|a| Ok(at(a))).collect(),
+                    Vec::new(),
+                )));
             }
             Err(Some(rows)) => return row_sums::project(rows, syms, solver),
             Err(None) => {}

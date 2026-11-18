@@ -11,7 +11,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
-use zedc_lattice::interval::IntervalSet;
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::{Congruence, Lattice};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
 /// words (sec:diagnostics), and each but [`Refusal::Work`] and [`Refusal::Questions`] is a
@@ -378,3 +379,311 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 /// The projection of [`super::project`] onto one symbol, and the causes for which a
 /// disjunction was left out of it.
 pub type One = (IntervalSet, Vec<Refusal>);
+
+/// A set of integers written as ranges met with one congruence class: the values of `ranges`
+/// that lie in `class`. The set the exact projection gives where its values are every second
+/// (or every `m`-th) value of some ranges, as the odd values of `-b..=b`, which ranges alone
+/// hold only as one range for each value (PRES-interval-strided-piece).
+///
+/// Kept in one form for each set ([`Classed::new`]), so that two equal sets compare equal:
+/// the class is the least one holding the set (its modulus the gcd of the differences of its
+/// members; every integer where that is 1 or the set has one member or none), and the ranges
+/// are its maximal runs of members one modulus apart, each from its least member to its
+/// greatest. Proof that this is a function of the set alone: the gcd of the differences of a
+/// set's members and the residue of any member modulo it depend on the members only, and so
+/// do the maximal runs. A class other than every integer is kept only with finite ranges: a
+/// set with an infinite range holds two consecutive integers, so its gcd is 1.
+// Complexity tradeoff: naive version, every value of the class within the ranges listed as a
+// range of its own (`exact::block_set` before PRES-interval-strided-piece), O(v) pieces for v
+// values, for every set built and every set read; used: the ranges and the class, O(p) for p
+// ranges (one in the benchmarks of `l01_39_scope_relations::xst::s4::bench`), with the values
+// listed only where a reader asks for the plain set ([`Classed::met`]), O(v) there, or a join
+// meets two different classes ([`Classed::join`]). Design B of the plan row, scored against a
+// strided piece inside `IntervalSet` (no one form for equality, every reader of its pieces
+// expanding it again).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Classed {
+    /// The ranges, each from a member of the set to a member.
+    pub ranges: IntervalSet,
+    /// The class; every integer (modulus 1) for a set of ranges alone.
+    pub class: Congruence,
+}
+
+impl Classed {
+    /// The set `set`, in the form of [`Classed`]: O(p) for p ranges.
+    pub fn plain(set: IntervalSet) -> Classed {
+        Classed::new(set, Congruence::top())
+    }
+
+    /// The values of `ranges` in `class`, in the one form of [`Classed`]. `class` other than
+    /// every integer must come with finite ranges (or none). O(p log p) for p ranges.
+    pub fn new(ranges: IntervalSet, class: Congruence) -> Classed {
+        let empty = || Classed {
+            ranges: IntervalSet::empty(),
+            class: Congruence::top(),
+        };
+        let (m, r) = match class {
+            Congruence::Bottom => return empty(),
+            Congruence::Class { modulus, residue } => (modulus, residue),
+        };
+        if m.is_zero() {
+            // One value, `r`.
+            return if ranges.contains_end(&End::Fin(r.clone())) {
+                Classed::plain_unchecked(IntervalSet::point(r))
+            } else {
+                empty()
+            };
+        }
+        // Each range's ends moved in to the nearest members of the class (as
+        // `revision::reduce_congruence`), so every end is a member.
+        let reduced: Vec<(End, End)> = if m == Num::ONE {
+            ranges.into_pieces()
+        } else {
+            (ranges.pieces())
+                .filter_map(|(lo, hi)| {
+                    let (End::Fin(lo), End::Fin(hi)) = (lo, hi) else {
+                        unreachable!("a class other than every integer comes with finite ranges")
+                    };
+                    let lo = lo + &(&r - lo).rem_euclid(&m);
+                    let hi = hi - &(hi - &r).rem_euclid(&m);
+                    (lo <= hi).then(|| (End::Fin(lo), End::Fin(hi)))
+                })
+                .collect()
+        };
+        // The gcd `g` of the differences of the members from the least one, `a0`: every member
+        // is `a0 + (lo_i - a0) + k m` for a range `[lo_i, hi_i]`, so `g` is the gcd of the
+        // `lo_i - a0` and, where a range holds two members, of `m`.
+        let Some((End::Fin(a0), _)) = reduced.first().cloned() else {
+            return match reduced.first() {
+                None => empty(),
+                // An infinite range holds two consecutive integers: every integer.
+                Some(_) => Classed::plain_unchecked(IntervalSet::from_pieces(reduced)),
+            };
+        };
+        let mut g = Num::ZERO;
+        for (lo, hi) in &reduced {
+            let (End::Fin(lo), End::Fin(hi)) = (lo, hi) else {
+                // An infinite end: two consecutive integers, so `m` is 1 and `g` would be 1.
+                return Classed::plain_unchecked(IntervalSet::from_pieces(reduced));
+            };
+            if hi > lo {
+                g = g.gcd(&m);
+            }
+            g = g.gcd(&(lo - &a0));
+        }
+        if g.is_zero() || g == Num::ONE {
+            // One member, or every integer: the ranges alone.
+            return Classed::plain_unchecked(IntervalSet::from_pieces(reduced));
+        }
+        // Every member lies in `a0 mod g`; the maximal runs of members `g` apart. With `g`
+        // above `m` every range holds one member, so the runs join single values; with `g`
+        // equal to `m`, ranges whose ends are `m` apart.
+        let mut runs: Vec<(Num, Num)> = Vec::new();
+        for (lo, hi) in reduced {
+            let (End::Fin(lo), End::Fin(hi)) = (lo, hi) else {
+                unreachable!("every range is finite here, shown above")
+            };
+            match runs.last_mut() {
+                Some((_, end)) if &(&lo - &*end) == &g => *end = hi,
+                _ => runs.push((lo, hi)),
+            }
+        }
+        let class = Congruence::new(g.clone(), a0);
+        Classed {
+            ranges: IntervalSet::from_pieces(
+                (runs.into_iter())
+                    .map(|(lo, hi)| (End::Fin(lo), End::Fin(hi)))
+                    .collect(),
+            ),
+            class,
+        }
+    }
+
+    /// `set` with every integer as its class, `set` known to be in the one form already.
+    fn plain_unchecked(set: IntervalSet) -> Classed {
+        Classed {
+            ranges: set,
+            class: Congruence::top(),
+        }
+    }
+
+    /// Whether the set has no value.
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    /// The modulus of the class and its residue, where it is not every integer.
+    pub fn strided(&self) -> Option<(&Num, &Num)> {
+        match &self.class {
+            Congruence::Class { modulus, residue } if *modulus > Num::ONE => {
+                Some((modulus, residue))
+            }
+            _ => None,
+        }
+    }
+
+    /// The set as ranges alone, each value of a class other than every integer listed as a
+    /// range of its own: the set [`super::project_each`] gave before the class was kept.
+    /// O(v) for v values.
+    pub fn met(&self) -> IntervalSet {
+        let Some((m, _)) = self.strided() else {
+            return self.ranges.clone();
+        };
+        let mut pieces = Vec::new();
+        for (lo, hi) in self.ranges.pieces() {
+            let (End::Fin(lo), End::Fin(hi)) = (lo, hi) else {
+                unreachable!("a class other than every integer comes with finite ranges")
+            };
+            let mut v = lo.clone();
+            while &v <= hi {
+                pieces.push((End::Fin(v.clone()), End::Fin(v.clone())));
+                v = &v + m;
+            }
+        }
+        IntervalSet::from_pieces(pieces)
+    }
+
+    /// The union. With one class, the union of the ranges in it; else the two sets listed
+    /// ([`Classed::met`]) and joined.
+    // Complexity tradeoff: the union of two different classes is in general no one class
+    // within ranges (the odd values and the multiples of 4), so it is listed, O(v) for v
+    // values, as every union was before PRES-interval-strided-piece; one class costs O(p).
+    pub fn join(&self, other: &Classed) -> Classed {
+        if self.is_empty() {
+            return other.clone();
+        }
+        if other.is_empty() {
+            return self.clone();
+        }
+        if self.class == other.class {
+            return Classed::new(self.ranges.join(&other.ranges), self.class.clone());
+        }
+        Classed::plain(self.met().join(&other.met()))
+    }
+
+    /// The intersection: the ranges met, in the meet of the classes (by the Chinese remainder
+    /// theorem, `Congruence::meet`), exact, as `(A ∩ C) ∩ (B ∩ D) = (A ∩ B) ∩ (C ∩ D)`.
+    pub fn meet(&self, other: &Classed) -> Classed {
+        Classed::new(
+            self.ranges.meet(&other.ranges),
+            self.class.meet(&other.class),
+        )
+    }
+
+    /// The hull: every end of the ranges is a member.
+    pub fn hull(&self) -> IntervalSet {
+        self.ranges.hull()
+    }
+
+    /// The number of values, `u64::MAX` for a set with no end or past `u64`. O(p) for p
+    /// ranges.
+    pub fn count(&self) -> u64 {
+        let m = self.strided().map_or(Num::ONE, |(m, _)| m.clone());
+        let mut n: u64 = 0;
+        for (lo, hi) in self.ranges.pieces() {
+            let (End::Fin(lo), End::Fin(hi)) = (lo, hi) else {
+                return u64::MAX;
+            };
+            // `lo` and `hi` are members, so the range holds `(hi - lo) / m + 1` of them.
+            let k = (&(hi - lo).div_floor(&m) + &Num::ONE).to_i128();
+            let k = k.and_then(|k| u64::try_from(k).ok()).unwrap_or(u64::MAX);
+            n = n.saturating_add(k);
+        }
+        n
+    }
+
+    /// The number of ranges of the plain set ([`Classed::met`]), counted, not listed: each
+    /// value with a class other than every integer is a range of its own (no two members are
+    /// next to each other), else the ranges, maximal in the one form. O(p) for p ranges.
+    pub fn listed_len(&self) -> u64 {
+        if self.strided().is_some() {
+            self.count()
+        } else {
+            self.ranges.len() as u64
+        }
+    }
+
+    /// The values of `self` not in `other`, exact. With `A = R ∩ C` and `B = S ∩ D`,
+    /// `A \ B = ((R \ S) ∩ C) ∪ ((R ∩ S) ∩ (C \ D))`; `C \ D` is `C` where the classes do not
+    /// meet, nothing where `C` lies in `D`, and the one class of `C` left where `D` takes one
+    /// of the two classes modulo `lcm(m, k)` into which it cuts `C` (as the even values left
+    /// of every integer once the odd ones are taken). Where `C \ D` is more classes than one,
+    /// the sets are listed ([`Classed::met`]) and their difference taken.
+    // Complexity tradeoff: naive version, both sets listed and subtracted, O(v) for v values,
+    // as `projection::Held::push` did before PRES-interval-strided-piece; used: the ranges and
+    // the classes, O(p log p) for p ranges, in the cases above, which are the ones the exact
+    // projection of a stride makes (a range with the odd values taken, then the even ones),
+    // and the listed difference in every other, O(v) as before.
+    pub fn minus(&self, other: &Classed) -> Classed {
+        if self.is_empty() || other.is_empty() {
+            return self.clone();
+        }
+        let met = self.class.meet(&other.class);
+        // `C \ D`, where it is one class or none (`Bottom`).
+        let rest = if met == Congruence::Bottom {
+            Some(self.class.clone())
+        } else if met == self.class {
+            Some(Congruence::Bottom)
+        } else {
+            match (&self.class, &met) {
+                (
+                    Congruence::Class {
+                        modulus: m,
+                        residue: a,
+                    },
+                    Congruence::Class { modulus: l, .. },
+                ) if !m.is_zero() && *l == m * &Num::from(2) => {
+                    // `C` is two classes modulo `l`; `D` holds the one `met`, so `C \ D` is
+                    // the other, `a + m` or `a` modulo `l`, whichever is not `met`.
+                    let shifted = Congruence::new(l.clone(), a + m);
+                    Some(if shifted == met {
+                        Congruence::new(l.clone(), a.clone())
+                    } else {
+                        shifted
+                    })
+                }
+                _ => None,
+            }
+        };
+        let Some(rest) = rest else {
+            return Classed::plain(self.met().minus(&other.met()));
+        };
+        let outside = Classed::new(self.ranges.minus(&other.ranges), self.class.clone());
+        if rest == Congruence::Bottom {
+            return outside;
+        }
+        let inside = self.ranges.meet(&other.ranges);
+        // `rest` other than every integer needs finite ranges: `other`'s class is not every
+        // integer (else `C` would lie in it), so `other`'s ranges, and their meet, are finite.
+        outside.join(&Classed::new(inside, rest))
+    }
+}
+
+/// [`Each`] with each set [`Classed`]: the answer of [`super::project_each_classed`].
+#[derive(Clone, PartialEq, Debug)]
+pub struct EachClassed {
+    /// Each symbol's set, or its refusal.
+    pub sets: Vec<Result<Classed, Refusal>>,
+    /// The causes for which a disjunction was left out of them.
+    pub causes: Vec<Refusal>,
+}
+
+impl EachClassed {
+    /// The sets of `each`, with every integer as each one's class.
+    pub fn plain(each: Each) -> EachClassed {
+        let (sets, causes) = each;
+        EachClassed {
+            sets: (sets.into_iter()).map(|r| r.map(Classed::plain)).collect(),
+            causes,
+        }
+    }
+
+    /// The sets as ranges alone ([`Classed::met`]): what [`super::project_each`] gave before
+    /// the class was kept, for every caller that reads ranges alone.
+    pub fn met(&self) -> Each {
+        let sets = (self.sets.iter())
+            .map(|r| r.as_ref().map(Classed::met).map_err(Clone::clone))
+            .collect();
+        (sets, self.causes.clone())
+    }
+}

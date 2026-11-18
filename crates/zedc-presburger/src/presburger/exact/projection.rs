@@ -27,9 +27,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::{Congruence, Lattice};
 
 use super::super::meter::{EXACT_QUESTIONS, LISTED, PIECE, Work};
-use super::super::{Atom, Con, Formula, Lin, Model, Refusal, Rel};
+use super::super::{Atom, Classed, Con, Formula, Lin, Model, Refusal, Rel};
 
 /// The in-cell step for the values an implicant has without end.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,7 +107,9 @@ pub(super) fn pugh(
     let mut fresh = 0u32;
     let mut at = Int::from(1);
     let mut from = Int::from(0);
-    let mut held = Held { left: goal.clone() };
+    let mut held = Held {
+        left: Classed::plain(goal.clone()),
+    };
     project(
         rows.to_vec(),
         s,
@@ -122,7 +125,7 @@ pub(super) fn pugh(
 
 /// The values of the goal of [`pugh`] that no part found so far holds.
 struct Held {
-    left: IntervalSet,
+    left: Classed,
 }
 
 impl Held {
@@ -132,40 +135,46 @@ impl Held {
     }
 
     /// `p` added to `out`, and its values taken from those left: a part with no holes as one
-    /// range; a part with holes value by value, but only in the finite pieces of what is left
+    /// range; a part with holes by its class, but only in the finite pieces of what is left
     /// within its ends, each value taken charged [`LISTED`] and each piece read [`PIECE`].
     ///
     /// Complexity tradeoff: naive version, a part with holes taken from what is left by a set
-    /// of its values, which has no end for a part with no end. Used: each finite piece of
-    /// `left` within the part's ends read once, and each of the part's values in it taken once
-    /// (it is then gone from `left`), so the values listed over all parts are at most the
-    /// finite values of the goal, and each is a value outside the parts with no holes, which
-    /// [`ranges`] lists one by one from the same parts when it is not cut short. A piece of
-    /// `left` with no end inside a part with no end is skipped: the goal is then not held by
-    /// that part alone, and the projection goes on, as without the goal.
+    /// of its values, which has no end for a part with no end. Before
+    /// PRES-interval-strided-piece: each finite piece of `left` within the part's ends read
+    /// once, and each of the part's values in it listed and taken from `left` as a range of
+    /// its own, O(v) for the v values of the goal, on each projection: the holes-cut and
+    /// split-moved benchmarks of `l01_39_scope_relations::xst::s4::bench` project a stride
+    /// over a goal of O(n) values O(n) times, O(n^2) (eu-stack samples, 2026-11-18: 11 of 19
+    /// samples in `project_classes` were here). Used: `left` kept as ranges met with one class
+    /// ([`Classed`]) and the part taken by its range and class ([`Classed::minus`]), O(p log p)
+    /// for p ranges where the values left stay one class (every integer less the odd values,
+    /// then less the even ones), and listed, O(v) as before, where they do not. The values
+    /// taken and the pieces read are counted, not listed ([`Classed::count`],
+    /// [`Classed::listed_len`]), so each part is charged the same work as before, and the same
+    /// projections are refused at the limit.
     fn push(&mut self, p: Strided, out: &mut Vec<Strided>, work: &mut Work) -> Result<(), Refusal> {
         let lo = p.lo.as_ref().map_or(End::NegInf, fin);
         let hi = p.hi.as_ref().map_or(End::PosInf, fin);
-        let within = self.left.meet(&IntervalSet::range(lo, hi));
+        let within = self.left.meet(&Classed::plain(IntervalSet::range(lo, hi)));
         if p.step == Int::from(1) {
-            work.charge(PIECE.saturating_mul(within.len() as u64 + 1))?;
+            work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
             self.left = self.left.minus(&within);
         } else if !within.is_empty() {
-            work.charge(PIECE.saturating_mul(within.len() as u64 + 1))?;
-            let mut taken = Vec::new();
-            for (l, u) in within.pieces() {
-                let (End::Fin(l), End::Fin(u)) = (l, u) else {
-                    continue;
-                };
-                let (l, u) = (Int::from(l), Int::from(u));
-                let mut v = &l + &(&p.res - &l).mod_floor(&p.step);
-                while v <= u {
-                    work.charge(LISTED)?;
-                    taken.push((fin(&v), fin(&v)));
-                    v = &v + &p.step;
-                }
-            }
-            self.left = self.left.minus(&IntervalSet::from_pieces(taken));
+            work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
+            // The finite pieces of `within`; a piece with no end is skipped (the goal is then
+            // not held by this part alone). With a class other than every integer every piece
+            // is finite already.
+            let finite = IntervalSet::from_pieces(
+                (within.ranges.pieces())
+                    .filter(|(l, u)| matches!((l, u), (End::Fin(_), End::Fin(_))))
+                    .map(|(l, u)| (l.clone(), u.clone()))
+                    .collect(),
+            );
+            let class = Congruence::new(Num::from(&p.step), Num::from(&p.res));
+            let taken = Classed::new(finite, within.class.meet(&class));
+            // Each value taken charged [`LISTED`], as each was when listed.
+            work.charge(LISTED.saturating_mul(taken.count()))?;
+            self.left = self.left.minus(&taken);
         }
         out.push(p);
         Ok(())

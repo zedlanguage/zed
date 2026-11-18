@@ -61,6 +61,7 @@ use std::rc::Rc;
 
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::Congruence;
 
 use super::absorbing;
 use super::formula::Id;
@@ -69,7 +70,7 @@ pub use super::meter::{
     QUESTION_WORK, SOLVER_UNIT,
 };
 use super::meter::{PIECE, Solver, Work};
-use super::{Atom, Con, Each, Factor, Formula, Lin, Model, Refusal, Rel};
+use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
 
 mod projection;
 pub use projection::{METHOD, Method};
@@ -115,9 +116,9 @@ impl Work {
 /// depend on that order (PRES-cover-order-refusals). A caller with a formula in another
 /// order puts it in that form first, once for both. `solver` holds the solver's steps the
 /// cover asks ([`Solver`]).
-pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver) -> Each {
+pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver) -> EachClassed {
     if EXACT_OFF.get() {
-        return found;
+        return EachClassed::plain(found);
     }
     let (each, _) = found;
     // A set of the solver's that is empty shows that `f` has no point, since each set it
@@ -137,7 +138,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         let out = (each.into_iter())
             .map(|r| r.map(|_| IntervalSet::empty()))
             .collect();
-        return (out, Vec::new());
+        return EachClassed::plain((out, Vec::new()));
     }
     let limit = EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT);
     // The conjuncts of `f` grouped into parts that share no atom (`split`): each symbol is
@@ -194,7 +195,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     for (s, got) in syms.iter().zip(each) {
         sorted.entry(s).or_insert(got);
     }
-    let answers: BTreeMap<&Atom, Result<IntervalSet, Refusal>> = (sorted.into_iter())
+    let answers: BTreeMap<&Atom, Result<Classed, Refusal>> = (sorted.into_iter())
         .map(|(s, got)| {
             // Each symbol's cover has a limit of its own, as each refusal names one symbol: a
             // limit shared by the call would refuse a symbol by the work of those before it in
@@ -209,16 +210,16 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                 let at = part_of.get(s).copied();
                 let Some(i) = at.or((!many).then_some(0)) else {
                     // `s` is in no part of `f`: every value, once each part has a point.
-                    return Ok(IntervalSet::range(End::NegInf, End::PosInf));
+                    return Ok(Classed::plain(IntervalSet::top()));
                 };
                 let p = &parts[i];
                 if let Some((has, sets)) = &once[i] {
                     shown[i] |= *has;
-                    return Ok(match (sets.get(s), has) {
+                    return Ok(Classed::plain(match (sets.get(s), has) {
                         (Some(set), _) => set.clone(),
                         (None, true) => IntervalSet::range(End::NegInf, End::PosInf),
                         (None, false) => IntervalSet::empty(),
-                    });
+                    }));
                 }
                 // The cover of `s` over the part's smaller formula (above), with the limit of its
                 // own; where it is refused, the cover over `p.f` runs as it did before, with a
@@ -252,16 +253,16 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
             (s, answer)
         })
         .collect();
-    let out: Vec<Result<IntervalSet, Refusal>> = syms.iter().map(|s| answers[s].clone()).collect();
+    let out: Vec<Result<Classed, Refusal>> = syms.iter().map(|s| answers[s].clone()).collect();
     if !many {
-        return (
-            out,
-            if wider {
+        return EachClassed {
+            sets: out,
+            causes: if wider {
                 vec![Refusal::Repeats]
             } else {
                 Vec::new()
             },
-        );
+        };
     }
     let mut call = Work {
         used: 0,
@@ -277,18 +278,18 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         .map(|r| match (&has, r) {
             (_, Err(e)) => Err(e),
             (Ok(true), r) => r,
-            (Ok(false), _) => Ok(IntervalSet::empty()),
+            (Ok(false), _) => Ok(Classed::plain(IntervalSet::empty())),
             (Err(e), _) => Err(e.clone()),
         })
         .collect();
-    (
-        out,
-        if wider {
+    EachClassed {
+        sets: out,
+        causes: if wider {
             vec![Refusal::Repeats]
         } else {
             Vec::new()
         },
-    )
+    }
 }
 
 /// A part of `f` for [`split`]: the conjunction of some of its conjuncts, the atoms they read,
@@ -568,8 +569,43 @@ fn has_points(
 /// those found here are added to them. Refused where a question is refused (for its cause)
 /// and past the work limit ([`Refusal::Questions`]). Where the values have holes without end,
 /// which no set of ranges holds, the piece holding them is kept whole and the answer comes
-/// with `true`, wider than exact for that cause ([`Refusal::Repeats`]).
+/// with `true`, wider than exact for that cause ([`Refusal::Repeats`]). The set comes with a
+/// class where [`direct`] reads it as ranges met with one ([`Classed`]); every other answer
+/// is ranges alone.
 fn cover(
+    f: &Formula,
+    s: &Atom,
+    h: &IntervalSet,
+    size: u64,
+    factors: &HashSet<Atom>,
+    points: &mut Vec<Model>,
+    work: &mut Work,
+) -> Result<(Classed, bool), Refusal> {
+    // No value has a point where the solver's set, which holds every value with one, is empty.
+    if h.is_empty() {
+        return Ok((Classed::plain(IntervalSet::empty()), false));
+    }
+    // The exact projection read from the structure of `f`, with no question (`direct`). It lies
+    // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
+    // another part has no point, and then every answer is made empty (`exact_each`). So it may
+    // be met with the hull of `h` where that helps a block end (`block_set`). The solver finds
+    // such an `f` empty before the cover runs in every case tried, so the test that reaches
+    // this case gives `exact_each` sets that miss it (`tests::a_part_split_off_gets_the_same_
+    // answer_with_and_without_direct`, which also compares `direct` on and off).
+    if factors.is_empty()
+        && !DIRECT_OFF.get()
+        && let Some(set) = tried(&mut { work.limit }, work.solver, |w| {
+            direct(f, s, &h.hull(), w)
+        })
+    {
+        return Ok((set, false));
+    }
+    let (set, kept) = cells_cover(f, s, h, size, factors, points, work)?;
+    Ok((Classed::plain(set), kept))
+}
+
+/// [`cover`] by cells and questions, once [`direct`] has not answered.
+fn cells_cover(
     f: &Formula,
     s: &Atom,
     h: &IntervalSet,
@@ -590,25 +626,6 @@ fn cover(
     // values there with a point of `f` are exactly those residues' ([`ended`]).
     let mut kept: Vec<Kept> = Vec::new();
     let mut read = 0;
-    // No value has a point where the solver's set, which holds every value with one, is empty.
-    if h.is_empty() {
-        return Ok((IntervalSet::empty(), false));
-    }
-    // The exact projection read from the structure of `f`, with no question (`direct`). It lies
-    // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
-    // another part has no point, and then every answer is made empty (`exact_each`). So it may
-    // be met with the hull of `h` where that helps a block end (`block_set`). The solver finds
-    // such an `f` empty before the cover runs in every case tried, so the test that reaches
-    // this case gives `exact_each` sets that miss it (`tests::a_part_split_off_gets_the_same_
-    // answer_with_and_without_direct`, which also compares `direct` on and off).
-    if factors.is_empty()
-        && !DIRECT_OFF.get()
-        && let Some(set) = tried(&mut { work.limit }, work.solver, |w| {
-            direct(f, s, &within, w)
-        })
-    {
-        return Ok((set, false));
-    }
     // A first point without a question where one comes soon (`quick_point`): every point of
     // `f` has `s` in `h`, so its cell is read as a question's point would be.
     if points.is_empty()
@@ -1108,7 +1125,7 @@ fn ray_from(
 #[derive(Clone)]
 enum Part {
     Rows(Vec<Con>),
-    Set(IntervalSet, HashSet<Atom>),
+    Set(Classed, HashSet<Atom>),
     Alts(Vec<Vec<Con>>),
 }
 
@@ -1205,7 +1222,7 @@ fn direct(
     s: &Atom,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<Option<IntervalSet>, Refusal> {
+) -> Result<Option<Classed>, Refusal> {
     enum Go<'a> {
         Read(&'a Formula, bool),
         Join(&'a Formula, bool),
@@ -1678,9 +1695,9 @@ fn block_set(
     s: &Atom,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<Option<IntervalSet>, Refusal> {
+) -> Result<Option<Classed>, Refusal> {
     if let Some(set) = projected(rows, s, work)? {
-        return Ok(Some(set));
+        return Ok(Some(Classed::plain(set)));
     }
     if !rows.iter().any(|c| c.lin.terms.contains_key(s)) {
         return Ok(None);
@@ -1700,27 +1717,53 @@ fn block_set(
         }
     }
     let parts = projection::pugh(&bounded_rows, s, within, work)?;
-    let mut pieces: Vec<(End, End)> = Vec::new();
+    // Complexity tradeoff: naive version (before PRES-interval-strided-piece), each value of a
+    // part with a step of 2 or more listed as a range of its own, O(v) pieces for v values, and
+    // every later join, meet and reader of the answer O(v) too: holes-cut and split-moved of
+    // `l01_39_scope_relations::xst::s4::bench` answered each of O(n) calls with O(n) values one
+    // a piece (1,044 pieces at size 512), O(n^2). Used: each such part kept as its range, its
+    // first value to its last, met with its class ([`Classed`]), O(p) for p parts, where every
+    // part with a step shares one class; where they do not, or a part of step 1 is joined to
+    // one with a step, the join lists the values ([`Classed::join`]), O(v) as before. The work
+    // charged is the same as listing's, each value [`LISTED`] and each value a piece, counted
+    // and not listed, so the same calls are refused at the limit, and every answer is the same
+    // set as before, written another way.
+    let mut ranges: Vec<(End, End)> = Vec::new();
+    let mut strided: Vec<Classed> = Vec::new();
+    let mut values: u64 = 0;
     for p in parts {
         if p.step == Int::from(1) {
             let lo = p.lo.as_ref().map_or(End::NegInf, fin);
             let hi = p.hi.as_ref().map_or(End::PosInf, fin);
-            pieces.push((lo, hi));
+            ranges.push((lo, hi));
             continue;
         }
         let (Some(lo), Some(hi)) = (&p.lo, &p.hi) else {
             return Ok(None);
         };
-        // Each value listed charged [`LISTED`], as `projection::listed` charges its own.
-        let mut v = lo + &(&p.res - lo).mod_floor(&p.step);
-        while &v <= hi {
-            work.charge(super::meter::LISTED)?;
-            pieces.push((fin(&v), fin(&v)));
-            v = &v + &p.step;
+        let first = lo + &(&p.res - lo).mod_floor(&p.step);
+        if &first > hi {
+            continue;
         }
+        // The values `first, first + step, ..., <= hi`, counted.
+        let count = (&(hi - &first).div_floor(&p.step) + &Int::from(1)).to_i128();
+        let count = count
+            .and_then(|c| u64::try_from(c).ok())
+            .unwrap_or(u64::MAX);
+        // Each value charged [`LISTED`], as `projection::listed` charges its own.
+        work.charge(super::meter::LISTED.saturating_mul(count))?;
+        values = values.saturating_add(count);
+        strided.push(Classed::new(
+            IntervalSet::range(fin(&first), fin(hi)),
+            Congruence::new(Num::from(&p.step), Num::from(&p.res)),
+        ));
     }
-    work.charge(PIECE.saturating_mul(pieces.len() as u64 + 1))?;
-    Ok(Some(IntervalSet::from_pieces(pieces)))
+    work.charge(PIECE.saturating_mul((ranges.len() as u64).saturating_add(values) + 1))?;
+    let mut set = Classed::plain(IntervalSet::from_pieces(ranges));
+    for c in &strided {
+        set = set.join(c);
+    }
+    Ok(Some(set))
 }
 
 /// A part of [`direct`] as a set: rows projected; a disjunction of blocks, the union of their
@@ -1730,12 +1773,12 @@ fn as_set(
     s: &Atom,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<Option<(IntervalSet, HashSet<Atom>)>, Refusal> {
+) -> Result<Option<(Classed, HashSet<Atom>)>, Refusal> {
     Ok(match p {
         Part::Set(set, atoms) => Some((set, atoms)),
         Part::Rows(rows) => block_set(&rows, s, within, work)?.map(|set| (set, others(&rows, s))),
         Part::Alts(blocks) => {
-            let mut set = IntervalSet::empty();
+            let mut set = Classed::plain(IntervalSet::empty());
             let mut atoms = HashSet::new();
             for b in &blocks {
                 let Some(p) = block_set(b, s, within, work)? else {
@@ -1768,7 +1811,7 @@ fn joined_parts(
         }
         return Ok(Some(Part::Alts(blocks)));
     }
-    let mut set = IntervalSet::empty();
+    let mut set = Classed::plain(IntervalSet::empty());
     let mut atoms: HashSet<Atom> = HashSet::new();
     for p in parts {
         let Some((p, more)) = as_set(p, s, within, work)? else {
@@ -1809,7 +1852,7 @@ fn met(
     }
     // The items: each row, then each projected part, joined through the atoms they read.
     let mut rows: Vec<Con> = Vec::new();
-    let mut sets: Vec<(IntervalSet, HashSet<Atom>)> = Vec::new();
+    let mut sets: Vec<(Classed, HashSet<Atom>)> = Vec::new();
     // Each disjunction of blocks, with the atoms other than `s` its blocks read, an item of its
     // own after the sets.
     let mut alts: Vec<(Vec<Vec<Con>>, HashSet<Atom>)> = Vec::new();
@@ -1889,7 +1932,7 @@ fn met(
         let (blocks, _) = alts.pop().expect("one disjunction");
         return Ok(Some(Part::Alts(distribute(&group, &blocks, work)?)));
     }
-    let mut set = IntervalSet::range(End::NegInf, End::PosInf);
+    let mut set = Classed::plain(IntervalSet::top());
     for (group, held, ors) in groups.values() {
         let p = match (group.is_empty(), held.as_slice(), ors.as_slice()) {
             (false, [], []) => match block_set(group, s, within, work)? {
@@ -1905,8 +1948,8 @@ fn met(
                 }
             }
             (_, [], [_, _, ..]) if cut => match cut_at_shared(group, ors, &alts, s, work)? {
-                Some(true) => IntervalSet::range(End::NegInf, End::PosInf),
-                Some(false) => IntervalSet::empty(),
+                Some(true) => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
+                Some(false) => Classed::plain(IntervalSet::empty()),
                 None => return Ok(None),
             },
             _ => return Ok(None),

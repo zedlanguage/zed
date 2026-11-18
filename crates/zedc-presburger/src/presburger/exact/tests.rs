@@ -466,7 +466,7 @@ fn a_part_split_off_gets_the_same_answer_with_and_without_direct() {
             let g = super::super::canonical_parts(&f);
             for off in [false, true] {
                 DIRECT_OFF.set(off);
-                let (got, _) = exact_each(&g, &syms, (given.clone(), vec![]), SOLVER);
+                let (got, _) = exact_each(&g, &syms, (given.clone(), vec![]), SOLVER).met();
                 DIRECT_OFF.set(false);
                 for (k, r) in got.iter().enumerate() {
                     if let Ok(set) = r
@@ -793,7 +793,8 @@ fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
                         &[a("x")],
                         (vec![Ok(wide.clone())], vec![]),
                         SOLVER,
-                    );
+                    )
+                    .met();
                     assert_eq!(got, given, "{f}");
                     let set = got.0[0].as_ref().expect("this small tail must answer");
                     assert_eq!(got.1, vec![Refusal::Repeats], "{f}");
@@ -2034,7 +2035,7 @@ fn two_disjunctions_tied_by_one_atom_get_their_emptiness_answered() {
             match got {
                 None => declined += 1,
                 Some(set) if set.is_empty() == has => wrong.push(format!(
-                    "seed {seed} round {round}: {set}, points {has}: {f}"
+                    "seed {seed} round {round}: {set:?}, points {has}: {f}"
                 )),
                 Some(_) => {}
             }
@@ -2044,4 +2045,96 @@ fn two_disjunctions_tied_by_one_atom_get_their_emptiness_answered() {
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert_eq!(declined, 0);
     assert!(empty > 0 && empty < 200, "{empty} of 200 empty");
+}
+
+/// `x == 2a + b` with `b == 1` and x in `-bound..=bound`, the odd values of the range.
+fn odd_x(bound: i64) -> Formula {
+    Formula::and(vec![
+        eq(&[("x", 1), ("a", -2), ("b", -1)], 0),
+        ge(&[("b", 1)], 0),
+        ge(&[("b", -1)], 1),
+        eq(&[("b", 1)], -1),
+        ge(&[("x", 1)], bound),
+        ge(&[("x", -1)], bound),
+    ])
+}
+
+/// [`direct`] answers a stride as its range met with its class, a few pieces whatever the
+/// bound, not one piece per value (PRES-interval-strided-piece): the odd values of
+/// `-bound..=bound` are the range from the first odd value to the last, met with 1 mod 2.
+#[test]
+fn a_stride_is_answered_as_its_range_and_class() {
+    let mut pieces = Vec::new();
+    for bound in [101, 808] {
+        let f = odd_x(bound);
+        let mut work = Work {
+            used: 0,
+            limit: super::super::meter::EXACT_LIMIT,
+            solver: SOLVER,
+        };
+        let got = direct(&f, &a("x"), &IntervalSet::top(), &mut work)
+            .unwrap()
+            .expect("direct answers the stride");
+        assert_eq!(
+            got.class,
+            Congruence::new(Num::from(2), Num::from(1)),
+            "{got:?}"
+        );
+        let odd = if bound % 2 == 1 { bound } else { bound - 1 };
+        assert_eq!(got.ranges, IntervalSet::of(-odd, odd), "{got:?}");
+        assert_eq!(got.met(), brute_odd(bound));
+        pieces.push(got.ranges.len());
+        // The public answer, with its class, and its listed form for the old callers.
+        let each = super::super::project_each_classed(&f, &[a("x")]).unwrap();
+        assert_eq!(each.sets[0].as_ref().unwrap(), &got);
+        assert_eq!(project(&f, "x"), brute_odd(bound));
+    }
+    assert_eq!(pieces, vec![1, 1]);
+}
+
+fn brute_odd(bound: i64) -> IntervalSet {
+    IntervalSet::from_pieces(
+        (-bound..=bound)
+            .filter(|v| v.rem_euclid(2) == 1)
+            .map(|v| (End::of(v), End::of(v)))
+            .collect(),
+    )
+}
+
+/// [`Classed::minus`], [`Classed::count`] and [`Classed::listed_len`] agree with the listed
+/// sets ([`Classed::met`]) on every set of up to two ranges in `-6..=6` with a modulus up to
+/// 4, taken from every other such set: the difference, exact, in each case the projection's
+/// `Held::push` meets (a class less another, a range less a class) and the listed fallback.
+#[test]
+fn classed_differences_and_counts_agree_with_the_listed_sets() {
+    let mut sets = Vec::new();
+    let ranges = [
+        IntervalSet::empty(),
+        IntervalSet::of(-6, 6),
+        IntervalSet::of(-3, 2),
+        IntervalSet::from_pieces(vec![(End::of(-6), End::of(-2)), (End::of(1), End::of(5))]),
+        IntervalSet::of(4, 4),
+    ];
+    for r in &ranges {
+        for m in 1..=4i64 {
+            for a in 0..m {
+                sets.push(Classed::new(
+                    r.clone(),
+                    Congruence::new(Num::from(m), Num::from(a)),
+                ));
+            }
+        }
+    }
+    for x in &sets {
+        let listed = x.met();
+        let values: Vec<i64> = (-7..=7).filter(|v| listed.contains(*v)).collect();
+        assert_eq!(x.count(), values.len() as u64, "{x:?}");
+        assert_eq!(x.listed_len(), listed.len() as u64, "{x:?}");
+        for y in &sets {
+            let got = x.minus(y);
+            assert_eq!(got.met(), listed.minus(&y.met()), "{x:?} minus {y:?}");
+            // In the one form: the class found again from the listed values.
+            assert_eq!(got, Classed::plain(got.met()), "{got:?}");
+        }
+    }
 }

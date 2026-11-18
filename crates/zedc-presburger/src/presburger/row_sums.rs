@@ -161,7 +161,7 @@ use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
-use super::refusal::{Each, Refusal};
+use super::refusal::{EachClassed, Refusal};
 use super::row_domains::{self, Settled, range};
 
 mod plane;
@@ -537,13 +537,13 @@ pub(super) fn point(
 pub(super) fn project(
     rows: Rows,
     syms: &[Atom],
-    old: impl FnOnce() -> Result<Each, Refusal>,
-) -> Result<Each, Refusal> {
+    old: impl FnOnce() -> Result<EachClassed, Refusal>,
+) -> Result<EachClassed, Refusal> {
     if rows.empty {
-        return Ok((
+        return Ok(EachClassed::plain((
             syms.iter().map(|_| Ok(IntervalSet::empty())).collect(),
             Vec::new(),
-        ));
+        )));
     }
     let wanted: Vec<Option<usize>> = (syms.iter())
         .map(|a| rows.atoms.binary_search(a).ok())
@@ -561,7 +561,7 @@ pub(super) fn project(
                 })
             })
             .collect();
-        (each, Vec::new())
+        EachClassed::plain((each, Vec::new()))
     };
     // Two atoms besides those an equation defines: the polygons' projections, whose cost does
     // not grow with the widths of the ranges, where they are shown exact and cost no more than
@@ -4250,7 +4250,7 @@ mod tests {
         ROW_SUMS_JOIN.with(|o| o.set(false));
         let (units, answered) = JOINED.with(Cell::get)?;
         assert!(answered, "the join with no limit answers");
-        let sets = got.expect("the join's sets").0;
+        let sets = got.expect("the join's sets").met().0;
         Some((sets.into_iter().map(|s| s.expect("a set")).collect(), units))
     }
 
@@ -4297,7 +4297,7 @@ mod tests {
         let syms = rows.atoms.clone();
         ROUTE.with(|r| r.set(None));
         let got = project(rows, &syms, || Err(Refusal::Work)).ok();
-        let sets = got.map(|g| g.0.into_iter().map(|s| s.expect("a set")).collect());
+        let sets = got.map(|g| g.met().0.into_iter().map(|s| s.expect("a set")).collect());
         (sets, ROUTE.with(Cell::get))
     }
 
