@@ -8688,4 +8688,38 @@ fn lists_the_prefix_chains_leave_to_the_search_agree_with_the_oracle() {
     }
 }
 
+#[test]
+fn chains_to_two_carriers_of_one_cycle_with_other_heads_agree_with_the_oracle() {
+    // The meets above, whose positive rows share a head, are decided by the front sweep
+    // (`sweep::list_sweep_checked`) before `find_prefix_chains` runs, so they never reach its
+    // walk to the carrier (TEST-kernel-unreached-paths-4, cover3: a probe showed that `forced`
+    // lists both rows of the meet, and that `prefix_chains` was never asked about the list).
+    // With the heads `1` and `1 | 2` the sweep declines, and the walk meets two carriers of
+    // one cycle (`_pc2a` and `_pc2b`, the lists of `int`) at the end of the positive rows, the
+    // second added to the first. The verdict is the oracle's, on lists of up to 4 items.
+    let samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
+    let la = list_named(Type::int(), "_pc2a");
+    let lb = list_named(Type::int(), "_pc2b");
+    let both = &cell(&lit(1), &la) & &cell(&(&lit(1) | &lit(2)), &lb);
+    let cases = [
+        (
+            "less a head the meet does not take",
+            &both - &cell(&lit(2), &la),
+        ),
+        ("less the whole meet", &both - &cell(&lit(1), &la)),
+        (
+            "less a longer chain",
+            &both - &cell(&lit(1), &cell(&lit(1), &la)),
+        ),
+    ];
+    for (what, t) in cases {
+        Type::forget_emptiness();
+        let want = match list_oracle_inhabited(&t, &samples, 4) {
+            true => Verdict::Inhabited,
+            false => Verdict::Empty,
+        };
+        assert_eq!(t.verdict(), want, "{what}: {t}");
+    }
+}
+
 mod bench;

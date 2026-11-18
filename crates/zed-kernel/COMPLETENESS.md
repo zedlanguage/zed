@@ -218,3 +218,26 @@ Closed in this round:
 
 Open (the other ranges of the list), for the next round: see the handoff
 /home/luke/Work/wt/pause/cover4-2026-11-18-handoff.md.
+
+Fourth round (cover3, 2026-11-18). Coverage re-run at zed-impl 395a28b68 (`tools/run_tests.sh
+--cov`, the short-address pieces left out, load 77 to 315): 2,664 pieces, 3 failed
+(`l01_23_groups_and_refusals::group_oracle` and `zedc_presburger`'s library timed out, so their
+coverage is missing from this run; `l01_39_scope_relations` `audit_seeds_against_the_oracle`
+failed). `empty.rs` has 8,912 instrumented lines, of which 351 were not reached; the list with
+each line's text is `wt/coverage/TEST-kernel-unreached-paths-4-empty-395a28b68.txt`.
+
+Why cover2's meets do not reach the first carrier loop: a probe showed that `forced` lists both
+rows of `cell(int, La) & cell(int, Lb)` (two taken, one refused), so the meet is not normalized
+first. `find_prefix_chains` is never called on those lists: the front sweep
+(`sweep::list_sweep_checked`, run before `prefix_chains`) decides them, and `prefix_chains` runs
+only on the heads (`int`, `bool`). With the heads `1` and `1 | 2` the sweep declines.
+
+- `find_prefix_chains`, the first loop's test of `carriers` for a second row's carrier (old
+  7412): removed, with the proof at the site. `forced` lists each row once, and every row met
+  there has the head `c.item`, so two rows differ in their carrier.
+- The second loop's arm for a second carrier of the one cycle (old 7430-7434): reached by the new
+  test `l01_23_groups_and_refusals` `chains_to_two_carriers_of_one_cycle_with_other_heads_agree_with_the_oracle`
+  (three cases, each the oracle's verdict on lists of up to 4 items). The negative control (the
+  type not kept) left all three verdicts unchanged. The reason: `is_carrier` accepts any carrier of
+  the cycle without `carrier_set`, so `walk` maps it to node 0. The push only saved that test, and
+  it is removed, with the proof at the site.

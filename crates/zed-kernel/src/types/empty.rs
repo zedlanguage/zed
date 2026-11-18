@@ -7406,11 +7406,11 @@ impl<'m> Searching<'m> {
                             carrier_cycle = Some(c);
                             carriers.push(a[1].clone());
                         }
-                        Some(prev) if prev == &c => {
-                            if !carriers.contains(&a[1]) {
-                                carriers.push(a[1].clone());
-                            }
-                        }
+                        // No test of `carriers` for `a[1]`: `forced` lists each row once (its
+                        // rows come from one ordered set of settings, `bdd::settings`, or one
+                        // block, a set by atom), and every row met here has `a[0] == c.item`,
+                        // so two rows met here differ in `a[1]`.
+                        Some(prev) if prev == &c => carriers.push(a[1].clone()),
                         Some(_) => return None,
                     }
                 }
@@ -7427,11 +7427,14 @@ impl<'m> Searching<'m> {
                                         carrier_cycle = Some(c);
                                         carriers.push(cur);
                                     }
-                                    Some(prev) if prev == &c => {
-                                        if !carriers.contains(&cur) {
-                                            carriers.push(cur);
-                                        }
-                                    }
+                                    // A second carrier of the one cycle is not kept: its step
+                                    // is `(Some(c.stop), c.link, c.item, cur)` (period 1, at
+                                    // 0), which `is_carrier` accepts without `carrier_set`, so
+                                    // `walk` maps it to node 0 and a row ending there is read as
+                                    // one ending at the carrier (TEST-kernel-unreached-paths-4:
+                                    // test `chains_to_two_carriers_of_one_cycle_...` reaches this
+                                    // arm, and its verdicts were the same with the type kept).
+                                    Some(prev) if prev == &c => {}
                                     Some(_) => return None,
                                 }
                             }
