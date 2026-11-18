@@ -177,25 +177,53 @@ fn the_x_tail_family_is_refused_at_a_fork() {
     }
 }
 
+/// The number of tuples of `vars` bits in which every clause of `r3(vars, seed)` holds, by trying
+/// each of the 2^vars tuples (with the same draws as `r3`).
+fn models(vars: usize, seed: u64) -> usize {
+    let mut g = Rng::new(seed * 2 + 1);
+    let clauses: Vec<Vec<(usize, bool)>> = (0..vars * 426 / 100)
+        .map(|_| (0..3).map(|_| (g.below(vars), g.below(2) == 0)).collect())
+        .collect();
+    (0u64..1 << vars)
+        .filter(|x| {
+            clauses
+                .iter()
+                .all(|c| c.iter().any(|&(v, b)| ((x >> v) & 1 == 1) == b))
+        })
+        .count()
+}
+
+/// Both verdicts of `a - b` for `r3(vars, seed)`: `verdict` and `subtype_verdict`.
+fn r3_verdicts(vars: usize, seed: u64) -> (Verdict, Verdict) {
+    let (a, b) = r3(vars, seed);
+    Type::forget_emptiness();
+    let v = (&a - &b).verdict();
+    Type::forget_emptiness();
+    (v, a.subtype_verdict(&b))
+}
+
 /// Small instance of `bench::the_verdict_of_random_3_cnf_is_refused_in_its_size` and
 /// `bench::the_subtype_verdict_of_random_3_cnf_is_refused_in_its_size`
-/// (TEST-bench-move-l0123, author P170): random 3-CNF over 8 bits, seed 2, the benchmark's
+/// (TEST-bench-move-l0123, author P170): random 3-CNF over 16 bits, seed 3, the benchmark's
 /// small instance, is refused at shared cells of component 0 by `verdict` and by
-/// `subtype_verdict`. Only this instance is known to be refused (see below), so no other size
-/// is checked.
+/// `subtype_verdict`.
 #[test]
 fn random_3_cnf_is_refused_at_shared_cells() {
-    let (a, b) = r3(8, 2);
-    Type::forget_emptiness();
-    assert_eq!(
-        (&a - &b).verdict(),
-        Verdict::Refused(Refusal::SharedCells(0))
-    );
-    Type::forget_emptiness();
-    assert_eq!(
-        a.subtype_verdict(&b),
-        Verdict::Refused(Refusal::SharedCells(0))
-    );
+    let refused = Verdict::Refused(Refusal::SharedCells(0));
+    assert_eq!(r3_verdicts(16, 3), (refused.clone(), refused));
+}
+
+/// Seed 2, the benchmarks' instance until GROUP-order-cpoly-merge: over 8 bits no tuple meets
+/// every clause (counted by trying all 256) and the verdict is a refusal at shared cells; over
+/// 16 bits 5 tuples meet every clause (all 65,536 tried), and the merged kernel finds one, so
+/// both verdicts are `Inhabited`. Before the merge they were refused there too.
+#[test]
+fn random_3_cnf_seed_2_is_refused_at_8_bits_and_inhabited_at_16() {
+    let refused = Verdict::Refused(Refusal::SharedCells(0));
+    assert_eq!(models(8, 2), 0);
+    assert_eq!(r3_verdicts(8, 2), (refused.clone(), refused));
+    assert_eq!(models(16, 2), 5);
+    assert_eq!(r3_verdicts(16, 2), (Verdict::Inhabited, Verdict::Inhabited));
 }
 
 // Measured at 8d0bfe954 with the classes of values (COMPLEXITY.md K111; instructions of
@@ -203,8 +231,10 @@ fn random_3_cnf_is_refused_at_shared_cells() {
 // under a limit of 123. Before, a value read in from each group that built it was tested
 // against each type under a number of its own (Θ(n³) tests): 145M and 20.3G, 140 times.
 
-// Seed 2 is refused at shared cells at both sizes; other seeds are decided at one of them,
-// Empty or Inhabited by the instance, not by its size. Measured at 8d0bfe954: 61.0M
-// instructions at n = 8 and 3.82G at n = 64, 62.6 times, under a limit of 141.
+// The benchmarks use seed 3, refused at shared cells at 16 and 128 bits by both verdicts
+// (checked on branch wt/order2, 2026-11-18). Of seeds 0 to 39 at 16 bits, 18 are refused and
+// the rest Inhabited; seed 2, used until GROUP-order-cpoly-merge, is Inhabited at 16 (see the
+// test above). Measured at 8d0bfe954 for seed 2: 61.0M instructions at n = 8 and 3.82G at
+// n = 64, 62.6 times, under a limit of 141.
 
 mod bench;

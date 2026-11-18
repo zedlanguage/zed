@@ -13420,6 +13420,9 @@ impl<'a> Walked<'a> {
         for &t in &below {
             nodes[at(node[t])].below.push(t.clone());
         }
+        let (mut nodes, quot) = quotient(nodes);
+        let at = |x: usize| quot[at(x)];
+        merged_any |= nodes.len() < count;
         Group::set_deep(&mut nodes, self.dir);
         let single_chain = members.len() == 1
             && !merged_any
@@ -13520,6 +13523,127 @@ impl<'a> Walked<'a> {
             }
         });
     }
+}
+
+/// The nodes of a group's trie with the bisimilar ones merged, and each old node's new number:
+/// two nodes are one when they hold the same keys, lists, whole and lower types, and their
+/// children by each edge are one. Node 0 stays 0, and the nodes keep the order of their first
+/// old node. Placing a type at a node reads the same keys below it at either of two bisimilar
+/// nodes, so `joined` gives the same classes; two types that reach one ring at different
+/// members (`Even0` and `Even1` of a ring of alike definitions) then meet at one node, and a
+/// placement walks the ring's period, not the ring.
+// Complexity tradeoff (PERF-group-overlaps-dir1, COMPLEXITY.md K131): without the quotient, a
+// ring of n alike definitions has a trie of order n nodes, one set per member, and two types
+// placed at two members of it walk it in step, merging node pairs around the whole ring: O(n)
+// per call of `joined`, and `overlaps` is called for about n checks of the ring, O(n^2) in all
+// (`l01_29_diagnostics::bench::group_site::naming_the_head_group_scales`, T(8n)/T(n) about 34;
+// measured: 32,000 binds per direction-1 run at 8,000 definitions). Used: the coarsest stable
+// coloring of the trie ([`crate::refine::Refine`], Paige and Tarjan 1987 with Hopcroft's
+// smaller-half rule), O((N + K) log N) for N nodes and K children, once per group (each group
+// is cached in `GROUPS`), plus O(N log N) comparisons of the nodes' contents in the starting
+// sort. Given up: memory for the refinement's arrays, O(N + K), while the group is made.
+fn quotient(nodes: Vec<GroupNode>) -> (Vec<GroupNode>, Vec<usize>) {
+    let v = nodes.len();
+    // The nodes' starting colors: by what they hold, the lower types in their order.
+    let below: Vec<Vec<&Type>> = nodes
+        .iter()
+        .map(|n| {
+            let mut b: Vec<&Type> = n.below.iter().collect();
+            b.sort();
+            b
+        })
+        .collect();
+    let content = |a: usize, b: usize| {
+        let (x, y) = (&nodes[a], &nodes[b]);
+        x.points
+            .cmp(&y.points)
+            .then_with(|| x.lists.cmp(&y.lists))
+            .then_with(|| x.whole.cmp(&y.whole))
+            .then_with(|| below[a].cmp(&below[b]))
+    };
+    let mut sorted: Vec<usize> = (0..v).collect();
+    sorted.sort_by(|&a, &b| content(a, b));
+    // Vertices: the nodes, then one per child (a place), colored by its edge.
+    let places: Vec<(usize, &Edge, usize)> = nodes
+        .iter()
+        .enumerate()
+        .flat_map(|(u, n)| n.kids.iter().map(move |(e, c)| (u, e, *c)))
+        .collect();
+    let size = v + places.len();
+    let mut color = vec![0; size];
+    let mut next = 0;
+    for (i, &a) in sorted.iter().enumerate() {
+        if i > 0 && content(sorted[i - 1], a).is_ne() {
+            next += 1;
+        }
+        color[a] = next;
+    }
+    next += usize::from(v > 0);
+    // The edges numbered as first met: a color only needs to tell edges apart, since the
+    // classes are numbered by their first node below.
+    let mut edges: HashMap<&Edge, usize> = HashMap::new();
+    for (e, &(_, edge, _)) in places.iter().enumerate() {
+        let k = edges.len();
+        color[v + e] = next + *edges.entry(edge).or_insert(k);
+    }
+    next += edges.len();
+    // The vertices counted when the class of a vertex refines: a node's places as a child, a
+    // place's node.
+    let mut start = vec![0; size + 1];
+    for (e, &(_, _, c)) in places.iter().enumerate() {
+        start[c + 1] += 1;
+        start[v + e + 1] = 1;
+    }
+    for x in 0..size {
+        start[x + 1] += start[x];
+    }
+    let mut adj = vec![0; start[size]];
+    let mut cursor = start[..size].to_vec();
+    for (e, &(u, _, c)) in places.iter().enumerate() {
+        adj[cursor[c]] = v + e;
+        cursor[c] += 1;
+        adj[cursor[v + e]] = u;
+    }
+    let mut into = vec![0; size];
+    for &w in &adj {
+        into[w] += 1;
+    }
+    let degree = (0..size)
+        .map(|x| (start[x + 1] - start[x]).max(into[x]))
+        .max()
+        .unwrap_or(0);
+    let mut refine = crate::refine::Refine::new(color, next, degree);
+    refine.run(&start, &adj);
+    let color = refine.color;
+    // The classes numbered in the order of their first node, so node 0 stays 0.
+    let mut class = vec![usize::MAX; size];
+    let mut quot = vec![0; v];
+    let mut count = 0;
+    for x in 0..v {
+        if class[color[x]] == usize::MAX {
+            class[color[x]] = count;
+            count += 1;
+        }
+        quot[x] = class[color[x]];
+    }
+    if count == v {
+        return (nodes, quot);
+    }
+    let mut out: Vec<Option<GroupNode>> = (0..count).map(|_| None).collect();
+    for (x, mut n) in nodes.into_iter().enumerate() {
+        let slot = &mut out[quot[x]];
+        if slot.is_none() {
+            for (_, c) in &mut n.kids {
+                *c = quot[*c];
+            }
+            *slot = Some(n);
+        }
+    }
+    let out = out
+        .into_iter()
+        .map(|n| n.expect("each class has a node"))
+        .collect();
+    (out, quot)
 }
 
 impl<'a> zed_graph::Walk for Walked<'a> {

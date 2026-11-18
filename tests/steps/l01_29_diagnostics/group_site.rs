@@ -2,7 +2,6 @@
 //! lists the group's definitions, beside the message at the use site (DESIGN.md L1.29, item
 //! REFUSE-group-site); zedc adds their places once a recursive `type` is lowered (L2.5).
 
-use zed_kernel::Value;
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zedc::check::ty::Ty;
@@ -13,10 +12,6 @@ fn r(i: usize) -> Expr {
 
 fn int() -> Expr {
     Expr::Type(Type::int())
-}
-
-fn one(i: i64) -> Expr {
-    Expr::Type(Type::lit(&Value::Int(i)).unwrap())
 }
 
 fn nil() -> Expr {

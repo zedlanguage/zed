@@ -838,6 +838,59 @@ fn the_rings_of_names_have_the_classes_their_shapes_give() {
     }
 }
 
+/// A ring of `k` alike lists of `int`, `R_i = #nil | #cons((int, R_{i+1}))` with `R_k = R_0`,
+/// has a group trie of the same nodes for every `k` in both directions, and in direction 1,
+/// which follows the tail, its members are one group at one node, their nodes bisimilar and
+/// merged ([`quotient`], PERF-group-overlaps-dir1), and every pair of its members
+/// is one class. Without the quotient the trie has a set of nodes per member, and two types
+/// placed at two members walk the whole ring in step.
+#[test]
+fn a_ring_of_alike_lists_has_one_trie_whatever_its_length() {
+    use super::super::rec::{Def, Expr, Group};
+    let ring = |k: usize| -> Vec<Type> {
+        let defs = (0..k)
+            .map(|d| {
+                let r = Expr::Ref((d + 1) % k, vec![]);
+                let cons = Expr::Atom(
+                    "cons".to_string(),
+                    vec![Expr::Tuple(vec![Expr::Type(Type::int()), r])],
+                );
+                Def {
+                    name: format!("R{d}"),
+                    params: vec![],
+                    body: Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
+                }
+            })
+            .collect();
+        Group::new(defs).expect("a ring").instance(vec![])
+    };
+    for dir in 0..2 {
+        let sizes: Vec<usize> = [1, 2, 3, 64]
+            .into_iter()
+            .map(|k| {
+                let ts = ring(k);
+                assert_eq!(
+                    overlaps(ts[..2.min(k)].iter()).len(),
+                    1,
+                    "k = {k}, dir = {dir}"
+                );
+                let (g, c0) = group_of(&ts[0], dir);
+                let (h, c1) = group_of(&ts[k - 1], dir);
+                // Direction 0 follows the head, `int`, so there each member is its own group.
+                if dir == 1 {
+                    assert!(std::rc::Rc::ptr_eq(&g, &h), "k = {k}");
+                    assert_eq!(c0, c1, "the members are at one node, k = {k}");
+                }
+                g.nodes.len()
+            })
+            .collect();
+        assert!(
+            sizes.iter().all(|&s| s == sizes[0]),
+            "dir = {dir}: {sizes:?}"
+        );
+    }
+}
+
 /// A number in `0..n`, from the generator [`next`].
 fn below(s: &mut u64, n: usize) -> usize {
     (next(s) >> 11) as usize % n
