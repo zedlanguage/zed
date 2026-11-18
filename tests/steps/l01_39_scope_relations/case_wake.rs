@@ -474,6 +474,14 @@ fn tests_on_two_names_with_distinct_slopes_give_the_projection_from_scratch() {
     run(Aim::Pair, "case wake: two names");
 }
 
+/// Seed 3394941344009854253 of the two-name attack: case 9, step 4, test `a != -2 && y != 1`
+/// false, where the incremental side lost `x`'s hole at 0 (`[-1, +inf)` against `{-1}` and
+/// `[1, +inf)` from scratch) (FAIL-case-wake-pair-3394941344).
+#[test]
+fn tests_on_two_names_give_the_projection_from_scratch_at_seed_3394941344009854253() {
+    run_at(Aim::Pair, 3_394_941_344_009_854_253);
+}
+
 #[test]
 fn tests_on_three_names_give_the_projection_from_scratch() {
     run_at(Aim::Three, 2);
@@ -555,6 +563,60 @@ fn three_names_in_a_case(drop: &[usize]) {
     assert_eq!(
         ran.stale, 0,
         "the scope differed from scratch before the test"
+    );
+}
+
+/// The history of pair seed 3394941344009854253, case 9, step 4, cut to the six assumptions
+/// it fails with (FAIL-case-wake-pair-3394941344). The test `a == -2 || y == 1` is split into
+/// its cases and joined, which gives `a` its hole; the test's own part then moved no name, so
+/// the whole block, which alone shows that `x == 0` has no point in either case, was not
+/// projected, and `x` kept `0`. By hand: at `x == 0` the case `a == -2` gives `y >= -2`, the
+/// first disjunction `y <= 0` and the second nothing (`3y >= 1` and `-y >= 5` both fail on
+/// `[-2, 0]`); the case `y == 1` fails the first disjunction (`x + 2y == 2 > 1` and
+/// `2x + 3y == 3 < 6`).
+#[test]
+fn a_test_joined_from_cases_projects_the_whole_block() {
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let history = [
+        ge(var("x"), -1),
+        prim(Prim::Le, var("y"), int(1)),
+        prim(Prim::Le, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(2, "x"), (3, "y")]), 6),
+            ge(lin(&[(-1, "x"), (-2, "y")]), -1),
+        ),
+        or(
+            ge(lin(&[(1, "x"), (3, "y")]), 1),
+            ge(lin(&[(3, "x"), (-1, "y")]), 5),
+        ),
+        or(
+            ge(lin(&[(-3, "a")]), -1),
+            ge(lin(&[(-1, "y"), (1, "a")]), 1),
+        ),
+    ];
+    let ns: Vec<Arc<str>> = ["a", "x", "y"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in &history {
+        s = s.assume(t, true, &p);
+    }
+    let t = prim(
+        Prim::And,
+        prim(Prim::Ne, var("a"), int(-2)),
+        prim(Prim::Ne, var("y"), int(1)),
+    );
+    let got = s.assume(&t, false, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+    assert!(
+        !got.get("x").ints().contains(0),
+        "x keeps 0: {:?}",
+        got.get("x").ints()
     );
 }
 

@@ -156,8 +156,11 @@ pub struct ProductDomains {
 /// narrowed only its interval, finds the finite set's members in it by two cuts
 /// ([`Product::kept_by_listed`]) rather than a walk. Nothing rests on it being current: it is
 /// read only when the finite set is still `v0` itself (the same tree) and the interval lies
-/// inside `i0`, which are checked at each read. Copied with the domains, and ignored by
-/// equality and printing, as [`Settled`] is.
+/// inside `i0`, which are checked at each read. Its readers rest only on every integer of `i0`
+/// being a member of `v0` and `v0` holding 64-bit integers only; its one writer,
+/// [`Product::reduce_domains`], proves that and the converse at the site
+/// (PROOF-ints-listed-writers). Copied with the domains, and ignored by equality and printing,
+/// as [`Settled`] is.
 #[derive(Clone, Default)]
 struct IntsListed(Option<(IntervalSet, TreapSet<Value>)>);
 
@@ -622,6 +625,23 @@ impl Product {
                 }
             }
             changed |= self.cell.finite.meet(&FiniteSet::Set(kept.clone()), &prem);
+            // The one writer of `IntsListed` outside tests (PROOF-ints-listed-writers). What
+            // its readers (`kept_by_listed`, `ints_all_listed`, `ints_among`) rest on: every
+            // integer of `i0` is a member of `kept`, and `kept` holds 64-bit integers only.
+            // Proof. `ints_only` says `vs` holds 64-bit integers only, and `kept` lies in `vs`
+            // (`kept_in` keeps members of `vs`; `kept_by_listed` gives `cut(vs, ..)`), so `kept`
+            // does too, and `listed` is set only under `ints_only`. `kept` is the members of
+            // `vs` in `x`, the interval before this step (the proofs at `kept_in` and
+            // `kept_by_listed`), so it lies in `x`. First branch: `fills(kept, x, true)` with
+            // `kept` inside `x` means `kept` has as many members as `x` has integers, so they
+            // are all of them (the proof at `fills`): `i0 = x` and its integers are exactly
+            // `kept`. Second branch: `i0` is the interval after the meet with `p = points(kept)`,
+            // and `i0 ⊆ p` is tested before it is recorded, so every integer of `i0` is a member
+            // of `kept`. The two hold exactly the same integers there too: the meet is sound, so
+            // `i0 ⊇ x ∩ p = p` (`kept` lies in `x`), and with `i0 ⊆ p`, `i0 = p`. The record
+            // pairs two persistent values that are never written after this, so later writes
+            // to the domains cannot break it; each reader checks that it still applies.
+            // Test: `tests::reductions_record_only_intervals_and_sets_of_the_same_integers`.
             if let Some(i0) = listed {
                 self.listed = IntsListed(Some((i0, kept)));
             }
@@ -5607,6 +5627,9 @@ struct Block {
     free: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
     /// The names' products at the end of the last projection.
     names_at: imbl::OrdMap<Arc<str>, Product>,
+    /// The names' products at the end of the last projection outside the cases of a test
+    /// ([`Scope::in_case`]), against which [`Block::gained_hole`] reads a hole outside them.
+    outer_names_at: imbl::OrdMap<Arc<str>, Product>,
     /// The keys of the parts added since the block was last kept ([`Seen::owners`]).
     added: Vec<PartKey>,
     /// A name of the block was given a set of more than one piece by a step outside the
@@ -5699,6 +5722,7 @@ impl Block {
             wide,
             free,
             names_at: names.clone(),
+            outer_names_at: names.clone(),
             added: Vec::new(),
             hole_pending: false,
         };
@@ -5722,20 +5746,36 @@ impl Block {
     /// when kept, O(N) for N names. Used: the names changed since then, from the persistent
     /// maps' difference, O(c log N) for c changed, with the block's names compared only when
     /// more than N changed, as [`Block::update`] walks them.
-    fn gained_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+    ///
+    /// Outside the cases of a test (`outer`) the names are compared with those of the last
+    /// projection outside them ([`Block::outer_names_at`]), not of the last case: a case can
+    /// give a name the hole the join of the cases then gives it, so that the join changes
+    /// nothing since the last case kept the block, while the whole block was never projected
+    /// with that hole outside the cases (FAIL-case-wake-pair-3394941344: in
+    /// `a == -2 || y == 1` the case `y == 1` gives `a` the set `(-inf, 0] ∪ [2, inf)`, the
+    /// join gives it the same, and `x` kept `0`, which the whole block shows has no point;
+    /// `case_wake::a_test_joined_from_cases_projects_the_whole_block`). Cost: the same
+    /// O(c log N) for c names changed since that projection, and one whole-block projection
+    /// where a part that gave the hole outside the cases would have asked for one.
+    fn gained_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>, outer: bool) -> bool {
         if self.hole_pending {
             return true;
         }
+        let at = if outer {
+            &self.outer_names_at
+        } else {
+            &self.names_at
+        };
         // A star's leaf is left out, as the loop's trigger leaves it out
         // ([`Scope::project_block`]): no part's projection onto the hubs reads it.
         let holed = |n: &Arc<str>| {
             self.users.contains_key(n)
                 && self.leaf.as_ref() != Some(n)
-                && !same_framed_opt(self.names_at.get(n), names.get(n))
+                && !same_framed_opt(at.get(n), names.get(n))
                 && names.get(n).is_some_and(|p| p.ints().len() > 1)
         };
         let mut changed = Vec::new();
-        for d in self.names_at.diff(names) {
+        for d in at.diff(names) {
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
@@ -7979,6 +8019,9 @@ impl Scope {
     /// Keeps `block` as its projection left it, with the names' products as they are now.
     fn keep(&mut self, mut block: Block) {
         block.names_at = self.names.view().clone();
+        if !self.in_case {
+            block.outer_names_at = block.names_at.clone();
+        }
         for w in std::mem::take(&mut block.spends) {
             self.spent.insert(w);
         }
@@ -8088,7 +8131,7 @@ impl Scope {
                 // A block with nothing to project, as most in an eager scope, is kept as it is,
                 // with a hole made since asking for the whole block ([`Block::hole_pending`]).
                 if due.is_empty() {
-                    b.hole_pending = b.gained_hole(self.names.view());
+                    b.hole_pending = b.gained_hole(self.names.view(), !self.in_case);
                     self.keep(b);
                     continue;
                 }
@@ -8117,7 +8160,7 @@ impl Scope {
                     let at = self.snapshot(&p.names);
                     self.projected.insert(p.key.clone(), (p.with.clone(), at));
                 }
-                b.hole_pending = b.gained_hole(self.names.view());
+                b.hole_pending = b.gained_hole(self.names.view(), !self.in_case);
                 self.keep(b);
                 continue;
             }
@@ -13342,7 +13385,7 @@ impl Scope {
         // since keeping it moves its snapshot past the change. Cost: O(c log N) to find it
         // ([`Block::gained_hole`]), and one whole-block projection where the loop's trigger
         // would have asked for one had the hole come from a part.
-        let mut entry_hole = b.gained_hole(self.names.view());
+        let mut entry_hole = b.gained_hole(self.names.view(), !self.in_case);
         b.hole_pending = false;
         if due.is_empty() {
             if !entry_hole {
@@ -20208,6 +20251,67 @@ mod tests {
             kept_fired > 100 && all_fired > 100 && among_fired > 100,
             "{kept_fired} {all_fired} {among_fired}"
         );
+    }
+
+    /// The writer of [`IntsListed`] keeps what its readers rest on (PROOF-ints-listed-writers):
+    /// after each reduction of a product whose finite set is a set of integers, narrowed step
+    /// by step in its interval (one piece or many) and now and then in its set, a record
+    /// `(i0, v0)` has `v0` of 64-bit integers only and `i0` exactly the points of `v0`. Each
+    /// step's record feeds the next reduction through [`Product::kept_by_listed`], so the
+    /// shortcut's own output is checked as well. The record must be written in some rounds.
+    #[test]
+    fn reductions_record_only_intervals_and_sets_of_the_same_integers() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        let mut written = 0;
+        for round in 0..600 {
+            let mut vs = TreapSet::new();
+            let mut n = next(20) as i64 - 30;
+            for _ in 0..1 + next(30) {
+                vs.insert(Value::Int(n));
+                n += 1 + next(3) as i64 * next(2) as i64;
+            }
+            let mut p = Product::top();
+            p.cell.finite.element = FiniteSet::Set(vs.clone());
+            if round % 2 == 0 {
+                p.cell.ints.element = Bounds::ints(points(&vs));
+            }
+            for step in 0..6 {
+                p.reduce_domains_now();
+                if let Some((i0, v0)) = &p.listed.0 {
+                    written += 1;
+                    assert_eq!(
+                        v0.classes() & !Value::INT_CLASS,
+                        0,
+                        "round {round} step {step}"
+                    );
+                    assert_eq!(*i0, points(v0), "round {round} step {step}: {v0:?}");
+                }
+                let cut = IntervalSet::from_pieces(
+                    (0..1 + next(4))
+                        .map(|_| {
+                            let a = next(70) as i64 - 35;
+                            (End::of(a), End::of(a + next(14) as i64))
+                        })
+                        .collect(),
+                );
+                let x = p.ints().meet(&cut);
+                p.cell.ints.element = Bounds::ints(x);
+                if next(4) == 0
+                    && let FiniteSet::Set(ws) = &p.cell.finite.element
+                {
+                    let mut less = ws.clone();
+                    less.remove(&Value::Int(next(60) as i64 - 30));
+                    p.cell.finite.element = FiniteSet::Set(less);
+                }
+            }
+        }
+        assert!(written > 300, "{written}");
     }
 
     /// [`Product::meet_type`] leaves a product reduced, its finite set the same values as
