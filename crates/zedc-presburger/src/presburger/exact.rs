@@ -56,7 +56,7 @@
 // path and is kept out of the tree until row PRES-cover-wire puts it there
 // (/home/luke/Work/wt/failing-tests/FAIL-or-if-projection-not-exact.rs).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use zedc_int::int::Int;
@@ -171,10 +171,10 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         .collect();
     // Each part read once over blocks answered for all its atoms at once (`read_once`), within
     // an allowance of its own as [`direct`]; where it declines, its symbols are covered below
-    // as before, with the same points and the same work. The allowance is the limit once for
-    // each distinct symbol asked of the part, at least once: the covers below, which run where
-    // it declines, have the limit each, one cover per such symbol (and up to twice the limit
-    // with their fast path, [`tried`]), so this admits no more work than they do. Every set
+    // as before, with the same points, their fast paths having what the reading left (below).
+    // The allowance is the limit once for each distinct symbol of the part the solver answered,
+    // and a part with none is not read: the fast paths of the covers below, which run where it
+    // declines, have the limit each, one for each such symbol. Every set
     // `read_once` answers is the exact projection, as is every set a cover answers, so where
     // both answer the answers are the same; a symbol whose cover would be refused may get its
     // exact set here instead. EXACT_LIMIT itself, the limit of each symbol, is unchanged.
@@ -185,25 +185,6 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // 224 groups against 2,802,000 units and 0.2 s at 192. Used: one reading, O(r) at that
     // size; the covers run only where it declines for another reason (COMPLEXITY.md row
     // PRES-cover-bench-disjoint-reduced).
-    let mut asked: Vec<u64> = vec![0; parts.len()];
-    for s in syms.iter().collect::<BTreeSet<&Atom>>() {
-        if let Some(i) = part_of.get(s).copied().or((!many).then_some(0)) {
-            asked[i] += 1;
-        }
-    }
-    let once: Vec<Option<ReadOnce>> = (parts.iter().zip(&asked))
-        .map(|(p, &k)| {
-            if !p.factors.is_empty() {
-                return None;
-            }
-            tried(&mut limit.saturating_mul(k.max(1)), solver, |w| {
-                read_once(&p.f, w)
-            })
-        })
-        .collect();
-    let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
-    let mut shown = vec![false; parts.len()];
-    let mut wider = false;
     // Each symbol once, in the order of `Atom`, whatever the order of `syms`: a cover reads the
     // points the covers before it found in its part, so its work, and a refusal past the limit,
     // would depend on the symbols covered before it (`tests::the_answers_do_not_depend_on_the_
@@ -216,11 +197,75 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     for (s, got) in syms.iter().zip(each) {
         sorted.entry(s).or_insert(got);
     }
+    // The symbols with a cover to run, those the solver answered, counted for each part: the
+    // reading of the part stands in for their covers alone, and a part with none is not read
+    // (no answer reads its reading).
+    let mut asked: Vec<u64> = vec![0; parts.len()];
+    for (s, got) in &sorted {
+        if got.is_ok()
+            && let Some(i) = part_of.get(s).copied().or((!many).then_some(0))
+        {
+            asked[i] += 1;
+        }
+    }
+    // The reading of each part and the work it used of its allowance.
+    let once: Vec<(Option<ReadOnce>, u64)> = (parts.iter().zip(&asked))
+        .map(|(p, &k)| {
+            if !p.factors.is_empty() || k == 0 {
+                return (None, 0);
+            }
+            let allowed = limit.saturating_mul(k);
+            let mut left = allowed;
+            let got = tried(&mut left, solver, |w| read_once(&p.f, w));
+            (got, allowed - left)
+        })
+        .collect();
+    // Where the reading gives up, the fast path of each symbol's cover ([`direct`], in
+    // [`cover`]) has what the reading left of that symbol's limit: the reading is a fast path
+    // done for the part's symbols together, in place of their `direct`s. Its work `w` is at
+    // most `k·L` for the part's k symbols and limit L (`tried` takes from the allowance at most
+    // what it holds) and is charged evenly: in the order of `Atom`, the j-th symbol (from 0) is
+    // charged `w / k`, plus 1 where `j < w % k`. The charges sum to exactly `w`, since `w % k`
+    // symbols get the 1, and each is at most L: `w / k <= L`, and `w / k < L` where
+    // `w % k > 0`, as then `w < k·L`. So the fast allowances left sum to `k·L - w`, and the
+    // reading and one fast path for each symbol admit at most `k·L`, what one fast path for
+    // each symbol admits with no reading. A symbol runs at most two fast paths (over the
+    // reduced formula, then over the part), so the fast work of the part is at most
+    // `w + 2·(k·L - w) <= 2·k·L`, and its loops (`cells_cover`) at most two limits each, `2·k·L`,
+    // as with no reading: in all `4·k·L`, the bound of the covers alone. Before, the reading
+    // came on top of that, up to `5·k·L`. Every meter may pass its limit by its one stopping
+    // charge, as before; `reduced` and `has_points` (one limit for the call each) are outside
+    // the symbols' limits, with or without the reading. A fast path with nothing left does not
+    // run (`tried`), and its symbol is covered by the loop as with `direct` off: every answer
+    // is the same as before (each exact), and a loop's limit and so its refusals do not depend
+    // on any fast path (`tests::the_work_limit_is_met_alike_on_both_sides`).
+    // Charging the loops too would bound the call by `k·L`, but the loop of a symbol would then
+    // be refused by work done before it, which `tried` excludes: run so, that test failed and
+    // `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`
+    // refused one answer more (7, 3, remainders of two inputs, 2). Under A99 read for each
+    // symbol (QUESTIONS A159) such a refusal would be correct; this keeps the loop as it was.
+    // Complexity tradeoff: before (90cac8417), each fast path had the whole limit after the
+    // reading gave up, so the fast work passed what the covers alone could spend (101,700 units
+    // where k·L is 48,000 in `tests::a_reading_that_gives_up_late_leaves_the_covers_only_what_
+    // is_left`, now 48,900, the reading's own). Naive alternative: charge each symbol the work of
+    // the blocks that read its atoms, which needs the reading to count work per atom, O(atoms of
+    // each block) more bookkeeping, for a share that only moves fast-path budget between
+    // symbols. Used: the even charge, O(1) per symbol (COMPLEXITY.md row
+    // PRES-cover-bench-disjoint-reduced, the second one).
+    let charge = |i: usize, j: u64| -> u64 {
+        let (w, k) = (once[i].1, asked[i].max(1));
+        w / k + u64::from(j < w % k)
+    };
+    let mut nth: Vec<u64> = vec![0; parts.len()];
+    let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
+    let mut shown = vec![false; parts.len()];
+    let mut wider = false;
     let answers: BTreeMap<&Atom, Result<Classed, Refusal>> = (sorted.into_iter())
         .map(|(s, got)| {
             // Each symbol's cover has a limit of its own, as each refusal names one symbol: a
             // limit shared by the call would refuse a symbol by the work of those before it in
-            // the order above, and batch where single answers (PRES-pugh-xr round 2, D).
+            // the order above, and batch where single answers (PRES-pugh-xr round 2, D). Its fast
+            // path has what the part's reading left of the limit (`charge`, above).
             let mut work = Work {
                 used: 0,
                 limit,
@@ -233,8 +278,10 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                     // `s` is in no part of `f`: every value, once each part has a point.
                     return Ok(Classed::plain(IntervalSet::top()));
                 };
+                let fast = limit - charge(i, nth[i]);
+                nth[i] += 1;
                 let p = &parts[i];
-                if let Some((has, sets)) = &once[i] {
+                if let (Some((has, sets)), _) = &once[i] {
                     shown[i] |= *has;
                     return Ok(Classed::plain(match (sets.get(s), has) {
                         (Some(set), _) => set.clone(),
@@ -258,6 +305,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                         *size,
                         &p.factors,
                         &mut small_points[i],
+                        fast,
                         &mut alone,
                     );
                     if let Ok((set, kept)) = got {
@@ -266,8 +314,16 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                         return Ok(set);
                     }
                 }
-                let (set, kept) =
-                    cover(&p.f, s, &h, p.size, &p.factors, &mut points[i], &mut work)?;
+                let (set, kept) = cover(
+                    &p.f,
+                    s,
+                    &h,
+                    p.size,
+                    &p.factors,
+                    &mut points[i],
+                    fast,
+                    &mut work,
+                )?;
                 wider |= kept;
                 Ok(set)
             })();
@@ -593,6 +649,12 @@ fn has_points(
 /// with `true`, wider than exact for that cause ([`Refusal::Repeats`]). The set comes with a
 /// class where [`direct`] reads it as ranges met with one ([`Classed`]); every other answer
 /// is ranges alone.
+/// `fast` is the allowance of `direct` (`tried`), the limit less what `exact_each` charged the
+/// symbol for the reading of its part; the loop has `work`'s limit, whatever `fast` is.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fast allowance is apart from `work` so that the loop's limit is not charged by the reading"
+)]
 fn cover(
     f: &Formula,
     s: &Atom,
@@ -600,6 +662,7 @@ fn cover(
     size: u64,
     factors: &HashSet<Atom>,
     points: &mut Vec<Model>,
+    fast: u64,
     work: &mut Work,
 ) -> Result<(Classed, bool), Refusal> {
     // No value has a point where the solver's set, which holds every value with one, is empty.
@@ -615,9 +678,7 @@ fn cover(
     // answer_with_and_without_direct`, which also compares `direct` on and off).
     if factors.is_empty()
         && !DIRECT_OFF.get()
-        && let Some(set) = tried(&mut { work.limit }, work.solver, |w| {
-            direct(f, s, &h.hull(), w)
-        })
+        && let Some(set) = tried(&mut { fast }, work.solver, |w| direct(f, s, &h.hull(), w))
     {
         return Ok((set, false));
     }

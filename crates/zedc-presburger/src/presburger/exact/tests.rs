@@ -2537,3 +2537,80 @@ fn the_work_of_one_call_on_separate_groups_grows_linearly() {
         "work {small} at 16 groups, {large} at 128"
     );
 }
+
+/// The reading and the fast paths of one call never spend more than the fast paths of its
+/// symbols' covers could, k times the limit for k symbols asked of a part, where `read_once`
+/// gives up late (PRES-cover-bench-disjoint-reduced, the condition on zed-impl 90cac8417): the
+/// formula of `the_work_of_one_call_on_separate_groups_grows_linearly` at 16 groups, 48
+/// symbols, under a limit so low that the reading passes its allowance of 48 limits. Each
+/// symbol's fast path (`direct`) then has only what the reading left of that symbol's limit,
+/// here nothing, so the fast work of the call less `reduced`'s (one limit for the call, outside
+/// the symbols', as `has_points`'s is) is the reading's. Each loop keeps a limit of its own.
+/// Before, each fast path started again with a whole limit: 101,700 units against 48,900.
+#[test]
+fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
+    const LIMIT: u64 = 1_000;
+    let n = 16;
+    let mut rows = Vec::new();
+    let mut syms = Vec::new();
+    for i in 0..n {
+        let (x, y, z) = (format!("x{i}"), format!("y{i}"), format!("z{i}"));
+        rows.push(ge(&[(x.as_str(), 1), (y.as_str(), -1)], 0));
+        rows.push(ge(&[(y.as_str(), 1), (z.as_str(), -1)], 0));
+        rows.push(ge(&[(z.as_str(), 1), (x.as_str(), -1)], 1));
+        for s in [&x, &y, &z] {
+            rows.push(ge(&[(s.as_str(), 1)], 0));
+            rows.push(ge(&[(s.as_str(), -1)], 9));
+            syms.push(a(s));
+        }
+    }
+    let narrow: Vec<Formula> = (syms.iter())
+        .map(|s| member(s, &IntervalSet::of(0, 4)))
+        .chain(rows.iter().cloned())
+        .collect();
+    let f = Formula::or(vec![Formula::and(rows), Formula::and(narrow)]);
+    let k = syms.len() as u64;
+    let allowed = k * LIMIT;
+    // The reading alone, with the allowance `exact_each` gives it: it declines past it.
+    EXACT_WORK.set(0);
+    let read = tried(&mut { allowed }, SOLVER, |w| read_once(&f, w));
+    let pass = EXACT_WORK.replace(0);
+    assert!(read.is_none(), "the reading answered within {allowed}");
+    // `reduced`, run once for the call with an allowance of one limit.
+    let kept: HashSet<&Atom> = syms.iter().collect();
+    tried(&mut { LIMIT }, SOLVER, |w| {
+        reduced(&f, &|s| kept.contains(s), w)
+    });
+    let reduce = EXACT_WORK.replace(0);
+    EXACT_LIMIT_SET.set(Some(LIMIT));
+    FAST_WORK.set(0);
+    let found = (vec![Ok(IntervalSet::of(0, 9)); syms.len()], vec![]);
+    let got = exact_each(&f, &syms, found, SOLVER);
+    EXACT_LIMIT_SET.set(None);
+    let total = EXACT_WORK.replace(0);
+    let fast = FAST_WORK.replace(0) - reduce;
+    let loops = total - reduce - fast;
+    println!(
+        "k = {k}, k * limit = {allowed}; reading alone {pass}, reduced {reduce}; in the call: \
+         fast paths less reduced {fast}, loops {loops}, all {total}"
+    );
+    // Late: the reading passed its whole allowance, by its one stopping charge.
+    assert!(
+        pass > allowed,
+        "the reading stopped at {pass}, before {allowed}"
+    );
+    // The fast paths of the covers (`direct`) have nothing left after it, so the fast work of
+    // the symbols is the reading's: k limits and the one charge that passed them.
+    assert!(
+        fast <= pass,
+        "the fast work {fast} passes the reading's {pass} (k * limit = {allowed})"
+    );
+    // Each loop has a limit of its own, as with no reading: at most two meters a symbol (over
+    // the reduced formula, then the part), each passing its limit by one stopping charge.
+    for g in got.sets {
+        assert!(
+            matches!(g, Err(Refusal::Questions)) || g == Ok(Classed::plain(IntervalSet::of(0, 9))),
+            "{g:?}"
+        );
+    }
+}
