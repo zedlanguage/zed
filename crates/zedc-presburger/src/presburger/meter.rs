@@ -50,6 +50,10 @@ thread_local! {
     /// Test control: the solver's answer as it is, with no cover (the answer before
     /// PRES-project-exact-solver), for the tests that compare the two.
     pub static EXACT_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: the cover of each symbol asks its questions without first trying the
+    /// projection read from the structure of the formula (`exact::direct`), for the tests
+    /// that compare the two.
+    pub static DIRECT_OFF: Cell<bool> = const { Cell::new(false) };
     /// The questions `exact_each` has asked on this thread, read by tests.
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.

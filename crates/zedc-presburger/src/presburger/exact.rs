@@ -65,8 +65,8 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use super::absorbing;
 use super::formula::Id;
 pub use super::meter::{
-    EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK, QUESTION_WORK,
-    SOLVER_UNIT,
+    DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
+    QUESTION_WORK, SOLVER_UNIT,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Con, Each, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -597,8 +597,12 @@ fn cover(
     // The exact projection read from the structure of `f`, with no question (`direct`). It lies
     // within `h` where `f` is the whole formula; for a part of it (`split`) it may not, where
     // another part has no point, and then every answer is made empty (`exact_each`). So it may
-    // be met with the hull of `h` where that helps a block end (`block_set`).
+    // be met with the hull of `h` where that helps a block end (`block_set`). The solver finds
+    // such an `f` empty before the cover runs in every case tried, so the test that reaches
+    // this case gives `exact_each` sets that miss it (`tests::a_part_split_off_gets_the_same_
+    // answer_with_and_without_direct`, which also compares `direct` on and off).
     if factors.is_empty()
+        && !DIRECT_OFF.get()
         && let Some(set) = tried(&mut { work.limit }, work.solver, |w| {
             direct(f, s, &within, w)
         })

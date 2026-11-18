@@ -337,19 +337,163 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
     assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
 }
 
-/// A value that each disjunction allows through a different disjunct, where no one
-/// combination of them does: `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 ||
-/// x == 3 && y == 0)` has no point, while the solver's meet of the unions of hulls keeps
-/// x in {1, 3}.
-#[test]
-fn values_two_disjunctions_allow_only_apart_are_left_out() {
+/// `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 || x == 3 && y == 0)`, which
+/// has no point, though the solver's meet of the unions of hulls keeps x in {1, 3}.
+fn apart() -> Formula {
     let d = |p: i64, q: i64, r: i64, s: i64| {
         Formula::or(vec![
             Formula::and(vec![eq(&[("x", 1)], -p), eq(&[("y", 1)], -q)]),
             Formula::and(vec![eq(&[("x", 1)], -r), eq(&[("y", 1)], -s)]),
         ])
     };
-    let f = boxed(Formula::and(vec![d(1, 0, 3, 1), d(1, 1, 3, 0)]));
+    Formula::and(vec![d(1, 0, 3, 1), d(1, 1, 3, 0)])
+}
+
+/// `f` with x, y and z renamed u, v and w.
+fn renamed(f: &Formula) -> Formula {
+    let to = |s: &Atom| match s {
+        Atom::Sym(n) if &**n == "x" => a("u"),
+        Atom::Sym(n) if &**n == "y" => a("v"),
+        Atom::Sym(n) if &**n == "z" => a("w"),
+        _ => s.clone(),
+    };
+    let each = |gs: &[Formula]| gs.iter().map(renamed).collect::<Vec<_>>();
+    match f {
+        Formula::Con(c) => Formula::Con(Con {
+            lin: Lin {
+                terms: c
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(s, k)| (to(s), k.clone()))
+                    .collect(),
+                constant: c.lin.constant.clone(),
+            },
+            rel: c.rel,
+        }),
+        Formula::Not(g) => Formula::Not(Shared::new(renamed(g))),
+        Formula::And(gs) => Formula::And(Shared::new(each(gs))),
+        Formula::Or(gs) => Formula::Or(Shared::new(each(gs))),
+    }
+}
+
+/// The answers for a part that `split` cuts from the formula, where [`direct`] answers it
+/// (PRES-cover-refusals-moduli, the comment at `cover`): random `f = p ∧ q`, `p` over x, y and
+/// z and `q` over u, v and w, each in a box, on fixed seeds; on every other round `q` is
+/// [`apart`], which has no point. `direct` reads `p` alone, so its answer for x is the
+/// projection of `p`, which has values with no point of `f` where `q` has none, and may lie
+/// outside the solver's set `h` there, which then need not hold it; `exact_each` makes every
+/// answer empty where a part has no point (`has_points`).
+///
+/// First, as the solver gives `h`: each answer must equal the values the points of `f` give
+/// (every point of `p` and of `q` tried), lie within `h`, and equal the answer of the cover
+/// with `direct` off (`DIRECT_OFF`) wherever both answer. The solver alone finds that `f` has
+/// no point wherever `q` has none (none of 388 empty random formulas of depth 4 had a value
+/// in its sets, 2026-11-18), so `exact_each` returns at its first step there, and the case
+/// above is not reached by this path. Second, so that it is: where `q` has no point,
+/// `exact_each` is given sets that miss that, `{0}` for x, y and z and the box for u, v and w
+/// (sound, as `f` has no value at all), and must answer every symbol empty, with `direct` on
+/// and off; the rounds where the projection of `p` onto x leaves `{0}`, so that `direct`'s
+/// answer is not within `h`, are counted and must occur.
+#[test]
+fn a_part_split_off_gets_the_same_answer_with_and_without_direct() {
+    let names = ["x", "y", "z", "u", "v", "w"];
+    let syms: Vec<Atom> = names.iter().map(|n| a(n)).collect();
+    let (mut wrong, mut refused, mut outside) = (Vec::new(), 0, 0);
+    for seed in [1u64, 126, 4_242, 99_991] {
+        let mut rng = Rng(seed);
+        for round in 0..20 {
+            let p = boxed(formula(&mut rng, 3));
+            let q = boxed(if round % 2 == 0 {
+                apart()
+            } else {
+                formula(&mut rng, 3)
+            });
+            let f = Formula::and(vec![p.clone(), renamed(&q)]);
+            let q_empty = brute(&q, "x").is_empty();
+            let both = !q_empty && !brute(&p, "x").is_empty();
+            let at = |r: &Result<Each, Refusal>, k: usize| match r {
+                Ok((e, _)) => e[k].clone().ok(),
+                Err(_) => None,
+            };
+            let each = project_each_exact(&f, &syms);
+            DIRECT_OFF.set(true);
+            let off = project_each_exact(&f, &syms);
+            DIRECT_OFF.set(false);
+            EXACT_OFF.set(true);
+            let solver = project_each_exact(&f, &syms);
+            EXACT_OFF.set(false);
+            for (k, n) in names.iter().enumerate() {
+                let want = match (both, k < 3) {
+                    (false, _) => IntervalSet::empty(),
+                    (true, true) => brute(&p, n),
+                    (true, false) => brute(&q, NAMES[k - 3]),
+                };
+                let Some(got) = at(&each, k) else {
+                    refused += 1;
+                    continue;
+                };
+                let say = |what: String| format!("seed {seed} round {round} {n}: {what}: {f}");
+                if got != want {
+                    wrong.push(say(format!("{got} not {want}")));
+                }
+                if let Some(o) = at(&off, k)
+                    && o != got
+                {
+                    wrong.push(say(format!("{got}, with direct off {o}")));
+                }
+                if let Some(h) = at(&solver, k)
+                    && got.meet(&h) != got
+                {
+                    wrong.push(say(format!("{got} outside {h}")));
+                }
+            }
+            if !q_empty {
+                continue;
+            }
+            if brute(&p, "x").minus(&IntervalSet::single(0)) != IntervalSet::empty() {
+                outside += 1;
+            }
+            let given: Vec<Result<IntervalSet, Refusal>> = (0..6)
+                .map(|k| {
+                    Ok(if k < 3 {
+                        IntervalSet::single(0)
+                    } else {
+                        IntervalSet::of(-B, B)
+                    })
+                })
+                .collect();
+            let g = super::super::canonical_parts(&f);
+            for off in [false, true] {
+                DIRECT_OFF.set(off);
+                let (got, _) = exact_each(&g, &syms, (given.clone(), vec![]), SOLVER);
+                DIRECT_OFF.set(false);
+                for (k, r) in got.iter().enumerate() {
+                    if let Ok(set) = r
+                        && !set.is_empty()
+                    {
+                        let n = names[k];
+                        wrong.push(format!(
+                            "seed {seed} round {round} {n}, h missing the emptiness, direct off {off}: {set} not empty: {f}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    println!("{outside} rounds where direct's answer for x leaves h, {refused} refused");
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(outside > 0, "no round where the projection of p leaves h");
+    assert!(refused <= 12, "{refused} refused");
+}
+
+/// A value that each disjunction allows through a different disjunct, where no one
+/// combination of them does: `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 ||
+/// x == 3 && y == 0)` has no point, while the solver's meet of the unions of hulls keeps
+/// x in {1, 3}.
+#[test]
+fn values_two_disjunctions_allow_only_apart_are_left_out() {
+    let f = boxed(apart());
     let each = project_each_exact(&f, &[a("x"), a("y")]).unwrap();
     assert_eq!(each.0[0], Ok(IntervalSet::empty()), "{f}");
     assert_eq!(each.0[1], Ok(IntervalSet::empty()), "{f}");
