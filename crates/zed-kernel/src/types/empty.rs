@@ -12440,15 +12440,12 @@ impl At<'_> {
 /// A node operand is never a leaf, so `read_two_sat` reads `Shape::Leaf` only at the root.
 /// Proof. `shape` makes node operands in two places. (1) A diagram node's branch, which the arm
 /// order in `shape` uses as an operand only when `leaf` gave it `None`, so it is not a leaf.
-/// (2) An operand of an expression `Form::Or(a, b)` or `Form::And(a, b)`; `Part::view` gives
-/// such a form only for a `Part::expr`, and `Form::Not` of an expression is read through to
-/// that expression. The expressions bdd.rs builds with `Or` or `And` (read there, no edits):
-/// `zipped` builds `Form::Or` only after `zip_at_once` and `xor_at_once` answer `None`, which
-/// they do for no leaf operand; the union at the end of the union of parts is built after
-/// `union_as_kept`, which starts with `zip_at_once`; and `xor::meet` builds `Form::And` of a
-/// literal and an exclusive or holding at least one atom. None of them has a leaf operand.
-/// This proof rests on reading those sites; a constructor in bdd.rs that folds a leaf operand
-/// away would make it a compiler check (asked of cover4 in wt/pause/cover7-bdd-request.md).
+/// (2) An operand of an expression `Form::Or(a, b)` or `Form::And(a, b)`, and `Form::Not` of
+/// an expression is read through to that expression. bdd.rs makes every expression in its
+/// `mod build`, whose `Part::expr` is private (a compiler check): `Part::connect` folds a leaf
+/// operand away, `Part::not_expr` makes no `Or` or `And`, and `Part::of_form` takes only a
+/// form an expression already had (`Source::Form`), so its operands are no leaves by the same
+/// rule. See `Form` in bdd.rs.
 #[derive(Clone, Copy)]
 enum Operand<'p> {
     Literal(Literal2),
