@@ -15269,7 +15269,9 @@ mod tests {
     /// case gives a refusal's cause; a refusal that spread would change these counts.
     #[test]
     fn or_ifs_of_a_fixed_seed_are_decided_as_counted() {
-        assert_eq!(or_if_rounds(0x0f1f_5eed), (35, 152, 0));
+        // 34 changed, 35 before PRES-again-monotone: `Formula::or` now finds a compound
+        // `g || !g` true, so one more draw reads alike both ways.
+        assert_eq!(or_if_rounds(0x0f1f_5eed), (34, 152, 0));
     }
 
     /// Runs [`OR_IF_ROUNDS`] random programs of `seed` through [`holds_where_it_held_as_ifs`],

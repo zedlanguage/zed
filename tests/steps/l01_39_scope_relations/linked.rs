@@ -1213,14 +1213,24 @@ fn nested(xs: &[Formula], ys: &[Formula]) -> Formula {
 }
 
 #[test]
-fn a_compound_disjunct_and_its_negation_are_kept_as_written() {
-    // `(x >= y + 3 && y >= z) || !(x >= y + 3 && y >= z)` holds at every point, but only a
-    // constraint and its negation are looked up (the tradeoff at `Formula::complementary`).
+fn a_compound_disjunct_and_its_negation_are_true() {
+    // `(x >= y + 3 && y >= z) || !(x >= y + 3 && y >= z)` holds at every point, and the
+    // compound `g` is looked up by the hash kept in its node (`Formula::complementary`,
+    // PRES-again-monotone), as a disjunction `g` is too.
     let g = Formula::and(vec![diff("x", "y", 3), diff("y", "z", 0)]);
     let not_g = Formula::negate(g.clone());
     assert_eq!(
-        Formula::or(vec![g.clone(), not_g.clone()]),
-        Formula::Or(Shared::new(vec![g, not_g]))
+        Formula::or(vec![g.clone(), not_g.clone(), diff("z", "w", 0)]),
+        Formula::and(vec![])
+    );
+    let h = Formula::or(vec![diff("x", "y", 3), diff("y", "z", 0)]);
+    let not_h = Formula::negate(h.clone());
+    assert_eq!(Formula::or(vec![not_h, h]), Formula::and(vec![]));
+    // A compound disjunct beside the negation of another compound stays a disjunction.
+    let other = Formula::and(vec![diff("x", "y", 4), diff("y", "z", 0)]);
+    assert_eq!(
+        Formula::or(vec![other.clone(), not_g.clone()]),
+        Formula::Or(Shared::new(vec![other, not_g]))
     );
     // Inside a nest, a constraint and its negation are still found at any depth.
     let inner = Formula::or(vec![diff("x", "y", 3), Formula::negate(diff("x", "y", 3))]);

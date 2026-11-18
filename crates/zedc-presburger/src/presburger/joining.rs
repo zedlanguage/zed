@@ -115,20 +115,25 @@ impl Formula {
 
     /// Whether two of `fs` are each other's complements, so that their disjunction is `true`:
     /// a constraint `c` and `!c`, or `t >= 0` and `s >= 0` with `t + s` a constant of at least
-    /// `-1`, since at an integer point `t <= -1` makes `s >= 0`. Each disjunct that is a
-    /// constraint or the negation of one is looked up once by its content, so the check costs
-    /// the size of the constraints in `fs` and never the depth of a compound disjunct.
-    // Complexity tradeoff: a compound `g || !g`, with `g` a conjunction or disjunction, is not
-    // found and stays a disjunction. That is sound, since the disjunction holds at every point,
-    // but each later test splits into its cases, as before this check (COMPLEXITY.md S20).
-    // Looking `g` up by its content hashes it through its whole depth on every `Formula::or`,
-    // and `map_cons`, `nnf` and `forget` call `or` once per `Or` node, so a nested or/and
-    // formula would cost its size times its depth (62 times the work for 8 times the depth,
-    // measured at d = 500 to 4000). The trigger is a disjunct that is not a constraint. Tests
-    // in `l01_39_scope_relations::linked`: `a_disjunction_of_a_constraint_and_its_complement_is_true`
-    // and `a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size`. A complete check
-    // needs a hash of each formula kept in its node when it is built, so that the lookup costs
-    // O(1) per disjunct.
+    /// `-1`, since at an integer point `t <= -1` makes `s >= 0`; or a compound `g` and `!g`.
+    /// Each disjunct that is a constraint or the negation of one is looked up once by its
+    /// content; a compound `g` under `!` is looked up by the hash kept in its node, and a
+    /// disjunction `g` flattened beside `!g` is found by each of its disjuncts.
+    // Complexity tradeoff: naive version (before PRES-again-monotone), a compound `g || !g`,
+    // with `g` a conjunction or disjunction, was not found and stayed a disjunction: sound, but
+    // each later test split into its cases, and the exact cover asked about both, past its
+    // limit on `l01_39_scope_relations::families::audit_seed_126_no_wider_set_from_a_narrower_start`
+    // (3.05 M units without the disjunction, refused with it), so a narrower start kept a wider
+    // set. Looking `g` up hashed it through its whole depth on every `Formula::or`, and
+    // `map_cons`, `nnf` and `forget` call `or` once per `Or` node, so a nested or/and formula
+    // cost its size times its depth (62 times the work for 8 times the depth, measured at
+    // d = 500 to 4000). Used: a compound node's hash is now found once and kept with it
+    // (`deep`, `Shared::keep_sig`), and the compound disjuncts are hashed only when some
+    // disjunct is the negation of a compound, so the lookup costs O(1) per disjunct once each
+    // node's hash is kept, O(size) over all calls, and a call with no such negation costs
+    // what it did. Tests in `l01_39_scope_relations::linked`:
+    // `a_disjunction_of_a_constraint_and_its_complement_is_true` and
+    // `a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size`.
     fn complementary(fs: &[Formula]) -> bool {
         if fs.len() < 2 {
             return false;
@@ -144,6 +149,25 @@ impl Formula {
                 if c.lin.constant > **k {
                     *k = &c.lin.constant;
                 }
+            }
+        }
+        let compound = |f: &Formula| matches!(f, Formula::And(_) | Formula::Or(_));
+        if fs
+            .iter()
+            .any(|f| matches!(f, Formula::Not(g) if compound(g)))
+        {
+            // A disjunction `g` beside its negation is flattened into `fs`: `!g` and each
+            // disjunct of `g` are then all in `fs`.
+            let parts: std::collections::HashSet<&Formula> = fs.iter().collect();
+            let complement = |g: &Formula| {
+                parts.contains(g)
+                    || matches!(g, Formula::Or(ds) if ds.iter().all(|d| parts.contains(d)))
+            };
+            if fs
+                .iter()
+                .any(|f| matches!(f, Formula::Not(g) if compound(g) && complement(g)))
+            {
+                return true;
             }
         }
         fs.iter().any(|f| match f {

@@ -1453,6 +1453,16 @@ fn audit_seed_109_no_wider_set_from_a_narrower_start() {
     no_widenings(109);
 }
 
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 126 (step 6 from the start
+/// `hole0`): the whole block held `g || !g` with `g` a conjunction, which was kept as a
+/// disjunction, and the exact cover asked about both cases past its limit, so `a` kept its
+/// earlier set, [-8..=-1, 1..=8] against the audit's [-8..=2]. `Formula::or` now finds a
+/// compound complement (`complementary`, PRES-again-monotone).
+#[test]
+fn audit_seed_126_no_wider_set_from_a_narrower_start() {
+    no_widenings(126);
+}
+
 /// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 99 (step 8 from a start with a
 /// hole; PRES-again-monotone).
 #[test]
@@ -2563,7 +2573,12 @@ fn audit_seed_126_keeps_the_ends_the_solver_alone_finds() {
     use zed_tests::step_helpers::l01_38_presburger::solver_alone;
     let alone = solver_alone(|| audit(126..127));
     let cover = audit(126..127);
-    assert_eq!(alone.iter().filter(|r| r.ends).count(), 9);
+    // The solver alone had the oracle's ends at all 9 steps while the block held `g || !g`
+    // (`g` a conjunction), whose two cases it split; with `Formula::or` finding that
+    // disjunction true (PRES-again-monotone) it keeps `a` wider at steps 6 to 8, and the
+    // cover still gives the oracle's ends at every step.
+    assert_eq!(alone.iter().filter(|r| r.ends).count(), 6);
+    assert_eq!(cover.iter().filter(|r| r.ends).count(), 9);
     for (a, c) in alone.iter().zip(&cover) {
         assert!(
             c.ends || !a.ends,
