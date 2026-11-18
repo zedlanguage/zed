@@ -8665,10 +8665,13 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
 /// atom besides `x`, always with coefficient 1 or -1 ([`unit_interval`]); the other classes
 /// are reduced by [`shadow`] (exact: W. Pugh, "A practical algorithm for exact array
 /// dependence analysis", Communications of the ACM 35(8), 1992, p. 106), and
-/// what it keeps of them is read with every question. So a question, rows `own` with the core,
-/// reads the rows of the classes that `own` reads, the intervals of the others as one, and the
-/// rows kept of the classes not over one interval; an interval of a class that `own` reads is
-/// implied by the class's rows.
+/// what it keeps of them is read with every question that does not read the class. So a
+/// question, rows `own` with the core, reads the rows of the classes that `own` reads, the
+/// intervals of the others as one, and the rows kept of the others not over one interval; an
+/// interval of a class that `own` reads, and the rows kept of it, are implied by the class's
+/// rows, and the kept rows are left out there (FLAKE-presburger-unseeded-order3: read beside
+/// the rows they come from, they made the solver refuse with `Growth` a question the whole
+/// core answers).
 // Complexity tradeoff: naive version, each question asked with the whole core, O(s·c) for s
 // questions and a core of c rows: quadratic on `point_rows`, where each disjunct reads an
 // atom `y_j` of its own and the core keeps every `y_j` (8.49 G instructions at n = 128,
@@ -8683,9 +8686,13 @@ struct CoreClasses<'c> {
     class: FxHashMap<&'c Atom, usize>,
     /// The rows of each class.
     rows: Vec<Vec<&'c Con>>,
-    /// The rows read with every question: those of the core with no atom but `x`, the shadows
-    /// of the classes not over `x` alone, and the bounds of `x` the other shadows give.
+    /// The rows read with every question: those of the core with no atom but `x`, and the
+    /// bounds of `x` the intervals and shadows of the classes give.
     always: Vec<Con>,
+    /// The rows the shadow of each class keeps beside bounds of `x`, read with a question that
+    /// does not read the class, and the classes that keep any.
+    kept: Vec<Vec<Con>>,
+    keeping: Vec<usize>,
 }
 
 /// The values of `x` where `rows`, over `x` and one other atom `y` whose coefficients are all 1
@@ -8913,7 +8920,8 @@ impl<'c> CoreClasses<'c> {
             .map(|(a, id)| (a, index[&find(&mut parent, id)]))
             .collect();
         let mut ends = AtomBounds::default();
-        for r in &rows {
+        let mut kept: Vec<Vec<Con>> = vec![Vec::new(); rows.len()];
+        for (i, r) in rows.iter().enumerate() {
             if let Some((lo, hi)) = unit_interval(r, x) {
                 if !narrow_to(&mut ends, x, lo, hi) {
                     return None;
@@ -8936,10 +8944,11 @@ impl<'c> CoreClasses<'c> {
                             return None;
                         }
                     }
-                    _ => always.push(c),
+                    _ => kept[i].push(c),
                 }
             }
         }
+        let keeping = (0..kept.len()).filter(|&i| !kept[i].is_empty()).collect();
         let xl = Lin::atom(x.clone());
         if let Some((lo, hi)) = ends.get(x) {
             always.extend(lo.as_ref().map(|l| Con::ge(&xl, &Lin::constant(l.clone()))));
@@ -8949,6 +8958,8 @@ impl<'c> CoreClasses<'c> {
             class,
             rows,
             always,
+            kept,
+            keeping,
         })
     }
 
@@ -8960,6 +8971,11 @@ impl<'c> CoreClasses<'c> {
             .filter(|&i| !std::mem::replace(&mut seen[i], true))
             .collect();
         (self.always.iter().cloned())
+            .chain(
+                (self.keeping.iter())
+                    .filter(|&&i| !seen[i])
+                    .flat_map(|&i| self.kept[i].iter().cloned()),
+            )
             .chain(
                 read.iter()
                     .flat_map(|&i| self.rows[i].iter().map(|c| (*c).clone())),
@@ -32295,7 +32311,8 @@ mod unit_interval_tests {
     fn core_classes_answer_as_the_whole_core() {
         let x = Atom::Sym("x".into());
         let others: Vec<Atom> = (0..4).map(|i| Atom::Sym(format!("y{i}").into())).collect();
-        let mut seed: u64 = crate::seed::seed("core_classes_answer_as_the_whole_core");
+        let first = crate::seed::seed("core_classes_answer_as_the_whole_core");
+        let mut seed: u64 = first;
         let mut next = |m: i128| {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             ((seed >> 33) as i128).rem_euclid(m)
@@ -32335,7 +32352,7 @@ mod unit_interval_tests {
                         .collect()
                 })
                 .collect();
-            match core_classes_checked(&core, &x, &questions) {
+            match core_classes_checked(&format!("seed {first}"), &core, &x, &questions) {
                 None => none += 1,
                 Some((p, e)) => {
                     points += p;
@@ -32350,13 +32367,13 @@ mod unit_interval_tests {
         let (no_point, core, questions) = core_classes_built();
         if none == 0 {
             assert_eq!(
-                core_classes_checked(&no_point, &x, &[]),
+                core_classes_checked("built", &no_point, &x, &[]),
                 None,
                 "{no_point:?}"
             );
         }
         if points == 0 || empty == 0 {
-            let answers = core_classes_checked(&core, &x, &questions);
+            let answers = core_classes_checked("built", &core, &x, &questions);
             assert_eq!(answers, Some((1, 1)), "{core:?} with {questions:?}");
         }
     }
@@ -32365,6 +32382,7 @@ mod unit_interval_tests {
     /// core has no point; otherwise each question with the classes has a point exactly where
     /// it has one with the whole core, and the numbers of questions with a point and without.
     fn core_classes_checked(
+        what: &str,
         core: &[Con],
         x: &Atom,
         questions: &[Vec<Con>],
@@ -32374,7 +32392,7 @@ mod unit_interval_tests {
             solve(&rows, false).map(|m| m.is_some())
         };
         let Some(classes) = CoreClasses::of(core, x) else {
-            assert_eq!(whole(&[]), Ok(false), "core {core:?}");
+            assert_eq!(whole(&[]), Ok(false), "{what}: core {core:?}");
             return None;
         };
         let (mut points, mut empty) = (0, 0);
@@ -32384,11 +32402,63 @@ mod unit_interval_tests {
             assert_eq!(
                 solve(&classes.with(&refs), false).map(|m| m.is_some()),
                 Ok(expect),
-                "core {core:?}, own {own:?}"
+                "{what}: core {core:?}, own {own:?}"
             );
             if expect { points += 1 } else { empty += 1 }
         }
         Some((points, empty))
+    }
+
+    /// The core and question of a run of [`core_classes_answer_as_the_whole_core`] in order3's
+    /// runs (FLAKE-presburger-unseeded-order3; the run's seed was not kept): the whole core with
+    /// the question's rows has no point, and the question asked with the classes refused with
+    /// `Growth`.
+    #[test]
+    fn core_classes_answer_order3s_question_as_the_whole_core() {
+        let con = |pairs: &[(&str, i64)], c: i64, rel: Rel| Con {
+            lin: Lin {
+                terms: (pairs.iter())
+                    .map(|&(n, k)| (Atom::Sym(n.into()), Int::from(k)))
+                    .collect(),
+                constant: Int::from(c),
+            },
+            rel,
+        };
+        let core = vec![
+            con(&[("x", -3), ("y0", -3), ("y2", 1)], -8, Rel::Ge),
+            con(&[("x", -3), ("y2", 3), ("y3", 1)], 8, Rel::Ge),
+            con(&[("x", -2), ("y3", -3)], -14, Rel::Ge),
+            con(&[("x", 3)], 10, Rel::Ge),
+            con(&[("x", 1), ("y1", -2), ("y2", -3)], 14, Rel::Ge),
+            con(&[("x", 1), ("y0", 3), ("y2", -3)], 0, Rel::Ge),
+            con(&[("x", 1), ("y2", -1)], -5, Rel::Ge),
+            con(&[("x", 1)], 20, Rel::Ge),
+            con(&[("x", -1)], 20, Rel::Ge),
+        ];
+        let own = vec![
+            con(&[("x", -2), ("y1", -1), ("y3", -1)], -10, Rel::Ge),
+            con(&[("x", 1), ("y1", -2), ("y3", -3)], -6, Rel::Eq),
+        ];
+        let x = Atom::Sym("x".into());
+        assert_eq!(
+            core_classes_checked("order3", &core, &x, &[own.clone()]),
+            Some((0, 1))
+        );
+        // Before the fix the classes read each class's own rows beside the rows its shadow
+        // keeps: three rows twice and `11x <= 9y2 + 10`, which the others imply. Rows given
+        // twice answer as given once; the implied row makes the solver refuse with `Growth`
+        // (its documented refusal when every elimination left adds terms), the question of
+        // SOLVE-growth-implied-row.
+        let base: Vec<&Con> = core.iter().chain(&own).collect();
+        let twice: Vec<&Con> = (base.iter().copied())
+            .chain([&core[0], &core[5], &core[6]])
+            .collect();
+        let implied = con(&[("x", -11), ("y2", 9)], 10, Rel::Ge);
+        let with_implied: Vec<&Con> = base.iter().copied().chain([&implied]).collect();
+        let answer = |rows: &[&Con]| solve(rows, false).map(|m| m.is_some());
+        assert_eq!(answer(&base), Ok(false));
+        assert_eq!(answer(&twice), Ok(false));
+        assert_eq!(answer(&with_implied), Err(Refusal::Growth));
     }
 
     /// Over `x` and `y0`: the core `y0 - 1 >= 0`, `-y0 >= 0` (with `x` in [-20, 20]), whose
@@ -32420,11 +32490,11 @@ mod unit_interval_tests {
         let x = Atom::Sym("x".into());
         let (no_point, core, questions) = core_classes_built();
         assert_eq!(
-            core_classes_checked(&no_point, &x, &[]),
+            core_classes_checked("built", &no_point, &x, &[]),
             None,
             "{no_point:?}"
         );
-        let answers = core_classes_checked(&core, &x, &questions);
+        let answers = core_classes_checked("built", &core, &x, &questions);
         assert_eq!(answers, Some((1, 1)), "{core:?} with {questions:?}");
     }
 }

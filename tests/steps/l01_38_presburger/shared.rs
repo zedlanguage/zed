@@ -920,8 +920,10 @@ pub(super) fn random_tiers(rng: &mut Rng) -> Formula {
 /// The 600 formulas of seed 0x5f5b (1.06 s at load 25) are in `bench::shared`.
 #[test]
 fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
-    let (mut rng, _) = Rng::fresh("shared part out of a disjunction");
-    factoring_loses_no_precision((0..200).map(|i| (i, random_tiers(&mut rng))));
+    let (mut rng, seed) = Rng::fresh("shared part out of a disjunction");
+    factoring_loses_no_precision(
+        (0..200).map(|i| (format!("{i} of seed {seed}"), random_tiers(&mut rng))),
+    );
 }
 
 /// Formula 122 of seed 0x5f5b, `c == 2 && (...)`, a disjunction of four, through
@@ -938,6 +940,35 @@ fn formula_122_of_seed_0x5f5b_loses_no_precision_when_its_shared_part_is_taken_o
         .expect("123 formulas");
     let c = factoring_loses_no_precision([(122, f)]);
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+}
+
+/// Formula 14 of a run of `taking_a_shared_part_out_of_a_disjunction_loses_no_precision` in
+/// order3's runs (FLAKE-presburger-unseeded-order3; the run's seed was not kept), written out
+/// row by row: `2 d >= 1 && ((d == 2 && u) || (u && 2 c <= -3))` with the shared part
+/// `u = 3 a >= b - 3 && (a + 3 b == 1 || 3 a == 2 b - 2)`. Taken out, `u` gives `a` its exact
+/// set `[0, inf)` (`a = 1 - 3 b` with `b <= 0`, or `a` even with `3 a >= -4`), where as written
+/// `a` is refused (`Disjuncts`); both leave a disjunction out for `Repeats`, which the test
+/// took for a loss until then.
+#[test]
+fn formula_14_of_order3s_run_loses_no_precision_when_its_shared_part_is_taken_out() {
+    let u = || {
+        and(vec![
+            row(&[("a", 3), ("b", -1)], -3, false),
+            or(vec![
+                row(&[("a", 1), ("b", 3)], 1, true),
+                row(&[("a", 3), ("b", -2)], -2, true),
+            ]),
+        ])
+    };
+    let f = and(vec![
+        row(&[("d", 2)], 1, false),
+        or(vec![
+            and(vec![row(&[("d", 1)], 2, true), u()]),
+            and(vec![u(), row(&[("c", -2)], 3, false)]),
+        ]),
+    ]);
+    let c = factoring_loses_no_precision([(14, f)]);
+    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
 }
 
 /// Formula `i` of the [`random_tiers`] draws of `seed`.
@@ -1000,13 +1031,17 @@ pub(super) struct FactoredCounts {
     pub(super) answered: usize,
 }
 
-/// The formulas `fs`, numbered: `presburger::factored` takes a part every disjunct holds out of
+/// The formulas `fs`, each with a label that its failure messages name (its number, and for
+/// a random run its seed): `presburger::factored` takes a part every disjunct holds out of
 /// the disjunction when it is linked to nothing else in the disjuncts (ST-formula-sibling).
 /// Each decision and each refusal is the one the formula as written gives, and each projection
 /// is the one it gives or within it, and holds every value of a point of the formula in a
-/// window.
-pub(super) fn factoring_loses_no_precision(
-    fs: impl IntoIterator<Item = (usize, Formula)>,
+/// window. A projection that differs leaves out no disjunction for a cause the formula as
+/// written does not give: it may leave one out for the same cause (formula 14 of order3's run,
+/// `Repeats` both ways, where the factored formula answers `a` exactly and as written refuses
+/// it).
+pub(super) fn factoring_loses_no_precision<L: std::fmt::Display>(
+    fs: impl IntoIterator<Item = (L, Formula)>,
 ) -> FactoredCounts {
     use zedc::store::presburger::{UNFACTORED, project_each};
     let names = ["a", "b", "c", "d"];
@@ -1035,10 +1070,14 @@ pub(super) fn factoring_loses_no_precision(
             continue;
         }
         narrower += 1;
-        let (Ok((now, now_skipped)), Ok((then, _))) = (&now, &then) else {
+        let (Ok((now, now_skipped)), Ok((then, then_skipped))) = (&now, &then) else {
             panic!("{what}: {now:?} where as written {then:?}");
         };
-        assert!(now_skipped.is_empty(), "{what}");
+        assert!(
+            now_skipped.iter().all(|c| then_skipped.contains(c)),
+            "{what}: {now:?} leaving out {now_skipped:?} where as written {then:?} leaving out \
+             {then_skipped:?}"
+        );
         let now: Vec<_> = now.iter().map(|s| s.clone().expect("a set")).collect();
         for (n, t) in now.iter().zip(then) {
             if let Ok(t) = t {
