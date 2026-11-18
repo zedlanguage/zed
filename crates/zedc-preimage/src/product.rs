@@ -410,8 +410,10 @@ impl Product {
     /// product in each arm's scope and paid O(k) per arm, O(k²) in all. Used: a product whose
     /// last reduction changed nothing and that was not written since is known settled
     /// ([`Settled`], proved there), and its reduction returns `false` at once, O(1), copying
-    /// nothing. Cost: one atomic flag per product, cleared by each write. Test:
-    /// `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
+    /// nothing. Cost: one atomic flag per product, cleared by each write. A product a test
+    /// really narrows is still reduced in O(k), which the open part of CHECK-literal-union-cost
+    /// takes on (COMPLEXITY.md C67). Test:
+    /// `l01_39_reduced_product::if_shortcut::a_settled_product_written_again_is_reduced_again`.
     fn reduce_domains(&mut self) -> bool {
         if self.settled.get() {
             return false;

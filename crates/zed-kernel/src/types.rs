@@ -2975,7 +2975,7 @@ impl Type {
         !l.cofinite && !l.values.is_empty()
     }
 
-    /// Whether it holds values of the base type `base` (order as in [`KType::lists_values_of`])
+    /// Whether it holds values of the base type `base` (order as in [`Type::lists_values_of`])
     /// that are not a list: what `(self & base type)` being nonempty with no
     /// `values_listed()` says, read from the parts in O(1). That is the base's `Lits` being
     /// `cofinite`, the complement of finitely many values in an infinite set, or one too large

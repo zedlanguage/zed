@@ -2187,8 +2187,12 @@ struct Ck<'t, 'a> {
     near: std::cell::Cell<Option<Span>>,
     /// Each type read at a carrier so far, by the type's scalars and the carrier, with what
     /// the read gave ([`Ck::read_at_once`]).
-    carrier_reads: std::cell::RefCell<HashMap<(KType, Carrier), Option<Result<Ty, Value>>>>,
+    carrier_reads: std::cell::RefCell<CarrierReads>,
 }
+
+/// Each type read at a carrier, by the type's scalars and the carrier, with what the read gave
+/// ([`Ck::read_at_once`]).
+type CarrierReads = HashMap<(KType, Carrier), Option<Result<Ty, Value>>>;
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
 /// sec:type_resolution): the value's name, the variables of the need's argument, the atoms.
