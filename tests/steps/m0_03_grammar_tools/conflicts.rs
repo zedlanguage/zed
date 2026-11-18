@@ -114,6 +114,37 @@ fn the_pairs_and_paths_follow_the_rule_of_the_plan() {
 }
 
 #[test]
+fn a_row_whose_title_starts_with_done_in_any_form_is_done() {
+    // The plan writes done rows as "Done: ...", and also as "Done by <agent> (<date>) ...",
+    // "Done (<agent>, <date>) ..." and "Done in <commit> ...". Each is done, so none of them
+    // shares DESIGN.md with the open row A, at one level or across levels.
+    let rows: &[(usize, &str, &str, &str, &str)] = &[
+        (0, "A", "The checker", "none", "`DESIGN.md`"),
+        (
+            0,
+            "B",
+            "Done by w (2026-11-18): a spec edit",
+            "none",
+            "`DESIGN.md`",
+        ),
+        (
+            0,
+            "C",
+            "Done (w, 2026-11-18): a spec edit",
+            "none",
+            "`DESIGN.md`",
+        ),
+        (1, "D", "Done in 0123abcde: a spec edit", "B", "`DESIGN.md`"),
+        (0, "E", "Documented later", "none", "`DESIGN.md`"),
+    ];
+    let head = "It has 5 items, 1 edges and 2 levels (0 to 1).";
+    let written = render(&compute(&plan(head, rows, "old", "- old")).expect("a plan"));
+    assert!(written.contains("| 0 | A, E | `DESIGN.md` |"), "{written}");
+    assert!(written.contains("There are 1 pairs."), "{written}");
+    assert!(!written.contains("`DESIGN.md`: level"), "{written}");
+}
+
+#[test]
 fn shared_paths_follow_the_earlier_row_s_order() {
     // H lists mod.rs before DESIGN.md, A the other way; A's row comes first, so its order holds.
     let text = plan(HEAD, ROWS, "old", "- old");

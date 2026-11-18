@@ -133,7 +133,9 @@ fn items(text: &str) -> Result<Vec<Item<'_>>, String> {
             Ok(Item {
                 id: r.id,
                 level,
-                open: !r.title.starts_with("Done:"),
+                // A done row's title starts "Done": most write "Done: ...", some "Done by
+                // <agent> ...", "Done (<agent>, <date>) ..." or "Done in <commit> ...".
+                open: !r.title.starts_with("Done"),
                 paths,
             })
         })
