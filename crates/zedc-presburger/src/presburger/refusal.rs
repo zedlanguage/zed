@@ -446,7 +446,7 @@ impl Classed {
                     };
                     let lo = lo + &(&r - lo).rem_euclid(&m);
                     let hi = hi - &(hi - &r).rem_euclid(&m);
-                    (lo <= hi).then(|| (End::Fin(lo), End::Fin(hi)))
+                    (lo <= hi).then_some((End::Fin(lo), End::Fin(hi)))
                 })
                 .collect()
         };
@@ -484,7 +484,7 @@ impl Classed {
                 unreachable!("every range is finite here, shown above")
             };
             match runs.last_mut() {
-                Some((_, end)) if &(&lo - &*end) == &g => *end = hi,
+                Some((_, end)) if (&lo - &*end) == g => *end = hi,
                 _ => runs.push((lo, hi)),
             }
         }
