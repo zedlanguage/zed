@@ -563,6 +563,7 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
                     Branch::new(left, Some(middle)),
                     Branch::new(right, None),
                 ])));
+                reached(Arm::RootSplit);
             }
         }
         self.len += 1;
@@ -597,6 +598,7 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
             && bs.len() == 1
         {
             self.root = Some(bs[0].child.clone());
+            reached(Arm::RootCollapse);
         }
         true
     }
@@ -759,6 +761,7 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                     if unique[i].child.len() < MIN {
                         let j = sibling(unique, i);
                         let (x, y) = unique.split_at_mut(j + 1);
+                        reached(Arm::MendInPlace);
                         if mend(&mut x[j], &mut y[0]) {
                             *bs = parts!(bs, j + 1, j + 2, |a, _m, b| a.chain(b).collect());
                         }
@@ -777,6 +780,7 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                         replaced(bs, i, i + 1, [fixed])
                     } else {
                         let j = sibling(bs, i);
+                        reached(Arm::MendOnCopy);
                         let (mut l, mut r) = match j == i {
                             true => (fixed, bs[i + 1].clone()),
                             false => (bs[i - 1].clone(), fixed),
@@ -791,6 +795,38 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
             }
         }
     }
+}
+
+/// The arms of the changes that move entries or subtrees between nodes, counted on the test's
+/// thread so a test can show it reached each with the kept sums filled (`tests::kept_sums_*`).
+#[derive(Clone, Copy)]
+enum Arm {
+    LeafFromRight,
+    LeafFromLeft,
+    LeafMerge,
+    InnerFromRight,
+    InnerFromLeft,
+    InnerMerge,
+    RootCollapse,
+    RootSplit,
+    MendInPlace,
+    MendOnCopy,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ARMS: std::cell::Cell<[u32; 10]> = const { std::cell::Cell::new([0; 10]) };
+}
+
+/// Counts `arm` in tests; nothing otherwise.
+#[cfg_attr(not(test), expect(unused_variables, reason = "counted in tests only"))]
+fn reached(arm: Arm) {
+    #[cfg(test)]
+    ARMS.with(|a| {
+        let mut c = a.get();
+        c[arm as usize] += 1;
+        a.set(c);
+    });
 }
 
 /// The branch `j` such that the underfull child of branch `i` is mended with its sibling,
@@ -824,12 +860,14 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                     .chain(iter::once(between))
                     .collect());
                 l.next = up;
+                reached(Arm::LeafFromRight);
                 false
             } else if rn < MIN && ln > MIN {
                 let (rest, up) = parts!(x, ln - 1, ln, |a, m, _b| (a.collect(), m.next()));
                 *x = rest;
                 *y = parts!(y, 0, 0, |_a, _m, b| iter::once(between).chain(b).collect());
                 l.next = up;
+                reached(Arm::LeafFromLeft);
                 false
             } else {
                 *x = parts!(x, ln, ln, |a, _m, _b| parts!(y, 0, 0, |_c, _n, d| a
@@ -837,6 +875,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                     .chain(d)
                     .collect()));
                 l.next = r.next.take();
+                reached(Arm::LeafMerge);
                 true
             }
         }
@@ -852,6 +891,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                     a.chain([last.with_next(Some(between)), first.with_next(None)])
                         .collect()
                 });
+                reached(Arm::InnerFromRight);
                 false
             } else if rn < MIN && ln > MIN {
                 // The last child of `x` moves to the front of `y`, the entry before it going up.
@@ -871,6 +911,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                 .chain(b)
                 .collect());
                 l.next = up;
+                reached(Arm::InnerFromLeft);
                 false
             } else {
                 *x = parts!(x, ln, ln + 1, |a, m, _b| {
@@ -881,6 +922,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                         .collect())
                 });
                 l.next = r.next.take();
+                reached(Arm::InnerMerge);
                 true
             }
         }

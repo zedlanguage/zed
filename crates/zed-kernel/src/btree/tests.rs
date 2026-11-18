@@ -395,3 +395,91 @@ fn the_entries_beside_a_key_held_or_not() {
         beside_agrees(&m, &model, 0..2 * n as u64 + 3);
     }
 }
+
+/// The term of an entry for the sums of these tests, below the modulus.
+fn term(k: &u64, v: &u64) -> u64 {
+    (k.wrapping_mul(0x9e37_79b9) ^ v.wrapping_mul(0x85eb_ca6b)) % SUM_MODULUS
+}
+
+/// The sum read again from every entry, keeping nothing.
+fn fresh_sum(m: &M) -> u64 {
+    m.iter().fold(0, |acc, (k, v)| add(acc, term(k, v)))
+}
+
+/// Random inserts and removals on a map whose sums were all filled before each change, in
+/// place (`shared` false) or on a copy that another holder keeps (`shared` true): after each
+/// change the kept sums give the sum of the entries, and so does the copy kept from before.
+/// Returns how often each arm of the changes ran (`Arm`).
+fn changes_after_sums(seed: u64, shared: bool) -> [u32; 10] {
+    ARMS.with(|a| a.set([0; 10]));
+    let mut draw = Draw(seed);
+    let mut m = M::default();
+    // Grow, then shrink, so nodes merge and borrow; then remove every key left, so the root
+    // collapses through each height.
+    let mut changes: Vec<(bool, u64)> = (0..6000_u64)
+        .map(|step| {
+            (
+                draw.below(5) < if step < 3000 { 4 } else { 1 },
+                draw.below(1500),
+            )
+        })
+        .collect();
+    for (step, &(insert, k)) in changes.iter().enumerate() {
+        change_once(&mut m, shared, insert, k, step as u64, seed);
+    }
+    changes = m.keys().map(|&k| (false, k)).collect();
+    for (step, &(insert, k)) in changes.iter().enumerate() {
+        change_once(&mut m, shared, insert, k, step as u64, seed);
+    }
+    ARMS.with(|a| a.get())
+}
+
+/// One change to `m`, with its sums filled before and checked after, on the map and on the copy
+/// kept from before when `shared`.
+fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u64) {
+    assert_eq!(m.sum(&mut term), fresh_sum(m), "seed {seed} step {step}");
+    let kept = shared.then(|| m.clone());
+    match insert {
+        true => m.insert(k, step),
+        false => m.remove(&k),
+    };
+    assert_eq!(m.sum(&mut term), fresh_sum(m), "seed {seed} step {step}");
+    if let Some(kept) = kept {
+        assert_eq!(
+            kept.sum(&mut term),
+            fresh_sum(&kept),
+            "seed {seed} step {step}"
+        );
+    }
+}
+
+/// Every arm that moves entries or subtrees between nodes runs with the sums filled, in place
+/// and on a copy, and the kept sums stay right through each (plan row
+/// PERF-family-hash-count-only). Control (not committed): `mend` without `r.child_mut()`, so a
+/// sibling that gains or loses a subtree keeps its old sum, fails this test.
+#[test]
+fn kept_sums_survive_every_arm_of_a_change() {
+    let names = [
+        "leaf from right",
+        "leaf from left",
+        "leaf merge",
+        "inner from right",
+        "inner from left",
+        "inner merge",
+        "root collapse",
+        "root split",
+        "mend in place",
+        "mend on a copy",
+    ];
+    let mut total = [0_u32; 10];
+    for (seed, shared) in [(1, false), (2, true), (3, false), (4, true)] {
+        let arms = changes_after_sums(seed, shared);
+        for (t, a) in total.iter_mut().zip(arms) {
+            *t += a;
+        }
+    }
+    for (name, count) in names.iter().zip(total) {
+        eprintln!("{name}: {count}");
+        assert!(count > 0, "the arm {name} was never reached");
+    }
+}

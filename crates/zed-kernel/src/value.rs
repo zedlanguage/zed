@@ -995,6 +995,13 @@ fn mix(a: u64, b: u64) -> u64 {
 const P: u64 = btree::SUM_MODULUS;
 /// The base of a family's hash: the term of the entry of integer key `i` is `G(v) · R^i`. Fixed,
 /// so the hash is the same on every run; any `R` other than 0 and 1 below `P` serves.
+///
+/// Collision beyond chance: as `R^(P-1) = 1`, the exponent is `i mod (P - 1)`, so integer keys
+/// that differ by a multiple of `P - 1 = 2^61 - 2` give the same `R^i`, and the families
+/// `{i: v}` and `{i + k(P - 1): v}` hash alike. Only the hash is equal: `==` still tells them
+/// apart, so a hash map compares the keys and stays right; the cost is a slower lookup on such
+/// keys alone. Families whose integer keys all lie in one run of fewer than `2^61 - 2` values
+/// never meet it.
 const R: u64 = 0x0d8e_4e27_c47d_124f;
 /// `G(n) = A + B · n` for an integer value `n` (`value_term`).
 const A: u64 = 0x1a3f_5c2b_9e8d_7061;
