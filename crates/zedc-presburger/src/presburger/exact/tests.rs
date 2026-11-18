@@ -1674,3 +1674,145 @@ fn reduced_is_refused_past_the_limit() {
     ]);
     assert_eq!(reduce_keeping_x(&f, 0), Err(Refusal::Questions));
 }
+
+fn read_once_answers(f: &Formula) -> Option<(bool, HashMap<Atom, IntervalSet>)> {
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    read_once(f, &mut work).expect("within the limit")
+}
+
+/// A random formula read once over blocks, or nearly: x, y and z each have a block of one to
+/// three rows over that name alone, and the three blocks are joined by a random tree of
+/// conjunctions, disjunctions and negations (a negated block parts into several, so some
+/// formulas are not read once, and `read_once` must then decline). Each row's solutions reach
+/// within 5 of 0, so a value in `-B..=B` with a point has one with every name in the box of
+/// `brute_wide`.
+fn read_once_formula(rng: &mut Rng) -> Formula {
+    let mut blocks: Vec<Formula> = (NAMES.iter())
+        .map(|n| {
+            let rows: Vec<Formula> = (0..1 + rng.below(3))
+                .map(|_| {
+                    let c = [1, -1, 2, -2, 3][rng.below(5) as usize];
+                    let k = rng.int(-4, 4);
+                    if rng.below(4) == 0 {
+                        eq(&[(n, c)], k)
+                    } else {
+                        ge(&[(n, c)], k)
+                    }
+                })
+                .collect();
+            Formula::and(rows)
+        })
+        .collect();
+    while blocks.len() > 1 {
+        let i = rng.below(blocks.len() as u64) as usize;
+        let g = blocks.swap_remove(i);
+        let j = rng.below(blocks.len() as u64) as usize;
+        let h = blocks.swap_remove(j);
+        let mut joined = if rng.below(2) == 0 {
+            Formula::and(vec![g, h])
+        } else {
+            Formula::or(vec![g, h])
+        };
+        if rng.below(4) == 0 {
+            joined = Formula::negate(joined);
+        }
+        blocks.push(joined);
+    }
+    blocks.remove(0)
+}
+
+/// The values of `sym` in `-B..=B` at the points of `f` with every name in `-W..=W`.
+fn brute_wide(f: &Formula, sym: &str) -> IntervalSet {
+    const W: i64 = 7;
+    let at = NAMES.iter().position(|n| *n == sym).unwrap();
+    let mut set = IntervalSet::empty();
+    for x in -W..=W {
+        for y in -W..=W {
+            for z in -W..=W {
+                let p = [x, y, z];
+                let m: Model = (NAMES.iter().zip(p))
+                    .map(|(n, v)| (a(n), Int::from(v)))
+                    .collect();
+                if p[at].abs() <= B && f.holds(&m) {
+                    set = set.join(&IntervalSet::single(p[at]));
+                }
+            }
+        }
+    }
+    set
+}
+
+/// `read_once` answers each name of a formula read once with the values that trying the points
+/// gives, read in the box, and whether there is a point; it declines the others. Negative
+/// control: with `esc[c] = esc[i]` at a disjunction (no other part with a point lets the
+/// symbol take every value), this test fails.
+#[test]
+fn read_once_formulas_project_to_the_values_of_their_points() {
+    let seed = crate::seed::seed("read_once_formulas_project_to_the_values_of_their_points");
+    let mut rng = Rng(seed | 1);
+    let (mut answered, mut wrong) = (0, Vec::new());
+    for round in 0..400 {
+        let f = read_once_formula(&mut rng);
+        let Some((has, sets)) = read_once_answers(&f) else {
+            continue;
+        };
+        answered += 1;
+        let mut any = false;
+        for n in NAMES {
+            let want = brute_wide(&f, n);
+            any |= !want.is_empty();
+            let got = sets
+                .get(&a(n))
+                .cloned()
+                .unwrap_or_else(|| IntervalSet::range(End::NegInf, End::PosInf))
+                .meet(&IntervalSet::of(-B, B));
+            if got != want {
+                wrong.push(format!("round {round} {n}: {got} not {want}: {f}"));
+            }
+        }
+        if has != any {
+            wrong.push(format!("round {round}: has {has} not {any}: {f}"));
+        }
+    }
+    println!("seed {seed}: {answered} of 400 answered");
+    assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+    assert!(answered >= 100, "seed {seed}: only {answered} answered");
+}
+
+/// The else arm of a chain of accounts, `x0 <= -1 and not (x0 >= 0 or (y0 >= 0 and x1 >= 1))`:
+/// the rows on `x0` meet in one block once the conjunctions are taken in, so `read_once`
+/// answers every name, `x0 <= -1` and `y0`, `x1` free
+/// (`deep_condition::bench::arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth`).
+#[test]
+fn the_else_arm_of_a_chain_of_accounts_is_read_once() {
+    let inner = Formula::and(vec![ge(&[("y0", 1)], 0), ge(&[("x1", 1)], -1)]);
+    let f = Formula::and(vec![
+        ge(&[("x0", -1)], -1),
+        Formula::negate(Formula::or(vec![ge(&[("x0", 1)], 0), inner])),
+    ]);
+    let (has, sets) = read_once_answers(&f).expect("read once");
+    assert!(has);
+    assert_eq!(sets[&a("x0")], IntervalSet::range(End::NegInf, End::of(-1)));
+    for n in ["y0", "x1"] {
+        assert_eq!(sets[&a(n)], IntervalSet::range(End::NegInf, End::PosInf), "{n}");
+    }
+}
+
+/// `(x == 0 and y == 0) or (x == 0 and z == 0)` reads `x` in two blocks: `read_once` declines,
+/// and the cover answers `x` in {0} and `y`, `z` free (Sol, round 1 of XR-cover-hybrid).
+#[test]
+fn an_atom_in_two_blocks_is_not_read_once() {
+    let f = Formula::or(vec![
+        Formula::and(vec![eq(&[("x", 1)], 0), eq(&[("y", 1)], 0)]),
+        Formula::and(vec![eq(&[("x", 1)], 0), eq(&[("z", 1)], 0)]),
+    ]);
+    assert!(read_once_answers(&f).is_none());
+    assert_eq!(project(&f, "x"), IntervalSet::single(0));
+    for n in ["y", "z"] {
+        assert_eq!(project(&f, n), IntervalSet::range(End::NegInf, End::PosInf), "{n}");
+    }
+}

@@ -168,6 +168,17 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
             Some((g, size))
         })
         .collect();
+    // Each part read once over blocks answered for all its atoms at once (`read_once`), within
+    // an allowance of its own as [`direct`]; where it declines, its symbols are covered below
+    // as before, with the same points and the same work.
+    let once: Vec<Option<(bool, HashMap<Atom, IntervalSet>)>> = (parts.iter())
+        .map(|p| {
+            if !p.factors.is_empty() {
+                return None;
+            }
+            tried(&mut { limit }, solver, |w| read_once(&p.f, w))
+        })
+        .collect();
     let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
     let mut shown = vec![false; parts.len()];
     let mut wider = false;
@@ -201,6 +212,14 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                     return Ok(IntervalSet::range(End::NegInf, End::PosInf));
                 };
                 let p = &parts[i];
+                if let Some((has, sets)) = &once[i] {
+                    shown[i] |= *has;
+                    return Ok(match (sets.get(s), has) {
+                        (Some(set), _) => set.clone(),
+                        (None, true) => IntervalSet::range(End::NegInf, End::PosInf),
+                        (None, false) => IntervalSet::empty(),
+                    });
+                }
                 // The cover of `s` over the part's smaller formula (above), with the limit of its
                 // own; where it is refused, the cover over `p.f` runs as it did before, with a
                 // limit of its own too, so no answer is refused that was answered before.
@@ -1239,6 +1258,233 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
         Part::Rows(rows) => projected(&rows, s, work),
         Part::Set(set, _) => Ok(Some(set)),
     }
+}
+
+/// The exact projection of `f` onto every atom it reads at once, with whether `f` has a point;
+/// `None` where `f` is not read once over blocks, or a block's elimination is not exact. `f`
+/// has no product atom. Read with signs as [`direct`] reads it, `f` is a tree of conjunctions,
+/// disjunctions and blocks, a block being a constraint or a conjunction of constraints alone;
+/// it is read once when no part is shared and no atom is read by two blocks. Then, with `sat`
+/// whether a node has a point (a conjunction's parts read disjoint atoms, so their points join),
+/// and from the root down `ctx` (every conjunction above holds its other parts at a point) and
+/// `esc` (some disjunction above, with `ctx` there, has another part with a point), the values
+/// of an atom `s` of block `B` with a point of `f` are every value where `esc(B)`, else `B`'s
+/// own projection onto `s` where `ctx(B)`, else none. Proof: along the one path from the root
+/// to `B`, a conjunction holds at `s = v` exactly where its child on the path does and its other
+/// parts have points, a disjunction where its child does or another part has a point, as those
+/// parts do not read `s`; unrolled, that is `esc(B)`, or `ctx(B)` and `v` in `B`'s projection
+/// (Opus and Sol, round 1 of XR-cover-hybrid; the two passes of Darwiche and Marquis, "A
+/// knowledge compilation map", JAIR 17, 2002, sec. 4, for decomposable forms).
+// Complexity tradeoff: [`direct`] reads the whole of `f` once for each symbol, O(k n) for k
+// symbols, 52.9 times the time at 8 times the depth of a chain of accounts
+// (`deep_condition::bench::arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth`).
+// Used: two passes over the nodes, O(n), and each block eliminated once for each of its own
+// atoms, charged as [`direct`] charges it; a part shared, an atom read by two blocks, or an
+// elimination not exact sends every symbol to the covers as before.
+fn read_once(
+    f: &Formula,
+    work: &mut Work,
+) -> Result<Option<(bool, HashMap<Atom, IntervalSet>)>, Refusal> {
+    enum Node {
+        Block(Vec<Con>),
+        // A conjunction's one block of rows, if any, and its other parts; the block joins
+        // the parts once the nodes are built.
+        And(Option<usize>, Vec<usize>),
+        Or(Vec<usize>),
+    }
+    enum Go<'a> {
+        Read(&'a Formula, bool),
+        Join(bool, usize),
+    }
+    // The nodes in post-order, so each node's parts come before it.
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut values: Vec<usize> = Vec::new();
+    // The parts `f` reaches by two paths; handles held outside `f` do not count.
+    let twice = Id::reached_twice(f);
+    let mut stack = vec![Go::Read(f, true)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Go::Read(g, pos) => {
+                if Id::among(g, &twice).is_some() {
+                    return Ok(None);
+                }
+                match g {
+                    Formula::Con(c) => {
+                        work.read(1)?;
+                        match (pos, c.rel) {
+                            (true, _) => nodes.push(Node::Block(vec![c.clone()])),
+                            (false, Rel::Ge) => {
+                                nodes.push(Node::Block(vec![negated(c, &Int::from(-1))]));
+                            }
+                            (false, Rel::Eq) => {
+                                nodes.push(Node::Block(vec![negated(c, &Int::from(-1))]));
+                                nodes.push(Node::Block(vec![negated(c, &Int::from(1))]));
+                                let n = nodes.len();
+                                nodes.push(Node::Or(vec![n - 2, n - 1]));
+                            }
+                        }
+                        values.push(nodes.len() - 1);
+                    }
+                    Formula::Not(h) => stack.push(Go::Read(h, !pos)),
+                    Formula::And(gs) | Formula::Or(gs) => {
+                        let and = matches!(g, Formula::And(_)) == pos;
+                        stack.push(Go::Join(and, gs.len()));
+                        stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
+                    }
+                }
+            }
+            Go::Join(and, len) => {
+                let parts = values.split_off(values.len() - len);
+                if !and {
+                    nodes.push(Node::Or(parts));
+                    values.push(nodes.len() - 1);
+                    continue;
+                }
+                // A conjunction takes in the parts of the conjunctions under it, and its rows
+                // are one block: the rows of `x0 <= -1 and not (x0 >= 0 or ...)` that read
+                // `x0` meet in one block. Each list taken in is moved into the longer one, so a
+                // chain of n conjunctions costs O(n log n), not O(n^2). The nodes taken in stay
+                // in `nodes`, unreached.
+                let mut rows: Vec<Con> = Vec::new();
+                let mut kids: Vec<usize> = Vec::new();
+                let take_rows = |rows: &mut Vec<Con>, mut more: Vec<Con>| {
+                    if more.len() > rows.len() {
+                        std::mem::swap(rows, &mut more);
+                    }
+                    rows.append(&mut more);
+                };
+                for i in parts {
+                    match std::mem::replace(&mut nodes[i], Node::Or(Vec::new())) {
+                        Node::Block(r) => take_rows(&mut rows, r),
+                        Node::And(block, mut more) => {
+                            if let Some(b) = block
+                                && let Node::Block(r) =
+                                    std::mem::replace(&mut nodes[b], Node::Or(Vec::new()))
+                            {
+                                take_rows(&mut rows, r);
+                            }
+                            if more.len() > kids.len() {
+                                std::mem::swap(&mut kids, &mut more);
+                            }
+                            kids.append(&mut more);
+                        }
+                        or => {
+                            nodes[i] = or;
+                            kids.push(i);
+                        }
+                    }
+                }
+                if kids.is_empty() {
+                    nodes.push(Node::Block(rows));
+                } else {
+                    let block = (!rows.is_empty()).then(|| {
+                        nodes.push(Node::Block(rows));
+                        nodes.len() - 1
+                    });
+                    nodes.push(Node::And(block, kids));
+                }
+                values.push(nodes.len() - 1);
+            }
+        }
+    }
+    let root = values.pop().expect("the node of `f`");
+    for n in &mut nodes {
+        if let Node::And(block, kids) = n
+            && let Some(b) = block.take()
+        {
+            kids.push(b);
+        }
+    }
+    // The nodes reached from the root, each once (the parts of a merged block are not).
+    let mut reached = vec![false; nodes.len()];
+    reached[root] = true;
+    for i in (0..nodes.len()).rev() {
+        if !reached[i] {
+            continue;
+        }
+        if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+            for &c in cs {
+                reached[c] = true;
+            }
+        }
+    }
+    // Each atom read by one block alone.
+    let mut block_of: HashMap<&Atom, usize> = HashMap::new();
+    for (i, n) in nodes.iter().enumerate() {
+        if let (true, Node::Block(rows)) = (reached[i], n) {
+            for a in rows.iter().flat_map(|c| c.lin.terms.keys()) {
+                if *block_of.entry(a).or_insert(i) != i {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    // Pass 1, from the blocks up: each block's projection onto each of its atoms, and `sat`.
+    let mut sat = vec![false; nodes.len()];
+    let mut own: HashMap<Atom, IntervalSet> = HashMap::new();
+    for i in 0..nodes.len() {
+        if !reached[i] {
+            continue;
+        }
+        sat[i] = match &nodes[i] {
+            Node::Block(rows) => {
+                let atoms: BTreeMap<&Atom, ()> = (rows.iter().flat_map(|c| c.lin.terms.keys()))
+                    .map(|a| (a, ()))
+                    .collect();
+                if atoms.is_empty() {
+                    return Ok(None);
+                }
+                let mut any = false;
+                for a in atoms.keys() {
+                    let Some(p) = projected(rows, a, work)? else {
+                        return Ok(None);
+                    };
+                    any |= !p.is_empty();
+                    own.insert((*a).clone(), p);
+                }
+                any
+            }
+            Node::And(_, cs) => cs.iter().all(|&c| sat[c]),
+            Node::Or(cs) => cs.iter().any(|&c| sat[c]),
+        };
+    }
+    // Pass 2, from the root down: `ctx` and `esc` of each node.
+    let mut ctx = vec![false; nodes.len()];
+    let mut esc = vec![false; nodes.len()];
+    ctx[root] = true;
+    for i in (0..nodes.len()).rev() {
+        if !reached[i] {
+            continue;
+        }
+        if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+            work.read(cs.len() as u64)?;
+            let live = cs.iter().filter(|&&c| sat[c]).count();
+            for &c in cs {
+                let others = live - usize::from(sat[c]);
+                if matches!(nodes[i], Node::And(..)) {
+                    ctx[c] = ctx[i] && others == cs.len() - 1;
+                    esc[c] = esc[i];
+                } else {
+                    ctx[c] = ctx[i];
+                    esc[c] = esc[i] || (ctx[i] && others > 0);
+                }
+            }
+        }
+    }
+    let every = IntervalSet::range(End::NegInf, End::PosInf);
+    let out = (block_of.into_iter())
+        .map(|(a, b)| {
+            let set = if esc[b] {
+                every.clone()
+            } else if ctx[b] {
+                own[a].clone()
+            } else {
+                IntervalSet::empty()
+            };
+            (a.clone(), set)
+        })
+        .collect();
+    Ok(Some((sat[root], out)))
 }
 
 /// A smaller formula `g` with the same values of each atom `keep` holds at its points as `f`,
