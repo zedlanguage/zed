@@ -1759,6 +1759,38 @@ fn split_moved_leaves_each_name_a_few_ranges() {
     }
 }
 
+/// [`points_written_after`] backward at 32 and 256 tests: each `x_i` ends even, and the written
+/// constraints found due grow linearly in the tests (BENCH-points-written-after-68b13f979).
+/// Each case `x_i == 3 && y == 0` makes `y` static, and `y` is read by every constraint; before
+/// the closed constraints of the static names with fewest constraints were evaluated first,
+/// every case gathered all of them before `x_i * y == x_i` refuted it: 592 due at 32 tests and
+/// 33,408 at 256 (56 times). Now 64 and 512. The limit, 8 times plus a quarter, is above the
+/// linear 8 and well under the 56 of the quadratic gathering.
+#[test]
+fn points_written_after_gather_linearly_many_constraints() {
+    use zedc::store::preimage::counts::due;
+    let even_values: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    let mut counted = Vec::new();
+    for k in [32, 256] {
+        let sys = points_written_after(k, even);
+        let before = due();
+        let s = sys.narrowed(How::Backward);
+        counted.push(due() - before);
+        for i in 0..k {
+            assert_eq!(
+                kept(&s, &format!("x{i}"), -21, 21),
+                even_values,
+                "k = {k}, x{i}: {s}"
+            );
+        }
+    }
+    let (small, large) = (counted[0], counted[1]);
+    assert!(
+        4 * large <= 33 * small.max(1),
+        "constraints due: {small} at 32 tests, {large} at 256"
+    );
+}
+
 /// [`points_written_after`] at a few tests, backward, the second case `x_i % 2 == 0`: each
 /// `x_i` ends even.
 #[test]

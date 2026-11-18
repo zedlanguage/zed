@@ -14950,10 +14950,77 @@ impl Scope {
                         out.insert(k.clone());
                     }
                 }
-                for d in names.diff(&self.names) {
-                    let (DiffItem::Add(n, _)
-                    | DiffItem::Remove(n, _)
-                    | DiffItem::Update { new: (n, _), .. }) = d;
+                let mut changed: Vec<Arc<str>> = names
+                    .diff(&self.names)
+                    .map(|d| {
+                        let (DiffItem::Add(n, _)
+                        | DiffItem::Remove(n, _)
+                        | DiffItem::Update { new: (n, _), .. }) = d;
+                        n.clone()
+                    })
+                    .collect();
+                // Complexity tradeoff: naive version, every constraint on every changed name
+                // is due at once, and each is substituted, checked to end and looked up before
+                // any is evaluated. A case that fixes a name `y` read by all c constraints and
+                // a name `x` its own constraint refutes (`x * y == x` at `x = 3, y = 0`) then
+                // costs O(c) before its refutation, and c cases cost O(c^2)
+                // (`points_written_after_scale`: 33,408 due at 256 tests, 592 at 32, ratio
+                // 14.6). Used: the changed names that are now static, fewest constraints
+                // first, have their closed constraints (every name static) evaluated before
+                // the rest are gathered, and a `false` ends the enumeration with the scope
+                // empty, so such a case costs the constraints of its smallest static names
+                // (512 due at 256 tests, ratio 9.0). Why it is sound: a closed constraint's
+                // value depends on its static names alone, and [`Scope::enumerate_on`]
+                // evaluates it the same way, records its key and reports a root failure as it
+                // would in the main pass; an empty scope narrows to nothing whatever is left
+                // unevaluated, and the main pass skips each key recorded here. Why the scope
+                // stays empty, so that what is left unevaluated is never needed: every write of
+                // `Scope::bottom` sets it to `true`, except where a scope is made (`Scope::new`,
+                // a copy, which keeps it, and `Scope::join`, which makes its result only when
+                // neither side is empty and otherwise returns the other side, the empty set
+                // being the join's unit) and in `Scope::extend_path`, which returns before it
+                // writes when the scope is empty or holds a written constraint, as one that
+                // enumerates does. The places that put another scope in its place
+                // (`Scope::unbind` restoring the copy saved before a binding, `narrow_linear`
+                // restoring the copy saved before `sides_exactly`, `join_kept` and
+                // `narrow_node` taking a case or the join of the cases) put a whole scope there,
+                // with its own `seen` and `enumerated`, made before this enumeration or from
+                // non-empty cases; none copies `seen` out of an empty scope (`join` reads a
+                // side's only when neither is empty, `join_kept` its projection only when not
+                // empty). So no path makes an empty scope non-empty again, the record this
+                // return leaves ahead of `enumerated` goes only with the empty scope, and a case
+                // refuted here comes back only as the unit of a join. Cost when no
+                // closed constraint is false: each closed constraint on a static changed name
+                // is gathered twice, here and in the main pass (which finds its key recorded),
+                // so at most twice the naive work, the order unchanged, plus a sort of the
+                // changed names, O(m log m) for m changed names. Test
+                // `l01_39_scope_relations::xst::s4::bench::points_written_after_scale`;
+                // COMPLEXITY.md row BENCH-points-written-after-68b13f979.
+                changed.sort_by_key(|n| self.written_by.count(n));
+                for n in &changed {
+                    if !self.names.read(n).is_some_and(|p| p.value().is_some()) {
+                        continue;
+                    }
+                    let closed: Vec<(Term, Vec<Arc<str>>, Enumerated)> = (self.written_by.of(n))
+                        .filter_map(|k| {
+                            let free = self.written.get(k)?;
+                            let statics = self.statics_of(free);
+                            if statics.len() != free.len() {
+                                return None;
+                            }
+                            let key = (k.clone(), statics.clone().into_iter().collect());
+                            (!self.enumerated.contains(&key))
+                                .then(|| substitute(k.term(), &statics))
+                                .filter(stage::ends)
+                                .map(|c| (c, Vec::new(), key))
+                        })
+                        .collect();
+                    self.enumerate_on(closed);
+                    if self.bottom {
+                        return true;
+                    }
+                }
+                for n in &changed {
                     out.extend(self.written_by.of(n).cloned());
                 }
                 for d in enumerated.diff(&self.enumerated) {
@@ -14966,6 +15033,8 @@ impl Scope {
                 out
             }
         };
+        #[cfg(feature = "counts")]
+        super::preimage::counts::DUE.set(super::preimage::counts::DUE.get() + due.len() as u64);
         let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = due
             .into_iter()
             .filter_map(|k| {

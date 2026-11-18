@@ -11526,6 +11526,7 @@ pub mod counts {
         pub(crate) static INPUTS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static TERM_READS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static EVALUATIONS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static DUE: Cell<u64> = const { Cell::new(0) };
         pub(crate) static PARTS_PROJECTED: Cell<u64> = const { Cell::new(0) };
         pub(crate) static PUT_IN_SIDE: Cell<Option<bool>> = const { Cell::new(None) };
         pub(crate) static ZERO_CYCLES_TIED: Cell<u64> = const { Cell::new(0) };
@@ -11608,6 +11609,13 @@ pub mod counts {
     /// roots of an obligation's equation is evaluated once at each root (ROOTS-listed).
     pub fn evaluations() -> u64 {
         EVALUATIONS.get()
+    }
+
+    /// The written constraints found due at an enumeration (`Scope::enumerate`) on this
+    /// thread since it started: those gathered on its names that changed, each counted once
+    /// per enumeration it is gathered at (BENCH-points-written-after-68b13f979).
+    pub fn due() -> u64 {
+        DUE.get()
     }
 
     /// The blocks of a scope's relation projected onto their names (`Scope::project_part`) on
