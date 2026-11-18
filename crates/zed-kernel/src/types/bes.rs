@@ -1152,6 +1152,52 @@ mod tests {
     /// node it does not refuse the answer of the game ([`by_the_game`]). Draws of 4 to 9
     /// nodes, mostly `Or` and `And` with one to three children and a few `Mor`, reach the
     /// deletion cascade of step 4 (`delete_cascade`) as well as the other steps.
+    /// Item TEST-kernel-unreached-paths-4 (`decide`, step 4 with one `Mor` node `m0`): a
+    /// system where assuming `m0` inhabited does not inhabit its child, so the second least
+    /// fixed point (with `m0` not inhabited) gives the answer. Found by a random search over
+    /// about 3.6 million draws of 4 to 43 nodes with few `Mor` nodes; the 40,000 draws of
+    /// `decide_agrees_with_the_game_on_systems_drawn_at_random` never reach that pass.
+    #[test]
+    fn one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point() {
+        use Kind::{And as A, Bot as B, Mor as M, Or as O};
+        let nodes: [(Kind, &[u32]); 20] = [
+            (A, &[15, 5]),
+            (A, &[12, 15, 11]),
+            (A, &[17, 0, 3]),
+            (A, &[5, 7, 16]),
+            (O, &[16]),
+            (O, &[19, 4, 17]),
+            (O, &[3]),
+            (O, &[12]),
+            (A, &[17]),
+            (O, &[14]),
+            (O, &[9]),
+            (M, &[2]),
+            (O, &[18, 7, 13]),
+            (B, &[]),
+            (A, &[10, 15]),
+            (M, &[7]),
+            (A, &[19, 9, 1]),
+            (A, &[0]),
+            (M, &[17]),
+            (M, &[11]),
+        ];
+        let mut g = Bes::new();
+        for _ in &nodes {
+            g.add(Kind::Bot, vec![]);
+        }
+        for (v, (kind, kids)) in nodes.iter().enumerate() {
+            g.set(v as u32, *kind, kids.to_vec());
+        }
+        g.seal();
+        let want = by_the_game(&g);
+        let got = decide(&g);
+        for v in 0..nodes.len() {
+            assert_ne!(got.answers[v], Answer::Refused, "node {v}");
+            assert_eq!(got.answers[v] == Answer::Inhabited, want[v], "node {v}");
+        }
+    }
+
     #[test]
     fn decide_agrees_with_the_game_on_systems_drawn_at_random() {
         let mut seed = 0x9e37_79b9_7f4a_7c15_u64;

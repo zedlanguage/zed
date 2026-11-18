@@ -240,8 +240,12 @@ Closed in this round:
 
 Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,
 and the cascade after it; no draw reaches it, and no proof yet: it needs an exit node true in
-the least fixed point of `bounds` and false in its last pass), and the second least fixed point
-of the one-`Mor` step (no draw changes an answer with it). The proofs relied on above (cover2's
+the least fixed point of `bounds` and false in its last pass). The second least fixed point of
+the one-`Mor` step is closed: the 40,000 draws never reach it, a search of about 3.6 million
+draws (4 to 43 nodes, few `Mor` nodes) found 20-node systems that do, and one is the test
+`one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point`; with the second pass
+disabled it fails (node 15 answered inhabited, the game says not). A proof that the pass is
+unreachable was tried first and does not hold. The proofs relied on above (cover2's
 and earlier) were re-derived in this round: `treap.rs` 195 (heap order by `(prio, key)` with the
 priority a function of the key), `bdd.rs` 1039, 1238 (only caller `Connect::not`), 1966 (all
 three `base` closures answer every `Part::Bdd`), 2495, `bes.rs` 352, 622, 747 (`Bes::add`,
