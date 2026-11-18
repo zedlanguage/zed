@@ -28,3 +28,30 @@ fn the_selector_proves_the_check_so_the_type_has_no_atom() {
 fn the_arm_checked_without_the_selector_has_the_atom() {
     assert_eq!(sig(BOTH_ARMS, "f"), "(x: int, d: int) -> int | #divByZero");
 }
+
+/// The `match` case of the same rule. In `match v { #d(0) -> 0, #d(n) -> x div n, #z -> 0 }`
+/// the second arm knows `n != 0` from the arm before it, not from the payload type, so the
+/// payload's least value, `0`, on which the arm runs when `v` holds `#z`, breaks that fact.
+/// This zedc does not compile a `match`, an atom with a payload or `u8` yet, so the two tests
+/// write the same arms with an `if` on an `int`: the arm typed with the earlier arm's fact has
+/// no `#divByZero`, and the arm run on the least value, as the transformation runs it when
+/// the member is absent, has it, so only typing with the facts keeps the plain type.
+const EXCLUDED_BY_EARLIER_ARM: &str = "f(x: int, n: int) = if n == 0 { 0 } else { x div n };\n";
+
+/// The arm run on the payload's least value before the selection, with `held` saying whether
+/// the member is present.
+const ARM_ON_LEAST_VALUE: &str =
+    "f(x: int, held: bool) = { q = x div 0; if held { q } else { 0 } };\n";
+
+#[test]
+fn the_earlier_arm_proves_the_check_so_the_type_has_no_atom() {
+    assert_eq!(sig(EXCLUDED_BY_EARLIER_ARM, "f"), "(x: int, n: int) -> int");
+}
+
+#[test]
+fn the_arm_on_the_least_value_has_the_atom() {
+    assert_eq!(
+        sig(ARM_ON_LEAST_VALUE, "f"),
+        "(x: int, held: bool) -> int | #divByZero"
+    );
+}
