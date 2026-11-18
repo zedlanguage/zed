@@ -10,6 +10,15 @@
 #   tools/spec_groups.sh --run [ARG..] runs them: tools/run_tests.sh --only '^(<groups>)$' ARG..,
 #                                      with the caller's ZED_SPEC_DIR (through zrun, as the
 #                                      short-addresses pieces need)
+#   tools/spec_groups.sh --dir         prints the spec checkout the tests find: $ZED_SPEC_DIR when
+#                                      set (a relative one taken from tests/, the directory the
+#                                      tests of zed-tests run in), else the first zed/ holding
+#                                      DESIGN.md in the checkout's parent or above it; nothing
+#                                      when there is none
+#   tools/spec_groups.sh --commit      prints the commit of that checkout, or nothing when there is
+#                                      none, it is not a git checkout, or its tracked files have
+#                                      uncommitted changes (tools/merge_check.sh keeps it in its
+#                                      record, MERGE-spec-push-check)
 # The groups are read off the code, not kept by hand: a test that reads the spec is compiled only
 # with the feature `spec` of zed-tests (tests/src/spec.rs), so its folder, tests/steps/<s> or
 # tests/full/<d>, holds `feature = "spec"`. The groups of such a folder are the [[test]] targets
@@ -25,14 +34,45 @@ mode=list
 case $1 in
   --check) mode=check ;;
   --run) mode=run && shift ;;
+  --dir) mode=dir ;;
+  --commit) mode=commit ;;
   '') ;;
   *)
-    echo "usage: tools/spec_groups.sh [--check | --run [run_tests.sh arguments]]" >&2
+    echo "usage: tools/spec_groups.sh [--check | --run [run_tests.sh arguments] | --dir | --commit]" >&2
     exit 2
     ;;
 esac
 [ -f tests/Cargo.toml ] && [ -f tools/run_tests.sh ] ||
   { echo "spec_groups.sh: run from the root of a zed-impl checkout" >&2; exit 2; }
+
+# The rule of zed_tests::spec::locate (tests/src/spec.rs).
+spec_dir() {
+  local d
+  if [ -n "${ZED_SPEC_DIR+set}" ]; then
+    d=$ZED_SPEC_DIR
+    [[ $d == /* ]] || d=$(pwd)/tests/$d
+    realpath -m -s -- "$d"
+    return
+  fi
+  d=$(pwd)
+  while [ "$d" != / ]; do
+    d=$(dirname "$d")
+    [ -f "$d/zed/DESIGN.md" ] && echo "${d%/}/zed" && return
+  done
+}
+case $mode in
+  dir) spec_dir; exit 0 ;;
+  commit)
+    # Only tracked files count, as for the checkout in tools/merge_check.sh: a file added to the
+    # spec checkout and not committed is not seen. A directory inside another repository, not
+    # the top of its own, has no commit of its own.
+    d=$(spec_dir)
+    [ -n "$d" ] && [ "$(git -C "$d" rev-parse --show-toplevel 2>&1)" = "$(realpath -e -- "$d" 2>&1)" ] &&
+      [ -z "$(git -C "$d" status --porcelain --untracked-files=no 2>&1)" ] &&
+      git -C "$d" rev-parse --verify -q HEAD
+    exit 0
+    ;;
+esac
 
 folders() {
   command grep -a -r -l --include='*.rs' "$@" tests/steps tests/full | awk -F/ 'NF > 3 { print $2 "/" $3 }' | sort -u

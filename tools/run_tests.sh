@@ -957,25 +957,13 @@ export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_thres
 # run also checks that the output does not depend on it. ZED_TREAP_SEED, when set, is kept.
 [ "$run_kind" = test ] || export ZED_TREAP_SEED=${ZED_TREAP_SEED:-0}
 cores=$(nproc)
-# The spec checkout the tests read (zed_tests::spec::locate, MERGE-spec-reads-map): the directory
-# $ZED_SPEC_DIR when it is set (a relative one taken from tests/, the directory the tests of
-# zed-tests run in), else the first zed/ holding DESIGN.md in the checkout's parent or above it.
-# --trace names a read under it spec:<path>, relative to it, so the map of run-time reads tells
-# which groups read the spec; strace names a directory by its real path, so the real path of the
-# spec checkout is matched too.
+# The spec checkout the tests read (zed_tests::spec::locate, MERGE-spec-reads-map), by the rule
+# tools/spec_groups.sh --dir prints. --trace names a read under it spec:<path>, relative to it,
+# so the map of run-time reads tells which groups read the spec; strace names a directory by its
+# real path, so the real path of the spec checkout is matched too.
 spec_dir= spec_real=
 if [ -n "$trace" ]; then
-  if [ -n "${ZED_SPEC_DIR+set}" ]; then
-    spec_dir=$ZED_SPEC_DIR
-    [[ $spec_dir == /* ]] || spec_dir=$root/tests/$spec_dir
-    spec_dir=$(realpath -m -s -- "$spec_dir")
-  else
-    d=$root
-    while [ "$d" != / ]; do
-      d=$(dirname "$d")
-      [ -f "$d/zed/DESIGN.md" ] && spec_dir=${d%/}/zed && break
-    done
-  fi
+  spec_dir=$(tools/spec_groups.sh --dir)
   [ -z "$spec_dir" ] || spec_real=$(realpath -m -- "$spec_dir")
 fi
 export root out slots slot_dir cores run_kind cov trace spec_dir spec_real

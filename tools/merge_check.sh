@@ -93,8 +93,8 @@
 #     record from their own trace. Cost: one pass over the map, O(map size) (2.3 MB for 280
 #     groups);
 #  3. with --record <file>: runs the tests under tools/run_tests.sh --trace, and when they pass
-#     writes to <file> the commit checked, the groups that passed and the paths each group's
-#     pieces read at run time. A later run with the same <file>, after the branch is rebased on a
+#     writes to <file> the commit checked, the commit of the spec checkout (tools/spec_groups.sh
+#     --commit), the groups that passed and the paths each group's pieces read at run time. A later run with the same <file>, after the branch is rebased on a
 #     main that moved (tools/../wt/merge-push.sh does this after a refused push), runs only the
 #     selected groups that did not pass then or whose inputs changed since; see "The record".
 #     It also fails when a group whose pieces read a file of the spec checkout (spec:<path> in
@@ -130,7 +130,10 @@
 # came into or went out of existence with it (git tracks no empty directory, so a directory
 # exists at a commit when a tracked file lies under it there); and they read
 # nothing the trace could not name (`*`: a relative path in a call strace shows without its
-# directory, or .git, whose answers change with every commit). Proof that skipping such a g is
+# directory, or .git, whose answers change with every commit); and it read no file of the spec
+# checkout (spec:<path>), or the spec checkout is at the commit the record names, with no
+# uncommitted change to a tracked file at either check (MERGE-spec-push-check: until then a spec
+# commit pushed after T_old was invisible to the record, and its groups were skipped). Proof that skipping such a g is
 # sound: g's test binaries are built from files step 2 maps to g, none of which differs between
 # T_old and H, so they are the same programs, except, under the narrowing of step 2, in code of
 # a linked crate that g's sources do not name, on which g's behavior does not depend by that
@@ -189,6 +192,10 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 head=$(git rev-parse HEAD)
+# The commit of the spec checkout the tests read, kept in the record (see "The record"); empty
+# when unknown. A toy checkout without tools/spec_groups.sh has none.
+spec_at=
+[ ! -x tools/spec_groups.sh ] || spec_at=$(tools/spec_groups.sh --commit)
 mb=$(git merge-base "$base" HEAD) || { echo "merge check: no merge base with $base" >&2; exit 1; }
 # --no-renames: a file moved from one package to another changes both.
 mapfile -t changed < <(git diff --no-renames --name-only "$mb" HEAD)
@@ -667,7 +674,8 @@ s=$(part_of full "$snew")
 [ -z "$s" ] || echo "merge check: tests/full pieces: $(paste -sd' ' <<<"$s")"
 [ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: both its parts run"
 
-# The record (see the header): `<commit>`, then `group <g>` for each group that passed there, then
+# The record (see the header): `<commit>`, then `spec <commit>` when the spec checkout's commit
+# is known (tools/spec_groups.sh --commit), then `group <g>` for each group that passed there, then
 # `read <g> <path>` for each path g's pieces named, relative to the root ("." for the root itself,
 # "*" for a read of anything, see tools/run_tests.sh --trace), then `end`. torun is
 # S_new ∩ (S_D ∪ not S_old); keep is S_old \ S_D.
@@ -707,6 +715,14 @@ if [ -n "$record" ] && [ -n "$snew" ]; then
           $1 == "read" && (substr($0, length($2) + 7) in k) { print $2 }' - "$record")
         sd=$(command grep -a . <<<"$sd" | sort -u)
       fi
+      # The groups that read the spec checkout (spec:<path> in the record) run again unless it is
+      # at the record's spec commit, known on both sides (MERGE-spec-push-check).
+      rspec=$(awk '$1 == "spec" { print $2; exit }' "$record")
+      if [ -z "$spec_at" ] || [ "$spec_at" != "$rspec" ]; then
+        s=$(awk '$1 == "read" && $3 ~ /^spec:/ { print $2 }' "$record" | sort -u)
+        echo "merge check: the spec checkout is at ${spec_at:-no known commit (none found, not a git checkout, or uncommitted changes)}, the record's at ${rspec:-no known commit}; the groups that read it are touched:${s:+ $(paste -sd' ' <<<"$s")}"
+        sd=$(command grep -a . <<<"$sd"$'\n'"$s" | sort -u)
+      fi
       torun=$(comm -12 <(echo "$snew") <(sort -u <(echo "$sd") <(comm -23 <(echo "$snew") <(echo "$sold")) | command grep -a .))
       keep=$(comm -23 <(echo "$sold") <(echo "$sd") | command grep -a .)
       echo "merge check: ${#dfiles[@]} files changed since the record's commit $(git rev-parse --short "$told"); passed there and not touched since: $(paste -sd' ' <<<"$keep")"
@@ -732,8 +748,13 @@ write_record() {
     echo "merge check: HEAD or its files changed during the check; the record is not written"
     return
   fi
+  if [ -n "$spec_at" ] && [ "$(tools/spec_groups.sh --commit)" != "$spec_at" ]; then
+    echo "merge check: the spec checkout changed during the check; the record is not written"
+    return
+  fi
   {
     echo "$head"
+    [ -z "$spec_at" ] || echo "spec $spec_at"
     command grep -a . <<<"$keep"$'\n'"$torun" | sort -u | sed 's/^/group /'
     {
       [ -z "$keep" ] || awk 'NR == FNR { k[$0] = 1; next } $1 == "read" && ($2 in k)' <(echo "$keep") "$record"

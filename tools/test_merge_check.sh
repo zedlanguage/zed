@@ -32,6 +32,16 @@ ws=$(pwd)/build/test-merge-check${part:+-$part}
 mkdir -p "$ws/crates/a/src" "$ws/crates/b/src/m" "$ws/crates/c/src/m" "$ws/crates/c/data" \
   "$ws/crates/tool/src" "$ws/crates/rootuse/src" "$ws/crates/lnk/src" "$ws/crates/feat/src" "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
 export CARGO_TARGET_DIR=$ws/target
+# The toy's spec checkout, a repository of its own (MERGE-spec-push-check); without it the walk of
+# tools/spec_groups.sh --dir would find the real one above the checkout.
+export ZED_SPEC_DIR=$ws/target/spec
+mkdir -p "$ZED_SPEC_DIR"
+[ -e "$ZED_SPEC_DIR/.git/HEAD" ] || git -C "$ZED_SPEC_DIR" init -q -b main
+git -C "$ZED_SPEC_DIR" config user.name test
+git -C "$ZED_SPEC_DIR" config user.email test@localhost
+echo "# spec" >"$ZED_SPEC_DIR/DESIGN.md"
+git -C "$ZED_SPEC_DIR" add -A
+git -C "$ZED_SPEC_DIR" commit -q --allow-empty -m "spec"
 fails=0
 check() {
   if [ "$2" = "$3" ]; then
@@ -356,7 +366,8 @@ check "a passing run writes the map file of each group that ran, from the trace"
 docs/plan.md
 commit $(git rev-parse HEAD)
 data" "$(cat "$ws/target/map-record/c.reads" "$ws/target/map-record/short-c.reads")"
-check "the record names the commit, the groups and what each read" "$(git rev-parse HEAD)
+check "the record names the commit, the spec's commit, the groups and what each read" "$(git rev-parse HEAD)
+spec $(git -C "$ZED_SPEC_DIR" rev-parse HEAD)
 group c
 group s_01f_import_graph
 group short-c
@@ -465,6 +476,31 @@ check "a group that read the spec and that spec_groups.sh does not name fails, a
 run_tests --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
 merge check: FAILED: tools/spec_groups.sh (above)
 1" "$(record_run base; cat "$rec")"
+# The spec's commit in the record (MERGE-spec-push-check): a group that read the spec runs again
+# when the spec checkout moved since the record or has uncommitted changes, and only then.
+command grep -a -v '^short-step_x ' "$STUB_READS" >"$STUB_READS-2"
+export STUB_READS=$STUB_READS-2
+record_run base >/dev/null
+check "the record names the spec's commit" "spec $(git -C "$ZED_SPEC_DIR" rev-parse HEAD)" \
+  "$(sed -n 2p "$rec")"
+check "the spec unmoved: nothing runs" "merge check: to run:" \
+  "$(record_run base | command grep -a 'to run')"
+echo "more" >>"$ZED_SPEC_DIR/DESIGN.md"
+git -C "$ZED_SPEC_DIR" commit -q -a -m "spec: more"
+check "the spec moved: the group that read it runs, the other does not, and the record names the new commit" \
+  "merge check: to run: step_x
+run_tests --only ^(step_x)\$ 6
+merge check: passed
+0
+spec $(git -C "$ZED_SPEC_DIR" rev-parse HEAD)" "$(record_run base; sed -n 2p "$rec")"
+echo "uncommitted" >>"$ZED_SPEC_DIR/DESIGN.md"
+check "the spec has uncommitted changes: the group that read it runs, and the record names no spec commit" \
+  "merge check: to run: step_x
+group short-step_x" "$(record_run base | command grep -a 'to run'; sed -n 2p "$rec")"
+git -C "$ZED_SPEC_DIR" checkout -q DESIGN.md
+check "then with the spec clean again, the record's unknown spec commit runs it once more" \
+  "merge check: to run: step_x" "$(record_run base | command grep -a 'to run')"
+check "and then nothing" "merge check: to run:" "$(record_run base | command grep -a 'to run')"
 git checkout -q --detach base
 fi
 popd >/dev/null || exit 1
