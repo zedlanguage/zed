@@ -166,7 +166,47 @@ fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out_to_
 fn taking_a_shared_part_out_of_the_600_disjunctions_of_seed_0x5f5b_loses_no_precision() {
     let mut rng = zed_tests::instances::Rng::new(0x5F5B);
     let c = factoring_loses_no_precision((0..600).map(|i| (i, random_tiers(&mut rng))));
-    // On 2026-11-14 one projection, of formula 9, is narrower than as written, and no refusal
-    // as written is answered.
-    assert_eq!((c.same, c.narrower, c.answered), (599, 1, 0), "{c:?}");
+    // On 2026-11-14 one projection, of formula 9, was narrower than as written. Formula 9 is
+    // `2c >= -4 && !((2b >= 2 && 3c <= 4) || (2b >= 2 && 3c >= 4) || ...)`, which is
+    // `b <= 0 && c >= -2` since `3c <= 4 || 3c >= 4` always holds; by 2026-11-18 both writings
+    // project it exactly (a, d any; b <= 0; c >= -2), so every projection is the same
+    // (PRES-cover-bench-twin-shared). No refusal as written is answered.
+    assert_eq!((c.same, c.narrower, c.answered), (600, 0, 0), "{c:?}");
+}
+
+/// Formula 9 of seed 0x5f5b, the one whose shared part narrowed its projection on 2026-11-14:
+/// it is `b <= 0 && c >= -2` (`3c <= 4 || 3c >= 4` always holds), and both writings now
+/// project it to the same sets with nothing left out, which is why the 600 formulas above
+/// count (600, 0, 0) (PRES-cover-bench-twin-shared).
+#[test]
+fn formula_9_of_seed_0x5f5b_projects_the_same_in_both_writings() {
+    use zedc::store::presburger::{Atom, UNFACTORED, project_each};
+    let mut rng = zed_tests::instances::Rng::new(0x5F5B);
+    let f = (0..10)
+        .map(|_| random_tiers(&mut rng))
+        .last()
+        .expect("ten formulas");
+    assert_eq!(
+        f.to_string(),
+        "2 * c >= -4 && !((2 * b >= 2 && 3 * c <= 4) || (2 * b >= 2 && 3 * c >= 4) || \
+         (2 * b >= 2 && d <= -4 && c >= 4) || (3 * c <= -1 && 2 * d <= -3 && 2 * b >= 2))"
+    );
+    let syms: Vec<Atom> = ["a", "b", "c", "d"].map(|n| Atom::Sym(n.into())).into();
+    let now = project_each(&f, &syms);
+    UNFACTORED.with(|u| u.set(true));
+    let then = project_each(&f, &syms);
+    UNFACTORED.with(|u| u.set(false));
+    assert_eq!(now, then);
+    let (sets, skipped) = now.expect("projected");
+    assert!(skipped.is_empty(), "{skipped:?}");
+    // a and d any, b <= 0, c >= -2: the exact projections.
+    let any = "Ok(IntervalSet { pieces: [(NegInf, PosInf)] })";
+    let want = [
+        any,
+        "Ok(IntervalSet { pieces: [(NegInf, Fin(Num(Small(0))))] })",
+        "Ok(IntervalSet { pieces: [(Fin(Num(Small(-2))), PosInf)] })",
+        any,
+    ];
+    let got: Vec<String> = sets.iter().map(|s| format!("{s:?}")).collect();
+    assert_eq!(got, want);
 }
