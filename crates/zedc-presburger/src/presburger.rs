@@ -20667,6 +20667,39 @@ impl Level {
             }
             join_lone_disjuncts(&mut p);
         }
+        // With two disjunctions or more, the bounds that each disjunction puts on a single atom
+        // ([`disjunction_hulls`] rows of one term) join the base, so that each disjunct is
+        // projected with them. Before, a disjunct was projected with the base alone, so a bound
+        // that needs another disjunction's rows was missed: with `y == -1 || y == 2` (a set with
+        // a hole, written as one disjunct for each of its pieces), `w <= 1` and `z + 2·w >= 1 || z + 3·y >= 3`, the
+        // second disjunct with `y` free left `z` unbounded below, and so did the meet, where
+        // `-1 <= y <= 2` written as two rows, a wider set, gives `z >= -3`: a narrower input
+        // gave a wider output (row PRES-monotone-rules, C7; audit seeds 51, 55, 65, 88, 93, 107
+        // and 109 of `l01_39_scope_relations::families`). The rows hold at every point of the
+        // parts, so the projection stays sound, and a row of one term joins no two groups of the
+        // base ([`Linked`]), so the groups each disjunct is asked with are those it had, each
+        // with its bounds.
+        // Complexity tradeoff: naive version, each disjunct projected with every row the
+        // disjunctions imply, which joins groups of the base through rows of two terms or more
+        // and makes each disjunct's question read the joined groups (measured as the negative
+        // control: up to 13% more instructions on the l01_38 benchmarks of matches and chains of
+        // disjunctions). Used: the rows of one term alone, from the joins of [`DeepHulls`],
+        // O(r log n) for each disjunction's r forms with the hull of each disjunct kept on it
+        // for its life, and O(r) to keep the rows of one term, with a hash set to leave out a
+        // row the base has; measured, at most 3.9% more instructions, size ratios unchanged.
+        // What is given up: a bound that needs a row of two terms or more that every disjunct
+        // of another disjunction implies; the tightening at the close ([`tighten_each`]) still
+        // meets the hulls with those rows. Test:
+        // `l01_38_omega_test::disj_groups::a_bound_through_a_set_with_a_hole_is_projected_as_through_its_hull`.
+        // COMPLEXITY.md row PRES-monotone-unary.
+        if !sets && p.ors.len() > 1 && !old_path() {
+            let mut have: HashSet<Con> = p.cons.iter().cloned().collect();
+            for c in disjunction_hulls(&p.ors, &mut DeepHulls::default()) {
+                if c.lin.terms.len() == 1 && have.insert(c.clone()) {
+                    p.cons.push(c);
+                }
+            }
+        }
         let model = match solve(&p.cons, true) {
             Err(r) => return Opened::Answer(Err(r)),
             Ok(None) => return none(&syms),

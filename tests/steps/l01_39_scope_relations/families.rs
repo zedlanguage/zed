@@ -1303,6 +1303,156 @@ fn audit(seeds: std::ops::Range<u64>) -> Vec<Record> {
     out
 }
 
+/// The steps of the audit at `seed` ([`audit`]) where a narrower start gives a wider set for a
+/// name (PRES-monotone-rules), each as `seed:step name: narrower start's set, the audit's set`.
+/// The narrower start assumes, before the steps, the hull the audit's last step gives each
+/// name, an end only where it lies inside the window `-r..=r`: every point the steps keep lies
+/// in that hull, so assuming it first takes away only points no step keeps. Each step of the
+/// scope then meets or joins a narrower set, and an exact or a monotone step gives a set no
+/// wider than the audit's at every step. A seed whose last step leaves a name empty in the
+/// window has no hull and is skipped.
+fn audit_widenings(seed: u64) -> Vec<String> {
+    let tests = &audit_tests()[seed as usize];
+    let p = Premises::new();
+    let ns: Vec<Arc<str>> = AUDIT_NAMES.into_iter().map(Arc::from).collect();
+    let even = seed.is_multiple_of(2);
+    let r: i64 = if even { 9 } else { 12 };
+    let run = |first: &[Term]| -> Vec<Scope> {
+        let mut s = ints(&ns);
+        if even {
+            for n in &ns {
+                s = s.assume(&and(ge(var(n), int(-8)), le(var(n), int(8))), true, &p);
+            }
+        }
+        for t in first {
+            s = s.assume(t, true, &p);
+        }
+        let mut out = Vec::new();
+        for (step, t) in tests.iter().enumerate() {
+            s = match step % 3 == 2 {
+                true => s.assume(t, true, &p).join(&s.assume(t, false, &p)),
+                false => s.assume(t, true, &p),
+            };
+            out.push(s.clone());
+        }
+        out
+    };
+    let wide = run(&[]);
+    let last = wide.last().expect("each seed has 9 steps");
+    let mut starts: Vec<(&str, Vec<Term>)> = Vec::new();
+    let mut hull = Some(Vec::new());
+    for n in &ns {
+        let p = last.get(n);
+        let set = p.ints();
+        let inside: Vec<i64> = (-r..=r)
+            .filter(|v| set.contains_end(&End::of(*v)))
+            .collect();
+        let (Some(&lo), Some(&hi), Some(h)) = (inside.first(), inside.last(), hull.as_mut()) else {
+            hull = None;
+            continue;
+        };
+        if lo > -r {
+            h.push(ge(var(n), int(lo)));
+        }
+        if hi < r {
+            h.push(le(var(n), int(hi)));
+        }
+    }
+    if let Some(h) = hull {
+        starts.push(("hull", h));
+    }
+    let each = |f: &dyn Fn(&str) -> Term| ns.iter().map(|n| f(n)).collect::<Vec<_>>();
+    starts.push((
+        "box6",
+        each(&|n| and(ge(var(n), int(-6)), le(var(n), int(6)))),
+    ));
+    starts.push((
+        "hole0",
+        each(&|n| or(le(var(n), int(-1)), ge(var(n), int(1)))),
+    ));
+    starts.push((
+        "hole1",
+        each(&|n| or(le(var(n), int(0)), ge(var(n), int(2)))),
+    ));
+    let mut out = Vec::new();
+    for (start, first) in &starts {
+        let narrow = run(first);
+        for (step, (a, b)) in narrow.iter().zip(&wide).enumerate() {
+            if a.bottom {
+                continue;
+            }
+            for n in &ns {
+                let (pa, pb) = (a.get(n), b.get(n));
+                let (x, y) = (pa.ints(), pb.ints());
+                if b.bottom || !x.is_subset(y) {
+                    out.push(format!("{seed}:{step} {start} {n}: {x}, {y}"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// [`audit_widenings`] finds no step of `seed` where a narrower start gives a wider set.
+fn no_widenings(seed: u64) {
+    let w = audit_widenings(seed);
+    assert!(
+        w.is_empty(),
+        "audit seed {seed}: a narrower start gave a wider set at\n{}",
+        w.join("\n")
+    );
+}
+
+/// Audit seeds 51, 55, 65, 88, 93, 107 and 109 each had a step where a narrower start gave a
+/// wider set: a set with a hole is written as a disjunction ([`presburger::member`]), and each
+/// disjunct of another disjunction was projected with the base alone, without the bounds the
+/// hole's hull puts on its name, so a name bounded through the hull was left unbounded (51:8,
+/// `x` unbounded below where the audit's start gives `[-3..]`). Each disjunct is now projected
+/// with the rows of one term that the disjunctions imply (`Level::open` in zedc-presburger,
+/// row PRES-monotone-rules, C7; the hand-made case is
+/// `l01_38_omega_test::disj_groups::a_bound_through_a_set_with_a_hole_is_projected_as_through_its_hull`).
+#[test]
+fn audit_seed_51_no_wider_set_from_a_narrower_start() {
+    no_widenings(51);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 55 (steps 7 and 8).
+#[test]
+fn audit_seed_55_no_wider_set_from_a_narrower_start() {
+    no_widenings(55);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 65 (steps 7 and 8, a bound that
+/// needs the base's rows and the hull of another disjunction together).
+#[test]
+fn audit_seed_65_no_wider_set_from_a_narrower_start() {
+    no_widenings(65);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 88 (steps 4 to 6).
+#[test]
+fn audit_seed_88_no_wider_set_from_a_narrower_start() {
+    no_widenings(88);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 93 (steps 6 to 8).
+#[test]
+fn audit_seed_93_no_wider_set_from_a_narrower_start() {
+    no_widenings(93);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 107 (steps 4 and 5).
+#[test]
+fn audit_seed_107_no_wider_set_from_a_narrower_start() {
+    no_widenings(107);
+}
+
+/// [`audit_seed_51_no_wider_set_from_a_narrower_start`], seed 109 (steps 3, 7 and 8).
+#[test]
+fn audit_seed_109_no_wider_set_from_a_narrower_start() {
+    no_widenings(109);
+}
+
 /// [`check`] for a case on which the scope and the oracle agree.
 fn exact(name: &str, k: usize, want: &str) {
     check(name, k, want, want);

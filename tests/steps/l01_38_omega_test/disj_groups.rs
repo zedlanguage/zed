@@ -505,6 +505,32 @@ fn an_unbounded_end_that_the_rows_the_disjunctions_imply_bound_is_read() {
     assert_hull(&f, None, Some(5));
 }
 
+/// `z + 2w >= 1 || z + 3y >= 3` with `w <= 1` and `y` in {-1, 2}: at `y = -1` the least `z`
+/// is -1 (`w = 1`), at `y = 2` it is -3 (`z + 6 >= 3`), so `z >= -3`. The second disjunct,
+/// projected with the base alone, has `y` free and leaves `z` unbounded below; the bound needs
+/// `y <= 2`, a row the disjunction on `y` implies. With `-1 <= y <= 2` written as two rows, a
+/// wider set, `z >= -3` was found, and with the hole `z` was left unbounded: a narrower input
+/// gave a wider output (row PRES-monotone-rules; audit seed 51 step 8 of
+/// `l01_39_scope_relations::families`, `x` unbounded below in the narrow run).
+#[test]
+fn a_bound_through_a_set_with_a_hole_is_projected_as_through_its_hull() {
+    let (w, y, z) = (named("w"), named("y"), named("z"));
+    let disj = Formula::or(vec![
+        ge(z.plus(&w.times(2)).minus(&Lin::constant(1))),
+        ge(z.plus(&y.times(3)).minus(&Lin::constant(3))),
+    ]);
+    let w_le_1 = ge(Lin::constant(1).minus(&w));
+    let hole = Formula::and(vec![one_of(&y, &[-1, 2]), w_le_1.clone(), disj.clone()]);
+    assert_hull(&hole, Some(-3), None);
+    let hull = Formula::and(vec![
+        ge(y.plus(&Lin::constant(1))),
+        ge(Lin::constant(2).minus(&y)),
+        w_le_1,
+        disj,
+    ]);
+    assert_hull(&hull, Some(-3), None);
+}
+
 /// `z <= 5` with `x >= 1 || z <= 0` and `x <= 0 || z <= 0`: `z >= 1` leaves `x >= 1` and
 /// `x <= 0` together, so `z <= 0`, reached at `x = 0`, `z = 0`. No row the disjunctions imply
 /// bounds `z` above but `z <= 5`, so only a question of the whole formula past the end does (item
