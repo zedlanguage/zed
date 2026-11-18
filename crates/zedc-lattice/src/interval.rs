@@ -182,6 +182,9 @@ struct Node {
     /// The longest run of integers missing between two neighboring pieces of the subtree, 0
     /// for one piece: set by the first [`gap`] that asks for it.
     gap: OnceLock<Num>,
+    /// The count of integers in the subtree's pieces, `None` when one end is infinite: set by
+    /// the first [`members`] that asks for it.
+    members: OnceLock<Option<Num>>,
     /// The hash of the subtree's pieces in order: `Σ h_i · R^(count - 1 - i)` modulo `P`.
     hash: u64,
     /// `R^count` modulo `P`.
@@ -284,6 +287,7 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         first,
         last,
         gap: OnceLock::new(),
+        members: OnceLock::new(),
         hash,
         pow,
     })
@@ -305,6 +309,21 @@ fn gap(n: &Node) -> &Num {
             g = g.max(run_between(&n.piece.1, &r.first)).max(gap(r).clone());
         }
         g
+    })
+}
+
+/// The count of integers in `n`'s subtree, `None` when it is infinite, computed for the nodes
+/// that do not hold it yet and kept in them, lazily for the reason [`gap`] gives.
+fn members(n: &Node) -> &Option<Num> {
+    n.members.get_or_init(|| {
+        let (Fin(lo), Fin(hi)) = &n.piece else {
+            return None;
+        };
+        let mut c = &(hi - lo) + &Num::ONE;
+        for child in [&n.left, &n.right].into_iter().flatten() {
+            c = &c + members(child).as_ref()?;
+        }
+        Some(c)
     })
 }
 
@@ -886,6 +905,15 @@ impl IntervalSet {
     /// the first time, `O(log p)` after a one-piece change to a set already asked.
     pub fn max_gap(&self) -> Num {
         self.root.as_ref().map_or(Num::ZERO, |n| gap(n).clone())
+    }
+
+    /// The count of integers in the set, `None` when it is infinite: `O(1)` for each node that
+    /// does not hold its count yet, as for [`IntervalSet::max_gap`]: `O(p)` the first time,
+    /// `O(log p)` after a change to a set already asked that keeps all but a path of its tree.
+    pub fn members(&self) -> Option<Num> {
+        self.root
+            .as_ref()
+            .map_or(Some(Num::ZERO), |n| members(n).clone())
     }
 
     /// The least and the greatest endpoint, or `None` for the empty set: `O(1)`.
@@ -2232,6 +2260,54 @@ mod tests {
             [NegInf, End::of(-3), PosInf].map(|e| e.to_string()),
             ["-inf", "-3", "inf"]
         );
+    }
+
+    /// The count of integers: none for the empty set, `None` with an infinite end, and the sum
+    /// of the pieces' widths otherwise, on sets built at once and on sets that unions, meets
+    /// and differences made from shared trees, whose nodes keep counts read before.
+    #[test]
+    fn members_count_the_integers() {
+        assert_eq!(IntervalSet::empty().members(), Some(Num::ZERO));
+        assert_eq!(IntervalSet::top().members(), None);
+        assert_eq!(IntervalSet::range(End::of(0), PosInf).members(), None);
+        assert_eq!(IntervalSet::single(-4).members(), Some(Num::ONE));
+        assert_eq!(
+            set(&[(0, 3), (5, 5), (9, 12)]).members(),
+            Some(Num::from(9))
+        );
+        let width = |s: &IntervalSet| -> i64 {
+            s.pieces()
+                .map(|(lo, hi)| match (lo, hi) {
+                    (End::Fin(a), End::Fin(b)) => (b - a).to_i64().unwrap() + 1,
+                    _ => unreachable!("finite sets only"),
+                })
+                .sum()
+        };
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng % 200) as i64
+        };
+        for _ in 0..200 {
+            let mut make = || {
+                let mut ps: Vec<(i64, i64)> = (0..next() % 12)
+                    .map(|_| {
+                        let a = next();
+                        (a, a + next() % 5)
+                    })
+                    .collect();
+                ps.sort();
+                ps.into_iter()
+                    .fold(IntervalSet::empty(), |s, p| s.join(&set(&[p])))
+            };
+            let (a, b) = (make(), make());
+            _ = (a.members(), b.members());
+            for s in [a.join(&b), a.meet(&b), a.minus(&b), a.clone()] {
+                assert_eq!(s.members(), Some(Num::from(width(&s))), "{s:?}");
+            }
+        }
     }
 
     /// Inclusion orders sets: less, greater, equal, and unordered when neither holds the

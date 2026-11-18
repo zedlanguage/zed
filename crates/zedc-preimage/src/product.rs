@@ -147,6 +147,30 @@ pub struct ProductDomains {
     pub time: Entry<Time>,
     /// Whether [`Product::reduce_domains`] is known to change nothing here.
     settled: Settled,
+    /// An interval and a set of integers proved, at a reduction, to hold the same integers.
+    listed: IntsListed,
+}
+
+/// An interval `i0` and a set `v0` of 64-bit integers that [`Product::reduce_domains`] proved
+/// to hold the same integers, kept so that a later reduction of the product, after a test
+/// narrowed only its interval, finds the finite set's members in it by two cuts
+/// ([`Product::kept_by_listed`]) rather than a walk. Nothing rests on it being current: it is
+/// read only when the finite set is still `v0` itself (the same tree) and the interval lies
+/// inside `i0`, which are checked at each read. Copied with the domains, and ignored by
+/// equality and printing, as [`Settled`] is.
+#[derive(Clone, Default)]
+struct IntsListed(Option<(IntervalSet, TreapSet<Value>)>);
+
+impl PartialEq for IntsListed {
+    fn eq(&self, _: &IntsListed) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for IntsListed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.is_some())
+    }
 }
 
 /// Whether a product's reduction between its own domains ([`Product::reduce_domains`]) is
@@ -248,6 +272,7 @@ impl Product {
             ty: Entry::new(Type::top()),
             time: Entry::new(Time::Run),
             settled: Settled::default(),
+            listed: IntsListed::default(),
         }))
     }
 
@@ -287,6 +312,7 @@ impl Product {
             ty: Entry::new(Type::lit(v).unwrap_or_else(Type::top)),
             time: Entry::new(Time::Build),
             settled: Settled::default(),
+            listed: IntsListed::default(),
         }))
     }
 
@@ -411,6 +437,51 @@ impl Product {
         .contains(&true)
     }
 
+    /// The interval, when [`IntsListed`] shows that every integer of it is a member of the
+    /// finite set, a set of integers only: then it is the interval met with the set's members,
+    /// what [`listed`] and a meet give.
+    // Proof: as for `kept_by_listed`, every integer of the interval is a member of `v0`, the
+    // finite set, all of whose members are integers (`IntsListed` is set only for such a set),
+    // so `listed` gives `Some` and the meet with its points changes nothing.
+    // Complexity tradeoff (CHECK-literal-union-spaced): naive, `listed` and the meet with an
+    // interval made from its `k` members, `O(k)` for each test that reads a name of `k`
+    // literals, `O(k^2)` for `k` tests. Used: a pointer comparison and the inclusion test of
+    // the interval in `i0`, `O(d log p)` for the `d` paths a test changed. Given up: nothing;
+    // otherwise the caller lists the members as before.
+    fn ints_all_listed(&self) -> Option<IntervalSet> {
+        let (i0, v0) = self.listed.0.as_ref()?;
+        let FiniteSet::Set(vs) = &self.cell.finite.element else {
+            return None;
+        };
+        (vs.ptr_eq(v0) && self.ints().is_subset(i0)).then(|| self.ints().clone())
+    }
+
+    /// The members of the finite set `vs` in the interval, by two cuts of `vs`, when
+    /// [`IntsListed`] shows that every integer of the interval is a member of `vs`; `None` when it
+    /// does not, and then [`kept_in`] finds them.
+    // Proof: `IntsListed` holds `(i0, v0)` with every integer of `i0` a member of `v0`; `vs` is
+    // `v0` (the same tree) and the interval `x` lies in `i0`, both read here, so every integer
+    // of `x` is a member of `vs`. They all lie in `x`'s hull, so the members of `vs` there,
+    // `span`, hold them; when `span` has no more members than `x` has integers, it is exactly
+    // them, the members of `vs` in `x`. `cut` reads `vs` as a set of 64-bit integers, which
+    // `v0` is, being set only so.
+    // Complexity tradeoff (CHECK-literal-union-spaced): naive, `kept_in`, which for an
+    // interval of `p` pieces walks `min(k', p)` members or pieces, `O(k)` for a test that
+    // narrows the interval of `k` literals 3 apart, `O(k^2)` for `k` tests. Used: two cuts,
+    // `O(log k)`, the inclusion test of `x` in `i0`, `O(d log p)` for the `d` paths a test
+    // changed, and the count of `x`'s integers, `O(log p)` for the nodes the test made.
+    // Given up: nothing; a product whose sets do not meet the conditions is walked as before.
+    fn kept_by_listed(&self, vs: &TreapSet<Value>) -> Option<TreapSet<Value>> {
+        let (i0, v0) = self.listed.0.as_ref()?;
+        let x = self.ints();
+        if !vs.ptr_eq(v0) || !x.is_subset(i0) {
+            return None;
+        }
+        let (lo, hi) = x.bounds()?;
+        let span = cut(vs, lo, hi);
+        (x.members() == Some(Num::from(span.len() as u64))).then_some(span)
+    }
+
     /// Meets the interval domain with `x`.
     fn meet_ints(&mut self, x: IntervalSet, premises: &Premises) -> bool {
         self.cell.ints.meet(&Bounds::ints(x), premises)
@@ -464,11 +535,28 @@ impl Product {
         changed |= self.cell.congruence.meet(&c, &prem);
         // A finite set against the interval: an integer member outside it goes.
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
-            let kept = kept_in(vs, self.ints());
-            if vs.classes() & !Value::INT_CLASS == 0 && !fills(&kept, self.ints()) {
-                changed |= self.meet_ints(points(&kept), &prem);
+            let ints_only = vs.classes() & !Value::INT_CLASS == 0;
+            let kept = self
+                .kept_by_listed(vs)
+                .unwrap_or_else(|| kept_in(vs, self.ints()));
+            // The interval, when it is proved to hold only members of `kept` (`IntsListed`): it
+            // equals their points, or it was met with them and lies inside them.
+            let mut listed = None;
+            if ints_only {
+                if fills(&kept, self.ints(), true) {
+                    listed = Some(self.ints().clone());
+                } else {
+                    let p = points(&kept);
+                    changed |= self.meet_ints(p.clone(), &prem);
+                    if self.ints().is_subset(&p) {
+                        listed = Some(self.ints().clone());
+                    }
+                }
             }
-            changed |= self.cell.finite.meet(&FiniteSet::Set(kept), &prem);
+            changed |= self.cell.finite.meet(&FiniteSet::Set(kept.clone()), &prem);
+            if let Some(i0) = listed {
+                self.listed = IntsListed(Some((i0, kept)));
+            }
         }
         // The type from the other domains.
         if self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom {
@@ -601,7 +689,7 @@ impl Product {
         if let Some(vs) = self.ty.element.ints_set()
             && !vs.is_empty()
             && vs.classes() & !Value::INT_CLASS == 0
-            && !fills(&vs, self.ints())
+            && !fills(&vs, self.ints(), false)
             && self.ty.element.subtype(&int)
         {
             changed |= self.meet_ints(points(&vs), &prem);
@@ -686,24 +774,29 @@ fn cut(vs: &TreapSet<Value>, lo: &End, hi: &End) -> TreapSet<Value> {
 }
 
 /// Whether the set `vs` of 64-bit integers holds every member of the interval `x` and nothing
-/// else, read in `O(log k)` when `x` is one finite piece: `vs` lies in it and has as many
-/// members as it. `false` otherwise, which only costs the meet it would skip.
-// Proof: the members of `vs` are distinct integers; if they number `b - a + 1` and lie in
-// `[a, b]`, which has `b - a + 1` integers, they are all of them, so the points of `vs` are
-// `x` and meeting `x` with them gives `x`.
-fn fills(vs: &TreapSet<Value>, x: &IntervalSet) -> bool {
-    let Some((End::Fin(a), End::Fin(b))) = x.only() else {
+/// else: `vs` lies in `x` and has as many members as `x` has integers. `inside` says the
+/// caller knows every member of `vs` lies in `x`, as for the set [`kept_in`] gives; otherwise
+/// that is read only when `x` is one piece, from the ends of `vs`. `O(log k)` and the count of
+/// `x`'s integers, `O(1)` for each node of `x` not counted yet ([`IntervalSet::members`]).
+/// `false` otherwise, which only costs the meet it would skip.
+// Proof: the members of `vs` are distinct integers; if they lie in `x` and number as many as
+// `x` has integers, they are all of them, so the points of `vs` are `x` and meeting `x` with
+// them gives `x`.
+// Complexity tradeoff (CHECK-literal-union-spaced): naive, the meet with `points(vs)` made
+// whenever `x` has more than one piece: `O(k)` to build the points and `O(k)` for the meet's
+// inclusion test, as the two trees share nothing; `k` tests on a callee of `k` literals 3
+// apart, each narrowing an interval of about `k` pieces, cost `O(k^2)`. Used: the count of
+// `x`'s integers, kept in its nodes, against `vs.len()`, for a set `vs` known to lie in `x`.
+fn fills(vs: &TreapSet<Value>, x: &IntervalSet, inside: bool) -> bool {
+    let (Some(Value::Int(f)), Some(Value::Int(l))) = (vs.first(), vs.last()) else {
         return false;
     };
-    let (Some(a), Some(b)) = (a.to_i64(), b.to_i64()) else {
+    if vs.classes() & !Value::INT_CLASS != 0 {
         return false;
-    };
-    match (vs.first(), vs.last()) {
-        (Some(Value::Int(f)), Some(Value::Int(l))) => {
-            a <= *f && *l <= b && i128::from(b) - i128::from(a) + 1 == vs.len() as i128
-        }
-        _ => false,
     }
+    let within =
+        inside || matches!(x.only(), Some((a, b)) if *a <= End::of(*f) && End::of(*l) <= *b);
+    within && x.members() == Some(Num::from(vs.len() as u64))
 }
 
 /// The interval of exactly the 64-bit integers of `vs`, one point each, joined where they
@@ -11106,6 +11199,10 @@ impl Scope {
                 .iter()
                 .map(|n| {
                     let p = self.get(n);
+                    if let Some(d) = p.ints_all_listed() {
+                        listed_names.insert(n.clone());
+                        return (n.clone(), d);
+                    }
                     let d = match listed(&p) {
                         Some(vs) => {
                             listed_names.insert(n.clone());
@@ -19891,17 +19988,30 @@ mod tests {
                 );
             }
             let ints_only = kept.classes() & !Value::INT_CLASS == 0;
-            if fills(&kept, &x) {
-                assert!(ints_only && !kept.is_empty());
-                assert_eq!(points(&kept), x, "round {round}");
+            for inside in [true, false] {
+                if fills(&kept, &x, inside) {
+                    assert!(ints_only && !kept.is_empty());
+                    assert_eq!(points(&kept), x, "round {round}");
+                }
             }
-            if ints_only
-                && x.len() == 1
-                && points(&kept) == x
-                && x.bounds()
-                    .is_some_and(|(a, b)| a.to_i64().is_some() && b.to_i64().is_some())
-            {
-                assert!(fills(&kept, &x), "round {round}: {kept:?} fills {x:?}");
+            // Read with `inside`, every set that fills its interval is found, of any number of
+            // pieces; without it, those of one piece.
+            if ints_only && !kept.is_empty() && points(&kept) == x {
+                assert!(
+                    fills(&kept, &x, true),
+                    "round {round}: {kept:?} fills {x:?}"
+                );
+                if x.len() == 1 {
+                    assert!(
+                        fills(&kept, &x, false),
+                        "round {round}: {kept:?} fills {x:?}"
+                    );
+                }
+            }
+            // A set not inside its interval, read without `inside`: `vs` itself, when the
+            // round's interval drops some of it.
+            if fills(&vs, &x, false) {
+                assert_eq!(points(&vs), x, "round {round}");
             }
         }
     }
