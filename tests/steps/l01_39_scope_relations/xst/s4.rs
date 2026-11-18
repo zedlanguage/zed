@@ -1725,6 +1725,40 @@ fn holes_cut_one_at_a_time_drop_each_case() {
     }
 }
 
+/// [`holes_cut_one_at_a_time`] at a few tests, forward: each `x_i` ends as one range met
+/// with its class, `0 mod 2`, not as each even value listed as a range of its own, so that
+/// the scope holds O(1) pieces per name whatever `k` (PRES-interval-strided-piece, stage 2).
+#[test]
+fn the_holes_cut_leave_each_x_one_range_and_one_class() {
+    for k in [1, 2, 3, 5, 8] {
+        let s = holes_cut_one_at_a_time(k).narrowed(How::Forward);
+        for i in 0..k {
+            let p = s.get(&format!("x{i}"));
+            assert!(p.ints().len() <= 1, "k = {k}, x{i}: {} in {s}", p.ints());
+            assert_eq!(
+                p.cell.congruence.element,
+                Congruence::new(2, 0),
+                "k = {k}, x{i}: {s}"
+            );
+        }
+    }
+}
+
+/// [`class_cases_moved`] at a few tests, forward: no name ever holds more than two ranges
+/// (`y_i` the low case and the other case), whatever `k`, so the scope holds O(1) pieces
+/// per name (PRES-interval-strided-piece, stage 2).
+#[test]
+fn split_moved_leaves_each_name_a_few_ranges() {
+    for k in [1, 2, 3, 5, 8] {
+        let s = class_cases_moved(k).narrowed(How::Forward);
+        let names = (0..k).map(|i| format!("y{i}")).chain(["x".to_string()]);
+        for n in names {
+            let p = s.get(&n);
+            assert!(p.ints().len() <= 2, "k = {k}, {n}: {} in {s}", p.ints());
+        }
+    }
+}
+
 /// [`points_written_after`] at a few tests, backward, the second case `x_i % 2 == 0`: each
 /// `x_i` ends even.
 #[test]

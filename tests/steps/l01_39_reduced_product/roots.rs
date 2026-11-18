@@ -73,12 +73,13 @@ fn a_root_the_constraint_keeps_reaches_the_division() {
     assert_eq!(g(SMALL, "(p * p) mod 3 == 1", "p - 4"), may_fail(1));
 }
 
-/// The solutions of a congruence are not listed: `p mod 9 == 4` is evaluated at the root 4
-/// only, and holds there, though it has more than 10^8 solutions in the range; `p mod 9 == 5`
-/// does not hold there.
+/// The solutions of a congruence are not listed: `p mod 9 == 4`, though it has more than 10^8
+/// solutions in the range, is held by the name's congruence, which decides the root 4 (it
+/// holds there) with no evaluation; `p mod 9 == 5` does not hold there. Until
+/// PRES-interval-strided-piece the test was evaluated once, at the root 4.
 #[test]
 fn a_congruence_is_evaluated_at_the_roots_only() {
-    assert_eq!(g(WIDE, "p mod 9 == 4", "p - 4"), may_fail(1));
+    assert_eq!(g(WIDE, "p mod 9 == 4", "p - 4"), may_fail(0));
     assert_eq!(g(WIDE, "p mod 9 == 5", "p - 4").0, int(0).0);
 }
 

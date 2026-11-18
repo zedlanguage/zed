@@ -11155,6 +11155,9 @@ impl Scope {
         // An equality with a literal, and the congruence of `x mod c == r`. The names whose
         // integers an equality narrows are read through their terms with the others below.
         let mut changed = Vec::new();
+        // The name whose class this test fixes exactly, `x mod c == r` or `x mod 2 != r`, met
+        // below as the name's congruence; and whether that meet changed the name.
+        let mut class_of: Option<(Arc<str>, bool)> = None;
         if let Term::Prim(op @ (Prim::Eq | Prim::Ne), a) = &t
             && a.len() == 2
         {
@@ -11181,11 +11184,12 @@ impl Scope {
                             && let Some(p) = self.names.get_mut(x)
                         {
                             let k = c.abs();
-                            if r.signum() < 0 || r >= k {
-                                p.ty.meet(&!&Type::int(), prem);
+                            let met = if r.signum() < 0 || r >= k {
+                                p.ty.meet(&!&Type::int(), prem)
                             } else {
-                                p.cell.congruence.meet(&Congruence::new(k, r), prem);
-                            }
+                                p.cell.congruence.meet(&Congruence::new(k, r), prem)
+                            };
+                            class_of = Some((x.clone(), met));
                         }
                     }
                     // `x mod 2 != r` leaves the one other class; for a modulus above 2 the
@@ -11198,7 +11202,8 @@ impl Scope {
                             && let Some(p) = self.names.get_mut(x)
                         {
                             let other = if r.is_zero() { 1 } else { 0 };
-                            p.cell.congruence.meet(&Congruence::new(2, other), prem);
+                            let met = p.cell.congruence.meet(&Congruence::new(2, other), prem);
+                            class_of = Some((x.clone(), met));
                         }
                     }
                     _ => {}
@@ -11262,6 +11267,37 @@ impl Scope {
             .collect();
         // The preimage of the outcome.
         let mut exact = false;
+        // A test of one integer name `x`, read through no summary, that fixes its class
+        // (`class_of`): its preimage is the product's integers in that class, which the meet of
+        // the congruence above already holds exactly, as the product's integers are those of
+        // its interval in its congruence and the reduction ([`reduce_congruence`]) moves the
+        // ends in to the class. So the preimage is not taken, and is exact.
+        // Proof that nothing is lost: with `x` the test's one free name, the preimage
+        // narrows only `x` (`pre.domains`), and with no summary at `x` there is no input read
+        // through one (`through` is empty, [`Scope::inputs_and_lets`] lists only names with a
+        // summary); the preimage of a congruence test over an interval is exact, so it gives
+        // no refusal. The meet above reads `x mod c` as the remainder in `0..|c|`, the reading
+        // the congruence test's arms already rest on.
+        // Complexity tradeoff: naive version, the preimage of the test taken as for any other
+        // test, which lists each value of the class in the name's interval as a range of its
+        // own ([`preimage_listed`]'s split by remainders), O(v) for v values, and the name then
+        // held as v ranges, read by every later part that frames it as v disjuncts: O(k v)
+        // for k tests (`xst::s4::bench::holes_cut_one_at_a_time_scale`). Used: the congruence
+        // alone, O(1), and the interval keeps one range (PRES-interval-strided-piece, stage
+        // 2). A test of more names, or of a name read through a summary, takes the preimage
+        // as before.
+        if let Some((x, met)) = &class_of
+            && inputs.len() == 1
+            && free.len() == 1
+            && &inputs[0] == x
+            && self.view().summary(x).is_none()
+        {
+            if *met {
+                changed.push(x.clone());
+            }
+            self.through_terms(changed, convex, prem);
+            return (true, inputs, free);
+        }
         if !inputs.is_empty() {
             // A name whose finite set lists its integers (`x: {0, 1, 2}`) is a listed input,
             // its domain the interval met with the list, so that the preimage may enumerate it
