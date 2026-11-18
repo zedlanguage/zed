@@ -8598,4 +8598,81 @@ fn the_prefix_chains_whose_stop_heads_cover_the_witness_agree_with_the_oracle() 
     }
 }
 
+/// `#cons((head, tail))` as a type.
+fn cell(head: &Type, tail: &Type) -> Type {
+    Type::atom_with("cons", &Type::tuple(vec![head.clone(), tail.clone()]))
+}
+
+#[test]
+fn lists_the_prefix_chains_leave_to_the_search_agree_with_the_oracle() {
+    // Each case is a list type of a shape `find_prefix_chains` declines, so the search decides
+    // it (TEST-kernel-unreached-paths-4): two carriers of one cycle, carriers of two cycles,
+    // first as rows and then at the end of chains; a chain step with another atom; a link of
+    // three components; and a carrier whose head the tuple part keeps as a meet, empty only by
+    // the search (R6). The verdict is the oracle's, on lists of up to 4 items of 0 to 3 and the
+    // two booleans.
+    let samples = [
+        Value::Int(0),
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+        Value::Bool(false),
+        Value::Bool(true),
+    ];
+    let la = list_named(Type::int(), "_pcla");
+    let lb = list_named(Type::int(), "_pclb");
+    let lbool = list_named(Type::bool(), "_pclbool");
+    let pair = |x: Type, y: Type| Type::tuple(vec![x, y]);
+    let never = &pair(Type::int(), Type::int()) & &pair(Type::bool(), Type::int());
+    let le = list_named(never.clone(), "_pcle");
+    let three = Type::atom_with(
+        "cons",
+        &Type::tuple(vec![Type::int(), Type::int(), la.clone()]),
+    );
+    let cases: Vec<(&str, Type)> = vec![
+        (
+            "two carriers of one cycle",
+            &(&cell(&Type::int(), &la) & &cell(&Type::int(), &lb)) - &cell(&lit(1), &la),
+        ),
+        (
+            "carriers of two cycles",
+            &(&cell(&Type::int(), &la) & &cell(&Type::bool(), &lbool)) - &cell(&lit(1), &la),
+        ),
+        (
+            "chains to two carriers of one cycle",
+            &(&cell(&lit(1), &cell(&Type::int(), &la)) & &cell(&lit(1), &cell(&Type::int(), &lb)))
+                - &cell(&lit(2), &la),
+        ),
+        (
+            "chains to carriers of two cycles",
+            &(&cell(&lit(1), &cell(&Type::int(), &la))
+                & &cell(&lit(1), &cell(&Type::bool(), &lbool)))
+                - &cell(&lit(2), &la),
+        ),
+        (
+            "a chain step with another atom",
+            &(&cell(&lit(1), &(&cell(&Type::int(), &la) | &Type::atom("other")))
+                & &cell(&Type::int(), &la))
+                - &cell(&lit(2), &la),
+        ),
+        (
+            "a chain step of three components",
+            &(&cell(&lit(1), &(&cell(&Type::int(), &la) | &three)) & &cell(&Type::int(), &la))
+                - &cell(&lit(2), &la),
+        ),
+        (
+            "a carrier whose head is empty only by the search",
+            &cell(&never, &le) - &cell(&never, &cell(&never, &le)),
+        ),
+    ];
+    for (what, t) in cases {
+        Type::forget_emptiness();
+        let want = match list_oracle_inhabited(&t, &samples, 4) {
+            true => Verdict::Inhabited,
+            false => Verdict::Empty,
+        };
+        assert_eq!(t.verdict(), want, "{what}: {t}");
+    }
+}
+
 mod bench;

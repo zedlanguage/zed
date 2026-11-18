@@ -1186,6 +1186,9 @@ impl Sweep {
                     items.push(v.clone());
                     y = *next;
                 }
+                // With `end`, each link on the path was kept as `Item` and the last as `End`,
+                // or it was kept by an earlier walk that ended; so every `Item` leads to an
+                // `End`.
                 _ => unreachable!("a walk that ends is kept on its path"),
             }
         }

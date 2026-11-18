@@ -345,6 +345,8 @@ pub(in crate::types) fn eval(e: &Node, env: &Arc<Env>) -> Type {
                         Type::morphism(parts.pop().expect("the guarantee"), u, v)
                     }
                     Shape::Param(_) | Shape::Ref(..) | Shape::Type(_) => {
+                        // `Step::Eval` takes these three at once and pushes `Step::Build` only
+                        // for the other shapes.
                         unreachable!("a leaf is not built")
                     }
                 }
@@ -508,6 +510,9 @@ impl Show<'_> {
                                 ])
                             }
                             Shape::Param(_) | Shape::Ref(..) | Shape::Type(_) => {
+                                // `Step::Visit` writes a `Param`, a `Type` and a `Ref` of no
+                                // arguments at once, and a `Ref` built is taken by the `if
+                                // let` above.
                                 unreachable!("a leaf is not built")
                             }
                         }

@@ -106,3 +106,51 @@ open: `empty.rs` 75, `types.rs` 45, `bdd.rs` 34, `print.rs` 15, `empty/sweep.rs`
 `empty/refused.rs` 7, `rec/unfold.rs` 7, `rec/group.rs` 6, `empty/escape.rs` 4, `bes.rs`,
 `empty/shared.rs` 2 each, `print/uses.rs`, `rec/unfold/show.rs` 1 each. 63 of their lines are
 `unreachable!`, `panic!`, `expect` or assertion guards.
+
+Second round (cover2, 2026-11-18). Tests added:
+
+- `l01_37a_short_addresses` `the_order_of_types_of_every_kind_of_part_is_total`: 1,200 types
+  (600 of every kind of part, 600 unions of bare atoms, atoms with payloads and small tuples);
+  the order is antisymmetric, equal exactly when the texts and `==` are, and transitive, in both
+  the normal and the short-address build. In the short build it reaches `types.rs` 1091 (two
+  atom payloads that tie in digest).
+- `l01_23_groups_and_refusals` `lists_the_prefix_chains_leave_to_the_search_agree_with_the_oracle`:
+  seven list shapes `find_prefix_chains` declines, each verdict equal to the list oracle's. It
+  reaches `empty.rs` 7400 (chains to carriers of two cycles) and 7495 (a link payload of fewer
+  than two rows). The first carrier loop's lines (7375, 7377) are not reached by the meets
+  written there; why is open.
+- `sweep_agreement` `the_sweep_agrees_on_random_groups_of_every_head`: 300 random cases; passes,
+  and reaches none of the list's lines.
+
+Proofs written at the site (each a comment above the guard):
+
+- `bdd.rs`: `opposite` "both tested" (the arm's guard); `negate` (one caller, `Connect::not`,
+  answers a diagram itself); `rebuild` (each of its three `base` closures answers every diagram);
+  the `as_literal` guard in the exclusive-or reading.
+- `empty.rs`: `tuple_item` and `list_parts` (each caller reads `v` under the shape made from
+  `shown[v]`, and `shown` is only pushed to while a search runs); `system`'s closed-part arm (a
+  `Ref` is taken at the top of `Step::Visit`, a `Param` or `Type` is never `recursive`) and its
+  `Step::Make` arm; `find_prefix_chains` 7329 and 7475 (finite atoms keep no name whose part is
+  `AtomPart::none()`, since `Atoms::set` is the one insertion and skips the default) and 7513
+  (two rows or more, and a second non-carrier row gives up, so one row is a carrier).
+- `empty/refused.rs` `site`; `empty/sweep.rs` `walk`; `print/uses.rs` `rebuild`;
+  `rec/group.rs` `of`; `rec/unfold.rs` both "a leaf is not built" guards;
+  `types.rs` `PartsRef` deref, `p_held`, the vertex merge's two guards, the overlay's
+  "a list reads no node", and `Expr` copy's leaf arm.
+
+The guard's own message is its proof (the line above shows it): `empty/shared.rs`
+`or_insert_with`, its three guards.
+
+Failure branches of tests and benchmarks, run only when a test fails, so not to be reached:
+`bdd/bench.rs` 621, 717; `bdd/set/tests.rs` 371; `bdd/tests.rs` 934, 944, 1533, 1589, 1620,
+1709, 2278, 2645, 2654, 2659, 2702, 2705, 2711, 2766, 2860, 2877; `bucket.rs` 403 (in its
+`#[cfg(test)]` module); `empty/tests.rs` 522, 528, 710; `rec/group.rs` 871;
+`rec/unfold/tests.rs` 49; `types/tests.rs` 1075.
+
+Still open among the guards, each with what would settle it: `empty.rs` `system`'s `Not` arm
+(admission refuses a recursive occurrence under `!`, rec/group.rs; to confirm, that an `Env` is
+built only from an admitted group); `print.rs` `put` "a text of class Of is one node" (a list's
+text can take `first[0].class`, which may be `Class::Of`; to confirm, that such a text is then
+that one node's segment); `empty.rs` `Rep::key`, the value-shape read, `pair_picks`, the
+exclusive-or component and the two-operand arm; `print.rs` 908 and 2052; `rec/group.rs` 253;
+`types.rs` 4614.

@@ -95,6 +95,8 @@ impl Node {
                         Expr::And(_) => Shape::And(parts),
                         Expr::Tuple(_) => Shape::Tuple(parts),
                         Expr::Atom(name, _) => Shape::Atom(name.clone(), parts),
+                        // `Step::Build` is pushed only by the `Visit` arm after the two that
+                        // take a `Param` and a `Type`.
                         Expr::Param(_) | Expr::Type(_) => unreachable!("a leaf is not built"),
                     }
                 }

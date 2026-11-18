@@ -312,14 +312,6 @@ impl Default for Shown {
     }
 }
 
-impl PartialEq for Shown {
-    fn eq(&self, _: &Shown) -> bool {
-        true
-    }
-}
-
-impl Eq for Shown {}
-
 /// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
 /// `make()`, computed on first use. Two nodes are one type when their keys are equal.
 struct Rec {
@@ -398,6 +390,8 @@ impl std::ops::Deref for PartsRef<'_> {
             PartsRef::Node(p) => p,
             PartsRef::Unfolded(t) => match &*t.0 {
                 Node::Parts(p, _) => p,
+                // `Type::p`, the one maker of `Unfolded`, unfolds in a loop until the node is no
+                // `Rec`, so `t` is a node of parts.
                 Node::Rec(_) => unreachable!("an unfolding is unfolded to a node of parts"),
             },
         }
@@ -1636,6 +1630,8 @@ impl Type {
     fn p_held<'a>(&'a self, held: &'a Held) -> &'a Parts {
         match &*self.0 {
             Node::Parts(p, _) => p,
+            // `Type::p` of a `Rec` node gives `Unfolded` and unfolds it to a node of parts, and
+            // `Held::put` gives back the type it was given.
             Node::Rec(_) => {
                 let PartsRef::Unfolded(t) = self.p() else {
                     unreachable!("a recursive node's parts are its unfolding's")
@@ -5949,6 +5945,7 @@ impl Graph {
                             flip ^= *c;
                             taken.push(std::mem::take(ys));
                         }
+                        // `alike` holds only of two unions, two meets or two exclusive ors.
                         Vertex::List(_) | Vertex::Not(_) => unreachable!("x is like n"),
                     }
                 } else {
@@ -5968,6 +5965,8 @@ impl Graph {
                     *c ^= flip;
                 }
                 Vertex::List(_) | Vertex::Not(_) => {
+                    // `n` was matched as one of these three above, only its operands were taken
+                    // out, and the loop writes only operands `x`, which come before `n`.
                     unreachable!("n is a union, meet or exclusive or")
                 }
             }
@@ -6095,6 +6094,8 @@ impl Graph {
                 base.counts[n] as isize + d(under) + d(&out)
             };
             let v = match &self.nodes[n] {
+                // `dirty` holds only nodes in `parents`, which are filled from the operands of
+                // the `Not`, `Or`, `And` and `Xor` nodes alone.
                 Vertex::List(_) => unreachable!("a list reads no node"),
                 Vertex::Not(a) => !out.now.get(a).copied().unwrap_or(under.value(base, *a)),
                 Vertex::Or(_) => count() > 0,
@@ -7289,6 +7290,8 @@ pub mod rec {
                                     Expr::Morphism(last(&mut parts), u, v)
                                 }
                                 Expr::Param(_) | Expr::Type(_) => {
+                                    // `Step::Copy` copies these two at once and pushes
+                                    // `Step::Rebuild` only for the other shapes.
                                     unreachable!("an expression with no parts is copied whole")
                                 }
                             };

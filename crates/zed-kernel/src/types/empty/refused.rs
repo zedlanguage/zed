@@ -193,6 +193,8 @@ impl Type {
             }
         })?;
         let Node::Rec(r) = &*m.0 else {
+            // `first_member` gives only a type with `is_member()`, which holds only of a
+            // `Node::Rec`.
             unreachable!("a member is a recursive node")
         };
         let (env, i) = r.key.member_at().expect("a member");

@@ -110,6 +110,7 @@ fn rebuild(t: &Rc<Trie>, left: Rc<Trie>, right: Rc<Trie>) -> Rc<Trie> {
         ..
     } = &**t
     else {
+        // Each caller (`insert`, `union`) passes a trie it has just matched as a branch.
         unreachable!("rebuilt only at a branch")
     };
     match Rc::ptr_eq(l, &left) && Rc::ptr_eq(r, &right) {

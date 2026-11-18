@@ -3506,6 +3506,8 @@ impl Search {
     fn tuple_item(&self, v: usize, i: usize) -> usize {
         match &self.shown[v] {
             Rep::Tuple(vs) => vs[i],
+            // The one caller reads `v` under `Shape::Tuple`, made from `shown[v]` being a
+            // `Rep::Tuple`, and `shown` is only pushed to while a search runs.
             _ => unreachable!("the value numbered {v} is read as a tuple and is not one"),
         }
     }
@@ -3516,6 +3518,8 @@ impl Search {
             Rep::List {
                 stop, link, len, ..
             } => (stop, link, len),
+            // Read only by `list_member`, whose one caller passes `v` under `Shape::List`, made
+            // from `shown[v]` being a `Rep::List`; `shown` is only pushed to while a search runs.
             _ => unreachable!("the value numbered {v} is read as a list and is not one"),
         }
     }
@@ -7322,6 +7326,8 @@ impl<'m> Searching<'m> {
         for (name, a) in &p.atoms.names {
             match (a.bare, a.payload == Type::empty()) {
                 (true, _) => return None,
+                // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no name
+                // whose part is `AtomPart::none()`, neither bare nor with a payload.
                 (false, true) => {}
                 (false, false) => {
                     if link.is_some() {
@@ -7468,6 +7474,8 @@ impl<'m> Searching<'m> {
             for (n, a) in &xp.atoms.names {
                 match (a.bare, a.payload == Type::empty()) {
                     (true, true) if *n == stop_name => has_stop = true,
+                    // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no
+                    // name whose part is `AtomPart::none()`.
                     (false, true) => {}
                     (false, false) if *n == link_name && l_payload.is_none() => {
                         l_payload = Some(a.payload.clone());
@@ -7505,6 +7513,8 @@ impl<'m> Searching<'m> {
                     return None;
                 }
             }
+            // Not met: there are at least two rows and the loop above gives up at a second row
+            // that is no carrier, so at least one row is a carrier.
             if car_heads.is_empty() {
                 return None;
             }
@@ -14802,6 +14812,9 @@ fn system(env: &Arc<Env>) -> System {
                             )
                         }
                         rec::Shape::Param(_) | rec::Shape::Type(_) | rec::Shape::Ref(..) => {
+                            // A `Ref` is taken at the top of `Step::Visit`; a `Param` or `Type`
+                            // has no children, so it is not `recursive` (rec/group.rs, where
+                            // `recursive` is set) and was taken by the first arm.
                             unreachable!("a closed part is not recursive")
                         }
                     };
@@ -14857,6 +14870,8 @@ fn system(env: &Arc<Env>) -> System {
                 | rec::Shape::Not(_)
                 | rec::Shape::Param(_)
                 | rec::Shape::Type(_) => {
+                    // `Step::Make` is pushed only by the arms of `Step::Visit` for a morphism,
+                    // a union, a tuple, an atom, a meet and a difference.
                     unreachable!("only a part with children is made after them")
                 }
             };

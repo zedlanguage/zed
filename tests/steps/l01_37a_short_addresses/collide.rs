@@ -229,6 +229,104 @@ fn the_order_of_types_is_total_on_every_pair_of_900() {
     assert_eq!(text(&sorted), text(&back));
 }
 
+/// A random type like [`random_type`]'s, over more kinds of parts: atoms with payloads under a
+/// few shared names, strings, floats, `f32`s, booleans, the empty tuple and tuples of three, so
+/// that two types that tie in digest share atom names, tuple lengths and scalar sets and are
+/// told apart only further in.
+fn random_wide_type(rng: &mut Rng, depth: usize) -> Type {
+    let lit = |v: Value| Type::lit(&v).expect("a scalar is a literal type");
+    if depth == 0 {
+        return match rng.below(9) {
+            0 => Type::atom(&format!("a{}", rng.below(3))),
+            1 => lit(Value::Int(rng.int(0, 2))),
+            2 => lit(Value::str(&format!("s{}", rng.below(3)))),
+            3 => lit(Value::float(rng.int(0, 2) as f64 / 2.0)),
+            4 => lit(Value::float32(rng.int(0, 2) as f32)),
+            5 => lit(Value::Bool(rng.below(2) == 0)),
+            6 => Type::tuple(Vec::new()),
+            7 => Type::int(),
+            _ => Type::top(),
+        };
+    }
+    let kind = rng.below(9);
+    let name = format!("p{}", rng.below(2));
+    let mut part = || {
+        let d = rng.below(depth);
+        random_wide_type(rng, d)
+    };
+    match kind {
+        0 => Type::atom_with(&name, &part()),
+        1 => Type::union_all([
+            Type::atom_with("p0", &part()),
+            Type::atom_with("p1", &part()),
+            part(),
+        ]),
+        2 => Type::tuple(vec![part()]),
+        3 => Type::tuple(vec![part(), part(), part()]),
+        4 => &part() | &part(),
+        5 => &part() & &part(),
+        6 => &part() - &part(),
+        7 => Type::morphism(part(), part(), part()),
+        _ => !&part(),
+    }
+}
+
+/// A union of one to four pieces, each a bare atom or an atom with a payload under the names
+/// `p0` and `p1`, or a tuple of one or two small integers: two such unions that tie in digest
+/// most often share their atom names and tuple lengths, and are told apart by whether an atom
+/// is bare, by its payload, or by one having more cells than the other.
+fn random_union_type(rng: &mut Rng) -> Type {
+    let small = |rng: &mut Rng| Type::lit(&Value::Int(rng.int(0, 3))).expect("an integer");
+    let k = 1 + rng.below(4);
+    Type::union_all((0..k).map(|_| {
+        let name = format!("p{}", rng.below(2));
+        match rng.below(5) {
+            0 => Type::atom(&name),
+            1 => Type::atom_with(&name, &small(rng)),
+            2 => Type::atom_with(&name, &Type::tuple(vec![small(rng), small(rng)])),
+            3 => Type::tuple(vec![small(rng)]),
+            _ => Type::tuple(vec![small(rng), small(rng)]),
+        }
+    }))
+}
+
+#[test]
+fn the_order_of_types_of_every_kind_of_part_is_total() {
+    // As `the_order_of_types_is_total_on_every_pair_of_900`, on 600 types of `random_wide_type`
+    // and 600 of `random_union_type`: antisymmetric on every pair, equal exactly when the texts
+    // are, and transitive on the sorted sequence. In the short build pairs that tie in digest
+    // are ordered by their atom names, bareness and payloads, their scalar sets, their tuple
+    // lengths and their cells in turn (TEST-kernel-unreached-paths-4).
+    const TYPES: usize = 1200;
+    let mut rng = Rng::new(0x37b);
+    let types: Vec<Type> = (0..TYPES)
+        .map(|i| match i < TYPES / 2 {
+            true => random_wide_type(&mut rng, 3),
+            false => random_union_type(&mut rng),
+        })
+        .collect();
+    let texts: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+    let mut tied = 0;
+    for (a, ta) in types.iter().zip(&texts) {
+        for (b, tb) in types.iter().zip(&texts) {
+            let ab = a.cmp(b);
+            assert_eq!(ab, b.cmp(a).reverse(), "{ta} against {tb}");
+            assert_eq!(ab == Ordering::Equal, ta == tb, "{ta} against {tb}");
+            assert_eq!(ab == Ordering::Equal, a == b, "{ta} against {tb}");
+            tied += usize::from(ab != Ordering::Equal && digest(a) == digest(b));
+        }
+    }
+    // Many of the types are equal, so fewer distinct pairs tie than in the test above.
+    assert_eq!(tied > 100, SHORT, "{tied} distinct pairs tie in digest");
+    let mut sorted = types.clone();
+    sorted.sort();
+    for (i, a) in sorted.iter().enumerate() {
+        for b in &sorted[i + 1..] {
+            assert_ne!(a.cmp(b), Ordering::Greater, "{a} after {b}");
+        }
+    }
+}
+
 #[test]
 fn rows_dropped_on_another_thread_leave_entries_that_lookups_pass_over() {
     // Rows and morphism types made here and dropped on another thread leave entries in this

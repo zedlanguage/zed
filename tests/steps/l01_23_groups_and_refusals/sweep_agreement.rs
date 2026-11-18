@@ -2670,3 +2670,66 @@ fn r9_run_tokens_against_product_automaton() {
         "{case:?}"
     );
 }
+
+/// Random groups of list definitions of every shape the families above use at once: one or two
+/// groups of two to six definitions, each `nil` or not with one to three rows whose heads are
+/// drawn from every head set above (integers, booleans, pairs, the atom, and cofinite `int`
+/// less one integer), terms of one or two positive definitions and up to three negative ones,
+/// each checked in both orders against the oracle (TEST-kernel-unreached-paths-4: the prefix
+/// chains' carrier and link checks, their refusals and the steps of their sweep that the
+/// families above leave unread).
+#[test]
+fn the_sweep_agrees_on_random_groups_of_every_head() {
+    let t = random_groups(Rng::new(0x5ee9));
+    eprintln!("random groups: {t:?}");
+}
+
+fn random_groups(mut rng: Rng) -> Tally {
+    const PALETTE: [u16; 13] = [
+        INT,
+        ONE,
+        TWO,
+        ONE | TWO,
+        INT & !ONE,
+        HOLES[0],
+        HOLES[1],
+        BOOL,
+        TRUE,
+        PAIR,
+        PAIR_ONE,
+        ATOM,
+        INT | ATOM,
+    ];
+    let mut tally = Tally::default();
+    for id in 0..300 {
+        let groups: Vec<Vec<D>> = (0..1 + rng.below(2))
+            .map(|_| {
+                let k = 2 + rng.below(5);
+                (0..k)
+                    .map(|_| D {
+                        nil: rng.below(3) == 0,
+                        rows: (0..1 + rng.below(3))
+                            .map(|_| (PALETTE[rng.below(PALETTE.len())], rng.below(k)))
+                            .collect(),
+                    })
+                    .collect()
+            })
+            .collect();
+        let pick = |rng: &mut Rng| {
+            let g = rng.below(groups.len());
+            (g, rng.below(groups[g].len()))
+        };
+        let pos = (0..1 + rng.below(2)).map(|_| pick(&mut rng)).collect();
+        let neg = (0..rng.below(4)).map(|_| pick(&mut rng)).collect();
+        let spec = Spec { groups };
+        let term = Term { pos, neg };
+        both_orders(
+            &mut tally,
+            &spec,
+            &term,
+            &format!("_xrg{id}"),
+            &format!("random group {id}"),
+        );
+    }
+    tally
+}

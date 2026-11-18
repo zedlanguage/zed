@@ -1035,6 +1035,7 @@ impl<A: Literal> Part<A> {
             (Part::Bdd(x), Part::Bdd(y)) => Part::lists_opposite(x, y),
             (Part::Expr(e), Part::Expr(f)) if e.xor.is_some() && f.xor.is_some() => {
                 let (Some(u), Some(v)) = (&e.xor, &f.xor) else {
+                    // The guard of this arm tested both `is_some()`.
                     unreachable!("both tested")
                 };
                 xor::opposite(u, v)
@@ -1232,6 +1233,8 @@ impl<'m> Connect<'m> {
     /// the complement's, so that a chain of choices is negated in steps, not walked.
     async fn negate<A: Literal>(&'m self, p: Part<A>) -> Part<A> {
         let Part::Expr(e) = &p else {
+            // `Connect::not`, the one caller, answers a `Part::Bdd` itself and sends only a
+            // `Part::Expr` here.
             unreachable!("only an expression keeps its complement")
         };
         let n = if let Some(source) = e.source.get() {
@@ -1958,6 +1961,8 @@ impl<A: Literal> Part<A> {
             return r;
         }
         let Part::Expr(root) = self else {
+            // Each `base` given to `rebuild` (`substitute_all`, `restrict`, `map_atoms`) answers
+            // `Some` for every `Part::Bdd`, so a part `base` leaves is an expression.
             unreachable!("`base` decides every diagram")
         };
         let mut memo: DigestMap<u64, Part<A>> = DigestMap::default();
@@ -2485,6 +2490,8 @@ impl<A: Literal> Part<A> {
                             match b.as_literal() {
                                 Some((a, true)) => refused.push(a.clone()),
                                 Some((a, false)) => taken.push(a.clone()),
+                                // The guard tested `b.as_literal().is_some()`, and
+                                // `as_literal` reads `b` alone.
                                 None => unreachable!("tested by the guard"),
                             }
                         }
