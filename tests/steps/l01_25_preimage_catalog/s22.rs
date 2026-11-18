@@ -3086,9 +3086,26 @@ fn remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain() {
     // and k = 5 take 30 ms and 1 ms; and `c <= 2 && y mod 2 == 0` at a modulus of `-2^62` or
     // below takes 1.5 s at k = 4 and 4.6 s at k = 6, about 25 times as long as at `2^62`,
     // with the same box. So `i64::MIN` is drawn at k = 3.
-    let mut rng = Rng::new(super::run_seed(
+    longer_chain_at_seed(super::run_seed(
         "s22::remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain",
     ));
+}
+
+/// [`remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain`] at three seeds that
+/// ran past 60 s when the exact projection's splinter loop went on after its goal was held,
+/// each splinter then uncharged (`exact::projection::project`, 2026-11-18); on main each took
+/// 3.3 s.
+#[test]
+fn remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain_at_slow_seeds() {
+    for seed in [470127760544155876, 6425115498553498299, 1440540727248067933] {
+        longer_chain_at_seed(seed);
+    }
+}
+
+/// The chain of [`remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain`] at the
+/// modulus `seed` draws.
+fn longer_chain_at_seed(seed: u64) {
+    let mut rng = Rng::new(seed);
     let m = rng.pick(&CORNER_MODULI);
     remainder_corners_at(m, if m == i64::MIN { 3 } else { 5 });
 }

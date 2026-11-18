@@ -903,13 +903,17 @@ fn project(
         return Ok(());
     }
     // The splinters: for each lower `b·x >= β` and `a` the largest upper coefficient, the
-    // rows with `b·x == β + i` for `0 <= i <= (a·b - a - b)/a`.
+    // rows with `b·x == β + i` for `0 <= i <= (a·b - a - b)/a`. The loop stops once `held` is
+    // done: a splinter made after that returns at once without charging `work`, so with a
+    // coefficient near `2^62` the loop ran about `b` uncharged clones of `rows` and neither
+    // ended nor refused (s22 `remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain`,
+    // 2026-11-18).
     let amax = upper.iter().map(|&i| coef(i, &x)).max().expect("upper");
     for &i in &lower {
         let b = coef(i, &x);
         let top = (&(&(&amax * &b) - &amax) - &b).div_floor(&amax);
         let mut k = Int::from(0);
-        while k <= top {
+        while k <= top && !held.done() {
             let mut one = rows.clone();
             let mut lin = rows[i].lin.clone();
             lin.constant = &lin.constant - &k;
