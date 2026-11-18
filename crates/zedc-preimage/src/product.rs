@@ -527,6 +527,29 @@ impl Product {
         (x.members() == Some(Num::from(span.len() as u64))).then_some(span)
     }
 
+    /// Whether every integer of the interval is a member of `vs`, a set of integers only, read
+    /// from [`IntsListed`]: then the meet with the points of `vs` changes nothing. `false` when
+    /// that record does not show it, and the caller makes the meet.
+    // Proof: `IntsListed` holds `(i0, v0)` with every integer of `i0` a member of `v0`; the
+    // interval lies in `i0` and `v0` lies in `vs`, both read here, so every integer of the
+    // interval is a member of `vs` and so lies in `points(vs)`.
+    // Complexity tradeoff (CHECK-literal-union-spaced, part 2): naive, the meet with
+    // `points(vs)` of the type's `k` integers whenever the interval has more than one piece
+    // (`fills` reads a set not known to lie in the interval only against one piece), `O(k)`
+    // to build the points at each reduction, `O(k^2)` for `k` tests on a callee of `k`
+    // literals 3 apart. Used: two inclusion tests that pass by the subtrees the sets share,
+    // `O(d log k)` for the `d` paths a test changed. Given up: nothing; otherwise the meet is
+    // made as before.
+    fn ints_among(&self, vs: &TreapSet<Value>) -> bool {
+        if !listed_shortcuts_on() {
+            return false;
+        }
+        let Some((i0, v0)) = self.listed.0.as_ref() else {
+            return false;
+        };
+        (v0.ptr_eq(vs) || v0.is_subset(vs)) && self.ints().is_subset(i0)
+    }
+
     /// Meets the interval domain with `x`.
     fn meet_ints(&mut self, x: IntervalSet, premises: &Premises) -> bool {
         self.cell.ints.meet(&Bounds::ints(x), premises)
@@ -735,6 +758,7 @@ impl Product {
             && !vs.is_empty()
             && vs.classes() & !Value::INT_CLASS == 0
             && !fills(&vs, self.ints(), false)
+            && !self.ints_among(&vs)
             && self.ty.element.subtype(&int)
         {
             changed |= self.meet_ints(points(&vs), &prem);
@@ -20087,7 +20111,7 @@ mod tests {
             seed ^= seed << 17;
             seed % m
         };
-        let (mut kept_fired, mut all_fired) = (0, 0);
+        let (mut kept_fired, mut all_fired, mut among_fired) = (0, 0, 0);
         for round in 0..2000 {
             let mut vs = TreapSet::new();
             let mut n = next(20) as i64 - 30;
@@ -20131,10 +20155,22 @@ mod tests {
                     "round {round}: {vs:?} {i0:?} {x:?}"
                 );
             }
+            // `ints_among` of `vs`, of a set holding `vs` and more, and of a set missing one
+            // member of `vs`: when it answers, meeting with the points changes nothing.
+            let mut more = vs.clone();
+            more.insert(Value::Int(next(80) as i64 - 40));
+            let mut less = vs.clone();
+            less.remove(&Value::Int(next(60) as i64 - 30));
+            for ws in [&vs, &more, &less] {
+                if p.ints_among(ws) {
+                    among_fired += 1;
+                    assert_eq!(x.meet(&points(ws)), x, "round {round}: {ws:?} {i0:?} {x:?}");
+                }
+            }
         }
         assert!(
-            kept_fired > 100 && all_fired > 100,
-            "{kept_fired} {all_fired}"
+            kept_fired > 100 && all_fired > 100 && among_fired > 100,
+            "{kept_fired} {all_fired} {among_fired}"
         );
     }
 
