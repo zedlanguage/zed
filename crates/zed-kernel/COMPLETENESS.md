@@ -216,6 +216,34 @@ Closed in this round:
   `rec/group.rs` 100, 256; `rec/unfold.rs` 350, 516; `types.rs` 395, 1637, 1640, 4617, 5952,
   5973, 6102, 7298. `bucket.rs` 403 and `rec/group.rs` 874 are in `#[cfg(test)]` helpers.
 
+- `rec/unfold/show.rs` 29 (a `Show` in the surface syntax whose types share a part declares
+  it): test `types::rec::group::tests::a_rejection_quoting_types_that_share_a_part_declares_the_part_first`;
+  llvm-cov: line 29 runs once. Negative control: the declaration skipped fails the test. Inside
+  a rejection's message the part is lifted under the sentence instead (`defs::lift`), so only a
+  text written outside a message reaches the line.
+- `bes.rs` `decide`: test `types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random`,
+  40,000 systems of 3 to 12 nodes, each answer not refused equal to the Büchi game the module
+  comment describes, solved by nested fixed points. Negative control: the one-`Mor` step of
+  step 4 without its assumption fails it. A second control, the same step without its second
+  least fixed point, passes it: no draw needs that pass (open, below).
+- `bes.rs` `delete_cascade`, a node of `u_set` with `need` 0 (old 638-639): proof at the site
+  (such a node's `hi` was made false by the last pass of `bounds`, so it is not in `u_set`); the
+  arm is now `unreachable!`. The test reaches `delete_cascade` (52 of the 40,000 systems) and
+  never panics there.
+
+Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,
+and the cascade after it; no draw reaches it, and no proof yet: it needs an exit node true in
+the least fixed point of `bounds` and false in its last pass), and the second least fixed point
+of the one-`Mor` step (no draw changes an answer with it). The proofs relied on above (cover2's
+and earlier) were re-derived in this round: `treap.rs` 195 (heap order by `(prio, key)` with the
+priority a function of the key), `bdd.rs` 1039, 1238 (only caller `Connect::not`), 1966 (all
+three `base` closures answer every `Part::Bdd`), 2495, `bes.rs` 352, 622, 747 (`Bes::add`,
+`Bes::set` asserts), the atom-map guards in `escape.rs` and `shared.rs` (`Atoms::set` is the only
+writer of `names` and drops a name whose part is the default; `zip` keeps `cofinite` where it
+clones), `types.rs` 395, 1637, 1640 (`Type::p` unfolds in a loop), 6102 (`parents` filled only
+from `Not`, `Or`, `And`, `Xor`); the others are stack-machine guards whose proof is in the same
+function. All hold.
+
 Open (the other ranges of the list), for the next round: see the handoff
 /home/luke/Work/wt/pause/cover4-2026-11-18-handoff.md.
 

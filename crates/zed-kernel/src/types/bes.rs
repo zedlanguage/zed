@@ -641,9 +641,16 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
                 .count() as u32,
         };
         sc.need[v] = need;
+        // `v` is in `u_set`, so `hi[v]` holds. `need` is 0 only when a child of an `And` or
+        // `Mor` node, or every child of an `Or` node, lies outside `u_set` with `hi` false.
+        // Such a child is decided (outside the component, or in it with `lo == hi`), and the
+        // last pass of `bounds` that wrote `hi[v]`, a greatest fixed point, read it as not
+        // inhabited (`base`, or its own value in that pass, which is its `hi`), so it made
+        // `hi[v]` false. (A child in another undecided component of `decide`'s step 4 was
+        // decided before `v`'s, as the components are taken bottom up.) So `need` is at least
+        // 1, and a node of `u_set` dies only when a tuple cycle loses its last seed, below.
         if need == 0 {
-            sc.cur[v] = false;
-            sc.queue.push(v_u32);
+            unreachable!("a node of `u_set` has a child that may be inhabited")
         }
     }
     let kill = |sc: &mut Scratch, tc: &[u32]| {
@@ -1078,7 +1085,7 @@ pub fn decide(raw: &Bes) -> Decision {
 
 #[cfg(test)]
 mod tests {
-    use super::Stamp;
+    use super::{Answer, Bes, Kind, Stamp, decide};
 
     /// After 2^32 - 1 advances the marks are cleared: a node marked under the first stamp is
     /// seen fresh again under the stamp of the same number (item TEST-types-unreached-paths;
@@ -1095,5 +1102,94 @@ mod tests {
         assert_eq!(s.cur, 1);
         assert!(s.first(0));
         assert!(s.first(1));
+    }
+
+    /// The answers by the game the module comment describes, found the slow way: a node is
+    /// inhabited when the player choosing a child of each `Or` node can keep every play from
+    /// a `Bot` node, an `Or` node with no child, and an infinite play that passes `Mor` nodes
+    /// only finitely often (a Büchi game with the `Mor` nodes accepting), against the player
+    /// choosing a child of each `And` node. Nested fixed points `νZ. μY. (Mor ∧ pre Z) ∨ pre Y`,
+    /// `O(n^2 (n + m))`.
+    fn by_the_game(g: &Bes) -> Vec<bool> {
+        let n = g.len();
+        let pre = |s: &[bool], v: usize| match g.kind[v] {
+            Kind::Top => true,
+            Kind::Bot => false,
+            Kind::Or => g.children[v].iter().any(|&w| s[w as usize]),
+            Kind::And | Kind::Mor => g.children[v].iter().all(|&w| s[w as usize]),
+        };
+        let mut z = vec![true; n];
+        loop {
+            let mut y = vec![false; n];
+            loop {
+                let next: Vec<bool> = (0..n)
+                    .map(|v| (g.kind[v] == Kind::Mor && pre(&z, v)) || pre(&y, v))
+                    .collect();
+                if next == y {
+                    break;
+                }
+                y = next;
+            }
+            if y == z {
+                return z;
+            }
+            z = y;
+        }
+    }
+
+    /// Item TEST-kernel-unreached-paths-4: `decide`, on systems drawn at random, gives each
+    /// node it does not refuse the answer of the game ([`by_the_game`]). Draws of 4 to 9
+    /// nodes, mostly `Or` and `And` with one to three children and a few `Mor`, reach the
+    /// deletion cascade of step 4 (`delete_cascade`) as well as the other steps.
+    #[test]
+    fn decide_agrees_with_the_game_on_systems_drawn_at_random() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = |k: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % k
+        };
+        let (mut decided, mut refused) = (0, 0);
+        for _ in 0..40_000 {
+            let n = 3 + next(10) as u32;
+            let mut g = Bes::new();
+            for _ in 0..n {
+                g.add(Kind::Bot, vec![]);
+            }
+            for v in 0..n {
+                let kind = match next(32) {
+                    0 => Kind::Top,
+                    1 => Kind::Bot,
+                    2..=9 => Kind::Mor,
+                    10..=20 => Kind::Or,
+                    _ => Kind::And,
+                };
+                let children = match kind {
+                    Kind::Top | Kind::Bot => vec![],
+                    Kind::Mor => vec![next(u64::from(n)) as u32],
+                    _ => (0..1 + next(3))
+                        .map(|_| next(u64::from(n)) as u32)
+                        .collect(),
+                };
+                g.set(v, kind, children);
+            }
+            g.seal();
+            let want = by_the_game(&g);
+            let got = decide(&g);
+            for v in 0..n as usize {
+                match got.answers[v] {
+                    Answer::Refused => refused += 1,
+                    a => {
+                        decided += 1;
+                        assert_eq!(a == Answer::Inhabited, want[v], "node {v} of {g:?}");
+                    }
+                }
+            }
+        }
+        assert!(
+            decided > 10 * refused,
+            "{decided} decided, {refused} refused"
+        );
     }
 }

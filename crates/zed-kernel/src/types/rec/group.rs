@@ -1011,4 +1011,50 @@ mod tests {
         assert!(Arc::ptr_eq(&t[0].0, &u[0].0));
         assert!(!t[0].is_empty());
     }
+
+    /// Item TEST-kernel-unreached-paths-4 (`rec/unfold/show.rs`, the declarations of a `Show`
+    /// in the surface syntax): an expression whose types share a part names the part and
+    /// declares it, under a rejection's sentence when the rejection quotes it, and on a line
+    /// before the expression when it is written outside a message.
+    #[test]
+    fn a_rejection_quoting_types_that_share_a_part_declares_the_part_first() {
+        let one = Type::lit(&crate::value::Value::Int(1)).expect("an int literal");
+        let d = &Type::int() - &one;
+        let pair = Type::tuple(vec![d.clone(), d]);
+        // `type L(a) = () | (a, L((int \ 1, int \ 1)))`: the recursive occurrence changes the
+        // parameter, so `L` is not regular.
+        let defs = vec![Def {
+            name: "L".to_string(),
+            params: vec!["a".to_string()],
+            body: Expr::Union(vec![
+                Expr::Tuple(vec![]),
+                Expr::Tuple(vec![
+                    Expr::Param(0),
+                    Expr::Ref(0, vec![Expr::Type(pair.clone())]),
+                ]),
+            ]),
+        }];
+        let r = Group::new(defs).expect_err("a recursive occurrence that changes the parameter");
+        assert!(
+            r.message
+                .contains("its recursive occurrence `L((Part1, Part1))` changes")
+                && r.message.contains("\n    type Part1 = int \\ 1;"),
+            "{}",
+            r.message
+        );
+        let text = || {
+            let g = Group::new(vec![Def {
+                name: "M".to_string(),
+                params: vec![],
+                body: Expr::Union(vec![
+                    Expr::Tuple(vec![]),
+                    Expr::Tuple(vec![Expr::Type(pair.clone()), Expr::Ref(0, vec![])]),
+                ]),
+            }])
+            .expect("a regular, contractive group");
+            g.text(0, &g.0.bodies[0])
+        };
+        // Outside a message the text declares the part itself, on a line before the expression.
+        assert_eq!(text(), "type Part1 = int \\ 1;\n() | ((Part1, Part1), M)");
+    }
 }
