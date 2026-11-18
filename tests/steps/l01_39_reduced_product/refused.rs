@@ -555,7 +555,10 @@ fn a_refused_projection_names_the_bounds_it_kept() {
 /// an alternative set aside keeps no bounds, since the box stage does not read it, and still
 /// says that its search found no values and ruled none out. `b` is refused only in the case
 /// with no alternative left, where `z2 <= 4` and so `b <= 13`; in the cases with an
-/// alternative its values are found exactly (PRES-project-each-cost).
+/// alternative its values are found exactly (PRES-project-each-cost). Of the two alternatives,
+/// only `2 * a + b >= 7 || z2 <= 8` is set aside: the box makes `b >= c - 11` true (`b >= -4`,
+/// `c <= 6`), so `b >= c - 11 || z2 <= 4` is left out of the question before the solver
+/// (BENCH-hole-end-pad-timeout), and none of its cases is refused.
 #[test]
 fn a_refused_projection_onto_one_name_names_its_bounds() {
     solver_alone(refused_onto_one_name);
@@ -585,7 +588,7 @@ fn refused_onto_one_name() {
     );
     assert_eq!(
         got.iter().filter(|w| w.contains(&aside)).count(),
-        2,
+        1,
         "{got:#?}"
     );
     assert!(

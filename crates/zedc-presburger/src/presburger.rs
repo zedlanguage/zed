@@ -20134,7 +20134,8 @@ impl Boxed {
 /// PROJECT-growth-box. A complete solution would decide the integer program (see
 /// `Omega::run`).
 pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
-    let (each, skipped, whole) = match project_each(f, syms) {
+    let lean = without_box_true_disjunctions(f);
+    let (each, skipped, whole) = match project_each(lean.as_ref().unwrap_or(f), syms) {
         Ok((each, skipped)) => (each, skipped, None),
         Err(e) => (
             syms.iter().map(|_| Err(e.clone())).collect(),
@@ -20157,6 +20158,77 @@ pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
         skipped,
         whole,
     }
+}
+
+/// `f` without each disjunction among its conjuncts that the box of `f` makes true: one with a
+/// disjunct `t >= 0` of two or more terms whose least value over the bounds [`row_box`] gives
+/// the atoms of `t` is at least 0. The set of the result is the set of `f`. `None` when no
+/// disjunction is dropped, or when the box is empty.
+// Complexity tradeoff (BENCH-hole-end-pad-timeout): naive version, the solver given every
+// disjunction, and each disjunction it keeps adds cases to split. On
+// `l01_39_scope_relations::families::bench::hole_end1_pad_scales` the box `0 <= x, y <= 10`
+// makes each of k padding disjunctions `x + j*y >= -1000j || x >= j*y + 1000j` true, yet
+// [`project_each`] took 52, 163, 608 and 1013 ms at k = 36, 72, 144 and 288; with this pass,
+// 12, 20, 33 and 64 ms (2026-11-18). Used: one pass over `f` for its atoms, [`row_box`]
+// (O(T log T) for the T terms of `f`), and one pass over its disjunctions. Tradeoffs: that
+// cost on formulas with nothing to drop; a disjunct of one term, or a conjunction of rows, is
+// not read, so a disjunction only those make true is left to the solver.
+// Proof of exactness. [`row_box`] reads a disjunction only for the hull of the bounds that
+// each of its disjuncts gives by rows of one term; a disjunct `t >= 0` of two or more terms
+// gives none, so that hull is empty and a dropped disjunction gives no bound. So [`row_box`]
+// of the result `r` gives the same sets, and each holds every value its atom takes at a point
+// of `r`. At a point p of `r`, then, t(p) >= the least value of `t` over those sets >= 0, so
+// each dropped disjunction holds at p, and p is a point of `f`; every point of `f` is one of
+// `r`, which has fewer conjuncts. Hence the two sets are equal. A disjunct of one term is
+// left out because its disjunction can give the very bound that makes it true
+// (`x >= 3 || x >= 5` gives `x >= 3`), and dropping it would lose that bound.
+fn without_box_true_disjunctions(f: &Formula) -> Option<Formula> {
+    let mut atoms: Vec<Atom> = Vec::new();
+    let mut seen: HashSet<&Atom> = HashSet::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::And(cs) | Formula::Or(cs) => stack.extend(cs.iter()),
+            Formula::Not(n) => stack.push(n),
+            Formula::Con(c) => {
+                for x in c.lin.terms.keys() {
+                    if seen.insert(x) {
+                        atoms.push(x.clone());
+                    }
+                }
+            }
+        }
+    }
+    let sets = row_box(f, &atoms);
+    let mut bounds: HashMap<&Atom, (&End, &End)> = HashMap::new();
+    for (x, s) in atoms.iter().zip(&sets) {
+        bounds.insert(x, s.bounds()?);
+    }
+    let true_on_box = |d: &Formula| {
+        let Formula::Con(c) = d else { return false };
+        if c.rel != Rel::Ge || c.lin.terms.len() < 2 {
+            return false;
+        }
+        let mut least = Num::from(&c.lin.constant);
+        for (x, a) in &c.lin.terms {
+            let (l, u) = bounds[x];
+            let end = if a.is_positive() { l } else { u };
+            let End::Fin(v) = end else { return false };
+            least = &least + &(&Num::from(a) * v);
+        }
+        least >= Num::from(&Int::ZERO)
+    };
+    let mut conjuncts: Vec<&Formula> = Vec::new();
+    let mut stack = vec![f];
+    let mut dropped = false;
+    while let Some(g) = stack.pop() {
+        match g {
+            Formula::And(cs) => stack.extend(cs.iter().rev()),
+            Formula::Or(ds) if ds.iter().any(true_on_box) => dropped = true,
+            _ => conjuncts.push(g),
+        }
+    }
+    dropped.then(|| Formula::and(conjuncts.into_iter().cloned().collect()))
 }
 
 /// The bounds the box stage of the Omega test (`tightened`) gives each of `syms` over the

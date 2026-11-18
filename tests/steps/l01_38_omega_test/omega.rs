@@ -10,7 +10,7 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
     Atom, Con, Entailment, Formula, Lin, Model, Refusal, Relation, Shared, decide, entails,
-    project, project_each, row_box, satisfiable,
+    project, project_each, project_each_boxed, row_box, satisfiable,
 };
 
 pub(super) fn sym(s: &str) -> Atom {
@@ -1578,4 +1578,68 @@ fn twin_definitions_are_merged_before_a_tied_projection() {
     let got = each[0].clone().expect("answered");
     assert_eq!(got, set(&[(Some(-9), -9)]), "{f}");
     assert_eq!(values_of_i(&f, -40, 40), vec![-9], "{f}");
+}
+
+/// The hole_end family's formula (`l01_39_scope_relations::families`) with `k` padding
+/// disjunctions `x + j*y >= -1000j || x - j*y >= 1000j`, the first disjunct of each true on
+/// the box of `x` and `y`.
+fn padded_hole_end(k: i128) -> Formula {
+    let x_parts = Formula::or(vec![
+        Formula::and(vec![ge(&[("x", 1)], 0), ge(&[("x", -1)], 5)]),
+        Formula::and(vec![ge(&[("x", 1)], -9), ge(&[("x", -1)], 10)]),
+    ]);
+    let mut cs = vec![
+        x_parts,
+        ge(&[("y", 1)], 0),
+        ge(&[("y", -1)], 10),
+        // `x + y <= 10 || 3x + y >= 37`.
+        Formula::or(vec![
+            ge(&[("x", -1), ("y", -1)], 10),
+            ge(&[("x", 3), ("y", 1)], -37),
+        ]),
+    ];
+    for j in 1..=k {
+        cs.push(Formula::or(vec![
+            ge(&[("x", 1), ("y", j)], 1000 * j),
+            ge(&[("x", 1), ("y", -j)], -1000 * j),
+        ]));
+    }
+    Formula::and(cs)
+}
+
+/// BENCH-hole-end-pad-timeout: a disjunction the box makes true is left out of the question,
+/// and the answer is the exact projection of the whole formula.
+#[test]
+fn a_disjunction_the_box_makes_true_leaves_the_projection_unchanged() {
+    let syms = [sym("x"), sym("y")];
+    let bare = project_each(&padded_hole_end(0), &syms).expect("projected");
+    for k in [1, 4, 12] {
+        let f = padded_hole_end(k);
+        let whole = project_each(&f, &syms).expect("projected");
+        let boxed = project_each_boxed(&f, &syms);
+        assert!(boxed.whole.is_none() && boxed.skipped.is_empty(), "k = {k}");
+        for (i, (s, cause)) in boxed.each.iter().enumerate() {
+            assert!(cause.is_none(), "k = {k}");
+            let want = bare.0[i].as_ref().expect("bare");
+            assert_eq!(s, want, "k = {k}, symbol {i}");
+            assert_eq!(
+                s,
+                whole.0[i].as_ref().expect("whole"),
+                "k = {k}, symbol {i}"
+            );
+        }
+    }
+}
+
+/// A disjunction of one-term rows gives the box its own bound (`x >= 3` from
+/// `x >= 3 || x >= 5`), so it is not dropped as true on that box: `x` stays in `[3, 10]`.
+#[test]
+fn a_disjunction_that_gives_its_own_bound_is_kept() {
+    let f = Formula::and(vec![
+        Formula::or(vec![ge(&[("x", 1)], -3), ge(&[("x", 1)], -5)]),
+        ge(&[("x", -1)], 10),
+    ]);
+    let boxed = project_each_boxed(&f, &[sym("x")]);
+    let want = IntervalSet::range(End::Fin(Num::from(3)), End::Fin(Num::from(10)));
+    assert_eq!(boxed.each[0].0, want);
 }
