@@ -2111,8 +2111,10 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 5 | PRES-cover-bench-wide-pairs | Found by a full l01_39 benchmark run (agent pugh-xr2, 2026-11-16; not accepted): with the cover on the path, `l01_39_scope_relations::families::bench::wide_pairs_scale` passes its limit (30 s); main 5.4 s. Passes with the cover off. Cause not shown. | M | no | PRES-pugh-xr-land | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-monotone-rules | Done (bundle-pre1, 2026-11-17). Question C7 of the PRES-pugh-xr round 4 brief (2026-11-16): the fault of audit seed 126 was a rule in the scope (`project_block`, crates/zedc-preimage/src/product.rs) that read how often a name moved, so a more exact input set (the cover's, in one step) gave a less exact output; search crates/zedc-preimage/ and crates/zedc-presburger/ for other rules that decide from how often, how far or in how many steps a set changed, from the number of pieces of a set, or from whether a set equals the solver's set. Probe `families::audit_widenings(seed)`: four narrower starts (the hull, a box of 6, and two sets with a hole) against the wide run, seeds 0 to 127, step by step; a widening is a narrow run's set not within the wide run's. 39 widenings at the start. Found and fixed (COMPLEXITY.md PRES-monotone-unary): `Level::open` in crates/zedc-presburger/src/presburger.rs projected each disjunct of a part with the base alone, so a set with a hole (one disjunct per piece) lost bounds its hull gives (`y == -1 \|\| y == 2`, `w <= 1`, `z + 2w >= 1 \|\| z + 3y >= 3` left `z` unbounded below, where the hull gives `z >= -3`); each disjunct now gets the rows of one term the disjunctions imply; 39 widenings to 23; tests red before green: `l01_38_omega_test::disj_groups::a_bound_through_a_set_with_a_hole_is_projected_as_through_its_hull` and `families::audit_seed_{51,55,65,88,93,107,109}_no_wider_set_from_a_narrower_start`. Not monotone, filed: the `again` rule of `Scope::project_block`, which reads whether a name moved twice or holds a hole (row PRES-again-monotone; `moved` at product.rs about line 12131 feeds it). Monotone, with the reason: (a) the switches on the number of pieces of a set (`part_leaf_bound`, the pendants' `disjunctions`, the reflected-gap certificate, `PunctureContext::of` on the domain and the pendant leaf, `cover_staircase`, `manages_stairs`, `ray_high`, all in product.rs) take a fast exact route for a set of one interval and the general per-part projection otherwise; the general route on a set with a hole is no wider than the fast route on its hull when the solver is monotone part by part, which the fix above restores for the case found; forcing each switch to the general route changed no set on any of the 128 seeds; (b) the rules that skip a part whose sets equal those it was last projected with (`Scope::is_projected`, and `join_preserving_outer` at about product.rs line 10464, which keeps that record across a join when the hubs are equal) are monotone when projecting a part again on equal sets gives equal sets, which the comment of `project_block` states (idempotent) and which no seed contradicted; not tested on its own; (c) no rule found reads whether a set equals the solver's set outside tests and messages. Left: the other 23 widenings (seed:step 4:4, 16:3 to 6, 48:6, 50:7 and 8, 64:3 to 8, 99:8, 112:3 and 4, 116:3 to 5, 126:6 to 8), where the narrow run loses holes the wide run gets (PRES-cover-wire), or 126:6 and 99:8 from the `again` rule (PRES-again-monotone), 4:4 also met by bundle-pres2's trigger. | M | yes | PRES-pugh-xr-land | `crates/zedc-preimage/src/product.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-again-monotone | Found by PRES-monotone-rules (bundle-pre1, 2026-11-17): in `Scope::project_block` (crates/zedc-preimage/src/product.rs, `again` set at about lines 13026 to 13063 and read at 13203) the whole block is projected once more only when a name moves twice in the part loop or a moved name holds more than one piece, so a narrower start under which no name moves gives a wider set. Audit seed 126 with a box of 6 at step 6 (`families::audit_widenings`): no name moves in the narrow run, the block is not projected whole and `a` stays `[-6..=6]`, where the exact set is `[-6..=2]` and the wide run gets `[-8..=2]`; seed 99 step 8 (a start with a hole, `z`) the same way. Tried and rejected: projecting the whole block at the end of every block run fixes 126:6, 99:8 and 4:4, but against the code without it 11 l01_39 family benchmarks time out at 60 s (coordkk, coordkk_y, coordmix, coordmix_shift, coordmix_unmatched, hole_end1_pad, hole_end2_pad, hubs, starjoin, star_mixed, star) and 6 fail their limits (coordmix_slopes, hop, hopon, hopb, hoponb, star_extra). bundle-pres2's change (a block name changed since the block was last kept that holds more than one piece starts the loop with `again`, for audit seed 4 step 4) does not cover a start where nothing moves. Find a trigger that is monotone (a narrower start never projects less than a wider one) at about the cost of the present one, or prove the narrower run's set stays within the wider one's; add `families::audit_seed_126_*` and `audit_seed_99_*` tests red before green (the case of seed 126 against the solver alone is /home/luke/Work/wt/failing-tests/PRES-cover-refusals-where-exact-audit126.rs, moved here from PRES-cover-refusals-where-exact on 2026-11-18), and run the l01_39 family benchmarks against main. Status (land-pres3, 2026-11-18): seed 99 and the cover-against-solver check of seed 126 pass on main and are tests in families.rs (`audit_seed_99_no_wider_set_from_a_narrower_start`, `audit_seed_126_keeps_the_ends_the_solver_alone_finds`); the audit126 failing-tests file is removed. Seed 126 still fails, now at step 6 from the start `hole0` only (`a` [-8..=-1, 1..=8] against [-8..=2]): both runs project the block whole, and the narrow run's whole projection is refused past the work limit (`Onto("a")`, `Solver(Questions)`), so `a` keeps its earlier set. With no limit the seed gives no wider set (80.8 M units in all, 3.1 s debug). So the rest is the cost of the exact cover, as in PRES-cover-refusals-moduli; its test, `no_widenings(126)`, is /home/luke/Work/wt/failing-tests/PRES-again-monotone.rs. | M | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_scope_relations/families.rs` |
-| 0 | PRES-cover-refusals-moduli | Found when PRES-cover-refusals-where-exact was marked Done (land-pres3, 2026-11-18): its test `s22::the_cover_answers_where_the_solver_alone_answered_at_moduli_5_and_7` (/home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs) still fails on main fa9885c5b. Of its 120 cases (moduli 5 and 7, seeds 1 to 3, five shapes, k in 1, 2, 5, 13), 47 are refused with `Questions` where the solver alone answers; each is refused at 3.12 to 3.69 million units against the limit of 3.1 million (`EXACT_LIMIT`), and with no limit each answers, with a box of `x` inside the solver's, at 3.7 to 44 million units (debug build, 59 ms to 1.8 s; the worst is `two moduli of one input` at modulus 7, k 5). Find what the cover spends these units on and make it cheaper, so that all 120 answer under the limit; never widen the limit, never keep the solver's set past it (P197, P13). Status (pres4, 2026-11-18): main had 50 refused cases at 4858d547e; `direct` now keeps disjunctions as blocks of rows and projects a group of rows with one disjunction block by block (COMPLEXITY.md, PRES-cover-refusals-moduli (part)), so the shapes `two moduli of one input` and `remainders of two inputs` answer in full (test `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`). 24 cases are left, all of shapes `arms over x`, `arms of x and y` and `a test of the chain` (3.7 M to 12.0 M units with no limit, 11 to 36 questions): nested `if`s on `x mod m` give several disjunctions tied through the remainder atom; next step: split such a group by the values of a remainder atom its rows bound to fewer than m values, so each case has one disjunction or none. | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs`, `tests/steps/l01_25_preimage_catalog/s22.rs` |
-| 0 | TEST-l01_39-split-long-modules | Found by land-pres3 (2026-11-18), owner pres4: the l01_39 modules `deep_condition`, `disjoint` and `xst` each run over 60 s as a single piece on main; split each into pieces that run under 60 s (by test, or by a seed or size range), with every test kept and none ignored. | S | no | none | `tests/steps/l01_39_scope_relations/` |
+| 1 | PRES-cover-refusals-moduli | Found when PRES-cover-refusals-where-exact was marked Done (land-pres3, 2026-11-18): its test `s22::the_cover_answers_where_the_solver_alone_answered_at_moduli_5_and_7` (/home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs) still fails on main fa9885c5b. Of its 120 cases (moduli 5 and 7, seeds 1 to 3, five shapes, k in 1, 2, 5, 13), 47 are refused with `Questions` where the solver alone answers; each is refused at 3.12 to 3.69 million units against the limit of 3.1 million (`EXACT_LIMIT`), and with no limit each answers, with a box of `x` inside the solver's, at 3.7 to 44 million units (debug build, 59 ms to 1.8 s; the worst is `two moduli of one input` at modulus 7, k 5). Find what the cover spends these units on and make it cheaper, so that all 120 answer under the limit; never widen the limit, never keep the solver's set past it (P197, P13). Status (pres4, 2026-11-18): main had 50 refused cases at 4858d547e; `direct` now keeps disjunctions as blocks of rows and projects a group of rows with one disjunction block by block (COMPLEXITY.md, PRES-cover-refusals-moduli (part)), so the shapes `two moduli of one input` and `remainders of two inputs` answer in full (test `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`). 24 cases are left, all of shapes `arms over x`, `arms of x and y` and `a test of the chain` (3.7 M to 12.0 M units with no limit, 11 to 36 questions): nested `if`s on `x mod m` give several disjunctions tied through the remainder atom. pres4 (2026-11-18, step 4): splitting by the values of the remainder atom does not answer them: in each refused group the two disjunctions share `s` and `q2` (one from `if x >= 0 {c} else {y}`, which reads no remainder, one from the chain over `x`, `q2` and `q1`), so at every value of `q1` two disjunctions remain; an exact answer distributes one over the other, O(\|A\|·\|B\|), quadratic, so it goes to PRES-cover-moduli-two-disjunctions. Groups with two disjunctions that do not read `s` (10 in the 48 cases at moduli 5 and 7, from `has_points`) are now answered by `cut_at_shared` (projection onto an atom all the disjunctions share; 8.2 to 8.4 times the work per eightfold n, no growth with m). | M | no | PRES-cover-moduli-two-disjunctions, PRES-direct-stride-answer-downstream | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs`, `tests/steps/l01_25_preimage_catalog/s22.rs` |
+| 0 | PRES-cover-moduli-two-disjunctions | Found by pres4 (PRES-cover-refusals-moduli step 4, 2026-11-18): the 24 cases of `s22::the_cover_answers_where_the_solver_alone_answered_at_moduli_5_and_7` still refused (shapes `arms over x`, `arms of x and y`, `a test of the chain`) each have a group in `direct`'s `met` with two disjunctions `A` and `B` that both read the projected symbol and share `q2`, so neither the one-disjunction rule nor `cut_at_shared` applies. Distributing one over the other is O(\|A\|·\|B\|) rows, quadratic: find a method near-linear in \|A\| + \|B\| (literature search first, then cross-review, then the author for anything quadratic, P226/P324), or prove the bound of \|A\|·\|B\| by m and measure at m and 8m. | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-direct-stride-answer-downstream | Found by pres4 (2026-11-18): since 94f38f6d3 the `l01_25` benchmark `bench::s22::remainder_chains_in_the_linear_stage_scale` passes 60 s (4.4 s before). `direct` answers y exactly, the even values of [-100000, 100000], 100001 one-value pieces from `block_set` (130 ms, 3.03 M units, within `EXACT_LIMIT`), where the cover alone refuses with `Questions` and the solver's set is kept (3.97 s with `direct` off). The time is spent after `exact_each`, in the preimage stage on that 100001-piece set (S22-hole-summaries meant holes to stay summarized). Charging the listing up front does not help (still past 60 s); declining strides in `block_set` makes it 3.26 s but fails `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7` (strides over [-60, 60]), and any rule between the two is a size threshold (P204). Fix: find which step of the preimage stage is superlinear in the pieces of an answer and make it linear, or give `IntervalSet` strided pieces (PRES-interval-strided-piece). | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-preimage/` |
+| 0 | TEST-l01_39-split-long-modules | Done: Found by land-pres3 (2026-11-18), owner pres4: the l01_39 modules `deep_condition`, `disjoint` and `xst` each run over 60 s as a single piece on main; split each into pieces that run under 60 s (by test, or by a seed or size range), with every test kept and none ignored. Status (pres4, 2026-11-18, 16ebee588, load 20 to 33): nothing to split. Their correctness tests, the pieces `tools/run_tests.sh` runs by default (`--skip bench::`), take 0.1 to 1.1 s a module (`deep_condition` 16 tests, `disjoint` 4, `xst` 88); only a run that takes in their benchmarks passes 60 s, and `--bench` already runs each benchmark as a piece of its own. All 43 of their benchmarks were timed one at a time (debug build, as the runner builds them; load 20 to 53). Five pass 60 s or fail, each one test that no split shortens, each with a row: `disjoint::bench::the_join_of_arms_on_many_disjoint_decided_groups_reduced_scales` and `..._refused_groups_reduced_scales`, each past 120 s (PRES-cover-bench-disjoint-reduced, owner presbench1); `deep_condition::bench::arms_of_a_chain_of_paired_choices_take_time_within_n_log_n`, 45.8 s and failed (PRES-cover-bench-deep-paired); `xst::s4::bench::holes_cut_one_at_a_time_scale`, 32.0 s and failed (PRES-cover-bench-holes-cut); `xst::s4::bench::split_moved_often_scales`, 40.6 s and failed (PRES-cover-bench-split-moved). Every other took 0.06 to 9.6 s. | S | yes | none | `tests/steps/l01_39_scope_relations/` |
 | 0 | BENCH-project-block-whole-release | Found by land-pres3 (2026-11-18), owner pres4: after 76bc93268 (a block with a hole projected whole), run every benchmark that reaches `Scope::project_block` in a release build, at n and 8n, and record the ratios and any limit failure against the commit before it. | S | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/` |
 | 5 | PRES-pugh-xr-rounds | Cross-review of the cases PRES-pugh-xr left open, rounds 4 to 8 (author P299, P303, 2026-11-16), on branch `wt/pugh-xr` (the cover wired in; its own checkout /home/luke/Work/wt/trees/pugh-xr), refreshed onto main first. Seats as in rounds 1 to 3 (Sol, Opus, Gemini, CD); 3 rounds at most before a report to the author, more only on the author's word. Brief and preamble templates: /home/luke/Work/wt/cd-xr/PRES-pugh-xr/BRIEF4.tmpl, PREAMBLE4.tmpl, seat-env.tmpl; history HISTORY.md; the dump replay tool r4x/ (coverx, ref-run.sh); CD brief cd5/nb/brief.md. Order from BRIEF4: the cases not accepted first (the six PRES-cover-bench-named-wide, -deep-accounts, -deep-paired, -deep-long-accounts, -unary-arms, -wide-pairs; PRES-cover-canonical-row-sums; PRES-cover-time-per-unit), then C1 (-chains-abs, -tied-disjunctions, -guards-beyond), the rest of C2 (-many-calls, -holes-cut, -split-moved, -named-tiers), PRES-cover-refusals-where-exact (moduli 5 and 7), PRES-monotone-rules, PRES-cover-sign-through-h, PRES-cover-tail-writing, PRES-work-charge-fit. Each fix lands on main through its own row. Every seat preamble carries the rm rules first and the git rules (no reset, stash, amend, force-push, `checkout --`, `-X ours/theirs`, `rebase --skip`, `pkill -f`). | L | no | PRES-pugh-xr-land | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-resolve-corpus-counts-remap | Done: the file that now resolves is `variants/06-matrix-multiply-remap.zed` (its remap builds to one node; its tuple source is refused in resolution); expected counts set to (38, 11, 50) with that named at the assertion; `variants/23-join-zoo-remap.zed` still stops at its joins. Found by fix-ty-tuples (2026-11-14), confirmed by runs: `l02_03_name_resolution::corpus_words::no_corpus_file_uses_an_undefined_name` expects (37, 12, 50) files resolved, holding a later layer's form, in all, and gets (38, 11, 50); it passes at 60e799549 and fails at 423fe2800 (REMAP-run, a remap builds to one node) and later. Test source: /home/luke/Work/wt/failing-tests/FAIL-resolve-corpus-counts-remap.rs. Wanted: the file that now resolves named, and either the expected counts updated or the remap refused in name resolution until its resolve piece lands. | S | no | none | `crates/zedc-resolve`, `tests/steps/l02_03_name_resolution/corpus_words.rs` |
@@ -3866,6 +3868,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | HOLES-exact-between, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/holes.rs`, `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -3886,6 +3889,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TIGHTEN-k-parts, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4030,6 +4034,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REF-nested-moduli-state, PATH-reads-scale | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | REF-nested-moduli-state, NARROW-hub-interleaved-scale | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | REF-nested-moduli-state, STAR-satellite-scale | `crates/zedc-preimage/src/preimage_ref.rs` |
+| 0 | REF-nested-moduli-state, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | REF-nested-moduli-state, PERF-hull-join-row-after | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | LIVE3-origin-long-path, LIMITS-remove-all | `crates/zedc-solvers/src/live3.rs` |
 | 0 | PRES-sum-chain-cost, PRES-holes-steps-cost | `crates/zedc-presburger/src/` |
@@ -4039,7 +4044,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-sum-chain-cost, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-sum-chain-cost, RP-scaling-10_5 | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PRES-sum-chain-cost, XR-cover-hybrid | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 0 | PRES-sum-chain-cost, PRES-cover-refusals-moduli | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
+| 0 | PRES-sum-chain-cost, PRES-cover-moduli-two-disjunctions | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-sum-chain-cost, PRES-direct-stride-answer-downstream | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-sum-chain-cost, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
@@ -4056,7 +4062,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-holes-steps-cost, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular/` |
 | 0 | PRES-holes-steps-cost, RP-scaling-10_5 | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PRES-holes-steps-cost, XR-cover-hybrid | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 0 | PRES-holes-steps-cost, PRES-cover-refusals-moduli | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
+| 0 | PRES-holes-steps-cost, PRES-cover-moduli-two-disjunctions | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-holes-steps-cost, PRES-direct-stride-answer-downstream | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-holes-steps-cost, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
@@ -4129,6 +4136,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-block-incr, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PERF-l139-block-incr, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
@@ -4151,6 +4159,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
@@ -4177,6 +4186,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-hopb-wakes, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4341,6 +4351,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S22-scaling-10_5, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | S22-scaling-10_5, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/` |
 | 0 | S22-scaling-10_5, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4938,6 +4949,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PATH-reads-scale, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | PATH-reads-scale, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/` |
 | 0 | PATH-reads-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4957,6 +4969,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | NARROW-hub-interleaved-scale, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | NARROW-hub-interleaved-scale, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/` |
 | 0 | NARROW-hub-interleaved-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4972,6 +4985,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STAR-satellite-scale, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | STAR-satellite-scale, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/` |
 | 0 | STAR-satellite-scale, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4986,6 +5000,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LINKED-incremental-scratch-agree, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -4997,6 +5012,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAMILY-scale-larger, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -5007,6 +5023,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -5016,6 +5033,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -5024,6 +5042,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -5170,6 +5189,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-part-tokens-slice-lex, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/read.rs` |
 | 0 | PROOF-part-tokens-slice-lex, MSG-tuple-generic-headline | `crates/zedc-check/src/check/read.rs` |
 | 0 | BENCH-scope-project-due-blocks, PRES-again-monotone | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
@@ -5215,17 +5235,30 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-frontier-containment-reach, PRES-hull-random-refusals | `crates/zedc-presburger` |
 | 0 | BENCH-limit-counts-setup, TOOLS-time-tests-fixes | `tools/bench_limit.sh` |
 | 0 | BENCH-limit-counts-setup, TEST-scaling-cold-and-warm | `tools/bench_limit.sh` |
-| 0 | XR-cover-hybrid, PRES-cover-refusals-moduli | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | XR-cover-hybrid, PRES-cover-moduli-two-disjunctions | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | XR-cover-hybrid, PRES-direct-stride-answer-downstream | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-cover-hybrid, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-cover-hybrid, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-again-monotone, PRES-direct-stride-answer-downstream | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-again-monotone, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
-| 0 | PRES-cover-refusals-moduli, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
-| 0 | PRES-cover-refusals-moduli, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
+| 0 | PRES-cover-moduli-two-disjunctions, PRES-direct-stride-answer-downstream | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-cover-moduli-two-disjunctions, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-cover-moduli-two-disjunctions, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-direct-stride-answer-downstream, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-direct-stride-answer-downstream, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-direct-stride-answer-downstream, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-direct-stride-answer-downstream, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-direct-stride-answer-downstream, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-direct-stride-answer-downstream, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
+| 0 | PRES-direct-stride-answer-downstream, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PRES-direct-stride-answer-downstream, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-direct-stride-answer-downstream, PERF-preimage-seed-7776978274844439420-round1 | `crates/zedc-preimage/src/preimage.rs` |
+| 0 | PRES-direct-stride-answer-downstream, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, CHECK-literal-union-spaced | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
@@ -6120,6 +6153,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | LIT-generic-class-follows-needs, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
+| 1 | PROOF-sweep, PRES-cover-refusals-moduli | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/projection.rs` |
 | 1 | PROOF-sweep, PRES-shadows-refusal-by-cost | `crates/zedc-presburger/src/presburger.rs` |
 | 1 | PROOF-sweep, POW-domains | `crates/zedc-check/src/check/walk.rs`, `crates/zed-kernel/src/eval.rs`, `crates/zedc-lattice/src/float.rs` |
 | 1 | PROOF-sweep, REDUCE-by-function | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/walk.rs` |

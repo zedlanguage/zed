@@ -1270,16 +1270,29 @@ fn direct(
                 };
                 let parts = values.split_off(values.len() - gs.len());
                 let v = if matches!(g, Formula::And(_)) == pos {
-                    met(parts, s, within, work)?
+                    met(parts, s, within, true, work)?
                 } else {
                     joined_parts(parts, s, within, work)?
                 };
-                let Some(v) = v else {
+                let Some(mut v) = v else {
                     return Ok(None);
                 };
                 if let Some(k) = Id::of(g)
                     && holders.get(&k).is_some_and(|&n| n > 1)
                 {
+                    // A shared disjunction is projected here, not kept as blocks: each holder
+                    // would copy its blocks and distribute its own rows over them, so a chain
+                    // of parts each holding the two before it (`l01_39_reduced_product`
+                    // `arms_of_a_chain_of_named_conjunctions...`) grew as the number of paths,
+                    // exponential in its length, until each call spent its allowance (past 60 s
+                    // where 4.2 s before 94f38f6d3). Projected, it is one set read by each
+                    // holder, as before; blocks stay unprojected only on parts read once.
+                    if let Part::Alts(_) = v {
+                        let Some((set, atoms)) = as_set(v, s, within, work)? else {
+                            return Ok(None);
+                        };
+                        v = Part::Set(set, atoms);
+                    }
                     memo.insert((k, pos), v.clone());
                 }
                 values.push(v);
@@ -1779,6 +1792,7 @@ fn met(
     parts: Vec<Part>,
     s: &Atom,
     within: &IntervalSet,
+    cut: bool,
     work: &mut Work,
 ) -> Result<Option<Part>, Refusal> {
     if parts.iter().all(|p| matches!(p, Part::Rows(_))) {
@@ -1890,6 +1904,11 @@ fn met(
                     None => return Ok(None),
                 }
             }
+            (_, [], [_, _, ..]) if cut => match cut_at_shared(group, ors, &alts, s, work)? {
+                Some(true) => IntervalSet::range(End::NegInf, End::PosInf),
+                Some(false) => IntervalSet::empty(),
+                None => return Ok(None),
+            },
             _ => return Ok(None),
         };
         set = set.meet(&p);
@@ -1902,6 +1921,70 @@ fn met(
         atoms.extend(more);
     }
     Ok(Some(Part::Set(set, atoms)))
+}
+
+/// Whether a group of [`met`] with rows `group` and two or more disjunctions `ors` of `alts`
+/// has a point, where none of it reads `s` (as in the emptiness check of [`has_points`], whose
+/// `s` occurs nowhere): such a group bounds no value of `s`, so its projection onto `s` is every
+/// value or none. The disjunctions are tied through atoms they share; where some atom `t` is
+/// read by every one of them (the least such, so the same on every run), the group is projected
+/// onto `t` by [`met`] itself, which joins its items through atoms other than `t` only, and has
+/// a point exactly when that projection is not empty. `None` where no atom is shared by all, or
+/// where the projection onto `t` is not exact (again two disjunctions in one of its groups;
+/// that inner call cuts no further).
+///
+/// PRES-cover-refusals-moduli: in the 48 cases at moduli 5 and 7 of the l01_25 test
+/// `the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`, 10
+/// groups were declined here, each two disjunctions tied by `x` alone once the remainder atom
+/// `q1` goes with the rows (a disjunction over `x` alone, and one over `x`, `q1` and `q2`), and
+/// so asked as questions. The orchestrator's plan, splitting the group by the values of the
+/// remainder atom, does not answer them: the disjunction over `x` alone reads no remainder,
+/// so at every value of `q1` two disjunctions remain. Cost: one pass over the atoms of the
+/// disjunctions to find `t`, then [`met`] on the group, linear in its rows and blocks plus
+/// their projections, the same as the group would cost were it answered directly; one
+/// cut per group, never nested, so a chain of tied groups cannot multiply it. Measured
+/// (release, instructions less the startup run, 2026-11-18): 8.35 and 8.38 times the work per
+/// eightfold n at m = 5 (n 64 to 4096), 8.18 and 8.24 at m = 40; eight times m costs no more
+/// (1.25 G against 1.01 G at n = 4096).
+fn cut_at_shared(
+    group: &[Con],
+    ors: &[usize],
+    alts: &[(Vec<Vec<Con>>, HashSet<Atom>)],
+    s: &Atom,
+    work: &mut Work,
+) -> Result<Option<bool>, Refusal> {
+    let reads_s = |rows: &[Con]| rows.iter().any(|k| k.lin.terms.contains_key(s));
+    work.read(group.len() as u64)?;
+    if reads_s(group) {
+        return Ok(None);
+    }
+    let mut shared: Option<HashSet<&Atom>> = None;
+    for j in ors {
+        let (blocks, atoms) = &alts[*j];
+        work.read(blocks.iter().map(|b| b.len() as u64).sum::<u64>() + atoms.len() as u64)?;
+        if blocks.iter().any(|b| reads_s(b)) {
+            return Ok(None);
+        }
+        shared = Some(match shared {
+            None => atoms.iter().collect(),
+            Some(have) => have.into_iter().filter(|a| atoms.contains(*a)).collect(),
+        });
+    }
+    let Some(t) = shared.and_then(|have| have.into_iter().min().cloned()) else {
+        return Ok(None);
+    };
+    let mut parts = vec![Part::Rows(group.to_vec())];
+    parts.extend(ors.iter().map(|j| Part::Alts(alts[*j].0.clone())));
+    let top = IntervalSet::top();
+    let set = match met(parts, &t, &top, false, work)? {
+        None => return Ok(None),
+        Some(Part::Set(set, _)) => set,
+        Some(p @ (Part::Rows(_) | Part::Alts(_))) => match as_set(p, &t, &top, work)? {
+            Some((set, _)) => set,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(!set.is_empty()))
 }
 
 /// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more.

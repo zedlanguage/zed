@@ -1983,3 +1983,65 @@ fn an_atom_in_two_blocks_is_not_read_once() {
         );
     }
 }
+
+/// PRES-cover-refusals-moduli, [`super::cut_at_shared`]: the emptiness question of
+/// `has_points` (`direct` on a symbol that occurs nowhere) on the shape the l01_25 moduli cases
+/// declined, rows `x == 5 z + y`, `0 <= y <= 4` tying `x` to its remainder `y`, a disjunction
+/// over `x` alone and one over `x` and `y`, in the box, random on fixed seeds. Every case is
+/// answered, none declined (before the cut each was, its two disjunctions tied by `x`), and the
+/// answer is empty exactly where trying every point finds none.
+#[test]
+fn two_disjunctions_tied_by_one_atom_get_their_emptiness_answered() {
+    let none = Atom::Sym("#none".into());
+    let (mut wrong, mut declined, mut empty) = (Vec::new(), 0, 0);
+    for seed in [1u64, 126, 4_242, 99_991] {
+        let mut rng = Rng(seed);
+        for round in 0..50 {
+            let over_x = |rng: &mut Rng| {
+                let c = if rng.below(2) == 0 { 1 } else { -1 };
+                ge(&[("x", c)], rng.int(-4, 4))
+            };
+            let over_xy = |rng: &mut Rng| {
+                let b = Formula::and(vec![
+                    ge(
+                        &[("x", rng.int(-3, 3)), ("y", rng.int(-3, 3))],
+                        rng.int(-4, 4),
+                    ),
+                    eq(&[("y", 1)], -rng.int(0, 4)),
+                ]);
+                Formula::and(vec![b, over_x(rng)])
+            };
+            let n = 2 + rng.below(2) as usize;
+            let xs = Formula::or(
+                (0..n)
+                    .map(|_| Formula::and(vec![over_x(&mut rng), over_x(&mut rng)]))
+                    .collect(),
+            );
+            let xys = Formula::or((0..n).map(|_| over_xy(&mut rng)).collect());
+            let f = boxed(Formula::and(vec![
+                eq(&[("x", 1), ("z", -5), ("y", -1)], 0),
+                ge(&[("y", 1)], 0),
+                ge(&[("y", -1)], 4),
+                xs,
+                xys,
+            ]));
+            let has = !brute(&f, "x").is_empty();
+            empty += usize::from(!has);
+            let mut fast = u64::MAX;
+            let got = tried(&mut fast, SOLVER, |w| {
+                direct(&f, &none, &IntervalSet::top(), w)
+            });
+            match got {
+                None => declined += 1,
+                Some(set) if set.is_empty() == has => wrong.push(format!(
+                    "seed {seed} round {round}: {set}, points {has}: {f}"
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+    println!("{empty} of 200 empty, {declined} declined");
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert_eq!(declined, 0);
+    assert!(empty > 0 && empty < 200, "{empty} of 200 empty");
+}
