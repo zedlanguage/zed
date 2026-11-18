@@ -74,23 +74,13 @@ mod projection;
 pub use projection::{METHOD, Method};
 use projection::{Strided, Tail, bounded, fin, holds_at, value};
 
-/// The two charges of [`Work`] that ask the solver, here rather than in module `meter` with the
+/// The charge of [`Work`] that eliminates rows, here rather than in module `meter` with the
 /// rest of [`Work`], so that the meter holds no step of the cover (row MAIN-red-pugh-land).
-/// The solver's steps are the function values of `Work::solver` ([`Solver`]), not paths into
-/// `presburger.rs`, which calls this module (row PRES-cover-wire, `s_01f_import_graph`).
+/// `Work::ask` is in module `meter`: `projection::rays` asks it too, and `projection` imports
+/// nothing of this module (`s_01f_import_graph`). The solver's steps are the function values
+/// of `Work::solver` ([`Solver`]), not paths into `presburger.rs`, which calls this module
+/// (row PRES-cover-wire).
 impl Work {
-    /// `satisfiable` of `q`, its work counted by the solver's meter (`meter::charge`) and
-    /// charged here, the meter given the work left. A question that passes it is refused with
-    /// [`Refusal::Questions`], whatever the solver answered after: an error the solver drops on
-    /// its way (a search that reads a refusal as no point) could have changed that answer.
-    fn ask(&mut self, q: &Formula) -> Result<Option<Model>, Refusal> {
-        let before = self.used;
-        let satisfiable = self.solver.satisfiable;
-        let answer = self.metered(|| satisfiable(q));
-        QUESTION_WORK.set(QUESTION_WORK.get().saturating_add(self.used - before));
-        answer?
-    }
-
     /// A size-preserving exact shadow, with its input rows and all generated rows
     /// counted. A stopped shadow's provisional contradiction is discarded by `metered`.
     fn eliminate(

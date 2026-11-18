@@ -130,6 +130,20 @@ impl Work {
         }
         Ok(out)
     }
+
+    /// `satisfiable` of `q`, its work counted by the solver's meter ([`charge`]) and charged
+    /// here, the meter given the work left, and added to [`QUESTION_WORK`]. A question that
+    /// passes it is refused with [`Refusal::Questions`], whatever the solver answered after:
+    /// an error the solver drops on its way (a search that reads a refusal as no point) could
+    /// have changed that answer. Asked by the cover (`exact.rs`) and by `exact::projection`'s
+    /// `rays`; here, in the module both import, so that neither imports the other.
+    pub(super) fn ask(&mut self, q: &Formula) -> Result<Option<Model>, Refusal> {
+        let before = self.used;
+        let satisfiable = self.solver.satisfiable;
+        let answer = self.metered(|| satisfiable(q));
+        QUESTION_WORK.set(QUESTION_WORK.get().saturating_add(self.used - before));
+        answer?
+    }
 }
 
 /// The solver's work while a question of the cover runs (`exact::Work::ask`): units used and
