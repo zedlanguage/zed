@@ -799,6 +799,29 @@ fn a_literal_component_is_not_indexed() {
     }
 }
 
+#[test]
+fn a_literal_component_is_not_summed() {
+    // FAIL-random-f64-destructured-family: the checker accepted each, and the kernel then
+    // raised "type error: expected a family, found a value of type `f64`": `sum` of a class
+    // of carriers alone met the need as a variable that may yet hold a family, as an index
+    // did before FAIL-random-int-destructured-accepted.
+    let defs = "h(positional p) {\n  a, b = p;\n  return sum(a);\n}";
+    for call in ["h((-2.5, (3, 3, -2)))", "h((2.5, 1))", "h((3, 1))"] {
+        let errors = r_errors(defs, call);
+        assert_eq!(errors.len(), 1, "{call}: {errors:?}");
+        assert!(errors[0].contains("sum"), "{call}: {errors:?}");
+    }
+    // The program the random test found (seed 11135536357509542642 of
+    // `random::accepted_random_programs_raise_no_type_error`).
+    let found = "h0(positional p) {\n  a, b = p;\n  return sum(a);\n}\n\
+                 h1(positional p) = (3 * p[0]);\n\
+                 h2(positional p, positional q) = h0(p);";
+    assert_eq!(r_errors(found, "h0((-2.5, (3, 3, -2)))").len(), 1);
+    // A family or a tuple there is summed.
+    assert_eq!(runs(defs, &kind_of("h(([1, 2], 3))"), ""), "int\n");
+    assert_eq!(runs(defs, &kind_of("h(((1, 2), 3))"), ""), "int\n");
+}
+
 /// `defs` with `h2` … `h{depth}` added, each passing its argument on to the one before:
 /// `h2(positional p) = h1(p);`.
 fn wrapped(defs: &str, depth: usize) -> String {

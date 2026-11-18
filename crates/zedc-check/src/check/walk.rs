@@ -5213,6 +5213,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.alike_fold(x, key, rest_atoms, span, site);
             for v in x.vars.iter() {
                 let r = self.class_root(v);
+                // A class of carriers alone, as the literal `-2.5` of `(-2.5, xs)` bound by a
+                // call, is no family and no tuple: refused as an `f64` is, with no need
+                // recorded, which no later step would check (FAIL-random-f64-destructured-family;
+                // the test of `carriers_only`, FAIL-random-int-destructured-accepted). O(1).
+                let piece = Piece::Var(v.clone());
+                if self.carriers_only(&piece) {
+                    let shown = self.show(&piece.ty());
+                    self.sum_refused(&shown, span);
+                    continue;
+                }
                 let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
                     Some((_, Some(t))) => self.sum_method(&t.union(&beside), span, site),
                     Some((r, None)) => {
