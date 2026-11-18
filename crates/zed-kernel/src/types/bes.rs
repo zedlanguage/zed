@@ -1198,6 +1198,9 @@ mod tests {
         }
     }
 
+    /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.
+    const WIDE_DRAWS: u64 = 600_000;
+
     #[test]
     fn decide_agrees_with_the_game_on_systems_drawn_at_random() {
         let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
@@ -1208,38 +1211,45 @@ mod tests {
             seed % k
         };
         let (mut decided, mut refused) = (0, 0);
-        for _ in 0..40_000 {
-            let n = 3 + next(10) as u32;
-            let mut g = Bes::new();
-            for _ in 0..n {
-                g.add(Kind::Bot, vec![]);
-            }
-            for v in 0..n {
-                let kind = match next(32) {
-                    0 => Kind::Top,
-                    1 => Kind::Bot,
-                    2..=9 => Kind::Mor,
-                    10..=20 => Kind::Or,
-                    _ => Kind::And,
-                };
-                let children = match kind {
-                    Kind::Top | Kind::Bot => vec![],
-                    Kind::Mor => vec![next(u64::from(n)) as u32],
-                    _ => (0..1 + next(3))
-                        .map(|_| next(u64::from(n)) as u32)
-                        .collect(),
-                };
-                g.set(v, kind, children);
-            }
-            g.seal();
-            let want = by_the_game(&g);
-            let got = decide(&g);
-            for v in 0..n as usize {
-                match got.answers[v] {
-                    Answer::Refused => refused += 1,
-                    a => {
-                        decided += 1;
-                        assert_eq!(a == Answer::Inhabited, want[v], "node {v} of {g:?}");
+        // Small systems with many `Mor` nodes, then wide ones with few: only the second
+        // reach the second least fixed point of the one-`Mor` step (see
+        // `one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point`).
+        for (draws, span, wide) in [(40_000, 10, false), (WIDE_DRAWS, 40, true)] {
+            for _ in 0..draws {
+                let n = 3 + next(span) as u32;
+                let mors = 1 + next(5);
+                let mut g = Bes::new();
+                for _ in 0..n {
+                    g.add(Kind::Bot, vec![]);
+                }
+                for v in 0..n {
+                    let kind = match (wide, next(if wide { 40 } else { 32 })) {
+                        (false, 0) => Kind::Top,
+                        (_, 0) | (false, 1) => Kind::Bot,
+                        (false, 2..=9) => Kind::Mor,
+                        (true, r) if r <= mors => Kind::Mor,
+                        (false, 10..=20) | (true, 1..=21) => Kind::Or,
+                        _ => Kind::And,
+                    };
+                    let children = match kind {
+                        Kind::Top | Kind::Bot => vec![],
+                        Kind::Mor => vec![next(u64::from(n)) as u32],
+                        _ => (0..1 + next(3))
+                            .map(|_| next(u64::from(n)) as u32)
+                            .collect(),
+                    };
+                    g.set(v, kind, children);
+                }
+                g.seal();
+                let want = by_the_game(&g);
+                let got = decide(&g);
+                for v in 0..n as usize {
+                    match got.answers[v] {
+                        Answer::Refused => refused += 1,
+                        a => {
+                            decided += 1;
+                            assert_eq!(a == Answer::Inhabited, want[v], "node {v} of {g:?}");
+                        }
                     }
                 }
             }
