@@ -1514,3 +1514,47 @@ fn the_even_integers_get_one_answer_in_every_writing() {
         );
     }
 }
+
+/// The repaired unit of l01_29 `refused_warning::a_unit_with_no_refusal_prints_no_warning`:
+/// `w == 0` and four rows in x, y and z.
+fn repaired_unit() -> Formula {
+    Formula::and(vec![
+        eq(&[("w", 1)], 0),
+        ge(&[("x", 4), ("w", -12), ("y", -10), ("z", -12)], 11),
+        ge(&[("w", 4), ("x", 10), ("y", -10), ("z", -11)], -28),
+        ge(&[("w", 11), ("x", 4), ("y", -1), ("z", 12)], -28),
+        ge(&[("w", -8), ("x", -5), ("y", 12), ("z", -1)], 31),
+    ])
+}
+
+/// Every name of the repaired unit has its exact answer, the same by the default in-cell
+/// method as by recession rays (`Method::Rays`): `w` is {0} and `x` is [4, +inf). Measured
+/// 2026-11-18: the default (`Method::Pugh`) refused `w` and `x` (`Questions`) at the full
+/// 3.1M units of work with no question asked, since its cell projects the implicant with
+/// every splinter of the dark shadow, though for `w` the line through the point alone,
+/// `w == 0`, covers every value. Rays answered `w` in 20k units and `x` in 110k units with 20
+/// questions. Red until the cell stops doing that (row PRES-cover-refusals-where-exact).
+#[test]
+fn every_name_of_the_repaired_unit_has_its_exact_answer() {
+    let f = repaired_unit();
+    let exact = |s: &str| {
+        let got = project_each_exact(&f, &[a(s)]);
+        match got {
+            Ok((v, _)) => v.into_iter().next().expect("one set"),
+            Err(r) => Err(r),
+        }
+    };
+    for s in ["w", "x", "y", "z"] {
+        METHOD.set(Some(Method::Rays));
+        let rays = exact(s);
+        METHOD.set(None);
+        let got = exact(s);
+        assert!(got.is_ok(), "{s}: {got:?}");
+        assert_eq!(got, rays, "{s}");
+    }
+    assert_eq!(
+        exact("w"),
+        Ok(IntervalSet::from_pieces(vec![(End::of(0), End::of(0))]))
+    );
+    assert_eq!(exact("x"), Ok(IntervalSet::range(End::of(4), End::PosInf)));
+}

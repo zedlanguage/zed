@@ -304,7 +304,7 @@ fn following_the_repair_of_each_warning_ends_it() {
     let got = texts(&s);
     assert!(
         got.iter()
-            .all(|w| w.contains("longer than the checker allows")),
+            .all(|w| w.contains("more work than the checker allows")),
         "{got:#?}"
     );
 }
