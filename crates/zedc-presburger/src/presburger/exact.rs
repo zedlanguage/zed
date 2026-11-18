@@ -64,7 +64,7 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
 
 use super::absorbing;
-use super::formula::Id;
+use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
     QUESTION_WORK, SOLVER_UNIT,
@@ -1337,12 +1337,33 @@ type ReadOnce = (bool, HashMap<Atom, IntervalSet>);
 /// parts do not read `s`; unrolled, that is `esc(B)`, or `ctx(B)` and `v` in `B`'s projection
 /// (Opus and Sol, round 1 of XR-cover-hybrid; the two passes of Darwiche and Marquis, "A
 /// knowledge compilation map", JAIR 17, 2002, sec. 4, for decomposable forms).
+///
+/// An atom may also be read by several blocks, provided no conjunction has two parts that read
+/// it (the tree is decomposable, Darwiche and Marquis sec. 2). The values of `s` are then every
+/// value where some disjunction that reads `s`, with `ctx` there, has a part with a point that
+/// does not read `s`, else the union of the projections onto `s` of the blocks `B` that read it
+/// with `ctx(B)`. Proof: by the rule above, node by node, a conjunction's values of `s` are those
+/// of its one part that reads `s` where its other parts have points; a disjunction's are the
+/// union of those of its parts, every value for a part with a point that does not read `s`.
+/// Unrolled from the root, that is the rule stated. Such a disjunction is found among the nodes
+/// where the paths to the blocks of `s` part (their lowest common ancestors), checked one by one,
+/// and on the paths between them, where one part alone reads `s` and `esc` is counted as before
+/// (Sol, round 2 of XR-cover-hybrid).
 // Complexity tradeoff: [`direct`] reads the whole of `f` once for each symbol, O(k n) for k
 // symbols, 52.9 times the time at 8 times the depth of a chain of accounts
 // (`deep_condition::bench::arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth`).
 // Used: two passes over the nodes, O(n), and each block eliminated once for each of its own
-// atoms, charged as [`direct`] charges it; a part shared, an atom read by two blocks, or an
-// elimination not exact sends every symbol to the covers as before.
+// atoms, charged as [`direct`] charges it, or, for a forest of rows over one or two atoms,
+// projected onto all of them at once ([`forest`], O(rows)); a part shared, a conjunction with
+// two parts reading one atom, or an elimination not exact sends every symbol to the covers as
+// before. An atom read by m > 1 blocks costs O(m log n): its blocks sorted in the order of a
+// walk of the tree, the lowest common ancestor of each two neighbors by binary lifting
+// (O(n log n) once, built only where some atom is read by two blocks), and the count of
+// escapes on a path as a difference of counts from the root. Naive alternative: each
+// disjunction above each block checked for each atom, O(n) for each, quadratic on a deep
+// chain; `wide_pairs` (an atom in both arms of one disjunction) was declined and covered
+// symbol by symbol, past the time limit at 4096 names
+// (`l01_39_scope_relations::families::bench::wide_pairs_scale`).
 fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> {
     enum Node {
         Block(Vec<Con>),
@@ -1467,20 +1488,22 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
             }
         }
     }
-    // Each atom read by one block alone.
-    let mut block_of: HashMap<&Atom, usize> = HashMap::new();
+    // The blocks that read each atom, each once.
+    let mut blocks_of: HashMap<&Atom, Vec<usize>> = HashMap::new();
     for (i, n) in nodes.iter().enumerate() {
         if let (true, Node::Block(rows)) = (reached[i], n) {
             for a in rows.iter().flat_map(|c| c.lin.terms.keys()) {
-                if *block_of.entry(a).or_insert(i) != i {
-                    return Ok(None);
+                let bs = blocks_of.entry(a).or_default();
+                if bs.last() != Some(&i) {
+                    bs.push(i);
                 }
             }
         }
     }
     // Pass 1, from the blocks up: each block's projection onto each of its atoms, and `sat`.
     let mut sat = vec![false; nodes.len()];
-    let mut own: HashMap<Atom, IntervalSet> = HashMap::new();
+    let mut own: Vec<HashMap<Atom, IntervalSet>> =
+        (0..nodes.len()).map(|_| HashMap::new()).collect();
     for i in 0..nodes.len() {
         if !reached[i] {
             continue;
@@ -1493,23 +1516,30 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 if atoms.is_empty() {
                     return Ok(None);
                 }
-                let mut any = false;
-                for a in atoms.keys() {
-                    let Some(p) = projected(rows, a, work)? else {
-                        return Ok(None);
-                    };
-                    any |= !p.is_empty();
-                    own.insert((*a).clone(), p);
+                if let Some(sets) = forest(rows, work)? {
+                    own[i] = sets;
+                } else {
+                    for a in atoms.keys() {
+                        let Some(p) = projected(rows, a, work)? else {
+                            return Ok(None);
+                        };
+                        own[i].insert((*a).clone(), p);
+                    }
                 }
-                any
+                own[i].values().any(|p| !p.is_empty())
             }
             Node::And(_, cs) => cs.iter().all(|&c| sat[c]),
             Node::Or(cs) => cs.iter().any(|&c| sat[c]),
         };
     }
-    // Pass 2, from the root down: `ctx` and `esc` of each node.
+    // Pass 2, from the root down: `ctx` of each node, its parent and depth, and `esc` as a count:
+    // the disjunctions on the path from the root to it (it excluded) that have `ctx` and another
+    // part with a point than the one on the path.
     let mut ctx = vec![false; nodes.len()];
-    let mut esc = vec![false; nodes.len()];
+    let mut escs = vec![0usize; nodes.len()];
+    let mut parent = vec![root; nodes.len()];
+    let mut depth = vec![0usize; nodes.len()];
+    let mut live = vec![0usize; nodes.len()];
     ctx[root] = true;
     for i in (0..nodes.len()).rev() {
         if !reached[i] {
@@ -1517,33 +1547,294 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         }
         if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
             work.read(cs.len() as u64)?;
-            let live = cs.iter().filter(|&&c| sat[c]).count();
+            live[i] = cs.iter().filter(|&&c| sat[c]).count();
             for &c in cs {
-                let others = live - usize::from(sat[c]);
+                let others = live[i] - usize::from(sat[c]);
+                parent[c] = i;
+                depth[c] = depth[i] + 1;
                 if matches!(nodes[i], Node::And(..)) {
                     ctx[c] = ctx[i] && others == cs.len() - 1;
-                    esc[c] = esc[i];
+                    escs[c] = escs[i];
                 } else {
                     ctx[c] = ctx[i];
-                    esc[c] = esc[i] || (ctx[i] && others > 0);
+                    escs[c] = escs[i] + usize::from(ctx[i] && others > 0);
                 }
             }
         }
     }
+    // Where some atom is read by two blocks: the order of a walk of the tree from the root, and
+    // the ancestors of each node 2^j steps up.
+    let mut order = vec![0usize; nodes.len()];
+    let mut lift: Vec<Vec<usize>> = Vec::new();
+    if blocks_of.values().any(|bs| bs.len() > 1) {
+        let mut stack = vec![root];
+        let mut at = 0;
+        while let Some(i) = stack.pop() {
+            order[i] = at;
+            at += 1;
+            if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+                stack.extend(cs.iter().copied());
+            }
+        }
+        lift.push(parent.clone());
+        while 1usize << lift.len() <= at {
+            let up = lift.last().expect("one level");
+            let next = (0..nodes.len()).map(|i| up[up[i]]).collect();
+            lift.push(next);
+        }
+    }
+    let up_to = |mut i: usize, d: usize| {
+        let mut steps = depth[i].saturating_sub(d);
+        let mut j = 0;
+        while steps > 0 {
+            if steps & 1 == 1 {
+                i = lift[j][i];
+            }
+            steps >>= 1;
+            j += 1;
+        }
+        i
+    };
+    let lca = |a: usize, b: usize| {
+        let (mut a, mut b) = (up_to(a, depth[b]), up_to(b, depth[a]));
+        if a == b {
+            return a;
+        }
+        for up in lift.iter().rev() {
+            if up[a] != up[b] {
+                a = up[a];
+                b = up[b];
+            }
+        }
+        parent[a]
+    };
     let every = IntervalSet::range(End::NegInf, End::PosInf);
-    let out = (block_of.into_iter())
-        .map(|(a, b)| {
-            let set = if esc[b] {
-                every.clone()
-            } else if ctx[b] {
-                own[a].clone()
-            } else {
-                IntervalSet::empty()
-            };
-            (a.clone(), set)
-        })
-        .collect();
+    let mut out = HashMap::new();
+    for (a, mut bs) in blocks_of {
+        let escaped = if bs.len() == 1 {
+            escs[bs[0]] > 0
+        } else {
+            work.read(bs.len() as u64)?;
+            // The blocks with the lowest common ancestors of neighbors in walk order: a set
+            // closed under lowest common ancestors, in which each node's lowest ancestor is the
+            // lowest common ancestor of it and the node before it in walk order.
+            bs.sort_by_key(|&b| order[b]);
+            let mut vs = bs.clone();
+            vs.extend(bs.windows(2).map(|w| lca(w[0], w[1])));
+            vs.sort_by_key(|&v| order[v]);
+            vs.dedup();
+            let mut escaped = escs[vs[0]] > 0;
+            let mut parts: HashMap<usize, Vec<usize>> = HashMap::new();
+            for w in vs.windows(2) {
+                let x = lca(w[0], w[1]);
+                let c = up_to(w[1], depth[x] + 1);
+                escaped |= escs[w[1]] > escs[c];
+                parts.entry(x).or_default().push(c);
+            }
+            for (x, mut cs) in parts {
+                if matches!(nodes[x], Node::And(..)) {
+                    return Ok(None);
+                }
+                cs.sort_unstable();
+                cs.dedup();
+                let reading = cs.iter().filter(|&&c| sat[c]).count();
+                escaped |= ctx[x] && live[x] > reading;
+            }
+            escaped
+        };
+        let set = if escaped {
+            every.clone()
+        } else {
+            let pieces = (bs.iter().filter(|&&b| ctx[b]))
+                .flat_map(|&b| own[b][a].pieces().cloned())
+                .collect();
+            IntervalSet::from_pieces(pieces)
+        };
+        out.insert(a.clone(), set);
+    }
     Ok(Some((sat[root], out)))
+}
+
+/// The intersection of two intervals, each end `None` where it is unbounded; empty where the
+/// least is above the greatest.
+fn ends_meet(a: &Ends, b: &Ends) -> Ends {
+    let lo = match (&a.0, &b.0) {
+        (Some(x), Some(y)) => Some(x.max(y).clone()),
+        (x, y) => x.clone().or_else(|| y.clone()),
+    };
+    let hi = match (&a.1, &b.1) {
+        (Some(x), Some(y)) => Some(x.min(y).clone()),
+        (x, y) => x.clone().or_else(|| y.clone()),
+    };
+    (lo, hi)
+}
+
+fn ends_empty(a: &Ends) -> bool {
+    matches!(a, (Some(lo), Some(hi)) if lo > hi)
+}
+
+/// The values of `y` for which some `x` in `d` has `a·x + b·y + k >= 0`, for `a` and `b` not
+/// zero: every `y` where `a·x` is unbounded above on `d`, else `b·y >= -(k + max a·x)`.
+fn ends_sent(d: &Ends, a: &Int, b: &Int, k: &Int) -> Ends {
+    if ends_empty(d) {
+        return (Some(Int::ONE), Some(Int::ZERO));
+    }
+    let end = if a.is_positive() { &d.1 } else { &d.0 };
+    let Some(x) = end else {
+        return (None, None);
+    };
+    let t = -&(k + &(a * x));
+    if b.is_positive() {
+        (Some(-&(-&t).div_floor(b)), None)
+    } else {
+        (None, Some(t.div_floor(b)))
+    }
+}
+
+/// The exact projection of the conjunction `rows` onto each atom it reads, where each row is
+/// `>=` over one atom, or over two atoms and the rows over two atoms join the atoms as a forest
+/// (no two rows over the same two atoms, no cycle); `None` for other rows. Each atom's values
+/// are an interval: its own rows' interval met with, from each neighbor, the values for which
+/// some value of the neighbor in its interval, met with those from its other neighbors, meets
+/// their row. Exact over the integers, as a forest of constraints made arc consistent has a
+/// point with each atom at each of its values: each neighbor's subtree takes a value that meets
+/// the row, and so on outward, with no cycle to close (Freuder, "A sufficient condition for
+/// backtrack-free search", JACM 29, 1982, for trees; each message an interval, by the rounding
+/// above). Where some atom has no value, the conjunction has no point and every atom gets none.
+// Complexity tradeoff: [`projected`] for each atom eliminates the others, O(r) each and O(r²)
+// for the r rows of a path of `wide_pairs`. Used: two passes over each tree, a message each way
+// on each row, prefix and suffix intersections at each atom, O(r) in all; rows of other forms
+// fall back to [`projected`].
+fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSet>>, Refusal> {
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    let mut atoms: Vec<&Atom> = Vec::new();
+    for c in rows {
+        if c.lin.terms.len() > 2 || (c.lin.terms.len() == 2 && c.rel == Rel::Eq) {
+            return Ok(None);
+        }
+        for a in c.lin.terms.keys() {
+            index.entry(a).or_insert_with(|| {
+                atoms.push(a);
+                atoms.len() - 1
+            });
+        }
+    }
+    work.read(rows.len() as u64)?;
+    let n = atoms.len();
+    let mut own: Vec<Ends> = vec![(None, None); n];
+    // The rows over two atoms: (u, v, coefficient of u, of v, constant).
+    let mut edges: Vec<(usize, usize, &Int, &Int, &Int)> = Vec::new();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // The trees joined so far, by union-find with halving.
+    let mut root: Vec<usize> = (0..n).collect();
+    let find = |root: &mut Vec<usize>, mut i: usize| {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    };
+    for c in rows {
+        if let Some((a, lo, hi)) = super::formula::one_bound(c) {
+            let i = index[a];
+            own[i] = ends_meet(&own[i], &(lo, hi));
+            continue;
+        }
+        let mut ts = c.lin.terms.iter();
+        let (Some((x, a)), Some((y, b))) = (ts.next(), ts.next()) else {
+            return Ok(None);
+        };
+        let (u, v) = (index[x], index[y]);
+        let (ru, rv) = (find(&mut root, u), find(&mut root, v));
+        if ru == rv {
+            return Ok(None);
+        }
+        root[ru] = rv;
+        adj[u].push(edges.len());
+        adj[v].push(edges.len());
+        edges.push((u, v, a, b, &c.lin.constant));
+    }
+    // The message along edge `e` from its end `from` to its other end, given `from`'s values.
+    let sent = |e: usize, from: usize, d: &Ends| {
+        let (u, _, a, b, k) = edges[e];
+        if from == u {
+            ends_sent(d, a, b, k)
+        } else {
+            ends_sent(d, b, a, k)
+        }
+    };
+    let other = |e: usize, from: usize| {
+        let (u, v, ..) = edges[e];
+        if from == u { v } else { u }
+    };
+    // Each tree walked from a root: the atoms in walk order, each with the edge to its parent.
+    let mut seen = vec![false; n];
+    let mut walk: Vec<usize> = Vec::with_capacity(n);
+    let mut up_edge: Vec<Option<usize>> = vec![None; n];
+    for r in 0..n {
+        if seen[r] {
+            continue;
+        }
+        seen[r] = true;
+        let mut stack = vec![r];
+        while let Some(i) = stack.pop() {
+            walk.push(i);
+            for &e in &adj[i] {
+                let j = other(e, i);
+                if !seen[j] {
+                    seen[j] = true;
+                    up_edge[j] = Some(e);
+                    stack.push(j);
+                }
+            }
+        }
+    }
+    // From the leaves up: each atom's values over its subtree, and the message to its parent.
+    let mut below: Vec<Ends> = own.clone();
+    let mut to_parent: Vec<Ends> = vec![(None, None); n];
+    for &i in walk.iter().rev() {
+        if let Some(e) = up_edge[i] {
+            to_parent[i] = sent(e, i, &below[i]);
+            let p = other(e, i);
+            below[p] = ends_meet(&below[p], &to_parent[i]);
+        }
+    }
+    // From the roots down: the message from each atom's parent, from the parent's values over
+    // all but that atom's subtree, met from the other children's messages on each side.
+    let mut from_parent: Vec<Ends> = vec![(None, None); n];
+    for &i in &walk {
+        let kids: Vec<(usize, usize)> = (adj[i].iter())
+            .map(|&e| (e, other(e, i)))
+            .filter(|&(e, j)| up_edge[j] == Some(e))
+            .collect();
+        let base = ends_meet(&own[i], &from_parent[i]);
+        let mut suffix: Vec<Ends> = vec![(None, None); kids.len() + 1];
+        for t in (0..kids.len()).rev() {
+            suffix[t] = ends_meet(&suffix[t + 1], &to_parent[kids[t].1]);
+        }
+        let mut prefix = base;
+        for (t, &(e, j)) in kids.iter().enumerate() {
+            from_parent[j] = sent(e, i, &ends_meet(&prefix, &suffix[t + 1]));
+            prefix = ends_meet(&prefix, &to_parent[j]);
+        }
+    }
+    let ends: Vec<Ends> = (0..n)
+        .map(|i| ends_meet(&below[i], &from_parent[i]))
+        .collect();
+    let none = ends.iter().any(ends_empty);
+    let fin = |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
+    Ok(Some(
+        (atoms.into_iter().zip(&ends))
+            .map(|(a, e)| {
+                let set = if none {
+                    IntervalSet::empty()
+                } else {
+                    IntervalSet::range(fin(&e.0, End::NegInf), fin(&e.1, End::PosInf))
+                };
+                (a.clone(), set)
+            })
+            .collect(),
+    ))
 }
 
 /// A smaller formula `g` with the same values of each atom `keep` holds at its points as `f`,

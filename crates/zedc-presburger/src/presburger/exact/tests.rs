@@ -1966,23 +1966,166 @@ fn the_else_arm_of_a_chain_of_accounts_is_read_once() {
     }
 }
 
-/// `(x == 0 and y == 0) or (x == 0 and z == 0)` reads `x` in two blocks: `read_once` declines,
-/// and the cover answers `x` in {0} and `y`, `z` free (Sol, round 1 of XR-cover-hybrid).
+/// `(x == 0 and y == 0) or (x == 0 and z == 0)` reads `x` in two blocks, the two parts of a
+/// disjunction: `read_once` answers `x` in {0}, the union of the blocks' projections, and `y`,
+/// `z` free, as each has an arm with a point that does not read it (Sol, rounds 1 and 2 of
+/// XR-cover-hybrid).
 #[test]
-fn an_atom_in_two_blocks_is_not_read_once() {
+fn an_atom_in_both_arms_of_a_disjunction_is_answered() {
     let f = Formula::or(vec![
         Formula::and(vec![eq(&[("x", 1)], 0), eq(&[("y", 1)], 0)]),
         Formula::and(vec![eq(&[("x", 1)], 0), eq(&[("z", 1)], 0)]),
     ]);
-    assert!(read_once_answers(&f).is_none());
-    assert_eq!(project(&f, "x"), IntervalSet::single(0));
+    let (has, sets) = read_once_answers(&f).expect("decomposable");
+    assert!(has);
+    assert_eq!(sets[&a("x")], IntervalSet::single(0));
     for n in ["y", "z"] {
         assert_eq!(
-            project(&f, n),
+            sets[&a(n)],
             IntervalSet::range(End::NegInf, End::PosInf),
             "{n}"
         );
+        assert_eq!(project(&f, n), sets[&a(n)], "{n}");
     }
+}
+
+/// `(x >= 0 or y >= 0) and x <= 5` has two parts of a conjunction reading `x`: `read_once`
+/// declines, as their values of `x` do not join independently.
+#[test]
+fn an_atom_in_two_parts_of_a_conjunction_is_declined() {
+    let f = Formula::and(vec![
+        Formula::or(vec![ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]),
+        ge(&[("x", -1)], 5),
+    ]);
+    assert!(read_once_answers(&f).is_none());
+}
+
+/// The shape of `wide_pairs` with a box: `-5 <= z_j <= 5` and either `z_j + z_(j+1) >= 0` for
+/// every `j` or `z_j - z_(j+1) >= 0` for every `j`, the box in each arm. Each arm is one block, a
+/// path of rows over two atoms (`forest`), and each atom is read by both arms: every `z_j` takes
+/// `-5..=5`, and in the arm with `+`, `z_0 + z_1 >= 0` with `z_1 <= 5` gives `z_0 >= -5`.
+#[test]
+fn the_arms_of_wide_pairs_are_paths_read_at_once() {
+    let names = ["x", "y", "z"];
+    let arm = |s: i64| {
+        let mut rows: Vec<Formula> = names
+            .iter()
+            .flat_map(|n| [ge(&[(n, 1)], 5), ge(&[(n, -1)], 5)])
+            .collect();
+        rows.extend(names.windows(2).map(|w| ge(&[(w[0], 1), (w[1], s)], 0)));
+        Formula::and(rows)
+    };
+    let f = Formula::or(vec![arm(1), arm(-1)]);
+    let (has, sets) = read_once_answers(&f).expect("decomposable");
+    assert!(has);
+    for n in names {
+        assert_eq!(sets[&a(n)], IntervalSet::of(-5, 5), "{n}");
+    }
+    // One arm alone, `+` with `z <= -3`: `y >= 3`, so `x >= -5` meets `x + y >= 0` anywhere in
+    // the box, and `y <= 5`.
+    let mut rows = vec![ge(&[("z", -1)], -3)];
+    rows.extend(
+        names
+            .iter()
+            .flat_map(|n| [ge(&[(n, 1)], 5), ge(&[(n, -1)], 5)]),
+    );
+    rows.extend(names.windows(2).map(|w| ge(&[(w[0], 1), (w[1], 1)], 0)));
+    let g = Formula::and(rows);
+    let (has, sets) = read_once_answers(&g).expect("one block");
+    assert!(has);
+    assert_eq!(sets[&a("x")], IntervalSet::of(-5, 5));
+    assert_eq!(sets[&a("y")], IntervalSet::of(3, 5));
+    assert_eq!(sets[&a("z")], IntervalSet::of(-5, -3));
+}
+
+/// A random decomposable formula over x, y and z: a disjunction of two such formulas over the
+/// same names, a conjunction of two over names parted in two, or a block of one to three rows
+/// over one or two of its names, each name of the block held in `-W..=W` by rows of its own.
+/// Each name a block reads is in the box there, so a value of a name with a point has one with
+/// every name in the box (the names no chosen block reads at 0).
+fn decomposable_formula(rng: &mut Rng, names: &[&str], depth: u32) -> Formula {
+    const W: i64 = B;
+    let pick = rng.below(4);
+    if depth > 0 && pick == 0 {
+        return Formula::or(vec![
+            decomposable_formula(rng, names, depth - 1),
+            decomposable_formula(rng, names, depth - 1),
+        ]);
+    }
+    if depth > 0 && pick == 1 && names.len() > 1 {
+        let cut = 1 + rng.below(names.len() as u64 - 1) as usize;
+        return Formula::and(vec![
+            decomposable_formula(rng, &names[..cut], depth - 1),
+            decomposable_formula(rng, &names[cut..], depth - 1),
+        ]);
+    }
+    let read: Vec<&str> = if names.len() > 1 && rng.below(2) == 0 {
+        let i = rng.below(names.len() as u64) as usize;
+        let j = (i + 1 + rng.below(names.len() as u64 - 1) as usize) % names.len();
+        vec![names[i], names[j]]
+    } else {
+        vec![names[rng.below(names.len() as u64) as usize]]
+    };
+    let mut rows: Vec<Formula> = (read.iter())
+        .flat_map(|n| [ge(&[(n, 1)], W), ge(&[(n, -1)], W)])
+        .collect();
+    for _ in 0..1 + rng.below(3) {
+        let c = |rng: &mut Rng| [1, -1, 2, -2, 3][rng.below(5) as usize];
+        let k = rng.int(-4, 4);
+        let terms: Vec<(&str, i64)> = if read.len() == 2 && rng.below(2) == 0 {
+            vec![(read[0], c(rng)), (read[1], c(rng))]
+        } else {
+            vec![(read[rng.below(read.len() as u64) as usize], c(rng))]
+        };
+        rows.push(if rng.below(5) == 0 {
+            eq(&terms, k)
+        } else {
+            ge(&terms, k)
+        });
+    }
+    Formula::and(rows)
+}
+
+/// `read_once` answers each name of a random decomposable formula with the values that trying
+/// the points in the box gives, and whether there is a point; blocks with two rows over the same
+/// two names, or an equation over two, take the elimination of each name instead of `forest`.
+/// Negative controls: with the parting disjunctions not checked (`escaped |= ctx[x] && live[x] > reading`
+/// removed), or with `forest`'s message from a parent leaving out its own rows, this test fails.
+#[test]
+fn decomposable_formulas_project_to_the_values_of_their_points() {
+    let seed = crate::seed::seed("decomposable_formulas_project_to_the_values_of_their_points");
+    let mut rng = Rng(seed | 1);
+    let (mut answered, mut wrong, mut declined) = (0, Vec::new(), Vec::new());
+    for round in 0..300 {
+        let f = decomposable_formula(&mut rng, &NAMES, 3);
+        let Some((has, sets)) = read_once_answers(&f) else {
+            declined.push(format!("round {round}: {f}"));
+            continue;
+        };
+        answered += 1;
+        let mut any = false;
+        for n in NAMES {
+            let want = brute_wide(&f, n);
+            any |= !want.is_empty();
+            let got = sets
+                .get(&a(n))
+                .cloned()
+                .unwrap_or_else(|| match has {
+                    true => IntervalSet::range(End::NegInf, End::PosInf),
+                    false => IntervalSet::empty(),
+                })
+                .meet(&IntervalSet::of(-B, B));
+            if got != want {
+                wrong.push(format!("round {round} {n}: {got} not {want}: {f}"));
+            }
+        }
+        if has != any {
+            wrong.push(format!("round {round}: has {has} not {any}: {f}"));
+        }
+    }
+    println!("seed {seed}: {answered} of 300 answered, declined: {declined:#?}");
+    assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+    assert!(answered >= 200, "seed {seed}: only {answered} answered");
 }
 
 /// PRES-cover-refusals-moduli, [`super::cut_at_shared`]: the emptiness question of
