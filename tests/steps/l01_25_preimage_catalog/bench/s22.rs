@@ -556,7 +556,7 @@ fn guarded_holes_scale() {
 /// before is exact but for one doubted value of `i`, the point where `t_n` may be 0, and the
 /// linear stage decides that one slice of the relation: the preimage is exact, the box less
 /// that point. Measured with the whole preimage before, `c = 2`: 32.8 M and 263.8 M
-/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2, load
+/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2 of 2026-11-10, load
 /// 31 (item PERF-s22-const-chain). Negative control, not kept: the linear stage by the
 /// projection of the relation onto `i` and the decision of its complement leaves the box
 /// `[-20, 20]` inexact, and, with that check skipped, allocates 247 MB and 3.53 GB (14.3

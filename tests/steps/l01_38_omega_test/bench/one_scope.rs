@@ -850,7 +850,7 @@ fn the_questions_of_a_chain_of_residue_intervals_with_no_period_scale() {
     // after a different first step, or switch between two steps every five links. Main
     // before the interval tree, which listed the whole image at each change of period, took
     // 11.3 times the work at 100 and 800 links on the small moves and 14.1 times the bytes on
-    // the switching chain, over the limit of 12.77.
+    // the switching chain, over the limit of 12.77 of 2026-11-12.
     questions_scale_unit("random cuts and moves, by 2^31 - 1", 220, random_cuts_chain);
     questions_scale_unit(
         "random cuts and moves of 0 to 6, by 2^31 - 1",

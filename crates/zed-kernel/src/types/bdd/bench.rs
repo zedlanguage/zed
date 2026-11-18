@@ -307,8 +307,8 @@ fn parity_built_a_literal_at_a_time_scales() {
     // Measured (16 offsets, 2026-11-09): the tree nodes built per literal at 128 to 8,192
     // literals are 6.30, 7.99, 9.25, 10.48, 11.98, 13.18, 14.84, that is `2 H_n - 4.45`
     // within 0.15, the depth of a treap built by random insertion. So the work is `n log n`
-    // with a negative constant term, and its ratio at `n` and `8n` approaches the limit's
-    // `ln(8n)/ln(n) × 1.1` from above as `n` falls; at 2,048 and 16,384 the limit is 11.20.
+    // with a negative constant term, and its ratio at `n` and `8n` approaches the limit of
+    // 2026-11-09, `ln(8n)/ln(n) × 1.1`, from above as `n` falls; at 2,048 and 16,384 that limit was 11.20.
     // With the atoms in sorted order the nodes per literal are `H_n - 1.5`.
     //
     // Each node cost about 147,000 instructions while `xor::half` met its operands by `zip`,
@@ -321,7 +321,7 @@ fn parity_built_a_literal_at_a_time_scales() {
     // frames bring it to 4.99G and 50.09G (10.0 times), 489M and 4.97G bytes (10.2 times),
     // 28 s at load 31 where the code before took 54 s at load 30, and 51 s inside a run of
     // 508 tests (KERNEL-parity-cost). So the sizes are now 1,024 and 8,192 literals, where the
-    // limit is 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
+    // limit of 2026-11-09 was 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
     // times), 11 s at load 30. Rebuilding every tree node on each literal fails the check at
     // 128 and 1,024 literals, by 58.6 times the bytes. Making each exclusive or's two meets
     // only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G

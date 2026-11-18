@@ -198,7 +198,7 @@ fn a_menu_of_divisions_nested_deep_scales() {
 ///
 /// Negative control (run once, not committed), at n = 500 and 4,000: `Ck::drop_met` testing
 /// each error against every dropped range, which is quadratic with a small step, passed at
-/// 9.3 times, below the limit of 11.74, so this test does not catch that form.
+/// 9.3 times, below the limit of 11.74 of 2026-11-10, so this test does not catch that form.
 ///
 /// Besides its ratio: no type error. Small instance:
 /// `scaling::a_sum_of_divisions_of_literals_takes_its_carrier`.
@@ -223,7 +223,7 @@ fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
 ///
 /// Negative control (run once, not committed), at n = 500 and 4,000: walking all of each
 /// operand at each `/`, without stopping at an operation recorded already, which is
-/// quadratic, failed at 45.4 times the bytes, above the limit of 11.7.
+/// quadratic, failed at 45.4 times the bytes, above the limit of 11.7 of 2026-11-10.
 ///
 /// Besides its ratio: no type error. Small instance, with the value:
 /// `scaling::divisions_of_literals_nested_deep_take_their_carrier`.
@@ -278,7 +278,7 @@ fn a_comparison_of_tuples_of_many_operations_scales() {
 ///
 /// Negative control (run once, not committed), at n = 500 and 4,000: copying every operation
 /// on literals alone recorded so far at each call, which is quadratic, failed at 13.9 times the
-/// bytes, above the limit of 11.7, and so did the six other tests of literals here.
+/// bytes, above the limit of 11.7 of 2026-11-11, and so did the six other tests of literals here.
 ///
 /// Besides its ratio: no type error. Small instance, with a value:
 /// `scaling::calls_given_divisions_of_literals_take_their_carriers`.

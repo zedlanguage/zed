@@ -163,7 +163,7 @@ fn two_chains_written_alike_scale() {
 /// the walk that finds the groups a type depends on reads each part of the diagrams the members
 /// share once for the whole query, not once per member that holds it (item
 /// GROUP-search-canon-key). With a fresh scan per member the larger run took 35.2 times the
-/// work of the smaller, against a limit of 11.7 (measured at the old size, `n` 512). The groups
+/// work of the smaller, against the limit of 11.7 of 2026-11-14 (measured at the old size, `n` 512). The groups
 /// are built before the work is counted. Small instance:
 /// `small_groups_with_shared_parts_are_inhabited`.
 ///

@@ -25,7 +25,7 @@ fn a_disjunction_with_dead_sides_scales() {
 /// case is reduced once and the joins of the cases are not reduced (`join_cases` in
 /// zedc-preimage, NARROW-many-relational-sides). Before, each join that was joined again was
 /// reduced, projecting each of its sides again at each of the `log k` levels: 14.3 times
-/// the bytes from 32 to 256 sides, above the limit of 14.1; at 192 and 1,536 (since
+/// the bytes from 32 to 256 sides, above the limit of 14.1 of 2026-11-14; at 192 and 1,536 (since
 /// TEST-bench-move-l0139) each side is projected at more levels, so the old method fails by
 /// more (inferred, not rerun).
 #[test]

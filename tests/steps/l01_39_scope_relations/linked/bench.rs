@@ -396,7 +396,7 @@ fn a_satellite_of_every_hub_costs_its_related_names_once() {
 /// out alone (`Blocks::cut`), in time near the smaller side of each split it makes; building
 /// the blocks of the whole component again, as before, cost O(d) for each such star, and in a
 /// random order the number of such stars grows with `d`. Built at 64 and 512 in a random
-/// order: 10.7 times the instructions and 8.4 times the bytes, limit 13.2; before, 22.5 and
+/// order: 10.7 times the instructions and 8.4 times the bytes, limit 13.2 of 2026-11-09; before, 22.5 and
 /// 16.6 times (2026-11-09). At 64 and 512 it measured 11.3 times, over the limit of 10.5, so it
 /// is built at 512 and 4096: 10.4 times the instructions and 8.3 times the bytes (2026-11-13). Without the bounds no leaf becomes a star
 /// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row RP-scaling-10_5 in

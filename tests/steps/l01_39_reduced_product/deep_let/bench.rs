@@ -93,7 +93,7 @@ fn ifs_nested_1000_deep_have_their_arms_on_a_2_mib_stack() {
 /// The arms of [`fees`] with a fee every day cost `O(d log d)`, at 4,000 and 32,000 days, on a
 /// 2 MiB stack; the blocks are built before the timing. A cost of about 84 instructions for each
 /// pair of bindings (a count of the names in scope at each binding; control run, not committed)
-/// gives 15.7 times the work against a limit of 11.0 here, and 12.6 against 11.4 at 2,000 days,
+/// gives 15.7 times the work against the limit of 11.0 of 2026-11-09 here, and 12.6 against 11.4 at 2,000 days,
 /// but 9.5 against 12.1 at 250, where it passed (item PA-bind-cost).
 #[test]
 fn the_arms_of_a_deep_block_scale() {

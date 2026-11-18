@@ -15211,7 +15211,7 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 /// level `j` holds the disjunction of `2^j` cases, and reducing it projects every side again,
 /// each projection asking `O(log k)` questions of the hull's bisection, so that the joins cost
 /// `Θ(k log² k)` projections of sides for `k` cases (bytes 14.3 times from 32 to 256 live
-/// sides `n + m >= -i`, above the limit of 14.1). Here the joins are only joined, `O(k log k)`
+/// sides `n + m >= -i`, above the limit of 14.1 of 2026-11-10). Here the joins are only joined, `O(k log k)`
 /// for the copies of the cases' conjuncts, and the one reduction is the caller's. Given up:
 /// nothing; over the groups that narrow by disjunctions, every answer is the same with and
 /// without the reductions of the joins (NARROW-many-relational-sides).

@@ -173,7 +173,7 @@ pub fn hold(what: &str, measure: &str, small: u64, large: u64, power: u32) -> f6
 /// load (calls of a function, nodes made or entered, bytes of a text), held also to
 /// [`PREFERRED`]: such a count measures near 8 times on every run, so a bound of 9 still finds an
 /// extra factor of `log n` (`8 ln(8n) / ln(n)`, 10.4 at n = 1000) that [`LIMIT`] lets through.
-/// The tests that use it held their count under 9, or under 5 at 4n, before the limit was 13.
+/// The tests that use it held their count under 9, or under 5 at 4n, before the limit became 13 on 2026-11-13.
 pub fn hold_linear(what: &str, measure: &str, small: u64, large: u64) -> f64 {
     let ratio = hold(what, measure, small, large, 1);
     assert!(
@@ -852,7 +852,7 @@ fn compare_by_dyn(
         Bound::Order(power) => (limit(power), why(power)),
         Bound::Given(limit, why) => (limit, why.to_owned()),
     };
-    // A comparison of its own holds its limit itself, as it did before the limit of 13.
+    // A comparison of its own holds its limit itself, as it did before the limit became 13 on 2026-11-13.
     let over = |ratio: f64, limit: f64| match bound {
         Bound::Order(_) => ratio >= limit,
         Bound::Given(..) => ratio > limit,

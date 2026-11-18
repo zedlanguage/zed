@@ -3386,7 +3386,7 @@ fn found(p: Parts) -> Result<Option<Model>, Refusal> {
 // 1.74 times with all of [`found`]'s probe made after this one, on both paths. Not used:
 // [`found`]'s probe first (one probe, the same answers as [`satisfiable`]), whose batched
 // searches cost 95.7 times the bytes at 8n on `s22::chain_cross_above_its_width_scales`
-// (limit 16.2) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
+// (limit 16.2 of 2026-11-10) and 68.0 times on `chain_cross_dead_scales` (limit 17.6). Test:
 // `l01_38_omega_test::decide_sat::decide_answers_where_satisfiable_answers`.
 //
 // Complexity tradeoff (HAS-point-probe, M5): naive version, main's order ([`by_cells`] after
@@ -11008,7 +11008,7 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
 /// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
 /// domain of `h` pieces over a formula of size `n` (holes of `x` on difference chains, 128 to
-/// 1024 pieces: 12.55 times the work for 8 times the pieces, limit 12.57; 66 to 1015 rounds
+/// 1024 pieces: 12.55 times the work for 8 times the pieces, limit 12.57 of 2026-11-10; 66 to 1015 rounds
 /// for 128 to 2048). Keeping the set untested asks nothing of it (6 to 69 rounds; 7.4 times
 /// with the set left out of each search, [`search_by_halves`]),
 /// at the price of a piece with no point that the set keeps: it can widen a hull or leave it
@@ -12158,7 +12158,7 @@ fn point_with(
 /// Complexity tradeoff: one search per disjunct, as [`probe_to`] made before (item
 /// PROJECT-canon-precision, method (b)), costs `r` searches of the whole formula for `r`
 /// disjuncts no earlier point holds, `O(r n log n)`, which grew with `n` on the difference
-/// chain (39.4 times the bytes at `8n`, limit 13.2), the three-atom chain (16.6 times) and the
+/// chain (39.4 times the bytes at `8n`, limit 13.2 of 2026-11-10), the three-atom chain (16.6 times) and the
 /// wide named disjunction (25.8 times), measured after batch 101. Here a set of `s` forced disjuncts that has a point costs one
 /// search, and one without costs two more, of its halves, so that `f` disjuncts with no point
 /// cost `O(f log r)` searches and the others `O(f log r + 1)` together: on those chains, where
@@ -12166,7 +12166,7 @@ fn point_with(
 /// The disjuncts are forced in rounds: one whose bounds of one atom exclude those of a
 /// disjunct forced before it in the round waits for the next. Taken a round each, a
 /// disjunction of `m` cases that exclude each other, each with a point, cost `m` rounds of one
-/// search each, `O(m n log n)`: 20.1 times the bytes at `8n` (limit 14.1) on a chain whose
+/// search each, `O(m n log n)`: 20.1 times the bytes at `8n` (limit 14.1 of 2026-11-10) on a chain whose
 /// cases each read one stage (`exclusive_cases`). Here the first search of a round that finds
 /// a point also settles the disjuncts left waiting ([`hold_waiting`]): each is marked held
 /// when the point, with the atoms that only that disjunct's disjunction reads moved
@@ -12177,8 +12177,8 @@ fn point_with(
 /// its own, as before; such cases cost what they cost before. Forced all in one round (method
 /// (c)), such cases share no point, so their halves cost a search each down to one case: the
 /// chain of guarded remainders took 77.7
-/// times the bytes at `8n` (limit 15.4); in rounds 8.8 times. On the remainder chains `m` stops at the classes of the modulus (spread and
-/// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6; 32 to 256: 7.5 and
+/// times the bytes at `8n` (limit 15.4 of 2026-11-10); in rounds 8.8 times. On the remainder chains `m` stops at the classes of the modulus (spread and
+/// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6 of 2026-11-10; 32 to 256: 7.5 and
 /// 11.1 times). A set of values of one atom, which would cost a round per piece, is not
 /// tested here ([`one_atom_set`] in [`probe_unhandled`]).
 /// When most disjuncts have no point (`f` near `r`), the halving adds up to `2r` searches to
@@ -12220,7 +12220,7 @@ fn search_by_halves(
     // `f` of them have no point because the formula bounds one atom they all bound, as on a
     // chain of `k` guards `i >= j` beyond the inputs (`f` near `k/4`), those `2f` searches cost
     // `O(k^2)` while [`learn`] removes them all with `O(log k)` propagations (41.0 times the
-    // bytes at `8k` from 16, limit 15.4, ledger PROBE-guards). And a search that fails without
+    // bytes at `8k` from 16, limit 15.4 of 2026-11-12, ledger PROBE-guards). And a search that fails without
     // the bound, which the search does not see, fails again for each other disjunct alone
     // (`k/2` more there, each with a point). Used: a disjunct whose search alone fails is
     // handed to [`learn`] at once, whose bounds every later search takes, and a disjunct they
@@ -19804,7 +19804,7 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 // whole projection problem. Trigger: a projection whose atoms share a color. Tests:
 // `l01_38_omega_test::omega::twin_definitions_are_merged_before_a_tied_projection` and
 // `l01_38_omega_test::omega::twin_definitions_merge_in_time_near_linear` (control: the
-// pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1).
+// pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1 of 2026-11-10).
 // COMPLEXITY.md row PROJECT-box-half-open. With `factors_too` (FAIL-presburger-propagation-seed)
 // one more pass renames the products, a hash lookup for each factor, O(P) for P products, and
 // a collision among them repeats the call once without factors. The tied decision that calls

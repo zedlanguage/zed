@@ -12,7 +12,7 @@ use super::*;
 
 /// Components ranked each right after the first, so that the ranks between run out again
 /// and again, are ranked again `O(log n)` times each on average (Bender et al.): from
-/// 8,000 to 64,000 components the number ranked again grows under the limit of 13 for
+/// 8,000 to 64,000 components the number ranked again grows under the limit of 13 of 2026-11-13 for
 /// order n (9.8 times measured, 1.24 log2 n each; below n = 4,000,
 /// while the ranks fill up, the count each grows faster than `log n`); ranking each later
 /// component again, the naive version, would grow it 64 times.

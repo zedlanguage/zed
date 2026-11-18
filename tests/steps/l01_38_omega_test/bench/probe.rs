@@ -33,7 +33,7 @@ fn guards_beyond_the_inputs_scale() {
 /// at `k = 16` and `128`: `i` from `k/4 + 1` to `3k/4`. The `k/4` disjuncts `i <= j - 1`, `j`
 /// up to `k/4 + 1`, have no point, and the others' searches failed alone without the bound
 /// `i >= k/4 + 1`: halving down to each disjunct cost a search of the whole formula each,
-/// 65.3 M and 2,679.6 M bytes, 41.0 times (limit 15.4, ledger PROBE-guards). Now the first
+/// 65.3 M and 2,679.6 M bytes, 41.0 times (limit 15.4 of 2026-11-12, ledger PROBE-guards). Now the first
 /// search that fails alone hands its disjunct to `learn`, whose bound every later search of the
 /// round takes and which excludes the other dead disjuncts unsearched: 47.3 M and 440.6 M
 /// bytes, 9.3 times, and 9.3 times the instructions.

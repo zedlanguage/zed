@@ -6,7 +6,7 @@ use super::*;
 
 /// Addressing a definition whose end and class hold a number past `i64` is linear in the
 /// number's bits; its decimal text took more than linear time. The decimal text cost about
-/// `n^1.5`, 22.6 times the work at 8n: over the limit of 13, though under the 24 allowed until
+/// `n^1.5`, 22.6 times the work at 8n: over the limit of 13 of 2026-11-13, though under the 24 allowed until
 /// SCALE-ratio, when a second test held it at 64 times the bits (removed by
 /// TESTS-scaling-limit-13). Those figures were measured at n = 128 KiB.
 /// TEST-bench-move-l0123, author P169: n was 128 KiB, now 40 MiB; 1x 0.32 s at load 60.

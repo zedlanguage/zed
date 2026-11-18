@@ -33,7 +33,7 @@ fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_
     );
 }
 
-/// At 512 stages, where the limit, 11.7 times, is below the 12.13 times of work of order n^1.2;
+/// At 512 stages, where the limit of 2026-11-10, 11.7 times, was below the 12.13 times of work of order n^1.2;
 /// at 64 it was 13.2 (plan item THREE-atom-exponent).
 #[test]
 fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {

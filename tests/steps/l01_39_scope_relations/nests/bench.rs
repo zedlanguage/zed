@@ -27,7 +27,7 @@ fn narrowing_by_a_nest_of_disjunctions_scales() {
 /// `a` is paired with `7a + 1` modulo the `k/4 + 2` names, a graph whose shape changes with
 /// that number): measured, k = 400 and 1600 cost more per side than 200, 800 and 3200, so
 /// these two sizes favor the larger; the old method still took 18.2 times the work at them,
-/// against a limit of 11.9, and fails. The answer is that of the nest written in the reverse
+/// against the limit of 11.9 of 2026-11-10, and fails. The answer is that of the nest written in the reverse
 /// order: every name is still unbounded and the scope is not empty.
 #[test]
 fn excluded_sides_cost_the_names_they_change() {

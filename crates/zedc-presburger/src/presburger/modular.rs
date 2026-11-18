@@ -619,7 +619,7 @@ fn rewrite_lin_full(
 // Complexity tradeoff: a conjunction `C && (D1 || ... || Dk)` is not split into `k` solves of
 // `C && Di` (R5-CLAUDE-5): that split cost O(k |C|) when no part had a point, which made
 // `l01_39_reduced_product::named_test::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth`
-// take 17.1 times the work for 8 times the depth (limit 14.2). It was added for the `fails`
+// take 17.1 times the work for 8 times the depth (limit 14.2 of 2026-11-11). It was added for the `fails`
 // questions of pairs (I3.2), which the zero witness and the batched remainder check now answer
 // near-linearly (`one_scope::the_fails_questions_of_pairs_scale`,
 // `pncx_probe::pncx_pairs_scale`, `pncx_probe::pncx_disj_scale` pass without it). What is

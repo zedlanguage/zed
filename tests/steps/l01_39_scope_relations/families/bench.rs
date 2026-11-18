@@ -114,7 +114,7 @@ fn coordmix_slopes_scales() {
 
 /// About `k^1.2` to `k^1.8` from `k = 8` to 128 on main; with the threshold aggregate's
 /// upper disjunctions (LAZY-hub-unsolved), about `k^1.2` to `k^1.4`, 15.6 times the work from
-/// `k = 16` to 128 against the limit 15.4. Each of the `k` tests took one constraint on two
+/// `k = 16` to 128 against the limit 15.4 of 2026-11-12. Each of the `k` tests took one constraint on two
 /// names out of a block of near `k` such constraints, and the work after it read every
 /// conjunct of that block: the names of each (`Scope::due`) and a search through it
 /// (`Blocks::peel`). Now the names of a block and its constraints on two names are counted as
