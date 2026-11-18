@@ -2174,6 +2174,40 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             }
             ca
         }
+        // A case a merge-push run drew (2026-11-18, seed not kept): inhabited by [1, 0, 0, 1],
+        // yet `escape::decide` answered Empty. The refused row through node 2 has atoms at
+        // places 1 to 4 and was read to its third; unit narrowing by the rows through nodes 5
+        // and 6 then cut it to one atom, read as exact. Dropping the row through node 0 or the
+        // one through node 1 (not both) leaves a case that failed alike.
+        {
+            let p = |cof: bool, mask: u8| Pred { cof, mask };
+            use TailRef::{Car, Node};
+            let fixed = ChainCase {
+                car_head: p(true, 0),
+                nodes: vec![
+                    (false, p(false, 1), Car),
+                    (false, p(true, 2), Node(0)),
+                    (false, p(true, 2), Node(1)),
+                    (false, p(true, 4), Node(2)),
+                    (false, p(true, 1), Car),
+                    (false, p(true, 0), Node(4)),
+                    (false, p(true, 1), Car),
+                    (true, p(true, 0), Car),
+                    (false, p(true, 4), Node(7)),
+                    (false, p(true, 0), Node(8)),
+                    (false, p(true, 0), Node(9)),
+                ],
+                pos: vec![(p(true, 0), Node(10))],
+                neg: vec![
+                    (p(true, 2), Node(0)),
+                    (p(true, 2), Node(1)),
+                    (p(true, 4), Node(2)),
+                    (p(true, 0), Node(5)),
+                    (p(true, 0), Node(6)),
+                ],
+            };
+            check_case(&fixed, "fixed");
+        }
         let mut chain_decided = 0usize;
         let mut chain_empty = 0usize;
         let mut chain_inhab = 0usize;

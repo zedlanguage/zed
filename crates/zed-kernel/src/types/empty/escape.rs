@@ -58,7 +58,9 @@
 //! place `ht(s_N) - ht(v) + 2` of each refused row `N` whose tail `s_N` lies below it (an Euler
 //! interval). The cons nodes are read from the highest down, so each row meets its places in
 //! increasing order, and a row stops being read once it is killed, once it has three atoms, or
-//! once the nodes left are past its length `l0`: each row takes at most four cells. At each
+//! once the nodes left are past its length `l0`: each row takes at most four cells there. A
+//! row with three atoms is read further only when the unit narrowing leaves it fewer than
+//! three (`read_on`), since an atom it has further on can save a list. At each
 //! node the cells are read from whichever side lists fewer: the rows still read below `v`
 //! (skipping pointers and a Fenwick count), or the places that can separate at `v`, from an
 //! index of the places by value (a cofinite head `int \ X` separates exactly the places whose
@@ -818,6 +820,24 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let mut e2 = true;
         let mut orig_live: Vec<(Row, Vec<(usize, Ints)>)> = Vec::new();
         let mut clauses_work: Vec<Vec<(usize, Ints)>> = Vec::new();
+        // For each clause, where its row's read stopped, when it stopped at the third atom
+        // (`take`) with places left: the node of the next place, that place, and the row's
+        // last place. Such a row may have more atoms, or a kill, further on, so its clause is
+        // stronger than the row written; the unit narrowing (U2) below could shrink it to one
+        // atom or none, read as exact: a wrong Empty (sweep_agreement r7, fixed case: a row
+        // read to x1, x2, x3 lost its atom at x4). So whenever U2 leaves such a clause fewer
+        // than three atoms, `read_on` reads its row further, to three atoms again, its end, or a
+        // kill. While places are left a clause holds three atoms, so it is no unit, U1 (which
+        // merges clauses of two) passes it by, and a clause of three at the fixed point turns
+        // every Empty into a refusal (`strengthened`).
+        // Complexity tradeoff: each cell of a row is read at most once, and only for rows the
+        // narrowing reaches: `O(cells read)` set operations more, none on the families where no
+        // unit narrows a cut row. Naive alternatives: read every cut row to its end, 28.7 times
+        // the instructions per 8 times the size on `r6three` and `r6repeat3` (`Θ(n^2)`: n rows
+        // of n places); or answer no Empty once a row is cut, which lost the decided cases of
+        // `r8_light_edges_and_wide_rows_agree_with_the_witness` and
+        // `r9_bmm_encoding_decides_as_the_boolean_product`.
+        let mut more: Vec<Option<(usize, usize, usize)>> = Vec::new();
         for mut r in roots {
             if let Some(j) = r.kill {
                 hints.push((r.row, ChainHint::Miss(j - 1)));
@@ -828,6 +848,14 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 e2 = false;
             }
             r.atoms.sort_unstable_by_key(|a| a.0);
+            // The read covers places 2 ..= min(target_len, ht + 1) (`walk`); place `j` is at
+            // the node `j - 2` links after the row's tail.
+            let last = target_len.min(nodes[r.s].ht + 1);
+            let read = r.atoms.last().map_or(0, |a| a.0);
+            more.push(
+                (r.atoms.len() >= 3 && read < last)
+                    .then(|| (anc.at(r.s, read - 1, nodes), read + 1, last)),
+            );
             orig_live.push((r.row, r.atoms.clone()));
             clauses_work.push(r.atoms);
         }
@@ -841,7 +869,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         // laminar 2-SAT (Aspvall, Plass and Tarjan 1979). U1 is Boolean distributivity,
         // `\bigwedge_q ((j_1, A) \lor (j_2, B_q)) \iff (j_1, A) \lor (j_2, \bigcap_q B_q)`, and U2
         // is unit propagation: a clause of one atom `(j, U)` narrows `pl[j]` to `pl[j] \cap U`.
-        // Both rewrite the clauses into an equivalent set, so every clause stays exact: no clause
+        // Both rewrite the clauses into an equivalent set, so every clause stays exact (each row is
+        // read whole, above): no clause
         // is cut to its first two atoms (round 3 of XR-group-order-5 cut them, which made a unit
         // or an emptied clause prove nothing), and a clause of three or more atoms is narrowed
         // like the others; only the 2-SAT below reads the first two atoms of a clause still wide
@@ -902,13 +931,18 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                     if !merged_new.is_empty() {
                         changed = true;
                         let mut next_work = Vec::with_capacity(clauses_work.len());
-                        for (idx, item) in clauses_work.into_iter().enumerate() {
+                        let mut next_more = Vec::with_capacity(clauses_work.len());
+                        for (idx, (item, m)) in clauses_work.into_iter().zip(more).enumerate() {
                             if !drop_mask[idx] {
                                 next_work.push(item);
+                                next_more.push(m);
                             }
                         }
+                        // Merged from clauses of two atoms, each read whole.
+                        next_more.extend(merged_new.iter().map(|_| None));
                         next_work.extend(merged_new);
                         clauses_work = next_work;
+                        more = next_more;
                     }
                 }
 
@@ -941,7 +975,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                     pl[j] = new_pl.clone();
                 }
                 let mut next_work = Vec::with_capacity(clauses_work.len());
-                for atoms in clauses_work {
+                let mut next_more = Vec::with_capacity(clauses_work.len());
+                for (atoms, mut rest) in clauses_work.into_iter().zip(more) {
                     let mut killed = false;
                     let mut updated: Vec<(usize, Ints)> = Vec::with_capacity(atoms.len());
                     for (j, a) in atoms {
@@ -970,15 +1005,17 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                             updated.push((j, a));
                         }
                     }
-                    if killed {
+                    if killed || read_on(&mut updated, &mut rest, nodes, &pl, counts) {
                         continue;
                     }
                     if updated.is_empty() {
                         return (exact && !strengthened).then_some(ChainPlan::Empty);
                     }
                     next_work.push(updated);
+                    next_more.push(rest);
                 }
                 clauses_work = next_work;
+                more = next_more;
             }
             if strengthened || !clauses_work.iter().any(|a| a.len() > 2) {
                 break;
@@ -993,6 +1030,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             for atoms in &mut clauses_work {
                 atoms.truncate(2);
             }
+            // No Empty follows from here on, so no row is read further.
+            more.iter_mut().for_each(|m| *m = None);
         }
 
         let wide = strengthened;
@@ -1258,6 +1297,40 @@ fn take(r: &mut Root, j: usize, pl: &[Ints], hv: &Ints, counts: &mut (usize, usi
     }
     r.atoms.push((j, pl[j].minus(hv)));
     r.atoms.len() >= 3
+}
+
+/// Reads a row further from where `rest` says its read stopped (the node of the next place,
+/// that place, the row's last place), as `take` reads, until `atoms` holds three again or the
+/// row ends; `rest` is then `None` at the end. Whether a kill was met: the row then holds no
+/// list of the places' sets and drops out.
+fn read_on(
+    atoms: &mut Vec<(usize, Ints)>,
+    rest: &mut Option<(usize, usize, usize)>,
+    nodes: &[Node],
+    pl: &[Ints],
+    counts: &mut (usize, usize),
+) -> bool {
+    while atoms.len() < 3 {
+        let Some((v, j, last)) = *rest else {
+            break;
+        };
+        *rest = (j < last).then(|| {
+            let next = nodes[v]
+                .next
+                .expect("a cons node below the row's last place");
+            (next, j + 1, last)
+        });
+        counts.0 += 1;
+        let hv = &nodes[v].head;
+        if pl[j].subset(hv) {
+            counts.1 += 1;
+        } else if pl[j].disjoint(hv) {
+            return true;
+        } else {
+            atoms.push((j, pl[j].minus(hv)));
+        }
+    }
+    false
 }
 
 /// The positions `0 .. n` still in a list: the next one at or after a position, by pointers that
