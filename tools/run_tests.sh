@@ -817,8 +817,12 @@ split="
 # load 19 to 60, nearly all of it round 1 (PERF-preimage-seed-7776978274844439420-round1), so a
 # piece started at low load ran past its limit of 20 s once the load rose
 # (TEST-lib-pieces-near-limit, 2026-11-17).
+# zed_kernel ran past its limit of 22 s at load 35 (merge of FAIL-overlaps-order-ddc1ec274,
+# 2026-11-18); without benchmarks it took 12.5 to 14.7 s whole at load 39, and 3.9 s without its
+# random test of the boolean equation solver, which takes about 10 s alone and is a piece of its own.
 alone="
   zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
+  zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
@@ -883,7 +887,15 @@ step_pieces() {
           done
           echo "$n $c $p$skips"
           ;;
-        zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
+        zed_kernel-*)
+          skips=
+          for t in $alone; do
+            [ "${t%%::*}" = "$g" ] || continue
+            echo "$t crates/zed-kernel $p --exact ${t#*::}"
+            skips="$skips --skip ${t#*::}"
+          done
+          echo "$n crates/zed-kernel $p$skips"
+          ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;
         zed_cert-*) echo "$n crates/zed-cert $p" ;;
