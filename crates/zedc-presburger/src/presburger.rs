@@ -32441,7 +32441,7 @@ mod unit_interval_tests {
         ];
         let x = Atom::Sym("x".into());
         assert_eq!(
-            core_classes_checked("order3", &core, &x, &[own.clone()]),
+            core_classes_checked("order3", &core, &x, std::slice::from_ref(&own)),
             Some((0, 1))
         );
         // Before the fix the classes read each class's own rows beside the rows its shadow
