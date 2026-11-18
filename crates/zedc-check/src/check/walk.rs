@@ -2976,6 +2976,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if taken.len() < 2 {
             return;
         }
+        self.errors_cut(before);
         let found = self.errors.split_off(before);
         let mut parts = Vec::with_capacity(taken.len());
         // The notes of the errors grouped that lie outside their argument, as the step
@@ -3106,6 +3107,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if parts.is_empty() {
             return;
         }
+        self.errors_cut(before);
         let found = self.errors.split_off(before);
         let inside = |e: &Found| {
             let k = parts.partition_point(|(p, _, _)| p.start <= e.span.start);
@@ -6774,6 +6776,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if dropped.is_empty() {
             return;
         }
+        self.errors_cut(before);
         let found = self.errors.split_off(before);
         let mut ranges = dropped.into_iter().peekable();
         for (i, e) in found.into_iter().enumerate() {
@@ -13588,6 +13591,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut got = self.meet(n, &on, binds, span);
                 let used = self.open.last().is_some_and(|o| o.used);
                 if used && !got.is_empty() {
+                    self.errors_cut(errors);
                     self.errors.truncate(errors);
                     self.need_passed.truncate(passing);
                     let o = self.open.last_mut().expect("the need just pushed");
@@ -20889,7 +20893,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter_map(|(j, a)| Some((a.as_ref()?.at?, j)))
             .collect();
         ats.sort_unstable_by_key(|&(s, _)| (s.start, s.end));
-        let carried = self.shared_settled(w, t, (&found, &ats), carried, &mut up);
+        let mut carried = self.shared_settled(w, t, (&found, &ats), carried, &mut up);
         // For each argument whose carried fixes are all of rejections of literals that
         // nothing gives a carrier, the types they give it ([`Self::carried_lent`]); `None` for
         // an argument with another fix. A type is lent only to an argument other than the one
@@ -20899,16 +20903,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // each fix rides up every level, as in `((1 + 1) / 1 + 1) / 1 …`, so making the table
         // at every construct cost O(n^2) in all (ratio 10.69 at 8n against 8.01 before the
         // table, l01_26a an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time);
-        // the test of one argument is O(carries). Still quadratic: a nest in which another
-        // argument carries a fix at each level beside the one the fixes ride up in, as
-        // `((1 + 1 / 1) / 1 + 1 / 1) / 1 …` at an f64 parameter: 8.54 at 8n (sizes 500 and
-        // 4000), against 9.08 with the table made at every construct (2026-11-18).
+        // the test of one argument is O(carries). Where another argument carries a fix at each
+        // level beside the one the fixes ride up in, as `((1 + 1 / 1) / 1 + 1 / 1) / 1 …` at
+        // an f64 parameter, the table is made at every level, and was quadratic there too:
+        // 8.54 at 8n (sizes 500 and 4000). [`Self::unfixed_only`] now reads a fix once when it
+        // joins or moves, not at each level ([`LitsRead`]): 8.00 (PERF-carried-lent-two-args,
+        // l01_26a an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier_in_linear_time).
         let one_arg = carried
             .iter()
             .all(|(i, _)| Some(*i) == carried.first().map(|c| c.0));
         let mut lent: Vec<Option<Vec<Ty>>> = vec![Some(Vec::new()); w.args.len()];
-        for (i, c) in carried.iter().filter(|_| !one_arg) {
-            match self.unfixed_only(&c.fixes) {
+        for (i, c) in carried.iter_mut().filter(|_| !one_arg) {
+            match self.unfixed_only(&mut c.fixes) {
                 true => lent[*i].iter_mut().for_each(|tys| tys.push(c.ty.clone())),
                 false => lent[*i] = None,
             }
@@ -20951,12 +20957,64 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether each fix of `fixes` is one of a rejection of literals that nothing gives a
-    /// carrier (row UnfixedDecimal), still found. O(fixes log errors).
-    fn unfixed_only(&self, fixes: &Fixes) -> bool {
-        (fixes.list.iter()).all(|p| {
+    /// carrier (row UnfixedDecimal), still found. Reads only the fixes not read before
+    /// ([`LitsRead`]), and the one found not to be, unless an error was removed since that one
+    /// of the fixes read could be: an error's row never changes, an error removed is not found
+    /// again with that id once the removal ends, and a real error's id is not given to another
+    /// (a trial's errors take the next id, [`Self::next_found`], and are undone after it).
+    ///
+    /// Complexity tradeoff: the naive way reads every fix of the carry, O(fixes log errors),
+    /// and in a nest of n operations each fix rides up every level, so O(n^2 log n) in all
+    /// where the table of [`Self::pending_settled`] is made at every level, as in
+    /// `((1 + 1 / 1) / 1 + 1 / 1) / 1 …` (8.54 at 8n). Here a fix is read when it joins a
+    /// carry or moves in it, O(log fixes) times by union by size ([`Fixes::join`]), each
+    /// O(log errors), plus one binary search over the removals ([`Self::kept_since`]) per
+    /// call. Still the naive cost: where an error of an id up to the largest read is removed
+    /// between two calls, every fix is read again (a removal of the errors of a construct
+    /// being checked, as a trial's undo, takes only ids larger than those of the fixes
+    /// carried into it).
+    fn unfixed_only(&self, fixes: &mut Fixes) -> bool {
+        let good = |p: &Pending| {
             self.found(p.id)
                 .is_some_and(|e| e.row == Some(Row::UnfixedDecimal))
-        })
+        };
+        let (list, read) = (&fixes.list, &mut fixes.read);
+        match read.ok {
+            Some((at, max)) if self.kept_since(at, max) => read.ok = Some((self.cut_seq, max)),
+            Some(_) => {
+                *read = LitsRead {
+                    fresh: (0..list.len()).collect(),
+                    ..LitsRead::default()
+                }
+            }
+            None => {}
+        }
+        if let Some(b) = read.bad {
+            if !good(&list[b]) {
+                return false;
+            }
+            read.bad = None;
+            read.fresh.push(b);
+        }
+        // A fix of an error not found yet, whose id the next error takes, is not kept as read.
+        let mut later = Vec::new();
+        while let Some(j) = read.fresh.pop() {
+            let Some(p) = list.get(j) else { continue };
+            if !good(p) {
+                read.fresh.append(&mut later);
+                read.bad = Some(j);
+                return false;
+            }
+            match p.id < self.next_found {
+                true => {
+                    let max = read.ok.map_or(p.id, |(_, m)| m.max(p.id));
+                    read.ok = Some((self.cut_seq, max));
+                }
+                false => later.push(j),
+            }
+        }
+        read.fresh = later;
+        true
     }
 
     /// The type the construct `w` has with the fixes `c` carried into its argument `i`, which
@@ -21280,6 +21338,31 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn found(&self, id: usize) -> Option<&Found> {
         let i = self.errors.binary_search_by_key(&id, |e| e.id).ok()?;
         Some(&self.errors[i])
+    }
+
+    /// Records that the errors from the place `from` on are about to be removed, some perhaps
+    /// to be pushed again, for [`Self::kept_since`]: the errors keep the order of their ids,
+    /// so the smallest id removed is that of the error at `from`. Nothing where there is none.
+    /// Amortized O(1): each removal enters [`Self::cuts`] once and leaves it at most once.
+    pub(super) fn errors_cut(&mut self, from: usize) {
+        let Some(e) = self.errors.get(from) else {
+            return;
+        };
+        let id = e.id;
+        self.cut_seq += 1;
+        while self.cuts.last().is_some_and(|&(_, i)| i >= id) {
+            self.cuts.pop();
+        }
+        self.cuts.push((self.cut_seq, id));
+    }
+
+    /// Whether no error of an id up to `max` was removed after the removal numbered `at`
+    /// ([`Self::cut_seq`]). The smallest id removed after it is that of the first entry of
+    /// [`Self::cuts`] after it: an entry left out has a later one of no greater id. One binary
+    /// search, O(log removals).
+    fn kept_since(&self, at: u64, max: usize) -> bool {
+        let k = self.cuts.partition_point(|&(s, _)| s <= at);
+        self.cuts.get(k).is_none_or(|&(_, id)| id > max)
     }
 
     /// Drops the fix `p` from the menu of its rejection, which the errors hold in the order

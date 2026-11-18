@@ -251,6 +251,26 @@ fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier() {
     assert_eq!(value(&nested_argument(3), "y"), "4.0");
 }
 
+/// `((1 + 1 / 1) / 1 + 1 / 1) / 1 …`, `n` levels at an `f64` parameter, each on a line of its
+/// own: as [`nested_argument`], with a division of literals in the second operand of each `+`
+/// as well, so two arguments of each `+` carry fixes.
+pub(super) fn nested_argument_two_sides(n: usize) -> String {
+    format!(
+        "f(x: f64) = x;\ny = f(x: {}1{});\n",
+        "(".repeat(n),
+        "\n  + 1 / 1) / 1".repeat(n)
+    )
+}
+
+#[test]
+fn an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier() {
+    assert_eq!(
+        type_errors(&nested_argument_two_sides(3)),
+        Vec::<String>::new()
+    );
+    assert_eq!(value(&nested_argument_two_sides(3), "y"), "4.0");
+}
+
 /// `(…((base)^-1)^-1 …)^-1`, `n` powers nested `n` deep, each level on a line of its own.
 fn nest_powers(base: &str, n: usize) -> String {
     format!("{}({base}){}", "(".repeat(n), ")\n^-1".repeat(n))
@@ -464,4 +484,38 @@ fn a_power_at_rat_with_a_long_or_deep_exponent_checks() {
         assert!(!type_errors(&shape(3, "0.5")).is_empty());
         assert_eq!(type_errors(&shape(3, "2")), Vec::<String>::new());
     }
+}
+
+/// A call whose fixes are carried in its first argument alone, `1 / 2`, beside a second argument
+/// that `f`'s `T` does not take with it, or takes only at another carrier: the table of types
+/// lent across arguments is not made then (04555ad8b), and the verdicts are those of 76705768a,
+/// which made it at every call (checked with the table made always, PERF-carried-lent-two-args).
+/// Beside `"s"` the call is rejected and the literal offered `f64`, the type the call gives it;
+/// beside `1.0f64` the literal takes `f64` and the program runs; beside `#a` it is offered `rat`,
+/// and the program with `1r` checks.
+#[test]
+fn carries_in_one_argument_beside_one_that_fails_keep_their_verdicts() {
+    let decl = "f(positional p0, positional p1) = p0 < p1;\n";
+    let check = |call: &str| -> Vec<String> {
+        let errors = type_errors(&format!("{decl}{call}\n"));
+        (errors.iter())
+            .map(|e| e.lines().next().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(
+        check("y = f(1 / 2, \"s\");"),
+        [
+            "`f` does not take (f64, \"s\"): no arrow of `f` takes these types. Try \
+             `f(String(1 / 2), \"s\")` instead. [f(1 / 2, \"s\")]",
+            "Nothing gives the literal `1` a carrier. Try `y = f(1.0f64 / 2, \"s\")` instead.",
+        ]
+    );
+    let src = format!("{decl}y = f(1 / 2, 1.0f64);\n");
+    assert_eq!(type_errors(&src), Vec::<String>::new());
+    assert_eq!(value(&src, "y"), "true");
+    assert_eq!(
+        check("y = f(1 / 2, #a);"),
+        ["Nothing gives the literal `1` a carrier. Try `y = f(1r / 2, #a)` instead."]
+    );
+    assert_eq!(check("y = f(1r / 2, #a);"), Vec::<String>::new());
 }

@@ -932,6 +932,27 @@ struct Carry {
 struct Fixes {
     list: Vec<Pending>,
     named: HashMap<usize, usize>,
+    /// What [`Ck::unfixed_only`] has read of `list`.
+    read: LitsRead,
+}
+
+/// What [`Ck::unfixed_only`] has read of the fixes of a [`Fixes`], by their places in its
+/// list: each place is in `fresh`, is `bad`, or is among those `ok` covers. A fix is read
+/// when it joins or moves, not again at each construct it rides up through (row
+/// PERF-carried-lent-two-args).
+#[derive(Clone, Default)]
+struct LitsRead {
+    /// The places of fixes not read since they joined or moved; a place past the end is
+    /// skipped, and one may stand twice.
+    fresh: Vec<usize>,
+    /// The place of a fix read and found not to be one of a rejection of literals that nothing
+    /// gives a carrier (row UnfixedDecimal).
+    bad: Option<usize>,
+    /// Every other fix was one of such a rejection, still found, after the removal of errors
+    /// numbered `.0` ([`Ck::cut_seq`]); `.1` is the largest of their [`Found::id`]s, so that
+    /// this holds while no error of an id up to it is removed ([`Ck::kept_since`]). `None`
+    /// where no fix was read so.
+    ok: Option<(u64, usize)>,
 }
 
 impl Fixes {
@@ -940,6 +961,10 @@ impl Fixes {
         Fixes {
             list: vec![p],
             named: HashMap::new(),
+            read: LitsRead {
+                fresh: vec![0],
+                ..LitsRead::default()
+            },
         }
     }
 
@@ -950,12 +975,18 @@ impl Fixes {
         let named = (list.iter().enumerate())
             .map(|(i, p)| (p.serial, i))
             .collect();
-        Fixes { list, named }
+        Fixes {
+            list,
+            named,
+            read: self.read.clone(),
+        }
     }
 
     /// `other` added to these. The fixes of the smaller one move, and only their marks, so
     /// that a fix moves O(log fixes) times however the groups join (union by size; Hopcroft
-    /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973).
+    /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973). What was read of
+    /// each is kept: the moved fixes' places shift, and the bound on the ids read is the
+    /// earlier removal and the larger id of the two.
     fn join(&mut self, mut other: Fixes) {
         if self.list.len() < other.list.len() {
             std::mem::swap(self, &mut other);
@@ -963,23 +994,42 @@ impl Fixes {
         let at = self.list.len();
         (self.named).extend(other.named.into_iter().map(|(s, i)| (s, at + i)));
         self.list.append(&mut other.list);
+        let (read, o) = (&mut self.read, other.read);
+        read.fresh.extend(o.fresh.into_iter().map(|j| at + j));
+        match (read.bad, o.bad) {
+            (None, Some(b)) => read.bad = Some(at + b),
+            (Some(_), Some(b)) => read.fresh.push(at + b),
+            _ => {}
+        }
+        read.ok = match (read.ok, o.ok) {
+            (Some((a, m)), Some((b, n))) => Some((a.min(b), m.max(n))),
+            (x, None) | (None, x) => x,
+        };
     }
 
     /// Adds the fix `p`, which a name carried.
     fn push_named(&mut self, p: Pending) {
         self.named.insert(p.serial, self.list.len());
+        self.read.fresh.push(self.list.len());
         self.list.push(p);
     }
 
     /// The fix of the serial `serial` a name carried, taken out, O(1): the last fix takes its
-    /// place, and its mark moves with it.
+    /// place, and its mark moves with it; it is read again there.
     fn take(&mut self, serial: usize) -> Option<Pending> {
         let i = self.named.remove(&serial)?;
         let p = self.list.swap_remove(i);
-        if let Some(moved) = self.list.get(i)
-            && let Some(at) = self.named.get_mut(&moved.serial)
-        {
-            *at = i;
+        let last = self.list.len();
+        self.read.bad = match self.read.bad {
+            Some(b) if b == i => None,
+            Some(b) if b == last => Some(i),
+            b => b,
+        };
+        if let Some(moved) = self.list.get(i) {
+            self.read.fresh.push(i);
+            if let Some(at) = self.named.get_mut(&moved.serial) {
+                *at = i;
+            }
         }
         Some(p)
     }
@@ -1815,6 +1865,13 @@ struct Ck<'t, 'a> {
     call_spans: Option<Rc<[Option<Span>]>>,
     /// The [`Found::id`] the next error gets.
     next_found: usize,
+    /// How many times errors were removed ([`Self::errors_cut`]).
+    cut_seq: u64,
+    /// The removals of errors, each as its number in [`Self::cut_seq`] and the smallest
+    /// [`Found::id`] it removed, only those whose id is smaller than that of every later
+    /// removal: the smallest id removed since a given removal is that of the first entry after
+    /// it ([`Self::kept_since`]).
+    cuts: Vec<(u64, usize)>,
     /// Whether the repair being tried ([`Ck::tried`]) makes an operation on literals alone
     /// whose value has no type until it meets a carrier, as `1 ^ 2.5`: the trial does not see
     /// where the value goes, so it fails.
@@ -2498,6 +2555,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrow_names: HashSet::new(),
             call_spans: None,
             next_found: 0,
+            cut_seq: 0,
+            cuts: Vec::new(),
             opened: false,
             failed: HashSet::new(),
             trying: false,
@@ -5517,6 +5576,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         reported.dedup();
         self.info.reported_literals = reported;
         let text = self.t.text;
+        self.errors_cut(0);
         let mut errors: Vec<Error> = (std::mem::take(&mut self.errors).into_iter())
             .map(|f| f.written(text))
             .collect();
@@ -7426,6 +7486,7 @@ impl Ck<'_, '_> {
             let w = self.log.pop().expect("longer than the mark");
             self.set(w);
         }
+        self.errors_cut(m.errors);
         self.errors.truncate(m.errors);
         self.top_parts.truncate(m.top_parts);
         self.alike_calls.truncate(m.alike_calls);

@@ -17,9 +17,10 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 use super::super::scaling::{
     calls, calls_of_divisions, calls_with_divisor, decimals, deep_exponent, divisor_chain,
     flat_exponent, half_of_a_power, if_of_a_power, int_pair_of_a_power, long,
-    main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument, nested_divisions,
-    nested_quotients, pair_of_a_power, pairs, power_divisor, powers_at_the_top, powers_in_a_body,
-    powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions, tuple_of_a_power,
+    main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument, nested_argument_two_sides,
+    nested_divisions, nested_quotients, pair_of_a_power, pairs, power_divisor, powers_at_the_top,
+    powers_in_a_body, powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions,
+    tuple_of_a_power,
 };
 
 /// Besides its ratio: `n` follows for `n` literals, and the elaboration of the checked unit
@@ -362,6 +363,25 @@ fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_
             },
         );
     });
+}
+
+/// As [`an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`],
+/// with a division of literals in the second operand of each `+` too, so that two arguments of
+/// each `+` carry fixes and the table of types lent across arguments (`Ck::pending_settled`)
+/// is made at every level (row PERF-carried-lent-two-args).
+///
+/// Besides its ratio: no type error. Small instance:
+/// `scaling::an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier`.
+#[test]
+fn an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier_in_linear_time()
+{
+    accepted_scales(
+        "checking an argument of n nested divisions of literals, with a division of literals \
+         beside each, at an f64 parameter",
+        500,
+        1,
+        nested_argument_two_sides,
+    );
 }
 
 /// Checks `make(m)` at `n` and `8n`, accepted with no error, as work of order `n^order`.
