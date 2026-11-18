@@ -168,6 +168,50 @@ fn the_residue_length_agrees_with_a_scan() {
     assert_eq!(residue_agrees(&[(2, 1)], &[(3, 0)]), (true, true));
 }
 
+/// `meeting_pair` finds a pair exactly when some two classes share a length, by the Chinese
+/// remainder theorem, and the pair it gives does share one. The classes are drawn with periods
+/// of many common divisors (PERF-residue-length-cost).
+#[test]
+fn a_meeting_pair_agrees_with_every_pair() {
+    let mut seed = crate::seed::seed("a_meeting_pair_agrees_with_every_pair");
+    let mut next = |below: u64| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) % below
+    };
+    let periods = [1, 2, 3, 4, 6, 8, 9, 12, 18, 24, 36, 5, 10, 30];
+    let meet = |a: (u64, u64), b: (u64, u64)| {
+        let g = gcd(a.0, b.0);
+        a.1 % g == b.1 % g
+    };
+    let mut found = 0;
+    for _ in 0..20_000 {
+        let k = next(7);
+        let classes: Vec<(u64, u64)> = (0..k)
+            .map(|_| {
+                let p = periods[next(periods.len() as u64) as usize];
+                (p, next(p))
+            })
+            .collect();
+        let any = (0..classes.len()).any(|i| (0..i).any(|j| meet(classes[i], classes[j])));
+        match meeting_pair(&classes) {
+            Some((i, j)) => {
+                assert!(
+                    i != j && meet(classes[i], classes[j]),
+                    "{classes:?}: {i} {j}"
+                );
+                found += 1;
+            }
+            None => assert!(!any, "{classes:?}: a pair meets"),
+        }
+    }
+    // Built: a disjoint cover modulo 6, and one where 3 modulo 4 meets 3 modulo 6 at 3.
+    assert_eq!(meeting_pair(&[(2, 0), (6, 1), (6, 3), (6, 5)]), None);
+    assert!(meeting_pair(&[(2, 0), (6, 1), (6, 3), (12, 5), (4, 3)]).is_some());
+    eprintln!("{found} of 20000 drawn lists had a meeting pair");
+}
+
 /// Lengths 1 and 0 modulo 3 and 1 and 2 modulo 6 taken out leave those 5 modulo 6: the shares
 /// sum to one and (3, 1) meets (6, 1), so the rule finds a length. The choice by the expected
 /// number of classes alone ties on 2 and on 3, takes 0 on both, and the length 0 is in (3, 0)

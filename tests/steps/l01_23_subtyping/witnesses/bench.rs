@@ -185,3 +185,129 @@ fn a_list_of_cycles_less_many_disjoint_classes_scales() {
         || run(&large),
     );
 }
+
+/// The lists of the classes 1 to `p - 1` modulo `p`, one for each rotation of a single cycle of
+/// `p` definitions: rotation `i` reaches the empty list after the lengths `l` with
+/// `i + l = 0` modulo `p`. So the `p - 1` classes cost `p` definitions in all.
+fn rotations(p: usize) -> Vec<Type> {
+    let defs = (0..p)
+        .map(|i| {
+            let cons = Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(Type::int()), Expr::Ref((i + 1) % p, vec![])],
+            );
+            Def {
+                name: format!("R{i}"),
+                params: vec![],
+                body: match i {
+                    0 => Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
+                    _ => cons,
+                },
+            }
+        })
+        .collect();
+    let mut all = Group::new(defs).unwrap().instance(vec![]);
+    all.remove(0);
+    all
+}
+
+#[test]
+fn a_list_less_the_rotations_of_two_cycles_scales() {
+    // PERF-residue-length-cost, family 3: the rule refuses, since the shares of the classes 1
+    // to `p - 1` modulo `p` and 1 to `2p - 1` modulo `2p` sum past one. The length is then
+    // chosen on every prime and checked; the lengths 0 modulo `2p` are left.
+    let (a, b) = (521, 4169);
+    let list = |p: usize| {
+        let less = rotations(p).into_iter().chain(rotations(2 * p));
+        &period(1, 0) - &Type::union_all(less)
+    };
+    let (small, large) = (list(a), list(b));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        &format!(
+            "a list less the classes of the rotations of cycles of {a} and {b} definitions and \
+             twice those, {:.2} times",
+            b as f64 / a as f64
+        ),
+        1,
+        || run(&small),
+        || run(&large),
+    );
+}
+
+#[test]
+fn a_list_less_the_rotations_of_two_prime_cycles_scales() {
+    // PERF-residue-length-cost, family 2: `residue_classes` splits on residues and runs
+    // `shares` again on each split. The primes `p < q < 2p` give the classes 1 to `p - 1`
+    // modulo `p` and half the classes 1 to `q - 1` modulo `q`, all rotations, so `p + q`
+    // definitions; lengths 0 modulo `pq` are left.
+    let ((p, q), (r, s)) = ((257, 263), (2053, 2063));
+    let list = |p: usize, q: usize| {
+        let less = rotations(p)
+            .into_iter()
+            .chain(rotations(q).into_iter().step_by(2));
+        &period(1, 0) - &Type::union_all(less)
+    };
+    let (small, large) = (list(p, q), list(r, s));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        &format!(
+            "a list less the rotations of cycles of the primes {p} and {q}, and {r} and {s}: \
+             {:.2} times the definitions",
+            (r + s) as f64 / (p + q) as f64
+        ),
+        1,
+        || run(&small),
+        || run(&large),
+    );
+}
+
+#[test]
+fn a_list_less_the_rotations_of_one_cycle_scales() {
+    // PERF-residue-length-cost, family 1 (XR-wlen round 1, Gemini seat): a list less the
+    // classes 1 to `m - 1` modulo `m`, which are the rotations of one cycle and so cost `m`
+    // definitions, and less 0 and `m` modulo `3m` and `m` and `2m` modulo `6m`. The shares sum
+    // to one and two of the classes meet (`m` modulo `3m` and modulo `6m`), so the lengths `5m`
+    // modulo `6m` are left. The search for a meeting pair tried each pair of the `m + 3`
+    // classes: 63.4 times the pair checks per 8 times the classes in the harness.
+    let (a, b) = (521, 4169);
+    let list = |m: usize| {
+        let less = rotations(m).into_iter().chain([
+            period(3 * m, 0),
+            period(3 * m, m),
+            period(6 * m, m),
+            period(6 * m, 2 * m),
+        ]);
+        &period(1, 0) - &Type::union_all(less)
+    };
+    let (small, large) = (list(a), list(b));
+    let run = |t: &Type| {
+        Type::forget_emptiness();
+        assert_eq!(
+            Type::tuple(vec![t.clone(), Type::int()]).verdict(),
+            Verdict::Inhabited
+        );
+    };
+    scaling::compare(
+        &format!(
+            "a list less the classes of the rotations of a cycle of {a} and {b} definitions, \
+             {:.2} times",
+            b as f64 / a as f64
+        ),
+        1,
+        || run(&small),
+        || run(&large),
+    );
+}

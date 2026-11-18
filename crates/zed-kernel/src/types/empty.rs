@@ -2062,12 +2062,11 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
             .product()
     };
     // The terms of `g`, each with its sign (`true` for `+`); a class no length of `all` is in
-    // adds 0 and is left out.
-    let mut terms: Vec<(bool, Fine)> = none
+    // adds 0 and is left out. `kept` holds the whole class of each term.
+    let (kept, mut terms): (Vec<_>, Vec<(bool, Fine)>) = none
         .iter()
-        .filter_map(|&c| fine(c))
-        .map(|c| (true, c))
-        .collect();
+        .filter_map(|&c| Some((c, (true, fine(c)?))))
+        .unzip();
     // The choices on every prime, and the sum of the classes' shares of them, stopped once it is
     // past them: each share is at least 1 over its period, and `n` shares summing to at most one
     // have periods summing to at least `n²` (Cauchy and Schwarz), so at most the square root of
@@ -2084,11 +2083,17 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
         }
     }
     if sum == whole {
-        // Two classes that meet, and their meet, which `all` meets by the proof above. A class
-        // listed twice meets itself. Complexity tradeoff: otherwise every pair is tried for the
-        // one whose meet is largest, O(classes² × primes of a period); the shares sum to one, so
-        // the classes number at most the square root of the definitions `n`, and the work is
-        // O(n × primes of a period), within O(n log n). Any pair would do for the proof; the largest lowers the estimate most.
+        // Two classes that meet, and their meet, which `all` meets by the proof above. Any
+        // meeting pair will do for the proof. Two classes that both meet `all` meet each other
+        // exactly when their fine parts do: on a prime where one of them is no finer than `all`,
+        // its residue is the one `all` fixes, and the other's residue agrees with that one too.
+        // So `meeting_pair` runs on the whole classes, at the cost given there.
+        //
+        // Complexity tradeoff (PERF-residue-length-cost): this used to try every pair for the
+        // one whose meet is largest, O(classes² × primes of a period). Its comment claimed that
+        // the classes number at most the square root of the definitions. That is false: the
+        // rotations of one cycle give about `n` classes from `n` definitions. The largest meet
+        // only lowered the estimate more and was not needed for the proof.
         let meet = |a: &[(usize, u64, u64)], b: &[(usize, u64, u64)]| {
             let (mut i, mut j, mut out) = (0, 0, Vec::new());
             while i < a.len() || j < b.len() {
@@ -2118,26 +2123,8 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
             }
             Some(out)
         };
-        let mut sorted: Vec<&Fine> = terms.iter().map(|(_, c)| c).collect();
-        sorted.sort();
-        let pair = match sorted.windows(2).find(|w| w[0] == w[1]) {
-            Some(w) => Some(w[0].clone()),
-            None => {
-                let mut best: Option<(u128, Fine)> = None;
-                for (i, a) in sorted.iter().enumerate() {
-                    for b in &sorted[..i] {
-                        if let Some(m) = meet(a, b) {
-                            let r = ratio(&m, 0);
-                            if best.as_ref().is_none_or(|(least, _)| r < *least) {
-                                best = Some((r, m));
-                            }
-                        }
-                    }
-                }
-                best.map(|(_, m)| m)
-            }
-        };
-        if let Some(m) = pair {
+        if let Some((i, j)) = meeting_pair(&kept) {
+            let m = meet(&terms[i].1, &terms[j].1).expect("the whole classes meet");
             terms.push((false, m));
         }
     }
@@ -2279,20 +2266,75 @@ fn shares(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
     if sum > denom {
         return Lengths::Refused;
     }
-    let disjoint = meeting.iter().enumerate().all(|(i, a)| {
-        meeting[..i].iter().all(|b| {
-            let g = gcd(a.0, b.0);
-            a.1 % g != b.1 % g
-        })
-    });
-    if disjoint {
-        Lengths::None
-    } else {
-        Lengths::Some
+    match meeting_pair(&meeting) {
+        None => Lengths::None,
+        Some(_) => Lengths::Some,
     }
 }
 fn gcd(a: u64, b: u64) -> u64 {
     if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// Two classes `(period, residue)` of `classes` that share a length, by their indices, or
+/// `None` when they are pairwise disjoint. The classes `(p, r)` and `(q, s)` meet exactly when
+/// `r = s` modulo `gcd(p, q)` (Chinese remainder theorem).
+///
+/// Complexity tradeoff (PERF-residue-length-cost): the naive search tries every pair, which is
+/// O(k²) gcds for `k` classes. That is quadratic in the definitions, because the rotations of
+/// one cycle of `p` definitions give `p - 1` classes modulo `p`. Measured through types, it took
+/// 12.3 times the instructions per 8 times the definitions
+/// (`a_list_less_the_rotations_of_one_cycle_scales`). This search groups the classes by period:
+/// - In one group, two classes meet exactly when their residues are equal: one hash lookup per
+///   class.
+/// - For two groups of periods `p` and `q`, with `g = gcd(p, q)`, each group's residues modulo
+///   `g` go into a hash map. Each map is built once per group and distinct `g` and kept, and the
+///   smaller of the two maps is looked up in the larger.
+///
+/// The cost, for the callers' classes: every class meets the lengths of `all`, the shares sum
+/// to at most one, and all classes of one period `p` have one share `1 / ρ_p` with
+/// `ρ_p <= p`. Every distinct period is the period of its own cycle of `p` definitions, so with
+/// `a_p` classes of period `p`, `Σ a_p / ρ_p <= 1` and `Σ ρ_p <= Σ p <= n`. Then:
+/// - The number of groups is `D <= sqrt(2n)` (distinct periods summing to at most `n`), so
+///   there are at most `n` pairs of groups.
+/// - The lookups cost `Σ_{p<q} min(a_p, a_q) <= Σ sqrt(a_p a_q) <= (Σ sqrt(a_p))² / 2`. By
+///   Cauchy and Schwarz that is at most `(Σ a_p / ρ_p)(Σ ρ_p) / 2 <= n / 2`.
+/// - The maps cost `a_p` for each distinct `g` dividing `p`, so `Σ a_p d(p) <= n · max d(p)`,
+///   where `d` counts divisors. `d(p) = p^O(1 / log log p)` is not bounded by a power of `log n`.
+///   It is at most 240 for `p` below 10^6.
+///
+/// So the cost is O(n · max d(p)) hash operations in place of O(n²).
+fn meeting_pair(classes: &[(u64, u64)]) -> Option<(usize, usize)> {
+    let mut groups: Vec<(u64, HashMap<u64, usize>)> = Vec::new();
+    let mut slot: HashMap<u64, usize> = HashMap::new();
+    for (i, &(p, r)) in classes.iter().enumerate() {
+        let s = *slot.entry(p).or_insert_with(|| {
+            groups.push((p, HashMap::new()));
+            groups.len() - 1
+        });
+        match groups[s].1.entry(r % p) {
+            Entry::Occupied(e) => return Some((*e.get(), i)),
+            Entry::Vacant(e) => {
+                e.insert(i);
+            }
+        }
+    }
+    // Each group's residues modulo a divisor `g` of its period, with a class of each.
+    let mut down: HashMap<(usize, u64), HashMap<u64, usize>> = HashMap::new();
+    for a in 0..groups.len() {
+        for b in 0..a {
+            let g = gcd(groups[a].0, groups[b].0);
+            for s in [a, b] {
+                down.entry((s, g))
+                    .or_insert_with(|| (groups[s].1.iter()).map(|(&r, &i)| (r % g, i)).collect());
+            }
+            let (x, y) = (&down[&(a, g)], &down[&(b, g)]);
+            let (small, large) = if x.len() <= y.len() { (x, y) } else { (y, x) };
+            if let Some((r, &i)) = small.iter().find(|(r, _)| large.contains_key(r)) {
+                return Some((i, large[r]));
+            }
+        }
+    }
+    None
 }
 
 /// The inverse of `a` modulo `m`, by the extended Euclidean algorithm: `None` when `a` and `m`
@@ -2361,7 +2403,8 @@ fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
     // formulas against brute force, both ways);
     // COMPLEXITY.md K34. Used: O(classes × primes of a period) divisions of numbers of at most
     // the digits of the lcm and O(classes × primes of a period²) small operations, plus
-    // O(classes² × primes of a period) for the meeting pair when the shares sum to exactly one;
+    // O(n · max d(p)) hash operations for the meeting pair when the shares sum to exactly one
+    // (`meeting_pair`, with the proof; it was O(classes²));
     // the check `fits` takes one remainder of the length per class, the same order. When the
     // rule finds a length and every class is charged its period in definitions `n`, this is
     // O(n log n) operations on words of log n bits: classes whose shares sum to at most one
@@ -2372,8 +2415,13 @@ fn residue_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> Option<BigUint> {
     // rotations of one cycle, which share its definitions: about n/4 rotations of one cycle of
     // period n/2 beside cycles of about sqrt(n) distinct periods near sqrt(n) give about n^1.5
     // word operations here, and the rule itself (`residue_classes`, `shares`) factors and sums
-    // every class again on each branch of a split. Neither is measured; the bound and the fix
-    // are PERF-residue-length-cost. The length is a `BigUint`, never walked.
+    // every class again on each branch of a split. Measured through types
+    // (PERF-residue-length-cost, `witnesses/bench.rs`), with rotations of cycles at 8 times the
+    // definitions: a meeting pair among about `n` rotations was 12.3 times the instructions
+    // with the old all-pairs search and is 8.42 times with `meeting_pair` (load 32). A split
+    // by `residue_classes` on two prime cycles is 8.05 times (load 25), and the refused rule
+    // on two cycles is 8.20 times (load 29). The word-operation bound for the rotations is not
+    // proved, so these ratios are measurements only. The length is a `BigUint`, never walked.
     Some(greedy_length(&classes, none)).filter(fits)
 }
 
