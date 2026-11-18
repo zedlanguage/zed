@@ -16806,10 +16806,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error_with(span, message, notes);
         }
         // A class, at any depth, needs data of each of its values. A row that holds no class
-        // or unknown is not entered; nor is one whose classes were checked as data when it
-        // was made, since a class keeps a data need once it has one and a second is nothing.
-        // Of such a row only its unknown is reported, once, as each would be at this span.
-        // A row shared by many paths is visited once. Nor is a row or shape that an earlier
+        // or unknown is not entered. A row shared by many paths is visited once. Nor is a row
+        // or shape that an earlier
         // check entered ([`Self::data_checked`]) entered again: of the rows `p(s, v) = (s, (s,
         // v))` called `n` times nests, the `k`th call's need meets the `k` rows of `s`, which
         // the call before entered, so the calls cost `O(n)` in all and not `O(n^2)`.
@@ -16823,16 +16821,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut stack = vec![t];
         while let Some(t) = stack.pop() {
             for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.node())) {
-                match r.data() {
-                    true if r.dynamic() => self.any(what, span),
-                    true => {}
-                    false if self.data_checked.contains(&r.node()) => {}
-                    false => {
-                        if !r.dynamic() {
-                            entered.push(r.node());
-                        }
-                        stack.extend(r.iter());
+                if !self.data_checked.contains(&r.node()) {
+                    if !r.dynamic() {
+                        entered.push(r.node());
                     }
+                    stack.extend(r.iter());
                 }
             }
             for v in &t.vars {
@@ -25761,7 +25754,7 @@ fn out_of_bounds(r: Ty, key: &Ty, sig: &Sig) -> Ty {
 fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
     enum Step<'e> {
         Visit(Ty, &'e Expr),
-        Make(bool, usize),
+        Make(usize),
     }
     let mut todo = vec![Step::Visit(t.clone(), e)];
     let mut out: Vec<Ty> = Vec::new();
@@ -25779,18 +25772,15 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
                             out.push(t);
                             continue;
                         }
-                        todo.push(Step::Make(row.data(), cs.len()));
+                        todo.push(Step::Make(cs.len()));
                         todo.extend(cs.into_iter().zip(es).rev().map(|(c, e)| Step::Visit(c, e)));
                     }
                     _ => out.push(t),
                 }
             }
-            Step::Make(data, n) => {
+            Step::Make(n) => {
                 let cs = out.split_off(out.len() - n);
-                out.push(Ty::of_row(match data {
-                    true => ty::Row::of_data(cs),
-                    false => ty::Row::new(cs),
-                }));
+                out.push(Ty::of_row(ty::Row::new(cs)));
             }
         }
     }

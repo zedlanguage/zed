@@ -1085,3 +1085,61 @@ fn the_delegating_orders_and_texts_of_types_agree_with_what_they_delegate_to() {
         assert_eq!(r.to_string(), r.message(), "{r:?}");
     }
 }
+
+/// `rewrite_levels` at a recursive node (TEST-types-unreached-paths-3): the list `L = () |
+/// (int, L)` made by a `level` that gives every node back is `L` itself, alone and as a
+/// component; made by a `level` that turns `int` into `String`, it is none, since its
+/// unfolding holds `int`, a node `level` changes; and a node a previous call made into
+/// another, kept in `memo`, makes it none even where `level` gives every node back.
+#[test]
+fn a_recursive_node_is_rewritten_only_where_level_keeps_its_unfolding() {
+    use rec::{Def, Expr, Group};
+    let def = Def {
+        name: "RewrittenList".to_string(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])]),
+        ]),
+    };
+    let list = Group::new(vec![def])
+        .expect("a recursive group")
+        .instance(vec![])
+        .remove(0);
+    assert!(matches!(&*list.0, Node::Rec(_)), "{list:?} is recursive");
+    let pair = Type::tuple(vec![list.clone(), Type::string()]);
+    let mut memo = HashMap::new();
+    let mut same = |n: &Type| Some(n.clone());
+    assert_eq!(
+        list.rewrite_levels(&mut memo, &mut same),
+        Some(list.clone())
+    );
+    // The second time, the list and its unfolding are in `memo` as kept.
+    assert_eq!(
+        pair.rewrite_levels(&mut memo, &mut same),
+        Some(pair.clone())
+    );
+    let mut to_string = |n: &Type| {
+        Some(if *n == Type::int() {
+            Type::string()
+        } else {
+            n.clone()
+        })
+    };
+    assert_eq!(
+        list.rewrite_levels(&mut HashMap::new(), &mut to_string),
+        None
+    );
+    assert_eq!(
+        pair.rewrite_levels(&mut HashMap::new(), &mut to_string),
+        None
+    );
+    // `int` made into `String` by an earlier call: the list is none, though `level` now
+    // gives every node back.
+    let mut memo = HashMap::new();
+    assert_eq!(
+        Type::int().rewrite_levels(&mut memo, &mut to_string),
+        Some(Type::string())
+    );
+    assert_eq!(list.rewrite_levels(&mut memo, &mut same), None);
+}

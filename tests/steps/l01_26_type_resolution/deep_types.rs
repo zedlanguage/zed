@@ -215,6 +215,21 @@ fn types_built_apart_compare_by_their_contents() {
     assert_ne!(Ty::tuple(vec![z()]), Ty::tuple(vec![z(), z()]));
 }
 
+/// Types deep enough that `==` uses up the stack its recursion may take (128 KiB) and compares
+/// the rest from a list of its own (ROW-eq-deep): the components that hold no row, payload
+/// shape or function are compared at once and the others put on the list, and a difference at
+/// the bottom, met when the list is read, makes the types unequal (row
+/// TEST-types-unreached-paths-3; the benchmarks go deeper but only time it).
+#[test]
+fn types_deeper_than_the_recursion_s_stack_compare_by_their_contents() {
+    let y = || Ty::set(Type::atom("y"));
+    let n = 5_000;
+    assert_eq!(tuples(n, z()), tuples(n, z()));
+    assert_ne!(tuples(n, z()), tuples(n, y()));
+    assert_eq!(levels(n, z()), levels(n, z()));
+    assert_ne!(levels(n, z()), levels(n, y()));
+}
+
 #[test]
 fn a_value_shared_on_one_side_and_built_twice_on_the_other_compares_each_copy() {
     // `(x, x)` against `(x1, x2)`: once `x` is found equal to `x1`, the comparison must still

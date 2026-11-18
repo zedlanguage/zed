@@ -489,8 +489,8 @@ impl<T: Clone> Clone for MembersIter<'_, T> {
 // Complexity tradeoff (COMPLEXITY.md row F89): naive version, a row held by value and walked
 // at each level, O(n^2) for a tuple nested n deep (three walks of the whole type per level
 // in `Ck::finish`). Used: one shared node holding what the row holds at any depth (its
-// variables merged small into large, whether a tuple expression checked it, its first
-// unchecked function), copied in O(1), each read O(1). Tradeoffs: those facts are made with
+// variables merged small into large, its first unchecked function), copied in O(1), each
+// read O(1). Tradeoffs: those facts are made with
 // every row, read or not, and a reference count per row.
 #[derive(Clone)]
 pub struct Row(Arc<RowData>);
@@ -508,20 +508,12 @@ struct RowData {
     dynamic: bool,
     /// The first function, not a family, that a component holds at any depth.
     held: Option<Arc<Sig>>,
-    /// The first function, not a family, that a component holds at any depth and no tuple
-    /// expression has checked as data: none for a row that [`Self::checked`] says was.
+    /// The first function, not a family, that a component holds at any depth and no error
+    /// has reported yet ([`Ty::unchecked_function`]).
     unchecked: Option<Arc<Sig>>,
     /// Whether no component holds a type variable, a function or a payload, at any depth:
     /// replacing variables keeps the row whole.
     fixed: bool,
-    /// Whether every type variable it holds outside functions, at any depth, was checked as
-    /// data when the row was made: set only for the row of a tuple expression, whose
-    /// components are each checked as data first.
-    data: bool,
-    /// Whether this row, or the row it was made from by replacing variables, is the row of a
-    /// tuple expression: a function it held then was reported at that tuple, and a function
-    /// that took the place of a variable since is reported by the variable's data need.
-    checked: bool,
     /// The variables a component holds at any depth, inside functions and payloads too, as
     /// bits ([`VarBits`]): so replacing variables keeps whole a row that holds none of them.
     bits: VarBits,
@@ -561,24 +553,11 @@ struct RowData {
 }
 
 impl Row {
-    /// The row of `cs`.
+    /// The row of `cs`. (A row of a tuple expression checked as data, `Row::of_data`, was
+    /// made only by `retyped` in zedc-check from a row that already was one, so after
+    /// FIX-functions-in-tuples (26f8d7d35) took it out of the tuple step no input made one;
+    /// it and the facts it set were removed by TEST-types-unreached-paths-3.)
     pub fn new(cs: Vec<Ty>) -> Row {
-        Row::made(cs, false, false)
-    }
-
-    /// The row of `cs`, each checked as data.
-    pub fn of_data(cs: Vec<Ty>) -> Row {
-        Row::made(cs, true, true)
-    }
-
-    /// The row of `cs`, which took the place of this row's components when variables were
-    /// replaced: its variables' data needs are met anew, and a function it holds is reported
-    /// as this row's would be.
-    fn replaced(&self, cs: Vec<Ty>) -> Row {
-        Row::made(cs, false, self.0.checked)
-    }
-
-    fn made(cs: Vec<Ty>, data: bool, checked: bool) -> Row {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one(&cs);
         // Each component's rows and payload shapes keep what they hold at any depth, so this
@@ -586,10 +565,7 @@ impl Row {
         let open = cs.iter().any(|c| !c.closed());
         let dynamic = cs.iter().any(Ty::holds_unknown);
         let held = cs.iter().find_map(|c| c.held_function().cloned());
-        let unchecked = match checked {
-            true => None,
-            false => cs.iter().find_map(|c| c.unchecked_function().cloned()),
-        };
+        let unchecked = cs.iter().find_map(|c| c.unchecked_function().cloned());
         let mut bits = VarBits::default();
         cs.iter().for_each(|c| bits.ty(c));
         let fixed = cs.iter().all(|c| {
@@ -651,8 +627,6 @@ impl Row {
             held,
             unchecked,
             fixed,
-            data,
-            checked,
             bits,
             kernel,
             exact,
@@ -691,12 +665,6 @@ impl Row {
     /// Whether a component holds the unknown, outside functions, at any depth, in payloads too.
     pub fn dynamic(&self) -> bool {
         self.0.dynamic
-    }
-
-    /// Whether every type variable it holds outside functions was checked as data when the
-    /// row was made.
-    pub fn data(&self) -> bool {
-        self.0.data
     }
 
     /// Its address: the same for each path to a shared row, so a walk visits it once.
@@ -2336,7 +2304,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 out.tys.push(w.made_ty(made));
             }
             Step::RowDone(r) => {
-                let made = r.replaced(out.tys.split_off(out.tys.len() - r.len()));
+                let made = Row::new(out.tys.split_off(out.tys.len() - r.len()));
                 w.made_row(r, &made);
                 out.rows.push(made);
             }
@@ -3549,14 +3517,16 @@ impl Sig {
                 continue;
             }
             // Each family nested in an entry has its memo now, so these reads do not walk.
+            // Only families get here: each caller asks a family ([`Sig::holds_fn_as_data`]
+            // under `self.data`, the two reads of [`Ty`] after `filter(|s| s.data)`), and
+            // `families` pushes only families. A function's results are not held, so for a
+            // function this would be the empty `Entries` (row TEST-types-unreached-paths-3).
+            debug_assert!(s.data, "the entries of a function are not asked for");
             let results = || s.arrows.iter().map(|a| &a.result);
-            let e = match s.data {
-                true => Entries {
-                    held: results().find_map(|t| t.held_function().cloned()),
-                    unchecked: results().find_map(|t| t.unchecked_function().cloned()),
-                    wide: results().find_map(Ty::held_wide),
-                },
-                false => Entries::default(),
+            let e = Entries {
+                held: results().find_map(|t| t.held_function().cloned()),
+                unchecked: results().find_map(|t| t.unchecked_function().cloned()),
+                wide: results().find_map(Ty::held_wide),
             };
             let _ = s.facts.5.set(e);
         }
@@ -10110,7 +10080,7 @@ impl<'m, 's> Comparing<'m, 's> {
                 .map(|p| {
                     let mut comps: Vec<Ty> = r.iter().cloned().collect();
                     comps[j] = r[j].of_piece(p);
-                    r.replaced(comps)
+                    Row::new(comps)
                 })
                 .collect()
         };
@@ -19870,6 +19840,232 @@ mod tests {
 
     mod bench;
 
+    /// The parameter `x` of type `t`, for the signatures of the tests below.
+    fn one_of(t: Ty, result: Ty) -> Sig {
+        let x = SParam {
+            name: "x".into(),
+            positional: true,
+            default: None,
+            range: None,
+        };
+        Sig::one(vec![x], vec![t], result)
+    }
+
+    /// A signature whose parameter holds `_` beside `int` is printed with `_` alone, as the
+    /// reader reads that union and as a type holding it is printed ([`Absorb::sig`]; row
+    /// TEST-types-unreached-paths-3).
+    #[test]
+    fn a_signature_whose_parameter_holds_the_unknown_beside_int_prints_the_unknown_alone() {
+        let int = || Ty::carrier(Carrier::Int);
+        let s = one_of(int().union(&Ty::dynamic()), int());
+        let plain = one_of(Ty::dynamic(), int());
+        assert_eq!(s.to_string(), plain.to_string());
+        assert_eq!(s.to_string(), "_ -> int");
+        // As a type, the same text.
+        assert_eq!(Ty::func(Arc::new(s)).to_string(), "_ -> int");
+        // A variable beside `_` is absorbed too; the walk keeps it until the union is made.
+        let t = Ty::tuple(vec![Ty::dynamic().union(&Ty::var("T".into())), int()]);
+        assert_eq!(t.to_string(), "(_, int)");
+    }
+
+    /// An atom whose payload is not known (`None`) equals only an atom whose payload is not
+    /// known either, and a union in which one member's payload is not known has a payload not
+    /// known, in either order ([`join_payloads`]; row TEST-types-unreached-paths-3).
+    #[test]
+    fn a_payload_not_known_equals_only_one_not_known_and_stays_not_known_in_a_union() {
+        let atom = |shapes: Option<Vec<Shape>>| {
+            let mut t = Ty::set(KType::atom_with("a", &KType::top()));
+            t.payloads.insert("a".into(), shapes);
+            t
+        };
+        let int = Shape::new(vec![Ty::carrier(Carrier::Int)], BTreeMap::new());
+        let (unknown, known) = (atom(None), atom(Some(vec![int])));
+        assert_eq!(unknown, atom(None));
+        assert_ne!(unknown, known);
+        assert_ne!(known, unknown);
+        for u in [
+            unknown.union(&known),
+            known.union(&unknown),
+            Ty::union_all([&known, &unknown, &known]),
+            Ty::union_all([&unknown, &known]),
+        ] {
+            assert_eq!(u.payloads.get("a"), Some(&None), "{u:?}");
+            assert_eq!(u, unknown, "{u:?}");
+        }
+    }
+
+    /// A row that holds a variable, shared by a parameter and the result, is walked once by
+    /// the answer to whether a signature holds a variable outside its own; that answer is the
+    /// same as for the row built twice ([`fns_outside`]; row TEST-types-unreached-paths-3).
+    #[test]
+    fn a_row_shared_by_a_parameter_and_the_result_is_read_once_for_the_variables_it_holds() {
+        let v = |x: &str| Ty::var(x.into());
+        let shared = Ty::tuple(vec![v("T")]);
+        let mut payload = Ty::set(KType::atom_with("a", &KType::top()));
+        let shape = Shape::new(vec![v("T")], BTreeMap::new());
+        payload.payloads.insert("a".into(), Some(vec![shape]));
+        for (p, r) in [
+            (shared.clone(), shared.clone()),
+            (payload.clone(), payload.clone()),
+            (Ty::tuple(vec![v("T")]), Ty::tuple(vec![v("T")])),
+        ] {
+            let built = |own: &[&str]| {
+                let mut s = one_of(p.clone(), r.clone());
+                s.own = own.iter().map(|&o| o.into()).collect();
+                s.note_held();
+                s
+            };
+            assert!(built(&["T"]).holds_only_own_variables(), "{p:?}");
+            assert!(!built(&[]).holds_only_own_variables(), "{p:?}");
+            assert!(!built(&["T"]).holds_no_variable(), "{p:?}");
+        }
+    }
+
+    /// A variable that a function and a function in its result each own is their own in both:
+    /// a binding of it outside is hidden in each, the count of functions hiding it going to
+    /// two and back, and only the other variable is replaced (row
+    /// TEST-types-unreached-paths-3: `Replace::made_held`).
+    #[test]
+    fn a_variable_owned_by_two_nested_functions_is_replaced_in_neither() {
+        let v = |x: &str| Ty::var(x.into());
+        let make = |u: Ty| {
+            let own = || ["T".into()].into_iter().collect();
+            let mut inner = one_of(v("T"), Ty::tuple(vec![v("T"), u.clone()]));
+            inner.own = own();
+            inner.note_held();
+            let mut outer = one_of(Ty::tuple(vec![v("T"), u]), Ty::func(Arc::new(inner)));
+            outer.own = own();
+            outer.note_held();
+            Ty::func(Arc::new(outer))
+        };
+        let mut b = Binds::new();
+        b.insert("T".into(), Ty::carrier(Carrier::Int));
+        b.insert("U".into(), Ty::carrier(Carrier::Bool));
+        let want = make(Ty::carrier(Carrier::Bool));
+        assert_eq!(make(v("U")).replace(&b), want);
+        // `subst` replaces outside functions only, so it keeps the function whole.
+        assert_eq!(make(v("U")).subst(&b), make(v("U")));
+    }
+
+    /// Replacing each function a type holds outside functions keeps whole each tuple and
+    /// payload that holds none, beside one that holds a function (row
+    /// TEST-types-unreached-paths-3: `HeldFns::known_row`, `HeldFns::known_shape`).
+    #[test]
+    fn replacing_held_functions_keeps_the_parts_that_hold_none() {
+        let int = || Ty::carrier(Carrier::Int);
+        let f = |r: Ty| Ty::func(Arc::new(one_of(int(), r)));
+        let payload = |t: Ty| {
+            let mut a = Ty::set(KType::atom_with("a", &KType::top()));
+            let shape = Shape::new(vec![t], BTreeMap::new());
+            a.payloads.insert("a".into(), Some(vec![shape]));
+            a
+        };
+        let make = |r: Ty| {
+            Ty::union_all([
+                &Ty::tuple(vec![f(r.clone())]),
+                &Ty::tuple(vec![int(), int()]),
+                &payload(f(r)),
+                &payload(Ty::set(KType::atom("z"))),
+            ])
+        };
+        let to_bool = Arc::new(one_of(int(), Ty::carrier(Carrier::Bool)));
+        let made = make(int()).with_held_fns(|_| to_bool.clone());
+        assert_eq!(made, make(Ty::carrier(Carrier::Bool)));
+        assert_eq!(make(int()).with_held_fns(|s| s.clone()), make(int()));
+        // A variable beside them is kept: the walk binds none.
+        let t = || Ty::var("T".into());
+        let made = make(int()).union(&t()).with_held_fns(|_| to_bool.clone());
+        assert_eq!(made, make(Ty::carrier(Carrier::Bool)).union(&t()));
+    }
+
+    /// A range on a component of a tuple parameter is printed in the component's place
+    /// (RANGE-key-component-print), with a name or without, and a parameter whose type is not
+    /// one row of as many components prints its type alone (row TEST-types-unreached-paths-3:
+    /// `ParamRange::parts`).
+    #[test]
+    fn a_range_on_a_component_of_a_tuple_parameter_prints_in_its_place() {
+        let int = || Ty::carrier(Carrier::Int);
+        let range = ParamRange::Parts(Arc::from([
+            Some(WrittenRange::new(Some(Value::Int(0)), Some(Value::Int(1)))),
+            None,
+        ]));
+        assert_eq!(range.int(), None);
+        let with = |positional: bool, t: Ty| {
+            let x = SParam {
+                name: "x".into(),
+                positional,
+                default: None,
+                range: Some(range.clone()),
+            };
+            Sig::one(vec![x], vec![t], int())
+        };
+        let pair = || Ty::tuple(vec![int(), int()]);
+        assert_eq!(
+            with(false, pair()).to_string(),
+            "(x: (int[0..=1], int)) -> int"
+        );
+        assert_eq!(with(true, pair()).to_string(), "((int[0..=1], int)) -> int");
+        assert_eq!(with(false, int()).to_string(), "(x: int) -> int");
+    }
+
+    /// A family held in two entries of another, one node, is read once for what its entries
+    /// hold: its memo is filled at the first and found at the second (`Sig::entries`; row
+    /// TEST-types-unreached-paths-3). The outer family holds a function as data exactly when
+    /// the inner one does (DESIGN.md L1.17).
+    #[test]
+    fn a_family_held_in_two_entries_is_read_once_and_holds_what_it_holds() {
+        let int = || Ty::carrier(Carrier::Int);
+        let family = |arrows: Vec<(Ty, Ty)>| {
+            let mut s = one_of(int(), int());
+            s.arrows = (arrows.into_iter())
+                .map(|(k, v)| Arrow::exact(vec![k], v))
+                .collect();
+            s.data = true;
+            Arc::new(s)
+        };
+        let key = |n: &str| Ty::set(KType::atom(n));
+        for (leaf, holds) in [
+            (Ty::func(Arc::new(one_of(int(), int()))), true),
+            (int(), false),
+        ] {
+            let inner = Ty::func(family(vec![(key("k"), leaf)]));
+            let outer = family(vec![(key("a"), inner.clone()), (key("b"), inner)]);
+            assert_eq!(outer.holds_fn_as_data(), holds);
+        }
+    }
+
+    /// The hull of a function's result ints (row RANGE-result-hull, DESIGN.md L1.25): a
+    /// function fits where a function of results in a range is expected only if its own
+    /// results lie in that range, an open end of the expected range holding anything on its
+    /// side, and one with no hull, any int, only where none is expected (row
+    /// TEST-types-unreached-paths-3: [`WrittenRange::within`]).
+    #[test]
+    fn a_function_fits_where_its_result_range_lies_within_the_range_expected() {
+        let int = || Ty::carrier(Carrier::Int);
+        let with = |h: Option<(Option<i64>, Option<i64>)>| {
+            let mut s = one_of(int(), int());
+            s.hull = h.map(|(l, h)| WrittenRange::new(l.map(Value::Int), h.map(Value::Int)));
+            s
+        };
+        let r = |l: Option<i64>, h: Option<i64>| Some((l, h));
+        for (s, q, fits) in [
+            (r(Some(1), Some(5)), r(Some(0), Some(9)), true),
+            (r(Some(0), Some(10)), r(Some(0), Some(9)), false),
+            (r(Some(-1), Some(5)), r(Some(0), Some(9)), false),
+            (r(Some(1), Some(5)), r(None, Some(9)), true),
+            (r(None, Some(5)), r(Some(0), Some(9)), false),
+            (r(None, Some(5)), r(None, Some(9)), true),
+            (r(Some(3), None), r(Some(0), None), true),
+            (r(Some(3), None), r(Some(0), Some(9)), false),
+            (None, r(Some(0), Some(9)), false),
+            (r(Some(0), Some(9)), None, true),
+            (None, None, true),
+        ] {
+            let (s, q) = (with(s), with(q));
+            assert_eq!(fits_sig(&s, &q), fits, "{s} in {q}");
+        }
+    }
+
     /// The intersection of the results of the arrows that cover an expected arrow leaves out a
     /// result that holds `_`, which is every value, as the meet of types does (A92); every
     /// result holding `_` gives every value (FAIL-kernel-print-seed-12530893063770583521).
@@ -19917,6 +20113,10 @@ mod tests {
         assert_eq!(b.pop(), Some(3));
         assert!(!b.contains(&3) && b == a && hash(&b) == hash(&a));
         assert!(b.insert_new(3));
+        // A retain that keeps every member leaves the list as it was; one that drops a
+        // member makes a new list.
+        b.retain(|_| true);
+        assert_eq!(b.to_vec(), [1, 2, 3]);
         b.retain(|&x| x != 1);
         assert_eq!(b.to_vec(), [2, 3]);
         assert!(!b.contains(&1) && b.insert_new(1));
@@ -19924,6 +20124,10 @@ mod tests {
         assert_eq!(b.iter().rev().copied().collect::<Vec<_>>(), [1, 3, 2]);
         while b.pop().is_some() {}
         assert!(b.is_empty() && b == Members::new() && hash(&b) == hash(&Members::new()));
+        // An empty list is not equal to one with members, either way round; Debug text lists
+        // the members.
+        assert!(b != a && a != b);
+        assert_eq!(format!("{a:?}"), "[1, 2]");
         assert_eq!(a.clone().into_vec(), [1, 2]);
         // A list that is a duplicate of a member at two places keeps both.
         let mut e: Members<u32> = vec![4, 4].into();

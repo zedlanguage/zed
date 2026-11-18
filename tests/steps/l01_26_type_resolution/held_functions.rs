@@ -448,6 +448,27 @@ fn a_function_in_nested_families_is_one_error_with_the_path_to_it() {
     }
 }
 
+/// One family held in two entries of another is read once: the memo of what its entries hold
+/// is filled at the first and found at the second ([`Sig::holds_fn_as_data`]; row
+/// TEST-types-unreached-paths-3). Holding a function, the outer family is not data and `==`
+/// on it is one error (DESIGN.md L1.17); holding an int, it is data.
+#[test]
+fn a_family_held_in_two_entries_of_another_is_data_exactly_when_its_entries_are() {
+    let held = |leaf: &str| {
+        compared(
+            &format!("{SCALE}t0 = {{ \"k\" -> {leaf} }};\nt1 = {{ \"a\" -> t0, \"b\" -> t0 }};\n"),
+            "t1",
+        )
+    };
+    let errors = type_errors(&held("scale"));
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(
+        errors[0].starts_with("Cannot compare a value that may hold a function: `t1 : "),
+        "{errors:#?}"
+    );
+    assert_eq!(type_errors(&held("1")), Vec::<String>::new());
+}
+
 /// Each use DESIGN.md L1.17 reserves for data rejects a family whose entries are functions:
 /// showing it, by interpolation or `String`, and `==` and `!=`. The family is the one of
 /// `function_in_family.rs`, whose entries are generic lambdas.

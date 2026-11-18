@@ -87,3 +87,46 @@ What this pass did:
 The rest of the list, most of it early returns in `ty.rs` and the zed-kernel functions
 `find_prefix_chains`, `check_chain_witness`, `tuples_on`, `morphisms`, `print.rs` and `bes.rs`,
 is row TEST-types-unreached-paths-3.
+
+Row TEST-types-unreached-paths-3 (2026-11-18), from a coverage run of the whole local suite at
+zed-impl 5461fb972: llvm-cov `show` on each of the 175 objects alone, as in the second pass;
+the 20 executable tests that fail under the coverage build (their timing limits) were left
+out. Line numbers below are those of `ty.rs` at 5461fb972. The zed-kernel half of the list is
+in `crates/zed-kernel/COMPLETENESS.md`, section TEST-types-unreached-paths-3. What this pass did:
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| `Row::of_data`, `Row::made`, `Row::replaced`, the `data` and `checked` fields of the row data and `data()` (570-572, 590) | | Removed: no caller in the workspace; `check/walk.rs` builds its rows with `Row::new` and reads `data_checked` |
+| `Sig::entries` on a function (3559) | | Every caller asks a family (`holds_fn_as_data` under `self.data`; the two reads of `Ty` after `filter(\|s\| s.data)`; `families` pushes only families). Now a `debug_assert!` |
+| `Sig::entries`, a family met a second time on the stack after its memo was filled (3544) | `ty.rs` `a_family_held_in_two_entries_is_read_once_and_holds_what_it_holds`; l01_26 `held_functions.rs` `a_family_held_in_two_entries_of_another_is_data_exactly_when_its_entries_are` | |
+| `Absorb::sig` and `write_parts` on a parameter that holds `_` beside `int` or a variable (3118-3123, 19015-19019) | `ty.rs` `a_signature_whose_parameter_holds_the_unknown_beside_int_prints_the_unknown_alone` | |
+| A payload not known (`None`) against a known one: `==`, `union`, `union_all` (1194-1195, 2073) | `ty.rs` `a_payload_not_known_equals_only_one_not_known_and_stays_not_known_in_a_union` | |
+| `holds_only_own_variables` over a row or payload shape shared by a parameter and the result (2464, 2469) | `ty.rs` `a_row_shared_by_a_parameter_and_the_result_is_read_once_for_the_variables_it_holds` | |
+| `Replace::made_held`: a variable owned by two nested functions, hidden twice and shown again (2812-2813) | `ty.rs` `a_variable_owned_by_two_nested_functions_is_replaced_in_neither` | |
+| `with_held_fns` keeping a tuple or payload that holds no function, and a variable beside them (3007, 3018) | `ty.rs` `replacing_held_functions_keeps_the_parts_that_hold_none` | |
+| `fits_sig` by the hull of the result ints, and `WrittenRange` ends (4537-4543, 13515-13519) | `ty.rs` `a_function_fits_where_its_result_range_lies_within_the_range_expected` | |
+| `ParamRange::int` on component ranges, `ParamRange::parts` named, positional and on a type that is not one row (4574, 4596, 4611) | `ty.rs` `a_range_on_a_component_of_a_tuple_parameter_prints_in_its_place` | |
+| `==` of rows, payload shapes and signatures past the recursion's stack (858, 957, 1051) | l01_26 `deep_types.rs` `types_deeper_than_the_recursion_s_stack_compare_by_their_contents` | |
+| `FoldForm::what` for a scan, by `++` on strings (4133) | l03_02 `types.rs` `a_refused_scan_is_named_as_a_scan` | |
+| `FoldForm::example` for a scan (4143) | | Guard: `scan_end` (`check/walk/fp_ops.rs`) refuses through `levels_of` every receiver that is not a family, with its own repair `[1, 2, 3].scan(...)`, and folds the receiver without its loose atoms, so the branch of `fold_level` that asks `example` is never reached by a scan; the same test checks that refusal |
+| `Debug` of `Binds` and three other `Debug` texts (1455, 1498, 1841-1843, 5678-5680) | | Text for developers; DESIGN.md gives none to test against |
+| `unreachable!` arms (2931-2932, 2973-2974) | | Guards: the match before them takes every case |
+| `binding` of the `Absorb` and `HeldFns` walkers (3061-3063, 3222-3224) | | Guards: `binding` is called only from `rebuild` on a type's variables and from `sig_parts`, which these walkers reach only through types whose variables they keep (both return `None`, which keeps the variable) |
+| `Absorb::remade` with nothing changed (3133) | | Guard (inferred): `may_absorb` is true only where the walk changes a part |
+| `Facts` `eq` and `hash` (3592-3600) | | Recorded in the second pass |
+| `FoldForm::Sum` in `fold_name` (4122) | | Guard: `reduce_by` is called only with `Reduce`, `Scan` and `Infix` (`check/walk.rs`) |
+| `errs_members` on an operand with no `#errs` (5351) | | Guard: its caller checks `holds_errs` first |
+| `Ty::verdict` with the unknown on the other side (12279) | | Reached only through `refused`, asked after `<:` failed, and every type fits `_` |
+| Test and print code of the `tests` module (22618 on) | | Run only when a test fails, or a benchmark |
+
+The rest, about 80 lines in `ty.rs` (in `Need::map_tys`, `site_mut`, `alike_at`, `Binds::remove`,
+`Cx::unread`, `Holder::member`, `Choices::apart`, `Rest`, `Near::value_class` (`f32`),
+`BoundNode::remove`, `Pins::own_shape`, `Comparing::fits`, `keep`, `components_in`, `replace`,
+`failing_component`, `PlaceFns::below`, `Forms`, `lone_row`, `refused_in_group`, `meet_rest`,
+`walk_held`, `contains_here`, `Pairs::tried`, `Cx::open`, `bound_in_fns`, `held_bounded`,
+`repeated`, `equal_fits`, `uncovered`, `binds_nothing`, `Narrowing::new`, `Approx::made`,
+`Domains`, `ArrowIndex::keep_missing`, the `Hash` of `Sig`, `Places::walk`, `Sig::digest`,
+`first_seen`, `NameDigests::hash_ty`, `Walk::plan`, `Shared::of`, `walk_parts`, the arrow fit
+loop at 20082, and `index_keeps`), listed with their lines in
+`/home/luke/Work/wt/coverage/TEST-types-unreached-paths-3-left.txt`, is row
+TEST-types-unreached-paths-4.

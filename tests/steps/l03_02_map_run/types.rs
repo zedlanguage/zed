@@ -122,6 +122,29 @@ fn foldl_and_foldr_take_a_start_value_and_a_function_of_two_parameters() {
     }
 }
 
+/// A scan by an operator whose fold is not built is named as a scan, with the function the
+/// program wrote (row TEST-types-unreached-paths-3: `FoldForm::what`). A scan of a value that
+/// is not a family is refused before the fold, by the words on one level (`levels_of`), with
+/// `[1, 2, 3].scan(...)` as the repair.
+#[test]
+fn a_refused_scan_is_named_as_a_scan() {
+    let e = refused("scan_concat", "${[\"a\", \"b\"].scan((++))}");
+    assert!(
+        e.contains("a scan `.scan((++))` of entries of type \"a\" | \"b\""),
+        "{e}"
+    );
+    assert!(e.contains("does not compile it yet"), "{e}");
+    let e = refused("scan_scalar", "${(3).scan((+))}");
+    assert!(
+        e.contains("`.scan` reads the entries of a family, and this value is 3"),
+        "{e}"
+    );
+    assert!(
+        e.contains("repair: call it on a family, as `[1, 2, 3].scan((+))`"),
+        "{e}"
+    );
+}
+
 #[test]
 fn a_range_runs_over_integers() {
     for (name, body, end, t, repair) in [
