@@ -6410,29 +6410,22 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 5 | PRES-cover-bench-many-calls, PRES-cover-bench-disjoint-reduced | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-many-calls, PRES-cover-bench-deep-paired | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-many-calls, PRES-cover-bench-unary-arms | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-bench-many-calls, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-many-calls, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-interval-strided-piece, PRES-cover-exact-limit-scaled | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/meter.rs` |
 | 5 | PRES-interval-strided-piece, PRES-cover-bench-disjoint-reduced | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-interval-strided-piece, PRES-cover-bench-deep-paired | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-interval-strided-piece, PRES-cover-bench-unary-arms | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-interval-strided-piece, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-interval-strided-piece, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-exact-limit-scaled, PRES-cover-bench-disjoint-reduced | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-exact-limit-scaled, PRES-cover-bench-deep-paired | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-exact-limit-scaled, PRES-cover-bench-unary-arms | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-exact-limit-scaled, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-exact-limit-scaled, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-disjoint-reduced, PRES-cover-bench-deep-paired | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-disjoint-reduced, PRES-cover-bench-unary-arms | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-bench-disjoint-reduced, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-disjoint-reduced, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-deep-paired, PRES-cover-bench-unary-arms | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-bench-deep-paired, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-deep-paired, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-bench-unary-arms, PRES-cover-unary-push-down | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 5 | PRES-cover-bench-unary-arms, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 5 | PRES-cover-unary-push-down, PRES-pugh-xr-rounds | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 6 | IF-union, NAN-cast-atoms | `crates/zedc-check/src/check/` |
 | 6 | SETTLE-rounds, NAN-cast-atoms | `crates/zed-kernel/src/types/bdd.rs` |
 | 7 | L2.5, L1.39g | `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec.rs` |
