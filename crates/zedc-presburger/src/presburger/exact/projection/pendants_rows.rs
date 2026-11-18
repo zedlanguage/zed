@@ -36,7 +36,7 @@ fn the_whole_pendants_part_is_one_projection() {
         limit: 10_000_000,
         solver: super::super::super::SOLVER,
     };
-    let parts = pugh(&rows, &Atom::Sym("w".into()), &mut w).unwrap();
+    let parts = pugh(&rows, &Atom::Sym("w".into()), &IntervalSet::top(), &mut w).unwrap();
     let (got, tails) = ranges(&parts, &mut w).unwrap();
     eprintln!("PARTS {parts:?} WORK {}", w.used);
     assert!(tails.is_empty());

@@ -1537,10 +1537,13 @@ fn repaired_unit() -> Formula {
 /// Every name of the repaired unit has its exact answer, the same by the default in-cell
 /// method as by recession rays (`Method::Rays`): `w` is {0} and `x` is [4, +inf). Measured
 /// 2026-11-18: the default (`Method::Pugh`) refused `w` and `x` (`Questions`) at the full
-/// 3.1M units of work with no question asked, since its cell projects the implicant with
+/// 3.1M units of work with no question asked, since its cell projected the implicant with
 /// every splinter of the dark shadow, though for `w` the line through the point alone,
-/// `w == 0`, covers every value. Rays answered `w` in 20k units and `x` in 110k units with 20
-/// questions. Red until the cell stops doing that (row PRES-cover-refusals-where-exact).
+/// `w == 0`, covers every value. Rays answered `w` in 20k units and `x` in 482k units with 20
+/// questions. Fixed by the line first in `cell` (`w`: 13k units) and by the goal of
+/// `projection::pugh`, which stops once the values the cell still needs are held (`x`: 180k
+/// units, no question, against 4.8M with every splinter; `y` 20k, `z` 20k; row
+/// PRES-cover-refusals-where-exact).
 #[test]
 fn every_name_of_the_repaired_unit_has_its_exact_answer() {
     let f = repaired_unit();

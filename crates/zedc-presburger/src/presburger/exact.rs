@@ -1629,7 +1629,7 @@ fn cell(
             // end are the cell's; those with holes and no end go to the cover, which joins
             // them with the other cells' (`projection::ranges`).
             let parts = if how == Method::Pugh {
-                projection::pugh(&rows, s, work)?
+                projection::pugh(&rows, s, &within.minus(&c), work)?
             } else {
                 vec![projection::liaproj(&rows, s, m, work)?]
             };

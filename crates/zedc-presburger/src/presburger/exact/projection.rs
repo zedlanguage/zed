@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::super::meter::{EXACT_QUESTIONS, LISTED, Work};
+use super::super::meter::{EXACT_QUESTIONS, LISTED, PIECE, Work};
 use super::super::{Atom, Con, Formula, Lin, Model, Refusal, Rel};
 
 /// The in-cell step for the values an implicant has without end.
@@ -55,9 +55,11 @@ thread_local! {
 
 /// The method in force: [`METHOD`] where set, else Pugh's. Model-based projection
 /// ([`Method::Liaproj`]) is not the default: on the 38 tests of
-/// PRES-cover-bench-regressions it passes 15 where Pugh passes 12, fails the same 22 for the
-/// same causes (questions, memory), and asks 6 questions where
-/// `an_unbounded_conjunction_needs_one_cell` allows 2 (2026-11-18).
+/// PRES-cover-bench-regressions it passed 15 where Pugh passed 12, failing the same 22 for the
+/// same causes (questions, memory); it asks 6 questions where
+/// `an_unbounded_conjunction_needs_one_cell` allows 2, and refuses the repaired unit's `y`
+/// with Growth (2026-11-18). Pugh with the cell's goal (PRES-pugh-goal) passes 14 of the 38
+/// and answers all four names of the repaired unit.
 pub fn method() -> Method {
     METHOD.get().unwrap_or(Method::Pugh)
 }
@@ -72,13 +74,39 @@ pub(super) struct Strided {
     pub(super) res: Int,
 }
 
-/// The exact projection of the conjunction `rows` onto `s`, as a union of stride sets; each
-/// row made is charged its terms and one more to `work`. `rows` hold no product atom.
-pub(super) fn pugh(rows: &[Con], s: &Atom, work: &mut Work) -> Result<Vec<Strided>, Refusal> {
+/// The exact projection of the conjunction `rows` onto `s`, as a union of stride sets, or as
+/// much of it as holds `goal`; each row made is charged its terms and one more to `work`.
+/// `rows` hold no product atom.
+///
+/// `goal` is the set of values the caller still needs: once the parts found so far hold all
+/// of it, no further dark shadow or splinter is projected, so the answer may then leave out
+/// values outside `goal`. The cell (`super::cell`) passes the hull of the solver's set less the
+/// values it already has. Proof that the cell loses no value: every value of the projection is
+/// the value of a point of `rows`, whose conjunction implies the formula (`super::implicant`;
+/// `super::joined` drops only rows that share no atom with `s` and hold at the point, which
+/// leaves the projection the same), so the value lies in the solver's set and in its hull;
+/// a value left out is then one the cell already holds. Every value given is still one of the
+/// projection, so the cell holds no value without a point. `IntervalSet::top()` asks for the
+/// whole projection.
+///
+/// Complexity tradeoff: naive version, every splinter of every dark shadow projected
+/// (Pugh 1992, "Projection"), exponential in the atoms removed: the repaired unit's `x`
+/// (`exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`) took 4.8M units
+/// against the limit of 3.1M, 1,562 parts. Used: an emptiness test of the values left before
+/// each step of the projection, O(1), and each part found taken from them ([`Held::push`]); the
+/// worst case is unchanged (a `goal` never held), and where it is held the splinters left are
+/// not made: that `x` takes 180k units, 55 parts (2026-11-18).
+pub(super) fn pugh(
+    rows: &[Con],
+    s: &Atom,
+    goal: &IntervalSet,
+    work: &mut Work,
+) -> Result<Vec<Strided>, Refusal> {
     let mut out = Vec::new();
     let mut fresh = 0u32;
     let mut at = Int::from(1);
     let mut from = Int::from(0);
+    let mut held = Held { left: goal.clone() };
     project(
         rows.to_vec(),
         s,
@@ -86,9 +114,62 @@ pub(super) fn pugh(rows: &[Con], s: &Atom, work: &mut Work) -> Result<Vec<Stride
         &mut from,
         work,
         &mut fresh,
+        &mut held,
         &mut out,
     )?;
     Ok(out)
+}
+
+/// The values of the goal of [`pugh`] that no part found so far holds.
+struct Held {
+    left: IntervalSet,
+}
+
+impl Held {
+    /// Whether every value of the goal is held.
+    fn done(&self) -> bool {
+        self.left.is_empty()
+    }
+
+    /// `p` added to `out`, and its values taken from those left: a part with no holes as one
+    /// range; a part with holes value by value, but only in the finite pieces of what is left
+    /// within its ends, each value taken charged [`LISTED`] and each piece read [`PIECE`].
+    ///
+    /// Complexity tradeoff: naive version, a part with holes taken from what is left by a set
+    /// of its values, which has no end for a part with no end. Used: each finite piece of
+    /// `left` within the part's ends read once, and each of the part's values in it taken once
+    /// (it is then gone from `left`), so the values listed over all parts are at most the
+    /// finite values of the goal, and each is a value outside the parts with no holes, which
+    /// [`ranges`] lists one by one from the same parts when it is not cut short. A piece of
+    /// `left` with no end inside a part with no end is skipped: the goal is then not held by
+    /// that part alone, and the projection goes on, as without the goal.
+    fn push(&mut self, p: Strided, out: &mut Vec<Strided>, work: &mut Work) -> Result<(), Refusal> {
+        let lo = p.lo.as_ref().map_or(End::NegInf, fin);
+        let hi = p.hi.as_ref().map_or(End::PosInf, fin);
+        let within = self.left.meet(&IntervalSet::range(lo, hi));
+        if p.step == Int::from(1) {
+            work.charge(PIECE.saturating_mul(within.len() as u64 + 1))?;
+            self.left = self.left.minus(&within);
+        } else if !within.is_empty() {
+            work.charge(PIECE.saturating_mul(within.len() as u64 + 1))?;
+            let mut taken = Vec::new();
+            for (l, u) in within.pieces() {
+                let (End::Fin(l), End::Fin(u)) = (l, u) else {
+                    continue;
+                };
+                let (l, u) = (Int::from(l), Int::from(u));
+                let mut v = &l + &(&p.res - &l).mod_floor(&p.step);
+                while v <= u {
+                    work.charge(LISTED)?;
+                    taken.push((fin(&v), fin(&v)));
+                    v = &v + &p.step;
+                }
+            }
+            self.left = self.left.minus(&IntervalSet::from_pieces(taken));
+        }
+        out.push(p);
+        Ok(())
+    }
 }
 
 /// A divisibility literal `d | lin`, `d >= 2`, of [`liaproj`].
@@ -590,7 +671,8 @@ fn tidied(rows: Vec<Con>) -> Option<Vec<Con>> {
 }
 
 /// The values `at·t + from` of `s` at the points of `rows`, `t` standing for `s` (`at` zero
-/// once `t` is fixed), added to `out`.
+/// once `t` is fixed), added to `out`; nothing more once `held` is done ([`pugh`]).
+#[allow(clippy::too_many_arguments)]
 fn project(
     rows: Vec<Con>,
     t: &Atom,
@@ -598,8 +680,12 @@ fn project(
     from: &mut Int,
     work: &mut Work,
     fresh: &mut u32,
+    held: &mut Held,
     out: &mut Vec<Strided>,
 ) -> Result<(), Refusal> {
+    if held.done() {
+        return Ok(());
+    }
     let size: u64 = rows.iter().map(|k| k.lin.terms.len() as u64 + 1).sum();
     work.read(size)?;
     let Some(mut rows) = tidied(rows) else {
@@ -618,7 +704,7 @@ fn project(
             r.terms.remove(&x);
             rows.swap_remove(i);
             let rows = substituted(rows, &x, &r.times(-&c));
-            return project(rows, t, at, from, work, fresh, out);
+            return project(rows, t, at, from, work, fresh, held, out);
         }
         let g = (e.terms.iter())
             .filter(|(a, _)| *a != t)
@@ -650,7 +736,7 @@ fn project(
             let (at0, from0) = (at.clone(), from.clone());
             *from = &(&*at * &r) + &*from;
             *at = &*at * &m;
-            let done = project(rows, t, at, from, work, fresh, out);
+            let done = project(rows, t, at, from, work, fresh, held, out);
             (*at, *from) = (at0, from0);
             return done;
         }
@@ -682,7 +768,7 @@ fn project(
             }
         }
         let rows = substituted(rows, &k, &ek);
-        return project(rows, t, at, from, work, fresh, out);
+        return project(rows, t, at, from, work, fresh, held, out);
     }
     // An equality over `t` alone: `t` fixed, kept where the rest has a point.
     if let Some(i) = (0..rows.len()).find(|&i| rows[i].rel == Rel::Eq) {
@@ -697,7 +783,7 @@ fn project(
         let (at0, from0) = (at.clone(), from.clone());
         *from = &(&*at * &v) + &*from;
         *at = Int::from(0);
-        let done = project(rows, t, at, from, work, fresh, out);
+        let done = project(rows, t, at, from, work, fresh, held, out);
         (*at, *from) = (at0, from0);
         return done;
     }
@@ -722,24 +808,26 @@ fn project(
             return Ok(());
         };
         if at.is_zero() {
-            out.push(Strided {
+            let p = Strided {
                 lo: Some(from.clone()),
                 hi: Some(from.clone()),
                 step: Int::from(1),
                 res: Int::from(0),
-            });
+            };
+            held.push(p, out, work)?;
             return Ok(());
         }
         let map = |e: &End| match e {
             End::Fin(n) => Some(&(&*at * &Int::from(n)) + &*from),
             _ => None,
         };
-        out.push(Strided {
+        let p = Strided {
             lo: map(lo),
             hi: map(hi),
             step: at.clone(),
             res: from.mod_floor(at),
-        });
+        };
+        held.push(p, out, work)?;
         return Ok(());
     }
     // An atom bounded on one side only: its rows dropped, exactly.
@@ -752,7 +840,7 @@ fn project(
             .into_iter()
             .filter(|k| !k.lin.terms.contains_key(&x))
             .collect();
-        return project(rows, t, at, from, work, fresh, out);
+        return project(rows, t, at, from, work, fresh, held, out);
     }
     // The atom to remove: one whose elimination is exact, with the fewest new rows; else the
     // one with the fewest splinters, then the fewest new rows.
@@ -810,7 +898,7 @@ fn project(
             shadow.push(Con { lin, rel: Rel::Ge });
         }
     }
-    project(shadow, t, at, from, work, fresh, out)?;
+    project(shadow, t, at, from, work, fresh, held, out)?;
     if is_exact {
         return Ok(());
     }
@@ -826,7 +914,7 @@ fn project(
             let mut lin = rows[i].lin.clone();
             lin.constant = &lin.constant - &k;
             one.push(Con { lin, rel: Rel::Eq });
-            project(one, t, at, from, work, fresh, out)?;
+            project(one, t, at, from, work, fresh, held, out)?;
             k = &k + &Int::from(1);
         }
     }

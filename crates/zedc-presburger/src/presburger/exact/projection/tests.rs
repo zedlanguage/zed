@@ -68,7 +68,11 @@ fn the_pendants_ray_is_one_projection() {
         row(&[("b", -1)], 8, Rel::Ge),
     ];
     let mut w = work();
-    let (got, tails) = ranges(&pugh(&rows, &sym("w"), &mut w).unwrap(), &mut w).unwrap();
+    let (got, tails) = ranges(
+        &pugh(&rows, &sym("w"), &IntervalSet::top(), &mut w).unwrap(),
+        &mut w,
+    )
+    .unwrap();
     assert_eq!(got, IntervalSet::range(End::NegInf, End::from(-29i64)));
     assert!(tails.is_empty());
 }
@@ -81,7 +85,7 @@ fn a_ray_with_holes_is_a_tail_and_a_filled_one_is_not() {
         row(&[("a", -1)], 0, Rel::Ge),
     ];
     let mut w = work();
-    let parts = pugh(&rows, &sym("w"), &mut w).unwrap();
+    let parts = pugh(&rows, &sym("w"), &IntervalSet::top(), &mut w).unwrap();
     let (got, tails) = ranges(&parts, &mut w).unwrap();
     assert!(got.is_empty());
     assert_eq!(tails.len(), 1);
@@ -96,7 +100,7 @@ fn a_ray_with_holes_is_a_tail_and_a_filled_one_is_not() {
         row(&[("b", 1)], 0, Rel::Ge),
         row(&[("b", -1)], 1, Rel::Ge),
     ];
-    let parts = pugh(&rows, &sym("w"), &mut w).unwrap();
+    let parts = pugh(&rows, &sym("w"), &IntervalSet::top(), &mut w).unwrap();
     assert_eq!(
         ranges(&parts, &mut w).unwrap().0,
         IntervalSet::range(End::NegInf, End::from(1i64))
@@ -113,9 +117,12 @@ fn the_omega_nightmare_has_no_point() {
         row(&[("x", -7), ("y", 9)], 4, Rel::Ge),
     ];
     let mut w = work();
-    let got = ranges(&pugh(&rows, &sym("x"), &mut w).unwrap(), &mut w)
-        .unwrap()
-        .0;
+    let got = ranges(
+        &pugh(&rows, &sym("x"), &IntervalSet::top(), &mut w).unwrap(),
+        &mut w,
+    )
+    .unwrap()
+    .0;
     assert!(got.is_empty(), "{got:?}");
 }
 
@@ -151,9 +158,12 @@ fn small_systems_project_to_their_enumerated_values() {
             rows.push(row(&t, next(6), rel));
         }
         let mut w = work();
-        let got = ranges(&pugh(&rows, &sym("s"), &mut w).unwrap(), &mut w)
-            .unwrap()
-            .0;
+        let got = ranges(
+            &pugh(&rows, &sym("s"), &IntervalSet::top(), &mut w).unwrap(),
+            &mut w,
+        )
+        .unwrap()
+        .0;
         assert_eq!(
             values(&got, -6, 6),
             brute(&rows, "s", -6, 6, 6),
@@ -163,5 +173,49 @@ fn small_systems_project_to_their_enumerated_values() {
             values(&got, -100, -7).is_empty() && values(&got, 7, 100).is_empty(),
             "case {case}"
         );
+        // With a goal, the answer may stop once the goal is held: it still holds only values
+        // of the projection, and every value of the projection in the goal.
+        let (a, b) = (next(6), next(6));
+        let goal = IntervalSet::range(End::from(a.min(b)), End::from(a.max(b)));
+        let part = ranges(&pugh(&rows, &sym("s"), &goal, &mut w).unwrap(), &mut w)
+            .unwrap()
+            .0;
+        assert!(part.is_subset(&got), "case {case}: {part:?} beyond {got:?}");
+        assert!(
+            got.meet(&goal).is_subset(&part),
+            "case {case}: {part:?} misses some of {got:?} in {goal:?}"
+        );
     }
+}
+
+/// A goal held early stops the projection: the repaired unit's rows (`w == 0` put in) onto
+/// `x` make 1,562 parts with every splinter, and far fewer once `[4, 7]` and `[9, +inf)`, the
+/// goal of its first cell, are held (`exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`).
+#[test]
+fn a_held_goal_stops_the_splinters() {
+    let rows = vec![
+        row(&[("x", 4), ("y", -10), ("z", -12)], 11, Rel::Ge),
+        row(&[("x", 10), ("y", -10), ("z", -11)], -28, Rel::Ge),
+        row(&[("x", 4), ("y", -1), ("z", 12)], -28, Rel::Ge),
+        row(&[("x", -5), ("y", 12), ("z", -1)], 31, Rel::Ge),
+    ];
+    let mut w = work();
+    let whole = pugh(&rows, &sym("x"), &IntervalSet::top(), &mut w).unwrap();
+    let goal = IntervalSet::from_pieces(vec![
+        (End::from(4i64), End::from(7i64)),
+        (End::from(9i64), End::PosInf),
+    ]);
+    let mut v = work();
+    let part = pugh(&rows, &sym("x"), &goal, &mut v).unwrap();
+    assert!(
+        part.len() * 10 < whole.len(),
+        "{} of {}",
+        part.len(),
+        whole.len()
+    );
+    assert!(v.used * 10 < w.used, "{} of {}", v.used, w.used);
+    let expected = IntervalSet::range(End::from(4i64), End::PosInf);
+    assert_eq!(ranges(&whole, &mut w).unwrap().0, expected);
+    let got = ranges(&part, &mut v).unwrap().0;
+    assert!(goal.is_subset(&got) && got.is_subset(&expected), "{got:?}");
 }
