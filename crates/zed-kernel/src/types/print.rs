@@ -948,13 +948,23 @@ impl Printer<'_> {
             *t == Type::empty()
                 || (ms.iter()).any(|m| m.guarantee == *t || m.permission == *t || m.value == *t)
         };
+        // Where the upper bound is also within the lower, the two are one set (the verdict
+        // `Empty` puts the lower within the upper), so the arrow may be written with either as
+        // both bounds, and is written with one a literal names. The upper bound is often a
+        // meet node no literal names, as `a & (a | v)` for the literals `a -> rat` and
+        // `(a | v) ->? rat`, whose lower bound `a` a literal names (seed 76 of
+        // `parens::the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need`).
+        // Complexity tradeoff: `upper <: lower` is now asked also where the upper bound is not
+        // named, one more kernel comparison for such a meet, where before the meet was given up
+        // and kept its connective, which reads back as an overload.
         match lower.subtype_verdict(&upper) {
             Verdict::Inhabited => Some(Text::word("Never", Class::Prim)),
-            Verdict::Empty if !named(&upper) || !named(&value) => None,
-            Verdict::Empty if upper.subtype(&lower) => {
-                Some(self.morphism(&Morphism::new(upper.clone(), upper, value)))
+            Verdict::Empty if !named(&value) => None,
+            Verdict::Empty if (named(&upper) || named(&lower)) && upper.subtype(&lower) => {
+                let one = if named(&upper) { upper } else { lower };
+                Some(self.morphism(&Morphism::new(one.clone(), one, value)))
             }
-            Verdict::Empty if named(&lower) => {
+            Verdict::Empty if named(&lower) && named(&upper) => {
                 Some(self.morphism(&Morphism::new(lower, upper, value)))
             }
             Verdict::Empty | Verdict::Refused(_) => None,

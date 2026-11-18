@@ -854,7 +854,7 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
 fn a_kernel_meet_of_function_types_prints_as_the_one_arrow_it_is() {
     let int_bool = || KType::exact(KType::int(), KType::bool());
     let pair = |a: KType, b: KType| KType::atom_with("pair", &KType::tuple(vec![a, b]));
-    let cases: [(KType, &str, &str); 7] = [
+    let cases: [(KType, &str, &str); 8] = [
         // Payloads whose first components meet in no value.
         (
             &KType::exact(
@@ -918,6 +918,25 @@ fn a_kernel_meet_of_function_types_prints_as_the_one_arrow_it_is() {
             ) & &(&KType::atom("a") | &KType::partial(KType::rat(), KType::top())),
             "((((()), (rat), (String))) ->? (((rat), (f64)))) & ((#a) | ((rat) ->? (_)))",
             "Never ->? (rat, f64)",
+        ),
+        // An exact arrow over a union of two function types met with a partial arrow whose
+        // permission is that union and more: the upper bound `a & (a | v)` is a node of its
+        // own, named by no literal, but holds the same functions as the lower bound `a`, so the
+        // meet is `a -> rat` (ZED_TEST_SEED=76 of the random test above, which printed the
+        // meet with `&`, an overload).
+        (
+            {
+                let a = &KType::partial(KType::rat(), KType::top())
+                    | &KType::partial(KType::atom("a"), KType::top());
+                let inner = &KType::exact(KType::atom("a"), KType::bool())
+                    & &KType::partial(&KType::atom("a") | &KType::bool(), KType::bool());
+                let v = &KType::rat() | &inner;
+                &KType::exact(a.clone(), KType::rat()) & &KType::partial(&a | &v, KType::rat())
+            },
+            "(((rat) ->? (_)) | ((#a) ->? (_))) .. ((((rat) ->? (_)) | ((#a) ->? (_))) & \
+             ((((rat) ->? (_)) | ((#a) ->? (_))) | ((rat) | ((#a) .. ((#a) & ((#a) | (bool))) \
+             -> (bool))))) -> (rat)",
+            "((#a ->? _) | (rat ->? _)) -> rat",
         ),
     ];
     let mut wrong = Vec::new();
