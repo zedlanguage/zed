@@ -1549,3 +1549,23 @@ fn an_intersection_of_functions_in_a_tuple_equals_its_print_read_back() {
         );
     }
 }
+
+
+#[test]
+fn zz_probe_fn_meet_draw() {
+    for x in [
+        "(#pair(bool, _) -> bool) & (((#b -> _) ->? _) | ())",
+        "(#pair(bool, int) -> bool) & (((#b -> _) ->? _) | ())",
+        "(#pair(bool, _) -> bool) & (((#b -> int) ->? _) | ())",
+        "(#pair(bool, int) -> bool) & (((#b -> int) ->? _) | ())",
+        "(int -> bool) & (((#b -> _) ->? _) | ())",
+        "(_ -> bool) & (((#b -> _) ->? _) | ())",
+        "(#box(_) -> int) & ((rat -> int) | ())",
+        "(#pair(bool, _) -> int) & ((rat -> int) | ())",
+        "(#pair(bool, _) -> int) & (((int -> int) -> int) | ())",
+        "(#box(_) -> int) & (((int -> int) -> int) | ())",
+    ] {
+        let t = parse_type(x).unwrap();
+        eprintln!("{x}  =  {t}   empty: {}", t.is_empty());
+    }
+}
