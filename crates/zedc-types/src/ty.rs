@@ -7527,6 +7527,13 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
+    /// Whether [`Cx::read_key`] leaves the masks of its names out: the negative control of
+    /// `a_verdict_kept_by_readings_is_kept_apart_by_the_masks_of_outer_names`.
+    static NO_KEY_MASKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
     /// Whether [`member_hit`] finds nothing, as before it: the red state of its test.
     static NO_MEMBER_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -14019,6 +14026,10 @@ impl Cx<'_> {
             .chain(vs.order.iter());
         let mut masks: Vec<(Arc<str>, Option<u8>)> =
             names.map(|v| (v.clone(), var_mask(v, self))).collect();
+        #[cfg(test)]
+        if NO_KEY_MASKS.get() {
+            masks.iter_mut().for_each(|m| m.1 = None);
+        }
         masks.sort_unstable();
         masks.dedup();
         (
@@ -22721,6 +22732,49 @@ mod tests {
         );
         assert!(!first.0 && first.1.is_some(), "{q} in {s}: {first:?}");
         assert_eq!(second, first, "{q} in {s}: met again under new names");
+    }
+
+    /// TYPES-search-claims-proofs (a): the key of [`Cx::fitted_read`] holds the mask of each
+    /// name the pair holds that no signature of its nests binds ([`VarFacts::outer`]), and the
+    /// verdict depends on it. `(x0: int) -> Z` is within `(x0: int) -> int` where the rigid
+    /// `Z` is of `int` alone, and not where it may be `f64`. The pair is met twice in one
+    /// comparison state, under new names, with `Z`'s mask changed between: two verdicts kept,
+    /// and the second is no. Negative control ([`NO_KEY_MASKS`]): with the masks left out of
+    /// the key, the second meeting takes the first verdict, a wrong yes. The rest of the key is
+    /// the two signatures by address and their readings, which fix every other name the pair
+    /// holds: a name a signature of the nest binds is read only as its opening writes it.
+    #[test]
+    fn a_verdict_kept_by_readings_is_kept_apart_by_the_masks_of_outer_names() {
+        let int = Ty::carrier(Carrier::Int);
+        let one = |r: Ty| Arc::new(sig(vec![Arrow::exact(vec![int.clone()], r)], 1, false));
+        let (s, q) = (one(Ty::var("Z".into())), one(int.clone()));
+        assert!(s.facts().outer.iter().any(|v| &**v == "Z"), "{s}");
+        let env = Env::new();
+        let run = || {
+            let mut cx = Cx::default();
+            for name in ["q'1", "q'2"] {
+                cx.fns.insert(name.into(), (q.clone(), env.clone()));
+            }
+            let answers = comparing!(&mut cx, |c| async {
+                let mut answers = [false, false];
+                let masks = [Carrier::Int.bit(), B_MASK];
+                for (i, (v, w)) in [("s'1", "q'1"), ("s'2", "q'2")].into_iter().enumerate() {
+                    c.cx.borrow_mut().rigid.insert("Z".into(), masks[i]);
+                    answers[i] = c.fits_read(&v.into(), &s, &env, &w.into()).await;
+                }
+                answers
+            });
+            (answers, cx.fitted_read.len())
+        };
+        assert_eq!(run(), ([true, false], 2), "{s} in {q}");
+        NO_KEY_MASKS.with(|d| d.set(true));
+        let control = run();
+        NO_KEY_MASKS.with(|d| d.set(false));
+        assert_eq!(
+            control,
+            ([true, true], 1),
+            "the control keeps the masks apart"
+        );
     }
 
     /// The result of a random signature for [`pinned_shapes_are_those_of_the_rule_of_one_shape`]:
