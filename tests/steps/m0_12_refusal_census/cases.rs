@@ -79,6 +79,26 @@ fn the_exact_cover_s_refusals_are_found_by_their_own_words() {
 }
 
 #[test]
+fn a_refusal_for_the_work_of_the_sums_is_of_kind_work() {
+    // The join of row sums' refusal (`Refusal::Work`, `row_sums::project`), read from the
+    // solver's own reason. Negative control: the same reason with the kind's phrase taken out
+    // holds no named kind, so before the kind was listed such a refusal was counted as `Other`
+    // or not at all.
+    use zedc::store::presburger::Refusal;
+    let text = Refusal::Work
+        .closed_by("It kept the bounds of each variable.")
+        .to_string();
+    assert_eq!(kinds::of(&text), vec!["Work"], "{text}");
+    let phrase = kinds::KINDS.last().expect("a kind").phrase;
+    assert!(text.contains(phrase), "{text}");
+    let without = text.replace(phrase, "");
+    assert!(
+        matches!(kinds::of(&without).as_slice(), [] | ["Other"]),
+        "{without}"
+    );
+}
+
+#[test]
 fn a_census_line_is_tab_separated_on_one_line() {
     let mut out = String::new();
     line(
