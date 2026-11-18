@@ -175,9 +175,12 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// `n` rows of functions equal on both sides at one place, none compared there, decided in time
 /// linear in `n` when the forms are built a second time with the skipped pairs merged
 /// (FAIL-types-equal-functions-subset-no, COMPLEXITY.md F124): with a tag the right side lacks
-/// the answer is a definite no, and without it a refusal. Each row `(h_i, #b_i)` meets both
-/// right rows of its `i`, and `(h_i, #a_i | #b_i)` both left rows, so the pairs of rows that
-/// meet form no stars, and the pairs of rows the search finds outnumber the functions, so the
+/// the answer is a definite no, and without it a definite yes (a refusal before 1233ccd22,
+/// PERF-types-variable-shapes-one-bucket; `f_i` fits `h_i`, so `(f_i, #a_i)` and `(h_i, #b_i)`
+/// are both held by `(h_i, #a_i | #b_i)`). Each row `(h_i, #b_i)`
+/// meets both right rows of its `i`, and `(h_i, #a_i | #b_i)` both left rows, so the pairs of
+/// rows that meet form no stars, and the pairs of rows the search finds outnumber the functions,
+/// so the
 /// equal functions are skipped ([`PlaceFns::starred`] in `crates/zedc-types/src/ty.rs`; since
 /// FAIL-types-loose-pairing-non-star the count alone decides that); until
 /// FAIL-types-loose-pairing-decided the right side was
@@ -217,15 +220,15 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
     };
     let n = 256;
     let no = scaling::inputs(n, |m| sides(m, &format!("({}, #c)", "(int) -> int")));
-    let refused = scaling::inputs(n, |m| sides(m, ""));
+    let yes = scaling::inputs(n, |m| sides(m, ""));
     scaling::check(
         "n rows of functions equal on both sides at one place, decided twice",
         n,
         |m| {
             let (a, b): &(Ty, Ty) = &no[&m];
             assert!(!a.subtype(b) && a.refused(b).is_empty());
-            let (a, b): &(Ty, Ty) = &refused[&m];
-            assert!(!a.refused(b).is_empty());
+            let (a, b): &(Ty, Ty) = &yes[&m];
+            assert!(a.subtype(b));
         },
     );
 }
