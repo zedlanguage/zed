@@ -272,15 +272,26 @@ fi
 # any inline modules, and more only when such a file exists under B, which costs extra tests and
 # never misses one. Testing each changed file against each attribute instead would cost
 # O(changed files x attributes).
+# Every path is resolved by one realpath over all of them after the loop (MERGE-selftest-time):
+# the loop records each path with its source and a key (empty: includers[path] gets the source;
+# a rest: under_rest[rest] gets path|source), in the order the old per-path calls made them, so
+# the tables hold the same strings in the same order. A realpath, dirname and basename process
+# per path cost about 55 process starts per merge_check call with the test workspace's dozen
+# includes, the largest share of tools/test_merge_check.sh's time; the real workspace has about
+# 60 includes, so it saves there too. realpath, not a lexical normalizer, keeps the resolution
+# physical: a `..` after a symlinked directory goes where the compiler's open() goes.
 declare -A includers=() under_rest=()
+inc_paths=() inc_keys=() inc_srcs=()
 while IFS= read -r hit; do
   src=${hit%%:*}
   lit=${hit#*\"}
   lit=${lit%%\"*}
-  dir=$(dirname "$src")
-  for at in "$dir/$lit" "$dir/$(basename "$src" .rs)/$lit"; do
-    rel=$(realpath -m --relative-to=. "$at")
-    includers[$rel]+="$src "
+  # dirname and basename "$src" .rs, without a process each.
+  dir=. stem=$src
+  [[ $src != */* ]] || dir=${src%/*} stem=${src##*/}
+  [ "$stem" = .rs ] || stem=${stem%.rs}
+  for at in "$dir/$lit" "$dir/$stem/$lit"; do
+    inc_paths+=("$at") inc_keys+=("") inc_srcs+=("$src")
   done
   [[ $hit == *'#['* && $lit != /* ]] || continue
   IFS=/ read -ra parts <<<"$lit"
@@ -292,19 +303,37 @@ while IFS= read -r hit; do
       *) kept+=("$c") ;;
     esac
   done
-  rest=$(IFS=/; echo "${kept[*]}")
+  printf -v rest '%s/' "${kept[@]}"
+  rest=${rest%/}
   [ -n "$rest" ] || continue
-  for b in "$dir" "$dir/$(basename "$src" .rs)"; do
-    b=$(realpath -m --relative-to=. "$b")
-    under_rest[$rest]+="$b|$src "
+  for b in "$dir" "$dir/$stem"; do
+    inc_paths+=("$b") inc_keys+=("$rest") inc_srcs+=("$src")
+    # The old calls resolved b first and then b/../rest; with physical resolution that is the
+    # same as resolving b/../rest at once.
     up=
     for ((j = 1; j <= m; j++)); do
       up+=../
-      includers[$(realpath -m --relative-to=. "$b/$up$rest")]+="$src "
+      inc_paths+=("$b/$up$rest") inc_keys+=("") inc_srcs+=("$src")
     done
   done
 done < <(command grep -a -rnoE --include='*.rs' '(#\[path *= *"[^"]+"|include(_str|_bytes)?!\("[^"]+")' \
   $(printf '%s\n' "${pkgdirs[@]}" | cut -d' ' -f1 | command grep -a . | sort -u) | cut -d: -f1,3-)
+if [ ${#inc_paths[@]} -gt 0 ]; then
+  # xargs splits a list longer than one command line allows; realpath prints one line per path,
+  # in order. A count that differs (a path with a newline) stops the check rather than misfile.
+  mapfile -t inc_rels < <(printf '%s\0' "${inc_paths[@]}" | xargs -0 realpath -m --relative-to=. --)
+  if [ ${#inc_rels[@]} -ne ${#inc_paths[@]} ]; then
+    echo "merge check: FAILED: realpath gave ${#inc_rels[@]} paths for ${#inc_paths[@]} include paths" >&2
+    exit 1
+  fi
+  for i in "${!inc_paths[@]}"; do
+    if [ -z "${inc_keys[i]}" ]; then
+      includers[${inc_rels[i]}]+="${inc_srcs[i]} "
+    else
+      under_rest[${inc_keys[i]}]+="${inc_rels[i]}|${inc_srcs[i]} "
+    fi
+  done
+fi
 # The sources whose #[path] can name the file $1 through inline modules: for each suffix s of its
 # path after a /, or the whole path, each base B in under_rest[s] that the path starts with,
 # followed by at least the separator (B/<names>/s, no names allowed).
