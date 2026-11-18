@@ -10935,9 +10935,46 @@ impl Scope {
     // block update. Reference: P. Cousot and R. Cousot, "Systematic design of program analysis
     // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
     fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
+        // The names some case changed, read before the join takes the cases (see below).
+        let mut touched: BTreeSet<Arc<str>> = BTreeSet::new();
+        for c in &cases {
+            for d in self.names.base.diff(&c.names.base) {
+                let (DiffItem::Add(n, _)
+                | DiffItem::Remove(n, _)
+                | DiffItem::Update { old: (n, _), .. }) = d;
+                touched.insert(n.clone());
+            }
+        }
         let mut s = join_cases(cases);
         if s.bottom {
             return s;
+        }
+        // A name the cases narrowed apart and the join brought back to its outer product
+        // holds a new copy of it, equal and not shared. Every later difference of the
+        // persistent name maps (`Block::update`, `Block::gained_hole`) compares such a copy
+        // in full and does not count it among the names it yields, so a block kept before
+        // the test walked each name any later test rejoined.
+        // Complexity tradeoff: naive version, the joined copies kept, O(1) here and O(k) per
+        // later block update over k tests that each rejoin a name, Theta(k²) over the run
+        // (`holes_cut_one_at_a_time_scale`, ratio 13.6). Used: the outer product put back
+        // where the join equals it, for the names each case changed, from the difference of
+        // the base maps, which skips what a case shares with the outer scope: O(m (c log n +
+        // s)) for m cases, c names changed and s pieces compared. A name on a path
+        // or a pendant leaf is left as it is: its base entry is not its product, and a write
+        // to it materializes the paths (`NameProducts::set_fresh`). COMPLEXITY.md row
+        // PRES-products-stay-shared.
+        let same: Vec<(Arc<str>, Product)> = (touched.into_iter())
+            .filter_map(|n| {
+                let (a, b) = (self.names.base.get(&n)?, s.names.base.get(&n)?);
+                (!Arc::ptr_eq(&a.0, &b.0) && a == b).then(|| (n.clone(), a.clone()))
+            })
+            .filter(|(n, _)| {
+                !(self.names.paths.contains_key(n) || self.names.pendants.contains_key(n))
+                    && !(s.names.paths.contains_key(n) || s.names.pendants.contains_key(n))
+            })
+            .collect();
+        for (n, p) in same {
+            s.names.set_fresh(&n, Some(p));
         }
         let mut restores: Vec<(PartKey, (PartWith, Projected))> = Vec::new();
         for d in self.projected.diff(&s.projected) {
@@ -12663,8 +12700,17 @@ impl Scope {
             }
             holes::Outcome::Kept(sets) => {
                 let mut moved = Vec::new();
+                // Complexity tradeoff: naive version, each name's product written through
+                // `get_mut`, which copies it (and the map's path to it) even when the meet
+                // leaves it as it was; the equal copy is then compared in full by every later
+                // difference of the name maps that does not count it (`Block::update`,
+                // `Block::gained_hole`), O(k) per block update and Theta(k²) over k tests
+                // (`holes_cut_one_at_a_time_scale`). Used: the meet on a copy, written back
+                // only when it changed the product, O(log n) per name either way, so a
+                // product the projection leaves stays shared. COMPLEXITY.md row
+                // PRES-products-stay-shared.
                 for (n, set) in names.iter().zip(sets) {
-                    let Some(p) = self.names.get_mut(n) else {
+                    let Some(p) = self.names.get(n) else {
                         continue;
                     };
                     let set = IntervalSet::from_pieces(
@@ -12672,11 +12718,14 @@ impl Scope {
                             .map(|(a, b)| (end(a, End::NegInf), end(b, End::PosInf)))
                             .collect(),
                     );
+                    let mut p = p.clone();
                     let before = p.ints().clone();
                     let prem = p.premises();
-                    p.meet_ints(set, &prem);
-                    if *p.ints() != before {
-                        moved.push(n.clone());
+                    if p.meet_ints(set, &prem) {
+                        if *p.ints() != before {
+                            moved.push(n.clone());
+                        }
+                        self.names.insert(n.clone(), p);
                     }
                 }
                 Ends::Done(Shortest::Moved(moved))
