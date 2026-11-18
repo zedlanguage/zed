@@ -20185,19 +20185,32 @@ pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
 fn without_box_true_disjunctions(f: &Formula) -> Option<Formula> {
     let mut atoms: Vec<Atom> = Vec::new();
     let mut seen: HashSet<&Atom> = HashSet::new();
+    // Only the atoms of the disjuncts that could be dropped, each a row of two or more terms
+    // directly under a disjunction of the conjunction: the walk reads the conjunction as
+    // [`row_box`] does and does not go inside a disjunct, which may share parts with others
+    // (a walk of every node as a tree took past 60 s on
+    // `named_test::bench::arms_of_a_chain_of_named_conjunctions_take_time_near_linear_in_its_length`).
+    let candidate =
+        |d: &Formula| matches!(d, Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() >= 2);
     let mut stack = vec![f];
     while let Some(g) = stack.pop() {
         match g {
-            Formula::And(cs) | Formula::Or(cs) => stack.extend(cs.iter()),
-            Formula::Not(n) => stack.push(n),
-            Formula::Con(c) => {
-                for x in c.lin.terms.keys() {
-                    if seen.insert(x) {
-                        atoms.push(x.clone());
+            Formula::And(cs) => stack.extend(cs.iter()),
+            Formula::Or(ds) => {
+                for d in ds.iter().filter(|d| candidate(d)) {
+                    let Formula::Con(c) = d else { continue };
+                    for x in c.lin.terms.keys() {
+                        if seen.insert(x) {
+                            atoms.push(x.clone());
+                        }
                     }
                 }
             }
+            _ => {}
         }
+    }
+    if atoms.is_empty() {
+        return None;
     }
     let sets = row_box(f, &atoms);
     let mut bounds: HashMap<&Atom, (&End, &End)> = HashMap::new();
