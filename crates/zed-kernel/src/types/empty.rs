@@ -7073,7 +7073,9 @@ impl<'m> Searching<'m> {
         for (name, a) in &p.atoms.names {
             match (a.bare, a.payload == Type::empty()) {
                 (true, true) if bare.is_none() => bare = Some(name.clone()),
-                (false, true) => {}
+                // Never met: the atoms are finite (tested above), and `Atoms::set`, the one
+                // writer of `names`, keeps no name whose part is `AtomPart::none()` there.
+                (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                 (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
                 _ => return None,
             }
@@ -7363,7 +7365,7 @@ impl<'m> Searching<'m> {
                 (true, _) => return None,
                 // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no name
                 // whose part is `AtomPart::none()`, neither bare nor with a payload.
-                (false, true) => {}
+                (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                 (false, false) => {
                     if link.is_some() {
                         return None;
@@ -7513,7 +7515,7 @@ impl<'m> Searching<'m> {
                     (true, true) if *n == stop_name => has_stop = true,
                     // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no
                     // name whose part is `AtomPart::none()`.
-                    (false, true) => {}
+                    (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                     (false, false) if *n == link_name && l_payload.is_none() => {
                         l_payload = Some(a.payload.clone());
                     }
@@ -8899,7 +8901,9 @@ impl<'m> Searching<'m> {
             for (n, at) in &xp.atoms.names {
                 match (at.bare, at.payload == Type::empty()) {
                     (true, true) if n == stop => has_stop = true,
-                    (false, true) => {}
+                    // Never met: the atoms are finite (tested above), and `Atoms::set` keeps no
+                    // name whose part is `AtomPart::none()` there.
+                    (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                     (false, false) if n == link && l_payload.is_none() => {
                         l_payload = Some(at.payload.clone());
                     }
@@ -12271,22 +12275,20 @@ fn parities(
     Some(chosen)
 }
 
-/// A node of a tuple part as [`read_two_sat`] meets it: a part, a diagram, or one arm of a
-/// diagram node, `atom & hi` when `true`, `!atom & lo` when `false`.
+/// A node of a tuple part as [`read_two_sat`] meets it: a part or a diagram.
 #[derive(Clone, Copy)]
 enum At<'p> {
     Part(&'p Part<Row>),
     Bdd(&'p Bdd<Row>),
-    Arm(&'p Bdd<Row>, bool),
 }
 
 impl At<'_> {
-    /// The key of the node read as itself (`pos`) or as its complement: its id, and which arm.
+    /// The key of the node read as itself (`pos`) or as its complement: its id, and `0`. The last
+    /// place, once which arm of a diagram node, is now always `0` (see `shape`).
     fn key(self, pos: bool) -> (u64, bool, u8) {
         match self {
             At::Part(p) => (p.id(), pos, 0),
             At::Bdd(b) => (b.id(), pos, 0),
-            At::Arm(b, hi) => (b.id(), pos, 1 + u8::from(hi)),
         }
     }
 }
@@ -12308,8 +12310,8 @@ enum Shape<'p> {
 }
 
 /// The shape of the node `at` read as itself (`pos`) or as its complement, each atom the
-/// literal `literal` gives it; `None` for an atom it gives none. A diagram node `c ? hi : lo`
-/// whose branches are not leaves is the union of its two arms.
+/// literal `literal` gives it; `None` for an atom it gives none. A diagram node has a leaf on
+/// one branch, so it reads as a literal, or as the literal met with or joined to the other branch.
 fn shape<'p>(
     mut at: At<'p>,
     mut pos: bool,
@@ -12348,19 +12350,11 @@ fn shape<'p>(
                     (Some(false), _) => Shape::And(Operand::Literal(l ^ 1), node(lo)),
                     (Some(true), _) => Shape::Or(Operand::Literal(l), node(lo)),
                     (_, Some(true)) => Shape::Or(Operand::Literal(l ^ 1), node(hi)),
-                    _ => Shape::Or(
-                        Operand::Node(At::Arm(b, true), pos),
-                        Operand::Node(At::Arm(b, false), pos),
-                    ),
-                });
-            }
-            At::Arm(b, hi) => {
-                let (_, a, h, lo) = b.branch().ok()?;
-                let l = literal(a)?;
-                return Some(if hi {
-                    Shape::And(Operand::Literal(l), Operand::Node(At::Bdd(h), pos))
-                } else {
-                    Shape::And(Operand::Literal(l ^ 1), Operand::Node(At::Bdd(lo), pos))
+                    // Never met: `branch` of a list is `Bdd::view`, which gives the leaf of the
+                    // first block's value on the side where its literal holds, so one branch is
+                    // always a leaf. (A node with two inner branches was read as the union of
+                    // its two arms, `atom & hi | !atom & lo`; that reading is removed.)
+                    (None, None) => unreachable!("a diagram node has a leaf branch"),
                 });
             }
         }
@@ -13502,7 +13496,9 @@ fn list_rows(t: &Type, names: &mut [Option<Arc<str>>; 2]) -> Option<(bool, Part<
     for (name, a) in &p.atoms.names {
         match (a.bare, a.payload == Type::empty()) {
             (true, true) if stop.is_none() => stop = Some(name.clone()),
-            (false, true) => {}
+            // Never met: the atoms are finite (tested above), and `Atoms::set` keeps no name
+            // whose part is `AtomPart::none()` there.
+            (false, true) => unreachable!("a finite atoms map lists a name with no part"),
             (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
         }

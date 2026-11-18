@@ -277,3 +277,46 @@ only on the heads (`int`, `bool`). With the heads `1` and `1 | 2` the sweep decl
   type not kept) left all three verdicts unchanged. The reason: `is_carrier` accepts any carrier of
   the cycle without `carrier_set`, so `walk` maps it to node 0. The push only saved that test, and
   it is removed, with the proof at the site.
+
+Fifth round (cover7, 2026-11-18), `empty.rs` only. Coverage re-run at zed-impl 16279bfc5 (the
+short-address pieces left out, 4 jobs, load 54 to 146): 2,665 pieces, 23 failed (the pieces that
+link executables fail under `-C instrument-coverage`; `group_oracle` and `case_wake` timed out, so
+their coverage is missing). `empty.rs` has 8,906 instrumented lines, of which 332 were not
+reached; the list with each line's text is
+`wt/coverage/TEST-kernel-unreached-paths-4-empty-16279bfc5.txt` (numbers at 16279bfc5).
+
+Closed, 27 lines (20 arms):
+
+- Five `(false, true) => {}` arms (7076 `cycle_meet`, 7366 and 7516 `find_prefix_chains`, 8902
+  `check_chain_witness`, 13505 `list_rows`), now `unreachable!`. Each follows a test that the atoms
+  are finite. `Atoms::set` is the one writer of `names` outside a test, and it does not list a name
+  whose part is `AtomPart::none()` (`bare` false, payload empty) when the atoms are finite. `zip`
+  assigns `cofinite` after cloning, but the value it assigns is the clone's own, and the universe
+  constructor (`types.rs` 2018) sets it on a part with no names. 5 lines, 5 arms.
+- `read_two_sat`'s reading of a diagram node with two inner branches as the union of its arms
+  (`At::Arm`: 12289, 12351-12354, 12358-12363), removed. The match is now `(None, None) =>
+  unreachable!`. The reason: `branch` of a list is `Bdd::view`, which puts the leaf of the first
+  block's value on one side, so one branch is always a leaf. 10 lines, 3 arms.
+- Existing `unreachable!` lines whose proofs were re-derived: 2154, 2675, 3546, 3558, 10780,
+  10781, 11300, 11541, 12851, 14866, 14874, 14931. 12 lines, 12 arms.
+
+New test: `types::empty::tests::read_two_sat_agrees_with_enumeration_on_built_and_random_parts`
+(built parts, and 3,000 random parts of five rows checked against enumeration). It reaches no
+listed line, but it is the first test that calls `read_two_sat` directly. Negative control:
+`contradiction` adding no clause fails it (`Bdd(false)`, solver `true`, enumeration `false`).
+
+Open, 305 lines, with the reason for each group:
+
+- 11430 `pair_picks`: has an `unreachable!` whose proof (through `extract`, `pair` and `read`)
+  was read but not re-derived this round.
+- `read_two_sat` 12421-12422, 12438-12440, 12451-12452: these need an `or` operand or a forced
+  operand that is a leaf. A diagram never gives one, so only an expression form with a leaf
+  operand would. Proving no such form is built means checking every `Part::expr` site in
+  `bdd.rs` (cover4's file).
+- The fork and blame restore paths (`tuples_on` 5722-6057, morphisms 10868-10971, 4725-4726,
+  4977-4983, 5114-5119, 6150): need a search that meets a fork under a trial budget. No built
+  input found this round.
+- `nested_pieces` 6799-6859, `find_prefix_chains` 7520-8655, `chain_rep` 8664-8710,
+  `check_chain_witness` 8752-9384, `find_rep`'s `no_keys` 9973-10198, the `decided` parts
+  fallback 4633-4643, `system` 14808-14809, and about 90 single lines elsewhere: not studied this
+  round.

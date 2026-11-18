@@ -478,6 +478,106 @@ fn two_sat_agrees(vars: usize, cs: &[(Literal2, Literal2)]) -> bool {
     sat
 }
 
+/// The five tuple types the tests of [`read_two_sat`] build parts over, `(i)` for `i < 5`,
+/// each an atom of its own, read as the variable `i`.
+fn two_sat_rows() -> Vec<Row> {
+    (0..5)
+        .map(|i| {
+            Row::new(vec![
+                Type::lit(&crate::value::Value::Int(i)).expect("a literal"),
+            ])
+        })
+        .collect()
+}
+
+/// Checks [`read_two_sat`] on the part `f` over [`two_sat_rows`], each row the variable of its
+/// place: when it reads a 2-CNF, the 2-CNF has a solution exactly when some setting of the five
+/// rows puts a tuple in `f` (enumerated), and the solution's first five variables are such a
+/// setting. Gives `None` when `f` is no 2-CNF by its structure, else whether it is satisfiable.
+fn read_two_sat_agrees(f: &Part<Row>) -> Option<bool> {
+    let rows = two_sat_rows();
+    let var = |a: &Row| rows.iter().position(|r| r == a);
+    let holds = |x: &[bool]| f.eval3(&|a| var(a).map(|v| x[v])) == Some(true);
+    let s = read_two_sat(f, rows.len(), &|a| var(a).map(|v| 2 * v))?;
+    let sat = (0u32..1 << rows.len())
+        .any(|m| holds(&(0..5).map(|v| m >> v & 1 == 1).collect::<Vec<_>>()));
+    let x = s.solve();
+    assert_eq!(x.is_some(), sat, "{f:?}");
+    if let Some(x) = x {
+        assert!(
+            holds(&x[..rows.len()]),
+            "{f:?}: the solution {x:?} is not in the part"
+        );
+    }
+    Some(sat)
+}
+
+/// [`read_two_sat`] reads parts built to take its paths, and random parts of the five rows, as
+/// enumeration answers them: a part `false` (a contradiction, no solution) and `true`; a choice
+/// `a & b | !a & c`, an `or` of two meets each given a variable of its own; a meet of unions; the
+/// complement of a meet of unions (an `or` of meets under negation); a clause of three literals
+/// and a row with no literal (no 2-CNF). Each random part read as a 2-CNF agrees with
+/// enumeration.
+#[test]
+fn read_two_sat_agrees_with_enumeration_on_built_and_random_parts() {
+    use crate::types::bdd::Op;
+    let rows = two_sat_rows();
+    let [a, b, c, d, e] = [0, 1, 2, 3, 4].map(|i| Part::literal(rows[i].clone()));
+    let or = |x: &Part<Row>, y: &Part<Row>| x.zip(y, Op::Or);
+    let and = |x: &Part<Row>, y: &Part<Row>| x.zip(y, Op::And);
+    assert_eq!(read_two_sat_agrees(&Part::leaf(false)), Some(false));
+    assert_eq!(read_two_sat_agrees(&Part::leaf(true)), Some(true));
+    let choice = or(&and(&a, &b), &and(&a.not(), &c));
+    assert_eq!(read_two_sat_agrees(&choice), Some(true));
+    assert_eq!(
+        read_two_sat_agrees(&and(&choice, &and(&b.not(), &c.not()))),
+        Some(false)
+    );
+    let meet = and(&or(&a, &b), &or(&c, &d));
+    assert_eq!(read_two_sat_agrees(&meet), Some(true));
+    assert_eq!(read_two_sat_agrees(&meet.not()), Some(true));
+    assert_eq!(
+        read_two_sat_agrees(&and(&meet.not(), &and(&a, &c))),
+        Some(false)
+    );
+    assert_eq!(read_two_sat_agrees(&and(&meet.not(), &a)), Some(true));
+    assert_eq!(
+        read_two_sat_agrees(&and(&meet, &and(&a.not(), &b.not()))),
+        Some(false)
+    );
+    assert_eq!(read_two_sat_agrees(&or(&or(&a, &b), &c)), None);
+    let stranger = Part::literal(Row::new(vec![Type::bool()]));
+    assert_eq!(read_two_sat_agrees(&and(&a, &stranger)), None);
+    // Random parts: each part read as a 2-CNF agrees (the check above); a part of another
+    // structure is `None`, which is allowed of any part.
+    let mut s =
+        crate::seed::seed("read_two_sat_agrees_with_enumeration_on_built_and_random_parts") | 1;
+    fn random(s: &mut u64, depth: u32, atoms: &[Part<Row>]) -> Part<Row> {
+        let pick = next(s);
+        if depth == 0 || pick.is_multiple_of(4) {
+            let p = &atoms[(pick >> 8) as usize % atoms.len()];
+            return if pick >> 4 & 1 == 1 {
+                p.not()
+            } else {
+                p.clone()
+            };
+        }
+        let (x, y) = (random(s, depth - 1, atoms), random(s, depth - 1, atoms));
+        match pick % 4 {
+            1 => x.zip(&y, Op::Or),
+            2 => x.zip(&y, Op::And),
+            _ => x.zip(&y, Op::Or).not(),
+        }
+    }
+    let atoms = [a, b, c, d, e];
+    let mut read = [0usize; 3];
+    for _ in 0..3000 {
+        let f = random(&mut s, 4, &atoms);
+        read[read_two_sat_agrees(&f).map_or(2, usize::from)] += 1;
+    }
+    eprintln!("unsatisfiable, satisfiable, not a 2-CNF: {read:?}");
+}
+
 /// The value the search shows for a satisfiable 2-CNF of 48 bits is a tuple of 48 bits
 /// that holds every clause, read from the values shown, not from the search's own check.
 #[test]
