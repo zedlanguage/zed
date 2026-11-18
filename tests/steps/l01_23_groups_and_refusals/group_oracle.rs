@@ -3505,3 +3505,168 @@ fn groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print() 
         }
     }
 }
+
+// Order sweeps (from the Claude seat of XR-group-order-5, rounds 2 and 3): seeds of the cells
+// family, each in its written order and in four random reorderings of definitions, union arms,
+// meet parts and tuple components. The exact verdict class must agree across orders and with
+// the oracle. The ranges red at 4091b22e5 wait in wt/failing-tests/GROUP-order-cpoly-merge.rs.
+
+/// `e` with the components of every tuple of length m reordered by `p[m]`: component k of the
+/// result is component `p[m][k]` of the tuple. One permutation per length, applied at every
+/// depth, so values map one to one and every verdict is kept.
+fn components_permuted(e: &E, p: &[Vec<usize>]) -> E {
+    let all = |xs: &[E]| {
+        xs.iter()
+            .map(|x| components_permuted(x, p))
+            .collect::<Vec<_>>()
+    };
+    let one = |x: &E| Box::new(components_permuted(x, p));
+    match e {
+        E::Tup(xs) => E::Tup(
+            p[xs.len()]
+                .iter()
+                .map(|&k| components_permuted(&xs[k], p))
+                .collect(),
+        ),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+/// A random permutation of each length below `max`, drawn from `g`.
+fn component_perms(g: &mut Rng, max: usize) -> Vec<Vec<usize>> {
+    (0..max)
+        .map(|m| {
+            let mut v: Vec<usize> = (0..m).collect();
+            for i in (1..m).rev() {
+                let j = g.below(i + 1);
+                v.swap(i, j);
+            }
+            v
+        })
+        .collect()
+}
+/// Over `seeds` of `make`: each system in its written order and in `orders` reorderings, each a
+/// random definition order, random union-arm and meet-part orders, and a random permutation of
+/// the components of each tuple length. Returns the systems whose verdicts differ between two
+/// orders in the exact class (Empty and Refused apart), and the verdicts the oracle contradicts
+/// (Empty with a member shown, or Inhabited when the pool is exhaustive and shows none).
+fn order_sweep(
+    name: &str,
+    make: fn(&mut Rng) -> Vec<E>,
+    seeds: &[u64],
+    orders: usize,
+) -> (Vec<String>, Vec<String>) {
+    let mut differ = Vec::new();
+    let mut wrong = Vec::new();
+    for &seed in seeds {
+        let sys = make(&mut Rng::new(seed));
+        let tag = format!("{name}{seed}");
+        let want = alone(&kernel(&sys, &tag));
+        let tr = truth(&sys, CAP);
+        let check = |vs: &[Option<Verdict>], at: &[usize], label: &str, wrong: &mut Vec<String>| {
+            for (k, &v) in vs.iter().enumerate() {
+                let i = at[k];
+                let bad = match (&tr.seen[i], v) {
+                    (Seen::Member(_), Some(Verdict::Empty)) => true,
+                    (Seen::None, Some(Verdict::Inhabited)) => tr.exhaustive,
+                    _ => false,
+                };
+                if bad {
+                    wrong.push(format!("{tag}{label} R{i}: {v:?} vs {:?}", tr.seen[i]));
+                }
+            }
+        };
+        let n = sys.len();
+        check(&want, &(0..n).collect::<Vec<_>>(), "", &mut wrong);
+        let mut g = Rng::new(seed ^ 0x5EED_0002);
+        for k in 0..orders {
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = g.below(i + 1);
+                order.swap(i, j);
+            }
+            let p = component_perms(&mut g, 5);
+            let moved: Vec<E> = (moved(&sys, &order).iter())
+                .map(|e| components_permuted(&shuffled(e, &mut g), &p))
+                .collect();
+            let got = alone(&kernel(&moved, &format!("{tag}_q{k}")));
+            check(&got, &order, &format!("_q{k}"), &mut wrong);
+            let back: Vec<_> = order.iter().map(|&i| want[i]).collect();
+            let class = |vs: &[Option<Verdict>]| -> Vec<u8> {
+                vs.iter().map(|&v| verdict_class(v, true)).collect()
+            };
+            if class(&got) != class(&back) {
+                differ.push(format!(
+                    "{tag}: {back:?} in the order {order:?} perms {p:?}: {got:?}\n  {}",
+                    show_system(&sys)
+                ));
+            }
+        }
+    }
+    (differ, wrong)
+}
+
+fn order_sweep_asserts(seeds: std::ops::Range<u64>) {
+    let seeds: Vec<u64> = seeds.collect();
+    let (differ, wrong) = order_sweep("osc", gen_cells, &seeds, 4);
+    eprintln!(
+        "order sweep {}..{}: {} differing, {} wrong",
+        seeds[0],
+        seeds[seeds.len() - 1] + 1,
+        differ.len(),
+        wrong.len()
+    );
+    for d in differ.iter().chain(&wrong) {
+        eprintln!("order sweep {d}");
+    }
+    assert!(differ.is_empty() && wrong.is_empty());
+}
+
+#[test]
+fn the_cells_of_seeds_0_500_agree_exactly_in_every_order() {
+    order_sweep_asserts(0..500);
+}
+
+#[test]
+fn the_cells_of_seeds_500_1000_agree_exactly_in_every_order() {
+    order_sweep_asserts(500..1000);
+}
+
+#[test]
+fn the_cells_of_seeds_2000_2500_agree_exactly_in_every_order() {
+    order_sweep_asserts(2000..2500);
+}
+
+#[test]
+fn the_cells_of_seeds_2500_3000_agree_exactly_in_every_order() {
+    order_sweep_asserts(2500..3000);
+}
+
+#[test]
+fn the_cells_of_seeds_3500_4000_agree_exactly_in_every_order() {
+    order_sweep_asserts(3500..4000);
+}
+
+#[test]
+fn the_cells_of_seeds_4000_4500_agree_exactly_in_every_order() {
+    order_sweep_asserts(4000..4500);
+}
+
+#[test]
+fn the_cells_of_seeds_4500_5000_agree_exactly_in_every_order() {
+    order_sweep_asserts(4500..5000);
+}
+
+#[test]
+fn the_cells_of_seeds_5000_5500_agree_exactly_in_every_order() {
+    order_sweep_asserts(5000..5500);
+}
+
+#[test]
+fn the_cells_of_seeds_5500_6000_agree_exactly_in_every_order() {
+    order_sweep_asserts(5500..6000);
+}
