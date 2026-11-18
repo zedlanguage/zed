@@ -175,9 +175,13 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// `n` rows of functions equal on both sides at one place, none compared there, decided in time
 /// linear in `n` when the forms are built a second time with the skipped pairs merged
 /// (FAIL-types-equal-functions-subset-no, COMPLEXITY.md F124): with a tag the right side lacks
-/// the answer is a definite no, and without it a definite yes (a refusal before 1233ccd22,
-/// PERF-types-variable-shapes-one-bucket; `f_i` fits `h_i`, so `(f_i, #a_i)` and `(h_i, #b_i)`
-/// are both held by `(h_i, #a_i | #b_i)`). Each row `(h_i, #b_i)`
+/// the answer is a definite no, and without it a refusal. The functions take a tuple,
+/// `(x_i: (int, int)) -> int`, so they have no domain key and stay in one part (`domain_key` in
+/// ty.rs). Taking `int`, as here until 3189a1922 (PERF-types-loose-pairing-dense), each `i` is a
+/// part of its own, the rows are paired and the case without the tag is a definite yes (`f_i`
+/// fits `h_i`, so `(f_i, #a_i)` and `(h_i, #b_i)` are both held by `(h_i, #a_i | #b_i)`): that
+/// case is checked too (FAIL-bench-equal-functions-domain-key; bisected, the bench passed at
+/// 197c7de2b and failed at 3189a1922). Each row `(h_i, #b_i)`
 /// meets both right rows of its `i`, and `(h_i, #a_i | #b_i)` both left rows, so the pairs of
 /// rows that meet form no stars, and the pairs of rows the search finds outnumber the functions,
 /// so the
@@ -199,9 +203,9 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
     // from 300 k and 3.26 M to 33 k and 258 k.
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
-    let sides = |m: usize, extra: &str| {
-        let f = |i: usize| format!("((x{i}: int) -> int)");
-        let h = |i: usize| format!("((x{i}: int) -> int | #z)");
+    let sides = |m: usize, d: &str, extra: &str| {
+        let f = |i: usize| format!("((x{i}: {d}) -> int)");
+        let h = |i: usize| format!("((x{i}: {d}) -> int | #z)");
         let left: Vec<String> = (0..m)
             .flat_map(|i| [format!("({}, #a{i})", f(i)), format!("({}, #b{i})", h(i))])
             .chain([extra.to_string()].into_iter().filter(|e| !e.is_empty()))
@@ -219,14 +223,18 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
         (parse(left), parse(right))
     };
     let n = 256;
-    let no = scaling::inputs(n, |m| sides(m, &format!("({}, #c)", "(int) -> int")));
-    let yes = scaling::inputs(n, |m| sides(m, ""));
+    let pair = "(int, int)";
+    let no = scaling::inputs(n, |m| sides(m, pair, "(((int, int)) -> int, #c)"));
+    let refused = scaling::inputs(n, |m| sides(m, pair, ""));
+    let yes = scaling::inputs(n, |m| sides(m, "int", ""));
     scaling::check(
         "n rows of functions equal on both sides at one place, decided twice",
         n,
         |m| {
             let (a, b): &(Ty, Ty) = &no[&m];
             assert!(!a.subtype(b) && a.refused(b).is_empty());
+            let (a, b): &(Ty, Ty) = &refused[&m];
+            assert!(!a.refused(b).is_empty());
             let (a, b): &(Ty, Ty) = &yes[&m];
             assert!(a.subtype(b));
         },
