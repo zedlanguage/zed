@@ -91,9 +91,12 @@ fn residues_left() -> Type {
 }
 
 /// Erdős's covering system, 0 modulo 2, 0 modulo 3, 1 modulo 4, 5 modulo 6 and 7 modulo 12,
-/// covers every length, so the type is empty; no split on one prime decides it.
+/// with 1 modulo 6 over it, covers every length, so the type is empty; no split on one prime
+/// decides it. Erdős's system alone is decided by the split on 2 down to classes modulo 4
+/// (FAIL-periodic-lists-13375960689); 1 modulo 6 meets 7 modulo 12, so the shares of the class
+/// 3 modulo 4 sum to 4/3, and those of 1 modulo 3 split on 3 sum to 3/2.
 fn erdos_cover() -> Type {
-    lengths_outside(&[(2, 0), (3, 0), (4, 1), (6, 5), (12, 7)])
+    lengths_outside(&[(2, 0), (3, 0), (4, 1), (6, 5), (12, 7), (6, 1)])
 }
 
 /// Pairs of a list of integers and an integer, without those whose list holds only 1s or only
@@ -264,9 +267,10 @@ fn each_refusal_has_its_own_message() {
 
 #[test]
 fn the_checker_says_when_a_check_was_refused() {
-    // Erdős's cover holds every list, but no split on one prime shows it.
+    // Erdős's cover with 1 modulo 6 holds every list, but no split on one prime shows it
+    // (`erdos_cover`).
     let lists = Ty::set(list(Type::int()));
-    let cover = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7)].map(|(p, k)| period(p, k));
+    let cover = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7), (6, 1)].map(|(p, k)| period(p, k));
     let covered = Ty::set(Type::union_all(cover));
     assert!(!lists.subtype(&covered));
     assert_eq!(
@@ -591,7 +595,7 @@ fn period_named(p: usize, k: usize, tag: &str) -> Type {
 
 /// The Erdős cover of [`erdos_cover`], each class written `n` times in groups of its own.
 fn erdos_cover_repeated(n: usize, tag: &str) -> Type {
-    let classes = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7)];
+    let classes = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7), (6, 1)];
     (0..n).fold(list_named(Type::int(), tag), |t, j| {
         classes.iter().fold(t, |t, &(p, k)| {
             &t - &period_named(p, k, &format!("{tag}_{j}"))
