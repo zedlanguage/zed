@@ -3801,3 +3801,18 @@ fn rewritten_parts_of_seeds_found_later_are_decided_alike() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Seed 8090022510343574640 of the test of pendants against the whole part: the whole part
+/// keeps the parity of `z0` that `2 * b + 2 * c + z0 == 3` forces (FAIL-whole-projection-parity-seed).
+#[test]
+fn the_whole_part_keeps_the_parity_an_equality_forces_at_seed_8090022510343574640() {
+    let seed = 8_090_022_510_343_574_640;
+    pendants_against_whole(Rng::new(seed), seed);
+}
+
+/// Seed 11342540463404683610: `2 * a + 2 * b + z2 == -12`, z2 even.
+#[test]
+fn the_whole_part_keeps_the_parity_an_equality_forces_at_seed_11342540463404683610() {
+    let seed = 11_342_540_463_404_683_610;
+    pendants_against_whole(Rng::new(seed), seed);
+}
