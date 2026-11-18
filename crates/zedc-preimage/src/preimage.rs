@@ -8461,7 +8461,9 @@ impl<'m, 't> Walk<'m, 't> {
         // of the domain ([`Pa::to_treap`]), a case no longer splits at one either: 7 of 180
         // shape boxes at moduli 3, 5, 7 grew by 2 to 4 points, 10, 8 and 0 points in all
         // against 1648, 1469 and 1315 points above the exact projection, and one box at
-        // modulus 3 is 2 points wider than level by level (COMPLEXITY.md S22-hole-summaries).
+        // modulus 3 was 2 points wider than level by level (COMPLEXITY.md S22-hole-summaries)
+        // until the solver projected each disjunct through the hull's one-term bounds
+        // (COMPLEXITY.md PRES-monotone-unary), which removed those 2 points.
         // Meeting the box with the union of
         // the pieces does not help: a range whose summary is one line has one piece over the
         // whole domain. Why: cutting at every other range's starts makes `L * S` cases for `L`

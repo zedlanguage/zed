@@ -3077,8 +3077,7 @@ type Boxes = &'static [(i64, i64)];
 /// that the hull of each case made wider than the level-by-level translation, or wider at some
 /// points and narrower at others, as `(shape, seed, k, box, level-by-level box)`. Each case of
 /// the remainder `if` is now cut at the starts of the pieces of the class ranges next to it,
-/// which cuts out the holes again; every box but [`HOLE_WIDER`] lies within the level-by-level
-/// one.
+/// which cuts out the holes again; every box lies within the level-by-level one.
 const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
     (3, 1, 2, &[(-4, -4), (-1, 59)], &[(-4, -4), (-1, 59)]),
     (
@@ -3100,7 +3099,7 @@ const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
         4,
         1,
         5,
-        &[(-58, -58), (-54, -16), (-10, -4), (-2, 58)],
+        &[(-58, -58), (-52, -16), (-10, -4), (-2, 58)],
         &[(-58, -58), (-52, -4), (-2, 58)],
     ),
     (
@@ -3119,13 +3118,15 @@ const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
     ),
 ];
 
-/// The `(shape, seed, k)` of [`CUT_BOXES`] whose box is wider than level by level at `-54` and
-/// `-53`, 2 points (COMPLEXITY.md S22-hole-summaries): a hole of the domain of `x` cut each
-/// summary there, which narrowed the hull of a case; the summaries no longer cut at holes.
-const HOLE_WIDER: (usize, u64, usize) = (4, 1, 5);
+/// The `(shape, seed, k)` of [`CUT_BOXES`] whose box was wider than level by level at `-54`
+/// and `-53`, 2 points (COMPLEXITY.md S22-hole-summaries: the summaries no longer cut at the
+/// holes of the domain of `x`), until the solver projected each disjunct through the one-term
+/// bounds of its hull (COMPLEXITY.md PRES-monotone-unary), which cut those 2 points out again;
+/// its box is checked against the interpreter over the whole of `[-60, 60]`.
+const HOLE_NARROWED: (usize, u64, usize) = (4, 1, 5);
 
-/// COMPLEXITY.md S22-case-cuts: the boxes of [`CUT_BOXES`], each but [`HOLE_WIDER`] within its
-/// level-by-level box, and agreeing with the interpreter.
+/// COMPLEXITY.md S22-case-cuts: the boxes of [`CUT_BOXES`], each within its level-by-level box,
+/// and agreeing with the interpreter.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
     let (ds, d) = (xy_in(60), Demand::Bool(true));
@@ -3135,14 +3136,13 @@ fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
         let p = preimage(&t, &ds, &d);
         let (want, level) = (pieces(want), pieces(level));
         assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
-        let within = (s, seed, k) != HOLE_WIDER;
-        assert_eq!(
-            want.is_subset(&level),
-            within,
-            "{shape}, seed {seed}, k = {k}"
-        );
-        check(&t, &ds, &d, &p, (-20, 20));
-        check(&t, &ds, &d, &p, (45, 60));
+        assert!(want.is_subset(&level), "{shape}, seed {seed}, k = {k}");
+        if (s, seed, k) == HOLE_NARROWED {
+            check(&t, &ds, &d, &p, (-60, 60));
+        } else {
+            check(&t, &ds, &d, &p, (-20, 20));
+            check(&t, &ds, &d, &p, (45, 60));
+        }
     }
 }
 
