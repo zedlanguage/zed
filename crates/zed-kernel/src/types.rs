@@ -21,6 +21,8 @@
 //! as written rather than met with another, so no connective unfolds a type without end.
 //! Whether a type is empty, and so subtyping, is decided in module `empty`.
 
+mod atoms;
+use atoms::Atoms;
 mod bdd;
 pub mod bes;
 mod bucket;
@@ -250,8 +252,8 @@ impl Drop for Node {
                     }
                 });
             }
-            if !p.atoms.names.is_empty() {
-                free(Freed::Atoms(std::mem::take(&mut p.atoms.names)));
+            if !p.atoms.names().is_empty() {
+                free(Freed::Atoms(p.atoms.take_names()));
             }
             if !p.tuples.lens.is_empty() {
                 free(Freed::Lens(std::mem::take(&mut p.tuples.lens)));
@@ -981,17 +983,17 @@ fn types<'a>(a: &'a Type, b: &'a Type, steps: &mut Vec<Step<'a>>, equal: &Equal)
         .then_with(|| p.floats.cmp(&q.floats))
         .then_with(|| p.f32s.cmp(&q.f32s))
         .then_with(|| p.strings.cmp(&q.strings))
-        .then(p.atoms.cofinite.cmp(&q.atoms.cofinite));
+        .then(p.atoms.cofinite().cmp(&q.atoms.cofinite()));
     if c != Ordering::Equal {
         return c;
     }
     let n = steps.len();
-    let names = (&p.atoms.names, &q.atoms.names);
+    let names = (p.atoms.names(), q.atoms.names());
     let c = atom_names(names, Bound::Unbounded, steps);
     if c != Ordering::Equal {
         return c;
     }
-    let sum = (p.atoms.sum.cmp(&q.atoms.sum)).then(p.tuples.rest.cmp(&q.tuples.rest));
+    let sum = (p.atoms.sum().cmp(&q.atoms.sum())).then(p.tuples.rest.cmp(&q.tuples.rest));
     let lens = (&p.tuples.lens, &q.tuples.lens);
     if steps.len() > n {
         // A payload ties in digest: the fields after the atoms wait below its contents.
@@ -1374,24 +1376,6 @@ impl PartialOrd for Lits {
     }
 }
 
-/// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
-/// The map is persistent, and `sum` is the wrapping sum of its entries' hashes. `payloads` is
-/// the set of listed names whose payload lists something, kept by [`Atoms::set`] in O(log n),
-/// so that a sweep finds the one payload name, or that there is none, without reading the
-/// others: the sweeps ask it of every type they are given, and reading every name there made a
-/// chain of `n` failure atoms cost `n^2 log n`. `bare_names` counts the listed names that hold
-/// their bare atom, kept by [`Atoms::set`] in O(1), so that whether a type holds a bare atom is
-/// read without reading the names.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-struct Atoms {
-    name_sum: u64,
-    cofinite: bool,
-    names: OrdMap<Arc<str>, AtomPart>,
-    sum: u64,
-    payloads: OrdSet<Arc<str>>,
-    bare_names: usize,
-}
-
 /// The atoms of one name in a type: the bare atom, and those whose payload is in `payload`, a
 /// type within the tuples and structs.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1440,9 +1424,9 @@ impl Parts {
         for l in [&self.ints, &self.rats, &self.floats, &self.strings] {
             h = mix(mix(h, u64::from(l.cofinite)), l.sum());
         }
-        let base = mix(h, u64::from(self.atoms.cofinite));
-        let mut named = mix(base, self.atoms.name_sum);
-        h = mix(base, self.atoms.sum);
+        let base = mix(h, u64::from(self.atoms.cofinite()));
+        let mut named = mix(base, self.atoms.name_sum());
+        h = mix(base, self.atoms.sum());
         h = mix(h, u64::from(self.tuples.rest));
         named = mix(named, u64::from(self.tuples.rest));
         for (len, part) in &self.tuples.lens {
@@ -1759,7 +1743,7 @@ impl Type {
             } else if t.tuple_literals_only() {
                 tuples.push(rest.len());
                 rest.push(t);
-            } else if t.atoms_only() && !t.p().atoms.cofinite {
+            } else if t.atoms_only() && !t.p().atoms.cofinite() {
                 atoms.push(t);
             } else {
                 rest.push(t);
@@ -1793,7 +1777,7 @@ impl Type {
             rest.extend(atoms);
         } else {
             let largest = (0..atoms.len())
-                .max_by_key(|&i| atoms[i].p().atoms.names.len())
+                .max_by_key(|&i| atoms[i].p().atoms.names().len())
                 .expect("two at least");
             let mut joined = atoms[largest].p().atoms.clone();
             for (i, t) in atoms.iter().enumerate() {
@@ -1988,7 +1972,7 @@ impl Type {
                     None => continue,
                 }
             }
-            let payloads = p.atoms.names.values().map(|a| &a.payload);
+            let payloads = p.atoms.names().values().map(|a| &a.payload);
             stack.extend(payloads.filter(|t| seen.insert(t.node_id())).cloned());
             for part in p.tuples.lens.values() {
                 part.taken_toward(true, &mut paths, &mut |r| {
@@ -2017,7 +2001,7 @@ impl Type {
                 ] {
                     l.cofinite = true;
                 }
-                p.atoms.cofinite = true;
+                p.atoms = Atoms::all();
             }
             Universe::Tuple => {
                 p.tuples = Tuples {
@@ -2071,9 +2055,9 @@ impl Type {
             let p = t.p();
             pending.extend(
                 p.atoms
-                    .payloads
+                    .payloads()
                     .iter()
-                    .map(|n| p.atoms.names[n].payload.clone()),
+                    .map(|n| p.atoms.names()[n].payload.clone()),
             );
             p.tuples.atoms(&mut |row| {
                 pending.extend(row.iter().cloned());
@@ -2133,7 +2117,7 @@ impl Type {
             let rows: Vec<(usize, Vec<Row>)> = (p.tuples.lens.iter())
                 .map(|(n, part)| (*n, part.distinct_atoms()))
                 .collect();
-            let payloads = p.atoms.names.values().map(|a| &a.payload);
+            let payloads = p.atoms.names().values().map(|a| &a.payload);
             let mut below = payloads.chain(rows.iter().flat_map(|(_, rs)| rs.iter().flatten()));
             if !ready {
                 stack.push((t.clone(), true));
@@ -2147,7 +2131,7 @@ impl Type {
             }
             let made = |c: &Type| memo[c].clone().expect("tested above");
             let mut q: Option<Parts> = None;
-            for (n, a) in &p.atoms.names {
+            for (n, a) in p.atoms.names() {
                 let payload = made(&a.payload);
                 if payload != a.payload {
                     let bare = a.bare;
@@ -2202,7 +2186,7 @@ impl Type {
                 return false;
             }
             let p = u.p();
-            stack.extend(p.atoms.names.values().map(|a| a.payload.clone()));
+            stack.extend(p.atoms.names().values().map(|a| a.payload.clone()));
             for part in p.tuples.lens.values() {
                 stack.extend(part.distinct_atoms().iter().flat_map(|r| r.iter().cloned()));
             }
@@ -2318,7 +2302,7 @@ impl Type {
                     .iter()
                     .map(|l| l.values.len())
                     .sum::<usize>()
-                + p.atoms.names.values().filter(|a| a.bare).count();
+                + p.atoms.names().values().filter(|a| a.bare).count();
             if literals + boxes.len() <= 1 && ones(boxes, &single) {
                 single.insert(t);
             }
@@ -2593,12 +2577,12 @@ impl<'m> Finiteness<'m> {
         };
         if p.structs
             || p.morphisms.is_leaf() != Some(false)
-            || p.atoms.cofinite
+            || p.atoms.cofinite()
             || p.tuples.rest
             || [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
                 .iter()
                 .any(|l| l.cofinite)
-            || p.atoms.names.values().any(|a| a.payload != Type::empty())
+            || p.atoms.names().values().any(|a| a.payload != Type::empty())
         {
             return None;
         }
@@ -2691,8 +2675,8 @@ impl Type {
             Value::Float(_) => p.floats.contains(v),
             Value::Float32(_) => p.f32s.contains(v),
             Value::Str(_) => p.strings.contains(v),
-            Value::Atom(a) => match p.atoms.names.get(&a.name) {
-                None => p.atoms.cofinite,
+            Value::Atom(a) => match p.atoms.names().get(&a.name) {
+                None => p.atoms.cofinite(),
                 Some(part) if a.is_bare() => part.bare,
                 Some(part) if a.fields.is_empty() => {
                     return Member::Tuple(part.payload.clone(), a.args());
@@ -2952,7 +2936,7 @@ impl Parts {
     /// Whether it holds a bare atom, `#a`, or the atoms of every name it does not list, read
     /// from the parts in O(1) ([`Atoms`] counts the names that hold their bare atom).
     fn has_bare_atoms(&self) -> bool {
-        self.atoms.cofinite || self.atoms.bare_names > 0
+        self.atoms.cofinite() || self.atoms.bare_names() > 0
     }
 
     /// Whether it holds a boolean, number or string, read from the parts.
@@ -3118,15 +3102,15 @@ impl Type {
     /// unfolding (`rec::unfold::end_unit`).
     pub fn atom_names(&self) -> Option<impl Iterator<Item = (&str, bool)>> {
         let (map, list) = match &*self.0 {
-            Node::Parts(p, _) => match p.atoms.cofinite {
+            Node::Parts(p, _) => match p.atoms.cofinite() {
                 true => return None,
-                false => (Some(p.atoms.names.iter()), None),
+                false => (Some(p.atoms.names().iter()), None),
             },
             Node::Rec(r) => {
                 let names = r.names.get_or_init(|| {
                     let p = self.p();
-                    let names = p.atoms.names.iter();
-                    (!p.atoms.cofinite).then(|| names.map(|(n, a)| (n.clone(), a.bare)).collect())
+                    let names = p.atoms.names().iter();
+                    (!p.atoms.cofinite()).then(|| names.map(|(n, a)| (n.clone(), a.bare)).collect())
                 });
                 (None, Some(names.as_deref()?.iter()))
             }
@@ -3156,7 +3140,7 @@ impl Type {
                     false => Type::payloads(),
                 };
                 p.atoms
-                    .names
+                    .names()
                     .get_min()
                     .is_some_and(|(_, a)| a.payload == payload)
                     && p.atoms_only()
@@ -3182,7 +3166,7 @@ impl Type {
         let Node::Parts(p, _) = &*self.0 else {
             return None;
         };
-        if p.atoms.cofinite && p.tuples.rest && p.structs {
+        if p.atoms.cofinite() && p.tuples.rest && p.structs {
             return None;
         }
         let low = Type::with(|q| {
@@ -3205,10 +3189,10 @@ impl Type {
         });
         let morphisms = Type::with(|q| q.morphisms = p.morphisms.clone());
         let mut buckets = vec![Atoms::default(); cuts.len() + 1];
-        match p.atoms.cofinite {
+        match p.atoms.cofinite() {
             true => buckets[0] = p.atoms.clone(),
             false => {
-                for (name, part) in p.atoms.names.iter() {
+                for (name, part) in p.atoms.names().iter() {
                     let i = cuts.partition_point(|c| *c < &**name);
                     buckets[i].set(name, part.clone());
                 }
@@ -3332,194 +3316,6 @@ impl AtomPart {
         AtomPart {
             bare: !self.bare,
             payload: Type::payloads() - &self.payload,
-        }
-    }
-}
-
-impl Atoms {
-    /// Whether it is the part of no atom, `Atoms::default()`, read with nothing built.
-    fn is_default(&self) -> bool {
-        !self.cofinite && self.names.is_empty() && self.sum == 0
-    }
-
-    fn get(&self, name: &str) -> AtomPart {
-        match self.names.get(name) {
-            Some(p) => p.clone(),
-            None if self.cofinite => AtomPart::all(),
-            None => AtomPart::none(),
-        }
-    }
-
-    fn entries(name: &str, p: &AtomPart) -> (u64, u64) {
-        let head = mix(bytes(name.as_bytes()), u64::from(p.bare));
-        (
-            mix(head, p.payload.digest()),
-            mix(head, p.payload.name_digest()),
-        )
-    }
-
-    /// Gives `name` the part `p`, unlisting it when `p` is what an unlisted name has.
-    fn set(&mut self, name: &Arc<str>, p: AtomPart) {
-        if let Some(old) = self.names.remove(name) {
-            let (primary, named) = Atoms::entries(name, &old);
-            self.sum = self.sum.wrapping_sub(primary);
-            self.name_sum = self.name_sum.wrapping_sub(named);
-            self.payloads.remove(name);
-            self.bare_names -= usize::from(old.bare);
-        }
-        let default = if self.cofinite {
-            AtomPart::all()
-        } else {
-            AtomPart::none()
-        };
-        if p != default {
-            let (primary, named) = Atoms::entries(name, &p);
-            self.sum = self.sum.wrapping_add(primary);
-            self.name_sum = self.name_sum.wrapping_add(named);
-            if !p.payload.lists_nothing() {
-                self.payloads.insert(name.clone());
-            }
-            self.bare_names += usize::from(p.bare);
-            self.names.insert(name.clone(), p);
-        }
-    }
-
-    /// The parts combined by `op`. A name the smaller map does not list has every payload or
-    /// none, and a part combined with all or none is itself, all or none: so the result is the
-    /// larger map, or nothing, changed at the smaller map's names. When it is the larger map,
-    /// only the names where the two differ change, since a part combined with itself is itself;
-    /// those are found by walking the smaller map, `O(s log l)` steps for its `s` names and the
-    /// larger's `l`, or by a diff of the two maps, which skips the nodes they share, so that
-    /// two sets grown from one another, as a chain of merged failures grows the set of its
-    /// members beside its loose atoms (ERRS-precise), differ in `O(d log l)` for their `d`
-    /// differing names. The two walks advance in turn and the first to finish is used:
-    // Complexity tradeoff: twice the cheaper walk, so `O(min(s, d + log l) log l)`, against
-    // `O(s log l)` alone, which is quadratic for a chain of `n` such unions.
-    fn zip(&self, other: &Atoms, op: Op) -> Atoms {
-        let cofinite = match op {
-            Op::Or => self.cofinite || other.cofinite,
-            Op::And => self.cofinite && other.cofinite,
-        };
-        let (large, small) = if self.names.len() >= other.names.len() {
-            (self, other)
-        } else {
-            (other, self)
-        };
-        let mut out = match (op, small.cofinite) {
-            (Op::Or, false) | (Op::And, true) => large.clone(),
-            _ => {
-                let mut out = Atoms {
-                    cofinite,
-                    ..Atoms::default()
-                };
-                for (n, p) in &small.names {
-                    out.set(n, large.get(n).zip(p, op));
-                }
-                return out;
-            }
-        };
-        out.cofinite = cofinite;
-        let mut walk = small.names.iter();
-        let mut diff = large.names.diff(&small.names);
-        let mut differ = Vec::new();
-        loop {
-            if walk.next().is_none() {
-                for (n, p) in &small.names {
-                    out.set(n, large.get(n).zip(p, op));
-                }
-                return out;
-            }
-            match diff.next() {
-                None => break,
-                Some(DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. }) => {
-                    differ.push((n, p));
-                }
-                Some(DiffItem::Remove(..)) => {}
-            }
-        }
-        for (n, p) in differ {
-            out.set(n, large.get(n).zip(p, op));
-        }
-        out
-    }
-
-    /// Joins `other` into `self` in place, both listing every name they hold (neither
-    /// cofinite): `O(s log l)` for `other`'s `s` names and the result's `l`. A node `self`
-    /// shares with another map is copied the first time it changes, and then changed in place.
-    fn join(&mut self, other: &Atoms) {
-        debug_assert!(!self.cofinite && !other.cofinite);
-        for (n, p) in &other.names {
-            let joined = self.get(n).zip(p, Op::Or);
-            self.set(n, joined);
-        }
-    }
-
-    fn not(&self) -> Atoms {
-        let mut out = Atoms {
-            cofinite: !self.cofinite,
-            ..Atoms::default()
-        };
-        for (n, p) in &self.names {
-            out.set(n, p.not());
-        }
-        out
-    }
-
-    /// The parts of `self` outside `other`: `self.zip(&other.not(), Op::And)`, each name's part
-    /// the same, without building `other.not()`.
-    ///
-    /// Proof that it is that map. Write `s(n)` and `o(n)` for the parts `get` gives; the result
-    /// at `n` is `s(n) & !o(n)` (`at`), and `set` leaves a name unlisted exactly when its part
-    /// is the default of the result's kind, so it is enough that every name whose part may
-    /// differ from that default is set. An unlisted name has the part none in a finite map and
-    /// all in a cofinite one, and `!all` is none.
-    /// - `self` cofinite, `other` finite: the result is cofinite (default all). At a name
-    ///   `other` does not list, `!o(n)` is all and the part is `s(n)`, which `self.clone()`
-    ///   already holds; so only `other`'s names are set.
-    /// - Both cofinite: the result is finite (default none). At a name `other` does not list,
-    ///   `!o(n)` is none; so only `other`'s names can be other than none.
-    /// - `self` finite, `other` cofinite: finite. A name either map leaves unlisted gives none
-    ///   (`s(n)` none, or `!o(n)` none), so only names both list matter, and setting the
-    ///   names of either map, the smaller, covers them.
-    /// - Both finite: finite. A name `self` leaves unlisted gives none, so setting `self`'s
-    ///   names is enough; or, from `self.clone()`, a name `other` leaves unlisted keeps
-    ///   `s(n) & all = s(n)`, so setting `other`'s names is enough.
-    ///
-    /// Each case reads the names of one map and gets `s(n)` and `o(n)` in O(log) each.
-    // Complexity tradeoff: `O(min(s, o) log max(s, o))` for the `s` and `o` names listed, where
-    // `self & !other` complemented each of `other`'s names first, `O(o log o)` whatever `self`
-    // is. So `#a <: (#r1 | ... | #rk)`, asked of each arm of an `else if` chain of `n` links
-    // returning `n` atoms, cost `O(k)` at depth `k`, the chain `Θ(n²)`: 25.2 times the
-    // instructions for 8 times the links, 8.0 now (row BENCH-if-chain-other-paths; test
-    // `l08_02_remaps::bench::an_else_if_chain_returning_n_different_types_is_checked_in_n_log_n_time`;
-    // COMPLEXITY.md K119).
-    fn minus(&self, other: &Atoms) -> Atoms {
-        let at = |n: &Arc<str>| self.get(n).zip(&other.get(n).not(), Op::And);
-        let fresh = |cofinite: bool, names: &OrdMap<Arc<str>, AtomPart>| {
-            let mut out = Atoms {
-                cofinite,
-                ..Atoms::default()
-            };
-            for n in names.keys() {
-                out.set(n, at(n));
-            }
-            out
-        };
-        let changed = |names: &OrdMap<Arc<str>, AtomPart>| {
-            let mut out = self.clone();
-            for n in names.keys() {
-                out.set(n, at(n));
-            }
-            out
-        };
-        let smaller_self = self.names.len() <= other.names.len();
-        match (self.cofinite, other.cofinite) {
-            (true, false) => changed(&other.names),
-            (true, true) => fresh(false, &other.names),
-            (false, true) if smaller_self => fresh(false, &self.names),
-            (false, true) => fresh(false, &other.names),
-            (false, false) if smaller_self => fresh(false, &self.names),
-            (false, false) => changed(&other.names),
         }
     }
 }
@@ -3967,10 +3763,10 @@ impl Type {
             }
             out
         };
-        if p.atoms.cofinite {
+        if p.atoms.cofinite() {
             let except: Vec<Rope> = p
                 .atoms
-                .names
+                .names()
                 .iter()
                 .flat_map(|(n, part)| atom(n, &part.not()))
                 .collect();
@@ -3979,7 +3775,7 @@ impl Type {
                 false => items.push(Rope::listed("(\\ #_", except)),
             }
         } else {
-            items.extend(p.atoms.names.iter().flat_map(|(n, part)| atom(n, part)));
+            items.extend(p.atoms.names().iter().flat_map(|(n, part)| atom(n, part)));
         }
         tuples(&mut items, &p.tuples);
         if p.structs {
@@ -4747,7 +4543,7 @@ fn scalars(p: &Parts) -> Vec<Value> {
     }
     made.extend(
         p.atoms
-            .names
+            .names()
             .iter()
             .filter(|(_, a)| a.bare)
             .map(|(name, _)| Value::atom(name)),
@@ -4862,20 +4658,20 @@ impl Visit {
         let atoms = &p.atoms;
         keys.extend(
             atoms
-                .names
+                .names()
                 .iter()
-                .filter(|(_, a)| a.bare != atoms.cofinite)
+                .filter(|(_, a)| a.bare != atoms.cofinite())
                 .map(|(name, _)| Value::atom(name)),
         );
-        listed &= !atoms.cofinite;
+        listed &= !atoms.cofinite();
         // An atom with a tuple payload is in the type when its name is listed and the tuple of
         // its arguments is in the name's payload type, so its key is one of that type's.
         if reading == Reading::Payloads {
             next.extend(
                 atoms
-                    .payloads
+                    .payloads()
                     .iter()
-                    .map(|name| atoms.names[name].payload.clone()),
+                    .map(|name| atoms.names()[name].payload.clone()),
             );
         }
         let by_boxes = reading == Reading::Boxes;
@@ -5188,7 +4984,7 @@ fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> 
         Kind::Float => Some(p.floats.cofinite),
         Kind::Float32 => Some(p.f32s.cofinite),
         Kind::Str => Some(p.strings.cofinite),
-        Kind::Atom => Some(p.atoms.cofinite),
+        Kind::Atom => Some(p.atoms.cofinite()),
         Kind::Other => None,
         Kind::Tuple(len) => match p.tuples.lens.get(len) {
             None => Some(p.tuples.rest),
@@ -5476,7 +5272,10 @@ fn place_regions(open: &[Open], (j, d, len, m): Place) -> BTreeMap<Value, usize>
             let p = u.p();
             let lists = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
             let atoms = &p.atoms;
-            let names = atoms.names.iter().filter(|(_, a)| a.bare != atoms.cofinite);
+            let names = atoms
+                .names()
+                .iter()
+                .filter(|(_, a)| a.bare != atoms.cofinite());
             for k in lists
                 .into_iter()
                 .flat_map(|l| l.values.iter().cloned())

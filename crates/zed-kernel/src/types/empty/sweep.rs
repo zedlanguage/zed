@@ -221,20 +221,20 @@ fn shape(
     c: &mut Option<Arc<str>>,
 ) -> Option<(BTreeSet<Arc<str>>, Option<(Clause, bool)>)> {
     if p.has_scalars()
-        || p.atoms.cofinite
+        || p.atoms.cofinite()
         || !p.tuples.is_default()
         || p.structs
         || p.morphisms.is_leaf() != Some(false)
-        || p.atoms.payloads.len() > 1
+        || p.atoms.payloads().len() > 1
     {
         return None;
     }
     let mut clause = None;
-    if let Some(name) = p.atoms.payloads.get_min() {
+    if let Some(name) = p.atoms.payloads().get_min() {
         if c.get_or_insert_with(|| name.clone()) != name {
             return None;
         }
-        let q = p.atoms.names.get(name)?.payload.p();
+        let q = p.atoms.names().get(name)?.payload.p();
         if q.has_scalars()
             || !q.atoms.is_default()
             || q.structs
@@ -256,7 +256,7 @@ fn shape(
         }
         clause = Some(((taken, refused), union));
     }
-    let e = (p.atoms.names.iter())
+    let e = (p.atoms.names().iter())
         .filter(|(_, part)| part.bare)
         .map(|(name, _)| name.clone())
         .collect();
@@ -324,8 +324,8 @@ fn lits_ok(p: &Parts) -> bool {
 /// such scalars.
 fn head_ok(h: &Type) -> bool {
     let p = h.p();
-    let atoms =
-        !p.atoms.cofinite && (p.atoms.names.values()).all(|a| a.bare && a.payload.lists_nothing());
+    let atoms = !p.atoms.cofinite()
+        && (p.atoms.names().values()).all(|a| a.bare && a.payload.lists_nothing());
     let tuples = !p.tuples.rest
         && p.tuples.lens.iter().all(|(&len, part)| {
             part.clause().is_some_and(|(taken, refused)| {
@@ -848,13 +848,13 @@ impl Sweep {
         }
         let mut names: BTreeMap<Arc<str>, BTreeSet<usize>> = BTreeMap::new();
         for (g, t) in &gs {
-            for (a, part) in t.p().atoms.names.iter() {
+            for (a, part) in t.p().atoms.names().iter() {
                 if part.bare {
                     names.entry(a.clone()).or_default().insert(*g);
                 }
             }
         }
-        for (a, part) in p.atoms.names.iter() {
+        for (a, part) in p.atoms.names().iter() {
             if part.bare {
                 add(
                     false,
@@ -1841,7 +1841,7 @@ pub(super) fn list_sweep_checked(t: &Type) -> Option<Option<Value>> {
 fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
     // A type with no payload name, as a set of failure atoms, has no clause: it is left before
     // `shape` reads its names, which costs O(names log names) for every type asked.
-    if t.p().atoms.payloads.len() != 1 {
+    if t.p().atoms.payloads().len() != 1 {
         return None;
     }
     let mut sw: Sweep = Sweep::default();

@@ -292,9 +292,9 @@ fn only_ints(p: &Parts) -> bool {
         && !p.structs
         && p.morphisms.is_leaf() == Some(false)
         && p.tuples.is_default()
-        && !p.atoms.cofinite
+        && !p.atoms.cofinite()
         && p.atoms
-            .names
+            .names()
             .values()
             .all(|a| !a.bare && a.payload == Type::empty())
 }
@@ -372,11 +372,11 @@ fn finite_positive_alphabet(rows: &[Row]) -> Option<BTreeSet<Value>> {
                 || !p.tuples.is_default()
                 || p.structs
                 || p.morphisms.is_leaf() != Some(false)
-                || p.atoms.cofinite
-                || p.atoms.names.len() != 1
+                || p.atoms.cofinite()
+                || p.atoms.names().len() != 1
                 || !p
                     .atoms
-                    .names
+                    .names()
                     .values()
                     .next()
                     .is_some_and(|a| a.bare && a.payload == Type::empty())
@@ -495,12 +495,12 @@ impl Nodes {
                 || p.structs
                 || p.morphisms.is_leaf() != Some(false)
                 || !p.tuples.is_default()
-                || p.atoms.cofinite
+                || p.atoms.cofinite()
             {
                 return None;
             }
             let mut stop = None;
-            for (n, a) in &p.atoms.names {
+            for (n, a) in p.atoms.names() {
                 match (a.bare, a.payload == Type::empty()) {
                     (true, true) if stop.is_none() => stop = Some(n.clone()),
                     // A finite map of atoms lists no name whose part is none, the bare atom out
@@ -639,12 +639,12 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         || p.structs
         || p.morphisms.is_leaf() != Some(false)
         || !p.tuples.is_default()
-        || p.atoms.cofinite
+        || p.atoms.cofinite()
     {
         return None;
     }
     let mut link: Option<(std::sync::Arc<str>, Type)> = None;
-    for (name, a) in &p.atoms.names {
+    for (name, a) in p.atoms.names() {
         match (a.bare, a.payload == Type::empty()) {
             (true, _) => return None,
             // A finite map of atoms lists no name whose part is none, the bare atom out and no

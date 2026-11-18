@@ -79,20 +79,22 @@ fn scalar_cells_agree_with_explicit_set_operations_across_carriers() {
 
 /// [`Atoms::zip`] by the walk over the smaller map alone, as it was before the diff.
 fn zip_by_walk(a: &Atoms, b: &Atoms, op: Op) -> Atoms {
-    let (large, small) = if a.names.len() >= b.names.len() {
+    let (large, small) = if a.names().len() >= b.names().len() {
         (a, b)
     } else {
         (b, a)
     };
-    let mut out = match (op, small.cofinite) {
+    let cofinite = match op {
+        Op::Or => a.cofinite() || b.cofinite(),
+        Op::And => a.cofinite() && b.cofinite(),
+    };
+    let mut out = match (op, small.cofinite()) {
         (Op::Or, false) | (Op::And, true) => large.clone(),
+        _ if cofinite => Atoms::all(),
         _ => Atoms::default(),
     };
-    out.cofinite = match op {
-        Op::Or => a.cofinite || b.cofinite,
-        Op::And => a.cofinite && b.cofinite,
-    };
-    for (n, p) in &small.names {
+    assert_eq!(out.cofinite(), cofinite);
+    for (n, p) in small.names() {
         out.set(n, large.get(n).zip(p, op));
     }
     out

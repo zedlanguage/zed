@@ -81,7 +81,7 @@ fn holds_types(t: &Type) -> bool {
     match &*t.0 {
         Node::Rec(_) => false,
         Node::Parts(p, _) => {
-            !p.atoms.names.is_empty()
+            !p.atoms.names().is_empty()
                 || p.tuples.lens.values().any(|q| q.is_leaf().is_none())
                 || p.morphisms.is_leaf().is_none()
         }
@@ -217,10 +217,10 @@ impl Queue for Node {
             Text(", strings: "),
             Leaf(&p.strings),
             Text(", atoms: Atoms { cofinite: "),
-            Leaf(&p.atoms.cofinite),
+            Text(if p.atoms.cofinite() { "true" } else { "false" }),
             Text(", names: {"),
         ];
-        for (i, (name, a)) in p.atoms.names.iter().enumerate() {
+        for (i, (name, a)) in p.atoms.names().iter().enumerate() {
             if i > 0 {
                 w.push(Text(", "));
             }
@@ -235,7 +235,7 @@ impl Queue for Node {
         }
         w.extend([
             Text("}, sum: "),
-            Leaf(&p.atoms.sum),
+            Leaf(p.atoms.sum_ref()),
             Text(" }, tuples: Tuples { rest: "),
             Leaf(&p.tuples.rest),
             Text(", lens: {"),

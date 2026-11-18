@@ -28,7 +28,8 @@ fn classes_are_exact_on_cofinite_sets_names_lengths_and_components() {
         &Type::int() - &(&lit(3) | &lit(5)), // 7
         lit(5),                              // 8, in 1, not in 7
         // 9, every atom but `#a`, `#a(..)`, `#b` and `#b(..)`, so apart from 12 and 13
-        &(&(&(&Type::with(|p| p.atoms.cofinite = true) - &Type::atom_with("a", &Type::top()))
+        &(&(&(&Type::with(|p| p.atoms = crate::types::Atoms::all())
+            - &Type::atom_with("a", &Type::top()))
             - &Type::atom("a"))
             - &Type::atom_with("b", &Type::top()))
             - &Type::atom("b"),
@@ -1603,7 +1604,7 @@ fn height_bounds_are_exact_on_lists_cycles_and_open_parts() {
         ("G & R_4", &list_group(true) & &r(4), None),
         (
             "cofinite atoms",
-            Type::with(|p| p.atoms.cofinite = true),
+            Type::with(|p| p.atoms = crate::types::Atoms::all()),
             Some((0, top)),
         ),
         (

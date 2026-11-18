@@ -379,10 +379,14 @@ fn int_of_digest(d: u64) -> i64 {
     let p = e.p();
     assert!(p.tuples.lens.is_empty() && !p.f32s.cofinite && p.f32s.values.is_empty());
     let mut h = mix_inv(None, Some(p.morphisms.digest()), d);
-    for b in [u64::from(p.structs), u64::from(p.tuples.rest), p.atoms.sum] {
+    for b in [
+        u64::from(p.structs),
+        u64::from(p.tuples.rest),
+        p.atoms.sum(),
+    ] {
         h = mix_inv(None, Some(b), h);
     }
-    h = mix_inv(None, Some(u64::from(p.atoms.cofinite)), h);
+    h = mix_inv(None, Some(u64::from(p.atoms.cofinite())), h);
     for l in [&p.strings, &p.floats, &p.rats] {
         h = mix_inv(None, Some(l.sum()), h);
         h = mix_inv(None, Some(u64::from(l.cofinite)), h);

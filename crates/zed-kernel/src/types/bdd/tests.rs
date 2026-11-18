@@ -946,14 +946,13 @@ pub(super) fn tied(bottom: &str, depth: usize) -> Type {
         let mut p = p.clone();
         p.digest = 0;
         p.name_digest = 0;
-        p.atoms.names = p.atoms.names.update(
-            "a".into(),
+        p.atoms.set(
+            &"a".into(),
             AtomPart {
                 bare: false,
                 payload: t,
             },
         );
-        p.atoms.payloads = imbl::OrdSet::unit("a".into());
         t = Type(Arc::new(Node::Parts(p, super::super::Shown::default())));
     }
     t

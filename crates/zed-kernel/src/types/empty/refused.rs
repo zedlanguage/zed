@@ -242,7 +242,7 @@ fn first_member(t: &Type, want: impl Fn(&Type) -> bool) -> Option<Type> {
             return Some(t);
         }
         let p = t.p();
-        for a in p.atoms.names.values() {
+        for a in p.atoms.names().values() {
             visit(&a.payload, &mut queue);
         }
         p.tuples.atoms(&mut |row| {

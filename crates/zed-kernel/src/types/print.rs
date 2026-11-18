@@ -1071,7 +1071,7 @@ impl Printer<'_> {
                 if *t == Type::top() {
                     return Text::word("_", Class::Prim);
                 }
-                if p.atoms.cofinite && p.tuples.rest && p.structs {
+                if p.atoms.cofinite() && p.tuples.rest && p.structs {
                     let c = self.refer(Item::Ty(None, !t));
                     let mut segs = vec![Seg::Str("_ \\ ".into())];
                     put(&mut segs, c, At::Prim);
@@ -1130,9 +1130,9 @@ impl Printer<'_> {
                 self.fixed_now = false;
             }
         }
-        if p.atoms.cofinite {
+        if p.atoms.cofinite() {
             let mut except = Vec::new();
-            for (name, part) in p.atoms.names.iter() {
+            for (name, part) in p.atoms.names().iter() {
                 self.atom(&mut except, name, &part.not());
             }
             let except: Vec<Text> = except.into_iter().map(|(_, t)| t).collect();
@@ -1147,7 +1147,7 @@ impl Printer<'_> {
                 },
             ));
         } else {
-            for (name, part) in p.atoms.names.iter() {
+            for (name, part) in p.atoms.names().iter() {
                 self.atom(&mut items, name, part);
             }
         }

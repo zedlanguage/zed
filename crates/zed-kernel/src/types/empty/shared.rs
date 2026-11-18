@@ -202,7 +202,7 @@ pub(super) struct TwoSat {
     pub(super) vars: usize,
     pub(super) clauses: Vec<(Literal2, Literal2)>,
     /// The variable of each meet under an `or`, by the key of its node ([`super::At::key`]).
-    pub(super) meets: HashMap<(u64, bool, u8), Literal2>,
+    pub(super) meets: HashMap<(u64, bool), Literal2>,
 }
 
 impl TwoSat {
@@ -278,12 +278,12 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
         || p.tuples.rest
         || !p.tuples.lens.is_empty()
         || !only_atoms(&p)
-        || p.atoms.cofinite
+        || p.atoms.cofinite()
     {
         return None;
     }
     let (mut stop, mut link) = (None, None);
-    for (name, a) in &p.atoms.names {
+    for (name, a) in p.atoms.names() {
         match (a.bare, a.payload == Type::empty()) {
             (true, true) if stop.is_none() => stop = Some(name.clone()),
             // A finite map of atoms lists no name whose part is none, the bare atom out and no

@@ -869,8 +869,8 @@ impl Type {
                 // Complexity tradeoff: reading all names at every node is quadratic
                 // on a chain of failure atoms. Only payload-bearing names have edges;
                 // read those in O(payload edges * log names), with the same seen set.
-                for name in &p.atoms.payloads {
-                    if let Some(a) = p.atoms.names.get(name) {
+                for name in p.atoms.payloads() {
+                    if let Some(a) = p.atoms.names().get(name) {
                         visit(&a.payload, &mut seen, &mut stack);
                     }
                 }
@@ -1197,16 +1197,16 @@ impl Simulation {
             && a.strings.within(&b.strings)
             && (!a.structs || b.structs)
             && (a.morphisms.is_leaf() == Some(false) || a.morphisms == b.morphisms)
-            && (!a.atoms.cofinite || a.atoms == b.atoms)
+            && (!a.atoms.cofinite() || a.atoms == b.atoms)
             && (!a.tuples.rest || a.tuples == b.tuples);
         if !same {
             return None;
         }
         let mut needs = Vec::new();
-        if !a.atoms.cofinite {
-            for (name, x) in &a.atoms.names {
-                match b.atoms.names.get(name) {
-                    None if b.atoms.cofinite => {}
+        if !a.atoms.cofinite() {
+            for (name, x) in a.atoms.names() {
+                match b.atoms.names().get(name) {
+                    None if b.atoms.cofinite() => {}
                     None => return None,
                     Some(y) if x.bare && !y.bare => return None,
                     Some(y) => needs.push(vec![vec![self.pair(&x.payload, &y.payload)]]),
@@ -1311,8 +1311,8 @@ fn tuple_rows(t: &Type) -> Option<Vec<Row>> {
     if scalars
         || p.structs
         || p.morphisms.is_leaf() != Some(false)
-        || p.atoms.cofinite
-        || !p.atoms.names.is_empty()
+        || p.atoms.cofinite()
+        || !p.atoms.names().is_empty()
         || p.tuples.rest
     {
         return None;
@@ -3729,7 +3729,7 @@ impl Heights {
             let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
             if p.bools != 0
                 || p.structs
-                || p.atoms.cofinite
+                || p.atoms.cofinite()
                 || p.morphisms.is_leaf() != Some(false)
                 || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
             {
@@ -3738,14 +3738,14 @@ impl Heights {
             if p.tuples.rest {
                 ready.push(std::cmp::Reverse((1, n)));
             }
-            if p.atoms.bare_names > 0 {
+            if p.atoms.bare_names() > 0 {
                 ready.push(std::cmp::Reverse((0, n)));
             }
             // An atom name gives a rule of its own only through a payload that lists something
             // (`Atoms::payloads`): a payload that lists nothing has no value, so its rule never
             // becomes ready, and its bare atom is the rule of height 0 pushed above.
-            let mut children: Vec<Vec<Type>> = (p.atoms.payloads.iter())
-                .map(|name| vec![p.atoms.names[name].payload.clone()])
+            let mut children: Vec<Vec<Type>> = (p.atoms.payloads().iter())
+                .map(|name| vec![p.atoms.names()[name].payload.clone()])
                 .collect();
             for f in p.tuples.lens.values() {
                 if f.is_leaf() == Some(false) {
@@ -3815,8 +3815,8 @@ impl Heights {
     // each with `n` names) cost O(n^2) here and in the two functions below.
     fn height_children(t: &Type) -> Vec<Type> {
         let p = t.p();
-        let mut out: Vec<Type> = (p.atoms.payloads.iter())
-            .map(|name| p.atoms.names[name].payload.clone())
+        let mut out: Vec<Type> = (p.atoms.payloads().iter())
+            .map(|name| p.atoms.names()[name].payload.clone())
             .collect();
         for f in p.tuples.lens.values() {
             for row in f.distinct_atoms() {
@@ -3955,16 +3955,16 @@ impl Heights {
         {
             take(0);
         }
-        if p.atoms.cofinite || p.tuples.rest {
+        if p.atoms.cofinite() || p.tuples.rest {
             take(u64::MAX);
         }
-        if p.atoms.bare_names > 0 {
+        if p.atoms.bare_names() > 0 {
             take(0);
         }
         // Only the payloads that list something, as in `height_children`: those that list
         // nothing are bounded `None` and take nothing.
-        for name in &p.atoms.payloads {
-            if let Some((_, h)) = self.bounds[&p.atoms.names[name].payload] {
+        for name in p.atoms.payloads() {
+            if let Some((_, h)) = self.bounds[&p.atoms.names()[name].payload] {
                 take(h.saturating_add(1));
             }
         }
@@ -4127,9 +4127,9 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
         // Only the names whose payload lists something (`Atoms::payloads`): reading every name
         // here cost O(names) per type, n^2 on a chain of n failure atoms (l01_27_absences), and
         // a name whose payload lists nothing adds no component and leaves `wrap` as it is.
-        let mut wrap = !p.atoms.names.is_empty();
-        for name in &p.atoms.payloads {
-            let Some(a) = p.atoms.names.get(name) else {
+        let mut wrap = !p.atoms.names().is_empty();
+        for name in p.atoms.payloads() {
+            let Some(a) = p.atoms.names().get(name) else {
                 continue;
             };
             if a.bare {
@@ -4150,7 +4150,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                             if !met.insert((i, c.node_id())) {
                                 continue;
                             }
-                            if c.p().atoms.names.is_empty() {
+                            if c.p().atoms.names().is_empty() {
                                 rows.plain.push((i, c.clone()));
                             } else {
                                 rows.named.push((i, c.clone()));
@@ -4173,7 +4173,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                 }
                 for (i, c) in &rows.named {
                     let item = pair && *i == 0;
-                    if !c.p().atoms.names.contains_key(name) {
+                    if !c.p().atoms.names().contains_key(name) {
                         stack.push((c.clone(), in_item || item));
                         continue;
                     }
@@ -4233,7 +4233,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
 // admitted without admitting every literal intermediate tail as a separate sweep root.
 fn boolean_tail(c: &Type, name: &str) -> bool {
     let p = c.p();
-    let Some(a) = p.atoms.names.get(name) else {
+    let Some(a) = p.atoms.names().get(name) else {
         return false;
     };
     a.payload
@@ -4421,7 +4421,7 @@ impl<'m> Searching<'m> {
                 *a = Some(true);
                 continue;
             }
-            if root.p().atoms.names.is_empty() {
+            if root.p().atoms.names().is_empty() {
                 continue;
             }
             seeded = true;
@@ -4657,7 +4657,7 @@ impl<'m> Searching<'m> {
                                 false
                             } else {
                                 self.s().chains.insert(ty.clone(), None);
-                                let is_atom_list = !ty.p().atoms.names.is_empty()
+                                let is_atom_list = !ty.p().atoms.names().is_empty()
                                     && !self.s().wraps.contains_key(&ty);
                                 if is_atom_list {
                                     self.s().in_list_fallback += 1;
@@ -4670,8 +4670,8 @@ impl<'m> Searching<'m> {
                             }
                         }
                         None => {
-                            let is_atom_list =
-                                !ty.p().atoms.names.is_empty() && !self.s().wraps.contains_key(&ty);
+                            let is_atom_list = !ty.p().atoms.names().is_empty()
+                                && !self.s().wraps.contains_key(&ty);
                             if is_atom_list {
                                 self.s().in_list_fallback += 1;
                             }
@@ -4795,7 +4795,7 @@ impl<'m> Searching<'m> {
         // with a payload, and a tuple or a part that holds one reaches it a level down, where it
         // is asked. Given up: a tuple type whose components' heights clash is refuted by the
         // search at its components, not here.
-        if !t.p().atoms.payloads.is_empty() && height_bounds(t).is_none() {
+        if !t.p().atoms.payloads().is_empty() && height_bounds(t).is_none() {
             return Stack::ready(true);
         }
         let i = match self.s().met(t) {
@@ -5019,14 +5019,15 @@ impl<'m> Searching<'m> {
         let canonical = self.s().canonical_blame;
         if p.bools != 0
             || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
-            || p.atoms.cofinite
-            || (canonical && (p.structs || p.tuples.rest || p.atoms.names.values().any(|a| a.bare)))
+            || p.atoms.cofinite()
+            || (canonical
+                && (p.structs || p.tuples.rest || p.atoms.names().values().any(|a| a.bare)))
         {
             return false;
         }
         let mut forks = Vec::new();
         let mut blamed_false = Vec::new();
-        for a in p.atoms.names.values() {
+        for a in p.atoms.names().values() {
             if a.bare {
                 return false;
             }
@@ -5390,7 +5391,7 @@ impl<'m> Searching<'m> {
         for (j, l) in [&p.ints, &p.rats, &p.floats, &p.strings].iter().enumerate() {
             bits |= u16::from(l.cofinite || !l.values.is_empty()) << (j + 1);
         }
-        bits |= u16::from(p.atoms.cofinite || !p.atoms.names.is_empty()) << 5;
+        bits |= u16::from(p.atoms.cofinite() || !p.atoms.names().is_empty()) << 5;
         bits |= u16::from(p.tuples.rest || !p.tuples.lens.is_empty()) << 6;
         bits |= u16::from(p.structs) << 7;
         bits |= u16::from(p.morphisms.is_leaf() != Some(false)) << 8;
@@ -7119,15 +7120,16 @@ impl<'m> Searching<'m> {
         if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(&p) {
             return None;
         }
-        if p.atoms.names.len() > 2 || p.atoms.cofinite {
+        if p.atoms.names().len() > 2 || p.atoms.cofinite() {
             return None;
         }
         let (mut bare, mut link) = (None, None);
-        for (name, a) in &p.atoms.names {
+        for (name, a) in p.atoms.names() {
             match (a.bare, a.payload == Type::empty()) {
                 (true, true) if bare.is_none() => bare = Some(name.clone()),
                 // Never met: the atoms are finite (tested above), and `Atoms::set`, the one
-                // writer of `names`, keeps no name whose part is `AtomPart::none()` there.
+                // writer of `names` (its fields are private to module `types::atoms`, so the
+                // compiler checks this), keeps no name whose part is `AtomPart::none()` there.
                 (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                 (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
                 _ => return None,
@@ -7216,7 +7218,7 @@ impl<'m> Searching<'m> {
             stop: stop?,
             link: name,
             item,
-            bare: p.atoms.names.values().any(|a| a.bare),
+            bare: p.atoms.names().values().any(|a| a.bare),
             all,
             any,
             none,
@@ -7273,8 +7275,8 @@ impl<'m> Searching<'m> {
             && p.strings.values.is_empty()
             && !p.structs
             && p.morphisms.is_leaf() == Some(false)
-            && !p.atoms.cofinite
-            && p.atoms.names.is_empty()
+            && !p.atoms.cofinite()
+            && p.atoms.names().is_empty()
             && !p.tuples.rest
             && p.tuples.lens.len() == 1
             && let Some(f) = p.tuples.lens.values().next()
@@ -7319,7 +7321,8 @@ impl<'m> Searching<'m> {
     // R9, X41). Tradeoff: a list type in the sweep's class met only as a type the search builds
     // is left to the search.
     fn swept(&self, t: &Type) -> Option<Option<usize>> {
-        if self.in_fallback(t) || t.p().atoms.names.is_empty() || !self.s().roots.contains_key(t) {
+        if self.in_fallback(t) || t.p().atoms.names().is_empty() || !self.s().roots.contains_key(t)
+        {
             return None;
         }
         let known = self.s().swept.get(t).cloned();
@@ -7408,16 +7411,17 @@ impl<'m> Searching<'m> {
             || p.structs
             || p.morphisms.is_leaf() != Some(false)
             || !p.tuples.is_default()
-            || p.atoms.cofinite
+            || p.atoms.cofinite()
         {
             return None;
         }
         let mut link: Option<(std::sync::Arc<str>, Type)> = None;
-        for (name, a) in &p.atoms.names {
+        for (name, a) in p.atoms.names() {
             match (a.bare, a.payload == Type::empty()) {
                 (true, _) => return None,
-                // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no name
-                // whose part is `AtomPart::none()`, neither bare nor with a payload.
+                // Not met: the atoms are finite (tested above), so `Atoms::set`, the one writer
+                // of `names` (module `types::atoms`), keeps no name whose part is
+                // `AtomPart::none()`, neither bare nor with a payload.
                 (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                 (false, false) => {
                     if link.is_some() {
@@ -7557,17 +7561,18 @@ impl<'m> Searching<'m> {
                 || xp.structs
                 || xp.morphisms.is_leaf() != Some(false)
                 || !xp.tuples.is_default()
-                || xp.atoms.cofinite
+                || xp.atoms.cofinite()
             {
                 return None;
             }
             let mut has_stop = false;
             let mut l_payload: Option<Type> = None;
-            for (n, a) in &xp.atoms.names {
+            for (n, a) in xp.atoms.names() {
                 match (a.bare, a.payload == Type::empty()) {
                     (true, true) if *n == stop_name => has_stop = true,
-                    // Not met: the atoms are finite (tested above), so `Atoms::set` keeps no
-                    // name whose part is `AtomPart::none()`.
+                    // Not met: the atoms are finite (tested above), so `Atoms::set`, the one
+                    // writer of `names` (module `types::atoms`), keeps no name whose part is
+                    // `AtomPart::none()`.
                     (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                     (false, false) if *n == link_name && l_payload.is_none() => {
                         l_payload = Some(a.payload.clone());
@@ -7801,7 +7806,7 @@ impl<'m> Searching<'m> {
                     let xp = cur.p();
                     let link_payload = xp
                         .atoms
-                        .names
+                        .names()
                         .iter()
                         .find(|(n, a)| **n == link_name && !a.bare && a.payload != Type::empty())
                         .map(|(_, a)| a.payload.clone());
@@ -8805,11 +8810,15 @@ impl<'m> Searching<'m> {
     ) -> bool {
         if items.is_empty() {
             let p = t.p();
-            return p.atoms.names.get(stop).map_or(p.atoms.cofinite, |a| a.bare);
+            return p
+                .atoms
+                .names()
+                .get(stop)
+                .map_or(p.atoms.cofinite(), |a| a.bare);
         }
         let p = t.p();
-        let Some(a) = p.atoms.names.get(link) else {
-            return p.atoms.cofinite;
+        let Some(a) = p.atoms.names().get(link) else {
+            return p.atoms.cofinite();
         };
         let q = a.payload.p();
         let Some(f) = q.tuples.lens.get(&2) else {
@@ -8826,9 +8835,9 @@ impl<'m> Searching<'m> {
                         let rp = row[1].p();
                         let tail_ok = rp
                             .atoms
-                            .names
+                            .names()
                             .get(stop)
-                            .map_or(rp.atoms.cofinite, |x| x.bare);
+                            .map_or(rp.atoms.cofinite(), |x| x.bare);
                         if tail_ok { other } else { Some(false) }
                     }
                 };
@@ -8945,17 +8954,18 @@ impl<'m> Searching<'m> {
                 || xp.structs
                 || xp.morphisms.is_leaf() != Some(false)
                 || !xp.tuples.is_default()
-                || xp.atoms.cofinite
+                || xp.atoms.cofinite()
             {
                 return None;
             }
             let mut has_stop = false;
             let mut l_payload: Option<Type> = None;
-            for (n, at) in &xp.atoms.names {
+            for (n, at) in xp.atoms.names() {
                 match (at.bare, at.payload == Type::empty()) {
                     (true, true) if n == stop => has_stop = true,
-                    // Never met: the atoms are finite (tested above), and `Atoms::set` keeps no
-                    // name whose part is `AtomPart::none()` there.
+                    // Never met: the atoms are finite (tested above), and `Atoms::set`, the one
+                    // writer of `names` (module `types::atoms`), keeps no name whose part is
+                    // `AtomPart::none()` there.
                     (false, true) => unreachable!("a finite atoms map lists a name with no part"),
                     (false, false) if n == link && l_payload.is_none() => {
                         l_payload = Some(at.payload.clone());
@@ -9480,8 +9490,8 @@ impl<'m> Searching<'m> {
                 continue;
             }
             let p = x.p();
-            let Some(a) = p.atoms.names.get(self.s().list_parts(v).1) else {
-                return Some(p.atoms.cofinite);
+            let Some(a) = p.atoms.names().get(self.s().list_parts(v).1) else {
+                return Some(p.atoms.cofinite());
             };
             let f = a.payload.p().tuples.get(2);
             if f.is_leaf() == Some(true) {
@@ -9999,7 +10009,7 @@ impl<'m> Searching<'m> {
         if let Some(name) = t
             .p()
             .atoms
-            .names
+            .names()
             .iter()
             .find_map(|(n, a)| a.bare.then_some(n))
         {
@@ -10055,16 +10065,16 @@ impl<'m> Searching<'m> {
                 return Some(self.s().show(Rep::Value(v)));
             }
         }
-        if p.atoms.cofinite {
+        if p.atoms.cofinite() {
             let name = (0..)
                 .map(|i| format!("a{i}"))
-                .find(|n| !p.atoms.names.contains_key(n.as_str()));
+                .find(|n| !p.atoms.names().contains_key(n.as_str()));
             let name = name.expect("a name is free");
             return Some(self.s().show(Rep::Value(Value::atom(&name))));
         }
         let list_fallback =
             matches!(self.s().chains.get(t), Some(None)) && !self.s().wraps.contains_key(t);
-        for (name, a) in &p.atoms.names {
+        for (name, a) in p.atoms.names() {
             if a.bare {
                 return Some(self.s().show(Rep::Value(Value::atom(name))));
             }
@@ -10921,8 +10931,8 @@ impl<'m> Searching<'m> {
                     },
                     Rep::Struct => Shape::Known(Some(up.structs)),
                     Rep::Tuple(vs) => Shape::Tuple(vs.len(), up.tuples.get(vs.len())),
-                    Rep::Atom(name, payload) => match up.atoms.names.get(name) {
-                        None => Shape::Known(Some(up.atoms.cofinite)),
+                    Rep::Atom(name, payload) => match up.atoms.names().get(name) {
+                        None => Shape::Known(Some(up.atoms.cofinite())),
                         Some(a) => Shape::Payload(*payload, &a.payload),
                     },
                     Rep::List { item, .. } => Shape::List(*item),
@@ -12415,12 +12425,11 @@ enum At<'p> {
 }
 
 impl At<'_> {
-    /// The key of the node read as itself (`pos`) or as its complement: its id, and `0`. The last
-    /// place, once which arm of a diagram node, is now always `0` (see `shape`).
-    fn key(self, pos: bool) -> (u64, bool, u8) {
+    /// The key of the node read as itself (`pos`) or as its complement: its id and `pos`.
+    fn key(self, pos: bool) -> (u64, bool) {
         match self {
-            At::Part(p) => (p.id(), pos, 0),
-            At::Bdd(b) => (b.id(), pos, 0),
+            At::Part(p) => (p.id(), pos),
+            At::Bdd(b) => (b.id(), pos),
         }
     }
 }
@@ -12598,7 +12607,7 @@ impl TwoSat {
     /// each operand put on `forces`.
     fn meet<'p>(
         &mut self,
-        key: (u64, bool, u8),
+        key: (u64, bool),
         xs: [Operand<'p>; 2],
         forces: &mut Vec<(Literal2, Operand<'p>)>,
     ) -> Literal2 {
@@ -12792,7 +12801,7 @@ fn key_pieces(g: &Region, j: usize, cells: &[usize], open: &BTreeSet<usize>) -> 
 /// The values of `p` as keys, sorted, when it holds finitely many booleans, numbers, strings
 /// and bare atoms and nothing else; `None` otherwise. Each key is one value.
 fn flat_keys(p: &Parts, none: &Type) -> Option<Vec<Key>> {
-    if p.atoms.cofinite
+    if p.atoms.cofinite()
         || !p.tuples.is_default()
         || p.structs
         || p.morphisms.is_leaf() != Some(false)
@@ -12810,7 +12819,7 @@ fn flat_keys(p: &Parts, none: &Type) -> Option<Vec<Key>> {
     for (u, l) in lists.into_iter().enumerate() {
         keys.extend(l.values.iter().map(|v| Key::Lit(u, v.clone())));
     }
-    for (n, a) in &p.atoms.names {
+    for (n, a) in p.atoms.names() {
         if a.payload != *none {
             return None;
         }
@@ -12993,9 +13002,9 @@ fn listed(p: &Parts, u: usize, none: &Type) -> (bool, Vec<(Key, bool)>) {
             (l.cofinite, ks.collect())
         }
         5 => {
-            let ks = p.atoms.names.iter();
+            let ks = p.atoms.names().iter();
             let ks = ks.map(|(n, a)| (Key::Atom(n.clone()), a.bare || a.payload != *none));
-            (p.atoms.cofinite, ks.collect())
+            (p.atoms.cofinite(), ks.collect())
         }
         _ => {
             let ks = p.tuples.lens.iter();
@@ -13132,7 +13141,7 @@ fn local_dir<'a>(p: &'a Parts, none: &Type, dir: usize) -> Local<'a> {
         points.push(Key::All(8));
     }
     let mut kids = Vec::new();
-    for (n, a) in &p.atoms.names {
+    for (n, a) in p.atoms.names() {
         if !a.bare && a.payload == *none {
             continue;
         }
@@ -13872,17 +13881,18 @@ fn list_rows(t: &Type, names: &mut [Option<Arc<str>>; 2]) -> Option<(bool, Part<
     if p.structs
         || !p.tuples.is_default()
         || !only_atoms(&p)
-        || p.atoms.cofinite
-        || p.atoms.names.len() > 2
+        || p.atoms.cofinite()
+        || p.atoms.names().len() > 2
     {
         return None;
     }
     let (mut stop, mut link) = (None, None);
-    for (name, a) in &p.atoms.names {
+    for (name, a) in p.atoms.names() {
         match (a.bare, a.payload == Type::empty()) {
             (true, true) if stop.is_none() => stop = Some(name.clone()),
-            // Never met: the atoms are finite (tested above), and `Atoms::set` keeps no name
-            // whose part is `AtomPart::none()` there.
+            // Never met: the atoms are finite (tested above), and `Atoms::set`, the one writer
+            // of `names` (module `types::atoms`), keeps no name whose part is `AtomPart::none()`
+            // there.
             (false, true) => unreachable!("a finite atoms map lists a name with no part"),
             (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
