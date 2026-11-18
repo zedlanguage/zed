@@ -455,8 +455,10 @@ fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u
 
 /// Every arm that moves entries or subtrees between nodes runs with the sums filled, in place
 /// and on a copy, and the kept sums stay right through each (plan row
-/// PERF-family-hash-count-only). Control (not committed): `mend` without `r.child_mut()`, so a
-/// sibling that gains or loses a subtree keeps its old sum, fails this test.
+/// PERF-family-hash-count-only). Controls (not committed), each failing this test and
+/// `value::tests::kept_sums_follow_changes`: `mend` without `r.child_mut()`, so a sibling that
+/// gains or loses a subtree keeps its old sum; and `Branch::with_next` adding 1 to a filled
+/// sum it carries over, so a subtree moved whole arrives with a wrong kept sum.
 #[test]
 fn kept_sums_survive_every_arm_of_a_change() {
     let names = [
