@@ -19,7 +19,7 @@ reached in full (mod.rs of the canonicalizer, 100%, see m0_07's table).
 | Float instances hold NaN, both zeros, both infinities | `axioms::the_float_instances_hold_the_ieee_corner_values` |
 | Strings compare by code point | `axioms::strings_compare_by_code_point` |
 | `==` and `!=` at every carrier, `f64` only symmetric (and `==` transitive) | `axioms::equality_has_its_laws_at_every_carrier` |
-| Bit words on every value of 1 to 8 binary digits and about 2^63, 2^64; `shl(1, 64)` is 2^64; `shr` rounds toward negative infinity | `axioms::the_bit_word_axioms_hold_at_every_width_to_8`, `axioms::false_shift_axioms_are_refuted_where_they_fail` |
+| Bit words on every value of 1 to 8 binary digits and about 2^63, 2^64, `bitOr`'s identity 0 and `bitAnd`'s zero 0 among the laws (SPEC-bit-identities; their -1 waits for INT-twos); `shl(1, 64)` is 2^64; `shr` rounds toward negative infinity | `axioms::the_bit_word_axioms_hold_at_every_width_to_8`, `axioms::false_shift_axioms_are_refuted_where_they_fail` |
 | `min`/`max` at `f64` are IEEE `minimum`/`maximum`: signed zeros, NaN zero, infinite identities; `minsd` does not have the laws | `axioms::min_and_max_at_f64_have_the_ieee_laws_and_minsd_has_not` |
 | The two zeros compare equal, stay two values, find one key | `signed_zero::*` |
 | Comparisons at `bool` | None: DESIGN M0.11 names the comparison laws at `int`, `f64` and the string types only, and the table has no arrow of `<`, `<=`, `>`, `>=` at `bool`; the kernel evaluates them on booleans (eval.rs, natural order `false` before `true`), so if the language gives them an arrow at `bool`, DESIGN must list their laws there |

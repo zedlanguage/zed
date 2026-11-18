@@ -89,8 +89,21 @@ fn design() -> Vec<(&'static str, Carrier, Vec<Law>)> {
         and_or("&&", true, "||"),
         and_or("||", false, "&&"),
         ("!", Bool, vec![Inverse("!"), Injective, Monotone(&[Down])]),
-        ("bitAnd", Int, vec![Associative, Commutative, Idempotent]),
-        ("bitOr", Int, vec![Associative, Commutative, Idempotent]),
+        (
+            "bitAnd",
+            Int,
+            vec![Associative, Commutative, Idempotent, Zero(Const::Int(0))],
+        ),
+        (
+            "bitOr",
+            Int,
+            vec![
+                Associative,
+                Commutative,
+                Idempotent,
+                Identity(Const::Int(0)),
+            ],
+        ),
         (
             "bitXor",
             Int,

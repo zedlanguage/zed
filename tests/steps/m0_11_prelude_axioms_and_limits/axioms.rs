@@ -209,6 +209,12 @@ pub(super) fn check_word(a: &Axiom, w: u32) -> Result<usize, String> {
                 holds(&|| format!("{e} and {x}"), t(e, x) == x && t(x, e) == x)?;
             }
         }
+        Law::Zero(z) => {
+            let z = member(z);
+            for x in 0..size {
+                holds(&|| format!("{z} and {x}"), t(z, x) == z && t(x, z) == z)?;
+            }
+        }
         Law::SelfInverse(e) => {
             let e = member(e);
             for x in 0..size {
@@ -451,7 +457,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 137);
+    assert_eq!(AXIOMS.len(), 139);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -498,6 +504,8 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("<", String, Law::Composes(">", "<")), // "a" < "b" > "a" but not "a" < "a"
         claim("bitOr", Int, Law::SelfInverse(Const::Int(0))), // bitOr(1, 1) is 1
         claim("bitAnd", Int, Law::Identity(Const::Int(0))), // bitAnd(0, 1) is 0
+        claim("bitOr", Int, Law::Zero(Const::Int(0))), // bitOr(0, 1) is 1
+        claim("bitAnd", Int, Law::Zero(Const::Int(1))), // bitAnd(1, 2) is 0
         claim("shr", Int, Law::PowerOfTwo("quot")), // shr(-1, 1) is -1, and -1 quot 2 is 0
         claim("shl", Int, Law::PowerOfTwo("mulI64")), // shl(1, 63) is 2^63, not -2^63
     ];

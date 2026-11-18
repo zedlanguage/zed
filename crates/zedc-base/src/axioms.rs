@@ -363,12 +363,17 @@ pub const AXIOMS: &[Axiom] = &[
     // The bit words of step L1.39a, on their domain `int[0..]`. None takes a width, so no law
     // wraps: `shl(x, k)` is the exact `x * 2 ^ k` for every int `x`, `shl(1, 64)` is `2 ^ 64`,
     // and `shr(x, k)` is the Euclidean `x div 2 ^ k`, which rounds toward negative infinity.
+    // `bitOr` has identity 0 and `bitAnd` zero 0 on `int[0..]`. Their other constant, -1 (the
+    // identity of `bitAnd` and the zero of `bitOr`, DESIGN M0.11), is outside that domain until
+    // step L1.39d (plan row INT-twos) reads negative ints by two's complement.
     ax("bitAnd", Int, Associative),
     ax("bitAnd", Int, Commutative),
     ax("bitAnd", Int, Idempotent),
+    ax("bitAnd", Int, Zero(Const::Int(0))),
     ax("bitOr", Int, Associative),
     ax("bitOr", Int, Commutative),
     ax("bitOr", Int, Idempotent),
+    ax("bitOr", Int, Identity(Const::Int(0))),
     ax("bitXor", Int, Associative),
     ax("bitXor", Int, Commutative),
     ax("bitXor", Int, Identity(Const::Int(0))),

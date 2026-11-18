@@ -6403,6 +6403,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Ref::Bound(ids)) if ids.len() == 1 => {
                 self.env.get(&ids[0]).cloned().unwrap_or_else(Ty::dynamic)
             }
+            Some(Ref::Prelude(w)) if let Some(p) = bit_prim(w) => {
+                let w = w.clone();
+                self.bit_word_value(&w, p, span)
+            }
             Some(Ref::Prelude(w)) if w != "sum" => Ty::func(word_sig(w)),
             // `main::files` read outside `main`: the type of `main`'s parameter of that name, `Files`.
             Some(Ref::Main(_)) => port(Carrier::Str, true),
@@ -6410,6 +6414,62 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Ref::Bound(_)) => Ty::empty(),
             _ => Ty::dynamic(),
         }
+    }
+
+    /// The function value the bit word `w`, the primitive `p`, names where it is not called,
+    /// as in `masks.foldl(255, bitAnd)` (SPEC-bit-identities): for `bitAnd`, `bitOr` and
+    /// `bitXor`, the word's signature with a need on each operand that it is in int[0..], which
+    /// each call of the value checks as a call of the word checks its operands. Another bit word
+    /// is refused here: its domain relates its operands to each other and to `width` (`shl`'s
+    /// result within the width, `bitNot`'s `x` below `2^width`), which a need on one parameter
+    /// cannot state, as for a word curried with `...` ([`Self::curried_bits`]). Before this,
+    /// every bit word given as a value took the type of `String`, one text to one text.
+    fn bit_word_value(&mut self, w: &str, p: Prim, span: Span) -> Ty {
+        if !matches!(p, Prim::BitAnd | Prim::BitOr | Prim::BitXor) {
+            let names = zed_kernel::bits::params(p);
+            let params = names.join(", ");
+            // `width` is passed by name ([`bit_sig`]).
+            let args: Vec<String> = (names.iter())
+                .map(|&n| match n {
+                    "width" => "width: width".to_string(),
+                    _ => n.to_string(),
+                })
+                .collect();
+            let message = format!(
+                "`{w}` is given here as a function value; this version of zedc checks a bit \
+                 word's operands only where the word is called, and as a value only `bitAnd`, \
+                 `bitOr` and `bitXor`"
+            );
+            let menu = [format!(
+                "repair: write `({params}) -> {w}({})`",
+                args.join(", ")
+            )];
+            self.error_offering(span, message, menu);
+            return Ty::empty();
+        }
+        let mut sig = (*bit_sig(w, p)).clone();
+        for (j, name) in zed_kernel::bits::params(p).iter().enumerate() {
+            sig.needs.push(Need {
+                on: Ty::empty(),
+                kind: NeedKind::InDomain {
+                    domain: IntDomain {
+                        what: format!("`{w}` takes `{name}` in int[0..]").into(),
+                        name: (*name).into(),
+                        below_two_pow: None,
+                        written: None,
+                        key: None,
+                    },
+                    param: j,
+                    via: None,
+                    bits: None,
+                },
+                result: None,
+                span,
+                alike: Arc::from([]),
+                via: CallPath::default(),
+            });
+        }
+        Ty::func(Arc::new(sig))
     }
 
     /// The declared function that `e` names, if it names exactly one.

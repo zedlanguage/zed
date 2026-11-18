@@ -128,6 +128,18 @@ fn a_refusal_names_each_primitive_as_the_program_writes_it() {
             (None, 1) => format!("x = (a0) -> {w}a0;\n"),
             _ => format!("x = (a0, a1) -> a0 {w} a1;\n"),
         };
+        // A bit word other than `bitAnd`, `bitOr` and `bitXor` is refused as a function value
+        // by the checker (SPEC-bit-identities), and that refusal names it as written too; the
+        // evaluator's refusal is checked on the term elaboration gave it before, the word.
+        if word.is_some() && !matches!(p, Prim::BitAnd | Prim::BitOr | Prim::BitXor) {
+            let as_value = format!("`{w}` is given here as a function value");
+            if let Err(es) = elab(&text)
+                && es.iter().any(|e| e.contains(&as_value))
+            {
+                check_refusal(p, w, &refusal(with_prelude(Term::Var(w.into())), n));
+                continue;
+            }
+        }
         let unit = elab(&text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
         let d = unit.defs.iter().find(|d| d.name == "x").expect("x");
         match (d.term.as_ref(), p) {

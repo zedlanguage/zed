@@ -167,12 +167,17 @@ axioms = [
   // wraps: `shl(x, k)` is the exact `x * 2^k` for every int `x`, `shl(1, 64)` is `2^64`,
   // and `shr(x, k)` is the Euclidean `x div 2^k`, which rounds toward negative infinity.
   // `#selfInverse(e)` is `op(a, a) == e`; `#powerOfTwo(g)` is `op(x, k) == g(x, 2^k)`.
+  // `bitOr` has identity 0 and `bitAnd` zero 0 on `int[0..]`. Their other constant, -1 (the
+  // identity of `bitAnd` and the zero of `bitOr`, DESIGN M0.11), is outside that domain until
+  // step L1.39d (plan row INT-twos) reads negative ints by two's complement.
   Axiom(op: "bitAnd", carrier: #int, property: #associative),
   Axiom(op: "bitAnd", carrier: #int, property: #commutative),
   Axiom(op: "bitAnd", carrier: #int, property: #idempotent),
+  Axiom(op: "bitAnd", carrier: #int, property: #zero(0)),
   Axiom(op: "bitOr", carrier: #int, property: #associative),
   Axiom(op: "bitOr", carrier: #int, property: #commutative),
   Axiom(op: "bitOr", carrier: #int, property: #idempotent),
+  Axiom(op: "bitOr", carrier: #int, property: #identity(0)),
   Axiom(op: "bitXor", carrier: #int, property: #associative),
   Axiom(op: "bitXor", carrier: #int, property: #commutative),
   Axiom(op: "bitXor", carrier: #int, property: #identity(0)),

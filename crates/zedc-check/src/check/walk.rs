@@ -1888,9 +1888,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let (ExprKind::Name(w), Some(Ref::Prelude(_))) =
                     (&callee.kind, self.t.res.uses.get(&callee.span))
                 {
-                    if let Some(p) = bit_prim(w) {
-                        return self.bits(m, w, p, None, positional, named, curry, span);
-                    }
                     let call = PreludeCall {
                         w,
                         receiver: None,
@@ -7460,6 +7457,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
         {
             return self.strings_call(m, w, None, positional, named, curry, span);
+        }
+        // A bit word called by the prelude's name: its callee is not checked as a name, which
+        // would give the word as a function value ([`Ck::bit_word_value`]).
+        if let ExprKind::Name(w) = &callee.kind
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+            && let Some(p) = bit_prim(w)
+        {
+            return self.bits(m, w, p, None, positional, named, curry, span);
         }
         m.k(Frame::Callee {
             callee,
