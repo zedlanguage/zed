@@ -138,7 +138,7 @@ fn cases() -> Vec<Case> {
             shows: if i < 4 {
                 "the type the checker found for `f` is"
             } else {
-                "gives String | #invalid"
+                "gives String | #NaN | #overflow"
             },
         });
     }
