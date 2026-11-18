@@ -1049,6 +1049,28 @@ fn two_units_with_read_fits_at_one_span_are_checked_apart() {
         start,
         end: start + "g(b, x)".len(),
     };
+    // The writers differ: the `+` of `a` starts at `x`, the `+` of `b` one byte earlier, at
+    // `(`, as the parser gives their spans; so a second writer at the `Read` fit's span in one
+    // `Ck` would be a different construct, which `put_read`'s assertion would catch.
+    let plus_start = |text: &str| {
+        let tokens = lex_fence(text).unwrap();
+        let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+        let stmts = unit(text, &tokens, &tree).unwrap();
+        let k = stmts
+            .iter()
+            .find_map(|s| match &s.kind {
+                zedc::ast::StmtKind::Function(f) if f.name == "k" => Some(&f.body),
+                _ => None,
+            })
+            .expect("k");
+        match &k.kind {
+            zedc::ast::ExprKind::Binary(zedc::ast::BinaryOp::Add, _, _) => k.span.start,
+            other => panic!("k's body is not a `+`: {other:?}"),
+        }
+    };
+    assert_eq!(plus_start(&a), a.rfind("x +").expect("x"));
+    assert_eq!(plus_start(&b), b.rfind("(x)").expect("(x)"));
+    assert_eq!(plus_start(&b) + 1, plus_start(&a));
     for text in [&a, &b] {
         let fits = info(text).0.fits;
         assert_eq!(

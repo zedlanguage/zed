@@ -832,6 +832,42 @@ fn a_literal_component_is_not_summed() {
     assert_eq!(runs(defs, &kind_of("h(((1, 2), 3))"), ""), "int\n");
 }
 
+#[test]
+fn a_rat_or_int_literal_component_is_not_summed() {
+    // TEST-sum-literal-rat-path: `a_literal_component_is_not_summed` reaches `sum_beside`'s
+    // `carriers_only` refusal with f64 literals and one int; here the rat and int literals, in
+    // either place of the pair, directly and through one and two calls that pass it on.
+    let first = "h1(positional p) {\n  a, b = p;\n  return sum(a);\n}";
+    let second = "h1(positional p) {\n  a, b = p;\n  return sum(b);\n}";
+    for depth in [1, 2, 3] {
+        for (h1, literal_first) in [(first, true), (second, false)] {
+            let defs = wrapped(h1, depth);
+            for literal in ["1r", "-1r", "3r/2", "0r", "7", "-7", "0"] {
+                let pair = if literal_first {
+                    format!("({literal}, [1, 2])")
+                } else {
+                    format!("([1, 2], {literal})")
+                };
+                let call = format!("h{depth}({pair})");
+                let errors = r_errors(&defs, &call);
+                assert_eq!(errors.len(), 1, "{defs}\n{call}: {errors:?}");
+                assert!(errors[0].contains("sum"), "{defs}\n{call}: {errors:?}");
+            }
+            // A family of rats or ints in that place is summed.
+            for (family, kind) in [("[1r, 3r/2]", "rat"), ("[1, 2]", "int")] {
+                let pair = if literal_first {
+                    format!("({family}, 3)")
+                } else {
+                    format!("(3, {family})")
+                };
+                let ok =
+                    format!(r#"if h{depth}({pair}) is {kind} {{ "{kind}" }} else {{ "other" }}"#);
+                assert_eq!(runs(&defs, &ok, ""), format!("{kind}\n"), "{defs}\n{pair}");
+            }
+        }
+    }
+}
+
 /// `defs` with `h2` … `h{depth}` added, each passing its argument on to the one before:
 /// `h2(positional p) = h1(p);`.
 fn wrapped(defs: &str, depth: usize) -> String {
