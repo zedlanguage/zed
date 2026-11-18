@@ -27,7 +27,6 @@
 //! read back: such types are declared from step L2, and their text form comes with the
 //! declarations.
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -1056,7 +1055,7 @@ impl<'a> P<'a> {
                 domain.class = self.congruence()?;
             } else if self.eat_word("set") {
                 let vs = self.list("{", "}", ",", |p| p.number::<i64>())?;
-                domain.finite = FiniteSet::Set(vs.into_iter().collect::<BTreeSet<_>>());
+                domain.finite = FiniteSet::of(vs);
             } else if self.eat_word("facet") || self.eat_word("hint") {
                 let hint = self.s[..self.i].ends_with("hint");
                 let kind = self.name()?.into();

@@ -62,11 +62,18 @@ fn tests_calling_one_deep_callee_scale() {
 /// A callee of `k` nested arms each giving a literal: `0` below 0, `j` at `x = j - 1` for `j`
 /// in `1..k`, and `k` from `k - 1`. Its result type is the union of `k + 1` literals.
 fn literal_body(k: usize) -> String {
+    spaced_body(k, 1)
+}
+
+/// A callee of `k` nested arms each giving a literal `step` apart: `0` below 0, `step * j` at
+/// `x = j - 1` for `j` in `1..k`, and `step * k` from `k - 1`. For `step` above 1 no two of its
+/// literals are adjacent, so the interval of its result has a piece for each.
+fn spaced_body(k: usize, step: usize) -> String {
     let mut f = String::from("if x < 0 { 0 }");
     for j in 1..k {
-        f.push_str(&format!(" else if x < {j} {{ {j} }}"));
+        f.push_str(&format!(" else if x < {j} {{ {} }}", step * j));
     }
-    f.push_str(&format!(" else {{ {k} }}"));
+    f.push_str(&format!(" else {{ {} }}", step * k));
     f
 }
 
@@ -75,18 +82,27 @@ fn literal_body(k: usize) -> String {
 /// for `x >= c`, and the read is not negative where the test narrows `x` exactly when `past` is
 /// 0.
 fn literal_tests(rng: &mut Rng, k: usize, past: i64) -> String {
+    spaced_tests(rng, k, 1, past)
+}
+
+/// The callee of [`spaced_body`] and `k` tests `f(x) > step * c` at random `c` in `0..k`, each
+/// of whose arms reads `x - c - past`. On `0..k - 1`, `f(x)` is `step * (x + 1)`, so the test
+/// holds exactly for `x >= c`, and the read is not negative where the test narrows `x` exactly
+/// when `past` is 0.
+fn spaced_tests(rng: &mut Rng, k: usize, step: usize, past: i64) -> String {
     let tests: Vec<String> = (0..k)
         .map(|_| {
             let c = rng.int(0, k as i64 - 1);
             format!(
-                "(if f(x) > {c} {{ popCount(x - {}) }} else {{ 0 }})",
+                "(if f(x) > {} {{ popCount(x - {}) }} else {{ 0 }})",
+                step as i64 * c,
                 c + past
             )
         })
         .collect();
     format!(
         "f(positional x: int) = {};\ng(positional x: int) = {};\n",
-        literal_body(k),
+        spaced_body(k, step),
         tests.join(" + ")
     )
 }

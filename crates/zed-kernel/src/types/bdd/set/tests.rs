@@ -384,7 +384,7 @@ fn int_of_digest(d: u64) -> i64 {
     }
     h = mix_inv(None, Some(u64::from(p.atoms.cofinite)), h);
     for l in [&p.strings, &p.floats, &p.rats] {
-        h = mix_inv(None, Some(l.sum), h);
+        h = mix_inv(None, Some(l.sum()), h);
         h = mix_inv(None, Some(u64::from(l.cofinite)), h);
     }
     let before = mix(mix(0, u64::from(p.bools)), u64::from(p.ints.cofinite));

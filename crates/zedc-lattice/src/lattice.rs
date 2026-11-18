@@ -5,9 +5,9 @@
 //! source is `zed/prelude/lattice.zed`, and this module is the Rust-hosted checker's copy, which
 //! row S keeps as the differential oracle.
 
-use std::collections::BTreeSet;
 use std::fmt;
 
+use zed_kernel::treap_set::{Elem, TreapSet};
 use zed_kernel::types::{Type, Universe};
 
 use super::interval::{End, IntervalSet, Num};
@@ -230,39 +230,46 @@ impl Lattice for Congruence {
 
 /// A finite set of values (scalars, atoms, or tuples a type writes as a list), or the top: no
 /// finite-set fact.
+///
+/// The set is the kernel's persistent treap ([`TreapSet`]), as a type's literals are, so a set
+/// read from a type, or cut to an interval, shares that set's nodes, and a join or meet of two
+/// sets made from one set visits only the nodes they do not share (CHECK-literal-union-cost).
+// Complexity tradeoff: naive version, a `BTreeSet` rebuilt by each join and meet and copied
+// from a type's literals, `O(n)` per step whatever changed; `k` tests on a callee of `k`
+// literals cost `O(k^2)`. Used: the treap, `O(m log(n/m + 1))` per operation and `O(log n)`
+// for an operation on two sets made from one set by a cut; cost a pointer per member and three
+// words per node more than a B-tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum FiniteSet<T: Ord> {
+pub enum FiniteSet<T: Elem> {
     /// Exactly these values.
-    Set(BTreeSet<T>),
+    Set(TreapSet<T>),
     /// Any value of the carrier.
     Top,
 }
 
-impl<T: Ord + Clone> FiniteSet<T> {
+impl<T: Elem> FiniteSet<T> {
     /// The set of the given values.
     pub fn of(values: impl IntoIterator<Item = T>) -> Self {
         FiniteSet::Set(values.into_iter().collect())
     }
 }
 
-impl<T: Ord + Clone + fmt::Debug + Mark> Lattice for FiniteSet<T> {
+impl<T: Elem + fmt::Debug + Mark> Lattice for FiniteSet<T> {
     fn bottom() -> Self {
-        FiniteSet::Set(BTreeSet::new())
+        FiniteSet::Set(TreapSet::new())
     }
     fn top() -> Self {
         FiniteSet::Top
     }
     fn join(&self, other: &Self) -> Self {
         match (self, other) {
-            (FiniteSet::Set(a), FiniteSet::Set(b)) => FiniteSet::Set(a.union(b).cloned().collect()),
+            (FiniteSet::Set(a), FiniteSet::Set(b)) => FiniteSet::Set(a.union(b)),
             _ => FiniteSet::Top,
         }
     }
     fn meet(&self, other: &Self) -> Self {
         match (self, other) {
-            (FiniteSet::Set(a), FiniteSet::Set(b)) => {
-                FiniteSet::Set(a.intersection(b).cloned().collect())
-            }
+            (FiniteSet::Set(a), FiniteSet::Set(b)) => FiniteSet::Set(a.intersection(b)),
             (FiniteSet::Top, s) | (s, FiniteSet::Top) => s.clone(),
         }
     }
@@ -284,7 +291,7 @@ impl<T: Ord + Clone + fmt::Debug + Mark> Lattice for FiniteSet<T> {
         }
         match (self, self.join(next)) {
             (FiniteSet::Set(old), FiniteSet::Set(j))
-                if j.iter().all(|v| old.contains(v) || v.marked(marks)) =>
+                if j.difference(old).iter().all(|v| v.marked(marks)) =>
             {
                 FiniteSet::Set(j)
             }

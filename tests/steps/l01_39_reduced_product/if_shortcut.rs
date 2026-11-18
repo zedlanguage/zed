@@ -19,7 +19,6 @@
 //! value. `the_change_flag_matches_a_comparison` checks the flag against the comparison on
 //! random products whose domains disagree.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
@@ -364,14 +363,10 @@ fn random_product(rng: &mut Rng) -> Product {
     };
     p.cell.finite.element = match rng.below(3) {
         0 => FiniteSet::Top,
-        _ => FiniteSet::Set(
-            (0..rng.int(0, 4))
-                .map(|_| match rng.below(4) {
-                    0 => Value::str("a"),
-                    _ => Value::Int(rng.int(-5, 7)),
-                })
-                .collect::<BTreeSet<Value>>(),
-        ),
+        _ => FiniteSet::of((0..rng.int(0, 4)).map(|_| match rng.below(4) {
+            0 => Value::str("a"),
+            _ => Value::Int(rng.int(-5, 7)),
+        })),
     };
     p.cell.ints.premises = because(1);
     p.cell.congruence.premises = because(2);
@@ -457,7 +452,7 @@ fn a_settled_product_written_again_is_reduced_again() {
     assert_eq!(written.ty.element, Type::union_all([lit(2), lit(3)]));
     assert_eq!(
         written.cell.finite.element,
-        FiniteSet::Set(BTreeSet::from([Value::Int(2), Value::Int(3)]))
+        FiniteSet::of([Value::Int(2), Value::Int(3)])
     );
     assert_eq!(
         settled.ty.element,

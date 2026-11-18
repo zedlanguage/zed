@@ -962,6 +962,43 @@ fn ints_listed_are_the_ints_the_type_holds() {
     assert!(listed > 1000 && cofinite > 1000, "{listed} {cofinite}");
 }
 
+/// `Type::ints_of(vs)` is the union of the literals of `vs`, as a type (`==`, so equal under
+/// the order and hash every caller reads), and `ints_set` gives the set back, shared, for sets
+/// of 64-bit and wide integers of every size from none to 40; a set holding another value is
+/// refused (CHECK-literal-union-cost).
+#[test]
+fn ints_of_a_set_is_the_union_of_its_literals() {
+    let lit = |v: &Value| Type::lit(v).expect("a literal");
+    let wide = |k: u64| Value::int(num_bigint::BigInt::from(k + 1) << 70usize);
+    let mut seed = crate::seed::seed("ints_of_a_set_is_the_union_of_its_literals") | 1;
+    let mut below = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    for n in 0..=40 {
+        let vs: Vec<Value> = (0..n)
+            .map(|_| match below(4) {
+                0 => wide(below(5)),
+                _ => Value::Int(below(60) as i64 - 30),
+            })
+            .collect();
+        let set: TreapSet<Value> = vs.iter().cloned().collect();
+        let t = Type::ints_of(set.clone());
+        let u = Type::union_all(vs.iter().map(lit));
+        assert_eq!(t, u, "{vs:?}");
+        assert_eq!(t.cmp(&u), std::cmp::Ordering::Equal);
+        match t.ints_set() {
+            Some(back) => assert!(back.ptr_eq(&set) || set.is_empty()),
+            None => panic!("a finite set of integers"),
+        }
+    }
+    let mixed: TreapSet<Value> = [Value::Int(1), Value::Bool(true)].into_iter().collect();
+    let refused = std::panic::catch_unwind(|| Type::ints_of(mixed));
+    assert!(refused.is_err());
+}
+
 /// `lists_values_of(b)` says what listing the meet with base type `b` says, that it lists one
 /// value or more (CHECK-literal-union-cost), for types made by `|`, `&`, `-` and `!` from
 /// literals and whole base types of each base, tuples and atoms.

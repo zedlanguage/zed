@@ -30,6 +30,7 @@ mod site_table;
 pub mod sites;
 pub mod term;
 pub mod text;
+pub mod treap_set;
 pub mod types;
 pub mod value;
 pub mod words;

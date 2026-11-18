@@ -943,7 +943,7 @@ mod tests {
             let s = FiniteSet::of([-3, 0, 1, 7]);
             let (x2, s2) = reduce_finite(&x, &s);
             let FiniteSet::Set(kept) = s2 else { panic!() };
-            assert_eq!(members(&x2), kept.into_iter().collect::<Vec<_>>());
+            assert_eq!(members(&x2), kept.iter().copied().collect::<Vec<_>>());
         }
         let (x, _) = reduce_congruence(
             &IntervalSet::range(NegInf, End::of(-4)),

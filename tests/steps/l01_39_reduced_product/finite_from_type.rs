@@ -40,7 +40,7 @@ fn square(n: usize) -> Type {
 /// The finite set of `p`, `None` for the top.
 fn finite(p: &Product) -> Option<BTreeSet<Value>> {
     match &p.cell.finite.element {
-        FiniteSet::Set(s) => Some(s.clone()),
+        FiniteSet::Set(s) => Some(s.iter().cloned().collect()),
         FiniteSet::Top => None,
     }
 }
@@ -50,7 +50,7 @@ fn finite(p: &Product) -> Option<BTreeSet<Value>> {
 fn bound(ty: &Type, members: &BTreeSet<Value>) -> Product {
     let mut p = Product::top();
     p.ty.element = ty.clone();
-    p.cell.finite.element = FiniteSet::Set(members.clone());
+    p.cell.finite.element = FiniteSet::of(members.iter().cloned());
     let mut s = Scope::new([]);
     let x: Arc<str> = "x".into();
     s.bind(&x, p, &Shared::new(Term::Lit(int(0))));

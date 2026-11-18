@@ -19,7 +19,6 @@ use super::*;
 use zed_kernel::Shared;
 use zed_kernel::limits::{Kill, MainLimits};
 use zedc_lattice::cell::Premises;
-use zedc_lattice::lattice::Lattice;
 use zedc_preimage::address::Address;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
@@ -11588,8 +11587,9 @@ impl<'a> Ck<'_, 'a> {
                 }
                 s.eager_on(&t.term);
                 let mut p = product::forward(&t.term, &mut s);
-                if let Some(ty) = self.arms.bound_ty.get(&b) {
-                    p.ty.element = p.ty.element.meet(ty);
+                match self.arms.bound_ty.get(&b) {
+                    Some(ty) => p.meet_type(ty),
+                    None => p.meet_type(&KType::top()),
                 }
                 self.place_refusals(span, &before, &s.refusals);
                 self.arms.bound.insert(b, p);
@@ -26563,7 +26563,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(a) = a else { continue };
             let Some(e) = lone_call(a) else { continue };
             let decimal = |vs: Vec<Value>| vs.iter().any(|v| matches!(v, Value::Float(_)));
-            if !call_values(a).is_some_and(decimal) {
+            // Complexity tradeoff (CHECK-literal-union-cost): the list of the call's values,
+            // O(k) for a type of k literals, is made only when the type's `f64` part lists a
+            // value, read in O(1) (`KType::lists_values_of`); a `Value::Float` lies in that part
+            // alone, so a type whose part lists none has no decimal value and the test is the
+            // same. Naive version, the list made at each call argument: O(k) per test of a call
+            // of k literals, O(k²) for k such tests.
+            if !a.ty.set.lists_values_of(Carrier::F64.base())
+                || !call_values(a).is_some_and(decimal)
+            {
                 continue;
             }
             let (mut f64, mut rat) = (false, false);

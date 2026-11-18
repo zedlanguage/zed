@@ -49,6 +49,7 @@ use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::poly::roots::{Roots, term_roots};
 use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
+use zed_kernel::treap_set::TreapSet;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 
@@ -255,7 +256,7 @@ impl Product {
         let mut p = Product::top();
         p.cell.ints.element = Bounds::ints(IntervalSet::empty());
         p.cell.congruence.element = Congruence::Bottom;
-        p.cell.finite.element = FiniteSet::Set(BTreeSet::new());
+        p.cell.finite.element = FiniteSet::Set(TreapSet::new());
         p.ty.element = Type::empty();
         p.time.element = Time::Never;
         p
@@ -343,6 +344,21 @@ impl Product {
         out.extend(&self.ty.premises);
         out.extend(&self.time.premises);
         out
+    }
+
+    /// The type met with `ty`, with no premise, and the product then reduced between its own
+    /// domains until no reduction changes one: for a product stored once and copied into many
+    /// scopes, as the checker's bound values are, so that each copy starts reduced and
+    /// settled (`Settled`) and the literal sets of its domains are one shared set where
+    /// they are equal (step "type to finite set" in `Product::reduce_domains_now`).
+    // Complexity tradeoff (CHECK-literal-union-cost): naive version, the type written and the
+    // product stored unreduced, reduced again in each scope it is copied into; its finite
+    // set and its type's integers, joined apart over the arms, are equal sets that share no
+    // node, so each copy narrowed by a test met them member by member, `O(k)` for `k`
+    // literals, `O(k²)` for `k` tests. Used: one reduction here, `O(k)` once.
+    pub fn meet_type(&mut self, ty: &Type) {
+        self.ty.element = self.ty.element.meet(ty);
+        while self.reduce_domains() {}
     }
 
     /// Joins `other` into `self`; whether anything changed.
@@ -448,22 +464,9 @@ impl Product {
         changed |= self.cell.congruence.meet(&c, &prem);
         // A finite set against the interval: an integer member outside it goes.
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
-            let x = self.ints();
-            let kept: BTreeSet<Value> = vs
-                .iter()
-                .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
-                .cloned()
-                .collect();
-            if vs.iter().all(|v| matches!(v, Value::Int(_))) {
-                let ints = IntervalSet::from_pieces(
-                    kept.iter()
-                        .filter_map(|v| match v {
-                            Value::Int(n) => Some((End::of(*n), End::of(*n))),
-                            _ => None,
-                        })
-                        .collect(),
-                );
-                changed |= self.meet_ints(ints, &prem);
+            let kept = kept_in(vs, self.ints());
+            if vs.classes() & !Value::INT_CLASS == 0 && !fills(&kept, self.ints()) {
+                changed |= self.meet_ints(points(&kept), &prem);
             }
             changed |= self.cell.finite.meet(&FiniteSet::Set(kept), &prem);
         }
@@ -487,27 +490,41 @@ impl Product {
             // `l01_39_reduced_product::controls::ranges_of_every_width_list_nothing`.
             // COMPLEXITY.md row C5. A complete solution would let the type language hold
             // integer ranges, so that the interval enters the type without listing.
+            //
+            // The type's integers are its own set ([`Type::ints_set`]), cut to the interval
+            // ([`kept_in`]); when the cut keeps them all it is that set itself, and the meet,
+            // which would give the type back, is skipped: the type's `ints` are the set, and
+            // `!int | ints_of(set)` holds every other part whole, so the meet changes no part.
             let x = self.ints();
-            let vs: Option<Vec<Value>> = match self.ty.element.ints_listed() {
-                Some(vs) => Some(
-                    vs.into_iter()
-                        .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
-                        .collect(),
-                ),
+            let vs = match self.ty.element.ints_set() {
+                Some(own) => {
+                    let kept = kept_in(&own, x);
+                    (!kept.ptr_eq(&own)).then_some(kept)
+                }
                 None => match x.bounds() {
-                    Some((End::Fin(a), End::Fin(b))) if a == b => Some(vec![Value::from(a)]),
+                    Some((End::Fin(a), End::Fin(b))) if a == b => {
+                        Some([Value::from(a)].into_iter().collect())
+                    }
                     _ => None,
                 },
             };
             if let Some(vs) = vs {
-                let lits = Type::union_all(vs.iter().filter_map(Type::lit));
+                let lits = Type::ints_of(vs);
                 changed |= self.ty.meet(&(&!&int | &lits), &prem);
             }
         }
         if let FiniteSet::Set(vs) = &self.cell.finite.element {
-            let lits: Option<Vec<Type>> = vs.iter().map(Type::lit).collect();
-            if let Some(lits) = lits {
-                let t = Type::union_all(lits);
+            // A set of integers is a type at once ([`Type::ints_of`], the union of its
+            // literals); any other set is joined literal by literal, as before.
+            let t = match vs.classes() & !(Value::INT_CLASS | Value::BIG_CLASS) {
+                0 => Some(Type::ints_of(vs.clone())),
+                _ => vs
+                    .iter()
+                    .map(Type::lit)
+                    .collect::<Option<Vec<Type>>>()
+                    .map(Type::union_all),
+            };
+            if let Some(t) = t {
                 changed |= self.ty.meet(&t, &prem);
             }
         }
@@ -538,34 +555,168 @@ impl Product {
         // COMPLEXITY.md row S34. A complete solution would keep the finite set as a type,
         // with the type's operations, and decide a type's one value by an emptiness search
         // over its tuple types.
+        //
+        // A set of integers is met with the type's own set of integers
+        // (`TreapSet::intersection`), which skips the nodes the two share: an integer is in a
+        // type exactly when the type's `ints` hold it (the proof at [`Type::ints_listed`]).
+        // Any other set is filtered member by member, as before.
+        //
+        // With no finite set yet, a type of integers alone gives its own set
+        // ([`Type::ints_set`], `O(1)`), which is its list of values: by the same proof its
+        // values are the members of its `ints`, each once, since no other part holds a value.
+        // Complexity tradeoff (CHECK-literal-union-cost): naive version, the list
+        // ([`Type::values_listed`]) made into a new set, `O(k log k)`, equal to the type's set
+        // but sharing none of its nodes, so every later meet of the two walks all `k` members
+        // and a callee of `k` literals read in `k` tests cost `O(k²)` in all. Used: the type's
+        // set shared, so each later meet stops at the shared root. Any other type is listed.
         if self.ty.element.finite() {
             let ty = &self.ty.element;
+            // `Err(own)`: the finite set equals the type's set `own` but is another tree. It
+            // becomes `own`, the same value, so no domain changes; from then on the two share
+            // their nodes, and so do the cuts later made of them, which then meet in `O(log k)`.
             let kept = match &self.cell.finite.element {
-                FiniteSet::Set(vs) => {
-                    Some(FiniteSet::of(vs.iter().filter(|v| ty.contains(v)).cloned()))
-                }
-                FiniteSet::Top => ty.values_listed().map(FiniteSet::of),
+                FiniteSet::Set(vs) => match (vs.classes() & !Value::INT_CLASS, ty.ints_set()) {
+                    (0, Some(own)) => {
+                        let kept = vs.intersection(&own);
+                        match kept.len() == own.len() && kept.len() == vs.len() {
+                            true if !vs.ptr_eq(&own) => Err(own),
+                            _ => Ok(Some(FiniteSet::Set(kept))),
+                        }
+                    }
+                    _ => Ok(Some(FiniteSet::of(
+                        vs.iter().filter(|v| ty.contains(v)).cloned(),
+                    ))),
+                },
+                FiniteSet::Top => Ok(match ty.ints_set() {
+                    Some(own) if ty.subtype(&int) => Some(FiniteSet::Set(own)),
+                    _ => ty.values_listed().map(FiniteSet::of),
+                }),
             };
-            if let Some(kept) = kept {
-                changed |= self.cell.finite.meet(&kept, &prem);
+            match kept {
+                Ok(Some(kept)) => changed |= self.cell.finite.meet(&kept, &prem),
+                Ok(None) => {}
+                Err(own) => self.cell.finite.element = FiniteSet::Set(own),
             }
         }
-        if let Some(vs) = self.ty.element.ints_listed()
+        if let Some(vs) = self.ty.element.ints_set()
             && !vs.is_empty()
+            && vs.classes() & !Value::INT_CLASS == 0
+            && !fills(&vs, self.ints())
             && self.ty.element.subtype(&int)
         {
-            let ints = IntervalSet::from_pieces(
-                vs.iter()
-                    .filter_map(|v| match v {
-                        Value::Int(n) => Some((End::of(*n), End::of(*n))),
-                        _ => None,
-                    })
-                    .collect(),
-            );
-            changed |= self.meet_ints(ints, &prem);
+            changed |= self.meet_ints(points(&vs), &prem);
         }
         changed
     }
+}
+
+/// The members of `vs` that the interval `x` keeps: every member but a 64-bit integer outside
+/// `x`. `vs` itself when it loses none, so a domain met with it is seen unchanged at once.
+///
+/// For a set of 64-bit integers only ([`Value::INT_CLASS`], read in `O(1)`), the set is cut
+/// to `x`'s hull by two cuts of the treap, `O(log k)`, and then, when `x` has more than one
+/// piece, the smaller of the two is walked: each kept member looked up in `x`, `O(k' log p)`,
+/// or each piece of `x` cut out of the set and the cuts joined in order, `O(p log k)`. A set
+/// holding other values is filtered member by member, `O(k log p)`, since the integers are
+/// not one range of it (numbers of every kind are ordered together).
+// Complexity tradeoff (CHECK-literal-union-cost): naive version, every member looked up in
+// the interval and the set rebuilt, `O(k log k)` per reduction, so `k` tests on a callee of
+// `k` literals cost `O(k^2 log k)`. Used: cuts of the persistent treap (module
+// `zed_kernel::treap_set`; Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets",
+// SPAA 2016), `O(log k)` when `x` is one piece, as for a run of literals narrowed by a test,
+// and `O(min(k', p) log max(k', p))` otherwise. Cost: an interval of many pieces against a set
+// of many members, as the even numbers below `2k` narrowed at random, still walks
+// `min(k', p)`. Test:
+// `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
+fn kept_in(vs: &TreapSet<Value>, x: &IntervalSet) -> TreapSet<Value> {
+    let out = |v: &Value| matches!(v, Value::Int(n) if !x.contains(*n));
+    if vs.classes() & Value::INT_CLASS == 0 {
+        return vs.clone();
+    }
+    if vs.classes() != Value::INT_CLASS {
+        return match vs.iter().any(out) {
+            false => vs.clone(),
+            true => vs.iter().filter(|v| !out(v)).cloned().collect(),
+        };
+    }
+    let Some((lo, hi)) = x.bounds() else {
+        return TreapSet::new();
+    };
+    let span = cut(vs, lo, hi);
+    if x.len() == 1 || span.is_empty() {
+        return span;
+    }
+    if span.len() <= x.len() {
+        return match span.iter().any(out) {
+            false => span,
+            true => span.iter().filter(|v| !out(v)).cloned().collect(),
+        };
+    }
+    let (Some(Value::Int(first)), Some(Value::Int(last))) = (span.first(), span.last()) else {
+        unreachable!("a set of 64-bit integers, not empty")
+    };
+    let mut kept = TreapSet::new();
+    for (a, b) in x.pieces_from(&End::of(*first)) {
+        if *a > End::of(*last) {
+            break;
+        }
+        kept = kept.concat(&cut(&span, a, b));
+    }
+    match kept.len() == span.len() {
+        true => span,
+        false => kept,
+    }
+}
+
+/// The members of `vs`, every one a 64-bit integer, from `lo` to `hi`: two cuts of the treap,
+/// `O(log k)`, `vs` itself when they drop nothing. An end beyond the 64-bit range cuts nothing
+/// off on its own side and everything on the other.
+fn cut(vs: &TreapSet<Value>, lo: &End, hi: &End) -> TreapSet<Value> {
+    let zero = End::of(0);
+    let low = match lo.to_i64() {
+        Some(n) => vs.at_least(&Value::Int(n)),
+        None if *lo < zero => vs.clone(),
+        None => return TreapSet::new(),
+    };
+    match hi.to_i64() {
+        Some(n) => low.at_most(&Value::Int(n)),
+        None if *hi > zero => low,
+        None => TreapSet::new(),
+    }
+}
+
+/// Whether the set `vs` of 64-bit integers holds every member of the interval `x` and nothing
+/// else, read in `O(log k)` when `x` is one finite piece: `vs` lies in it and has as many
+/// members as it. `false` otherwise, which only costs the meet it would skip.
+// Proof: the members of `vs` are distinct integers; if they number `b - a + 1` and lie in
+// `[a, b]`, which has `b - a + 1` integers, they are all of them, so the points of `vs` are
+// `x` and meeting `x` with them gives `x`.
+fn fills(vs: &TreapSet<Value>, x: &IntervalSet) -> bool {
+    let Some((End::Fin(a), End::Fin(b))) = x.only() else {
+        return false;
+    };
+    let (Some(a), Some(b)) = (a.to_i64(), b.to_i64()) else {
+        return false;
+    };
+    match (vs.first(), vs.last()) {
+        (Some(Value::Int(f)), Some(Value::Int(l))) => {
+            a <= *f && *l <= b && i128::from(b) - i128::from(a) + 1 == vs.len() as i128
+        }
+        _ => false,
+    }
+}
+
+/// The interval of exactly the 64-bit integers of `vs`, one point each, joined where they
+/// are adjacent: `O(k)`.
+fn points(vs: &TreapSet<Value>) -> IntervalSet {
+    IntervalSet::from_pieces(
+        vs.iter()
+            .filter_map(|v| match v {
+                Value::Int(n) => Some((End::of(*n), End::of(*n))),
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 impl fmt::Display for Product {
@@ -19665,6 +19816,134 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// [`kept_in`] keeps exactly the members the plain filter keeps, every member but a 64-bit
+    /// integer outside the interval, and gives the set itself back when it keeps them all;
+    /// [`fills`] is true only where the points of the set are the interval: sets of 64-bit
+    /// integers alone, and mixed with wide integers, strings and fractions, against intervals
+    /// empty, whole, one piece, many pieces and pieces with infinite ends.
+    #[test]
+    fn the_members_kept_by_an_interval_are_those_a_filter_keeps() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        let wide = Value::int(BigInt::from(1u8) << 70);
+        assert!(matches!(wide, Value::Big(_)));
+        for round in 0..400 {
+            let k = next(40);
+            let mut vs: TreapSet<Value> =
+                (0..k).map(|_| Value::Int(next(60) as i64 - 30)).collect();
+            match round % 4 {
+                1 => {
+                    vs.insert(wide.clone());
+                }
+                2 => {
+                    vs.insert(Value::from("s"));
+                }
+                3 => {
+                    vs.insert(Value::from(true));
+                }
+                _ => {}
+            }
+            let end = |n: u64| match n {
+                0 => End::NegInf,
+                1 => End::PosInf,
+                _ => End::of(n as i64 - 32),
+            };
+            let x = match round % 7 {
+                0 => IntervalSet::empty(),
+                1 => IntervalSet::top(),
+                2 => IntervalSet::range(End::NegInf, end(next(60) + 2)),
+                3 => IntervalSet::range(end(next(60) + 2), End::PosInf),
+                _ => IntervalSet::from_pieces(
+                    (0..1 + next(6))
+                        .map(|_| {
+                            let a = next(60) as i64 - 32;
+                            (End::of(a), End::of(a + next(8) as i64))
+                        })
+                        .collect(),
+                ),
+            };
+            let plain: TreapSet<Value> = vs
+                .iter()
+                .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
+                .cloned()
+                .collect();
+            let kept = kept_in(&vs, &x);
+            assert_eq!(kept, plain, "round {round}: {vs:?} in {x:?}");
+            if kept.len() == vs.len() {
+                assert!(
+                    kept.ptr_eq(&vs),
+                    "round {round}: a set losing nothing is itself"
+                );
+            }
+            let ints_only = kept.classes() & !Value::INT_CLASS == 0;
+            if fills(&kept, &x) {
+                assert!(ints_only && !kept.is_empty());
+                assert_eq!(points(&kept), x, "round {round}");
+            }
+            if ints_only
+                && x.len() == 1
+                && points(&kept) == x
+                && x.bounds()
+                    .is_some_and(|(a, b)| a.to_i64().is_some() && b.to_i64().is_some())
+            {
+                assert!(fills(&kept, &x), "round {round}: {kept:?} fills {x:?}");
+            }
+        }
+    }
+
+    /// [`Product::meet_type`] leaves a product reduced, its finite set the same values as
+    /// before and, where that set equals its type's integers but was built apart, the type's
+    /// own set, so that cuts of later copies share nodes (CHECK-literal-union-cost); where the
+    /// sets differ, the finite set is their meet; a set with a value that is not an integer is
+    /// filtered by the type.
+    #[test]
+    fn meet_type_shares_the_finite_set_with_the_types_integers() {
+        for k in [1i64, 2, 7, 64, 300] {
+            let ty = Type::ints_of((0..k).map(Value::Int).collect());
+            let own = ty.ints_set().expect("a type of integers alone lists them");
+            let apart: TreapSet<Value> = (0..k).rev().map(Value::Int).collect();
+            assert!(!apart.ptr_eq(&own), "k = {k}: built apart");
+            let mut p = Product::top();
+            p.ty.element = ty.clone();
+            p.cell.finite.element = FiniteSet::Set(apart.clone());
+            p.meet_type(&Type::top());
+            match &p.cell.finite.element {
+                FiniteSet::Set(vs) => {
+                    assert_eq!(*vs, apart, "k = {k}: the same values");
+                    assert!(vs.ptr_eq(&own), "k = {k}: the type's own set");
+                }
+                FiniteSet::Top => panic!("k = {k}: the finite set lost"),
+            }
+            assert!(!p.reduce_domains(), "k = {k}: reduced");
+            let fewer: TreapSet<Value> = (1..k + 3).map(Value::Int).collect();
+            let mut q = Product::top();
+            q.ty.element = ty.clone();
+            q.cell.finite.element = FiniteSet::Set(fewer);
+            q.meet_type(&Type::top());
+            let met: TreapSet<Value> = (1..k).map(Value::Int).collect();
+            assert_eq!(
+                q.cell.finite.element,
+                FiniteSet::Set(met),
+                "k = {k}: the meet"
+            );
+            let mixed: TreapSet<Value> = (0..k).map(Value::Int).chain([Value::from("s")]).collect();
+            let mut r = Product::top();
+            r.ty.element = ty.clone();
+            r.cell.finite.element = FiniteSet::Set(mixed);
+            r.meet_type(&Type::top());
+            assert_eq!(
+                r.cell.finite.element,
+                FiniteSet::Set(own),
+                "k = {k}: filtered"
+            );
+        }
+    }
 
     /// The hull [`Scope::form_hull`] gives the form of a pendant (FAIL-pendants-route-parity):
     /// each term's ends times its coefficient, swapped where the coefficient is negative, and

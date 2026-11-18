@@ -9415,7 +9415,7 @@ impl<'m> Searching<'m> {
         } else {
             let mut greatest = &zero;
             for l in fields {
-                if let Some(v) = l.values.get_max()
+                if let Some(v) = l.values.last()
                     && v != greatest
                     && v > greatest
                 {

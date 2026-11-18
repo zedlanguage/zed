@@ -47,6 +47,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use crate::deep;
 use crate::frames::{Deep, Stack};
 use crate::num::Rat;
+use crate::priority::Priorities;
+use crate::treap_set::{Elem, TreapSet};
 use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
 use bucket::Bucket;
@@ -136,6 +138,62 @@ fn scalar(v: &Value) -> u64 {
         Value::Rat(r) => exact(5, r),
         other => mix(3, bytes(other.to_string().as_bytes())),
     }
+}
+
+/// A value as a key of a [`TreapSet`]: the literals of a type (`Lits`) and the finite-set
+/// domain of the reduced product. Its weight is `scalar` for a number or a string, so a
+/// set of literals sums what `Lits` summed before it was a treap (CHECK-literal-union-cost),
+/// and the digest of any other value, which costs its size once, when its node is first made.
+/// Its class is one bit per kind ([`Value::INT_CLASS`] and the others below), so a set holds
+/// only integers exactly when its classes are within `INT_CLASS | BIG_CLASS`, read in `O(1)`.
+///
+/// Priorities: a 64-bit integer's point is the integer with its sign bit flipped, so at most
+/// 118 integers tie whatever the draw, as for `i64` (module [`crate::treap_set`]); any other
+/// value's is its `Hash` stream ([`Priorities::hash`]), so two values tie whatever the draw only
+/// when their digests are equal, which a program can choose (as for the atoms of `bdd::set`,
+/// plan row PERF-set-tied-digest-depth).
+impl Elem for Value {
+    fn priority(&self) -> u64 {
+        static PRIORITIES: Priorities = Priorities::eight_wise(17);
+        match self {
+            Value::Int(n) => PRIORITIES.of((*n as u64) ^ (1 << 63)),
+            v => PRIORITIES.hash(v),
+        }
+    }
+    fn weight(&self) -> u64 {
+        match self {
+            Value::Int(_)
+            | Value::Big(_)
+            | Value::Rat(_)
+            | Value::Float(_)
+            | Value::Float32(_)
+            | Value::Str(_) => scalar(self),
+            v => {
+                use std::hash::{Hash, Hasher};
+                let mut h = crate::digest::Digest::default();
+                v.hash(&mut h);
+                h.finish()
+            }
+        }
+    }
+    fn class(&self) -> u32 {
+        match self {
+            Value::Int(_) => Value::INT_CLASS,
+            Value::Big(_) => Value::BIG_CLASS,
+            Value::Rat(_) => 4,
+            Value::Float(_) => 8,
+            Value::Float32(_) => 16,
+            Value::Str(_) => 32,
+            _ => 64,
+        }
+    }
+}
+
+impl Value {
+    /// The class ([`Elem::class`]) of a 64-bit integer.
+    pub const INT_CLASS: u32 = 1;
+    /// The class of an integer wider than 64 bits.
+    pub const BIG_CLASS: u32 = 2;
 }
 
 /// The program's own spelling of a literal value, if it has one: the text of a literal it
@@ -1281,14 +1339,16 @@ struct Parts {
     morphisms: Part<Morphism>,
 }
 
-/// A finite set of literals, or the complement of one within its base type. The set is
-/// persistent, so that a union or difference with a small set copies nothing else, and `sum`,
-/// the wrapping sum of its literals' hashes, is kept as it changes.
+/// A finite set of literals, or the complement of one within its base type. The set is a
+/// persistent treap ([`TreapSet`]), so that a union or difference with a small set copies
+/// nothing else, a cut to a range of literals is one path, and [`Lits::sum`], the wrapping sum
+/// of its literals' hashes ([`scalar`]), is kept at each node as it changes. The finite-set
+/// domain of the reduced product is a set of the same kind, so the two share their nodes
+/// (CHECK-literal-union-cost).
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Lits {
     cofinite: bool,
-    values: OrdSet<Value>,
-    sum: u64,
+    values: TreapSet<Value>,
 }
 
 /// By `cofinite`, then the values in order, then `sum`, as derived; but two equal sets are
@@ -1302,16 +1362,15 @@ struct Lits {
 // ordered one; equal sums of unequal sets are a hash collision.
 impl Ord for Lits {
     fn cmp(&self, other: &Lits) -> std::cmp::Ordering {
-        self.cofinite.cmp(&other.cofinite).then_with(|| {
-            let same = self.values.ptr_eq(&other.values);
-            match same || (self.sum == other.sum && self.values == other.values) {
+        self.cofinite
+            .cmp(&other.cofinite)
+            .then_with(|| match self.values == other.values {
                 true => std::cmp::Ordering::Equal,
                 false => self
                     .values
                     .cmp(&other.values)
-                    .then(self.sum.cmp(&other.sum)),
-            }
-        })
+                    .then(self.sum().cmp(&other.sum())),
+            })
     }
 }
 
@@ -1385,7 +1444,7 @@ impl Parts {
     fn hashes(&self) -> (u64, u64) {
         let mut h = mix(0, u64::from(self.bools));
         for l in [&self.ints, &self.rats, &self.floats, &self.strings] {
-            h = mix(mix(h, u64::from(l.cofinite)), l.sum);
+            h = mix(mix(h, u64::from(l.cofinite)), l.sum());
         }
         let base = mix(h, u64::from(self.atoms.cofinite));
         let mut named = mix(base, self.atoms.name_sum);
@@ -1407,8 +1466,8 @@ impl Parts {
         let f = &self.f32s;
         match f.cofinite || !f.values.is_empty() {
             true => (
-                mix(mix(h, u64::from(f.cofinite)), f.sum),
-                mix(mix(named, u64::from(f.cofinite)), f.sum),
+                mix(mix(h, u64::from(f.cofinite)), f.sum()),
+                mix(mix(named, u64::from(f.cofinite)), f.sum()),
             ),
             false => (h, named),
         }
@@ -2202,6 +2261,35 @@ impl Type {
     pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();
         (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())
+    }
+
+    /// The integers of `self` as the set the type keeps, when they are a finite set of
+    /// literals ([`Type::ints_listed`], which this is without the copy): `O(1)`, the set shared.
+    pub fn ints_set(&self) -> Option<TreapSet<Value>> {
+        let p = self.p();
+        (!p.ints.cofinite).then(|| p.ints.values.clone())
+    }
+
+    /// The type of exactly the integers `vs`, every member a `Value::Int` or `Value::Big`:
+    /// `O(1)`, the set shared, where [`Type::union_all`] of their [`Type::lit`]s joins `k`
+    /// literals. It is that union: a literal of an integer is the type whose `ints` hold it
+    /// alone and every other part nothing, and `|` joins part by part, so the union's `ints`
+    /// are `vs` and its other parts nothing; the empty set gives [`Type::empty`], as the union
+    /// of no types does. Test: `types::tests::ints_of_a_set_is_the_union_of_its_literals`.
+    pub fn ints_of(vs: TreapSet<Value>) -> Type {
+        assert!(
+            vs.classes() & !(Value::INT_CLASS | Value::BIG_CLASS) == 0,
+            "`Type::ints_of` of a set holding a value that is not an integer"
+        );
+        match vs.is_empty() {
+            true => Type::empty(),
+            false => Type::with(|p| {
+                p.ints = Lits {
+                    cofinite: false,
+                    values: vs,
+                }
+            }),
+        }
     }
 
     /// The values of `self` when its form writes each of them as a list, `None` otherwise:
@@ -3146,37 +3234,31 @@ impl Type {
 
 impl Lits {
     /// Whether no literal is in both sets.
+    // Complexity tradeoff (COMPLEXITY.md F113): the naive test walks the first set whatever the
+    // sizes, `O(s log l)` for its `s` values; a set of `n` literals tested against a cofinite
+    // set that leaves out none, as `0 | 1 | ... | n` within `int` in each link of a chain of
+    // `n` tuple `min`s, costs `n` each and `n^2` for the chain. Used: the treap's join-based
+    // intersection and difference, `O(s log(l/s + 1))` for `s <= l`, `O(1)` against an empty
+    // set, and only the unshared nodes visited (module `crate::treap_set`).
     fn disjoint(&self, other: &Lits) -> bool {
-        let (a, b) = (self, other);
-        match (a.cofinite, b.cofinite) {
-            (false, false) => Lits::apart(&a.values, &b.values),
-            (false, true) => a.values.iter().all(|v| b.values.contains(v)),
-            (true, false) => b.values.iter().all(|v| a.values.contains(v)),
+        let (a, b) = (&self.values, &other.values);
+        match (self.cofinite, other.cofinite) {
+            (false, false) => a.is_disjoint(b),
+            (false, true) => a.is_subset(b),
+            (true, false) => b.is_subset(a),
             (true, true) => false,
         }
     }
 
     /// Whether every literal of `self` is in `other`.
     fn within(&self, other: &Lits) -> bool {
-        let (a, b) = (self, other);
-        match (a.cofinite, b.cofinite) {
-            (false, false) => a.values.iter().all(|v| b.values.contains(v)),
-            (false, true) => Lits::apart(&a.values, &b.values),
+        let (a, b) = (&self.values, &other.values);
+        match (self.cofinite, other.cofinite) {
+            (false, false) => a.is_subset(b),
+            (false, true) => a.is_disjoint(b),
             (true, false) => false,
-            (true, true) => b.values.iter().all(|v| a.values.contains(v)),
+            (true, true) => b.is_subset(a),
         }
-    }
-
-    /// Whether no value is in both sets, read by walking the smaller set and looking each of
-    /// its values up in the larger.
-    // Complexity tradeoff (COMPLEXITY.md F113): the naive test walks the first set whatever the
-    // sizes, `O(s log l)` for its `s` values; a set of `n` literals tested against a cofinite
-    // set that leaves out none, as `0 | 1 | ... | n` within `int` in each link of a chain of
-    // `n` tuple `min`s, costs `n` each and `n^2` for the chain. Used: the smaller walked,
-    // `O(min(s, l) log max(s, l))`, `O(1)` against an empty set; the answer is the same.
-    fn apart(a: &OrdSet<Value>, b: &OrdSet<Value>) -> bool {
-        let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-        !small.iter().any(|v| large.contains(v))
     }
 
     fn contains(&self, v: &Value) -> bool {
@@ -3184,104 +3266,37 @@ impl Lits {
     }
 
     fn insert(&mut self, v: &Value) {
-        if self.values.insert(v.clone()).is_none() {
-            self.sum = self.sum.wrapping_add(scalar(v));
-        }
+        self.values.insert(v.clone());
     }
 
-    fn remove(&mut self, v: &Value) {
-        if self.values.remove(v).is_some() {
-            self.sum = self.sum.wrapping_sub(scalar(v));
-        }
+    /// The wrapping sum of the literals' hashes ([`scalar`]), kept at each node, `O(1)`.
+    fn sum(&self) -> u64 {
+        self.values.sum()
     }
 
-    /// The sets combined by `op`, each in `O(s log l)` steps for the smaller set's `s`
-    /// literals and the larger's `l`: the result is the larger set changed by the smaller's
-    /// literals, or the smaller set's literals filtered.
-    fn zip(&self, other: &Lits, op: Op) -> Lits {
-        let (a, b) = (self, other);
-        let (cofinite, mut out) = match (op, a.cofinite, b.cofinite) {
-            (Op::Or, false, false) => (false, Lits::union(a, b)),
-            (Op::Or, false, true) => (true, Lits::minus(b, a)),
-            (Op::Or, true, false) => (true, Lits::minus(a, b)),
-            (Op::Or, true, true) => (true, Lits::meet(a, b)),
-            (Op::And, false, false) => (false, Lits::meet(a, b)),
-            (Op::And, false, true) => (false, Lits::minus(a, b)),
-            (Op::And, true, false) => (false, Lits::minus(b, a)),
-            (Op::And, true, true) => (true, Lits::union(a, b)),
-        };
-        out.cofinite = cofinite;
-        out
-    }
-
-    /// The larger set with the smaller's literals added. Those it lacks are found by walking
-    /// the smaller set, `O(s log l)`, or by a diff of the two, which skips the nodes they
-    /// share, so two sets made from one set, as `u - 1` and `u - 3` are made from `u`, are
-    /// joined in `O(d log l)` for their `d` differing literals. The two walks advance in turn
-    /// and the first to finish is used, as `Atoms::zip` does; a literal already in the larger
-    /// set is not inserted again, so the result shares the larger set's nodes and a chain of
+    /// The sets combined by `op`, by the treap's join-based union, intersection and difference
+    /// (module `crate::treap_set`): `O(s log(l/s + 1))` expected for the smaller set's `s`
+    /// literals and the larger's `l`, and only the nodes the two do not share visited, so two
+    /// sets made from one set, as `u - 1` and `u - 3` are made from `u`, combine in about the
+    /// paths that differ, and a result equal to an operand is that operand, so a chain of
     /// such unions stays cheap (LIST-box-overlap).
-    // Complexity tradeoff: twice the cheaper walk, so `O(min(s, d + log l) log l)`, against
-    // `O(s log l)` alone, which is quadratic for a chain of `n` unions of sets made from one
-    // set of `n` literals (COMPLEXITY.md K69).
-    fn union(a: &Lits, b: &Lits) -> Lits {
-        let (large, small) = if a.values.len() >= b.values.len() {
-            (a, b)
-        } else {
-            (b, a)
+    // Complexity tradeoff (COMPLEXITY.md K69): the naive union walks the smaller set and inserts
+    // each literal, `O(s log l)`, quadratic for a chain of `n` unions of sets made from one set
+    // of `n` literals; `imbl`'s diff, used before, skipped shared nodes but still inserted one
+    // literal at a time. Used: the treap's recursion, which stops at shared subtrees.
+    fn zip(&self, other: &Lits, op: Op) -> Lits {
+        let (a, b) = (&self.values, &other.values);
+        let (cofinite, values) = match (op, self.cofinite, other.cofinite) {
+            (Op::Or, false, false) => (false, a.union(b)),
+            (Op::Or, false, true) => (true, b.difference(a)),
+            (Op::Or, true, false) => (true, a.difference(b)),
+            (Op::Or, true, true) => (true, a.intersection(b)),
+            (Op::And, false, false) => (false, a.intersection(b)),
+            (Op::And, false, true) => (false, a.difference(b)),
+            (Op::And, true, false) => (false, b.difference(a)),
+            (Op::And, true, true) => (true, a.union(b)),
         };
-        let mut out = large.clone();
-        let mut walk = small.values.iter();
-        let mut diff = large.values.diff(&small.values);
-        let mut missing = Vec::new();
-        loop {
-            if walk.next().is_none() {
-                for v in &small.values {
-                    if !large.values.contains(v) {
-                        out.insert(v);
-                    }
-                }
-                return out;
-            }
-            match diff.next() {
-                None => break,
-                Some(imbl::ordset::DiffItem::Add(v)) => missing.push(v),
-                Some(imbl::ordset::DiffItem::Remove(_)) => {}
-            }
-        }
-        for v in missing {
-            out.insert(v);
-        }
-        out
-    }
-
-    fn meet(a: &Lits, b: &Lits) -> Lits {
-        let (large, small) = if a.values.len() >= b.values.len() {
-            (a, b)
-        } else {
-            (b, a)
-        };
-        let mut out = Lits::default();
-        for v in small.values.iter().filter(|&v| large.values.contains(v)) {
-            out.insert(v);
-        }
-        out
-    }
-
-    /// The literals of `a` not in `b`.
-    fn minus(a: &Lits, b: &Lits) -> Lits {
-        if a.values.len() <= b.values.len() {
-            let mut out = Lits::default();
-            for v in a.values.iter().filter(|&v| !b.values.contains(v)) {
-                out.insert(v);
-            }
-            return out;
-        }
-        let mut out = a.clone();
-        for v in &b.values {
-            out.remove(v);
-        }
-        out
+        Lits { cofinite, values }
     }
 
     fn not(&self) -> Lits {
@@ -3997,7 +4012,7 @@ fn union(mut items: Vec<Rope>) -> Rope {
     }
 }
 
-fn spaced(vs: &OrdSet<Value>) -> String {
+fn spaced(vs: &TreapSet<Value>) -> String {
     vs.iter().map(lit_text).collect::<Vec<_>>().join(" ")
 }
 
@@ -8029,9 +8044,9 @@ pub mod rec {
                             // fingerprint tie. Comparing tied large sets at every
                             // reference would repeat their boundaries. Equal
                             // classes unfold alike, including the scalar label.
-                            let key = (a.values.len(), a.sum, classes[i]);
+                            let key = (a.values.len(), a.sum(), classes[i]);
                             let old =
-                                alphabet.map(|(old, class)| (old.values.len(), old.sum, class));
+                                alphabet.map(|(old, class)| (old.values.len(), old.sum(), class));
                             if old.is_none_or(|old| key < old) {
                                 alphabet = Some((a, classes[i]));
                             }
