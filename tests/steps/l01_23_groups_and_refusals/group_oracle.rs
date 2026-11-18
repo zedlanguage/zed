@@ -3670,3 +3670,134 @@ fn the_cells_of_seeds_5000_5500_agree_exactly_in_every_order() {
 fn the_cells_of_seeds_5500_6000_agree_exactly_in_every_order() {
     order_sweep_asserts(5500..6000);
 }
+
+// GROUP-order-classes-outside-cpoly (XR-group-order-5 round 3, the Gemini seat's finding F5):
+// the split by classes took the first component that splits, so this box was refused at a fork
+// as written and decided Empty with its components reversed. The type is empty: under #a the
+// second component L12 | #c loses L1, L12 and #c; under #b it loses L12 and #c.
+#[test]
+fn a_box_split_at_two_components_outside_cpoly_is_empty_in_both_orders() {
+    let one = Type::lit(&zed_kernel::Value::Int(1)).unwrap();
+    let two = Type::lit(&zed_kernel::Value::Int(2)).unwrap();
+    let mk_list = |elem: Type, name: &str| -> Type {
+        Group::new(vec![Def {
+            name: name.into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom("cons".into(), vec![Expr::Type(elem), Expr::Ref(0, vec![])]),
+            ]),
+        }])
+        .unwrap()
+        .instance(vec![])
+        .remove(0)
+    };
+    let l1 = mk_list(one.clone(), "CLASSES_L1");
+    let l12 = mk_list(&one | &two, "CLASSES_L12");
+    // The split now takes the components in an order fixed by their contents, so other atom
+    // names may put the forking component first; each must be decided Empty too.
+    let names = [
+        ("a", "b", "c"),
+        ("b", "c", "a"),
+        ("x", "y", "z"),
+        ("p", "q", "r"),
+        ("u", "v", "w"),
+    ];
+    for (an, bn, cn) in names {
+        let (a, b, c) = (Type::atom(an), Type::atom(bn), Type::atom(cn));
+        let mk_box = |rev: bool| -> Type {
+            let pair = |x: Type, y: Type| {
+                if rev {
+                    Type::tuple(vec![y, x])
+                } else {
+                    Type::tuple(vec![x, y])
+                }
+            };
+            let pos = pair(&a | &b, &l12 | &c);
+            let negs = [
+                pair(a.clone(), l1.clone()),
+                pair(a.clone(), l12.clone()),
+                pair(a.clone(), c.clone()),
+                pair(b.clone(), l12.clone()),
+                pair(b.clone(), c.clone()),
+            ];
+            negs.into_iter().fold(pos, |acc, n| &acc - &n)
+        };
+        for rev in [false, true] {
+            Type::forget_emptiness();
+            assert_eq!(
+                mk_box(rev).verdict(),
+                Verdict::Empty,
+                "((#{an} | #{bn}), (L12 | #{cn})) less five boxes, components reversed: {rev}"
+            );
+        }
+    }
+    let a = Type::atom("a");
+    // Contrast: (#a, L12) less (#a, L1) and (#a, L2) keeps `(#a, [1, 2])`, and neither recursive
+    // type alone empties the component, so it must not be called Empty in either order.
+    let l2 = mk_list(two.clone(), "CLASSES_L2");
+    for rev in [false, true] {
+        let pair = |x: Type, y: Type| {
+            if rev {
+                Type::tuple(vec![y, x])
+            } else {
+                Type::tuple(vec![x, y])
+            }
+        };
+        let t = &(&pair(a.clone(), l12.clone()) - &pair(a.clone(), l1.clone()))
+            - &pair(a.clone(), l2.clone());
+        Type::forget_emptiness();
+        assert_ne!(
+            t.verdict(),
+            Verdict::Empty,
+            "{t}, components reversed: {rev}"
+        );
+    }
+}
+
+/// `refusals::fork_by(2)` as a system: pairs of lists less, for `i` of 1 and 2, the pairs of a
+/// list of only `i` and a list of `i`'s length parity, and the pairs of any other list and that
+/// parity. The elements are the atoms `#one`, `#two` and `#oth` in place of the integers 1, 2
+/// and the rest, which no type of `fork_by` tells apart. Definitions: 0 the lists, 1 and 2 the
+/// lists of only `#one` and of only `#two`, 3 and 4 the lists of even and of odd length, 5 the
+/// type. With `odd_twice` the parity for `i` of 2 is odd too, which leaves the pairs whose second
+/// list has an even length: the contrast, which the pool must show inhabited.
+fn fork_by_two(odd_twice: bool) -> Vec<E> {
+    let elem = E::Union(vec![E::Atom("one"), E::Atom("two"), E::Atom("oth")]);
+    let list = |x: E, rest: usize| E::Union(vec![E::Atom("nil"), tup(vec![x, E::Ref(rest)])]);
+    let (only1, only2) = (E::Ref(1), E::Ref(2));
+    let (even, odd) = (E::Ref(3), E::Ref(4));
+    let parity2 = if odd_twice { odd.clone() } else { even.clone() };
+    let lists = E::Ref(0);
+    let mut t = tup(vec![lists.clone(), lists.clone()]);
+    for (only, parity) in [(only1, odd.clone()), (only2, parity2)] {
+        t = diff(t, tup(vec![only.clone(), parity.clone()]));
+        t = diff(t, tup(vec![diff(lists.clone(), only), parity]));
+    }
+    vec![
+        list(elem.clone(), 0),
+        list(E::Atom("one"), 1),
+        list(E::Atom("two"), 2),
+        E::Union(vec![E::Atom("nil"), tup(vec![elem.clone(), E::Ref(4)])]),
+        tup(vec![elem, E::Ref(3)]),
+        t,
+    ]
+}
+
+// GROUP-order-cpoly-merge: the check asked before `fork_by(2)` moves from Refused(Fork) to
+// Empty. The pool of the oracle shows no value of it, and shows one of the contrast. The proof
+// that it is empty: for `i` of 1 the two pairs taken out hold every first list (a list of only 1
+// or any other), so every pair with an odd second list goes; for `i` of 2 every pair with an even
+// one goes; every list has one of the two parities.
+#[test]
+fn fork_by_two_shows_no_value_in_the_oracle() {
+    let empty = truth(&fork_by_two(false), CAP * RERUN);
+    assert_eq!(empty.seen[5], Seen::None, "pool {}", empty.pool);
+    assert!(empty.pool > 100, "pool {}", empty.pool);
+    let left = truth(&fork_by_two(true), CAP * RERUN);
+    assert!(
+        matches!(left.seen[5], Seen::Member(_)),
+        "{:?}",
+        left.seen[5]
+    );
+}

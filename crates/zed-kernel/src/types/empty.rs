@@ -83,8 +83,8 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{
-    Filer, Held, Lits, Morphism, Node, Parts, Reading, Refusal, Row, RowIndex, Split, Tuples, Type,
-    Universes, Verdict, blind, makeable,
+    Filer, Held, Lits, Morphism, Node, Parts, PartsRef, Reading, Refusal, Row, RowIndex, Split,
+    Tuples, Type, Universes, Verdict, blind, makeable,
 };
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
@@ -5161,8 +5161,9 @@ impl<'m> Searching<'m> {
     /// of `f` meets the box, and a tuple type in none is taken out of the box when it holds the
     /// box in every component but one. True when `f` is proved empty on the box. Two tuple types
     /// it would take out of one component with different recursive types there, each on a
-    /// cycle of its group, are a fork: the decision of a verdict refuses there, and the search
-    /// of a value keeps that component.
+    /// cycle of its group, are a fork: unless the component less its cuts on no cycle is one of
+    /// those recursive types, the decision of a verdict refuses there, and the search of a value
+    /// keeps that component.
     async fn narrow_tuples(&'m self, g: &mut Region, f: &mut Part<Row>) -> bool {
         if g.structural_empty {
             return true;
@@ -5262,6 +5263,50 @@ impl<'m> Searching<'m> {
                         }
                     }
                 }
+            }
+            // Complexity tradeoff (GROUP-order-classes-outside-cpoly, COMPLEXITY.md K35b): before
+            // a fork is met, each forked component less its cuts on no cycle, built as a type and
+            // not decided, is compared with the recursive types cut there: when it is one of them
+            // or the empty type, the cuts there hold the component, so `f` is empty on the box.
+            // Whether such a fork was refused came with the order of the components (finding
+            // F5: `((#a | #b), (L12 | #c))` less five pairs: a split on the first component left
+            // L1, L12 and `#c` to take out of the second, refused, though `(L12 | #c) - #c` is
+            // L12; a split on the second first decided Empty). Naive: refuse at once, as before.
+            // Tried and dropped, each order `n^2` on the lists by the place of a 1 from the end
+            // (`G{i}` walks `i` levels): deciding the component less each recursive type alone,
+            // 13.35 times from n 64 to 512 against 8.09; taking the cuts on no cycle out first and
+            // testing the cells again, which tests every recursive type against the new
+            // component, past the 25 s limit. Used: one difference per cut on no cycle at the
+            // component, as its narrowing would build, and one lookup among the recursive types
+            // and their kept unrollings by content digest (`Type`'s `Ord`), O(r log r) for `r`
+            // cuts; no type is decided, so the search goes no deeper than before. Sound: each cut
+            // counted holds the box in every other component (`missed` 0, `loose` 1), so cuts
+            // whose union holds this component leave `f` no value on the box. Not caught: a
+            // component the cuts hold without one recursive type equal to the rest, which stays
+            // refused.
+            let mut held = false;
+            for &at in &forked {
+                let (mut rest, mut cyc) = (g.r[at].clone(), BTreeSet::new());
+                for a in &refused {
+                    let k = g.index[a];
+                    if g.missed[k] == 0 && g.loose[k] == (1, at) {
+                        if a[at].on_cycle() {
+                            // The box's component holds a recursive type unrolled one level,
+                            // so the rest is compared with each cut and with its unrolling,
+                            // kept on the node (`Type::p`): O(1) per cut once made.
+                            if let PartsRef::Unfolded(u) = a[at].p() {
+                                cyc.insert(u);
+                            }
+                            cyc.insert(a[at].clone());
+                        } else {
+                            rest = &rest - &a[at];
+                        }
+                    }
+                }
+                held |= rest == Type::empty() || cyc.contains(&rest);
+            }
+            if held {
+                return true;
             }
             if !forked.is_empty() {
                 if refuse {
@@ -12128,12 +12173,30 @@ fn empty_by_classes(g: &Region, f: &Part<Row>, open: &[usize]) -> bool {
 /// so the pieces below a split hold each tuple type at most once and the nodes stay linear in
 /// the tuple types; a tuple type that held the component would go to every piece, and splits
 /// in turn on each component would be a search over all of them.
+// Complexity tradeoff (GROUP-order-classes-outside-cpoly, COMPLEXITY.md K35b): the first
+// component that splits, in written order, made the verdict depend on the order of the
+// components: on `((#a|#b), (L12|#c))` less five pairs, splitting the first component forked
+// and splitting the second decided Empty. Trying every splitting component and keeping a
+// decided one costs a factor `m` per split, `m^d` over `d` nested splits. Used: the
+// candidate components are taken in an order fixed by their contents, the component type and
+// then the sorted types of its open cells (`Type`'s order is by content digest, the same in
+// every run), so a permutation of the components picks the same component. Cost: one key per
+// candidate, `O(c log c)` for its `c` open cells, and `O(m log m)` comparisons of keys, each
+// `O(1)` on different digests; the `overlaps` calls are those of the first-found search, at
+// most one per candidate. A tie (two components of equal type and equal open cells) is broken
+// by position; it can then only matter when those two components carry different rows.
 fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
-    (0..g.r.len()).find_map(|j| {
-        if g.opens[j] < open.len() || open.iter().any(|&k| !g.is_open(k, j)) {
-            return None;
-        }
-        let cells: Vec<usize> = g.open_cells(j, open).into_iter().collect();
+    let mut order: Vec<(&Type, Vec<&Type>, usize, Vec<usize>)> = (0..g.r.len())
+        .filter(|&j| g.opens[j] >= open.len() && open.iter().all(|&k| g.is_open(k, j)))
+        .map(|j| {
+            let cells: Vec<usize> = g.open_cells(j, open).into_iter().collect();
+            let mut tys: Vec<&Type> = cells.iter().map(|&c| &g.cells[j][c].ty).collect();
+            tys.sort_unstable();
+            (&g.r[j], tys, j, cells)
+        })
+        .collect();
+    order.sort_unstable_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    order.into_iter().find_map(|(_, _, j, cells)| {
         let groups = overlaps(cells.iter().map(|&c| &g.cells[j][c].ty));
         if groups.len() < 2 {
             return None;

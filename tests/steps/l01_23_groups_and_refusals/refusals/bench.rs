@@ -141,6 +141,36 @@ fn a_fork_refusal_is_reached_in_the_size_of_the_pairs() {
 }
 
 #[test]
+fn a_fork_emptied_by_one_list_type_is_decided_in_its_size() {
+    // GROUP-order-classes-outside-cpoly (COMPLEXITY.md K35b): at a fork of `n + 1` list types
+    // the component less `#c`, the one cut on no cycle, is the lists of integers, one of the
+    // cuts, so the box is empty without a decision per list type.
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("Fork emptied by one list type", 64, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_f1b{}", tag.fetch_add(1, Relaxed));
+            let t = one_list_type_empties_a_fork(n, true, &tag);
+            assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
+        })
+    });
+}
+
+#[test]
+fn a_fork_no_list_type_empties_is_decided_in_its_size() {
+    // The same without the lists of integers taken out: Inhabited, by `(#a, [1, 2])` (K35b).
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("Fork no list type empties", 64, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_f1n{}", tag.fetch_add(1, Relaxed));
+            let t = one_list_type_empties_a_fork(n, false, &tag);
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        })
+    });
+}
+
+#[test]
 fn a_difference_of_forked_unions_is_refused_in_its_size() {
     // The union of `n` pairs minus the union of `n` pairs that hold them, one each. Measured on
     // 8874023a, before REFUSAL-narrow-cells: 25.7M, 104M, 470M and 2396M instructions at n 8,

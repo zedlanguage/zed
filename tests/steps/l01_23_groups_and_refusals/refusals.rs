@@ -693,6 +693,23 @@ fn fork_by(n: usize, tag: &str) -> Type {
     })
 }
 
+/// The pairs of `#a` and a list of integers or `#c`, less `(#a, #c)` and, for each `i` up to
+/// `n`, the pairs of `#a` and a list of only `i`s; with `full`, less the pairs of `#a` and any
+/// list of integers too. The lists of only `i` are `n` recursive types taken out of one
+/// component, a fork (COMPLEXITY.md K35). With `full` the type is empty, and the second
+/// component less `#c` and the lists of integers alone shows it (K35b,
+/// GROUP-order-classes-outside-cpoly); without, `(#a, [1, 2])` is left.
+fn one_list_type_empties_a_fork(n: usize, full: bool, tag: &str) -> Type {
+    let (a, c) = (Type::atom("a"), Type::atom("c"));
+    let pair = |y: Type| Type::tuple(vec![a.clone(), y]);
+    let l = list_named(Type::int(), tag);
+    let t = &pair(&l | &c) - &pair(c.clone());
+    let t = (1..=n).fold(t, |t, i| {
+        &t - &pair(list_named(lit(i as i64), &format!("{tag}_{i}")))
+    });
+    if full { &t - &pair(l) } else { t }
+}
+
 /// The parts of `forked_differences`: for each `i` up to `n`, the pairs of a list of only `i`s
 /// and a list of `i`'s parity, and the pairs of a list of only `i`s and any list of integers,
 /// which hold them.
@@ -7994,6 +8011,22 @@ fn morphisms_with_many_required_keys_are_refused_for_want_of_a_witness() {
 #[test]
 fn pairs_less_many_excluded_pairs_are_refused_at_the_fork() {
     refused_at(&[2, 3, 4, 8], Refusal::Fork, "_rsf", fork_by);
+}
+
+/// Small instance of `bench::a_fork_emptied_by_one_list_type_is_decided_in_its_size` and
+/// `bench::a_fork_no_list_type_empties_is_decided_in_its_size`: with the lists of integers taken
+/// out too the type is Empty (Refused(Fork) before K35b); without them it holds `(#a, [1, 2])`,
+/// found by the search of a value.
+#[test]
+fn a_fork_emptied_by_one_list_type_is_decided() {
+    for n in [2, 3, 8] {
+        Type::forget_emptiness();
+        let t = one_list_type_empties_a_fork(n, true, &format!("_f1e{n}"));
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+        Type::forget_emptiness();
+        let t = one_list_type_empties_a_fork(n, false, &format!("_f1r{n}"));
+        assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    }
 }
 
 /// Small instance of `bench::a_difference_of_forked_unions_is_refused_in_its_size`: the union
