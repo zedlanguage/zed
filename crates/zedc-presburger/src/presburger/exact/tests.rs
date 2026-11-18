@@ -3068,3 +3068,243 @@ fn the_certificate_meets_the_work_limit_alike_on_both_sides() {
     };
     assert_eq!(loop_run(false), loop_run(true));
 }
+
+/// `unary_arms` of `l01_39_scope_relations::families`: `k` names all at least 1 or all at most
+/// -1, then `z0 + z(k-1) >= 5 || x <= 0`. The two tests share `z0` and `z(k-1)`, so `read_once`
+/// declines the part (a conjunction with two parts reading one atom).
+fn unary_arms(k: usize) -> (Formula, Vec<Atom>) {
+    let z = |i: usize| format!("z{i}");
+    let up = Formula::and((0..k).map(|i| ge(&[(&z(i), 1)], -1)).collect());
+    let down = Formula::and((0..k).map(|i| ge(&[(&z(i), -1)], -1)).collect());
+    let last = z(k - 1);
+    let test = Formula::or(vec![ge(&[("z0", 1), (&last, 1)], -5), ge(&[("x", -1)], 0)]);
+    let f = Formula::and(vec![Formula::or(vec![up, down]), test]);
+    let mut syms: Vec<Atom> = (0..k).map(|i| a(&z(i))).collect();
+    syms.push(a("x"));
+    (f, syms)
+}
+
+/// Each point's implicant answers every symbol it reads, and every symbol it does not, for all
+/// the symbols of a part at once: a part `read_once` declines is not covered symbol by symbol,
+/// each cover reading the whole part, O(k) symbols times O(k) rows (PRES-cover-bench-unary-arms).
+#[test]
+fn a_declined_part_is_covered_for_all_its_symbols_at_once() {
+    let not_zero = IntervalSet::range(End::NegInf, fin(&Int::from(-1)))
+        .join(&IntervalSet::range(fin(&Int::from(1)), End::PosInf));
+    let mut used = Vec::new();
+    for k in [64, 512] {
+        let (f, syms) = unary_arms(k);
+        EXACT_WORK.set(0);
+        let got = project_each_exact(&f, &syms).unwrap().0;
+        used.push(EXACT_WORK.replace(0));
+        for (s, g) in syms.iter().zip(&got) {
+            let want = if *s == a("x") {
+                IntervalSet::top()
+            } else {
+                not_zero.clone()
+            };
+            assert_eq!(g.as_ref().unwrap(), &want, "{s:?} at k = {k}");
+        }
+    }
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// Two atoms with equal coefficients in every sum are twins only where no other row reads
+/// one of them: `a mod 3 == 0`, written `a == 3·q`, gives `a` a column `b` and `c` lack, so
+/// `a` is not given every value, while `b` and `c`, twins, are.
+#[test]
+fn an_atom_read_by_a_remainder_is_no_twin() {
+    let f = Formula::and(vec![
+        ge(&[("a", 1), ("b", 1), ("c", 1)], 0),
+        ge(&[("a", -1), ("b", -1), ("c", -1)], 10),
+        eq(&[("a", 1), ("q", -3)], 0),
+    ]);
+    let top = IntervalSet::top();
+    let names = [a("a"), a("b"), a("c")];
+    let want: BTreeMap<&Atom, IntervalSet> = names.iter().map(|s| (s, top.clone())).collect();
+    let mut points = Vec::new();
+    let mut out = HashMap::new();
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    shared_cells(&f, constraints(&f), want, &mut points, &mut out, &mut work).unwrap();
+    assert_eq!(out.get(&a("b")), Some(&top));
+    assert_eq!(out.get(&a("c")), Some(&top));
+    assert_ne!(out.get(&a("a")), Some(&top), "{out:?}");
+}
+
+/// One linear form over boxed atoms projects exactly onto each atom: `z0 + z1 + z2 >= 12` (and
+/// the weaker `>= 3`) with each in `-5..=5` leaves each at least 2, as the other two give at
+/// most 10; `w`, read by no sum, keeps its box.
+#[test]
+fn a_sum_of_boxed_atoms_projects_exactly_onto_each() {
+    let con = |f: Formula| match &f {
+        Formula::Con(c) => c.clone(),
+        _ => unreachable!(),
+    };
+    let mut rows = Vec::new();
+    for z in ["z0", "z1", "z2", "w"] {
+        rows.push(con(ge(&[(z, 1)], 5)));
+        rows.push(con(ge(&[(z, -1)], 5)));
+    }
+    rows.push(con(ge(&[("z0", 1), ("z1", 1), ("z2", 1)], -12)));
+    rows.push(con(ge(&[("z0", 1), ("z1", 1), ("z2", 1)], -3)));
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let got = star(&rows, &mut work).unwrap().unwrap();
+    for z in ["z0", "z1", "z2"] {
+        assert_eq!(got[&a(z)], IntervalSet::of(2, 5), "{z}");
+    }
+    assert_eq!(got[&a("w")], IntervalSet::of(-5, 5));
+    // Two different forms are not this shape.
+    rows.push(con(ge(&[("z0", 1), ("w", 1)], 0)));
+    assert!(star(&rows, &mut work).unwrap().is_none());
+}
+
+/// The rows of `star`'s tests, each a constraint.
+fn star_rows(fs: Vec<Formula>) -> Vec<Con> {
+    (fs.into_iter())
+        .map(|f| match &f {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!(),
+        })
+        .collect()
+}
+
+fn star_of(fs: Vec<Formula>) -> Option<HashMap<Atom, IntervalSet>> {
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    star(&star_rows(fs), &mut work).unwrap()
+}
+
+/// `-2·z0 - z1 >= 4` with each in `-5..=5`: `-z1` is at most 5, so `-2·z0 >= -1`, `z0 <= 1/2`,
+/// rounded down to 0 (a negative coefficient bounds from above, and the bound rounds toward
+/// lower values); `-2·z0` is at most 10, so `z1 <= 6`, and `z1` keeps its box.
+#[test]
+fn a_star_with_a_negative_coefficient_bounds_from_above() {
+    let got = star_of(vec![
+        ge(&[("z0", 1)], 5),
+        ge(&[("z0", -1)], 5),
+        ge(&[("z1", 1)], 5),
+        ge(&[("z1", -1)], 5),
+        ge(&[("z0", -2), ("z1", -1)], -4),
+    ])
+    .unwrap();
+    assert_eq!(got[&a("z0")], IntervalSet::of(-5, 0));
+    assert_eq!(got[&a("z1")], IntervalSet::of(-5, 5));
+}
+
+/// A coefficient written as zero is no term (`lin` and every `Lin` keep none), so `z1` there
+/// is read by its box alone: `3·z0 + 0·z1 >= 7` leaves `z0 >= 3`.
+#[test]
+fn a_star_with_a_zero_coefficient_reads_that_atom_by_its_box() {
+    let got = star_of(vec![
+        ge(&[("z0", 1)], 5),
+        ge(&[("z0", -1)], 5),
+        ge(&[("z1", 1)], 5),
+        ge(&[("z1", -1)], 5),
+        ge(&[("z0", 3), ("z1", 0), ("z2", 1)], -7),
+        ge(&[("z2", 1)], 0),
+        ge(&[("z2", -1)], 0),
+    ])
+    .unwrap();
+    assert_eq!(got[&a("z0")], IntervalSet::of(3, 5));
+    assert_eq!(got[&a("z1")], IntervalSet::of(-5, 5));
+}
+
+/// `3·z1 + z2 >= 7` with `z2` in `0..=2`: `3·z1 >= 5`, so `z1 >= 2` (5/3 rounded up), and
+/// with `z1` in `0..=2`, `z2 >= 1`.
+#[test]
+fn a_star_with_a_coefficient_of_three_rounds_up() {
+    let got = star_of(vec![
+        ge(&[("z1", 1)], 0),
+        ge(&[("z1", -1)], 2),
+        ge(&[("z2", 1)], 0),
+        ge(&[("z2", -1)], 2),
+        ge(&[("z1", 3), ("z2", 1)], -7),
+    ])
+    .unwrap();
+    assert_eq!(got[&a("z1")], IntervalSet::of(2, 2));
+    assert_eq!(got[&a("z2")], IntervalSet::of(1, 2));
+}
+
+/// One empty box (`z1 >= 3` and `z1 <= 1`): no point, so every projection is empty.
+#[test]
+fn a_star_with_an_empty_box_projects_to_nothing() {
+    let got = star_of(vec![
+        ge(&[("z0", 1)], 5),
+        ge(&[("z1", 1)], -3),
+        ge(&[("z1", -1)], 1),
+        ge(&[("z0", 1), ("z1", 1)], 0),
+    ])
+    .unwrap();
+    assert_eq!(got[&a("z0")], IntervalSet::empty());
+    assert_eq!(got[&a("z1")], IntervalSet::empty());
+}
+
+/// `z0 + z1 >= 11` with each in `0..=5`: never met, so every projection is empty.
+#[test]
+fn a_star_whose_form_cannot_be_met_projects_to_nothing() {
+    let got = star_of(vec![
+        ge(&[("z0", 1)], 0),
+        ge(&[("z0", -1)], 5),
+        ge(&[("z1", 1)], 0),
+        ge(&[("z1", -1)], 5),
+        ge(&[("z0", 1), ("z1", 1)], -11),
+    ])
+    .unwrap();
+    assert_eq!(got[&a("z0")], IntervalSet::empty());
+    assert_eq!(got[&a("z1")], IntervalSet::empty());
+}
+
+/// `(sum >= 5k - 2 || z0 <= -1)` with each of the `k` names `z_i` in `-5..=5`, as two blocks
+/// read once: in the first each `z_i` is at least 3 (the other `k - 1` give at most `5k - 5`),
+/// so `z0` is `-5..=-1` or `3..=5` and every other name keeps its box.
+fn boxed_sum_arms(k: usize) -> Formula {
+    let names: Vec<String> = (0..k).map(|i| format!("z{i}")).collect();
+    let boxes = || -> Vec<Formula> {
+        (names.iter())
+            .flat_map(|n| [ge(&[(n.as_str(), 1)], 5), ge(&[(n.as_str(), -1)], 5)])
+            .collect()
+    };
+    let sum: Vec<(&str, i64)> = names.iter().map(|n| (n.as_str(), 1)).collect();
+    let mut first = boxes();
+    first.push(ge(&sum, -(5 * k as i64 - 2)));
+    let mut second = boxes();
+    second.push(ge(&[("z0", -1)], -1));
+    Formula::or(vec![Formula::and(first), Formula::and(second)])
+}
+
+/// A block whose rows are a sum of `k` boxed names is read in work linear in `k`
+/// ([`star`]), where each name's own elimination over the block was work near `k^2` in all
+/// (`wide` of `l01_39_scope_relations::families`).
+#[test]
+fn a_block_of_a_boxed_sum_is_read_once_in_linear_work() {
+    let mut used = Vec::new();
+    for k in [64, 512] {
+        let f = boxed_sum_arms(k);
+        let mut work = Work {
+            used: 0,
+            limit: EXACT_LIMIT,
+            solver: SOLVER,
+        };
+        let (_, sets) = read_once(&f, &mut work)
+            .expect("within the limit")
+            .expect("a reading");
+        used.push(work.used);
+        let z0 = IntervalSet::of(-5, -1).join(&IntervalSet::of(3, 5));
+        assert_eq!(sets[&a("z0")], z0);
+        assert_eq!(sets[&a("z1")], IntervalSet::of(-5, 5));
+    }
+    let ratio = used[1] as f64 / used[0] as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times");
+}

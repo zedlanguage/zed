@@ -255,6 +255,36 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         };
         once.push((got, allowed - left));
     }
+    // Where the reading declines, the cells of points shared by the part's symbols
+    // ([`shared_cells`]), with what the reading left of the part's allowance `k·L`, and its
+    // work added to the reading's, so that `w` below is at most `k·L` as before (`tried` takes
+    // at most what it holds). The symbols it shows get their exact sets; the rest are covered
+    // alone below, with its points. A part with one symbol to cover is left to its cover: with
+    // nothing to share, the phase would only add questions where [`direct`] asks none
+    // (`tests::fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing`). A symbol
+    // the forward certificate answered (above) is not asked again, and counts toward neither.
+    // Complexity tradeoff: see [`shared_cells`].
+    let mut shared: Vec<HashMap<Atom, IntervalSet>> = vec![HashMap::new(); parts.len()];
+    for (i, p) in parts.iter().enumerate() {
+        if once[i].0.is_some() || !p.factors.is_empty() || asked[i] < 2 {
+            continue;
+        }
+        let want: BTreeMap<&Atom, IntervalSet> = (sorted.iter())
+            .filter(|(s, _)| part_of.get(*s).copied().or((!many).then_some(0)) == Some(i))
+            .filter(|(s, _)| !certified.contains_key(*s))
+            .filter_map(|(s, h)| Some((*s, h.as_ref().ok()?.clone())))
+            .collect();
+        if want.len() < 2 {
+            continue;
+        }
+        let allowed = limit.saturating_mul(asked[i]) - once[i].1;
+        let mut left = allowed;
+        let out = &mut shared[i];
+        tried(&mut left, solver, |w| {
+            shared_cells(&p.f, p.size, want, &mut points[i], out, w).map(Some)
+        });
+        once[i].1 += allowed - left;
+    }
     // Where the reading gives up, the fast path of each symbol's cover ([`direct`], in
     // [`cover`]) has what the reading left of that symbol's limit: the reading is a fast path
     // done for the part's symbols together, in place of their `direct`s. Its work `w`, with
@@ -329,6 +359,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                         (None, true) => IntervalSet::range(End::NegInf, End::PosInf),
                         (None, false) => IntervalSet::empty(),
                     }));
+                }
+                if let Some(set) = shared[i].get(s) {
+                    return Ok(Classed::plain(set.clone()));
                 }
                 // The cover of `s` over the part's smaller formula (above), with the limit of its
                 // own; where it is refused, the cover over `p.f` runs as it did before, with a
@@ -1832,8 +1865,15 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                     &combined
                 };
                 let mut all = true;
+                // A group that is one sum over boxed atoms ([`star`], exact) is projected onto
+                // all its atoms at once. Complexity tradeoff: [`projected`] per atom, O(a) each
+                // and O(a²) for the a atoms of the sum (`wide` of
+                // `l01_39_scope_relations::families`, 55 per cent of its time at k = 128 in
+                // `shadow_logged` under this loop); `star`, one pass, O(a).
                 for group in row_groups(eff, work)? {
                     let sets = if let Some(sets) = forest(&group, work)? {
+                        sets
+                    } else if let Some(sets) = star(&group, work)? {
                         sets
                     } else {
                         let mut sets = HashMap::new();
@@ -2046,6 +2086,329 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         out.insert(a.clone(), IntervalSet::from_pieces(pieces));
     }
     Ok(Some((sat[root], out)))
+}
+
+/// The exact projections of the part `f` onto the symbols of `want`, each with the solver's
+/// set, put in `out` as each is shown, read from the cells of points shared by every symbol:
+/// for a part [`read_once`] declines, in place of a cell of each point read for each symbol
+/// alone ([`cell`], which reads the whole part once a symbol). For each point `m` (those of
+/// `points`, else one from [`quick_point`] or a question), its implicant `I` ([`implicant`]:
+/// rows that hold at `m` and whose conjunction implies `f`) is read once and split into groups
+/// that share no atom ([`row_groups`]). Each set below holds only values of points of `I`, so
+/// of `f`; a symbol whose sets so far hold its solver's set `h` (which holds every value with a
+/// point) has exactly `h`. The sets of one point:
+/// - a symbol `I` does not read: every value, since `I` holds whatever its value is;
+/// - in a group [`forest`] answers: its exact projection of the group, which is that of `I`,
+///   as the other groups share no atom with it and hold at `m`;
+/// - in another group, a symbol `a` whose column (each row's coefficient of it) is that of
+///   another atom `b`: every value, as `a + t`, `b - t` leaves each row's value as it was, so
+///   moving `m` so keeps every row of the group, for each integer `t`. A row is a [`Lin`],
+///   whose `terms` map atoms to integer coefficients and nothing else: no `mod`, division or
+///   congruence term sits inside a row. `x div n` and `x mod n` are written as the row
+///   `x == n·q + r` over atoms of their own (`formula.rs`, [`Factor`]), so an atom such a
+///   remainder reads has that row in its column, which no atom outside it shares
+///   (`tests::an_atom_read_by_a_remainder_is_no_twin`). A product atom could change when one
+///   factor moves, but a part with any product has factors ([`factors`]) and never comes
+///   here ([`exact_each`]);
+/// - else its line: the values `v` with every row of its group true at `m` with `a` at `v`.
+///
+/// Then each symbol not yet shown, in the order of `Atom`, asks one question, of `f` with the
+/// symbol on the first piece of its gap: a point found is read for every symbol, and a piece
+/// with none is cut from that symbol's `h`. A symbol left is covered alone, as before.
+// Complexity tradeoff: naive version, each symbol's cover reads each point's cell over the
+// whole part (`along`, then the implicant's projection), O(k·r) for k symbols over r rows,
+// 15,200 M instructions at k = 1,536 of `unary_arms` against a limit of 24 s
+// (PRES-cover-bench-unary-arms). Used: one implicant and one grouping for each point, O(r + k)
+// a point, the symbols read at once, and one question for each symbol the points leave, so
+// O(p·(r + k)) for p points, linear where the points are few. A symbol left after its question
+// costs what it cost before. Where `I` is a forest of two-atom rows the cells are exact
+// projections; elsewhere a line can be narrower than the projection, and the symbol is then
+// left to its own cover, never answered wrongly.
+fn shared_cells(
+    f: &Formula,
+    size: u64,
+    mut want: BTreeMap<&Atom, IntervalSet>,
+    points: &mut Vec<Model>,
+    out: &mut HashMap<Atom, IntervalSet>,
+    work: &mut Work,
+) -> Result<(), Refusal> {
+    if points.is_empty() {
+        if let Some(m) = quick_point(f, 2 * (size + 2), work)? {
+            points.push(m);
+        } else {
+            work.question(size)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            match work.ask(f)? {
+                Some(m) => points.push(m),
+                None => {
+                    for s in want.keys() {
+                        out.insert((*s).clone(), IntervalSet::empty());
+                    }
+                    return Ok(());
+                }
+            }
+        }
+    }
+    let mut found: HashMap<Atom, IntervalSet> = HashMap::new();
+    let mut read = 0;
+    let order: Vec<Atom> = want.keys().map(|s| (*s).clone()).collect();
+    let none = IntervalSet::empty();
+    // Each symbol is checked once before its question, O(1) charged pieces each, and all once
+    // at the end: a check of every symbol before each question would be O(k²).
+    for s in &order {
+        while read < points.len() {
+            point_cells(f, &points[read], &want, size, &mut found, work)?;
+            read += 1;
+        }
+        let Some(h) = want.get(s) else {
+            continue;
+        };
+        work.read(1)?;
+        let gap = h.minus(found.get(s).unwrap_or(&none));
+        let Some((lo, hi)) = gap.pieces().next() else {
+            out.insert(s.clone(), h.clone());
+            want.remove(s);
+            continue;
+        };
+        let piece = IntervalSet::range(lo.clone(), hi.clone());
+        work.question(size + 2)?;
+        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+        let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
+        match work.ask(&q)? {
+            Some(m) => points.push(m),
+            None => {
+                if let Some(h) = want.get_mut(s) {
+                    *h = h.minus(&piece);
+                }
+            }
+        }
+    }
+    while read < points.len() {
+        point_cells(f, &points[read], &want, size, &mut found, work)?;
+        read += 1;
+    }
+    work.read(want.len() as u64)?;
+    for (s, h) in want {
+        if found.get(s).is_some_and(|r| h.is_subset(r)) {
+            out.insert(s.clone(), h);
+        }
+    }
+    Ok(())
+}
+
+/// The cells of the point `m` of `f` for the symbols of `want`, joined to `found`
+/// ([`shared_cells`], which proves each).
+fn point_cells(
+    f: &Formula,
+    m: &Model,
+    want: &BTreeMap<&Atom, IntervalSet>,
+    size: u64,
+    found: &mut HashMap<Atom, IntervalSet>,
+    work: &mut Work,
+) -> Result<(), Refusal> {
+    work.read(size + want.len() as u64)?;
+    let mut rows = Vec::new();
+    if !implicant(
+        f,
+        m,
+        true,
+        &mut rows,
+        &mut HashSet::new(),
+        &mut HashMap::new(),
+    ) {
+        // Every point given holds `f`; one that did not would give no cell.
+        return Ok(());
+    }
+    // A row reading no atom holds at `m`, so everywhere, and limits no atom.
+    rows.retain(|c| !c.lin.terms.is_empty());
+    let mut add = |a: &Atom, set: IntervalSet| {
+        if want.contains_key(a) {
+            let e = found.entry(a.clone()).or_insert_with(IntervalSet::empty);
+            *e = e.join(&set);
+        }
+    };
+    let mut seen: HashSet<Atom> = HashSet::new();
+    for group in row_groups(&rows, work)? {
+        for c in &group {
+            seen.extend(c.lin.terms.keys().cloned());
+        }
+        if let Some(sets) = forest(&group, work)? {
+            for (a, set) in sets {
+                add(&a, set);
+            }
+            continue;
+        }
+        if let Some(sets) = star(&group, work)? {
+            for (a, set) in sets {
+                add(&a, set);
+            }
+            continue;
+        }
+        let mut columns: HashMap<&Atom, Vec<(usize, &Int)>> = HashMap::new();
+        for (j, c) in group.iter().enumerate() {
+            for (a, k) in &c.lin.terms {
+                columns.entry(a).or_default().push((j, k));
+            }
+        }
+        let mut alike: HashMap<&Vec<(usize, &Int)>, u32> = HashMap::new();
+        for col in columns.values() {
+            *alike.entry(col).or_default() += 1;
+        }
+        for (a, col) in &columns {
+            if !want.contains_key(*a) {
+                continue;
+            }
+            if alike[col] > 1 {
+                add(a, IntervalSet::top());
+                continue;
+            }
+            let v = value(&Lin::atom((*a).clone()), m);
+            let (mut lo, mut hi): Ends = (None, None);
+            for &(j, k) in col {
+                let c = &group[j];
+                // `k·x + r` with every other atom at `m`.
+                let r = &value(&c.lin, m) - &(k * &v);
+                let row: Ends = match c.rel {
+                    Rel::Eq => (Some(v.clone()), Some(v.clone())),
+                    Rel::Ge if k.is_positive() => (Some(-&r.div_floor(k)), None),
+                    Rel::Ge => (None, Some(r.div_floor(&-k))),
+                };
+                (lo, hi) = ends_meet(&(lo, hi), &row);
+            }
+            let end = |e: Option<Int>, inf: End| e.as_ref().map_or(inf, fin);
+            add(
+                a,
+                IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf)),
+            );
+        }
+    }
+    for a in want.keys() {
+        if !seen.contains(*a) {
+            add(a, IntervalSet::top());
+        }
+    }
+    Ok(())
+}
+
+/// The exact projection of the conjunction `rows` onto each atom it reads, where every row
+/// reads one atom except rows `>=` over one linear form `t` that differ only in their constant
+/// (`t + k >= 0`, the least `k` standing for all); `None` for other rows. Each atom `x` alone in its rows has an interval `D_x`. Then `v` is in the
+/// projection onto `a` where `v` is in `D_a` and `c_a·v + k + Σ_{x ≠ a} max_{D_x} c_x·x >= 0`:
+/// each other atom takes, independently of the rest, the end of its own interval that
+/// makes its term largest, and an interval of integers attains its maximum term at an end (or
+/// the term is unbounded above, and every `v` in `D_a` has a point). Exact over the integers,
+/// as every step names a point. Where the rows have no point (an empty interval, an
+/// equation `k·x = c` with `k` not dividing `c`, or an atom of the form left with no value,
+/// which happens exactly when `k + Σ max c_x·x < 0`, that is, when no point meets the form),
+/// the projection onto every atom is empty ([`nothing`]).
+// Complexity tradeoff: naive version, a cover per symbol ([`projected`] for each atom,
+// eliminating the others one by one), O(n) each and O(n²) for the n atoms of the form (`wide`
+// of `l01_39_scope_relations::families`, a sum of n names each boxed, measured 166 times the
+// work at 8 times n). Used: one pass, the sum of every term's maximum once, with the count of
+// unbounded ones, and each atom's own term taken back out, O(n) in all.
+fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSet>>, Refusal> {
+    work.read(rows.iter().map(|c| c.lin.terms.len() as u64).sum())?;
+    let mut dom: HashMap<&Atom, Ends> = HashMap::new();
+    let mut form: Option<(&BTreeMap<Atom, Int>, &Int)> = None;
+    for c in rows {
+        if c.lin.terms.len() == 1 {
+            let (a, k) = c.lin.terms.iter().next().expect("one term");
+            let c0 = &c.lin.constant;
+            let row: Ends = match c.rel {
+                Rel::Ge if k.is_positive() => (Some(-&c0.div_floor(k)), None),
+                Rel::Ge => (None, Some(c0.div_floor(&-k))),
+                Rel::Eq => {
+                    let v = (-c0).div_floor(k);
+                    if &(k * &v) != &-c0 {
+                        return Ok(Some(nothing(rows)));
+                    }
+                    (Some(v.clone()), Some(v))
+                }
+            };
+            let d = dom.entry(a).or_insert((None, None));
+            *d = ends_meet(d, &row);
+            continue;
+        }
+        if c.rel != Rel::Ge {
+            return Ok(None);
+        }
+        match &mut form {
+            None => form = Some((&c.lin.terms, &c.lin.constant)),
+            Some((t, k)) if *t == &c.lin.terms => {
+                if &c.lin.constant < *k {
+                    *k = &c.lin.constant;
+                }
+            }
+            Some(_) => return Ok(None),
+        }
+    }
+    let Some((terms, k)) = form else {
+        return Ok(None);
+    };
+    if dom.values().any(ends_empty) {
+        return Ok(Some(nothing(rows)));
+    }
+    // Each term's maximum on its atom's interval, `None` where it is unbounded above.
+    let top = |a: &Atom, c: &Int| -> Option<Int> {
+        let d = dom.get(a);
+        let end = if c.is_positive() {
+            d.and_then(|d| d.1.as_ref())
+        } else {
+            d.and_then(|d| d.0.as_ref())
+        };
+        end.map(|e| c * e)
+    };
+    let mut sum = Int::from(0);
+    let mut open = 0usize;
+    for (a, c) in terms {
+        match top(a, c) {
+            Some(v) => sum = &sum + &v,
+            None => open += 1,
+        }
+    }
+    let end = |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, fin);
+    let mut out: HashMap<Atom, IntervalSet> = HashMap::new();
+    for (a, c) in terms {
+        let own = top(a, c);
+        let d = dom.get(a).cloned().unwrap_or((None, None));
+        let rest_open = open - usize::from(own.is_none());
+        let d = if rest_open > 0 {
+            d
+        } else {
+            // `c·v + r >= 0`, `r` the constant and the other terms' maxima.
+            let r = &(k + &sum) - &own.unwrap_or_else(|| Int::from(0));
+            let row: Ends = if c.is_positive() {
+                (Some(-&r.div_floor(c)), None)
+            } else {
+                (None, Some(r.div_floor(&-c)))
+            };
+            ends_meet(&d, &row)
+        };
+        if ends_empty(&d) {
+            return Ok(Some(nothing(rows)));
+        }
+        out.insert(
+            a.clone(),
+            IntervalSet::range(end(&d.0, End::NegInf), end(&d.1, End::PosInf)),
+        );
+    }
+    for (a, d) in &dom {
+        if !terms.contains_key(*a) {
+            out.insert(
+                (*a).clone(),
+                IntervalSet::range(end(&d.0, End::NegInf), end(&d.1, End::PosInf)),
+            );
+        }
+    }
+    Ok(Some(out))
+}
+
+/// The empty set for every atom `rows` read: the projections of a conjunction with no point.
+fn nothing(rows: &[Con]) -> HashMap<Atom, IntervalSet> {
+    (rows.iter())
+        .flat_map(|c| c.lin.terms.keys())
+        .map(|a| (a.clone(), IntervalSet::empty()))
+        .collect()
 }
 
 /// The intersection of two intervals, each end `None` where it is unbounded; empty where the
