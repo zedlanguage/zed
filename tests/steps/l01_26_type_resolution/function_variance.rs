@@ -645,11 +645,12 @@ fn records_in(info: &zedc::check::Info, at: usize, len: usize) -> Vec<String> {
 /// alone: those of the same remap in a body that holds only it.
 #[test]
 fn remaps_alike_with_computed_keys_run_and_record_as_each_alone() {
-    // Literals in keys meet `k`, an `int` at every call, or `v` at `int` only: a key such as
-    // `v * 2`, or a value `v / 2`, with `v` an `f64` fails at run time with one remap and
-    // one call (row FAIL-remap-key-literal-f64). A folded level is checked at one carrier per
-    // program: a fold whose empty level folds to one identity at `int` and another at `f64`
-    // is not compiled yet at two carriers.
+    // Literals in keys meet `k`, an `int` at every call, or `v` at `int` and at `f64`: a key
+    // such as `v * 2`, or a value `v / 2` (at `f64` alone, as `/` takes no two `int`s), follows
+    // the carrier of `v` at run time (row
+    // FAIL-remap-key-literal-f64). A folded level is checked at one carrier per program: a fold
+    // whose empty level folds to one identity at `int` and another at `f64` is not compiled
+    // yet at two carriers.
     let two = ["t: [1, 2, 3]", "t: [0.5, 1.5, 2.5]"];
     let ints = ["t: [1, 2, 3]", "t: [4, 5, 6, 7]"];
     let floats = ["t: [0.5, 1.5, 2.5]", "t: [4.0]"];
@@ -663,10 +664,8 @@ fn remaps_alike_with_computed_keys_run_and_record_as_each_alone() {
             "(t as (k -> v) into (-k + 10 -> k * 2 >< (*) -> v))",
             floats,
         ),
-        (
-            "(t as (k -> v) into (v * 2 -> k))",
-            ["t: [1, 2, 3]", "t: [4, 5]"],
-        ),
+        ("(t as (k -> v) into (v * 2 -> k))", two),
+        ("(t as (k -> v) into (k -> v / 2))", floats),
         (
             "(t as (k -> v) into (k div 2 -> k + 1 >< (+) -> v))",
             floats,
@@ -700,6 +699,47 @@ fn remaps_alike_with_computed_keys_run_and_record_as_each_alone() {
             alone,
             "the second remap of {many}"
         );
+    }
+}
+
+/// A number literal in a remap's `into` pattern that meets a binder of type `f64`, in a key or
+/// in a value, is read as an `f64`, as `2.0` written out is, at one call, and where `int` is
+/// taken too, at calls at `int` and at `f64` as at each alone (row FAIL-remap-key-literal-f64).
+/// `/` takes no two `int`s, so `v / 2` is called at `f64` alone.
+#[test]
+fn a_literal_in_a_remap_pattern_meets_an_f64_binder() {
+    runs_to(
+        "one(t) = (t as (k -> v) into (v * 2 -> k));\na = one(t: [0.5, 1.5]);\n",
+        "a",
+        "{1.0 -> {0}, 3.0 -> {1}}",
+    );
+    runs_to(
+        "one(t) = (t as (k -> v) into (k -> v / 2));\na = one(t: [0.5, 1.5]);\n",
+        "a",
+        "{0 -> 0.25, 1 -> 0.75}",
+    );
+    for (r, int_too) in [
+        ("(t as (k -> v) into (v * 2 -> k))", true),
+        ("(t as (k -> v) into (k -> 1 + v * 2))", true),
+        ("(t as (k -> v) into (k -> v / 2))", false),
+        (
+            "(t as (k -> v) into (k div 2 -> k + 1 >< (+) -> v / 2))",
+            false,
+        ),
+    ] {
+        let floats = format!("one(t) = {r};\na = one(t: [0.5, 1.5, 2.5]);\n");
+        let written = floats.replace(" 2 ->", " 2.0 ->").replace(" 2)", " 2.0)");
+        let written = written.replace("div 2.0", "div 2");
+        assert_ne!(floats, written);
+        assert_eq!(value_of(&floats, "a"), value_of(&written, "a"), "{floats}");
+        if !int_too {
+            continue;
+        }
+        let both = format!("one(t) = {r};\na = (one(t: [0.5, 1.5]), one(t: [1, 2]));\n");
+        let apart = format!(
+            "oneF(t) = {r};\noneI(t) = {r};\na = (oneF(t: [0.5, 1.5]), oneI(t: [1, 2]));\n"
+        );
+        assert_eq!(value_of(&both, "a"), value_of(&apart, "a"), "{both}");
     }
 }
 

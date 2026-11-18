@@ -4807,7 +4807,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut m = M::new();
         m.ty(src.clone());
         m.k(Frame::Remap(s));
+        // A literal of its keys beside a value of the source's type variable is recorded as
+        // following that value's carrier (`Ck::key_follows`).
+        self.remap_keys.push(e.span);
         self.drive(&mut m);
+        self.remap_keys.pop();
         let after = self.info.remaps.get(&e.span).cloned();
         let kept = match (before, after) {
             (before, _) if self.trying => before,
@@ -23698,12 +23702,35 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 (0..sig.arrows.len()).collect()
             }
-            None => match self.fewest(what, sig, args)? {
-                Some(kept) => kept,
-                // Reported: no value, as a rejected application gives, so that no operator
-                // around it reports it again.
-                None => return Ok((Ty::empty(), Vec::new())),
-            },
+            None => {
+                // A bare literal beside a value in a remap's key, as the `2` of `v * 2`, checked
+                // in a check of a need, follows that value's carrier at run time
+                // ([`Ck::key_follows`]), among the carriers its parameter takes on the arrows:
+                // the adoption [`Self::fewest`] makes is written through [`Ck::put`], which
+                // writes nothing in a check of a need, and the calls may give the value
+                // different carriers.
+                // Complexity tradeoff: O(a) to find a value among the a arguments, and in a
+                // key's check O(A) per literal for the A ≤ 5 arrows of an operator, plus
+                // [`Ck::key_follows`]'s O(1); outside a key's check nothing more. The naive
+                // way, recording each call's adoption apart and joining them after the checks,
+                // keeps one record per call and literal, O(calls) per literal.
+                let valued = (args.iter().flatten()).any(|a| a.lit.is_none());
+                if valued && !self.remap_keys.is_empty() {
+                    for (i, a) in args.iter().enumerate() {
+                        if let Some(l) = a.as_ref().and_then(|a| a.lit.as_ref()).filter(|l| l.bare)
+                        {
+                            let m = (sig.arrows.iter()).fold(0, |m, a| m | mask_of(&a.params[i]));
+                            self.key_follows(l, m);
+                        }
+                    }
+                }
+                match self.fewest(what, sig, args)? {
+                    Some(kept) => kept,
+                    // Reported: no value, as a rejected application gives, so that no operator
+                    // around it reports it again.
+                    None => return Ok((Ty::empty(), Vec::new())),
+                }
+            }
         };
         // An argument with no value, of type `Never` or of atoms that all pass by, has no piece
         // and keeps every arrow, so each value of the other arguments is still checked against

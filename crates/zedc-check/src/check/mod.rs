@@ -1895,6 +1895,11 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// The spans of the remaps whose key expressions are being checked in a check of a need
+    /// ([`Ck::remap_alone`] under [`Self::replaying`]), innermost last: a literal beside a
+    /// value of a type variable inside the innermost is recorded in [`Info::follows`]
+    /// ([`Self::key_follows`]).
+    remap_keys: Vec<Span>,
     /// For each need being met ([`Ck::meet`]), innermost last, its site and the uses alike
     /// its signature left out for it ([`Need::alike`]): a need the check makes on a class of
     /// the function around, at the same site, takes them ([`Ck::need`]), so a use left out in
@@ -2508,6 +2513,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
+            remap_keys: Vec::new(),
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
             need_chain: Vec::new(),
@@ -5649,6 +5655,43 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn lit_follows(&mut self, l: &Lit, c: Carrier) {
         if !l.exponent || c == Carrier::F64 {
             self.adopt_to(l, c);
+        }
+    }
+
+    /// Records in [`Info::follows`] that the literal `l`, an operand beside a value whose
+    /// parameter takes the carriers `m`, takes at run time the carrier of that value, where
+    /// `l` lies in a key expression of the remap whose keys a check of a need is checking
+    /// ([`Self::remap_keys`]; plan row FAIL-remap-key-literal-f64). Such a remap's source is a
+    /// class of a generic function, so its key expressions are checked only by the checks of
+    /// its needs, one per call, which write nothing through [`Self::put`]: in `v * 2` the
+    /// adoption of `2` at `f64` that [`Ck::fewest`] made at a call with `v` an `f64` was
+    /// dropped, the `2` stayed an `int`, and that call met `*` on `f64` and `int` at run time.
+    /// Two calls may give `v` two carriers, so the literal follows `v` rather than adopting
+    /// one carrier. A generic literal of a
+    /// function body follows its class's carrier in the same way ([`Self::resolve`]): one
+    /// value for each carrier of `m` other than its own of which it is exactly a value, and
+    /// the elaborator matches on the other operand's carrier (`follow` in zedc-elab). A
+    /// trial's check writes nothing, as a trial's records are undone.
+    // Complexity tradeoff: one comparison of spans and at most four adoptions per literal,
+    // O(1); the naive way, walking each key again at each carrier that flows into the class
+    // after the checks end, costs a second walk of every key per need check.
+    pub(super) fn key_follows(&mut self, l: &Lit, m: u8) {
+        let inside = |s: &Span| s.start <= l.span.start && l.span.end <= s.end;
+        if self.replaying == 0 || self.trying || !self.remap_keys.last().is_some_and(inside) {
+            return;
+        }
+        let values: Vec<(Carrier, Value)> =
+            [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
+                .into_iter()
+                .filter(|&c| m & c.bit() != 0 && c != lit_carrier(&l.value))
+                .filter(|&c| !(l.exponent && c == Carrier::Rat))
+                .filter_map(|c| match adopt(l, c) {
+                    Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
+                    _ => None,
+                })
+                .collect();
+        if !values.is_empty() {
+            self.info.follows.insert(l.span, values);
         }
     }
 
