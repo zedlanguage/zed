@@ -697,6 +697,36 @@ fn function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_
     );
 }
 
+/// The program of FAIL-print-two-variables-one-name with its shape free of variables grown to
+/// `n`: both parameters hold `((#ki | #li, bool) | (#ki | #li, bool, bool),)` for each `i`,
+/// which neither member `((V, V),)` nor `((V, V, V),)` fits at either carrier of `V`, and
+/// `f`'s holds `((V, V) | (V, V, V),)`, which both fit.
+fn members_past_closed_shapes(n: usize) -> String {
+    let closed = (0..n)
+        .map(|i| format!("((#k{i} | #l{i}, bool) | (#k{i} | #l{i}, bool, bool),)"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    format!(
+        "p(f: (h: (x: {closed} | ((V, V) | (V, V, V),)) -> int for V in int | f64) -> int) = 0;\n\
+         q(g: (h: (x: {closed} | ((V, V),) | ((V, V, V),)) -> int) -> int for V in int | f64) \
+         = p(f: g);\n"
+    )
+}
+
+#[test]
+fn members_past_shapes_free_of_variables_fit_in_linear_time() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // FAIL-print-two-variables-one-name: each member, `V` a bounded own variable of `g`'s
+    // signature, fails the `2n` shapes free of variables at both carriers of `V`. Each is
+    // tested once against their union, made once a bucket (`Searched::closed_left_out`), at
+    // each carrier of `V`'s bound, and not counted as failed, so the second member is not
+    // refused for the search past them; tried one by one, each member costs O(n) checks.
+    let inputs = scaling::inputs(1024, members_past_closed_shapes);
+    scaling::check("two members past n shapes free of variables", 1024, |n| {
+        assert_eq!(type_errors(&inputs[&n]), Vec::<String>::new());
+    });
+}
+
 #[test]
 fn tuples_held_by_members_of_a_shape_union_are_found_in_linear_time() {
     // `((X0, X0),) | … | ((X(n-1), X(n-1)),)` in `((int, bool) | (int, bool, bool),) |

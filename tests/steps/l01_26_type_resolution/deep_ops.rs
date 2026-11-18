@@ -628,11 +628,28 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
         "the tuples ((int, int),) and ",
         "may each be held by one of the shapes",
     ];
+    // Accepted: at `U` = `int`, `b` is `a | c` value for value, so in each pair below `g`'s
+    // domain is `p`'s. Before FAIL-print-two-variables-one-name each was refused, as both
+    // tuples of `a` searched past `c`, which holds no variable and neither tuple; such a shape
+    // is now left out uncounted (`Searched::closed_left_out`).
     for (slot, g) in [
         (format!("({a} | {c}, bool)"), format!("({b}, bool)")),
         (
             format!("({a} | {c} | ((bool,),), bool)"),
             format!("({b}, bool) | ({a} | ((bool,),), bool)"),
+        ),
+    ] {
+        let src = program(&slot, &g, "int | f64");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    }
+    // With a function in the first shape it is not left out, and the bucket is refused.
+    let cf = "((int, bool, (y: int) -> int) | (int, bool, bool, (y: int) -> int),)";
+    let bf = format!("{cf} | ((int, U) | (int, U, U),)");
+    for (slot, g) in [
+        (format!("({a} | {cf}, bool)"), format!("({bf}, bool)")),
+        (
+            format!("({a} | {cf} | ((bool,),), bool)"),
+            format!("({bf}, bool) | ({a} | ((bool,),), bool)"),
         ),
     ] {
         let errs = type_errors(&program(&slot, &g, "int | f64"));
@@ -674,10 +691,23 @@ fn a_refused_comparison_of_result_functions_refuses_the_call() {
     let a = "((int, int),) | ((int, int, int),)";
     let b = "((int, bool) | (int, bool, bool),) | ((int, V) | (int, V, V),)";
     let c = "((int, bool) | (int, bool, bool),)";
-    let src = format!(
-        "p(f: (x: T) -> ((y: ({a} | {c}, bool)) -> T) for T in int | f64) = 0;\n\
-         q(g: (x: T) -> ((y: ({b}, bool)) -> T for V in int | f64) for T in int | f64) = p(f: g);\n"
-    );
+    let program = |b: &str, c: &str| {
+        format!(
+            "p(f: (x: T) -> ((y: ({a} | {c}, bool)) -> T) for T in int | f64) = 0;\n\
+             q(g: (x: T) -> ((y: ({b}, bool)) -> T for V in int | f64) for T in int | f64) \
+             = p(f: g);\n"
+        )
+    };
+    // Accepted: at `V` = `int`, `b` is `a | c` value for value, so the inner functions' domains
+    // are equal. Before FAIL-print-two-variables-one-name this was refused, as both tuples of
+    // `a` searched past `c`, which holds no variable and neither tuple; such a shape is now left
+    // out uncounted (`Searched::closed_left_out`).
+    let src = program(b, c);
+    assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    // With a function in the first shape it is not left out, and the bucket is refused.
+    let c = "((int, bool, (y: int) -> int) | (int, bool, bool, (y: int) -> int),)";
+    let b = format!("{c} | ((int, V) | (int, V, V),)");
+    let src = program(&b, c);
     let errs = type_errors(&src);
     assert_eq!(errs.len(), 1, "{errs:?}");
     for part in [

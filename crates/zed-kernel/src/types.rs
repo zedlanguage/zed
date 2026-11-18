@@ -2655,6 +2655,24 @@ impl Type {
         })
     }
 
+    /// `self` made ready for many tests of [`Type::contains`] ([`Membership`]).
+    pub fn membership(&self) -> Membership {
+        let p = self.p();
+        let mut filer = Filer::default();
+        let by_len = match p.tuples.rest {
+            true => BTreeMap::new(),
+            false => (p.tuples.lens.iter())
+                .map(|(&len, part)| (len, RowIndex::new(len, part, &mut filer)))
+                .collect(),
+        };
+        Membership {
+            ty: self.clone(),
+            by_len,
+            chains: Chains::default(),
+            known: HashMap::new(),
+        }
+    }
+
     /// The types `self`'s values are built from, each with its boxes and after the types in
     /// them, `self` last, when every one is known finite. One visit per type, kept in a visited
     /// set, and an explicit stack, since the nesting depth follows the input. With `merge`, each
@@ -4205,6 +4223,51 @@ pub struct Values {
     chains: Chains,
     /// How many values of the listed type have been given.
     given: usize,
+}
+
+/// One type tested for many values ([`Type::membership`]): [`Membership::contains`] answers
+/// as [`Type::contains`] does.
+// Complexity tradeoff (COMPLEXITY.md F124, FAIL-print-two-variables-one-name): naive version,
+// `Type::contains` for each value, which evaluates the part of the value's length over all its
+// `r` rows, O(r) a test, so `n` values against a union of `n` tuple types cost O(n²). Used:
+// the type's tuple parts filed once by the values their rows may hold ([`RowIndex`], as
+// [`Values`] files them), O(r log r), and a tuple of plain values ([`makeable`]) tested on the
+// rows with a key of it and on the kinds of a tuple with none, the latter decided once per
+// class of tuple and kept: about the rows it may be in times `log r` a test. Given up: a value
+// that is not a tuple of plain values, or a type that holds tuples of every length, is tested
+// the naive way; the tests of components are kept for the life of the `Membership`, memory of
+// the order of the tests made.
+pub struct Membership {
+    ty: Type,
+    by_len: BTreeMap<usize, RowIndex>,
+    chains: Chains,
+    known: HashMap<(Type, Id), bool>,
+}
+
+impl Membership {
+    /// Whether `v` is in the type: [`Type::contains`].
+    pub fn contains(&mut self, v: &Value) -> bool {
+        let Membership {
+            ty,
+            by_len,
+            chains,
+            known,
+        } = self;
+        if let Value::Tuple(items) = v
+            && makeable(v)
+            && let Some(index) = by_len.get_mut(&items.len())
+        {
+            let xs: Vec<Value> = items.as_slice().to_vec();
+            let cell = RefCell::new(std::mem::take(known));
+            let fits = |r: &Row| {
+                (r.iter().zip(&xs)).all(|(t, x)| t.contains_kept(x, &mut cell.borrow_mut()))
+            };
+            let holds = index.holds_in(&xs, chains, fits);
+            *known = cell.into_inner();
+            return holds;
+        }
+        ty.contains_kept(v, known)
+    }
 }
 
 /// Numbers for the values a [`Values`] makes, equal exactly when the values are: a scalar or

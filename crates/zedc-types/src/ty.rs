@@ -6784,6 +6784,81 @@ fn file_members(table: &mut MemberTable, i: usize, xs: &[&Ty]) {
     }
 }
 
+/// One value `t` holds at some instance of the rigid variables of `cx` ([`Cx::rigid`]), if one
+/// is found this way: `0`, `false` or `""` where its set holds it, its one value, the zero of
+/// the first carrier of a rigid variable's mask (a call fixes the variable to one whole carrier
+/// of its bound, rule 6 of sec:type_resolution, so every carrier of the mask is an instance),
+/// or the tuple of the values of its first tuple shape's components. None where it holds the
+/// unknown, or where no part of it gives a value: a variable not rigid, a function, a set of
+/// other scalars. Each rigid variable takes the same carrier wherever it stands, so the value
+/// is of one instance. With `own`, a bounded own variable of a comparison open now
+/// ([`Cx::own_bounds`]) taken at one carrier of its bound, the value is of that instance of it
+/// too. `Err(Some(v))` where the walk meets such a variable `v` and `own` names no variable:
+/// the caller then asks again for each carrier of `v`'s bound. A row is visited once, kept by
+/// its address, and the walk keeps its own stack: a row reached by many paths (`(x, x)` nested
+/// `n` deep, `2^n` paths) costs one visit, and the depth of the nesting is the input's. Used by
+/// [`Searched::closed_left_out`].
+fn some_value(t: &Ty, cx: &Cx, own: Option<(&str, Carrier)>) -> Result<Value, Option<Arc<str>>> {
+    enum Step<'a> {
+        Visit(&'a Ty),
+        Build(&'a Row),
+    }
+    let zero = |c: Carrier| match c {
+        Carrier::Int => Some(Value::Int(0)),
+        Carrier::Bool => Some(Value::Bool(false)),
+        Carrier::Str => Some(Value::str("")),
+        Carrier::F64 => Some(Value::float(0.0)),
+        Carrier::F32 => Some(Value::float32(0.0)),
+        Carrier::Rat => None,
+    };
+    let mut made: HashMap<*const (), Value> = HashMap::new();
+    let mut out: Vec<Value> = Vec::new();
+    let mut stack = vec![Step::Visit(t)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Visit(t) => {
+                if t.dynamic {
+                    return Err(None);
+                }
+                let probes = [Value::Int(0), Value::Bool(false), Value::str("")];
+                let at = |v: &Arc<str>| match own {
+                    Some((w, c)) if **v == *w => zero(c),
+                    _ => Carrier::of_mask(*cx.rigid.get(v)?).find_map(zero),
+                };
+                let leaf = (probes.into_iter().find(|v| t.set.contains(v)))
+                    .or_else(|| t.point())
+                    .or_else(|| t.vars.iter().find_map(at));
+                if let Some(v) = leaf {
+                    out.push(v);
+                    continue;
+                }
+                let Some(r) = t.tuples.iter().next() else {
+                    let asked = (t.vars.iter()).find(|v| {
+                        own.is_none()
+                            && !cx.rigid.contains_key(*v)
+                            && cx.own_bounds.contains_key(*v)
+                    });
+                    return Err(asked.cloned());
+                };
+                match made.get(&r.addr()) {
+                    Some(v) => out.push(v.clone()),
+                    None => {
+                        stack.push(Step::Build(r));
+                        stack.extend(r.0.cs.iter().rev().map(Step::Visit));
+                    }
+                }
+            }
+            Step::Build(r) => {
+                let items = out.split_off(out.len() - r.0.cs.len());
+                let v = Value::tuple(items);
+                made.insert(r.addr(), v.clone());
+                out.push(v);
+            }
+        }
+    }
+    out.pop().ok_or(None)
+}
+
 /// The shape of `table` filed under the first tuple member, by place then written order, of a
 /// component of the piece `xs`, if one is: a shape whose union at that place holds a member
 /// equal to the piece's (up to the digest), so one that may hold the piece binding nothing
@@ -7572,6 +7647,14 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
+    /// Whether [`Comparing::search`] tries the shapes free of variables as before
+    /// [`Searched::closed_left_out`]: the form `shapes_left_out_as_closed_change_no_verdict`
+    /// compares with, and the slow side of its bench.
+    static CLOSED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
     /// Whether [`member_hit`] finds nothing, as before it: the red state of its test.
     static NO_MEMBER_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -7612,6 +7695,10 @@ type BucketAt<G> = (G, usize, Bucket);
 struct Searched<G, M> {
     by: BTreeMap<BucketAt<G>, M>,
     pins: BTreeMap<BucketAt<G>, (Ceilings, Option<Rc<Pins>>)>,
+    /// Each bucket's shapes that hold no variable, function or unknown, as the union of their
+    /// kernel types made ready for many tests, with the bucket's other shapes; none where the
+    /// bucket has no such shape ([`Searched::closed_left_out`]).
+    closed: BTreeMap<BucketAt<G>, Option<(zed_kernel::types::Membership, Rc<[usize]>)>>,
 }
 
 impl<G: Ord + Clone, M> Searched<G, M> {
@@ -7619,6 +7706,96 @@ impl<G: Ord + Clone, M> Searched<G, M> {
         Searched {
             by: BTreeMap::new(),
             pins: BTreeMap::new(),
+            closed: BTreeMap::new(),
+        }
+    }
+
+    /// The shapes of `bucket` (whose components `comps` gives) that hold a variable, a
+    /// function or the unknown, when a value of the member `xs` ([`some_value`]) is in no other
+    /// shape of the bucket: the member then fails each of those others, which
+    /// [`Comparing::search`] need not try or count as failed. None where no such value is
+    /// found, the bucket has no shape free of variables, or the value is in one.
+    ///
+    /// Proof that skipping them changes no verdict and no binding: a shape `s` with no
+    /// variable, function or unknown holds the member only if it holds each value of the
+    /// member at each instance of its rigid variables, and `w` is one ([`some_value`]); its
+    /// kernel type holds at least the values of `s` (payloads read loosely), so `w` outside the
+    /// union of the kernel types is outside `s`, and the fit of the member to `s` fails. A
+    /// failed fit binds nothing ([`Comparing::search`] keeps the bindings it had), so the
+    /// member's search goes on to the next shape just as when it skipped `s`. Only the count of
+    /// failures changes: a member that failed only such shapes before reaching the one it fits
+    /// no longer counts as searching past the bucket, and the next member that does is not
+    /// refused for it (FAIL-print-two-variables-one-name, where `((V, V),)` and `((V, V, V),)`
+    /// both fail `((int, bool) | (int, bool, bool),)` before `((T, T) | (T, T, T),)`). That count
+    /// guards the rule of one shape against bindings two members make in an order other than
+    /// written order; a shape that binds nothing for either member cannot cause that.
+    // Complexity tradeoff (COMPLEXITY.md F124): naive version, each skipped shape tested for the
+    // member apart, O(k) kernel tests a member for `k` shapes, n² for `n` members and shapes.
+    // Used: the union of the kernel types of the bucket's shapes free of variables, made once
+    // for the bucket in O(k log k) (`union_all`) and filed by the values its rows may hold
+    // ([`zed_kernel::types::Membership`]), then one test of one value a member, about `log k`
+    // for a tuple of plain values. A member holding one bounded own variable is tested once for
+    // each carrier of its bound, at most `Carrier::ALL.len()` (6) tests, so the same order.
+    // Given up: a member none of whose values this finds ([`some_value`]: a scalar set holding
+    // none of `0`, `false`, `""` and no one value, a variable neither rigid nor a bounded own
+    // one, two bounded own variables, or a `rat` instance), or whose value is in the union
+    // though it fails every shape of it, is searched as before, failures counted.
+    fn closed_left_out<'t>(
+        &mut self,
+        at: BucketAt<G>,
+        bucket: &[usize],
+        comps: &impl Fn(usize) -> Vec<&'t Ty>,
+        xs: &[&Ty],
+        cx: &Cx,
+    ) -> Option<Rc<[usize]>> {
+        let entry = self.closed.entry(at).or_insert_with(|| {
+            let mut kernels = Vec::new();
+            let mut open = Vec::new();
+            for &r in bucket {
+                let cs = comps(r);
+                let k = (cs.len() == xs.len())
+                    .then(|| cs.iter().map(|c| c.kernel()).collect::<Option<Vec<_>>>())
+                    .flatten();
+                match k {
+                    Some(k) => kernels.push(KType::tuple(k)),
+                    None => open.push(r),
+                }
+            }
+            (!kernels.is_empty()).then(|| (KType::union_all(kernels).membership(), open.into()))
+        });
+        let (union, open) = entry.as_mut()?;
+        let value = |own| {
+            (xs.iter().map(|x| some_value(x, cx, own)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::tuple)
+        };
+        match value(None) {
+            Ok(w) => (!union.contains(&w)).then(|| open.clone()),
+            Err(None) => None,
+            // A bounded own variable `v` of a comparison open now, which the comparison binds
+            // (FAIL-print-two-variables-one-name: `V'1` of `for V in int | f64`). A call fixes
+            // it to one whole carrier of its bound (DESIGN.md sec:type_resolution rule 6: "A
+            // bounded type variable is one carrier at a call"; its exception, values of more
+            // than one carrier given by one argument outside every function type, does not
+            // reach a member inside a function's parameter, as here), so the member's instances
+            // are the ones at each carrier of the bound, and it fails a shape free of variables
+            // only where it fails it at each: a value of each instance
+            // outside the union. A bound holding values of no carrier (`OTHER`), or none, has
+            // no carrier that stands for each of its instances, and a second such variable
+            // would need each pair of carriers; both are searched as before, failures counted.
+            Err(Some(v)) => {
+                let m = *cx.own_bounds.get(&v)?;
+                if m == 0 || m & OTHER != 0 {
+                    return None;
+                }
+                for c in Carrier::of_mask(m) {
+                    let w = value(Some((&v, c))).ok()?;
+                    if union.contains(&w) {
+                        return None;
+                    }
+                }
+                Some(open.clone())
+            }
         }
     }
 
@@ -9668,6 +9845,10 @@ impl<'m, 's> Comparing<'m, 's> {
         };
         #[cfg(not(test))]
         let scan_all = false;
+        #[cfg(test)]
+        let closed_off = CLOSED_OFF.get();
+        #[cfg(not(test))]
+        let closed_off = false;
         let (group, m) = member;
         let at = |k: usize| (group.clone(), buckets[k].0, buckets[k].1.clone());
         // The lists of shapes to try, each with its bucket: a bucket whole, or the lists its
@@ -9693,7 +9874,15 @@ impl<'m, 's> Comparing<'m, 's> {
                             let new = pins.lists(shapes, xs, binds, &cx);
                             lists.extend(new.into_iter().map(|l| (k, l)));
                         }
-                        None => lists.push((k, Shapes::Bucket(shapes))),
+                        // The shapes free of variables that cannot hold the member are left out
+                        // as one, uncounted ([`Searched::closed_left_out`]).
+                        None => match (!closed_off)
+                            .then(|| searched.closed_left_out(at(k), shapes, &comps, xs, &cx))
+                            .flatten()
+                        {
+                            Some(open) => lists.push((k, Shapes::Pinned(open))),
+                            None => lists.push((k, Shapes::Bucket(shapes))),
+                        },
                     },
                 }
             }
@@ -20953,6 +21142,86 @@ mod tests {
         assert!(
             !red && !red_payloads,
             "without the lookup, both are refused"
+        );
+    }
+
+    /// FAIL-print-two-variables-one-name, second refusal: `((V, V),) | ((V, V, V),)`, `V` rigid
+    /// of `int | f64`, in `((int, bool) | (int, bool, bool),) | ((T, T) | (T, T, T),)`. Both
+    /// members fall in one bucket and fail its first shape, which holds no variable, before the
+    /// second, which binds `T`; counted as failures, the second member was refused. The value
+    /// `((0, 0),)` of the first member is in no shape free of variables, so that shape is left
+    /// out uncounted ([`Searched::closed_left_out`]). Control ([`CLOSED_OFF`]): the old search
+    /// refuses. A member that fits the closed shape, `((1, true),)`, still takes it, and
+    /// `((V, true),)` gets the old search's verdict.
+    #[test]
+    fn shapes_free_of_variables_a_member_cannot_fit_are_not_counted_as_failed() {
+        let (v, t) = (Ty::var("V'1".into()), Ty::var("T".into()));
+        let (int, boolt) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let tup = |xs: &[&Ty]| Ty::tuple(xs.iter().map(|x| (*x).clone()).collect());
+        let one = |s: &Ty| Ty::tuple(vec![s.clone()]);
+        let fixed = Ty::union_all(&[tup(&[&int, &boolt]), tup(&[&int, &boolt, &boolt])]);
+        let open = Ty::union_all(&[tup(&[&t, &t]), tup(&[&t, &t, &t])]);
+        let shapes = Ty::union_all(&[one(&fixed), one(&open)]);
+        let held = Ty::union_all(&[one(&tup(&[&v, &v])), one(&tup(&[&v, &v, &v]))]);
+        let fits = |x: &Ty| {
+            let mut cx = Cx::default();
+            let mask = Carrier::Int.bit() | Carrier::F64.bit();
+            cx.rigid.insert("V'1".into(), mask);
+            let mut binds = Binds::new();
+            comparing!(&mut cx, |c| c.sub_in(x, &shapes, &mut binds))
+        };
+        CLOSED_OFF.set(true);
+        let red = fits(&held);
+        CLOSED_OFF.set(false);
+        assert!(!red, "without leaving out the closed shape, refused");
+        assert!(fits(&held), "{held} in {shapes}");
+        let yes = Ty::lit(&Value::Bool(true));
+        let lit = one(&tup(&[&Ty::lit(&Value::Int(1)), &yes]));
+        assert!(fits(&lit), "{lit} in {shapes}");
+        let mixed = one(&tup(&[&v, &yes]));
+        let now = fits(&mixed);
+        CLOSED_OFF.set(true);
+        let before = fits(&mixed);
+        CLOSED_OFF.set(false);
+        assert_eq!(
+            now, before,
+            "{mixed} in {shapes}: one member, no refusal to remove"
+        );
+
+        // `V'1` a bounded own variable of a comparison open now (`Cx::own_bounds`), as in the
+        // program of the row, not a rigid one: the members are tested at each carrier of the
+        // bound. With a bound of `int | bool`, the instance at `bool` of `((V, V),)` has a value
+        // in a shape free of variables, `((bool, bool),)`, so that shape is not left out and
+        // the verdict is the old search's.
+        let own = |mask: u8, shapes: &Ty, x: &Ty| {
+            let mut cx = Cx::default();
+            cx.keep_own("V'1".into(), Some(mask));
+            let mut binds = Binds::new();
+            comparing!(&mut cx, |c| c.sub_in(x, shapes, &mut binds))
+        };
+        let int_f64 = Carrier::Int.bit() | Carrier::F64.bit();
+        CLOSED_OFF.set(true);
+        let red = own(int_f64, &shapes, &held);
+        CLOSED_OFF.set(false);
+        assert!(
+            !red,
+            "own variable, without leaving out the closed shape, refused"
+        );
+        assert!(
+            own(int_f64, &shapes, &held),
+            "own variable: {held} in {shapes}"
+        );
+        let int_bool = Carrier::Int.bit() | Carrier::Bool.bit();
+        let both = Ty::union_all(&[tup(&[&int, &boolt]), tup(&[&boolt, &boolt])]);
+        let shapes_b = Ty::union_all(&[one(&both), one(&open)]);
+        let held_b = Ty::union_all(&[one(&tup(&[&v, &v])), one(&tup(&[&v, &v, &v]))]);
+        let now = own(int_bool, &shapes_b, &held_b);
+        CLOSED_OFF.set(true);
+        let before = own(int_bool, &shapes_b, &held_b);
+        CLOSED_OFF.set(false);
+        assert_eq!(
+            now, before,
+            "{held_b} in {shapes_b}: an instance in the closed shape"
         );
     }
 
