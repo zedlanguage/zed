@@ -40,15 +40,17 @@ pub enum Refusal {
     Unordered(Arc<Tie>),
     /// The values of the variables asked were to be found by adding up, row by row, the values
     /// their alternatives allow (module `row_sums`), and that work passed its measured limit,
-    /// `row_sums::JOIN_LIMIT` (about 250 ms). The one refusal by size: the author refuses a
-    /// question that provably blows up, by a measured limit (P196, as A99 does), rather than
-    /// answer with the solver's coarser set (P197; PRES-switchover-not-race).
+    /// `row_sums::JOIN_LIMIT`, a count of work units (measured once as about 250 ms, so the
+    /// count, not the time, decides on every machine). The one refusal by size: the author
+    /// refuses a question that provably blows up, by a measured limit (P196, as A99 does),
+    /// rather than answer with the solver's coarser set (P197; PRES-switchover-not-race).
     Work,
     /// The values of a variable were to be found exactly by asking, one range of values at a
     /// time, whether some point of the formula lies there (module `exact`), and that work,
     /// the solver's work for each question included, passed its measured limit,
-    /// `exact::EXACT_LIMIT` (about 250 ms). A refusal by size, as [`Refusal::Work`] is
-    /// (PRES-pugh-work-budget).
+    /// `meter::EXACT_LIMIT`, a count of work units (measured once as about 250 ms). A refusal
+    /// by size, as [`Refusal::Work`] is (PRES-pugh-work-budget). The message says "more work
+    /// than the checker allows" and names no time, since load never changes the verdict.
     Questions,
     /// The values of a variable have gaps that repeat without end (`x == 2 * y` with `y`
     /// unbounded gives the even numbers), which a set of ranges cannot hold (module `exact`).
@@ -335,15 +337,13 @@ impl fmt::Display for Closed<'_> {
                 f,
                 "{ALTERNATIVES}. To find every value each variable can take, it adds up the \
                  values the cases allow, one condition at a time. Here the sums take so many \
-                 different values that this would take longer than the checker allows (about \
-                 a quarter of a second)."
+                 different values that this would take more work than the checker allows."
             ),
             Refusal::Questions => write!(
                 f,
                 "to find exactly which values each variable can take, the checker asks, one \
                  range of values at a time, whether some values there meet every condition. \
-                 Here those questions would take longer than the checker allows (about a \
-                 quarter of a second)."
+                 Here those questions would take more work than the checker allows."
             ),
             Refusal::Repeats => write!(
                 f,

@@ -101,7 +101,7 @@ pub const KINDS: &[Kind] = &[
     },
     Kind {
         name: "Questions",
-        phrase: "Here those questions would take longer than the checker allows",
+        phrase: "Here those questions would take more work than the checker allows",
     },
     Kind {
         name: "Repeats",
