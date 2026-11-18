@@ -95,6 +95,15 @@ fn residues_left() -> Type {
 /// decides it. Erdős's system alone is decided by the split on 2 down to classes modulo 4
 /// (FAIL-periodic-lists-13375960689); 1 modulo 6 meets 7 modulo 12, so the shares of the class
 /// 3 modulo 4 sum to 4/3, and those of 1 modulo 3 split on 3 sum to 3/2.
+///
+/// The refusal comes from `Searching::decided` (crates/zed-kernel/src/types/empty.rs, the one
+/// site that gives up with `Refusal::Residues`): `pure_cycles` asks `Meet::lengths`, which asks
+/// `residues_meet` since the cover has no `any` classes; `shares` refuses the whole
+/// cover, `split_on(2)` refuses the class 3 modulo 4 and finds no negated class with a power of
+/// 2 above 4 to split it further, `split_on(3)` does the same for 1 modulo 3 with no power of 3
+/// above 3, so `residue_classes` answers `Refused` and `decided` gives up with
+/// `Refusal::Residues`. `residues_meet_refuses_erdos_cover_with_1_mod_6` in the kernel's
+/// unit tests holds the middle of that chain.
 fn erdos_cover() -> Type {
     lengths_outside(&[(2, 0), (3, 0), (4, 1), (6, 5), (12, 7), (6, 1)])
 }

@@ -251,6 +251,22 @@ fn a_length_is_given_where_plausible_wrong_choices_miss() {
     }
 }
 
+/// Erdős's covering system alone is decided by `split_on(2)` going down to the classes modulo
+/// 4; with 1 modulo 6 added, the class 3 modulo 4 and the class 1 modulo 3 are each refused by
+/// `shares` and no negated class has a finer power of 2 or 3, so no one-prime split decides it
+/// (the `erdos_cover` refusal tests in l01_23_groups_and_refusals rest on this;
+/// FAIL-periodic-lists-13375960689).
+#[test]
+fn residues_meet_refuses_erdos_cover_with_1_mod_6() {
+    let erdos = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7)];
+    assert!(residues_meet(&[], &erdos) == Lengths::None);
+    let mut more = erdos.to_vec();
+    more.push((6, 1));
+    assert!(residues_meet(&[], &more) == Lengths::Refused);
+    assert!(shares(&[(4, 3)], &more) == Lengths::Refused);
+    assert!(shares(&[(3, 1)], &more) == Lengths::Refused);
+}
+
 /// Odd lengths not 1 modulo 6 are 3 or 5 modulo 6: a choice on 2 that weighs (6, 1) without
 /// the residues left on 3 takes 0 modulo 2 and gives 6 (XR-wlen round 1).
 #[test]
