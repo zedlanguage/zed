@@ -4,8 +4,8 @@ Row TEST-complete-types (author P189). The crate holds `kernel_type.rs`, the ker
 written type denotes, and `ty.rs`, the checker's own type `Ty`: a kernel set beside tuples,
 functions, type variables, atom payloads and the unknown, with union, meet, difference,
 subtyping, the fit of an argument to a function's arrows, and the text of a type. Its unit
-tests are the `tests` module at the end of `ty.rs` (22 tests, and 1 benchmark in `ty/tests/bench.rs`,
-run apart); the step tests reach it through the checker. The test binary lists those 23; the
+tests are the `tests` module at the end of `ty.rs` (65 tests, and 2 benchmarks in `ty/tests/bench.rs`,
+run apart); the step tests reach it through the checker. The test binary lists those 67; the
 own test of `tests/src/seed.rs`, which the crate compiles in by `#[path]`, runs in zed-tests
 only (TEST-seed-test-once). Expected results are from DESIGN.md
 L1.22, L1.23, sec:type_language, sec:type_resolution and sec:diagnostics. llvm-cov, as a floor
