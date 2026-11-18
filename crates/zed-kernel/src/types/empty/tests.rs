@@ -1047,6 +1047,30 @@ fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
     classes_met_and_apart_built(met, apart);
 }
 
+/// The case that split by order (FAIL-overlaps-order-ddc1ec274: case 78 of
+/// `ZED_TEST_SEED=1225632394908755589` above). `#b(((0,),)) | (0,)` places `0` at the node of
+/// `(0,)`, and under `#b` leaves the node below `((0,),)` waiting; `#b(((0,),))` placed after it
+/// reads that node, so `0` is placed there too and the two nodes merge, joining `((0,),)`. The
+/// shortcut for a shared chain joined `#b(((0,),))` without reading the waiting node, so in this
+/// order the merge was lost and `((0,),)` stood apart, and in the other it was not: classes
+/// `[[0], [1], [2, 3, 4, 5]]` against `[[0], [1, 2, 3, 4, 5]]`.
+#[test]
+fn overlaps_are_the_same_in_both_orders_when_a_chain_waits() {
+    let lit0 = Type::lit(&Value::Int(0)).expect("a literal");
+    let one = |t: &Type| Type::tuple(vec![t.clone()]);
+    let b = Type::atom_with("b", &one(&one(&lit0)));
+    let ts = [
+        Type::atom_with("c", &all_but_one(0)),
+        one(&one(&lit0)),
+        b.clone(),
+        &b | &one(&lit0),
+        Type::atom_with("b", &all_but_one(0)),
+        b,
+    ];
+    let (mut met, mut apart) = (0, 0);
+    check_classes(0, &ts, &mut met, &mut apart);
+}
+
 /// Checks that [`group_of`], ported onto `zed_graph::Search` (GRAPH-lazy-tarjan), makes the
 /// same groups as its walk before the port ([`groups_by_old_walk`]) for `t` and each type
 /// inside it, in the same order and each with its members in the same order, so each group's

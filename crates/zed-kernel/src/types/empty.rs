@@ -14605,7 +14605,20 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
     // costs `Theta(n^2)` placements (`18.0x` at `64 -> 512`). Recording `(y_root, g.id) -> (j, y)`
     // once a deep `single_chain` root is read lets any later cell `i` with zero other active/pending
     // branches and `min_gid[i] > g.id` (Tarjan topological order, Tarjan 1972) join `j` in `O(1)`
-    // with zero lost merges and an identical partition (`O(S log S)` in all).
+    // with zero lost merges and an identical partition (`O(S log S)` in all), when `j` has no
+    // node waiting (`pending_cnt[j] == 0`). Why: placing `g` for `i` at `y_root` walks the same
+    // nodes as `j`'s placement, `g` merging no nodes and its lower groups placed for `i` for the
+    // first time (`min_gid[i] > g.id`), so it adds no key and merges nothing that `join(i, j)`
+    // does not give, except by reading a node of that walk that waits. A node waits for the
+    // placement that made it, and every node of the walk is a node of `j`'s placements (a child
+    // another cell made before `j` read its parent is read by `j`'s bind), so only `j`'s nodes can
+    // wait there. Reading one makes `j` place its lower types there, which can merge two nodes
+    // of `j` and join more types: FAIL-overlaps-order-ddc1ec274, where `#b(((0,),))` placed after
+    // `#b(((0,),)) | (0,)` reads the node holding `0` under `#b` and merges it with the node of
+    // `(0,)`, and the shortcut without this test skipped the read in one order and not the other
+    // (test `overlaps_are_the_same_in_both_orders_when_a_chain_waits`). When `j` has a waiting
+    // node, `i` is placed as before, which reads `j`'s waiting nodes on the walk, so a later cell
+    // takes the shortcut: one extra walk per chain, the bound unchanged.
     let mut shared_chain: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
     let mut work: Vec<Work> = Vec::new();
     for (i, l) in tops.into_iter().enumerate() {
@@ -14635,6 +14648,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
                             && g.nodes[0].deep
                             && let Some(&(j, orig_y)) = shared_chain.get(&(y_root, g.id))
                             && trie.find(orig_y) == y_root
+                            && s.pending_cnt[j] == 0
                         {
                             join(&mut parent, i, j);
                             continue;
