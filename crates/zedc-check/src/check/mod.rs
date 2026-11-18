@@ -7431,7 +7431,11 @@ impl Ck<'_, '_> {
     ///    the call's own argument, read back only by `zip`'s need under [`Self::meet`], where
     ///    `replaying` is set and no fit is written. Every other `Arg` is `Arg::of` a type,
     ///    with no expression, and is never read.
-    /// 3. An expression is an operand of one construct, its parent in the tree, and every
+    /// 3. An expression is an operand of one construct, its parent in the tree, and no two
+    ///    expressions share a span (the builder gives each its own text, a section's lambda
+    ///    standing for the section; tested over every desugaring of the builder and every
+    ///    program of the repository in zedc-syntax ast/walk/tests.rs,
+    ///    TEST-read-fit-span-unique), so the span names that one parent. Every
     ///    application of that construct (each arrow, each function its callee's type holds,
     ///    each trial of a repair or a carried fix) passes the construct's own span.
     ///

@@ -203,3 +203,6 @@ fn key_kids<'a>(keys: &'a mut [IndexKey], out: &mut Vec<&'a mut Expr>) {
 fn param_kids<'a>(params: &'a mut [Param], out: &mut Vec<&'a mut Expr>) {
     out.extend(params.iter_mut().filter_map(|p| p.default.as_mut()));
 }
+
+#[cfg(test)]
+mod tests;
