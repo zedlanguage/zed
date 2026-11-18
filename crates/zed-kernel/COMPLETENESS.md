@@ -89,3 +89,20 @@ each run reaches. Line numbers are those of 5461fb972.
 The other entries of this list, most of them in `empty.rs`, `bdd.rs`, `types.rs`, `empty/sweep.rs`,
 `empty/escape.rs`, `empty/refused.rs`, `bes.rs` (`delete_cascade` 634-677, 766), the rest of `print.rs` and `rec/`, are row
 TEST-kernel-unreached-paths-4.
+
+### Row TEST-kernel-unreached-paths-4 (cover2, in progress)
+
+A differential test over random small types,
+`types::empty::tests::random_types_agree_with_membership_on_a_finite_set_of_values`: 3,000
+random types (literals, `int`, atoms with payloads, one- and two-tuples, union, meet,
+difference, complements and random recursive groups of one or two definitions) are checked
+against `Type::contains` on the values listed up to three levels deep; the verdict of `t & bound`, its
+emptiness, and subtyping between consecutive types must agree with membership. All 3,000 are
+decided and agree (2 s). It reaches only three of the list's lines (`empty.rs` 14784-14785 and
+one in `types.rs`): the other entries need structures random small types do not form (prefix
+chains of list carriers, chain witnesses, nested pieces, morphisms, residues), and each still
+needs its own test, proof at the site, or removal. At this commit 210 of the 240 entries are
+open: `empty.rs` 75, `types.rs` 45, `bdd.rs` 34, `print.rs` 15, `empty/sweep.rs` 11,
+`empty/refused.rs` 7, `rec/unfold.rs` 7, `rec/group.rs` 6, `empty/escape.rs` 4, `bes.rs`,
+`empty/shared.rs` 2 each, `print/uses.rs`, `rec/unfold/show.rs` 1 each. 63 of their lines are
+`unreachable!`, `panic!`, `expect` or assertion guards.

@@ -1744,3 +1744,184 @@ fn kept_height_bounds_agree_with_fresh_ones_across_rebuilds() {
     eprintln!("{compared} kept bounds compared with fresh ones");
     assert!(compared > 1000, "only {compared} compared");
 }
+
+/// splitmix64 from a seed, for the random types below.
+struct Draw(u64);
+
+impl Draw {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        (z ^ (z >> 31)) % n
+    }
+}
+
+/// The values the random types are checked on, and the type `bound` that holds exactly them:
+/// the integers -2 to 2 and the bare atoms `#a` and `#b` (level 0); their one-tuples, pairs
+/// and `#a(x)`, `#b(x)` (level 1); and the one-tuples, `#a(u)`, `#b(u)` and pairs with a
+/// level-0 value of each level-1 value `u`.
+fn values_and_bound() -> (Vec<Value>, Type) {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let level0: Vec<Value> = (-2..=2)
+        .map(Value::Int)
+        .chain([Value::atom("a"), Value::atom("b")])
+        .collect();
+    let above = |xs: &[Value], ys: &[Value]| -> Vec<Value> {
+        let mut out = Vec::new();
+        for x in xs {
+            out.push(Value::tuple(vec![x.clone()]));
+            out.push(Value::atom_with("a", vec![x.clone()]));
+            out.push(Value::atom_with("b", vec![x.clone()]));
+            for y in ys {
+                out.push(Value::tuple(vec![x.clone(), y.clone()]));
+                out.push(Value::tuple(vec![y.clone(), x.clone()]));
+            }
+        }
+        out
+    };
+    let level1 = above(&level0, &level0);
+    let level2 = above(&level1, &level0);
+    let values: Vec<Value> = level0
+        .iter()
+        .chain(&level1)
+        .chain(&level2)
+        .cloned()
+        .collect();
+    let t0 = Type::union_all((-2..=2).map(lit).chain([Type::atom("a"), Type::atom("b")]));
+    let above_t = |x: &Type, y: &Type| {
+        Type::union_all([
+            Type::tuple(vec![x.clone()]),
+            Type::atom_with("a", &Type::tuple(vec![x.clone()])),
+            Type::atom_with("b", &Type::tuple(vec![x.clone()])),
+            Type::tuple(vec![x.clone(), y.clone()]),
+            Type::tuple(vec![y.clone(), x.clone()]),
+        ])
+    };
+    let t1 = above_t(&t0, &t0);
+    let bound = Type::union_all([t0.clone(), t1.clone(), above_t(&t1, &t0)]);
+    (values, bound)
+}
+
+/// A random type of depth at most `d` over integers, the atoms `#a` and `#b`, tuples of one and
+/// two components, unions, meets and differences, and (when `rec`) instances of random
+/// recursive groups.
+fn random_type(draw: &mut Draw, d: u32, rec: bool) -> Type {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let name = |draw: &mut Draw| if draw.below(2) == 0 { "a" } else { "b" };
+    let small = |draw: &mut Draw| draw.below(5) as i64 - 2;
+    let pick = if d == 0 {
+        draw.below(5)
+    } else {
+        draw.below(13)
+    };
+    let sub = |draw: &mut Draw| random_type(draw, d.saturating_sub(1), rec);
+    match pick {
+        0 => lit(small(draw)),
+        1 => Type::int(),
+        2 => &Type::int() - &lit(small(draw)),
+        3 => Type::atom(name(draw)),
+        4 => Type::top(),
+        5 => {
+            let n = name(draw);
+            Type::atom_with(n, &Type::tuple(vec![sub(draw)]))
+        }
+        6 => Type::tuple(vec![sub(draw)]),
+        7 => Type::tuple(vec![sub(draw), sub(draw)]),
+        8 => &sub(draw) | &sub(draw),
+        9 => &sub(draw) & &sub(draw),
+        10 => &sub(draw) - &sub(draw),
+        11 => &Type::universe(crate::types::Universe::Tuple) - &sub(draw),
+        _ if rec => random_instance(draw).unwrap_or_else(|| sub(draw)),
+        _ => sub(draw),
+    }
+}
+
+/// An instance of a random recursive group of one or two definitions, or none when the group
+/// is rejected.
+fn random_instance(draw: &mut Draw) -> Option<Type> {
+    use super::super::rec::{Def, Expr, Group};
+    fn expr(draw: &mut Draw, defs: usize, d: u32) -> Expr {
+        let pick = if d == 0 { draw.below(2) } else { draw.below(8) };
+        match pick {
+            0 => Expr::Type(random_type(draw, 1, false)),
+            1 => Expr::Ref(draw.below(defs as u64) as usize, vec![]),
+            2 => Expr::Tuple(vec![expr(draw, defs, d - 1)]),
+            3 => Expr::Tuple(vec![expr(draw, defs, d - 1), expr(draw, defs, d - 1)]),
+            4 => {
+                let n = if draw.below(2) == 0 { "a" } else { "b" };
+                Expr::Atom(n.into(), vec![expr(draw, defs, d - 1)])
+            }
+            5 => Expr::Union(vec![expr(draw, defs, d - 1), expr(draw, defs, d - 1)]),
+            6 => Expr::And(vec![expr(draw, defs, d - 1), expr(draw, defs, d - 1)]),
+            _ => Expr::Diff(
+                Box::new(expr(draw, defs, d - 1)),
+                Box::new(expr(draw, defs, d - 1)),
+            ),
+        }
+    }
+    let defs = 1 + draw.below(2) as usize;
+    let group: Vec<Def> = (0..defs)
+        .map(|i| Def {
+            name: format!("T{i}"),
+            params: vec![],
+            body: expr(draw, defs, 3),
+        })
+        .collect();
+    let at = draw.below(defs as u64) as usize;
+    Some(Group::new(group).ok()?.instance(vec![]).remove(at))
+}
+
+/// Random types against membership on a finite set of values (`values_and_bound`): the meet
+/// `t & bound` holds exactly the listed values that `Type::contains` puts in `t`, so its verdict
+/// has one right answer; `t` itself is never proved empty when a listed value is in it; a
+/// subtype found holds only values of its supertype. `Type::contains` reads values against the
+/// parts, apart from the search the verdicts come from. A refusal is allowed and counted
+/// (row TEST-kernel-unreached-paths-4: the search's paths for cofinite sets, tuples, atoms and
+/// recursive groups, reached here with an answer to check).
+#[test]
+fn random_types_agree_with_membership_on_a_finite_set_of_values() {
+    let (values, bound) = values_and_bound();
+    assert!(
+        values.iter().all(|v| bound.contains(v)),
+        "a value outside the bound"
+    );
+    let mut draw = Draw(0x5eed);
+    let (mut decided, mut refused) = (0, 0);
+    let mut previous = Type::top();
+    for case in 0..3000 {
+        let rec = case % 3 == 0;
+        let t = random_type(&mut draw, 3, rec);
+        let held: Vec<bool> = values.iter().map(|v| t.contains(v)).collect();
+        let any = held.iter().any(|&h| h);
+        let bounded = &t & &bound;
+        match bounded.verdict() {
+            Verdict::Empty => assert!(!any, "case {case}: {t:?} & bound proved empty"),
+            Verdict::Inhabited => assert!(any, "case {case}: {t:?} & bound inhabited"),
+            Verdict::Refused(_) => refused += 1,
+        }
+        if !matches!(bounded.verdict(), Verdict::Refused(_)) {
+            decided += 1;
+        }
+        if bounded.is_empty() {
+            assert!(!any, "case {case}: {t:?} & bound is_empty");
+        }
+        if t.verdict() == Verdict::Empty {
+            assert!(!any, "case {case}: {t:?} proved empty");
+        }
+        for (s, u) in [(&t, &previous), (&previous, &t)] {
+            if s.subtype(u) {
+                for v in &values {
+                    assert!(
+                        !s.contains(v) || u.contains(v),
+                        "case {case}: {s:?} <: {u:?}, but {v:?} is only in the first"
+                    );
+                }
+            }
+        }
+        previous = t;
+    }
+    eprintln!("{decided} decided, {refused} refused");
+    assert!(decided > 2000, "only {decided} decided");
+}
