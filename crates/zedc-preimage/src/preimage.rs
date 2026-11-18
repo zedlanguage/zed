@@ -11528,6 +11528,21 @@ pub mod counts {
         pub(crate) static PUT_IN_SIDE: Cell<Option<bool>> = const { Cell::new(None) };
         pub(crate) static ZERO_CYCLES_TIED: Cell<u64> = const { Cell::new(0) };
         pub(crate) static NEGATIVE_CYCLES: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
+        pub(crate) static INVERSE_MOST: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
+    }
+
+    /// The most pieces seen on this thread since the last call, and resets both to 0: of a
+    /// node's forward image at a step of `Tx::inverse_states` (k), and of a label built by
+    /// `tree_parts` (PROOF-round-down-piece-bound).
+    pub fn inverse_most() -> [u64; 2] {
+        INVERSE_MOST.replace([0, 0])
+    }
+
+    /// Raises the `i`th maximum of `inverse_most` to `n`.
+    pub(crate) fn note_inverse(i: usize, n: usize) {
+        let mut most = INVERSE_MOST.get();
+        most[i] = most[i].max(n as u64);
+        INVERSE_MOST.set(most);
     }
 
     /// The cycles of negative weight `product::put_in` found on this thread since it started:

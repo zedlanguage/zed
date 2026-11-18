@@ -885,3 +885,29 @@ fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
         }
     }
 }
+
+/// PROOF-round-down-piece-bound: on `normal_round_down` the forward image of a node has at most
+/// 3 pieces (3 only at the `Round`) and every label the walk builds has one piece, the two
+/// bounds the proof at `Tx::inverse_states` derives for every n. Every n to 128, on the default
+/// stack (author P178); `bench::ref_memo::normal_round_down_keeps_its_pieces_at_large_sizes`
+/// reads the same at 1024 to 8192.
+#[test]
+fn the_round_down_chain_keeps_three_pieces_and_one_piece_labels() {
+    for n in 1..=128 {
+        assert_eq!(round_down_most(n), [3, 1], "normal_round_down at {n}");
+    }
+}
+
+/// The most pieces of a forward image and of a label in the preimage of `normal_round_down` at
+/// `n` links ([`zedc::store::preimage::counts::inverse_most`]), read on the calling thread.
+pub(super) fn round_down_most(n: usize) -> [u64; 2] {
+    use zedc::store::preimage::counts::inverse_most;
+    let mut most = [0, 0];
+    for (t, ds, d) in family("normal_round_down", n) {
+        inverse_most();
+        preimage(&t, &ds, &d);
+        let m = inverse_most();
+        most = [most[0].max(m[0]), most[1].max(m[1])];
+    }
+    most
+}

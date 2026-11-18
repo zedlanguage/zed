@@ -9,7 +9,7 @@ use zed_tests::scaling;
 use zedc::store::preimage_ref::{Demand, Domains, preimage};
 
 use crate::bench::s22::on_big_stack;
-use crate::ref_memo::{answer_pieces, family, output_grid};
+use crate::ref_memo::{answer_pieces, family, output_grid, round_down_most};
 
 /// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
 /// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. Every
@@ -101,6 +101,19 @@ scaling_tests! {
     pow2_small_scales: "pow2_small" at 8;
     pow2_wide_scales: "pow2_wide" at 64;
     random_chains_scales: "random_chains" at 64;
+}
+
+/// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large
+/// stack: the forward image of a node has at most 3 pieces and every label one, as the proof at
+/// `Tx::inverse_states` derives for every n; `ref_memo::the_round_down_chain_keeps_three_pieces_and_one_piece_labels`
+/// reads every n to 128.
+#[test]
+fn normal_round_down_keeps_its_pieces_at_large_sizes() {
+    on_big_stack(|| {
+        for n in [1024, 2048, 4096, 8192] {
+            assert_eq!(round_down_most(n), [3, 1], "normal_round_down at {n}");
+        }
+    });
 }
 
 /// The work of writing out an answer 8 times larger, the term unchanged: [`output_grid`] at 1024

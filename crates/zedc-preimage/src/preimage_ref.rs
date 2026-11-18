@@ -3342,13 +3342,50 @@ impl<'t> Tx<'t> {
     //   [0, 0] and the at most 2k nodes the `Round` node's clip trimmed have bounds of both
     //   residues, so the recursion follows at most 2k + 1 paths, O(k log p), and every key is
     //   again [2k', 2k' + 1]; the labels lie in [j + 1, inf): (2) holds at j - 1.
-    // So a link costs O(k log p) with p = O(n), O(n log n) in all if k and the pieces of a
-    // label (met or joined at each node touched) are bounded. Not proved: that both are
-    // bounded on this family. Evidence: `revision::map2` caps each sign
-    // region of an image to the most pieces its operand has in that region, and a probe found
-    // k <= 3 at every node (3 only at `Round`: [lo, -2], [0, 0], [2, hi]) at n = 16, 128,
-    // 1024 and 8192, labels of one piece each, p = n, heights 5, 8, 11 and 14, and nodes
-    // built per step at most 12, 32, 53 and 74, about 5.3 times the height.
+    // So a link costs O(k log p) with p = O(n), O(n log n) in all, once k and the pieces of a
+    // label (met or joined at each node touched) are bounded. Both are, at every n
+    // (PROOF-round-down-piece-bound):
+    //   (k) Write M = 10^6, X_j = the forward image of t_j, c = 6j + 2. Claim: X_j is one
+    //   interval [L_j, H_j] with L_j <= -M and H_j >= M, and H_j >= c + M - 1 for j >= 1.
+    //   X_0 = [-M, M]. Step j, with X_{j-1} = [L, H]: `revision::forward` splits an operand
+    //   at 0 (`split_signs`), maps each pair of parts by `corners`, and caps each sign region
+    //   of the image to `most`, the most pieces either operand has in one region (`map2`),
+    //   1 here, before `from_pieces` merges touching pieces. `t / 2`: the parts [L, -1],
+    //   [0, 0], [1, H] give pieces ending at -1 or 0, the piece [0, 0], and one starting at 0
+    //   or 1, so one region each, merged into one interval [A, B], A <= L / 2 rounded down
+    //   or up (A <= -1 as L <= -2), B >= floor(H / 2) >= 1. `* 2`: [A, -1], [0, 0], [1, B]
+    //   give [2A, -2], [0, 0], [2, 2B], one per region, not touching: k = 3, the only node
+    //   with more than one piece. `c - _` (not the one-piece fast path, the operand having 3):
+    //   the pieces [c - 2B, c - 2], [c, c], [c + 2, c - 2A], split at 0, each region capped
+    //   to one piece, give the interval [c - 2B, c - 2A]: k = 1. The `If` joins it with
+    //   [L, H]. As c - 2A > 0 > L, the union is one interval when c - 2B <= H + 1, and
+    //   2B >= H - 1 reduces that to c <= 2H, true as H >= M >= 4 at j = 1 and
+    //   H >= 6(j - 1) + 2 + M - 1 >= 3j + 1 after. So X_j = [min(L, c - 2B), max(H,
+    //   c - 2A)], and -2A >= -L - 1 >= M - 1 gives H_j >= c + M - 1. A guard that cannot
+    //   fail (j >= M) leaves X_j = X_{j-1}. So k <= 3 at every node, k = 3 only at `Round`.
+    //   (labels) Each operation of the walk is the exact inverse of its node on the relation
+    //   {(value, input)}: `restrict_x` meets labels with the arm's interval of inputs,
+    //   `union` joins them, `Reflect` and `Round` move keys only, and `clip_values` drops
+    //   values outside the node's forward image, which holds every value the node takes.
+    //   So the label of v at a node N is the set of inputs x in [-M, M] that reach N and
+    //   whose remaining links map v to 0. At A_j (x <= j + 1, then arms after): {x <= j + 1}
+    //   at v = 0, else empty: one piece. At B_j, the `Round` and `Reflect` of link j + 1
+    //   (x >= j + 2): the remaining links are f_m(y) = 6m + 2 - 2 floor(y / 2) for
+    //   m = j + 1 .. min(x - 1, n), a count fixed by x. From B_j with r = 2 floor(v / 2),
+    //   a_1 = 6j + 8 - r, then every value is even and a_2s = r + 6s (s >= 1),
+    //   a_2s+1 = 6j + 6s + 8 - r (s >= 0): 0 is met at r = -6s <= -6 or r = 6j + 6s + 8 >= 8,
+    //   two disjoint sets, each one-to-one in s. So at most one count m of links ends at
+    //   0, and the label is the x with that count: one x for m < n - j, and all of
+    //   [n + 1, M] for m = n - j, one piece either way. `Reflect` at value w is B_j's case
+    //   one link later with w itself among the counts (count 0 at w = 0; 2 floor(w / 2)
+    //   in r's place after), and `Round` at u is `Reflect` at c - u; the same reading gives
+    //   one piece. So every label, and every meet or join of two at a node touched (both
+    //   labels of one value, whose union is again that value's label), has one piece.
+    // Tests: `ref_memo::the_round_down_chain_keeps_three_pieces_and_one_piece_labels` and
+    // `bench::ref_memo::normal_round_down_keeps_its_pieces_at_large_sizes` read both maxima
+    // (`counts::inverse_most`) at every n to 128 and at 1024, 2048, 4096 and 8192: 3 and 1.
+    // Before this proof the bound rested on a probe at n = 16, 128, 1024 and 8192 (p = n, heights 5, 8, 11 and 14, nodes built per step at most 12, 32, 53 and 74,
+    // about 5.3 times the height).
     fn inverse_states(
         &mut self,
         root: At,
@@ -3425,6 +3462,8 @@ impl<'t> Tx<'t> {
                 continue;
             };
             let step = self.step_1d(u.0, u.1).expect("inverse step");
+            #[cfg(feature = "counts")]
+            crate::preimage::counts::note_inverse(0, step.fwd.len());
             let st = st.clip_values(&step.fwd);
             let top = unbranched.contains(&u);
             let mut child = |c, next| {
@@ -3670,6 +3709,8 @@ fn tree_division(t: Tree, c: &Num) -> Tree {
     Some(arc)
 }
 fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> PartitionNode {
+    #[cfg(feature = "counts")]
+    crate::preimage::counts::note_inverse(1, data.len());
     let (xlo, xhi) = data.bounds().expect("nonempty input labels");
     let (mut xlo, mut xhi) = (xlo.clone(), xhi.clone());
     for n in [&left, &right].into_iter().flatten() {
