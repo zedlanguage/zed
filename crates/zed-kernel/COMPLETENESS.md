@@ -238,6 +238,14 @@ Closed in this round:
   re-derived in the same round and hold. The test reaches `delete_cascade` (52 of the 40,000 systems) and
   never panics there.
 
+For cover7's `empty.rs` arms that read a leaf operand: `bdd.rs` now makes every expression in
+its module `build`, where `Part::expr` is private; `Part::connect` folds a leaf operand of an
+`Or` or `And` away, and the other constructors (`not_expr`, `of_form`, and `xor::halves`'s
+form) assert that no operand is a leaf. The rule is stated on `enum Form`. The test
+`connecting_keeps_the_value_of_the_unfolded_expression` compares `connect` with the unfolded
+expression on 2000 random pairs, leaves mixed in, at all 64 assignments; with `a | false` made
+`false` it fails.
+
 Open from this round: `bes.rs` `delete_cascade` 645-689 (a tuple cycle losing its last seed,
 and the cascade after it; no draw reaches it, and no proof yet: it needs an exit node true in
 the least fixed point of `bounds` and false in its last pass). The second least fixed point of

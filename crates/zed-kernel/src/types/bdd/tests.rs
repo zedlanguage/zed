@@ -7,7 +7,7 @@ pub(super) fn atom(i: u64) -> Row {
     Row::new(vec![Type::lit(&Value::Int(i as i64)).unwrap()])
 }
 
-fn random(seed: &mut u64, depth: u32) -> Part<Row> {
+pub(super) fn random(seed: &mut u64, depth: u32) -> Part<Row> {
     *seed = seed
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
@@ -40,11 +40,11 @@ fn random_expr(seed: &mut u64, depth: u32, pool: &mut Vec<Part<Row>>) -> Part<Ro
         random_expr(seed, depth - 1, pool),
         random_expr(seed, depth - 1, pool),
     );
-    let p = Part::expr(match pick % 3 {
-        0 => Form::Or(a, b),
-        1 => Form::And(a, b),
-        _ => Form::Not(a),
-    });
+    let p = match pick % 3 {
+        0 => Part::connect(Op::Or, a, b),
+        1 => Part::connect(Op::And, a, b),
+        _ => Part::not_expr(a),
+    };
     pool.push(p.clone());
     p
 }
@@ -80,8 +80,8 @@ fn three_valued_operations_keep_the_assignments() {
     // logic, so `e` becomes true, and `true & !true` is false), so it settles to empty.
     let lit = Part::literal(atom(0));
     assert_eq!(three_valued_holds(&lit, 1, 1), [false, true, true, false]);
-    let e = Part::expr(Form::Or(Part::literal(atom(0)), Part::literal(atom(1))));
-    let none = Part::expr(Form::And(e.clone(), Part::expr(Form::Not(e))));
+    let e = Part::connect(Op::Or, Part::literal(atom(0)), Part::literal(atom(1)));
+    let none = Part::connect(Op::And, e.clone(), Part::not_expr(e));
     let [expr, _, _, settled] = three_valued_holds(&none, 0, 0);
     assert!(expr && settled, "{none:?}");
 }
@@ -988,7 +988,7 @@ fn types_whose_digests_tie_at_every_depth_are_ordered() {
 /// deeper, each `x_k` the part `leaf` makes of the atom `base + k`.
 pub(super) fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
     (1..m as u64).fold(leaf(atom(base)), |e, k| {
-        Part::expr(Form::Or(e, leaf(atom(base + k))))
+        Part::connect(Op::Or, e, leaf(atom(base + k)))
     })
 }
 
@@ -999,7 +999,7 @@ pub(super) fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<
 pub(super) fn ladder(base: u64, m: usize) -> Part<Row> {
     let (mut below, mut top) = (Part::literal(atom(base)), Part::literal(atom(base + 1)));
     for _ in 2..m {
-        let next = Part::expr(Form::Or(top.clone(), below));
+        let next = Part::connect(Op::Or, top.clone(), below);
         (below, top) = (top, next);
     }
     top
@@ -1011,15 +1011,16 @@ pub(super) fn ladder(base: u64, m: usize) -> Part<Row> {
 /// rebuilt from them merges into a list. [`Part::settle`] pins `t` to `false` and
 /// rebuilds the `m - 1` expressions above it.
 pub(super) fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
-    let t = Part::expr(Form::Not(Part::literal(atom(base))));
+    let t = Part::not_expr(Part::literal(atom(base)));
     let p = (1..m as u64).fold(t.clone(), |e, k| {
         let x = Bdd::literal(atom(base + 2 * k - 1));
-        Part::expr(Form::Or(
+        Part::connect(
+            Op::Or,
             e,
             Part::Bdd(x.and_literal((atom(base + 2 * k), true))),
-        ))
+        )
     });
-    Part::expr(Form::And(p, Part::expr(Form::Not(t))))
+    Part::connect(Op::And, p, Part::not_expr(t))
 }
 
 /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
@@ -1173,10 +1174,11 @@ pub(super) fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
 pub(super) fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
     (1..m as u64).fold(Part::literal(atom(base + m as u64)), |p, k| {
         let c = Part::literal(atom(base + k));
-        Part::expr(Form::Or(
-            Part::expr(Form::And(c.clone(), p)),
-            Part::expr(Form::And(c.not(), Part::literal(atom(leaves + k)))),
-        ))
+        Part::connect(
+            Op::Or,
+            Part::connect(Op::And, c.clone(), p),
+            Part::connect(Op::And, c.not(), Part::literal(atom(leaves + k))),
+        )
     })
 }
 
@@ -2150,7 +2152,7 @@ fn conjunction_literal(i: usize) -> Part<Row> {
 /// `x_0 ∧ x_1 ∧ … ∧ x_{m-1}`, every third literal refused, kept as expressions: built one
 /// literal at a time, or as a balanced tree (`balanced`).
 pub(super) fn conjunction(m: usize, balanced: bool) -> Part<Row> {
-    let and = |a: Part<Row>, b: Part<Row>| Part::expr(Form::And(a, b));
+    let and = |a: Part<Row>, b: Part<Row>| Part::connect(Op::And, a, b);
     if !balanced {
         return (1..m).fold(conjunction_literal(0), |p, i| {
             and(p, conjunction_literal(i))
@@ -2207,10 +2209,7 @@ fn a_conjunction_forces_each_of_its_literals() {
         }
     }
     // A conjunction holding an atom both ways holds nowhere: every atom is then forced.
-    let empty = Part::expr(Form::And(
-        conjunction(5, false),
-        Part::literal(atom(0)).not(),
-    ));
+    let empty = Part::connect(Op::And, conjunction(5, false), Part::literal(atom(0)).not());
     let (t, r) = empty.forced();
     assert_eq!(t.len() + r.len(), 5, "{empty:?}");
 }
@@ -2220,7 +2219,7 @@ fn a_conjunction_forces_each_of_its_literals() {
 pub(super) fn self_meets(depth: usize) -> Part<Row> {
     let mut x = Part::literal(atom(0));
     for _ in 0..depth {
-        x = Part::expr(Form::And(x.clone(), x.not()));
+        x = Part::connect(Op::And, x.clone(), x.not());
     }
     x
 }

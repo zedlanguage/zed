@@ -713,11 +713,115 @@ enum Source<A: Literal> {
     Form(Form<A>),
 }
 
+/// An expression's form. No operand of an `Or` or `And` is a leaf (`Part::is_leaf`): every
+/// expression is made in [`build`], whose `Part::connect` folds a leaf operand away
+/// (`a | true` is `true`, `a | false` is `a`, `a & true` is `a`, `a & false` is `false`), and
+/// whose other constructors assert it. Readers of a form (`empty.rs` `read_two_sat`) rely on it.
 #[derive(Clone)]
 pub(super) enum Form<A: Literal> {
     Not(Part<A>),
     Or(Part<A>, Part<A>),
     And(Part<A>, Part<A>),
+}
+
+/// The only constructors of an expression with a form: `Part::expr` is private here, so no
+/// other code, the tests included, makes an `Or` or `And` with a leaf operand ([`Form`]).
+mod build {
+    use super::*;
+
+    impl<A: Literal> Part<A> {
+        fn expr(form: Form<A>) -> Part<A> {
+            Part::made(
+                form.digest(),
+                form.name_digest(),
+                std::sync::OnceLock::from(form),
+                None,
+            )
+        }
+
+        /// `a | b` (`Op::Or`) or `a & b` (`Op::And`), operands in this order, as an expression;
+        /// a leaf operand is folded away and its result returned instead.
+        pub(super) fn connect(op: Op, a: Part<A>, b: Part<A>) -> Part<A> {
+            match (op, a.is_leaf(), b.is_leaf()) {
+                (Op::Or, Some(true), _) | (Op::Or, _, Some(true)) => Part::Bdd(Bdd::Leaf(true)),
+                (Op::And, Some(false), _) | (Op::And, _, Some(false)) => {
+                    Part::Bdd(Bdd::Leaf(false))
+                }
+                (_, Some(_), _) => b,
+                (_, _, Some(_)) => a,
+                (Op::Or, None, None) => Part::expr(Form::Or(a, b)),
+                (Op::And, None, None) => Part::expr(Form::And(a, b)),
+            }
+        }
+
+        /// `!p` kept as an expression.
+        pub(super) fn not_expr(p: Part<A>) -> Part<A> {
+            Part::expr(Form::Not(p))
+        }
+
+        /// The expression of `form`, a form an expression had: its operands are no leaves.
+        pub(super) fn of_form(form: Form<A>) -> Part<A> {
+            form.assert_no_leaf_operand();
+            Part::expr(form)
+        }
+    }
+
+    impl<A: Literal> Form<A> {
+        /// Asserts in debug builds that no operand of an `Or` or `And` is a leaf ([`Form`]).
+        pub(super) fn assert_no_leaf_operand(&self) {
+            if let Form::Or(a, b) | Form::And(a, b) = self {
+                debug_assert!(
+                    a.is_leaf().is_none() && b.is_leaf().is_none(),
+                    "a leaf operand of an `Or` or `And`"
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::tests::{atom, random};
+        use super::*;
+        use crate::types::Row;
+
+        /// `Part::connect` keeps the value of the expression built without folding, on random
+        /// parts with leaves mixed in, at every assignment of the six atoms.
+        #[test]
+        fn connecting_keeps_the_value_of_the_unfolded_expression() {
+            let mut seed =
+                crate::seed::seed("connecting_keeps_the_value_of_the_unfolded_expression");
+            let operand = |seed: &mut u64| {
+                *seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                match (*seed >> 33) % 4 {
+                    0 => Part::Bdd(Bdd::Leaf(true)),
+                    1 => Part::Bdd(Bdd::Leaf(false)),
+                    _ => random(seed, 2),
+                }
+            };
+            let mut folded = 0;
+            for _ in 0..2000 {
+                let (a, b) = (operand(&mut seed), operand(&mut seed));
+                for op in [Op::Or, Op::And] {
+                    let old = Part::expr(match op {
+                        Op::Or => Form::Or(a.clone(), b.clone()),
+                        Op::And => Form::And(a.clone(), b.clone()),
+                    });
+                    let new = Part::connect(op, a.clone(), b.clone());
+                    if !matches!(new, Part::Expr(_)) {
+                        folded += 1;
+                    }
+                    for set in 0..64u32 {
+                        let holds = |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
+                        let or = matches!(op, Op::Or);
+                        assert_eq!(new.eval(&holds), old.eval(&holds), "{a:?} or {or} {b:?}");
+                    }
+                }
+            }
+            assert!(folded > 1000, "{folded} folded");
+        }
+    }
 }
 
 /// The digest of the expression `a | b` (`Op::Or`) or `a & b` (`Op::And`) whose operands, in
@@ -858,15 +962,6 @@ impl<A: Literal> Part<A> {
             Part::Bdd(Bdd::Leaf(b)) => Some(*b),
             _ => None,
         }
-    }
-
-    fn expr(form: Form<A>) -> Part<A> {
-        Part::made(
-            form.digest(),
-            form.name_digest(),
-            std::sync::OnceLock::from(form),
-            None,
-        )
     }
 
     /// The exclusive or `xor` of the digests `digest` and `name_digest`, its halves made when
@@ -1240,8 +1335,8 @@ impl<'m> Connect<'m> {
         let n = if let Some(source) = e.source.get() {
             // The expression this one was made the complement of, freed: made again as written.
             match source {
-                Source::NotOfThis => Part::expr(Form::Not(p.clone())),
-                Source::Form(f) => Part::expr(f.clone()),
+                Source::NotOfThis => Part::not_expr(p.clone()),
+                Source::Form(f) => Part::of_form(f.clone()),
             }
         } else if let Some((s, constant)) = &e.xor {
             // An exclusive or's complement is the one of its set and the other constant.
@@ -1266,7 +1361,7 @@ impl<'m> Connect<'m> {
             n
         } else {
             e.plain.store(true, Atomic::Relaxed);
-            Part::expr(Form::Not(p.clone()))
+            Part::not_expr(p.clone())
         };
         e.link(n)
     }
@@ -1327,10 +1422,7 @@ impl<'m> Connect<'m> {
             return self.choose(&c, &x, &y).await;
         }
         let (a, b) = if a.before(&b) { (a, b) } else { (b, a) };
-        Part::expr(match op {
-            Op::Or => Form::Or(a, b),
-            Op::And => Form::And(a, b),
-        })
+        Part::connect(op, a, b)
     }
 
     /// Whether `a` is the complement of `b`, as built. Two diagrams are compared by their first
@@ -1432,7 +1524,7 @@ impl<'m> Connect<'m> {
                 return l;
             }
         }
-        Part::expr(Form::Or(a, b))
+        Part::connect(Op::Or, a, b)
     }
 
     /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
@@ -2942,11 +3034,17 @@ mod xor {
         } else {
             (meet(&p, &nq), meet(&np, &q))
         };
-        if x.before(&y) {
+        // The form is made when first read (`Part::expr_unmade`), so it cannot be folded; its
+        // operands are no leaves: each is the meet of a literal and an exclusive or (or their
+        // complements) over disjoint atoms, which `meet` keeps as an expression or a two-literal
+        // list, never a leaf.
+        let form = if x.before(&y) {
             Form::Or(x, y)
         } else {
             Form::Or(y, x)
-        }
+        };
+        form.assert_no_leaf_operand();
+        form
     }
 
     /// `a & b` for `a` and `b` each a literal or an exclusive or made by [`node`] (or the
@@ -2977,7 +3075,7 @@ mod xor {
             return a.zip(b, Op::And);
         }
         let (a, b) = if a.before(b) { (a, b) } else { (b, a) };
-        Part::expr(Form::And(a.clone(), b.clone()))
+        Part::connect(Op::And, a.clone(), b.clone())
     }
 
     /// The exclusive or of the set `s` of two or more atoms and `constant`, the complement of the

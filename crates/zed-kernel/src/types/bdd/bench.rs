@@ -798,7 +798,7 @@ fn distinct_atoms_of_one_digest_scales() {
             let mut it = level.into_iter();
             while let Some(a) = it.next() {
                 next.push(match it.next() {
-                    Some(b) => Part::expr(Form::Or(a, b)),
+                    Some(b) => Part::connect(Op::Or, a, b),
                     None => a,
                 });
             }
