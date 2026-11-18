@@ -139,8 +139,123 @@ fn a_plan_with_no_count_sentence_is_reported() {
 
 #[test]
 fn a_bar_in_a_title_does_not_move_the_needs_column() {
-    let text = plan(GOOD_HEAD, GOOD).replace("Work on ST1", "Work on `a | b` in ST1");
+    let text = plan(GOOD_HEAD, GOOD).replace("Work on ST1", "Work on `a \\| b` in ST1");
     assert_eq!(checked(&text), (true, String::new()));
+}
+
+/// The plan `text` read by the tool, which must refuse it; what it says.
+fn refused(text: &str) -> String {
+    let err = check_plan(text, &mut String::new()).unwrap_err();
+    assert_eq!(fix_plan(text), Err(err.clone()));
+    err
+}
+
+#[test]
+fn a_row_whose_last_cells_are_written_twice_is_refused() {
+    // The case that made the column count check (found by edits-spec, 2026-11-16): `plan --fix`
+    // read the needs and paths from the right and took this row as good.
+    let text = plan(GOOD_HEAD, GOOD).replace(
+        "| T4 | `src/ST1.rs` |",
+        "| T4 | `src/ST1.rs` | S | no | T4 | `src/ST1.rs` |",
+    );
+    assert_eq!(
+        refused(&text),
+        "line 11: the row has 11 cells, not 7 (Level, Id, Title, Size, Hard, Needs, Paths); a `|` \
+         in a cell's text, also inside backticks, is written `\\|`"
+    );
+}
+
+#[test]
+fn a_row_with_one_cell_too_few_is_refused() {
+    let text = plan(GOOD_HEAD, GOOD).replace("| S | no | T4 |", "| S | T4 |");
+    assert!(refused(&text).starts_with("line 11: the row has 6 cells, not 7"));
+}
+
+#[test]
+fn a_row_with_an_escaped_bar_in_backticks_is_read_with_the_right_fields() {
+    // TOOL-plan-row-columns' own row, whose title holds `|` inside backticks, written `\|` as
+    // GitHub needs it. Its needs (none, at level 0) and the row after it (needing it, at level 1)
+    // are read from the right cells, and the fix leaves both as written.
+    let row = "| 0 | TOOL-plan-row-columns | Found by edits-spec (2026-11-16): a naive split on \
+               ` \\| ` gives 6 to 11 fields | S | yes | none | `crates/zed-tools/src/plan.rs` |\n\
+               | 1 | NEXT | Uses it, `a \\| b \\| c` | S | no | TOOL-plan-row-columns | `x/` |\n";
+    let text = plan("It has 6 items, 5 edges and 3 levels (0 to 2).", GOOD)
+        .replace("\n## File conflicts", &format!("{row}\n## File conflicts"));
+    assert_eq!(checked(&text), (true, String::new()));
+    assert_eq!(fixed(&text), text);
+    assert_eq!(
+        zed_tools::plan::row_ids(&text).unwrap(),
+        ["T4", "LR1", "ST1", "L1.40", "TOOL-plan-row-columns", "NEXT"]
+    );
+    // One cell off would show: NEXT at level 0 is then reported against its need.
+    let moved = text.replace("| 1 | NEXT |", "| 0 | NEXT |");
+    let (ok, out) = checked(&moved);
+    assert!(!ok);
+    assert!(
+        out.contains("NEXT is at level 0; one more than the highest level among its needs is 1")
+    );
+}
+
+#[test]
+fn a_bar_in_backticks_written_without_its_backslash_is_refused() {
+    // GitHub splits a table row at a `|` inside a code span too, so such a row shows broken
+    // there; the tool reads the row the same way and names the repair.
+    let text = plan(GOOD_HEAD, GOOD).replace("Work on ST1", "Work on `a | b` in ST1");
+    assert!(
+        refused(&text).starts_with("line 11: the row has 8 cells, not 7"),
+        "{}",
+        refused(&text)
+    );
+}
+
+#[test]
+fn an_escaped_bar_outside_the_title_is_refused() {
+    let text = plan(GOOD_HEAD, GOOD).replace("`src/ST1.rs`", "`src/a\\|b.rs`");
+    assert_eq!(
+        refused(&text),
+        "line 11: the Paths cell holds `\\|`; only the Title may"
+    );
+}
+
+#[test]
+fn a_blank_line_inside_the_table_is_refused() {
+    // A blank line ends a Markdown table: the rows after it show as one paragraph.
+    let text = plan(GOOD_HEAD, GOOD).replace("| 1 | ST1 |", "\n| 1 | ST1 |");
+    assert_eq!(
+        refused(&text),
+        "line 11: a blank line inside the table, which ends it in Markdown"
+    );
+}
+
+#[test]
+fn a_line_in_the_table_that_is_not_a_row_is_refused() {
+    let text = plan(GOOD_HEAD, GOOD).replace("| 1 | ST1 |", "Note.\n| 1 | ST1 |");
+    assert_eq!(
+        refused(&text),
+        "line 11: not a table row: a row starts and ends with `|`"
+    );
+}
+
+#[test]
+fn a_table_with_another_header_is_refused() {
+    let text = plan(GOOD_HEAD, GOOD).replace("| Hard |", "| Hard? |");
+    assert!(refused(&text).starts_with(
+        "line 7: `| Level | Id | Title | Size | Hard? | Needs | Paths |` where the table must have"
+    ));
+}
+
+#[test]
+fn every_bad_line_is_named_at_once() {
+    let text = plan(GOOD_HEAD, GOOD)
+        .replace("| 0 | LR1 |", "| x | LR1 |")
+        .replace("| S | no | T4 |", "| S | T4 |");
+    assert_eq!(
+        refused(&text)
+            .lines()
+            .map(|l| l.split(':').next().unwrap())
+            .collect::<Vec<_>>(),
+        ["line 10", "line 11"]
+    );
 }
 
 #[test]
@@ -198,24 +313,20 @@ fn fix_keeps_the_spacing_of_each_level_cell() {
 }
 
 #[test]
-fn fix_does_not_read_a_row_whose_level_is_not_a_number() {
+fn a_row_whose_level_is_not_a_number_is_refused() {
+    // Until TOOL-plan-row-columns such a line was skipped, so ST1 seemed to have no row.
     let text = plan(GOOD_HEAD, GOOD).replace("| 1 | ST1 |", "| 1a | ST1 |");
-    // A level cell that is not all digits is not a row to the reader, so ST1 has no row.
-    assert!(
-        fix_plan(&text)
-            .unwrap_err()
-            .contains("ST1, which has no row")
-    );
+    assert_eq!(refused(&text), "line 11: ST1 has level `1a`, not a number");
 }
 
 #[test]
 fn fix_reads_the_needs_column_past_a_bar_in_a_title() {
     let text = plan(GOOD_HEAD, GOOD)
-        .replace("Work on ST1", "Work on `a | b` in ST1")
+        .replace("Work on ST1", "Work on `a \\| b` in ST1")
         .replace("| 2 | L1.40 |", "| 1 | L1.40 |");
     assert_eq!(
         fixed(&text),
-        plan(GOOD_HEAD, GOOD).replace("Work on ST1", "Work on `a | b` in ST1")
+        plan(GOOD_HEAD, GOOD).replace("Work on ST1", "Work on `a \\| b` in ST1")
     );
 }
 

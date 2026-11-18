@@ -8,6 +8,17 @@
 //! give, and the count sentence of the first paragraph becomes the table's counts. Nothing else
 //! changes, not even the order of the rows. It refuses, writing nothing, when the levels cannot
 //! be computed: an id with two rows, a need with no row, or a cycle.
+//!
+//! The table is read the way GitHub renders it (GitHub-flavored Markdown): a row is split into
+//! cells at every `|`, also one inside backticks, except a `|` written `\|`, which is part of the
+//! cell's text (and shows as `|`, in code too). Before both modes the tool refuses the file, with
+//! one line per bad line, unless the section holds, after blank lines, exactly the header
+//! `| Level | Id | Title | Size | Hard | Needs | Paths |`, the delimiter row, and then only rows
+//! of exactly seven cells whose level is a number, with no blank line between two rows (a blank
+//! line ends a Markdown table). A `\|` may stand only in the Title cell, since the other readers
+//! of this table (tools/dagview, tools/plan_merge.sh) split at every `|` and read the cells
+//! after the title from the right. So a row whose last cells were written twice
+//! (TOOL-plan-row-columns) and a `|` in a title written without its `\` are both refused.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -20,6 +31,13 @@ use crate::{Outcome, impl_root, say};
 /// The heading of the table the tool reads; the table ends at the next `## ` heading.
 const TABLE: &str = "## Items by level";
 
+/// The names of the table's columns, in order.
+const COLUMNS: [&str; 7] = ["Level", "Id", "Title", "Size", "Hard", "Needs", "Paths"];
+
+/// The table's header line and delimiter row, as they must be written.
+const HEADER: &str = "| Level | Id | Title | Size | Hard | Needs | Paths |";
+const DELIMITER: &str = "|---|---|---|---|---|---|---|";
+
 /// One row of the table.
 pub(crate) struct Row<'a> {
     /// The line number in the file, from 1.
@@ -28,7 +46,7 @@ pub(crate) struct Row<'a> {
     pub(crate) level: &'a str,
     /// The id.
     pub(crate) id: &'a str,
-    /// The start of the title column: the text after the id, up to the first `|`.
+    /// The title column as written, a `|` in it as `\|`.
     pub(crate) title: &'a str,
     /// The ids in the `needs` column; empty for `none`.
     pub(crate) needs: Vec<&'a str>,
@@ -36,8 +54,33 @@ pub(crate) struct Row<'a> {
     pub(crate) paths: &'a str,
 }
 
-/// The rows of the table in `text`. The title column may hold a `|`, so `needs` is read from the
-/// right: it is the second-last cell, before the paths.
+/// The cells of the table line `l`, trimmed: the text between one `|` and the next, where a `|`
+/// written `\|` is text (see the module comment); `None` unless `l` starts and ends with a `|`
+/// that splits.
+fn cells(l: &str) -> Option<Vec<&str>> {
+    let mut cells = Vec::new();
+    let mut start = None;
+    let mut escaped = false;
+    for (at, b) in l.bytes().enumerate() {
+        match b {
+            b'|' if !escaped => {
+                if let Some(s) = start {
+                    cells.push(l[s..at].trim());
+                } else if at != 0 {
+                    return None;
+                }
+                start = Some(at + 1);
+            }
+            _ => {}
+        }
+        escaped = b == b'\\';
+    }
+    // The line must end at a splitting bar: nothing but the empty text after the last one.
+    (start == Some(l.len()) && !cells.is_empty()).then_some(cells)
+}
+
+/// The rows of the table in `text`, read as the module comment states; refused with one line per
+/// bad line of the table. One pass over the bytes of the section: O(length).
 pub(crate) fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
     let mut lines = text.lines().enumerate();
     lines
@@ -45,28 +88,96 @@ pub(crate) fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
         .find(|(_, l)| *l == TABLE)
         .ok_or_else(|| format!("no heading `{TABLE}`"))?;
     let mut rows = Vec::new();
+    let mut bad = String::new();
+    // What the next non-blank line must be: the header, then the delimiter, then rows.
+    let mut seen = 0;
+    // The first blank line after the delimiter, if a row may still follow it.
+    let mut blank: Option<usize> = None;
     for (i, l) in lines.take_while(|(_, l)| !l.starts_with("## ")) {
-        let Some(inner) = l.strip_prefix('|').and_then(|l| l.strip_suffix('|')) else {
-            continue;
-        };
-        let cells: Vec<&str> = inner.split('|').map(str::trim).collect();
-        if cells.len() < 7 || !cells[0].bytes().all(|b| b.is_ascii_digit()) || cells[0].is_empty() {
+        let line = i + 1;
+        if l.trim().is_empty() {
+            if seen == 2 && blank.is_none() {
+                blank = Some(line);
+            }
             continue;
         }
-        let needs = match cells[cells.len() - 2] {
+        if seen < 2 {
+            let want = [HEADER, DELIMITER][seen];
+            if l != want {
+                say!(
+                    &mut bad,
+                    "line {line}: `{l}` where the table must have `{want}`"
+                );
+                return Err(bad.trim_end().into());
+            }
+            seen += 1;
+            continue;
+        }
+        if let Some(b) = blank.take() {
+            say!(
+                &mut bad,
+                "line {b}: a blank line inside the table, which ends it in Markdown"
+            );
+        }
+        let Some(cells) = cells(l) else {
+            say!(
+                &mut bad,
+                "line {line}: not a table row: a row starts and ends with `|`"
+            );
+            continue;
+        };
+        if cells.len() != COLUMNS.len() {
+            say!(
+                &mut bad,
+                "line {line}: the row has {} cells, not {} ({}); a `|` in a cell's text, also \
+                 inside backticks, is written `\\|`",
+                cells.len(),
+                COLUMNS.len(),
+                COLUMNS.join(", ")
+            );
+            continue;
+        }
+        if let Some(k) = (0..COLUMNS.len()).find(|&k| k != 2 && cells[k].contains("\\|")) {
+            say!(
+                &mut bad,
+                "line {line}: the {} cell holds `\\|`; only the Title may",
+                COLUMNS[k]
+            );
+            continue;
+        }
+        if cells[0].is_empty() || !cells[0].bytes().all(|b| b.is_ascii_digit()) {
+            say!(
+                &mut bad,
+                "line {line}: {} has level `{}`, not a number",
+                cells[1],
+                cells[0]
+            );
+            continue;
+        }
+        let needs = match cells[5] {
             "none" => Vec::new(),
             list => list.split(',').map(str::trim).collect(),
         };
         rows.push(Row {
-            line: i + 1,
+            line,
             level: cells[0],
             id: cells[1],
             title: cells[2],
             needs,
-            paths: cells[cells.len() - 1],
+            paths: cells[6],
         });
     }
-    Ok(rows)
+    if seen < 2 {
+        say!(
+            &mut bad,
+            "the section `{TABLE}` has no table: it must start with `{HEADER}` and `{DELIMITER}`"
+        );
+    }
+    if bad.is_empty() {
+        Ok(rows)
+    } else {
+        Err(bad.trim_end().into())
+    }
 }
 
 /// The counts the first paragraph states: items, edges, levels and the highest level, from the
