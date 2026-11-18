@@ -1498,9 +1498,12 @@ type ReadOnce = (bool, HashMap<Atom, IntervalSet>);
 fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> {
     enum Node {
         Block(Vec<Con>),
-        // A conjunction's one block of rows, if any, and its other parts; the block joins
-        // the parts once the nodes are built.
-        And(Option<usize>, Vec<usize>),
+        And {
+            block: Option<usize>,
+            unary: HashMap<Atom, Ends>,
+            unsat: bool,
+            kids: Vec<usize>,
+        },
         Or(Vec<usize>),
     }
     enum Go<'a> {
@@ -1551,12 +1554,9 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                     values.push(nodes.len() - 1);
                     continue;
                 }
-                // A conjunction takes in the parts of the conjunctions under it, and its rows
-                // are one block: the rows of `x0 <= -1 and not (x0 >= 0 or ...)` that read
-                // `x0` meet in one block. Each list taken in is moved into the longer one, so a
-                // chain of n conjunctions costs O(n log n), not O(n^2). The nodes taken in stay
-                // in `nodes`, unreached.
                 let mut rows: Vec<Con> = Vec::new();
+                let mut unary: HashMap<Atom, Ends> = HashMap::new();
+                let mut unsat = false;
                 let mut kids: Vec<usize> = Vec::new();
                 let take_rows = |rows: &mut Vec<Con>, mut more: Vec<Con>| {
                     if more.len() > rows.len() {
@@ -1564,10 +1564,32 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                     }
                     rows.append(&mut more);
                 };
+                let take_unary =
+                    |u: &mut HashMap<Atom, Ends>, mut more: HashMap<Atom, Ends>, bad: &mut bool| {
+                        if more.len() > u.len() {
+                            std::mem::swap(u, &mut more);
+                        }
+                        for (a, bnd) in more {
+                            let met = u
+                                .get(&a)
+                                .map_or_else(|| bnd.clone(), |old| ends_meet(old, &bnd));
+                            if ends_empty(&met) {
+                                *bad = true;
+                            }
+                            u.insert(a, met);
+                        }
+                    };
                 for i in parts {
                     match std::mem::replace(&mut nodes[i], Node::Or(Vec::new())) {
                         Node::Block(r) => take_rows(&mut rows, r),
-                        Node::And(block, mut more) => {
+                        Node::And {
+                            block,
+                            unary: sub_u,
+                            unsat: sub_bad,
+                            kids: mut more,
+                        } => {
+                            unsat |= sub_bad;
+                            take_unary(&mut unary, sub_u, &mut unsat);
                             if let Some(b) = block
                                 && let Node::Block(r) =
                                     std::mem::replace(&mut nodes[b], Node::Or(Vec::new()))
@@ -1585,14 +1607,39 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                         }
                     }
                 }
-                if kids.is_empty() {
+                if kids.is_empty() && unary.is_empty() && !unsat {
                     nodes.push(Node::Block(rows));
                 } else {
-                    let block = (!rows.is_empty()).then(|| {
-                        nodes.push(Node::Block(rows));
+                    let empty_model = Model::new();
+                    let mut wide: Vec<Con> = Vec::new();
+                    for c in rows {
+                        if c.lin.terms.is_empty() {
+                            if !c.holds(&empty_model) {
+                                unsat = true;
+                            }
+                        } else if let Some((a, lo, hi)) = super::formula::one_bound(&c) {
+                            let bnd = (lo, hi);
+                            let met = unary
+                                .get(a)
+                                .map_or_else(|| bnd.clone(), |old| ends_meet(old, &bnd));
+                            if ends_empty(&met) {
+                                unsat = true;
+                            }
+                            unary.insert(a.clone(), met);
+                        } else {
+                            wide.push(c);
+                        }
+                    }
+                    let block = (!wide.is_empty()).then(|| {
+                        nodes.push(Node::Block(wide));
                         nodes.len() - 1
                     });
-                    nodes.push(Node::And(block, kids));
+                    nodes.push(Node::And {
+                        block,
+                        unary,
+                        unsat,
+                        kids,
+                    });
                 }
                 values.push(nodes.len() - 1);
             }
@@ -1600,7 +1647,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
     }
     let root = values.pop().expect("the node of `f`");
     for n in &mut nodes {
-        if let Node::And(block, kids) = n
+        if let Node::And { block, kids, .. } = n
             && let Some(b) = block.take()
         {
             kids.push(b);
@@ -1613,22 +1660,118 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         if !reached[i] {
             continue;
         }
-        if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+        if let Node::And { kids: cs, .. } | Node::Or(cs) = &nodes[i] {
             for &c in cs {
                 reached[c] = true;
             }
         }
     }
-    // The blocks that read each atom, each once.
-    let mut blocks_of: HashMap<&Atom, Vec<usize>> = HashMap::new();
-    for (i, n) in nodes.iter().enumerate() {
-        if let (true, Node::Block(rows)) = (reached[i], n) {
-            for a in rows.iter().flat_map(|c| c.lin.terms.keys()) {
-                let bs = blocks_of.entry(a).or_default();
-                if bs.last() != Some(&i) {
-                    bs.push(i);
+    // Pass 0, top-down with an undo stack: cumulative ancestor unary bounds `cur_box`, pushing
+    // active ancestor bounds into each leaf block over the atoms it reads, and marking `And`
+    // nodes whose cumulative box becomes empty (`box_unsat`, handling nested disjoint intervals).
+    enum BoxStep {
+        Enter(usize),
+        Exit(Vec<(Atom, Option<Ends>)>),
+    }
+    let mut cur_box: HashMap<Atom, Ends> = HashMap::new();
+    let mut after_box: Vec<HashMap<Atom, Ends>> = (0..nodes.len()).map(|_| HashMap::new()).collect();
+    let mut box_unsat = vec![false; nodes.len()];
+    let mut pushed: Vec<Vec<Con>> = (0..nodes.len()).map(|_| Vec::new()).collect();
+    let mut bstack = vec![BoxStep::Enter(root)];
+    while let Some(step) = bstack.pop() {
+        match step {
+            BoxStep::Enter(i) => match &nodes[i] {
+                Node::And { unary, kids, .. } => {
+                    let mut undo = Vec::with_capacity(unary.len());
+                    for (a, bnd) in unary {
+                        let prev = cur_box.get(a).cloned();
+                        let met = prev
+                            .as_ref()
+                            .map_or_else(|| bnd.clone(), |old| ends_meet(old, bnd));
+                        if ends_empty(&met) {
+                            box_unsat[i] = true;
+                        }
+                        after_box[i].insert(a.clone(), met.clone());
+                        cur_box.insert(a.clone(), met);
+                        undo.push((a.clone(), prev));
+                    }
+                    if !undo.is_empty() {
+                        bstack.push(BoxStep::Exit(undo));
+                    }
+                    for &c in kids.iter().rev() {
+                        bstack.push(BoxStep::Enter(c));
+                    }
+                }
+                Node::Or(kids) => {
+                    for &c in kids.iter().rev() {
+                        bstack.push(BoxStep::Enter(c));
+                    }
+                }
+                Node::Block(rows) => {
+                    let mut seen_a: HashSet<&Atom> = HashSet::new();
+                    for a in rows.iter().flat_map(|c| c.lin.terms.keys()) {
+                        if seen_a.insert(a)
+                            && let Some((lo, hi)) = cur_box.get(a)
+                        {
+                            if let Some(lo) = lo {
+                                pushed[i].push(Con {
+                                    lin: Lin {
+                                        terms: [(a.clone(), Int::ONE)].into_iter().collect(),
+                                        constant: -lo,
+                                    },
+                                    rel: Rel::Ge,
+                                });
+                            }
+                            if let Some(hi) = hi {
+                                pushed[i].push(Con {
+                                    lin: Lin {
+                                        terms: [(a.clone(), -&Int::ONE)].into_iter().collect(),
+                                        constant: hi.clone(),
+                                    },
+                                    rel: Rel::Ge,
+                                });
+                            }
+                        }
+                    }
+                }
+            },
+            BoxStep::Exit(undo) => {
+                for (a, prev) in undo {
+                    match prev {
+                        Some(old) => {
+                            cur_box.insert(a, old);
+                        }
+                        None => {
+                            cur_box.remove(&a);
+                        }
+                    }
                 }
             }
+        }
+    }
+    // The blocks and unary-bearing `And` nodes that read each atom, each once.
+    let mut occ_of: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    let mut any_and_unary = false;
+    for (i, n) in nodes.iter().enumerate() {
+        if !reached[i] {
+            continue;
+        }
+        match n {
+            Node::Block(rows) => {
+                for a in rows.iter().flat_map(|c| c.lin.terms.keys()) {
+                    let os = occ_of.entry(a).or_default();
+                    if os.last() != Some(&i) {
+                        os.push(i);
+                    }
+                }
+            }
+            Node::And { unary, .. } => {
+                for a in unary.keys() {
+                    any_and_unary = true;
+                    occ_of.entry(a).or_default().push(i);
+                }
+            }
+            Node::Or(_) => {}
         }
     }
     // Pass 1, from the blocks up: each block's projection onto each of its atoms, and `sat`.
@@ -1662,8 +1805,15 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 // projected onto its own atoms, O(r_g a_g) for a group of r_g rows and a_g
                 // atoms; a block of one group costs what it did (COMPLEXITY.md row
                 // PRES-cover-bench-disjoint-reduced).
+                let combined: Vec<Con>;
+                let eff: &[Con] = if pushed[i].is_empty() {
+                    rows
+                } else {
+                    combined = rows.iter().chain(&pushed[i]).cloned().collect();
+                    &combined
+                };
                 let mut all = true;
-                for group in row_groups(rows, work)? {
+                for group in row_groups(eff, work)? {
                     let sets = if let Some(sets) = forest(&group, work)? {
                         sets
                     } else {
@@ -1692,7 +1842,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 }
                 all
             }
-            Node::And(_, cs) => cs.iter().all(|&c| sat[c]),
+            Node::And { unsat, kids: cs, .. } => !*unsat && !box_unsat[i] && cs.iter().all(|&c| sat[c]),
             Node::Or(cs) => cs.iter().any(|&c| sat[c]),
         };
     }
@@ -1704,39 +1854,37 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
     let mut parent = vec![root; nodes.len()];
     let mut depth = vec![0usize; nodes.len()];
     let mut live = vec![0usize; nodes.len()];
-    ctx[root] = true;
+    ctx[root] = sat[root];
     for i in (0..nodes.len()).rev() {
         if !reached[i] {
             continue;
         }
-        if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+        if let Node::And { kids: cs, .. } | Node::Or(cs) = &nodes[i] {
             work.read(cs.len() as u64)?;
             live[i] = cs.iter().filter(|&&c| sat[c]).count();
             for &c in cs {
                 let others = live[i] - usize::from(sat[c]);
                 parent[c] = i;
                 depth[c] = depth[i] + 1;
-                if matches!(nodes[i], Node::And(..)) {
-                    ctx[c] = ctx[i] && others == cs.len() - 1;
+                if let Node::And { unsat, .. } = &nodes[i] {
+                    ctx[c] = ctx[i] && !*unsat && !box_unsat[i] && others == cs.len() - 1;
                     escs[c] = escs[i];
                 } else {
-                    ctx[c] = ctx[i];
+                    ctx[c] = ctx[i] && sat[c];
                     escs[c] = escs[i] + usize::from(ctx[i] && others > 0);
                 }
             }
         }
     }
-    // Where some atom is read by two blocks: the order of a walk of the tree from the root, and
-    // the ancestors of each node 2^j steps up.
     let mut order = vec![0usize; nodes.len()];
     let mut lift: Vec<Vec<usize>> = Vec::new();
-    if blocks_of.values().any(|bs| bs.len() > 1) {
+    if any_and_unary || occ_of.values().any(|os| os.len() > 1) {
         let mut stack = vec![root];
         let mut at = 0;
         while let Some(i) = stack.pop() {
             order[i] = at;
             at += 1;
-            if let Node::And(_, cs) | Node::Or(cs) = &nodes[i] {
+            if let Node::And { kids: cs, .. } | Node::Or(cs) = &nodes[i] {
                 stack.extend(cs.iter().copied());
             }
         }
@@ -1772,49 +1920,106 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         }
         parent[a]
     };
+    let ends_set = |e: &Ends| {
+        if ends_empty(e) {
+            IntervalSet::empty()
+        } else {
+            let fin = |v: &Option<Int>, inf: End| v.as_ref().map_or(inf, |x| End::Fin(Num::from(x)));
+            IntervalSet::range(fin(&e.0, End::NegInf), fin(&e.1, End::PosInf))
+        }
+    };
     let every = IntervalSet::range(End::NegInf, End::PosInf);
     let mut out = HashMap::new();
-    for (a, mut bs) in blocks_of {
-        let escaped = if bs.len() == 1 {
-            escs[bs[0]] > 0
-        } else {
-            work.read(bs.len() as u64)?;
-            // The blocks with the lowest common ancestors of neighbors in walk order: a set
-            // closed under lowest common ancestors, in which each node's lowest ancestor is the
-            // lowest common ancestor of it and the node before it in walk order.
-            bs.sort_by_key(|&b| order[b]);
-            let mut vs = bs.clone();
-            vs.extend(bs.windows(2).map(|w| lca(w[0], w[1])));
-            vs.sort_by_key(|&v| order[v]);
-            vs.dedup();
-            let mut escaped = escs[vs[0]] > 0;
-            let mut parts: HashMap<usize, Vec<usize>> = HashMap::new();
-            for w in vs.windows(2) {
-                let x = lca(w[0], w[1]);
-                let c = up_to(w[1], depth[x] + 1);
-                escaped |= escs[w[1]] > escs[c];
-                parts.entry(x).or_default().push(c);
-            }
-            for (x, mut cs) in parts {
-                if matches!(nodes[x], Node::And(..)) {
-                    return Ok(None);
-                }
+    for (a, mut os) in occ_of {
+        if os.len() == 1 && matches!(nodes[os[0]], Node::Block(_)) {
+            let b = os[0];
+            let set = if !sat[root] {
+                IntervalSet::empty()
+            } else if escs[b] > 0 {
+                every.clone()
+            } else if ctx[b] && sat[b] {
+                own[b][a].clone()
+            } else {
+                IntervalSet::empty()
+            };
+            out.insert(a.clone(), set);
+            continue;
+        }
+        work.read(os.len() as u64)?;
+        os.sort_by_key(|&v| order[v]);
+        let mut vs = os.clone();
+        vs.extend(os.windows(2).map(|w| lca(w[0], w[1])));
+        vs.sort_by_key(|&v| order[v]);
+        vs.dedup();
+        let mut vkids: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        for w in vs.windows(2) {
+            let x = lca(w[0], w[1]);
+            let c = up_to(w[1], depth[x] + 1);
+            vkids.entry(x).or_default().push((w[1], c));
+        }
+        for (&x, edges) in &vkids {
+            if matches!(nodes[x], Node::And { .. }) {
+                let mut cs: Vec<usize> = edges.iter().map(|&(_, c)| c).collect();
                 cs.sort_unstable();
                 cs.dedup();
-                let reading = cs.iter().filter(|&&c| sat[c]).count();
-                escaped |= ctx[x] && live[x] > reading;
+                if cs.len() > 1 {
+                    return Ok(None);
+                }
             }
-            escaped
-        };
-        let set = if escaped {
-            every.clone()
-        } else {
-            let pieces = (bs.iter().filter(|&&b| ctx[b]))
-                .flat_map(|&b| own[b][a].pieces().cloned())
-                .collect();
-            IntervalSet::from_pieces(pieces)
-        };
-        out.insert(a.clone(), set);
+        }
+        if !sat[root] {
+            out.insert(a.clone(), IntervalSet::empty());
+            continue;
+        }
+        if escs[vs[0]] > 0 {
+            out.insert(a.clone(), every.clone());
+            continue;
+        }
+        let mut v_in: HashMap<usize, Ends> = HashMap::new();
+        v_in.insert(vs[0], (None, None));
+        let mut pieces = Vec::new();
+        for &v in &vs {
+            let vin = v_in[&v].clone();
+            let vafter = match &nodes[v] {
+                Node::And { unary, .. } if unary.contains_key(a) => after_box[v][a].clone(),
+                _ => vin.clone(),
+            };
+            match &nodes[v] {
+                Node::Block(_) if ctx[v] && sat[v] => {
+                    pieces.extend(own[v][a].pieces().cloned());
+                }
+                Node::And { unary, .. }
+                    if unary.contains_key(a)
+                        && vkids.get(&v).is_none_or(Vec::is_empty)
+                        && ctx[v]
+                        && sat[v] =>
+                {
+                    pieces.extend(ends_set(&vafter).pieces().cloned());
+                }
+                Node::Or(_) if ctx[v] && sat[v] => {
+                    let mut cs: Vec<usize> = vkids
+                        .get(&v)
+                        .map(|es| es.iter().map(|&(_, c)| c).collect())
+                        .unwrap_or_default();
+                    cs.sort_unstable();
+                    cs.dedup();
+                    let reading = cs.iter().filter(|&&c| sat[c]).count();
+                    if live[v] > reading {
+                        pieces.extend(ends_set(&vin).pieces().cloned());
+                    }
+                }
+                _ => {}
+            }
+            if let Some(edges) = vkids.get(&v) {
+                for &(w, c) in edges {
+                    v_in.insert(w, vafter.clone());
+                    if escs[w] > escs[c] {
+                        pieces.extend(ends_set(&vafter).pieces().cloned());
+                    }
+                }
+            }
+        }
+        out.insert(a.clone(), IntervalSet::from_pieces(pieces));
     }
     Ok(Some((sat[root], out)))
 }

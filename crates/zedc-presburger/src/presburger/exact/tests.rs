@@ -3,6 +3,7 @@ use super::super::{SOLVER, Shared, member, project_each_exact};
 use super::*;
 
 mod columns;
+mod push_down;
 
 /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
 /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
@@ -2069,13 +2070,23 @@ fn an_atom_in_both_arms_of_a_disjunction_is_answered() {
     }
 }
 
-/// `(x >= 0 or y >= 0) and x <= 5` has two parts of a conjunction reading `x`: `read_once`
-/// declines, as their values of `x` do not join independently.
+/// `(x >= 0 or y >= 0) and x + z <= 5` has two non-unary parts of a conjunction reading `x`:
+/// `read_once` declines, while unary `x <= 5` above `x >= 0 or y >= 0` is answered by the
+/// cumulative ancestor box as `(-inf, 5]`.
 #[test]
 fn an_atom_in_two_parts_of_a_conjunction_is_declined() {
-    let f = Formula::and(vec![
+    let boxed = Formula::and(vec![
         Formula::or(vec![ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]),
         ge(&[("x", -1)], 5),
+    ]);
+    let (has, sets) = read_once_answers(&boxed).expect("unary ancestor box answered");
+    assert!(has);
+    assert_eq!(sets[&a("x")], IntervalSet::range(End::NegInf, End::of(5)));
+    assert_eq!(sets[&a("y")], IntervalSet::top());
+
+    let f = Formula::and(vec![
+        Formula::or(vec![ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]),
+        ge(&[("x", -1), ("z", -1)], 5),
     ]);
     assert!(read_once_answers(&f).is_none());
 }
