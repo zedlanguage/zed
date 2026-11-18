@@ -1,5 +1,6 @@
 #!/bin/bash
-# Tests the piece selection of tools/run_tests.sh (--list, --only, --bench, --each-test). Run from a checkout's root,
+# Tests the piece selection of tools/run_tests.sh (--list, --only, --bench, --each-test), and with
+# the argument `trace` the spec reads --trace names. Run from a checkout's root,
 # in a worktree through zrun (`/home/luke/Work/wt/zrun tools/test_run_tests.sh`), since it lists
 # the tests of the built binaries. It builds as run_tests.sh does, which does nothing on a built
 # tree; its first listing selects every piece, so in a checkout with no short-addresses clone
@@ -22,6 +23,38 @@ logs=build/test-run-tests
 run() {
   tools/run_tests.sh --logs "$logs" "$@"
 }
+# `tools/test_run_tests.sh trace` checks only the spec reads --trace names (MERGE-spec-reads-map),
+# in a log directory of its own, as a separate piece: the selection checks take most of 60 s at
+# load 80, and these run l01_06 three times and l01_03 once (10 s at load 75, 2026-11-17). l01_06's
+# program test reads DESIGN.md and EXAMPLES.md in place, the spec found beside the checkout or
+# through ZED_SPEC_DIR, absolute or relative to tests/; the l01_03 lexer tests read no spec file.
+if [ "$1" = trace ]; then
+  logs=$logs-trace
+  spec_reads() {
+    command grep -a -h '^spec:' "$1"/*.reads | sort -u | tr '\n' ' '
+  }
+  spec=$ZED_SPEC_DIR
+  d=$(pwd)
+  while [ -z "$spec" ] && [ "$d" != / ]; do
+    d=$(dirname "$d")
+    [ -f "$d/zed/DESIGN.md" ] && spec=${d%/}/zed
+  done
+  for how in beside absolute relative; do
+    case $how in
+      beside) env=(env -u ZED_SPEC_DIR) ;;
+      absolute) env=(env "ZED_SPEC_DIR=$(realpath "$spec")") ;;
+      relative) env=(env "ZED_SPEC_DIR=$(realpath --relative-to=tests "$spec")") ;;
+    esac
+    "${env[@]}" tools/run_tests.sh --logs "$logs" --only '^l01_06_lexer_tokens$' --trace "$logs/trace-$how" >/dev/null
+    check "--trace names the spec's files l01_06 reads, the spec $how" "spec:DESIGN.md spec:EXAMPLES.md " \
+      "$(spec_reads "$logs/trace-$how" | command grep -a -o -E 'spec:(DESIGN|EXAMPLES)\.md ' | tr -d '\n')"
+  done
+  run --only '^l01_03_' --trace "$logs/trace-none" >/dev/null
+  check "--trace names no spec file for l01_03" "" "$(spec_reads "$logs/trace-none")"
+  echo "checks failed: $fails"
+  [ "$fails" = 0 ]
+  exit
+fi
 all=$(run --list)
 rc=$?
 [ "$rc" = 0 ] || { echo "FAILED: --list exit $rc"; exit 1; }

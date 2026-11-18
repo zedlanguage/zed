@@ -22,6 +22,7 @@
 # --record runs again (MERGE-push-race).
 # MERGE_CHECK names another script to test, such as an older version, to see these cases fail.
 check_script=${MERGE_CHECK:-$(pwd)/tools/merge_check.sh}
+spec_groups=$(pwd)/tools/spec_groups.sh
 part=$1
 case $part in
   '' | select | record) ;;
@@ -81,7 +82,11 @@ printf 'mod outer {\n    mod inner {\n        #[path = "../../../../../../tests/
   >crates/c/src/m/mod.rs
 for f in viamod inl nest; do echo "//! $f." >"tests/src/$f.rs"; done
 echo '// table' >crates/c/data/table.rs
-printf '//! x.\nuse t::helper as _;\nuse tool as _;\n' >tests/steps/x/mod.rs
+# step_x reads the spec (MERGE-spec-reads-map): its folder holds the feature spec, so the real
+# tools/spec_groups.sh, copied into the toy, names it.
+printf '//! x.\nuse t::helper as _;\nuse tool as _;\n#[cfg(feature = "spec")]\nmod spec {}\n' >tests/steps/x/mod.rs
+cat "$spec_groups" >tools/spec_groups.sh
+chmod +x tools/spec_groups.sh
 printf '//! y.\nuse t::wrap as _;\n' >tests/steps/y/mod.rs
 echo '//! full.' >tests/full/main.rs
 mkdir -p tests/full/w tests/full/z
@@ -440,6 +445,26 @@ run_tests --only ^(c|short-s_01f_import_graph)\$ 6
 run_tests --full --only ^(full-z)\$ 6
 merge check: passed
 0" "$(record_run upstream)"
+# A group whose pieces read a file of the spec checkout must be one tools/spec_groups.sh names
+# (MERGE-spec-reads-map): in the toy step_x, not short-step_x (the toy has no short_steps).
+rec=$ws/target/record-spec
+: >"$rec"
+git checkout -q --detach base
+echo "// changed" >>tests/steps/x/mod.rs
+git commit -q -a -m "branch: change the step x"
+sx=$(sorted "$(short step_x)")
+echo 'step_x spec:DESIGN.md' >>"$STUB_READS"
+check "a group that read the spec and that spec_groups.sh names passes" "merge check: to run: $sx
+run_tests --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
+merge check: passed
+0" "$(record_run base)"
+: >"$rec"
+echo 'short-step_x spec:EXAMPLES.md' >>"$STUB_READS"
+check "a group that read the spec and that spec_groups.sh does not name fails, and no record is written" \
+  "merge check: to run: $sx
+run_tests --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
+merge check: FAILED: tools/spec_groups.sh (above)
+1" "$(record_run base; cat "$rec")"
 git checkout -q --detach base
 fi
 popd >/dev/null || exit 1

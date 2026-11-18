@@ -957,15 +957,38 @@ export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_thres
 # run also checks that the output does not depend on it. ZED_TREAP_SEED, when set, is kept.
 [ "$run_kind" = test ] || export ZED_TREAP_SEED=${ZED_TREAP_SEED:-0}
 cores=$(nproc)
-export root out slots slot_dir cores run_kind cov trace
+# The spec checkout the tests read (zed_tests::spec::locate, MERGE-spec-reads-map): the directory
+# $ZED_SPEC_DIR when it is set (a relative one taken from tests/, the directory the tests of
+# zed-tests run in), else the first zed/ holding DESIGN.md in the checkout's parent or above it.
+# --trace names a read under it spec:<path>, relative to it, so the map of run-time reads tells
+# which groups read the spec; strace names a directory by its real path, so the real path of the
+# spec checkout is matched too.
+spec_dir= spec_real=
+if [ -n "$trace" ]; then
+  if [ -n "${ZED_SPEC_DIR+set}" ]; then
+    spec_dir=$ZED_SPEC_DIR
+    [[ $spec_dir == /* ]] || spec_dir=$root/tests/$spec_dir
+    spec_dir=$(realpath -m -s -- "$spec_dir")
+  else
+    d=$root
+    while [ "$d" != / ]; do
+      d=$(dirname "$d")
+      [ -f "$d/zed/DESIGN.md" ] && spec_dir=${d%/}/zed && break
+    done
+  fi
+  [ -z "$spec_dir" ] || spec_real=$(realpath -m -- "$spec_dir")
+fi
+export root out slots slot_dir cores run_kind cov trace spec_dir spec_real
 # Prints the paths the strace output $1 (strace -f -y -e trace=%file,getdents64) names under the
-# checkout, relative to it, sorted: for a call of the *at family each path after a directory
+# checkout, relative to it, and under the spec checkout ($spec_dir above), as spec:<path>
+# relative to it, sorted: for a call of the *at family each path after a directory
 # strace decoded (`AT_FDCWD</dir>, "path"`, or `3</dir>, ""` for the directory itself), joined to
 # it unless absolute; for a directory listing its directory; for any other call (execve, access,
 # chdir...) its first path, which must be absolute, as strace does not show the cwd a relative
 # one would be resolved against. A relative one of those, and the checkout's .git (a test that
 # runs git reads the files through the object store, and its answers change with each commit),
-# are printed as `*`: the piece may have read anything. The checkout's root itself is `.`.
+# are printed as `*`: the piece may have read anything. The checkout's root itself is `.`. In the
+# spec checkout its root is spec:. and its .git spec:*. Other paths are left out.
 # Paths are normalized without following symbolic links, so a/../b is b.
 trace_reads() {
   awk -v root="$root" '
@@ -986,8 +1009,17 @@ trace_reads() {
       }
       # A relative path here is printed as root/.git, which the last step prints as `*`.
       if (match(rest, /^"([^"]*)"/, q) && q[1] != "") print (q[1] ~ /^\// ? q[1] : root "/.git")
-    }' "$1" | sort -u | xargs -r -d '\n' realpath -m -s --relative-to="$root" -- |
-    awk '/^\.git(\/|$)/ { print "*"; next } !/^\.\.(\/|$)/' | sort -u
+    }' "$1" | sort -u | xargs -r -d '\n' realpath -m -s -- |
+    awk -v root="$root" -v spec="$spec_dir" -v real="$spec_real" '
+      # under(d): the path is the directory d or lies in it; rest(d): the path relative to d.
+      function under(d) { return d != "" && index($0 "/", d "/") == 1 }
+      function rest(d) { p = substr($0, length(d) + 2); return p == "" ? "." : p }
+      under(spec) || under(real) {
+        p = under(spec) ? rest(spec) : rest(real)
+        print (p ~ /^\.git(\/|$)/ ? "spec:*" : "spec:" p)
+        next
+      }
+      under(root) { p = rest(root); print (p ~ /^\.git(\/|$)/ ? "*" : p) }' | sort -u
 }
 take_slot() {
   exec 5>"$slot_dir/queue"

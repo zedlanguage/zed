@@ -4,7 +4,8 @@
 #   /home/luke/Work/wt/zrun tools/merge_check.sh [--base <rev>] [--record <file>] [--reads <dir>] [--list | --groups] [jobs]
 # It takes the files the branch changes since its merge base with <rev> (origin/main by default;
 # fetch first), both paths of a rename, and
-#  0. when tools/merge_check.sh, tools/test_merge_check.sh or tools/run_tests.sh changed: runs both
+#  0. when tools/merge_check.sh, tools/test_merge_check.sh, tools/run_tests.sh or
+#     tools/spec_groups.sh changed: runs both
 #     parts of tools/test_merge_check.sh, select and record, at once, each under the limit of a
 #     piece of tools/run_tests.sh (max(20, 20 × load / cores) s), and fails if either fails
 #     (MERGE-tools-self-tests). They test this script on a toy workspace, about 12 s each;
@@ -96,6 +97,10 @@
 #     pieces read at run time. A later run with the same <file>, after the branch is rebased on a
 #     main that moved (tools/../wt/merge-push.sh does this after a refused push), runs only the
 #     selected groups that did not pass then or whose inputs changed since; see "The record".
+#     It also fails when a group whose pieces read a file of the spec checkout (spec:<path> in
+#     the trace) is not one tools/spec_groups.sh names, since a change to the spec would then not
+#     run it (MERGE-spec-reads-map: l01_09, l01_10 and l01_12 were missed so, and spec commit
+#     1d06e2e left main red).
 # It exits 0 when every check passes or nothing needs one (a change to docs alone), 1 otherwise.
 # --groups prints the selection, and with --record what would run, and stops; --list also passes
 # the selection to tools/run_tests.sh --list, which builds it and prints the pieces. Neither runs a
@@ -191,7 +196,7 @@ echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$
 [ ${#changed[@]} -gt 0 ] || exit 0
 selftest=
 for f in "${changed[@]}"; do
-  case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh) selftest=1 ;; esac
+  case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh) selftest=1 ;; esac
 done
 
 meta=$(cargo metadata --no-deps --format-version 1 -q) || { echo "merge check: cargo metadata failed" >&2; exit 1; }
@@ -803,5 +808,15 @@ for kind in local full; do
   tools/run_tests.sh "${full[@]}" --only "^($(paste -sd'|' <<<"$run"))\$" "${trace[@]}" $list "$jobs" ||
     { echo "merge check: FAILED: $([ "$kind" = full ] && echo tests/full || echo tests) (above)" >&2; exit 1; }
 done
+# The groups whose pieces read a file of the spec checkout must be those tools/spec_groups.sh
+# names (step 3 above). One pass over the trace's files; spec_groups.sh runs only when a group
+# read the spec.
+if [ ${#tdirs[@]} -gt 0 ]; then
+  spec_read=$(awk '{ dir = FILENAME; sub(/\/groups$/, "", dir); f = $1; gsub("/", "_", f); f = dir "/" f ".reads"
+         while ((getline p < f) > 0) if (p ~ /^spec:/) { print $2; break }
+         close(f) }' "${tdirs[@]/%//groups}" | sort -u)
+  [ -z "$spec_read" ] || tools/spec_groups.sh --check <<<"$spec_read" ||
+    { echo "merge check: FAILED: tools/spec_groups.sh (above)" >&2; exit 1; }
+fi
 [ -z "$record" ] || [ ${#tdirs[@]} -eq 0 ] || { write_record "${tdirs[@]}"; write_reads; }
 echo "merge check: passed"
