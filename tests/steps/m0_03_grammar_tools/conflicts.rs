@@ -220,7 +220,7 @@ fn plan_fix_rewrites_stale_conflict_lists() {
     let file = path.display().to_string();
     let mut out = String::new();
     assert_eq!(
-        zed_tools::plan::run(&["--fix".to_string(), file.clone()], &mut out),
+        zed_tools::conflicts::plan_run(&["--fix".to_string(), file.clone()], &mut out),
         Ok(true),
         "{out}"
     );

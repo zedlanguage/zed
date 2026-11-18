@@ -5,10 +5,10 @@
 //! line per problem and fails if there is any.
 //!
 //! With `--fix` it first rewrites the file: each row's level cell becomes the level its needs
-//! give, and the count sentence of the first paragraph becomes the table's counts; when the file
-//! has the two file-conflict sections of the `conflicts` tool and the table passes the check,
-//! those sections are rewritten as `conflicts` writes them. Nothing else changes, not even the
-//! order of the rows. It refuses, writing nothing, when the levels cannot
+//! give, and the count sentence of the first paragraph becomes the table's counts. The `plan`
+//! binary (`conflicts::plan_run`) then also rewrites the file-conflict sections of the
+//! `conflicts` tool, when the file has them and the table passes the check. Nothing else
+//! changes, not even the order of the rows. It refuses, writing nothing, when the levels cannot
 //! be computed: an id with two rows, a need with no row, or a cycle.
 //!
 //! The table is read the way GitHub renders it (GitHub-flavored Markdown): a row is split into
@@ -442,8 +442,20 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
     })
 }
 
-/// Runs the tool.
+/// Runs the tool with nothing after `--fix`'s levels; the `plan` binary runs
+/// `conflicts::plan_run`, which also rewrites the conflict sections.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
+    run_with(args, out, |_| Ok(None))
+}
+
+/// Runs the tool; with `--fix`, `after_fix` may rewrite the fixed text further (`Some`) before
+/// it is written. It is a parameter, not a call into `conflicts`, because `conflicts` reads this
+/// module and a call back would make an import cycle (s_01f_import_graph).
+pub fn run_with(
+    args: &[String],
+    out: &mut String,
+    after_fix: fn(&str) -> Result<Option<String>, String>,
+) -> Outcome {
     let usage = "usage: plan [--fix] [PLAN_DAG.md]";
     let fixing = args.first().is_some_and(|a| a == "--fix");
     let rest = &args[usize::from(fixing)..];
@@ -465,15 +477,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     let mut fixed = fix_plan(&text).map_err(|e| {
         format!("{path}: the levels cannot be computed, so nothing was written:\n{e}")
     })?;
-    // The file-conflict sections pair rows by level, so new levels or rows make them stale: they
-    // are rewritten here too, when the file has them and its table passes the check the
-    // `conflicts` tool needs (PLAN-conflict-lists-stale). O(m log m + D log m + output), as
-    // `conflicts::compute` says.
-    if crate::conflicts::has_sections(&fixed.text) && check_plan(&fixed.text, &mut String::new())? {
-        let new = {
-            let c = crate::conflicts::compute(&fixed.text).map_err(|e| format!("{path}: {e}"))?;
-            crate::conflicts::rewrite(&fixed.text, &c)?
-        };
+    if let Some(new) = after_fix(&fixed.text).map_err(|e| format!("{path}: {e}"))? {
         fixed.text = new;
     }
     if fixed.text != text {

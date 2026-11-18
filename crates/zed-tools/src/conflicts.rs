@@ -283,9 +283,20 @@ pub fn render(c: &Conflicts<'_>) -> String {
     out
 }
 
-/// Whether `text` has both sections, so that `rewrite` can place them.
-pub fn has_sections(text: &str) -> bool {
-    sections(text).is_ok()
+/// The `plan` tool, whose `--fix` also rewrites both sections (PLAN-conflict-lists-stale): the
+/// same-level pairs depend on the levels `--fix` sets, so new levels or rows make them stale.
+pub fn plan_run(args: &[String], out: &mut String) -> Outcome {
+    crate::plan::run_with(args, out, refresh)
+}
+
+/// `text` with both sections rewritten, or `None` when it has no such sections or its table
+/// fails the check `compute` needs. O(m log m + D log m + output), as `compute` says.
+fn refresh(text: &str) -> Result<Option<String>, String> {
+    if sections(text).is_err() || !check_plan(text, &mut String::new())? {
+        return Ok(None);
+    }
+    let c = compute(text)?;
+    rewrite(text, &c).map(Some)
 }
 
 /// The byte range of both sections in `text`: from the start of the `SAME` heading to the start
