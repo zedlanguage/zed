@@ -1599,6 +1599,16 @@ fn cell(
         "a point of the solver is not one of {f:?}"
     );
     c = c.join(&own);
+    // The projection lies within `within`, and each value of the line has a point of `f`: so
+    // when the line already holds `within`, it is the whole cell, and the implicant is not
+    // projected. Complexity tradeoff: one subset test, at most linear in the pieces of the two
+    // sets (`IntervalSet::is_subset`), against the projection of the implicant, whose
+    // splinters can cost the whole limit (the repaired unit's `w`: 3.1M units, refused, for
+    // `w == 0`).
+    work.read((within.len() + c.len()) as u64 + 1)?;
+    if within.is_subset(&c) {
+        return Ok((c, strides, holed));
+    }
     let mut rows = Vec::new();
     let mut truth = HashMap::new();
     if implicant(f, m, true, &mut rows, &mut HashSet::new(), &mut truth) {
