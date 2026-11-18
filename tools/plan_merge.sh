@@ -34,6 +34,18 @@
 #     the side that changed it, or the higher of the two when both did;
 #  3. all three are the line of the count sentence and differ only inside "It has N items, E
 #     edges and L levels (0 to M": ours.
+# Before both, a hunk that lies inside the two sections the conflicts tool writes ("## File
+# conflicts at the same level" up to the `## ` heading after "## File conflicts across levels",
+# the range conflicts.rs's `sections` replaces whole) and whose sides hold no `## ` line is
+# resolved as ours (MERGE-generated-sections-auto, 2026-11-18). Those lines are output of
+# `plan --fix` (conflicts::plan_run rewrites the range from the items table), so no side's
+# version of them is kept: they are written again from the merged table, by merge-push.sh's
+# plan --fix after every rebase of a branch that changed the plan, or by hand after a rebase by
+# hand. Before this rule, two branches that each changed the table moved neighboring lines of
+# those lists, and the rebase stopped there (dag2, twice on 2026-11-18). Where the region lies
+# is read from the merged text outside the hunks; after a hunk that holds a `## ` line on any
+# side, the headings seen may no longer match the file, so the rule is not used again in that
+# file.
 # Any other conflict is left as git's merge-file leaves it, markers and all (in the diff3 style
 # this machine's git is set to), and the script exits 1. Rules 2 and 3 can leave levels and counts
 # that do not match the merged table: /home/luke/Work/wt/merge-push.sh runs `plan --fix` after
@@ -171,7 +183,16 @@ res=$(
       for (i = 1; i <= n; i++) print out[i]
       return 1
     }
+    # 1 when some side of the hunk holds a `## ` heading line.
+    function headed(   i) {
+      for (i = 1; i <= na; i++) if (index(A[i], "## ") == 1) return 1
+      for (i = 1; i <= no; i++) if (index(O[i], "## ") == 1) return 1
+      for (i = 1; i <= nb; i++) if (index(B[i], "## ") == 1) return 1
+      return 0
+    }
     function flush(   i, res, ok) {
+      if (headed()) lost = 1
+      else if (gen && !lost) { for (i = 1; i <= na; i++) print A[i]; return }
       if (keyed()) return
       ok = na == no && nb == no
       for (i = 1; ok && i <= no; i++) { res[i] = line(O[i], A[i], B[i]); if (res[i] == "\001") ok = 0 }
@@ -189,6 +210,13 @@ res=$(
     state == 1 { A[++na] = $0; next }
     state == 2 { O[++no] = $0; next }
     state == 3 { B[++nb] = $0; next }
+    # gen: 1 from the heading of the same-level section, 2 from that of the cross-level one, 0
+    # again at the next `## ` heading, as conflicts.rs `sections` finds the range. Any other
+    # heading while gen is 1 (one side renamed the cross-level one) also ends the range, so a
+    # renamed heading never extends the rule over the rest of the file.
+    $0 == "## File conflicts across levels" && gen == 1 { print; gen = 2; next }
+    gen && index($0, "## ") == 1 { gen = 0 }
+    $0 == "## File conflicts at the same level" && gen == 0 { gen = 1 }
     { print }
     END { exit left }
   '

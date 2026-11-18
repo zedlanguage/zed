@@ -191,5 +191,109 @@ if [ -f "$src/docs/plan_dag.md" ]; then
   if [ $rc -ne 0 ]; then ok "negative control: the real plan's rebase conflicts without the driver"; else bad "the real plan's rebase did not conflict without the driver"; fi
 fi
 
+# 8. The generated conflict lists (MERGE-generated-sections-auto): each side changes neighboring
+# lines of both lists, as two branches' plan --fix runs do; the hunks there resolve as ours (the
+# lists are written again by plan --fix after the rebase). $1: the lists' lines.
+gen_plan() {
+  plan "T1, T2, T3" | awk -v lists="$1" '$0 == "## Why each item waits" { print lists; print "" } { print }'
+}
+gen_lists() { # $1 the pair line, $2 the cross line, $3 the count
+  printf '%s\n' "## File conflicts at the same level" "" "There are $3 pairs." "" "| Level | Items | Shared paths |" "|---|---|---|" \
+    "| 0 | T1, T2 | \`a/\` |" "$1" "| 0 | T2, T3 | \`c/\` |" "" "## File conflicts across levels" "" "- \`a/\`: level 0: T1" "$2" "- \`z/\`: level 1: L1.41"
+}
+gen_one=$(gen_plan "$(gen_lists "| 0 | T1, FAIL-a | \`x/\` |" "- \`x/\`: level 0: FAIL-a" 4)")
+gen_two=$(gen_plan "$(gen_lists "| 0 | T1, FAIL-b | \`y/\` |" "- \`y/\`: level 0: FAIL-b" 5)")
+gen_base=$(gen_plan "$(gen_lists "| 0 | T1, T3 | \`a/\` |" "- \`b/\`: level 0: T2" 3)")
+gen_case() { # $1 the plan of one, $2 that of two, both from the base gen_base
+  echo "$gen_base" | commit main "$base"
+  gbase=$(g rev-parse HEAD)
+  echo "$1" | commit one "$gbase"
+  echo "$2" | commit two "$gbase"
+  g rebase -q one >"$repo.out" 2>&1
+}
+gen_case "$gen_one" "$gen_two"
+rc=$?
+if [ $rc -eq 0 ] && [ "$(cat "$repo/docs/plan_dag.md")" = "$gen_one" ]; then ok "rebase: the generated lists, changed on both sides, taken from main"; else
+  bad "generated lists (rc $rc, marker lines $(markers))"
+  g rebase --abort >/dev/null 2>&1
+fi
+# Negative control: the same with the rule turned off in a copy of the driver conflicts, so the
+# pass above is the rule's doing.
+sed 's/else if (gen \&\& !lost)/else if (0)/' "$src/tools/plan_merge.sh" >"$repo.nogen.sh"
+chmod +x "$repo.nogen.sh"
+cmp -s "$repo.nogen.sh" "$src/tools/plan_merge.sh" && bad "the mutation of the generated-lists rule changed nothing"
+g config merge.plan-needs.driver "$repo.nogen.sh %O %A %B %L %S %X %Y"
+gen_case "$gen_one" "$gen_two"
+rc=$?
+g rebase --abort >/dev/null 2>&1
+g config merge.plan-needs.driver "tools/plan_merge.sh %O %A %B %L %S %X %Y"
+if [ $rc -ne 0 ]; then ok "negative control: without the rule the generated lists conflict"; else bad "the generated lists merged without the rule"; fi
+# Negative control: a hunk in the lists whose sides hold a `## ` heading (one side renames the
+# cross-level heading) is not resolved, and neither is a hunk outside the lists (both sides
+# change the notes' prose).
+gen_case "$(sed 's/^## File conflicts across levels$/## File conflicts across all levels/' <<<"$gen_one")" "$gen_two"
+rc=$?
+m=$(markers)
+g rebase --abort >/dev/null 2>&1
+if [ $rc -ne 0 ] && [ "$m" != 0 ]; then ok "negative control: a hunk with a heading in the lists still conflicts"; else bad "a hunk with a heading in the lists was merged (rc $rc)"; fi
+gen_case "$(sed 's/^Notes\.$/Notes, one./' <<<"$gen_one")" "$(sed 's/^Notes\.$/Notes, two./' <<<"$gen_two")"
+rc=$?
+m=$(markers)
+g rebase --abort >/dev/null 2>&1
+if [ $rc -ne 0 ] && [ "$m" = 2 ]; then ok "negative control: prose after the lists, changed on both sides, still conflicts"; else bad "prose after the lists was merged (rc $rc, marker lines $m)"; fi
+
+# 9. The real plan and the real plan tool ($PLAN_TOOL, a command; by default this checkout's
+# release build of plan run through /home/luke/Work/wt/zrun): each side adds a level-0 row
+# whose path other open level-0 rows touch, so plan --fix adds pairs to the lists on both
+# sides. The rebase stops nowhere, and plan --fix on its result passes the plan check with
+# both rows, the lists written from the merged table (the conflicts tool's --check passes).
+plan_tool=${PLAN_TOOL:-/home/luke/Work/wt/zrun build/cargo/release/plan}
+conflicts_tool=${CONFLICTS_TOOL:-/home/luke/Work/wt/zrun build/cargo/release/conflicts}
+if [ -f "$src/docs/plan_dag.md" ]; then
+  fixed() { # $1 the id: the real plan with its row added (none when empty), after plan --fix
+    awk -v id="$1" 'id == "" { print; next }
+      /^\| [0-9]+ \| L1\.41 \|/ { n = split($0, c, "|"); c[n - 2] = c[n - 2] ", " id " "; sub(/  $/, " ", c[n - 2]); s = c[1]; for (i = 2; i <= n; i++) s = s "|" c[i]; $0 = s }
+      { print }
+      /^\| 0 \| / && !done { print "| 0 | " id " | A test row | S | no | none | `DESIGN.md`, `crates/zedc/` |"; done = 1 }
+    ' "$src/docs/plan_dag.md" >"$repo.fix.md"
+    $plan_tool --fix "$repo.fix.md" >"$repo.fix.out" 2>&1 || { cat "$repo.fix.out" >&2; return 1; }
+    cat "$repo.fix.md"
+  }
+  if real_0=$(fixed "") && real_a=$(fixed FAIL-gen-a) && real_b=$(fixed FAIL-gen-b); then
+    echo "$real_0" | commit main "$base"
+    rbase=$(g rev-parse HEAD)
+    echo "$real_a" | commit one "$rbase"
+    echo "$real_b" | commit two "$rbase"
+    g rebase -q one >"$repo.out" 2>&1
+    rc=$?
+    m=$(markers)
+    if [ $rc -eq 0 ] && [ "$m" = 0 ]; then
+      cp "$repo/docs/plan_dag.md" "$repo.fix.md"
+      if $plan_tool --fix "$repo.fix.md" >"$repo.fix.out" 2>&1 && $conflicts_tool --check "$repo.fix.md" >>"$repo.fix.out" 2>&1 &&
+        [ "$(command grep -a -c -E '^\| 0 \| (FAIL-gen-a|FAIL-gen-b) \|' "$repo.fix.md")" = 2 ] &&
+        command grep -a -q -E '^\| 0 \| [^|]*(, FAIL-gen-a|FAIL-gen-a, )[^|]* \|' "$repo.fix.md" &&
+        command grep -a -q -E '^\| 0 \| [^|]*(, FAIL-gen-b|FAIL-gen-b, )[^|]* \|' "$repo.fix.md"; then
+        ok "the real plan: both sides' conflict lists merged and written again by plan --fix"
+      else
+        bad "the real plan's merged lists after plan --fix:"
+        cat "$repo.fix.out"
+      fi
+    else
+      bad "the real plan with both sides' lists (rc $rc, marker lines $m)"
+      g rebase --abort >/dev/null 2>&1
+    fi
+    # Negative control: without the rule this rebase conflicts in the lists.
+    g config merge.plan-needs.driver "$repo.nogen.sh %O %A %B %L %S %X %Y"
+    echo "$real_b" | commit two "$rbase"
+    g rebase -q one >"$repo.out" 2>&1
+    rc=$?
+    g rebase --abort >/dev/null 2>&1
+    g config merge.plan-needs.driver "tools/plan_merge.sh %O %A %B %L %S %X %Y"
+    if [ $rc -ne 0 ]; then ok "negative control: the real plan's lists conflict without the rule"; else bad "the real plan's lists merged without the rule"; fi
+  else
+    bad "the real plan: $plan_tool --fix failed (above); build it with /home/luke/Work/wt/zcargo build --release -p zed-tools --bin plan --bin conflicts, or set PLAN_TOOL and CONFLICTS_TOOL"
+  fi
+fi
+
 echo "failed: $fails"
 [ "$fails" -eq 0 ]
