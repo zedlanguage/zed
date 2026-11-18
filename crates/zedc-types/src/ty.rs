@@ -7534,6 +7534,14 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
+    /// Whether [`Comparing::held_as_is`] takes a shape that holds the member even where it
+    /// binds: the negative control of
+    /// `a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict`.
+    static HIT_BINDS_ANY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
     /// Whether [`member_hit`] finds nothing, as before it: the red state of its test.
     static NO_MEMBER_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -9796,7 +9804,12 @@ impl<'m, 's> Comparing<'m, 's> {
     /// the search refuses (FAIL-print-two-variables-one-name). Taking a shape that holds the
     /// member binding nothing, out of written order, is what the attempt above does already:
     /// the member is in the union whichever shape holds it, and no binding is made that a later
-    /// member or the result could contradict.
+    /// member or the result could contradict. So a yes stays a yes, and the hit can only turn a
+    /// no or a refusal of the search to yes where the first shape in written order would have
+    /// bound a variable a later member needs; such a yes is right, as the member is held. This
+    /// is not "no verdict changes": on random renamings it turns wrong noes to yes
+    /// (`a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict`, which checks it never
+    /// moves a verdict otherwise, with a negative control).
     ///
     /// Complexity tradeoff (COMPLEXITY.md F203): naive version, every shape tried for one that
     /// binds nothing before the first that binds, O(k) comparisons a member for `k` shapes.
@@ -9823,6 +9836,10 @@ impl<'m, 's> Comparing<'m, 's> {
             let before = self.begin_alone();
             let (ok, b) = fit(r, binds.clone()).await;
             self.end_alone(before);
+            #[cfg(test)]
+            if ok && HIT_BINDS_ANY.get() {
+                return true;
+            }
             if ok && b == *binds {
                 return true;
             }
@@ -14471,8 +14488,9 @@ async fn instance_within<'m>(
 /// it, required above); so where the one at `T` is within `q`, the one at `Never` is too.
 /// Where a requirement fails, `b` alone is tried: a wrong no is possible there, never a wrong
 /// yes, as `b` is the cover's own binding. Checked by brute force against every binding of
-/// `v` to a union of carriers of its bound (`Never` where the bound takes values of no
-/// carrier; elsewhere it is no instance, and would fit where none does), with a negative control that
+/// `v` to a union of carriers of its bound (and, where the bound takes values of no carrier,
+/// to `Never` and to types of such values: an atom, tuples, their union; elsewhere `Never` is
+/// no instance, and would fit where none does), with a negative control that
 /// drops the last listed binding: `a_generic_arrow_fits_where_some_binding_of_its_variable_fits`.
 ///
 /// FAIL-types-bindable-union-param-refused: the cover of `(x: (A, bool) | (C, bool))` by
@@ -14516,7 +14534,18 @@ fn unbound_carriers(s: &Sig, sa: &Arrow, b: &Binds, cx: &Cx) -> Vec<Binds> {
                     })
                     .collect();
                 if m & OTHER != 0 {
-                    least.push(Ty::empty());
+                    // `Never`, and types of values of no carrier a call may bind `v` to
+                    // (TYPES-search-claims-proofs (b)): an atom, tuples, and their union.
+                    let atom = Ty::set(KType::atom("a0"));
+                    let tup = |t: Ty| Ty::tuple(vec![t]);
+                    let bool_tup = tup(Ty::carrier(Carrier::Bool));
+                    least.extend([
+                        Ty::empty(),
+                        atom.clone(),
+                        bool_tup.clone(),
+                        tup(Ty::carrier(Carrier::Int)),
+                        atom.union(&bool_tup),
+                    ]);
                 }
             }
             least
@@ -21774,8 +21803,12 @@ mod tests {
     /// and the list is used. The overload of the instances is not the oracle: domains are
     /// exact, so `((x0: bool | int) -> int) & ((x0: bool | f64) -> int)` takes `f64`, which
     /// `(x0: int | bool) -> int` does not, while `(x0: bool | B) -> int for B in int | f64`
-    /// fits it at `B = int`. Negative control: with the last carrier dropped from the list
-    /// ([`DROP_LEAST`]), some pair answers apart.
+    /// fits it at `B = int`. Where the bound takes values of no carrier, the brute force also
+    /// binds `B` to types of such values, an atom, `(bool,)`, `(int,)` and `#a0 | (bool,)`
+    /// (TYPES-search-claims-proofs (b)), so the list's `Never` is checked against real other
+    /// types, not only against itself. Negative control: with the last carrier dropped from the
+    /// list ([`DROP_LEAST`]), some pair answers apart, and some at the bound with other types,
+    /// where the binding dropped is `Never`.
     #[test]
     fn a_generic_arrow_fits_where_some_binding_of_its_variable_fits() {
         let v = |x: &str| Ty::var(x.into());
@@ -21832,7 +21865,7 @@ mod tests {
                         EVERY_BINDING.with(|d| d.set(false));
                         fit += usize::from(o);
                         if a != o {
-                            apart.push(format!("{s} in {q}: {a}, at every binding {o}"));
+                            apart.push((m, format!("{s} in {q}: {a}, at every binding {o}")));
                         }
                     }
                 }
@@ -21840,7 +21873,8 @@ mod tests {
             (apart, fit)
         };
         let (apart, fit) = compare();
-        assert!(apart.is_empty(), "{}", apart.join("\n"));
+        let text = |v: &[(u8, String)]| v.iter().map(|x| x.1.clone()).collect::<Vec<_>>();
+        assert!(apart.is_empty(), "{}", text(&apart).join("\n"));
         assert!(fit > 0, "no pair fits, so the check compares nothing");
         DROP_LEAST.with(|d| d.set(true));
         let (dropped, _) = compare();
@@ -21848,6 +21882,14 @@ mod tests {
         assert!(
             !dropped.is_empty(),
             "the control drops a carrier and every pair still agrees"
+        );
+        // Where the bound takes values of no carrier, the binding dropped is `Never`, and the
+        // brute force, which binds `B` to `Never` and to types of other values (an atom,
+        // tuples), finds a pair the short list then misses: the other-type bindings are
+        // compared, and a list without their least instance is caught.
+        assert!(
+            dropped.iter().any(|(m, _)| m & OTHER != 0),
+            "the control drops `Never` and no pair whose bound takes other types answers apart"
         );
     }
 
@@ -22835,6 +22877,117 @@ mod tests {
             }
         }
         println!("{cases} cases: {held} held, {failed} failed, {refused} refused");
+    }
+
+    /// TYPES-search-claims-proofs (c): [`Comparing::held_as_is`] taking, through
+    /// [`member_hit`], a shape that is not first in written order and binds nothing gives no
+    /// wrong verdict. Random signatures whose components are unions of tuples of the
+    /// variables, so that a member's component is often a member of a shape's union, are
+    /// compared with [`member_hit`] on and off ([`NO_MEMBER_HIT`]). Half compare a signature
+    /// with itself renamed, members shuffled: the same type, so a yes is right there. The
+    /// claim as first written, that the hit changes no verdict, is false: on about one seed in
+    /// three, a renaming the search alone answers no (the first shape in written order binds a
+    /// variable that a later member then cannot use) is answered yes with the hit, as it should
+    /// be. Checked: the hit never turns a yes to no, never changes a verdict on two signatures
+    /// drawn apart (no oracle there, so any change fails), and moves a renaming only from no to
+    /// yes; the cases it decides where the search refused or failed are counted, which must be
+    /// some. Negative control ([`HIT_BINDS_ANY`]): taking a hit shape that binds gives a wrong
+    /// change on some case.
+    #[test]
+    fn a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict() {
+        let (ts, xs) = (["T", "U"], ["X", "W"]);
+        let component = |rng: &mut Rng, names: &[&str]| {
+            let v = |rng: &mut Rng| Ty::var(names[rng.below(names.len() as u64) as usize].into());
+            let tup = |c: Vec<Ty>| Ty::tuple(c);
+            match rng.below(6) {
+                0 => v(rng),
+                1 => Ty::carrier(Carrier::Int),
+                2 => tup(vec![v(rng), v(rng)]),
+                3 => {
+                    let t = v(rng);
+                    tup(vec![t.clone(), t.clone()]).union(&tup(vec![t.clone(), t.clone(), t]))
+                }
+                4 => tup(vec![Ty::carrier(Carrier::Int)]).union(&tup(vec![v(rng)])),
+                _ => tup(vec![v(rng)]).union(&tup(vec![v(rng), Ty::carrier(Carrier::Int)])),
+            }
+        };
+        let members = |rng: &mut Rng, names: &[&str]| -> Vec<Vec<Ty>> {
+            (0..1 + rng.below(4))
+                .map(|_| {
+                    (0..1 + rng.below(2))
+                        .map(|_| component(rng, names))
+                        .collect()
+                })
+                .collect()
+        };
+        let verdict = |s: &Sig, q: &Sig| {
+            let ok = fits_sig(s, q);
+            sig_unchosen(s, q).is_none().then_some(ok)
+        };
+        let run = |seed: u64, stop_at_apart: bool| {
+            let mut rng = Rng(seed);
+            let (mut apart, mut decided_by_hit, mut held) = (Vec::new(), 0, 0);
+            for i in 0..600 {
+                if stop_at_apart && !apart.is_empty() {
+                    break;
+                }
+                let sm = members(&mut rng, &ts);
+                let sr = sig_result(&mut rng, &ts);
+                let s = random_shapes_sig(&ts, &sm, &sr);
+                let (qm, qr) = if i % 2 == 0 {
+                    let mut qm = renamed(&sm, &ts, &xs);
+                    for k in (1..qm.len()).rev() {
+                        qm.swap(k, rng.below(k as u64 + 1) as usize);
+                    }
+                    (qm, renamed(&sr, &ts, &xs))
+                } else {
+                    (members(&mut rng, &xs), sig_result(&mut rng, &xs))
+                };
+                let q = random_shapes_sig(&xs, &qm, &qr);
+                let on = verdict(&s, &q);
+                NO_MEMBER_HIT.set(true);
+                let off = verdict(&s, &q);
+                NO_MEMBER_HIT.set(false);
+                held += usize::from(on == Some(true));
+                // A signature renamed, its members shuffled, is the same type, so it fits: a no
+                // the hit turns to yes there is a wrong no put right. Any other move is wrong.
+                let renaming = i % 2 == 0;
+                match (on, off) {
+                    (Some(true), Some(false)) if renaming => decided_by_hit += 1,
+                    (Some(a), Some(b)) if a != b => {
+                        apart.push(format!("{q} in {s}: with the hit {a}, without {b}"))
+                    }
+                    (Some(_), None) => decided_by_hit += 1,
+                    _ => {}
+                }
+            }
+            (apart, decided_by_hit, held)
+        };
+        // Fixed seeds, so that the counts below, which are small (a few cases in a thousand),
+        // are the same on every run: with a seed drawn per run, one run in about twelve had
+        // the hit decide nothing and one in four had the control move nothing.
+        const SEEDS: [u64; 4] = [1, 2, 3, 4];
+        let (mut decided_by_hit, mut held) = (0, 0);
+        for seed in SEEDS {
+            let (apart, d, h) = run(seed, false);
+            assert!(apart.is_empty(), "seed {seed}:\n{}", apart.join("\n"));
+            (decided_by_hit, held) = (decided_by_hit + d, held + h);
+        }
+        println!(
+            "{held} held, {decided_by_hit} decided by the hit where the search refused or failed"
+        );
+        assert!(held > 0, "no case holds, so the check compares nothing");
+        assert!(
+            decided_by_hit > 0,
+            "the hit decides no case, so the check reaches nothing"
+        );
+        HIT_BINDS_ANY.set(true);
+        let control = SEEDS.iter().any(|&seed| !run(seed, true).0.is_empty());
+        HIT_BINDS_ANY.set(false);
+        assert!(
+            control,
+            "the control takes a binding hit and no verdict moves"
+        );
     }
 
     /// `q` in `s` by the pins and by the rule of one shape (`SCAN_ALL`): the same verdict,
