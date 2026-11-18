@@ -1605,7 +1605,11 @@ impl Printer<'_> {
                 // A block of value `false` before no value leaves no value.
                 // Its block is a set of one literal or more (`Bdd::list`): each refused one is in
                 // `first` (or in the meet there) and each taken one in `taken`, so the two are not
-                // both empty, and the text after it is not the text of this block.
+                // both empty, and the text after it is not the text of this block. (A block's set
+                // is a `Cell::block: Arc<Set<A>>`, a treap node that holds a literal, so
+                // `set::iter` yields one at least. The one block whose texts are left empty
+                // follows a block with `merged`, which `merged` sets only where that block has
+                // `value` `true`, so it is not of this arm.)
                 (false, false) => next.map(|_| match (taken.is_empty(), first.len()) {
                     (false, _) => Class::Diff,
                     (true, 1) if every && k + 1 == m => first[0].class,
