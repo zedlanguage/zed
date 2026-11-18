@@ -14957,8 +14957,8 @@ fn judge(env: &Arc<Env>) -> Judgment {
 /// Whether `t` holds only flat values (scalars, bare atoms, 0-tuples, structs).
 fn is_flat_type(t: &Type) -> bool {
     let p = t.p();
-    !p.atoms.cofinite
-        && p.atoms.payloads.is_empty()
+    !p.atoms.cofinite()
+        && p.atoms.payloads().is_empty()
         && !p.tuples.rest
         && p.tuples
             .lens
@@ -14970,7 +14970,7 @@ fn is_flat_type(t: &Type) -> bool {
 /// The exact flat projection `[[t]] \cap Val_flat`, when `!t.p().atoms.cofinite`.
 fn flat_part(t: &Type) -> Option<Type> {
     let p = t.p();
-    if p.atoms.cofinite {
+    if p.atoms.cofinite() {
         return None;
     }
     Some(Type::with(|q| {
@@ -14986,7 +14986,7 @@ fn flat_part(t: &Type) -> Option<Type> {
             q.tuples.lens.insert(0, f0);
         }
         q.atoms = p.atoms.clone();
-        for name in p.atoms.payloads.iter() {
+        for name in p.atoms.payloads().iter() {
             let bare = p.atoms.get(name).bare;
             q.atoms.set(
                 name,
@@ -15012,8 +15012,8 @@ fn nonflat_part(t: &Type) -> Type {
             q.tuples.lens.remove(&0);
         }
         q.morphisms = p.morphisms.clone();
-        if p.atoms.cofinite {
-            for (name, a) in p.atoms.names.iter() {
+        if p.atoms.cofinite() {
+            for (name, a) in p.atoms.names().iter() {
                 if a.payload != Type::empty() {
                     q.atoms.set(
                         name,
@@ -15027,7 +15027,7 @@ fn nonflat_part(t: &Type) -> Type {
             let mut k = 0usize;
             let fresh: std::sync::Arc<str> = loop {
                 let cand: std::sync::Arc<str> = format!("nf_{k}").into();
-                if !p.atoms.names.contains_key(&cand) {
+                if !p.atoms.names().contains_key(&cand) {
                     break cand;
                 }
                 k += 1;
@@ -15041,7 +15041,7 @@ fn nonflat_part(t: &Type) -> Type {
             );
         } else {
             q.atoms = p.atoms.clone();
-            for (name, a) in p.atoms.names.iter() {
+            for (name, a) in p.atoms.names().iter() {
                 if a.bare {
                     q.atoms.set(
                         name,
@@ -15081,7 +15081,7 @@ fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
         } else {
             ts.iter().all(|t| {
                 let p = t.p();
-                p.atoms.cofinite || p.has_scalars() || p.has_bare_atoms() || p.structs
+                p.atoms.cofinite() || p.has_scalars() || p.has_bare_atoms() || p.structs
             })
         }
     };
@@ -15093,21 +15093,21 @@ fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
     }
     let share_payload_atom = {
         let p0 = ts[0].p();
-        if p0.atoms.cofinite {
+        if p0.atoms.cofinite() {
             ts[1..]
                 .iter()
-                .all(|t| t.p().atoms.cofinite || !t.p().atoms.payloads.is_empty())
+                .all(|t| t.p().atoms.cofinite() || !t.p().atoms.payloads().is_empty())
         } else {
-            p0.atoms.payloads.iter().any(|name| {
+            p0.atoms.payloads().iter().any(|name| {
                 ts[1..].iter().all(|t| {
                     let pt = t.p();
-                    if pt.atoms.cofinite {
+                    if pt.atoms.cofinite() {
                         pt.atoms
-                            .names
+                            .names()
                             .get(name)
                             .is_none_or(|a| a.payload != Type::empty())
                     } else {
-                        pt.atoms.payloads.contains(name)
+                        pt.atoms.payloads().contains(name)
                     }
                 })
             })
