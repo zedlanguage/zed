@@ -207,6 +207,44 @@ fn a_plan_with_no_conflict_sections_stops_the_tool() {
 }
 
 #[test]
+fn plan_fix_rewrites_stale_conflict_lists() {
+    // `plan --fix` sets levels, which the same-level pairs depend on, so it rewrites both
+    // sections too (PLAN-conflict-lists-stale); before that change a stale list stayed stale
+    // until someone ran `conflicts`. E written at level 0 moves to level 1 and the lists follow.
+    let mut rows = ROWS.to_vec();
+    rows[4].0 = 0;
+    let dir = zed_tests::step_helpers::scratch("conflicts-plan-fix");
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    let path = dir.join("plan_dag.md");
+    std::fs::write(&path, plan(HEAD, &rows, "old", "- old")).expect("writing the plan");
+    let file = path.display().to_string();
+    let mut out = String::new();
+    assert_eq!(
+        zed_tools::plan::run(&["--fix".to_string(), file.clone()], &mut out),
+        Ok(true),
+        "{out}"
+    );
+    let fixed = std::fs::read_to_string(&path).expect("reading the plan");
+    assert_eq!(
+        fixed,
+        rewrite(&fixed, &compute(&fixed).expect("a plan")).expect("both sections")
+    );
+    assert!(fixed.contains(SAME_ROWS), "{fixed}");
+    assert_eq!(
+        run(&["--check".to_string(), file], &mut String::new()),
+        Ok(true)
+    );
+    std::fs::remove_file(&path).expect("removing the plan");
+    std::fs::remove_dir(&dir).expect("removing the directory");
+}
+
+#[test]
+fn this_repository_s_conflict_lists_are_current() {
+    let mut out = String::new();
+    assert_eq!(run(&["--check".to_string()], &mut out), Ok(true), "{out}");
+}
+
+#[test]
 fn an_unknown_option_is_refused() {
     let why = run(&["--write".to_string()], &mut String::new()).expect_err("an option");
     assert!(why.starts_with("usage: conflicts"), "{why}");

@@ -283,6 +283,11 @@ pub fn render(c: &Conflicts<'_>) -> String {
     out
 }
 
+/// Whether `text` has both sections, so that `rewrite` can place them.
+pub fn has_sections(text: &str) -> bool {
+    sections(text).is_ok()
+}
+
 /// The byte range of both sections in `text`: from the start of the `SAME` heading to the start
 /// of the next `## ` heading after `CROSS`, or the end of the text.
 fn sections(text: &str) -> Result<std::ops::Range<usize>, String> {

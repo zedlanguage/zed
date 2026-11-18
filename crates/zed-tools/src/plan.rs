@@ -5,8 +5,10 @@
 //! line per problem and fails if there is any.
 //!
 //! With `--fix` it first rewrites the file: each row's level cell becomes the level its needs
-//! give, and the count sentence of the first paragraph becomes the table's counts. Nothing else
-//! changes, not even the order of the rows. It refuses, writing nothing, when the levels cannot
+//! give, and the count sentence of the first paragraph becomes the table's counts; when the file
+//! has the two file-conflict sections of the `conflicts` tool and the table passes the check,
+//! those sections are rewritten as `conflicts` writes them. Nothing else changes, not even the
+//! order of the rows. It refuses, writing nothing, when the levels cannot
 //! be computed: an id with two rows, a need with no row, or a cycle.
 //!
 //! The table is read the way GitHub renders it (GitHub-flavored Markdown): a row is split into
@@ -460,9 +462,20 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     if !fixing {
         return check_plan(&text, out);
     }
-    let fixed = fix_plan(&text).map_err(|e| {
+    let mut fixed = fix_plan(&text).map_err(|e| {
         format!("{path}: the levels cannot be computed, so nothing was written:\n{e}")
     })?;
+    // The file-conflict sections pair rows by level, so new levels or rows make them stale: they
+    // are rewritten here too, when the file has them and its table passes the check the
+    // `conflicts` tool needs (PLAN-conflict-lists-stale). O(m log m + D log m + output), as
+    // `conflicts::compute` says.
+    if crate::conflicts::has_sections(&fixed.text) && check_plan(&fixed.text, &mut String::new())? {
+        let new = {
+            let c = crate::conflicts::compute(&fixed.text).map_err(|e| format!("{path}: {e}"))?;
+            crate::conflicts::rewrite(&fixed.text, &c)?
+        };
+        fixed.text = new;
+    }
     if fixed.text != text {
         std::fs::write(path, &fixed.text).map_err(|e| format!("{path}: {e}"))?;
     }
