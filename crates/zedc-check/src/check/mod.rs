@@ -6849,15 +6849,32 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// offered, and of `n = 9007199254740993` is not (row CAST-rat-nonfinite; before, the carrier
 /// alone was read here and the first was not offered either, while `cast_loses` let it pass).
 ///
+/// A value the cast turns into a failure atom is not kept, even where `t` already holds that
+/// atom (FAIL-check-widening-atom-sets): `rat(x)` of `x: f64 | #NaN | #overflow` gives
+/// `#overflow` at an infinity, so it is not offered, though the atoms of its result are those
+/// of `t`. The comparison of atoms alone let it pass. An atom of `t` itself passes through the
+/// cast as it is, and is kept.
+///
 /// Complexity tradeoff (COMPLEXITY.md row MSG-concise-casts): naive version, apply the cast to
 /// each value `t` may hold and check each result exactly, O(the values of `t`), unbounded for
 /// an `int`; this version reads the cast's arrows once per piece of `t` ([`converted`]) and
 /// compares the atoms of the result with those of `t`, O(the size of `t`), the cost of printing
-/// `t` in the message that offers the cast. A type that lists its values costs one cast and its
-/// inverse per value (COMPLEXITY.md row C66), as `cast_loses` already spends on the same type.
+/// `t` in the message that offers the cast. A type that lists its values costs, per value, one
+/// cast, to see that it gives no atom, and the cast and its inverse of [`value_kept`]
+/// (COMPLEXITY.md row C66), the order `cast_loses` already spends on the same type.
 fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
     let listed = t.kernel().and_then(|k| k.values_listed());
-    let kept = listed.map(|vs| vs.iter().all(|v| value_kept(w, v)));
+    let cast = match w {
+        "int" => Some(Prim::CastInt),
+        "rat" => Some(Prim::CastRat),
+        "f64" => Some(Prim::CastF64),
+        "f32" => Some(Prim::CastF32),
+        _ => None,
+    };
+    let number =
+        |v: &Value| cast.is_none_or(|p| run(p, v).is_some_and(|x| !matches!(x, Value::Atom(_))));
+    let kept_one = |v: &Value| matches!(v, Value::Atom(_)) || (number(v) && value_kept(w, v));
+    let kept = listed.map(|vs| vs.iter().all(kept_one));
     let mut sig = word_sig(w);
     Arc::make_mut(&mut sig)
         .arrows
@@ -6866,16 +6883,17 @@ fn widening(w: &str, t: &Ty, exact: bool) -> Option<Ty> {
 }
 
 /// Whether the cast `w` gives back every value of the type `from`, one of its arrows'
-/// parameters, as the same number: `int` of an `int`, `rat` of an `int`, a `rat` or a float
-/// (whose NaN gives `#NaN` and infinities `#overflow`, which [`widening`] reads from the atoms), `f64` of
+/// parameters, as the same number: `int` of an `int`, `rat` of an `int` or a `rat`, `f64` of
 /// either float format and `f32` of an `f32`, and `f64` of an int proved within ±2^53
-/// (`exact`). A word that is not a numeric cast keeps its arrows.
+/// (`exact`). Not `rat` of a float format: its NaN gives `#NaN` and its infinities `#overflow`,
+/// numbers turned into failures (FAIL-check-widening-atom-sets). A word that is not a numeric
+/// cast keeps its arrows.
 fn keeps_values(w: &str, from: &Ty, exact: bool) -> bool {
     use Carrier::*;
     let is = |cs: &[Carrier]| cs.iter().any(|c| *from == Ty::carrier(*c));
     match w {
         "int" => is(&[Int]),
-        "rat" => is(&[Int, Rat, F64, F32]),
+        "rat" => is(&[Int, Rat]),
         "f64" => is(&[F64, F32]) || (exact && is(&[Int])),
         "f32" => is(&[F32]),
         _ => true,
@@ -14130,6 +14148,70 @@ mod tests {
                 Some(Value::atom(atom))
             );
         }
+    }
+
+    /// FAIL-check-widening-atom-sets: a cast widens only where it keeps every value of its
+    /// operand. A value it maps to a failure atom is not kept, even where the operand's type
+    /// already holds that atom: `rat(x)` of `x: f64 | #NaN | #overflow` gives `#overflow` at an
+    /// infinity, a number turned into a failure, so no repair menu offers it. Read by the
+    /// carrier (`f64`, `f32`) and by the listed values (an infinity or the NaN among them). The
+    /// atoms of the operand itself pass through: `rat(n)` of `n: int | #NaN | #overflow` keeps
+    /// every number, and so does `rat(x)` of a list of finite floats beside those atoms.
+    #[test]
+    fn a_cast_that_maps_a_value_to_an_atom_the_operand_holds_does_not_widen() {
+        let atoms = |names: &[&str]| {
+            names
+                .iter()
+                .fold(Ty::empty(), |t, a| t.union(&Ty::set(KType::atom(a))))
+        };
+        let both = atoms(&["NaN", "overflow"]);
+        let with = |t: Ty| t.union(&both);
+        let rat = Ty::carrier(Carrier::Rat);
+        // By the carrier: each float format, with the atoms its `rat` gives already held.
+        for c in [Carrier::F64, Carrier::F32] {
+            let t = with(Ty::carrier(c));
+            assert_eq!(
+                widening("rat", &t, false),
+                None,
+                "rat of {c:?} | #NaN | #overflow"
+            );
+        }
+        // By the listed values: an infinity or the NaN beside a finite value and both atoms a
+        // float's `rat` gives, so the atoms of the result are those of the operand.
+        for x in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let t = with(Ty::lit(&Value::float(1.0)).union(&Ty::lit(&Value::float(x))));
+            assert!(t.kernel().and_then(|k| k.values_listed()).is_some(), "{x}");
+            assert_eq!(
+                widening("rat", &t, false),
+                None,
+                "rat of 1.0 | {x} | #NaN | #overflow"
+            );
+            let t = with(Ty::lit(&Value::float32(x as f32)));
+            assert_eq!(
+                widening("rat", &t, false),
+                None,
+                "rat of {x}f32 | #NaN | #overflow"
+            );
+        }
+        // Controls, offered before and after: the operand's own atoms pass through a cast
+        // that keeps each of its numbers.
+        let t = with(Ty::carrier(Carrier::Int));
+        assert_eq!(
+            widening("rat", &t, false),
+            Some(with(rat.clone())),
+            "rat of int"
+        );
+        let t = Ty::lit(&Value::float(1.0))
+            .union(&Ty::lit(&Value::float(0.5)))
+            .union(&both);
+        assert_eq!(
+            widening("rat", &t, false),
+            Some(with(rat.clone())),
+            "rat of 1.0 | 0.5"
+        );
+        let t = Ty::carrier(Carrier::F32).union(&atoms(&["NaN"]));
+        let f64_ = Ty::carrier(Carrier::F64).union(&atoms(&["NaN"]));
+        assert_eq!(widening("f64", &t, false), Some(f64_), "f64 of f32 | #NaN");
     }
 
     /// PROOF-family-values-builders, negative control: a partial arrow written field by field

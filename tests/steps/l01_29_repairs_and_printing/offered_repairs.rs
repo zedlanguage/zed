@@ -624,3 +624,19 @@ fn a_text_repair_is_offered_only_where_it_changes_no_value_taken() {
     let got = offered("h(positional a: rat) = a;\nf(k: int) = h(k);");
     assert!(got.contains("Try `h(rat(k))` instead."), "{got}");
 }
+
+/// A cast that turns a number into a failure atom is not offered, even where the operand
+/// already holds that atom (FAIL-check-widening-atom-sets): beside a `rat`, `rat(x)` of
+/// `x: f64 | #NaN | #overflow` gives `#overflow` at an infinity, which `x` held as a number,
+/// so it is not offered; `rat(n)` of `n: int | #NaN | #overflow` keeps every number and is.
+#[test]
+fn a_cast_that_turns_a_number_into_an_atom_is_not_offered() {
+    let got = offered("f(x: f64 | #NaN | #overflow, r: rat) = x == r;");
+    assert!(!got.contains("rat(x)"), "{got}");
+    assert!(
+        got.contains("repair: write `false` in place of `x == r`"),
+        "{got}"
+    );
+    let got = offered("f(n: int | #NaN | #overflow, r: rat) = n == r;");
+    assert!(got.contains("repair: write `rat(n) == r`"), "{got}");
+}
