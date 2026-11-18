@@ -614,6 +614,17 @@ pub(super) struct InferF<'a> {
     closed: Option<usize>,
 }
 
+/// The position in `ids` of each id, the first where it occurs more than once: for each `b`,
+/// `first_positions(ids).get(&b)` is `ids.iter().position(|&id| id == b)`, the search it
+/// replaced (commit e658dbd45), whether or not the ids are distinct. O(p) for p ids.
+fn first_positions(ids: &[usize]) -> HashMap<usize, usize> {
+    let mut index = HashMap::with_capacity(ids.len());
+    for (j, &id) in ids.iter().enumerate() {
+        index.entry(id).or_insert(j);
+    }
+    index
+}
+
 pub(super) struct AtomF<'a> {
     name: &'a str,
     positional: &'a [Expr],
@@ -3066,12 +3077,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 range: range.map(ParamRange::Int),
             });
         }
-        let mut index = HashMap::new();
-        if f.params.iter().any(|p| p.default.is_some()) {
-            for (j, &id) in ids.iter().enumerate() {
-                index.entry(id).or_insert(j);
-            }
-        }
+        let index = match f.params.iter().any(|p| p.default.is_some()) {
+            true => first_positions(&ids),
+            false => HashMap::new(),
+        };
         let s = InferF {
             f,
             fid,
@@ -4108,7 +4117,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let what = what.as_str();
         let applied = self.applied.take();
         let saved = self.mark();
-        self.trying = true;
+        let was = std::mem::replace(&mut self.trying, true);
         self.apply(
             Label::Text(what),
             fsig,
@@ -4117,7 +4126,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
         );
         let takes = self.errors.len() == saved.errors;
-        self.trying = false;
+        self.end_trial(was);
         self.undo(&saved);
         self.applied = applied;
         if !takes {
@@ -12193,10 +12202,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg<'a>>>, span: Span) {
         let applied = self.applied.take();
         let saved = self.mark();
-        self.trying = true;
+        let was = std::mem::replace(&mut self.trying, true);
         let (t, _) = self.apply(Label::Text(what), sig, with, false, span);
         let ok = self.errors.len() == saved.errors;
-        self.trying = false;
+        self.end_trial(was);
         self.undo(&saved);
         self.applied = applied;
         self.tried_at(span, ok.then(|| t.loose()));
@@ -17208,7 +17217,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         self.components(what, &sides, a, b, span);
         let ok = self.errors.len() == mark.errors;
-        self.trying = was;
+        self.end_trial(was);
         self.undo(&mark);
         ok
     }
@@ -19222,6 +19231,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // Written past `Self::put`, which makes no write while needs are replayed: this
             // write is on the call being checked, not on the body the needs came from.
             None => {
+                self.trial_wrote(at);
                 let undo = self.set(Undo::Fit(at, Some(fit)));
                 self.log.push(undo);
             }
@@ -19732,6 +19742,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // Written past `Self::put`, which makes no write while needs are replayed: this
         // write is on the call being checked, not on the body the needs came from.
+        self.trial_wrote(at);
         let undo = self.set(Undo::Fit(at, Some(Fit::Coerce(fit))));
         self.log.push(undo);
     }
@@ -20781,7 +20792,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.opened = opened;
         self.comparing = comparing;
         self.rough = rough;
-        self.trying = trying;
+        self.end_trial(trying);
         self.lit_refused.truncate(refused);
         self.undo(&saved);
         (t, found)
@@ -27725,6 +27736,30 @@ mod tests {
         let mut at = Some(a);
         while let Some(Coercion::Fn { result, .. }) = at {
             at = result.map(|b| *b);
+        }
+    }
+
+    /// Plan row TEST-walk-binder-unique: the map of each parameter binder to its position that
+    /// [`Ck::note_default_reads`] reads (commit e658dbd45) gives the position the search it
+    /// replaced gave, the first, for every id, on lists with an id twice and three times as
+    /// well as on distinct ids: the two agree whether or not binder ids are distinct. Seen to
+    /// fail with the map keeping the last position (`insert` in place of `or_insert`; the
+    /// negative control, run once and not kept).
+    #[test]
+    fn the_binder_positions_are_those_a_search_finds() {
+        for ids in [
+            vec![],
+            vec![7],
+            vec![3, 1, 4, 5, 9],
+            vec![4, 2, 4],
+            vec![1, 1],
+            vec![5, 6, 5, 6, 5],
+        ] {
+            let index = first_positions(&ids);
+            for b in 0..10 {
+                let want = ids.iter().position(|&id| id == b);
+                assert_eq!(index.get(&b).copied(), want, "id {b} of {ids:?}");
+            }
         }
     }
 }

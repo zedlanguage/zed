@@ -1969,6 +1969,14 @@ struct Ck<'t, 'a> {
     /// in the body are met later, at a call of the generic function the lambda lies in, and
     /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
     arrow_lambdas: HashMap<Span, Arc<Sig>>,
+    /// The spans at which the trials under way ([`Self::trying`]) wrote a fit, emptied when
+    /// the outermost ends ([`Self::end_trial`]): a fit there is the trial's own, and another
+    /// one is refused, where a [`Fit::Read`] the walk wrote before the trial is replaced
+    /// ([`Self::put`]). A span an inner trial wrote stays after that trial's undo, so a later
+    /// write there in the outer trial is refused as before this set existed. The naive test,
+    /// a scan of the log since the trial's mark for a write at the span, is O(log) a write
+    /// and O(n^2) over a construct of n arguments; this set is O(1).
+    trial_fits: HashSet<Span>,
     /// The spans of the needs [`Ck::meet`] is checking, outermost first: the uses in the
     /// bodies a check of a fold passes through on its way from the call that meets it
     /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
@@ -2582,6 +2590,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             remap_keys: Vec::new(),
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
+            trial_fits: HashSet::new(),
             need_chain: Vec::new(),
             passing_on: Vec::new(),
             fold_uses: HashSet::new(),
@@ -7381,6 +7390,17 @@ impl Ck<'_, '_> {
     /// | f64) ->? int)`, is rebuilt with a test of `int` at the first arrow and of `f64` at
     /// the second, and the run would call `small` on 2.5 at the second test kept alone
     /// (PROOF-twice-lambda-placement).
+    ///
+    /// A trial ([`Self::trying`]) checks one construct again, and a [`Fit::Read`] it puts at
+    /// an argument replaces the one the walk put there before the trial: the construct that
+    /// reads an argument is the one writer of a `Read` at its span (the comment at
+    /// `Frame::Guarded` in walk.rs), so the walk's `Read` is the fit the construct had before
+    /// the repair tried, and the repaired program has the trial's in its place. The carried
+    /// fix `1r` of `r = (v60 -> 0)(1) + (1 / 2)` reads the call at `rat` where the walk read it
+    /// at `f64`, and refusing that dropped the fix from the menu
+    /// (PROOF-fit-twice-only-arrow-lambda). The replaced fit is logged, and the trial's undo
+    /// puts it back. A span inside an arrow lambda keeps the refusal, since the lambda's other
+    /// arrow may read the span at another carrier in the repaired program as well.
     fn put(&mut self, w: Undo) {
         if self.replaying > 0 {
             return;
@@ -7388,11 +7408,42 @@ impl Ck<'_, '_> {
         if let Undo::Fit(at, Some(new)) = &w
             && let Some(old) = self.info.fits.get(at)
             && old != new
+            && !self.walk_read_replaced(*at, old, new)
         {
             return self.fit_twice(*at);
         }
+        if let Undo::Fit(at, Some(_)) = &w {
+            self.trial_wrote(*at);
+        }
         let undo = self.set(w);
         self.log.push(undo);
+    }
+
+    /// Whether the fit `new` at `at`, put by a trial, replaces the fit `old` that the walk put
+    /// there before the trial, as [`Self::put`] says: both [`Fit::Read`], `at` not written in
+    /// this trial ([`Self::trial_fits`]) and not inside an arrow lambda. O(1) but for the
+    /// arrow lambdas, scanned only on this path, where two fits differ under a trial.
+    fn walk_read_replaced(&self, at: Span, old: &Fit, new: &Fit) -> bool {
+        self.trying
+            && matches!((old, new), (Fit::Read(_), Fit::Read(_)))
+            && !self.trial_fits.contains(&at)
+            && !(self.arrow_lambdas.keys()).any(|l| l.start <= at.start && at.end <= l.end)
+    }
+
+    /// Records that a trial wrote a fit at `at` ([`Self::trial_fits`]).
+    fn trial_wrote(&mut self, at: Span) {
+        if self.trying {
+            self.trial_fits.insert(at);
+        }
+    }
+
+    /// Ends a trial begun when [`Self::trying`] was `was`: restores it, and forgets the fits
+    /// the trials wrote once the outermost ends, since their writes are undone by then.
+    fn end_trial(&mut self, was: bool) {
+        self.trying = was;
+        if !was {
+            self.trial_fits.clear();
+        }
     }
 
     /// Refuses a second fit, of another kind or shape, at `at` ([`Self::put`]).

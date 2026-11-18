@@ -2299,6 +2299,159 @@ fn a_reordered_function_the_generic_body_uses_in_another_order_is_refused() {
     }
 }
 
+/// The functions of the use-kind tests of row PROOF-reorder-forwarded-uses-complete: `re`
+/// takes `y` first and `app2`'s slot takes `x` first. Called by name, `re(x: 1, y: 2)` is 12;
+/// called with its arguments in each other's places it would be 21. The claim tested is that
+/// [`Fit::Adapter`] put at `re` for `app2`'s slot (`Ck::reorder_forwarded`) is put only where
+/// `Ck::note_fn_uses` saw every other use of the generic parameter, so a body that also uses
+/// it in any other way is refused and never runs with its arguments swapped.
+const REORDER_HEAD: &str =
+    "re(y: int, x: int) = x * 10 + y;\napp2(f: (x: int, y: int) -> int) = f(x: 1, y: 2);\n";
+
+/// Each of `rests`, after [`REORDER_HEAD`], is refused with exactly one error for the order of
+/// `re`'s parameters, and that error gives the reason `why`.
+fn reorder_refused(rests: &[&str], why: &str) {
+    for rest in rests {
+        let src = format!("{REORDER_HEAD}{rest}");
+        let errors = type_errors(&src);
+        let order: Vec<_> = (errors.iter())
+            .filter(|e| e.contains("with its parameters in another order"))
+            .collect();
+        assert_eq!(order.len(), 1, "{src}: {errors:?}");
+        assert!(order[0].contains(why), "{src}: {errors:?}");
+    }
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by a call: a body that calls the parameter
+/// in its own order, directly, through a partial application, through a generic callee,
+/// after passing it to a generic forwarder, through a local name, or after taking it back out
+/// of a tuple, is refused.
+#[test]
+fn a_reordered_function_the_generic_body_also_calls_is_refused() {
+    reorder_refused(
+        &[
+            "pass(g) = app2(f: g) + g(y: 2, x: 1);\na = pass(g: re);\n",
+            "pass(g) = app2(f: g) + g(y: 2, ...)(x: 1);\na = pass(g: re);\n",
+            "callit(h) = h(y: 2, x: 1);\npass(g) = app2(f: g) + callit(h: g);\na = pass(g: re);\n",
+            "fwd(h) = app2(f: h);\npass(g) = fwd(h: g) + g(y: 2, x: 1);\na = pass(g: re);\n",
+            "pass(g) = { h = g; app2(f: h) + g(y: 2, x: 1) };\na = pass(g: re);\n",
+            "pass(g) = app2(f: (g, 0)[0]) + g(y: 2, x: 1);\na = pass(g: re);\n",
+        ],
+        "also uses it in its own order",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by passing it on: a body that also passes
+/// the parameter to a slot in its own order, directly or through a generic forwarder, is
+/// refused.
+#[test]
+fn a_reordered_function_the_generic_body_also_passes_on_in_another_order_is_refused() {
+    let own = "own(f: (y: int, x: int) -> int) = f(y: 2, x: 1);\n";
+    reorder_refused(
+        &[
+            &format!("{own}pass(g) = app2(f: g) + own(f: g);\na = pass(g: re);\n"),
+            &format!(
+                "{own}fwd(h) = own(f: h);\npass(g) = app2(f: g) + fwd(h: g);\na = pass(g: re);\n"
+            ),
+        ],
+        "also passes it on as `(y: int, x: int) -> int`, in that order",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by storing it: a body that puts the
+/// parameter in a tuple, a map or a family and calls it from there is refused.
+#[test]
+fn a_reordered_function_the_generic_body_also_stores_is_refused() {
+    reorder_refused(
+        &[
+            "pass(g) = { t = (g, 0); app2(f: g) + t[0](y: 2, x: 1) };\na = pass(g: re);\n",
+            "pass(g) = { m = { 1 -> g }; app2(f: g) + m[1](y: 2, x: 1) };\na = pass(g: re);\n",
+            "pass(g) = app2(f: g) + [g].map(h -> h(y: 2, x: 1))[0];\na = pass(g: re);\n",
+            "pass(g) = { m = [g, re]; app2(f: g) + m[1](y: 2, x: 1) };\na = pass(g: re);\n",
+        ],
+        "also uses it in its own order",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by a closure: a closure that calls the
+/// parameter is refused; one that only passes it on in the slot's order runs, to the value of
+/// a call by name.
+#[test]
+fn a_reordered_function_a_closure_of_the_generic_body_captures_is_refused_or_runs() {
+    reorder_refused(
+        &[
+            "pass(g) = { c = z -> g(y: 2, x: z); app2(f: g) + c(1) };\na = pass(g: re);\n",
+            "pass(g) = { c = z -> app2(f: g); c(1) + g(y: 2, x: 1) };\na = pass(g: re);\n",
+        ],
+        "also uses it in its own order",
+    );
+    runs_to(
+        &format!("{REORDER_HEAD}pass(g) = {{ c = z -> app2(f: g); c(1) }};\na = pass(g: re);\n"),
+        "a",
+        "12",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by giving it back: a result that holds the
+/// parameter in a map or a family is refused for giving it back, and one that holds a closure
+/// calling it is refused for the call.
+#[test]
+fn a_reordered_function_the_generic_body_returns_inside_another_value_is_refused() {
+    reorder_refused(
+        &[
+            "pass(g) = (app2(f: g), { 1 -> g });\nb = pass(g: re);\na = b[1][1](y: 2, x: 1) + b[0];\n",
+            "pass(g) = (app2(f: g), [g]);\nb = pass(g: re);\na = b[1][0](y: 2, x: 1) + b[0];\n",
+        ],
+        "also gives it back",
+    );
+    reorder_refused(
+        &["pass(g) = (app2(f: g), z -> g(y: 2, x: z));\nb = pass(g: re);\na = b[1](1) + b[0];\n"],
+        "also uses it in its own order",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by a comparison: comparing a function is
+/// refused in any case, and the reordering is refused beside it.
+#[test]
+fn a_reordered_function_the_generic_body_compares_is_refused() {
+    for rest in [
+        "pass(g) = app2(f: g) + (if g == re { 100 } else { 0 });\na = pass(g: re);\n",
+        "pass(g) = app2(f: g) + (if g == g { 100 } else { 0 });\na = pass(g: re);\n",
+    ] {
+        let src = format!("{REORDER_HEAD}{rest}");
+        let errors = type_errors(&src);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("Cannot compare a value that may hold a function")),
+            "{src}: {errors:?}"
+        );
+    }
+    reorder_refused(
+        &["pass(g) = app2(f: g) + (if g == g { 100 } else { 0 });\na = pass(g: re);\n"],
+        "also uses it in its own order",
+    );
+}
+
+/// Row PROOF-reorder-forwarded-uses-complete, use by a struct: a struct declaration is not
+/// compiled yet, so a struct holding the parameter never reaches the checker. When structs
+/// are compiled, this test fails, and the struct cases join the tests above.
+#[test]
+fn a_reordered_function_in_a_struct_is_not_compiled_yet() {
+    let head = "struct Box { v: (y: int, x: int) -> int }\n";
+    for rest in [
+        "pass(g) = { b = Box(v: g); app2(f: g) + b.v(y: 2, x: 1) };\na = pass(g: re);\n",
+        "pass(g) = (app2(f: g), Box(v: g));\nb = pass(g: re);\na = b[1].v(y: 2, x: 1) + b[0];\n",
+    ] {
+        let src = format!("{head}{REORDER_HEAD}{rest}");
+        let errors = front_errors(&src);
+        assert!(
+            errors.iter().any(|e| e.contains("does not compile it yet")),
+            "{src}: {errors:?}"
+        );
+    }
+}
+
 /// Row TEST-partial-slot-port-pe-routes, the second part: the cases the proof at
 /// `Ck::coerce_at` names for the "rebuilt here already" refusal, which is a debug assertion
 /// now, each run to its values. A lambda passed to a generic function that calls it at two

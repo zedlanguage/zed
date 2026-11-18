@@ -106,6 +106,48 @@ fn a_division_of_integer_literals_lists_three_lines() {
     );
 }
 
+/// A literal beside a call that the walk reads at `f64` lists the `rat` fix as well. Each fix
+/// is checked by checking the operation again with the literal retyped (`Ck::trial`), which
+/// reads the call at `rat` where the walk read it at `f64`; the checker took that second
+/// reading for a span rebuilt twice and dropped the fix, so these menus listed `1.0f64`
+/// alone (PROOF-fit-twice-only-arrow-lambda).
+#[test]
+fn a_literal_beside_a_call_read_at_f64_lists_the_rat_fix() {
+    for (head, op, holds) in [
+        ("f(x) = 0;\n", "f(x: 1) + (1 / 2)", "1r/2r"),
+        ("", "(v60 -> 0)(1) + (1 / 2)", "1r/2r"),
+        ("", "(v60 -> 0)(1) * (1 / 2)", "0r"),
+    ] {
+        let rat = op.replace("(1 / 2)", "(1r / 2)");
+        let f64 = op.replace("(1 / 2)", "(1.0f64 / 2)");
+        assert_eq!(
+            checked(&format!("{head}r = {op};\n")),
+            pairs(&[
+                (
+                    &format!("r = {rat};"),
+                    "the literal is then exactly 1, a rat"
+                ),
+                (&format!("r = {f64};"), "the literal is then the f64 1.0"),
+            ]),
+            "{op}"
+        );
+        assert_eq!(value(&format!("{head}r = {rat};\n"), "r"), holds, "{op}");
+    }
+    assert_eq!(
+        checked("r = if (v60 -> 0)(1) < (1 / 2) { 1 } else { 2 };\n"),
+        pairs(&[
+            (
+                "r = if (v60 -> 0)(1) < (1r / 2) { 1 } else { 2 };",
+                "the literal is then exactly 1, a rat"
+            ),
+            (
+                "r = if (v60 -> 0)(1) < (1.0f64 / 2) { 1 } else { 2 };",
+                "the literal is then the f64 1.0"
+            ),
+        ])
+    );
+}
+
 /// A decimal literal that nothing fixes is no error: it takes `f64`, and so does an operation
 /// on literals alone with a decimal among its operands, with no warning and no menu (DESIGN.md
 /// step L1.26b, author decision 2026-11-12). These lines each listed a menu before.
