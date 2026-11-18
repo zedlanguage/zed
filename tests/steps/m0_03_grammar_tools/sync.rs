@@ -1,15 +1,15 @@
-//! The `sync` command: the copies of the spec it writes, `--check`, and the checks of the
-//! spec's prose it runs; and the readers the tests use on DESIGN.md in place. This file spells
-//! the kernel rule names to test the list of them, so l01_21's `no_message_names_a_kernel_rule`
-//! leaves it out, as it leaves out its own file.
+//! The `sync` command, which runs the checks of the spec's prose and writes nothing (author P371,
+//! P375: this repository holds no copy of the spec); and the readers the tests use on DESIGN.md
+//! in place. This file spells the kernel rule names to test the list of them, so l01_21's
+//! `no_message_names_a_kernel_rule` leaves it out, as it leaves out its own file.
 
 use std::fs;
 
 use zed_tools::spec::Spec;
 use zed_tools::{fence_layers, spec_checks, sync};
 
-use super::{DOUBLE, design, design_of, fence, grammar, spec_dir};
-use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
+use super::{DOUBLE, design, fence, spec_dir, tool};
+use zed_tests::step_helpers::m0_03_grammar_tools::KERNEL;
 
 /// Two tables of step M0.7's serialization, the first ended by a paragraph, the second by a
 /// blank line, and between them a table whose header does not end as theirs do.
@@ -20,60 +20,67 @@ const SERIAL: &str = "| Grade | Tag | Fields in order |\n|---|---|---|\n| Axiom 
                       | `a + b` | 0 |\n\n| Primitive | Code | Note |\n|---|---|---|\n\
                       | `a - b` | 1 | — |\n";
 
-/// `sync` writes every copy, `--check` then passes, and a copy edited by hand is out of date.
-/// It copies no fence, message or table: the tests read those from DESIGN.md in place.
+/// The prelude laws as a spec states them, and the study page that states `allIntro` the same.
+const LAWS: &str = "L15.7. Build the prelude laws `anyIntro`, `anyElim`, `allElim` and `allIntro`; \
+                    test: `anyIntro`, `anyElim`, `allElim` and `allIntro` reach proof grade.\n\
+                    The prelude also states `anyIntro`, `anyElim`, `allElim` and \
+                    `law allIntro(p: P) -> Q`. More.\n";
+const PAGE: &str = "law allIntro(p: P) -> Q proof { done }\n";
+
+/// `sync` on a spec runs each check of its prose and writes nothing; each check that fails is
+/// named with its failure, and the command fails. (The build-modes check passes only on a
+/// whole bullet; `the_prose_checks_pass_on_the_spec` runs all three on the spec.)
 #[test]
-fn sync_writes_the_copies_and_check_finds_a_stale_one() {
-    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
-    let dir = spec_dir("sync", &design(&body), &fence(DOUBLE));
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir("sync_zed");
-    let run = |check| {
-        let mut out = String::new();
-        (sync::sync_into(&spec, &zed.root(), check, &mut out), out)
-    };
-    let (outcome, _) = run(true);
-    assert_eq!(outcome, Ok(false), "nothing is written yet");
-    let (outcome, out) = run(false);
-    assert_eq!(outcome, Ok(true), "{out}");
-    for name in ["syntax.peg", "lexical.peg", "notation.peg", "desugar.txt"] {
-        assert_eq!(
-            fs::read_to_string(zed.at(&format!("grammar/{name}"))).unwrap(),
-            grammar(name),
-            "{name}"
-        );
-    }
-    let words = fs::read_to_string(zed.at("grammar/words.md")).unwrap();
-    assert!(
-        words.ends_with(
-            "| L1 | — | — | `len` |\n| L3 | — | — | `sorted` |\n| L7 | — | — | `log` |\n"
-        ),
-        "{words}"
+fn sync_runs_each_prose_check_and_names_the_one_that_fails() {
+    let with =
+        |body: &str| sync::prose_checks(&design(&format!("{}\n{body}", fence(DOUBLE))), PAGE);
+    let checks = with(&format!("{KERNEL}\n{LAWS}"));
+    assert_eq!(
+        checks.iter().map(|c| c.0).collect::<Vec<_>>(),
+        ["the kernel grammar", "the prelude laws", "the build modes"]
     );
-    let mut written: Vec<String> = fs::read_dir(zed.root())
+    assert_eq!(checks[0].1, Ok(()), "{checks:?}");
+    assert_eq!(checks[1].1, Ok(()), "{checks:?}");
+    assert!(checks[2].1.is_err(), "{checks:?}");
+
+    let no_kernel = format!("{}\n{LAWS}", fence(DOUBLE));
+    let checks = with(LAWS);
+    assert!(
+        checks[0]
+            .1
+            .as_ref()
+            .is_err_and(|e| e.contains("sec:kernel")),
+        "{checks:?}"
+    );
+    assert_eq!(checks[1].1, Ok(()), "{checks:?}");
+
+    // The command reads DESIGN.md from the directory, and writes nothing into it.
+    let dir = spec_dir("sync_no_kernel", &design(&no_kernel), "");
+    let (outcome, out) = tool(sync::run, &[&dir.root(), "--check"]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(out.contains("the kernel grammar: "), "{out}");
+    assert!(
+        out.contains("the citations: DESIGN.md has no section sec:steps"),
+        "{out}"
+    );
+    let mut files: Vec<String> = fs::read_dir(dir.root())
         .unwrap()
-        .chain(fs::read_dir(zed.at("grammar")).unwrap())
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    written.sort();
-    assert_eq!(
-        written,
-        [
-            "desugar.txt",
-            "grammar",
-            "lexical.peg",
-            "notation.peg",
-            "synced-from",
-            "syntax.peg",
-            "words.md"
-        ]
-    );
-    assert_eq!(run(true).0, Ok(true));
+    files.sort();
+    assert_eq!(files, ["DESIGN.md", "EXAMPLES.md"]);
+}
 
-    zed.write("grammar/words.md", "edited by hand\n");
-    let (outcome, out) = run(true);
-    assert_eq!(outcome, Ok(false));
-    assert_eq!(out, "words.md is out of date\n");
+/// The checks of the spec's prose pass on the spec's own DESIGN.md, read in place, with this
+/// repository's study page: `sync` runs them only by hand, so a spec edit that breaks one is
+/// caught here (DESIGN.md's "which builds the string" was once read as naming a build).
+#[cfg(feature = "spec")]
+#[test]
+fn the_prose_checks_pass_on_the_spec() {
+    let page = zed_tests::spec::read(&format!("{}/docs/mathlib-study.md", zed_tools::impl_root()));
+    for (what, result) in sync::prose_checks(zed_tests::spec::design(), &page) {
+        assert_eq!(result, Ok(()), "{what}");
+    }
 }
 
 /// The readers the tests use on DESIGN.md in place: a ```` ```text ```` fence inside a list
@@ -116,32 +123,23 @@ fn the_in_place_readers_give_the_messages_rules_and_tables() {
     );
 }
 
-/// A spec with no kernel grammar stops `sync` before it writes anything: with no words to ban,
-/// the test that no message names a kernel rule would pass on any message.
+/// DESIGN.md's table of words, read in place, gives each fence its layer from a cell's
+/// backquoted words only: prose, a gloss in parentheses and a word in another column are
+/// passed over, a word a cell names again in its note (as DESIGN.md's L3 row names `split` and
+/// `concat` again) counts once, and a word only the note names (as L15's tactics are) counts.
 #[test]
-fn sync_refuses_a_spec_with_no_kernel_grammar() {
-    let dir = spec_dir("sync_no_kernel", &design(&fence(DOUBLE)), "");
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir("sync_no_kernel_zed");
-    let mut out = String::new();
-    let why = sync::sync_into(&spec, &zed.root(), false, &mut out).expect_err("no sec:kernel");
-    assert!(why.contains("sec:kernel"), "{why}");
-    assert!(fs::read_dir(zed.at("grammar")).unwrap().next().is_none());
-}
-
-/// The copy of the table of words gives each fence the layer DESIGN.md's table gives it, though
-/// it keeps only each cell's backquoted words.
-#[test]
-fn the_copied_table_of_words_lays_out_the_fences_as_the_spec_does() {
+fn the_table_of_words_lays_out_the_fences_from_its_backquoted_words() {
     let table = "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
                  | L1 | — | — | `len`, and prose |\n\
-                 | L3 | `@pure` (see below) | `::size` here | `sorted`, `#notFound` and `max` |\n\
+                 | L3 | `@pure` (see below) | `::size` here | `sorted`, `split`, `concat` (`split` \
+                 keeps every piece; `concat` takes strings, `max` too) |\n\
                  | L7 | | | the port `log` |\n";
     let body = format!(
-        "{}\n{}\n{}\n{KERNEL}",
+        "{}\n{}\n{}\n{}\n{KERNEL}",
         fence(DOUBLE),
         fence("y = sorted(x);"),
-        fence("z = max(x, y);")
+        fence("z = max(x, y);"),
+        fence("w = split(x);")
     );
     let text = design(&body).replacen(
         "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
@@ -149,231 +147,19 @@ fn the_copied_table_of_words_lays_out_the_fences_as_the_spec_does() {
         table,
         1,
     );
-    assert!(text.contains("and prose"), "the table is replaced");
-    let dir = spec_dir("sync_words", &text, "");
-    fs::create_dir_all(format!("{}/zed/grammar", dir.root())).unwrap();
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let mut out = String::new();
-    let zed = format!("{}/zed", dir.root());
-    assert_eq!(
-        sync::sync_into(&spec, &zed, false, &mut out),
-        Ok(true),
-        "{out}"
-    );
-    let copy = Spec::of_impl(&dir.root()).expect("the copied grammars read");
-    let layers = |spec: &Spec| -> Vec<u32> {
-        fence_layers::of_document(&dir.at("DESIGN.md"), spec)
-            .expect("the fences lay out")
-            .iter()
-            .map(|f| f.layer)
-            .collect()
-    };
-    assert_eq!(layers(&spec), [1, 3, 3]);
-    assert_eq!(layers(&copy), layers(&spec));
-}
-
-/// A word a cell names again, as DESIGN.md's L3 row names `split` and `concat` again in the note
-/// that explains them, is listed once, where it first appears; a word only the note names, as
-/// L15's tactics are, is kept.
-#[test]
-fn a_word_named_again_in_a_note_is_listed_once() {
-    let table = "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
-                 | L1 | | | `len` |\n\
-                 | L3 | | | `sorted`, `split`, `concat` (`split` keeps every piece; `concat` \
-                 takes strings, `max` too) |\n\
-                 | L7 | | | `log` |\n";
-    let text = design(&format!("{}\n{KERNEL}", fence(DOUBLE))).replacen(
-        "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
-         | L1 | | | `len` |\n| L3 | | | `sorted` |\n| L7 | | | `log` |\n",
-        table,
-        1,
-    );
     assert!(text.contains("takes strings"), "the table is replaced");
-    let dir = spec_dir("sync_words_once", &text, "");
-    fs::create_dir_all(format!("{}/zed/grammar", dir.root())).unwrap();
+    let dir = spec_dir("table_words", &text, "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let mut out = String::new();
-    let zed = format!("{}/zed", dir.root());
-    assert_eq!(
-        sync::sync_into(&spec, &zed, false, &mut out),
-        Ok(true),
-        "{out}"
-    );
-    let words = fs::read_to_string(format!("{zed}/grammar/words.md")).unwrap();
-    assert!(
-        words.contains("\n| L3 | — | — | `sorted`, `split`, `concat`, `max` |\n"),
-        "{words}"
-    );
-}
-
-/// `sync` writes the spec commit the copies come from to `zed/synced-from`
-/// (MERGE-spec-lag-by-pin): `unknown` for a spec directory that is not the top of a git checkout
-/// (this one lies under build/, inside zed-impl's own checkout, whose commit is not the spec's),
-/// the HEAD commit for a clean checkout, and that commit marked when DESIGN.md has uncommitted
-/// changes. `--check` neither writes nor compares the stamp.
-#[test]
-fn sync_writes_the_spec_commit_it_copied_from() {
-    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
-    let dir = spec_dir("sync_stamp", &design(&body), &fence(DOUBLE));
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir("sync_stamp_zed");
-    let stamp = || fs::read_to_string(zed.at(sync::STAMP)).unwrap();
-    let run = |check| {
-        let mut out = String::new();
-        (sync::sync_into(&spec, &zed.root(), check, &mut out), out)
-    };
-    let (outcome, out) = run(true);
-    assert_eq!(outcome, Ok(false), "{out}");
-    assert!(!out.contains("synced-from"), "{out}");
-    assert!(
-        !std::path::Path::new(&zed.at(sync::STAMP)).exists(),
-        "--check writes no stamp"
-    );
-    let (outcome, out) = run(false);
-    assert_eq!(outcome, Ok(true), "{out}");
-    assert_eq!(stamp(), "unknown\n");
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .args(["-C", &dir.root(), "-c", "user.name=test"])
-            .args([
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(out.status.success(), "git {args:?}: {out:?}");
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    git(&["init", "-q"]);
-    git(&["add", "DESIGN.md", "EXAMPLES.md"]);
-    git(&["commit", "-q", "-m", "spec"]);
-    let head = git(&["rev-parse", "HEAD"]);
-    let (outcome, out) = run(false);
-    assert_eq!(outcome, Ok(true), "{out}");
-    assert!(out.contains("synced-from is written"), "{out}");
-    assert_eq!(stamp(), format!("{head}\n"));
-    let (outcome, out) = run(true);
-    assert_eq!(
-        outcome,
-        Ok(true),
-        "the stamp is not a copy --check compares: {out}"
-    );
-    fs::write(
-        dir.at("DESIGN.md"),
-        design(&format!("{body}\nA new line.\n")),
-    )
-    .unwrap();
-    assert_eq!(
-        sync::spec_commit(&dir.root()),
-        format!("{head} with uncommitted changes")
-    );
-}
-
-/// A copy held back with `--hold` keeps, in `zed/synced-from`, the commit it was written from
-/// while the first line moves on (SYNC-held-files-stamp): the stamp named only the last sync's
-/// commit, so merge-push counted a held copy's lag from there and missed the commits before it.
-/// `--check` names a held copy's own commit; the line goes once the copy is written, and a
-/// held copy that is current needs none.
-#[test]
-fn a_held_copy_keeps_its_own_commit_in_the_stamp() {
-    // Each commit changes the syntactic grammar by a comment after its last line's layer.
-    let body = format!("{}\n{KERNEL}", fence(DOUBLE));
-    let spec_text = |note: &str| {
-        design_of(
-            &grammar("lexical.peg"),
-            &format!("{}{note}\n", grammar("syntax.peg").trim_end()),
-            &grammar("notation.peg"),
-            &grammar("desugar.txt"),
-            &body,
-        )
-    };
-    let dir = spec_dir("sync_held", &spec_text(""), &fence(DOUBLE));
-    let zed = zed_dir("sync_held_zed");
-    let stamp = || fs::read_to_string(zed.at(sync::STAMP)).unwrap();
-    let run = |check, hold: &[&str]| {
-        let spec = Spec::open(&dir.root()).expect("the spec reads");
-        let hold: Vec<String> = hold.iter().map(|h| h.to_string()).collect();
-        let mut out = String::new();
-        (
-            sync::sync_holding(&spec, &zed.root(), check, &hold, &mut out),
-            out,
-        )
-    };
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .args(["-C", &dir.root(), "-c", "user.name=test"])
-            .args([
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(out.status.success(), "git {args:?}: {out:?}");
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    let commit = |note: &str| {
-        fs::write(dir.at("DESIGN.md"), spec_text(note)).unwrap();
-        git(&["add", "DESIGN.md", "EXAMPLES.md"]);
-        git(&["commit", "-q", "-m", "spec"]);
-        git(&["rev-parse", "HEAD"])
-    };
-    git(&["init", "-q"]);
-    let first = commit("");
-    assert_eq!(run(false, &[]).0, Ok(true));
-    assert_eq!(run(false, &["syntax.peg"]).0, Ok(true));
-    assert_eq!(
-        stamp(),
-        format!("{first}\n"),
-        "a current held copy needs no line"
-    );
-
-    let second = commit("  -- one");
-    let (outcome, out) = run(false, &["syntax.peg"]);
-    assert_eq!(outcome, Ok(true), "{out}");
-    assert!(
-        out.contains(&format!("syntax.peg is held, copied from zed {first}")),
-        "{out}"
-    );
-    assert_eq!(stamp(), format!("{second}\nsyntax.peg {first}\n"));
-    let (outcome, out) = run(true, &[]);
-    assert_eq!(outcome, Ok(false));
-    assert_eq!(
-        out,
-        format!("syntax.peg is out of date, copied from zed {first}\n")
-    );
-
-    let third = commit("  -- two");
-    assert_eq!(run(false, &["syntax.peg"]).0, Ok(true));
-    assert_eq!(
-        stamp(),
-        format!("{third}\nsyntax.peg {first}\n"),
-        "a later sync that still holds the copy keeps its commit"
-    );
-
-    let (outcome, out) = run(false, &[]);
-    assert_eq!(outcome, Ok(true), "{out}");
-    assert!(out.contains("syntax.peg is written"), "{out}");
-    assert_eq!(stamp(), format!("{third}\n"));
-    assert_eq!(run(true, &[]).0, Ok(true));
-
-    let (outcome, _) = run(false, &["design.txt"]);
-    assert!(
-        outcome
-            .as_ref()
-            .is_err_and(|e| e.contains("--hold design.txt")),
-        "{outcome:?}"
-    );
+    let layers: Vec<u32> = fence_layers::of_document(&dir.at("DESIGN.md"), &spec)
+        .expect("the fences lay out")
+        .iter()
+        .map(|f| f.layer)
+        .collect();
+    assert_eq!(layers, [1, 3, 3, 3]);
 }
 
 /// The spec checkout `sync` reads: the one directory it is given, else `ZED_SPEC_DIR`; `--check`
-/// and `--hold COPY` are no directory, and two directories or none, or `--hold` with no copy, is
-/// a usage error.
+/// is no directory, and two directories or none is a usage error.
 #[test]
 fn sync_reads_the_directory_it_is_given_or_else_the_variable() {
     let args = |a: &[&str]| -> Vec<String> { a.iter().map(|s| s.to_string()).collect() };
@@ -390,12 +176,6 @@ fn sync_reads_the_directory_it_is_given_or_else_the_variable() {
     assert!(sync::spec_dir(&args(&[]), None).is_err());
     assert!(sync::spec_dir(&args(&[]), Some(String::new())).is_err());
     assert!(sync::spec_dir(&args(&["/a", "/b"]), var()).is_err());
-    assert_eq!(
-        sync::spec_dir(&args(&["--hold", "syntax.peg", "/a", "--hold", "x"]), None),
-        Ok("/a".into()),
-        "a held copy's name is no directory"
-    );
-    assert!(sync::spec_dir(&args(&["/a", "--hold"]), None).is_err());
 }
 
 /// The prelude laws `sync` checks DESIGN.md for: named where step L15.7 builds them and where its
@@ -403,18 +183,11 @@ fn sync_reads_the_directory_it_is_given_or_else_the_variable() {
 /// study writes it. A law missing from any of the three is named.
 #[test]
 fn sync_checks_the_prelude_laws_design_states() {
-    let laws = "`anyIntro`, `anyElim`, `allElim` and `allIntro`";
-    let design = format!(
-        "L15.7. Build the prelude laws {laws}; test: {laws} reach proof grade.\n\
-         The prelude also states `anyIntro`, `anyElim`, `allElim` and \
-         `law allIntro(p: P) -> Q`. More.\n"
-    );
-    let page = "law allIntro(p: P) -> Q proof { done }\n";
-    assert_eq!(spec_checks::prelude_laws(&design, page), Ok(()));
-    let short = design.replacen(" and `allIntro`;", ";", 1);
-    assert!(spec_checks::prelude_laws(&short, page).is_err());
+    assert_eq!(spec_checks::prelude_laws(LAWS, PAGE), Ok(()));
+    let short = LAWS.replacen(" and `allIntro`;", ";", 1);
+    assert!(spec_checks::prelude_laws(&short, PAGE).is_err());
     let other = "law allIntro(p: P) -> R proof { done }\n";
-    let why = spec_checks::prelude_laws(&design, other).expect_err("stated otherwise");
+    let why = spec_checks::prelude_laws(LAWS, other).expect_err("stated otherwise");
     assert!(why.contains("allIntro(p: P) -> R"), "{why}");
 }
 

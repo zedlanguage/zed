@@ -123,10 +123,3 @@ fn the_spec_reads_the_fences_of_design_then_of_examples() {
         ]
     );
 }
-
-#[test]
-fn a_spec_needs_its_three_grammars() {
-    let dir = spec_dir("fences_edges_peg", "# T\n\n```peg\nA = 'a'\n```\n", "");
-    let e = Spec::open(&dir.root()).unwrap_err();
-    assert!(e.ends_with("has fewer than three peg fences"), "{e}");
-}

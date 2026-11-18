@@ -1,14 +1,5 @@
-//! Number literals (steps L1.3 and L1.4):
-//!
-//! ```peg
-//! Number   = (Rational | Float | Integer) !NameChar
-//! Rational = (Real | Decimal) 'r'
-//! Float    = Real ('f32' | 'f64')?
-//! Real     = Decimal '.' Decimal Exponent? | Decimal Exponent
-//! Exponent = [eE] [+\-]? Decimal
-//! Integer  = '0x' Hex ('_'? Hex)* | '0o' [0-7] ('_'? [0-7])* | '0b' [01] ('_'? [01])* | Decimal
-//! Decimal  = [0-9] ('_'? [0-9])*
-//! ```
+//! Number literals (steps L1.3 and L1.4): the rules `Number` to `Decimal` of
+//! `zed/grammar/lexical.peg`, with `FloatSuffix` read as `f32` or `f64` only (below).
 //!
 //! A literal keeps its digits, with the `_` removed, and its base: its width is chosen later
 //! from its use (sec:domains), so the lexer never rounds or overflows. A float or a rational

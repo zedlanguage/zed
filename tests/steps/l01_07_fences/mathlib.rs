@@ -4,7 +4,8 @@
 //! syntax only: `minFac`'s test table needs recursion (step L6.7) and its laws need layer L15, as
 //! the page says. Item MATHLIB-allintro-spec: the prelude laws, `zed_tools::spec_checks::PRELUDE`,
 //! are those step L15.7 of DESIGN.md names and sec:verification states, and DESIGN.md states
-//! `allIntro` as the page writes it; the `sync` tool checks this, since it reads DESIGN.md.
+//! `allIntro` as the page writes it; the `sync` tool's prose checks test this on DESIGN.md read in
+//! place (m0_03 `sync::the_prose_checks_pass_on_the_spec`).
 
 use std::path::PathBuf;
 

@@ -50,6 +50,18 @@ pub fn design() -> &'static str {
     TEXT.get_or_init(|| read(&design_path()))
 }
 
+/// The desugaring rules of the spec (the ```` ```desugar ```` fence of sec:grammar), each line
+/// ending in `\n`, read once per test binary.
+pub fn desugar() -> &'static str {
+    static TEXT: OnceLock<String> = OnceLock::new();
+    TEXT.get_or_init(|| {
+        let fences = zed_tools::spec::fence_texts(&design_path(), "desugar")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(!fences.is_empty(), "{} has no desugar fence", design_path());
+        format!("{}\n", fences.join("\n"))
+    })
+}
+
 /// The text of the file at `path`; panics naming it when it cannot be read.
 pub fn read(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"))

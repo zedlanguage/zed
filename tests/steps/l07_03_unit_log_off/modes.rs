@@ -1,8 +1,9 @@
 //! The build modes (DESIGN.md Part F, "Build modes"; plan row BUILD-modes): the table names
 //! the debug build and the optimized build, each preserving the program's values, and every
 //! "X build" of DESIGN.md that names a kind of build is a name the bullet defines. The `sync`
-//! tool checks DESIGN.md so (`zed_tools::spec_checks::build_modes`); this file tests that search
-//! on small texts. A program gives the same expected outputs in each way this implementation
+//! tool checks DESIGN.md so (`zed_tools::spec_checks::build_modes`), and m0_03
+//! `sync::the_prose_checks_pass_on_the_spec` runs that check on the spec; this file tests the
+//! search on small texts. A program gives the same expected outputs in each way this implementation
 //! builds it, with and without the unit item `@log(#off);`.
 //!
 //! The implementation does not yet have the two modes (the log modes come with step L7.3, and
@@ -70,6 +71,15 @@ fn a_step_id_before_builds_is_not_a_kind_of_build() {
             "12: \"l1x.2 build\""
         ]
     );
+}
+
+/// The pronoun "which" before the verb "builds" is its subject, not a kind of build (spec
+/// 2a73c74, sec:strings: "a format string, which builds the string at run time"; found by
+/// SPEC-copies-out, whose test runs these checks on the spec in place).
+#[test]
+fn which_before_builds_is_not_a_kind_of_build() {
+    let text = fixture("A format string, which builds the string at run time.\n");
+    assert_eq!(undefined(&text), Vec::<String>::new());
 }
 
 /// The branch `main` before the verb "builds" is its subject, not a kind of build (spec

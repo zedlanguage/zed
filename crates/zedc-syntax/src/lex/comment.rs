@@ -1,10 +1,4 @@
-//! Comments:
-//!
-//! ```peg
-//! Comment      = '//' (!'\n' TextChar)* | BlockComment
-//! BlockComment = '/*' (BlockComment | !'*/' TextChar)* '*/'
-//! TextChar     = !BidiControl ANY
-//! ```
+//! Comments: the rules `Comment`, `BlockComment` and `TextChar` of `zed/grammar/lexical.peg`.
 //!
 //! Block comments nest, so commenting out a region that already holds one works. A comment
 //! holds no `Bidi_Control` character (DESIGN.md sec:lexical): one is an error at the character,

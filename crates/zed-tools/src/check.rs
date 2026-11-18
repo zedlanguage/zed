@@ -265,6 +265,12 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     let root = arg(args, 0, "check SPEC_DIR [FILE:LINE [any]]")?;
     let spec = Spec::open(root)?;
     let only = args.get(1).map_or("", String::as_str);
+    report(&spec, only, args.len() > 2, out)
+}
+
+/// The checks of [`run`] on `spec`: of the fence at `only` (`FILE:LINE`) alone unless it is
+/// empty, and with each fence's ring listed when `list` holds.
+pub fn report(spec: &Spec, only: &str, list: bool, out: &mut String) -> Outcome {
     let mut undef = undefined(&spec.lexical, out) + undefined(&spec.all, out);
     let lint = containment(&spec.lexical, out)
         + containment(&spec.all, out)
@@ -280,7 +286,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         if !only.is_empty() && site != only {
             continue;
         }
-        match fence(&spec, &site, &f.text, &mut docs, &mut bad, out) {
+        match fence(spec, &site, &f.text, &mut docs, &mut bad, out) {
             Fenced::Ring(k) => {
                 rings.insert((f.file, f.line), k);
             }
@@ -303,7 +309,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         rings.len(),
         histogram.join(", ")
     );
-    if args.len() > 2 {
+    if list {
         for ((file, line), k) in &rings {
             say!(out, "{file} {line} L{k}");
         }

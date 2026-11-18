@@ -5,12 +5,11 @@
 //! no `FieldType` and builds at L1.
 
 use super::check;
-use zed_tests::step_helpers::m0_03_grammar_tools::grammar;
 
-/// The desugaring rule of `rule` in `zed/grammar/desugar.txt`.
+/// The desugaring rule of `rule` in the spec's DESIGN.md, read in place.
+#[cfg(feature = "spec")]
 fn rule(rule: &str) -> String {
-    let text = grammar("desugar.txt");
-    let line = text
+    let line = zed_tests::spec::desugar()
         .lines()
         .find(|l| l.split(':').next().map(str::trim) == Some(rule))
         .unwrap_or_else(|| panic!("no desugaring rule for {rule}"));
@@ -21,6 +20,7 @@ fn rule(rule: &str) -> String {
         .into()
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn the_desugaring_rules_read_the_spec() {
     assert_eq!(

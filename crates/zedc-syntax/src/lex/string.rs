@@ -1,17 +1,5 @@
-//! String literals (step L1.5):
-//!
-//! ```peg
-//! String        = '"""' (!'"""' Char)* '"""' | '"' (!'"' !'\n' Char1)* '"'
-//! String1       = '"""' (!'"""' !'\n' Char1)* '"""' | '"' (!'"' !'\n' Char1)* '"'
-//! Char          = Escape | Hole | !('\\' | '${') TextChar
-//! Char1         = Escape | &('${' HoleText1 '}') Hole | !('\\' | '${') TextChar
-//! Escape        = '\\' ([ntr0\\"$] | 'u{' Hex+ '}')
-//! Hole          = '${' HoleText '}'
-//! HoleText      = (String | Comment | '{' HoleText '}' | !'}' ANY)*
-//! HoleText1     = (String1 | '//' (!'\n' TextChar)* | BlockComment1 | '{' HoleText1 '}' | !'}' !'\n' ANY)*
-//! BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' TextChar)* '*/'
-//! TextChar      = !BidiControl ANY
-//! ```
+//! String literals (step L1.5): the rules `String` to `BlockComment1` and `TextChar` of
+//! `zed/grammar/lexical.peg`.
 //!
 //! The text of a string holds no `Bidi_Control` character (DESIGN.md sec:lexical): one is an
 //! error at the character, whose repair is the literal with each such character of its text

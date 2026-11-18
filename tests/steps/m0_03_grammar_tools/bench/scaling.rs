@@ -10,9 +10,8 @@ use zed_tools::spec::Spec;
 use crate::scaling::{
     audit_runs, cases_dir, cases_pass, check_passes, checklist, compares_checklist, fences_pass,
     first_pass_accepts, functions, layer_runs, layer_runs_on_package, lays_out_fences, many_fences,
-    package_dir, program_dir, progress_plan, reads_each_row, reads_unreadable, rejection_table,
-    renders_progress, ring_runs, sync_body, sync_targets, syncs, syncs_words_once, unreadable,
-    wide_words,
+    package_dir, program_dir, progress_plan, reads_each_row, reads_unreadable, reads_wide_words,
+    rejection_table, renders_progress, ring_runs, sync_body, syncs, unreadable, wide_words,
 };
 use crate::{Dir, design, fence, spec_dir};
 
@@ -173,32 +172,27 @@ fn progress_scales_with_the_length_of_the_plan() {
     });
 }
 
-/// `sync` reads all of DESIGN.md (for the kernel's rule names, the desugaring rules and the table
-/// of words), so its work grows with the length of the document, here the number of its `zed`
-/// and `text` fences; each size writes into a `zed/` of its own directory.
+/// `sync`'s checks read all of DESIGN.md (for the kernel's rule names, the prelude laws and the
+/// build modes), so their work grows with the length of the document, here the number of its
+/// `zed` and `text` fences.
 #[test]
 fn sync_scales_with_the_number_of_fences() {
     let dirs = specs("scale_sync", 25, sync_body);
-    for (_, d) in &dirs {
-        sync_targets(d);
-    }
     scales("sync", 25, &dirs, syncs);
 }
 
-/// `sync` keeps each word of a cell of the table of words once, by one hash-set lookup per word,
-/// so its work grows with the number of words in the cell.
+/// The reader of the table of words puts each word of a cell into a hash map, a word named
+/// again in the cell's note by one more lookup, so its work grows with the number of words in
+/// the cell.
 #[test]
-fn sync_scales_with_the_words_of_a_table_cell() {
+fn the_table_of_words_scales_with_the_words_of_a_cell() {
     let n = 2000;
     let dirs = [n, 8 * n].map(|m| (m, spec_dir(&format!("scale_words_{m}"), &wide_words(m), "")));
-    for (_, d) in &dirs {
-        sync_targets(d);
-    }
-    check("sync, by words of a cell", n, |m| {
+    check("table of words, by words of a cell", n, |m| {
         let (_, dir) = dirs
             .iter()
             .find(|d| d.0 == m)
             .expect("a size that was built");
-        syncs_words_once(dir, m);
+        reads_wide_words(dir, m);
     });
 }

@@ -1,7 +1,8 @@
 //! The `zed` fences of a document, each with its layer (step L1.7), and the row names of the
 //! rejection table (step L1.29). The tests lay out the spec's DESIGN.md and EXAMPLES.md this way,
-//! in place (`zed_tests::fences`, feature `spec`), and this repository's README.md against this
-//! repository's own grammar ([`Spec::of_impl`], item README-fences).
+//! in place (`zed_tests::fences`, feature `spec`), and this repository's README.md the same way
+//! (item README-fences): the grammar is this repository's `zed/grammar/*.peg` and the table of
+//! defined words is DESIGN.md's ([`Spec::open`]).
 //!
 //! The layer is computed as the M0.4 layer checker computes a corpus program's: the lowest ring
 //! at which the fence parses (as a `Unit`, or else under the documentation notation), raised to

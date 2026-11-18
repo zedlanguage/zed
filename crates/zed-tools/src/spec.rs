@@ -1,7 +1,8 @@
 //! A specification checkout: the directory holding `DESIGN.md` and `EXAMPLES.md`, and the
-//! grammars of the appendix sec:grammar. Its first ```` ```peg ```` fence is the lexical grammar
-//! over characters, the second the syntactic grammar over tokens, and the third the
-//! documentation notation.
+//! grammars of the appendix sec:grammar. The grammars are this repository's
+//! `zed/grammar/lexical.peg` (over characters), `syntax.peg` (over tokens) and `notation.peg`
+//! (the documentation notation), their only copy (author P375): DESIGN.md points to them and
+//! holds no grammar of its own.
 
 use std::collections::HashMap;
 
@@ -161,8 +162,8 @@ pub fn text_fences(paths: &[String]) -> Result<String, String> {
 pub struct Spec {
     /// The checkout's directory.
     pub root: String,
-    /// The path of the document with the table of defined words (sec:grammar): the spec's
-    /// `DESIGN.md`, or this repository's copy of the table, `zed/grammar/words.md`.
+    /// The path of the spec's `DESIGN.md`, which holds the table of defined words (sec:grammar)
+    /// and the desugaring rules.
     pub design: String,
     /// The text of the lexical grammar.
     pub lex_text: String,
@@ -180,44 +181,26 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// Reads the grammars of the checkout at `root`.
+    /// The spec checkout at `root` with this repository's grammars, `zed/grammar/*.peg`.
     pub fn open(root: &str) -> Result<Spec, String> {
-        let design = format!("{root}/DESIGN.md");
-        let mut fences = fence_texts(&design, "peg")?.into_iter();
-        let (Some(lex_text), Some(syn_text), Some(doc_text)) =
-            (fences.next(), fences.next(), fences.next())
-        else {
-            return Err(format!("{design} has fewer than three peg fences"));
-        };
-        Spec::of_texts(root, design, lex_text, syn_text, doc_text)
+        Spec::open_in(root, &format!("{}/zed/grammar", crate::impl_root()))
     }
 
-    /// The grammars of this repository at `root`: `zed/grammar/lexical.peg`, `syntax.peg` and
-    /// `notation.peg`, with the table of defined words `zed/grammar/words.md`. The `sync` tool
-    /// writes each from the spec, the grammar with a newline after its last line.
-    pub fn of_impl(root: &str) -> Result<Spec, String> {
-        let grammar = |name: &str| {
-            let text = read_text(&format!("{root}/zed/grammar/{name}"))?;
+    /// The spec checkout at `root` with the grammars `lexical.peg`, `syntax.peg` and
+    /// `notation.peg` of the directory `grammar`. A test that changes a grammar gives its own
+    /// directory. The newline after a grammar's last line is not part of it.
+    pub fn open_in(root: &str, grammar: &str) -> Result<Spec, String> {
+        let read = |name: &str| {
+            let text = read_text(&format!("{grammar}/{name}"))?;
             Ok::<_, String>(text.strip_suffix('\n').unwrap_or(&text).to_string())
         };
-        Spec::of_texts(
-            root,
-            format!("{root}/zed/grammar/words.md"),
-            grammar("lexical.peg")?,
-            grammar("syntax.peg")?,
-            grammar("notation.peg")?,
-        )
-    }
-
-    /// The spec of the grammar texts, the table of words at `design`, under `root`.
-    fn of_texts(
-        root: &str,
-        design: String,
-        lex_text: String,
-        syn_text: String,
-        doc_text: String,
-    ) -> Result<Spec, String> {
+        let (lex_text, syn_text, doc_text) = (
+            read("lexical.peg")?,
+            read("syntax.peg")?,
+            read("notation.peg")?,
+        );
         Ok(Spec {
+            design: format!("{root}/DESIGN.md"),
             root: root.into(),
             lexical: Grammar::read_open(&[&lex_text])?,
             syntactic: Grammar::read_open(&[&syn_text])?,
@@ -225,7 +208,6 @@ impl Spec {
             lex_text,
             syn_text,
             doc_text,
-            design,
         })
     }
 

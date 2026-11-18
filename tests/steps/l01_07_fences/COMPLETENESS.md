@@ -20,7 +20,7 @@ tagged `zed`, the ✗ variant rule, the `// layer Lk` label). llvm-cov, as a flo
 | A label too large for `u32` | | Layers are below 100; such a label gives `None`, as no label |
 | A `\r` in the document | | `extract` receives text that `load` or `read_text` has already given `\n` line endings |
 | DESIGN fences then EXAMPLES fences | `the_spec_reads_the_fences_of_design_then_of_examples` | |
-| A spec with fewer than three grammars | `a_spec_needs_its_three_grammars` | |
+| A grammar file missing from `zed/grammar` | `a_missing_grammar_file_is_refused_with_its_path` (M0.3) | |
 | Sections and keys of fences | `keys.rs` | |
 | Variants and fixtures | `variants.rs` | |
 | Every fence of DESIGN, EXAMPLES, README and the mathlib study | `copies.rs`, `mathlib.rs` | |

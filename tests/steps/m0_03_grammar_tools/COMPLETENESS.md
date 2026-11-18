@@ -17,7 +17,7 @@ below) cover more of `llp.rs`, `split.rs` and `fuzz.rs`.
 
 | Case | Covering test, or the reason none is needed |
 |---|---|
-| `check`: a spec whose fences parse; a fence that does not parse, named at its line; a fence that is not there; a rule with no definition; a production with no desugaring rule; a fence left open; too few grammars; a rule in both grammars; a missing spec | `mod.rs` (`check_*`, `a_fence_left_open_*`, `a_spec_with_too_few_grammars_is_refused`, `a_rule_defined_in_both_grammars_is_refused`, `a_missing_spec_is_reported_with_its_path`) |
+| `check`: a spec whose fences parse; a fence that does not parse, named at its line; a fence that is not there; a rule with no definition; a production with no desugaring rule; the spec's desugaring rules against `zed/grammar/syntax.peg` (feature `spec`); a fence left open; a grammar file missing; a rule in both grammars; a missing spec | `mod.rs` (`check_*`, `the_specs_desugaring_rules_match_the_grammar_file`, `a_fence_left_open_*`, `a_missing_grammar_file_is_refused_with_its_path`, `a_rule_defined_in_both_grammars_is_refused`, `a_missing_spec_is_reported_with_its_path`) |
 | Each report of `check` and `ring`: LAYER, MARK, DESUGAR (no production, two rules), TREE CHANGES, LEX, FAIL of a hole, DOC; FILE:LINE; a token rule with no kind; Python's `repr` | `check_reports::*` (9 tests) |
 | `cases`: the real cases and left-recursion cases; each form of a case line; each way a case fails; a line that is no case; each block of leftrec; a missing cases file | `cases_runs::*` (6 tests), `mod.rs::cases_passes_on_the_real_cases_and_fails_on_a_wrong_bracketing` |
 | `fences`, `ring` | `mod.rs::fences_counts_the_fences_and_lines_of_both_documents`, `ring_gives_the_lowest_ring_of_each_file_and_fails_on_one_that_does_not_parse` |
@@ -26,7 +26,7 @@ below) cover more of `llp.rs`, `split.rs` and `fuzz.rs`.
 | `fuzz`: the same report for one seed, a sentence the old `break` derives, the real grammar; a count or seed that is not a number | `mod.rs::fuzz_*` (4 tests) |
 | `fence_layers`, rejection rows | `mod.rs::fence_layers_*`, `rejection_rows_name_each_row_up_to_a_parenthesis_outside_code` |
 | `progress`: steps marked done, a design with no plan, a long title cut, lines that only look like steps | `mod.rs::progress_*`, `tool_edges::progress_cuts_a_long_title_and_skips_what_is_no_step` |
-| `sync`: copies written and a stale one found, no kernel grammar, the table of words, the directory or variable, prelude laws, build modes, a documentation fence's copy, no table of defined words | `sync::*` (6 tests), `tool_edges::sync_*` (2 tests) |
+| `sync`: each prose check run and the failing one named, no kernel grammar, the checks on the spec itself (feature `spec`), the in-place readers of messages, desugaring rules and tables, the table of words, the directory or variable, prelude laws, build modes | `sync::*` (7 tests); no table of defined words: `layer_roles` |
 | Prose checks: kernel rules and T rules, prelude laws that disagree | `prose_checks::*` (2 tests) |
 | `cite`: labels, steps, words that only contain a step, DESIGN.md, plan rows, dagview, exempt paths, no plan | `cite::*` (12 tests) |
 | `conflicts`: pairs and paths, shared paths, a stale list, changed text, a plan that fails, no sections, an unknown option, a remark in a path span | `conflicts::*` (9 tests) |

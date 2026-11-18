@@ -46,12 +46,11 @@ zed/                  Zed source code
                       LEDGER.md
   compiler/           the compiler written in Zed (row S); for now CATALOG.md, the routines
                       the Rust calls (row PORT-catalog)
-  grammar/            the grammars of sec:grammar, the desugaring rules and the table of words,
-                      written by the sync tool, and the bracketing and left-recursion cases
-                      (step L1.8)
-  fences/             the spec's fences (step L1.7), its rejection rows and kernel rule names,
-                      written by the sync tool; variants/, one fixture per commented ✗
-                      variant, and predictions/
+  grammar/            the grammars the parser reads, lexical.peg, syntax.peg and notation.peg
+                      (DESIGN.md sec:grammar points here; this is their one copy), and the
+                      bracketing and left-recursion cases (step L1.8)
+  fences/             variants/, one fixture per commented ✗ variant of the spec's fences
+                      (step L1.7), and predictions/
 tests/                the step tests (the `zed-tests` crate)
   Cargo.toml          one test target per step folder, written by the step_targets tool
   src/                helpers shared by every step; step_helpers/, those that the tests of
@@ -216,13 +215,14 @@ build without the feature compiles and runs every test that does not read the sp
 fences are laid out by `zed_tests::fences` with the spec's own parsers (`zed_tools::spec`),
 and the variant fixtures of commented ✗ lines stay in `zed/fences/variants/`.
 
-The grammars, the desugaring rules and the backquoted words of the table of words are still
-copied into `zed/grammar/` by the hand-run command `cargo run -p zed-tools --bin sync -- <spec
-dir>` (`zedc-syntax` embeds `syntax.peg` with `include_str!`). After a spec change, run `sync`
-and commit what it writes with the tests it moves. `sync --check` writes nothing, names each
-copy that differs from the spec and exits nonzero; it also runs the checks that need the
-spec's prose (the prelude laws, the build-mode table, and that each `sec:` this repository
-cites exists).
+The three grammars, `lexical.peg`, `syntax.peg` and `notation.peg`, live only in
+`zed/grammar/` (`zedc-syntax` embeds `syntax.peg` with `include_str!`); DESIGN.md sec:grammar
+points to them. A change to the syntax edits DESIGN.md's prose and these files together. The
+desugaring rules and the table of words are read from DESIGN.md in place. The hand-run command
+`cargo run -p zed-tools --bin sync -- <spec dir>` writes nothing: it runs the checks that need
+the spec's prose (the kernel grammar's rule names, the prelude laws and the build-mode table)
+and `cite`'s check that each `sec:` this repository cites exists, and exits nonzero when one
+fails.
 
 **Tests written in Zed.** Until the `test { }` runner lands (step L1.21), every step test is
 written in Rust, with the Zed source given as strings or fixture files. From then on, tests of

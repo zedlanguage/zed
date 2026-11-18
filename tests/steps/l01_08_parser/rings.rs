@@ -1,5 +1,5 @@
 //! Every fence of the documentation parses, and first parses at the ring
-//! the `sync` tool recorded with the spec's grammar tools: as a unit, or under the
+//! `zed_tests::fences` lays it out at with the spec's grammar tools: as a unit, or under the
 //! documentation notation.
 
 use zed_tests::fences;

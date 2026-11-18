@@ -4,7 +4,7 @@
 //! atom only where it is read (a pattern or a type), the `log` port, words inside string holes,
 //! the units of a program directory, and each way the table or a program can fail to read.
 
-use super::{Dir, grammar, tool};
+use super::{Dir, tool};
 use zed_tools::layer::{self, WordTable};
 
 /// A table with one word of each kind, each at its own layer.
@@ -21,16 +21,10 @@ const TABLE: &str = "| Layer | Annotations | Facet words | Words |\n|---|---|---
     | L13 | — | — | — |\n\
     | L20 | — | — | — |\n";
 
-/// A spec whose DESIGN.md holds `table` and the real grammars.
+/// A spec whose DESIGN.md holds `table`; the grammars are this repository's zed/grammar files,
+/// which the tool reads itself.
 fn spec_with(name: &str, table: &str) -> Dir {
-    let design = format!(
-        "# Test spec\n\n{table}\n```peg\n{}```\n\n```peg\n{}```\n\n```peg\n{}```\n\n\
-         ```desugar\n{}```\n",
-        grammar("lexical.peg"),
-        grammar("syntax.peg"),
-        grammar("notation.peg"),
-        grammar("desugar.txt"),
-    );
+    let design = format!("# Test spec\n\n{table}\n");
     let dir = Dir::new(name);
     dir.write("DESIGN.md", &design);
     dir.write("EXAMPLES.md", "");

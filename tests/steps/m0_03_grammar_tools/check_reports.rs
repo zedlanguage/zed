@@ -5,15 +5,19 @@
 //! lex (LEX), a fence that is documentation notation (DOC), and a hole of a string that does not
 //! parse. The lexer's token kinds, and the way a report writes a token (Python's `repr`).
 
-use super::{DOUBLE, design, design_of, fence, grammar, spec_dir, tool};
+use super::{
+    DOUBLE, Dir, check_in, design, design_of, fence, grammar, rules_of, spec_dir, tool,
+    write_grammars,
+};
 use zed_tools::spec::Spec;
 use zed_tools::text::repr;
 use zed_tools::{check, ring};
 
-/// The real grammars, with the rule line of the syntactic grammar that starts with `rule` and
-/// its alternatives replaced by `with`, `extra` added to the syntactic grammar, and `desugar`
-/// added to the desugaring rules; then `body`.
-fn changed(rule: &str, with: &str, extra: &str, desugar: &str, body: &str) -> String {
+/// A spec named `name` whose grammars are the real ones, with the rule line of the syntactic
+/// grammar that starts with `rule` and its alternatives replaced by `with`, and `extra` added
+/// to the syntactic grammar; whose desugaring rules are one per production of the real
+/// grammar ([`rules_of`]) and `desugar`; and whose DESIGN.md then has `body`.
+fn changed(name: &str, rule: &str, with: &str, extra: &str, desugar: &str, body: &str) -> Dir {
     let mut syn = String::new();
     let mut skipping = false;
     for line in grammar("syntax.peg").lines() {
@@ -30,13 +34,15 @@ fn changed(rule: &str, with: &str, extra: &str, desugar: &str, body: &str) -> St
         syn.push('\n');
     }
     syn.push_str(extra);
-    design_of(
+    let rules = format!("{}{desugar}", rules_of(&grammar("syntax.peg")));
+    let dir = spec_dir(name, &design_of(&rules, body), "");
+    write_grammars(
+        &dir,
         &grammar("lexical.peg"),
         &syn,
         &grammar("notation.peg"),
-        &format!("{}{desugar}", grammar("desugar.txt")),
-        body,
-    )
+    );
+    dir
 }
 
 /// `Unit` at L1 is `Item* END`, as in the real grammar, but from L5 on an earlier alternative
@@ -47,9 +53,15 @@ const LATER: &str = "Later         = Item*        L5\n";
 #[test]
 fn an_alternative_that_needs_a_rule_empty_at_its_layer_is_reported() {
     let extra = "Lint          = 'lint' High    L1\nHigh          = Name    L5\n";
-    let text = changed("", "", extra, "Lint : x\nHigh : x\n", &fence(DOUBLE));
-    let dir = spec_dir("check_layer", &text, "");
-    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    let dir = changed(
+        "check_layer",
+        "",
+        "",
+        extra,
+        "Lint : x\nHigh : x\n",
+        &fence(DOUBLE),
+    );
+    let (outcome, out) = check_in(&dir);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
         out.contains("LAYER Lint alternative 1 (L1) requires High, empty below L5\n"),
@@ -61,9 +73,8 @@ fn an_alternative_that_needs_a_rule_empty_at_its_layer_is_reported() {
 #[test]
 fn a_mark_above_its_rules_lowest_layer_is_reported() {
     let extra = "Wrap          = ~Name    L3\n";
-    let text = changed("", "", extra, "Wrap : x\n", &fence(DOUBLE));
-    let dir = spec_dir("check_mark", &text, "");
-    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    let dir = changed("check_mark", "", "", extra, "Wrap : x\n", &fence(DOUBLE));
+    let (outcome, out) = check_in(&dir);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
         out.contains("MARK Wrap alternative 1 (L3) marks Name, whose lowest layer is L1\n"),
@@ -73,7 +84,11 @@ fn a_mark_above_its_rules_lowest_layer_is_reported() {
 
 #[test]
 fn a_desugaring_rule_for_no_production_and_a_second_rule_are_reported() {
-    let text = changed("", "", "", "Nowhere : x\nName : again\n", &fence(DOUBLE));
+    let desugar = "Nowhere : x\nName : again\n";
+    let text = design_of(
+        &format!("{}{desugar}", rules_of(&grammar("syntax.peg"))),
+        &fence(DOUBLE),
+    );
     let dir = spec_dir("check_desugar_extra", &text, "");
     let (outcome, out) = tool(check::run, &[&dir.root()]);
     assert_eq!(outcome, Ok(false), "{out}");
@@ -87,20 +102,22 @@ fn a_desugaring_rule_for_no_production_and_a_second_rule_are_reported() {
 
 #[test]
 fn a_fence_whose_tree_changes_between_rings_is_reported() {
-    let text = changed("Unit", SPLIT_UNIT, LATER, "Later : x\n", &fence(DOUBLE));
-    let dir = spec_dir("check_tree", &text, "");
-    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    let dir = changed(
+        "check_tree",
+        "Unit",
+        SPLIT_UNIT,
+        LATER,
+        "Later : x\n",
+        &fence(DOUBLE),
+    );
+    let (outcome, out) = check_in(&dir);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(out.contains(" TREE CHANGES between L1 and L5\n"), "{out}");
 
     // The ring tool reports the same change, against the full ring.
-    let file = dir.write("double.zed", DOUBLE);
-    let (outcome, out) = tool(ring::run, &[&dir.root(), &file]);
-    assert_eq!(outcome, Ok(false), "{out}");
-    assert!(
-        out.contains(" FAIL TREE CHANGES between L1 and L29\n"),
-        "{out}"
-    );
+    let spec = Spec::open_in(&dir.root(), &dir.root()).expect("the spec reads");
+    let got = ring::ring_of(&spec, DOUBLE).map(|r| r.ring);
+    assert_eq!(got, Err("TREE CHANGES between L1 and L29".to_string()));
 }
 
 /// A fence at a ring above 1, one that does not lex, a string hole that does not lex, does not
@@ -175,9 +192,8 @@ fn a_documentation_fence_is_listed_and_one_using_no_notation_is_reported() {
     assert_eq!(line.split(' ').count(), 3, "{out}");
 
     let unit = "Unit          = 'program' Item* END    L1\n";
-    let text = changed("Unit", unit, "", "", &fence(DOUBLE));
-    let dir = spec_dir("check_doc_plain", &text, "");
-    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    let dir = changed("check_doc_plain", "Unit", unit, "", "", &fence(DOUBLE));
+    let (outcome, out) = check_in(&dir);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(
         out.contains(" DOC uses no signature, remap form or trailing expression\n"),
@@ -188,8 +204,7 @@ fn a_documentation_fence_is_listed_and_one_using_no_notation_is_reported() {
 /// A lexical grammar whose `Token` or `Number` has a rule that is no token kind stops the lexer.
 #[test]
 fn a_token_rule_with_no_kind_stops_the_lexer() {
-    let syn = grammar("syntax.peg");
-    let (doc, desugar) = (grammar("notation.peg"), grammar("desugar.txt"));
+    let (syn, doc) = (grammar("syntax.peg"), grammar("notation.peg"));
     let lexical = grammar("lexical.peg");
     let cases = [
         ("| Operator ", "| Operator | Odd ", "Token"),
@@ -205,12 +220,9 @@ fn a_token_rule_with_no_kind_stops_the_lexer() {
             "{}Odd           = '`'    L1\n",
             lexical.replacen(from, to, 1)
         );
-        let dir = spec_dir(
-            &format!("lex_kind_{name}"),
-            &design_of(&lex, &syn, &doc, &desugar, ""),
-            "",
-        );
-        let spec = Spec::open(&dir.root()).expect("the spec reads");
+        let dir = spec_dir(&format!("lex_kind_{name}"), &design(""), "");
+        write_grammars(&dir, &lex, &syn, &doc);
+        let spec = Spec::open_in(&dir.root(), &dir.root()).expect("the spec reads");
         let got = ring::ring_of(&spec, "x = `;").map(|r| r.ring);
         let want = if name == "Token" { "Odd" } else { "Number" };
         assert_eq!(got, Err(format!("LEX no token kind for {want}")), "{name}");

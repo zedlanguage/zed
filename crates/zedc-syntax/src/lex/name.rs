@@ -1,10 +1,5 @@
-//! Names and the wildcard (step L1.2; NAME-ascii-only, 2026-11-12):
-//!
-//! ```peg
-//! NameChar = [A-Za-z0-9_]
-//! Wildcard = '_' !NameChar
-//! Name     = ([A-Za-z] | '_' &NameChar) NameChar* "'"?
-//! ```
+//! Names and the wildcard (step L1.2; NAME-ascii-only, 2026-11-12): the rules `NameChar`,
+//! `Wildcard` and `Name` of `zed/grammar/lexical.peg`.
 //!
 //! So `_x`, `x_1` and `__` are names, and a bare `_` is the wildcard. A name is ASCII: a
 //! letter, digit or combining mark beyond ASCII where a name would hold it (`café`, `größe`,

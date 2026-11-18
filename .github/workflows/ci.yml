@@ -1,8 +1,8 @@
 # The local test suite on every commit (DESIGN.md step M0.1); it needs only the Rust toolchain.
 # Clippy also compiles the full battery, which runs locally with tools/run_tests.sh --full,
 # so that it cannot stop building unnoticed. CI=true makes insta fail on a
-# snapshot mismatch instead of writing a pending one. No test reads the spec repository: the
-# grammar and fixtures are this repository's own, which the hand-run `sync` tool refreshes.
+# snapshot mismatch instead of writing a pending one. CI has no spec checkout, so it builds
+# without the feature `spec` and runs the tests that do not read the spec in place.
 name: CI
 on:
   push:

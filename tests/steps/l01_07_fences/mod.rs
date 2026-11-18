@@ -8,6 +8,8 @@ mod edges;
 mod extractor;
 mod keys;
 mod mathlib;
+// README.md's fences are laid out with the table of words of the spec's DESIGN.md.
+#[cfg(feature = "spec")]
 mod readme;
 mod scaling;
 mod variants;

@@ -4,5 +4,6 @@
 
 mod keys;
 mod mathlib;
+#[cfg(feature = "spec")]
 mod readme;
 mod scaling;

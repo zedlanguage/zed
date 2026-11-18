@@ -204,7 +204,8 @@ check "a crate that exported a symbol at the base selects the package whole" \
   "merge check: groups: $(sorted "$(short lnk s_01f_import_graph step_x step_y t)")" \
   "$("$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: groups')"
 # Step 0a: tool asks for feat without its default features, which t gives it in the workspace
-# build.
+# build. Cargo's "Blocking waiting for file lock" lines, indented as the report's are, appear
+# when another build holds the lock, and are dropped.
 git checkout -q --detach base
 printf '\n[dependencies]\nfeat = { path = "../feat", default-features = false }\n' >>crates/tool/Cargo.toml
 git commit -q -a -m "tool: depend on feat without its defaults"
@@ -213,7 +214,8 @@ check "a manifest that gives a package alone other features than the workspace b
   tool:
     feat v0.0.0 ($ws/crates/feat) []
 merge check: FAILED
-1" "$("$check_script" --base base 2>&1 | command grep -a -E '^(merge check: (a manifest|FAILED)|  )'; echo "${PIPESTATUS[0]}")"
+1" "$("$check_script" --base base 2>&1 | command grep -a -E '^(merge check: (a manifest|FAILED)|  )' |
+  command grep -a -v 'Blocking waiting for file lock'; echo "${PIPESTATUS[0]}")"
 git checkout -q --detach base
 printf '\n[dependencies]\nfeat = { path = "../feat" }\n' >>crates/tool/Cargo.toml
 git commit -q -a -m "tool: depend on feat with its defaults"

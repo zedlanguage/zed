@@ -6,6 +6,7 @@
 //! fixtures of the commented ✗ variants in `zed/fences/variants/`.
 
 use std::path::PathBuf;
+#[cfg(feature = "spec")]
 use std::sync::OnceLock;
 
 use zed_tools::fence_layers::{self, LaidFence};
@@ -103,9 +104,8 @@ pub fn all() -> Vec<DocFence> {
 }
 
 /// The fences that this repository's `zed/grammar/syntax.peg` does not parse at any ring, each
-/// with the plan row that builds its form. The `sync` tool writes `syntax.peg` and `desugar.txt`
-/// whole, so a fence whose form the spec's grammar has and no row has built yet is held here
-/// until its row builds it. None is held now: OR-PAT built the last, the parenthesized range
+/// with the plan row that builds its form: a fence whose form the spec describes and no row has
+/// built into the grammar yet is held here until its row builds it. None is held now: OR-PAT built the last, the parenthesized range
 /// pattern `(0..=9)`. The rings test (step L1.8) checks that each still fails to parse, so an
 /// entry fails that test once its form parses, and none outlives it.
 pub const HELD_GRAMMAR_UNPARSED: &[(&str, &str)] = &[];
@@ -120,21 +120,16 @@ pub fn parsed() -> Vec<DocFence> {
         .collect()
 }
 
-/// The root of this repository.
-fn root() -> String {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/..").to_string()
-}
-
 /// The fences of this repository's README.md (item README-fences), in order, laid out against
-/// this repository's grammar once per test binary: laying out a fence parses it at up to every
-/// ring. They are not among `all` (feature `spec`): the page states its own results, and its
-/// tests compare them with the run.
+/// this repository's grammar and the table of words of the spec's DESIGN.md once per test
+/// binary: laying out a fence parses it at up to every ring. They are not among `all`: the page
+/// states its own results, and its tests compare them with the run.
+#[cfg(feature = "spec")]
 pub fn readme() -> Vec<DocFence> {
     static CELL: OnceLock<Vec<DocFence>> = OnceLock::new();
     CELL.get_or_init(|| {
-        let root = root();
-        let spec = Spec::of_impl(&root).unwrap_or_else(|e| panic!("{e}"));
-        of_document(&format!("{root}/README.md"), &spec)
+        let readme = concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md");
+        of_document(readme, spec())
     })
     .clone()
 }

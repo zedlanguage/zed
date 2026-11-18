@@ -1781,19 +1781,20 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 - Cargo's target directory is `build/cargo`, set in `.cargo/config.toml`.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
-- Fences and grammar (SPEC-standalone, 2026-11-13; supersedes SPEC-no-copies and
-  SPEC-no-verbatim): this repository builds and passes its tests from a fresh clone with no
-  access to the private spec. What it needs of the spec is copied by the hand-run command
-  `cargo run -p zed-tools --bin sync -- <spec dir>` (or `$ZED_SPEC_DIR`): the grammars, the
-  desugaring rules and the table of words into `zed/grammar/` (zedc-syntax embeds `syntax.peg`
-  with `include_str!`, so no build script reads the spec), and the `zed` fences, the text fences,
-  the rejection rows and the kernel rule names into `zed/fences/`. Only grammar rules, fences with
-  a one-line header, row names and test programs are copied, never prose. `sync --check` writes
-  nothing and exits nonzero naming each copy that differs; it also runs the checks that need the
-  spec's prose (the prelude laws against docs/mathlib-study.md, the build-mode table, the `sec:`
-  citations). No build and no test runs `sync`, and only `sync` and its unit test name
-  `ZED_SPEC_DIR`. The ✗ variants are fixtures again (`zed/fences/variants/*.zed`), each compared
-  with its fence by `zed_tests::fences::disagreements`; `zed/fences/variants.txt` is gone.
+- Fences and grammar (SPEC-copies-out, 2026-11-17, author P371 and P375; supersedes
+  SPEC-standalone, SPEC-no-copies and SPEC-no-verbatim): this repository keeps no copy of the
+  spec. The tests that need DESIGN.md or EXAMPLES.md read them in place under the cargo feature
+  `spec` of `zed-tests` (`ZED_SPEC_DIR`, by default the sibling `../zed`); `tools/run_tests.sh`
+  and `tools/merge_check.sh` always enable it, and with it on and no spec a test fails naming
+  the paths it tried. The desugaring rules, the table of words, the fences, the text fences and
+  the rejection rows are read from DESIGN.md that way. The three grammars, `lexical.peg`,
+  `syntax.peg` and `notation.peg`, live only in `zed/grammar/` (zedc-syntax embeds `syntax.peg`
+  with `include_str!`); DESIGN.md sec:grammar points to them, and a syntax change edits both.
+  The hand-run `sync` tool writes nothing: it runs the checks of the spec's prose (the kernel
+  grammar's rule names, the prelude laws against docs/mathlib-study.md, the build-mode table)
+  and the `sec:` citations, and m0_03 `sync::the_prose_checks_pass_on_the_spec` runs the same
+  checks in the tests. The ✗ variants are fixtures (`zed/fences/variants/*.zed`), each compared
+  with its fence by `zed_tests::fences::disagreements`.
 - No Python (the author's instruction, 2026-10-31): the repositories hold Rust and Zed only, plus
   `tools/dagview` in TypeScript. The tools are the
   binaries of the crate `crates/zed-tools`, each taking the spec directory as its first

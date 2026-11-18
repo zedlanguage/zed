@@ -68,33 +68,47 @@ impl Drop for Dir {
     }
 }
 
-/// The copy of a grammar file in `zed/grammar`.
+/// A grammar file of `zed/grammar` (`syntax.peg`, say), the grammar's only copy.
 pub fn grammar(name: &str) -> String {
     fs::read_to_string(format!("{}/zed/grammar/{name}", zed_tools::impl_root()))
         .expect("a file of zed/grammar")
+}
+
+/// Writes the grammars `lex`, `syn` and `doc` into `dir` as `lexical.peg`, `syntax.peg` and
+/// `notation.peg`, for a test that changes a grammar: `Spec::open_in(&dir.root(), &dir.root())`
+/// reads them.
+pub fn write_grammars(dir: &Dir, lex: &str, syn: &str, doc: &str) {
+    dir.write("lexical.peg", lex);
+    dir.write("syntax.peg", syn);
+    dir.write("notation.peg", doc);
 }
 
 /// A table with `sorted` at L3 and the `log` port at L7.
 const WORDS: &str = "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
                      | L1 | | | `len` |\n| L3 | | | `sorted` |\n| L7 | | | `log` |\n";
 
-/// The text of a `DESIGN.md` with the given grammars, then `body`.
-pub fn design_of(lex: &str, syn: &str, doc: &str, desugar: &str, body: &str) -> String {
-    format!(
-        "# Test spec\n\n{WORDS}\n```peg\n{lex}```\n\n```peg\n{syn}```\n\n```peg\n{doc}```\n\n\
-         ```desugar\n{desugar}```\n\n{body}\n"
-    )
+/// The text of a `DESIGN.md` with the table of words, the desugaring rules `desugar`, then
+/// `body`. The grammars are not in it: they are files ([`write_grammars`]).
+pub fn design_of(desugar: &str, body: &str) -> String {
+    format!("# Test spec\n\n{WORDS}\n```desugar\n{desugar}```\n\n{body}\n")
 }
 
-/// A `DESIGN.md` with the real grammars, then `body`.
+/// One desugaring rule `R : the rule of R` for each production `R` of the grammar `syn`, in
+/// order. `check` compares only the names of the rules with the productions, so this stands
+/// for the spec's rules (DESIGN.md sec:grammar) in a test spec; the tests built with the
+/// feature `spec` compare the spec's own rules with `zed/grammar/syntax.peg`.
+pub fn rules_of(syn: &str) -> String {
+    let g = zedc::parse::Grammar::read_open(&[syn]).expect("the grammar reads");
+    g.rules
+        .iter()
+        .map(|r| format!("{} : the rule of {}\n", r.name, r.name))
+        .collect()
+}
+
+/// A `DESIGN.md` with the table of words and one desugaring rule per production of
+/// `zed/grammar/syntax.peg` ([`rules_of`]), then `body`.
 pub fn design(body: &str) -> String {
-    design_of(
-        &grammar("lexical.peg"),
-        &grammar("syntax.peg"),
-        &grammar("notation.peg"),
-        &grammar("desugar.txt"),
-        body,
-    )
+    design_of(&rules_of(&grammar("syntax.peg")), body)
 }
 
 /// A ```` ```zed ```` fence.
@@ -119,15 +133,8 @@ pub fn tool(run: fn(&[String], &mut String) -> Outcome, args: &[&str]) -> (Outco
 }
 
 /// The kernel grammar of a test spec: seven generators, from which
-/// `zed_tools::spec_checks::kernel_rules` lists the words no message prints. `sync` refuses a
+/// `zed_tools::spec_checks::kernel_rules` lists the words no message prints. `sync` fails on a
 /// spec without one.
 pub const KERNEL: &str = "# (sec:kernel) Kernel\n\n```\nF ::= fam(D, i -> e)\n    | reindex(F, kf, vf)\n    \
                           | discard(F, sel)\n    | fold(F, op, ev)\n    | fix(F0, step, ev)\n    \
                           | gen(init, step, guard)\n    | port(decl)\n```\n";
-
-/// A directory standing for `zed/` with its subdirectory `grammar/`, for `sync` to write.
-pub fn zed_dir(name: &str) -> Dir {
-    let zed = Dir::new(name);
-    fs::create_dir(zed.at("grammar")).expect("a copy directory");
-    zed
-}

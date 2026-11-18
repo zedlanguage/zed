@@ -1,12 +1,11 @@
-//! Edge cases of `progress`, the fence layout and `sync`: a step title cut to its length, lines
-//! that only look like steps, a documentation fence, and a spec with no table of defined words
-//! (which the layer table reader refuses first, so `sync`'s own refusal of it cannot be reached).
+//! Edge cases of `progress` and the fence layout: a step title cut to its length, lines that
+//! only look like steps, and a documentation fence. (A spec with no table of defined words is
+//! refused by the table's reader: `layer_roles`.)
 
 use zed_tools::spec::Spec;
-use zed_tools::{fence_layers, progress, sync};
+use zed_tools::{fence_layers, progress};
 
 use super::{DOUBLE, design, fence, spec_dir};
-use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
 
 /// A title over 110 characters is cut to 107 and an ellipsis; one of 110 is kept whole. A line
 /// whose name has no layer number, no step number or no `.` after the name is no step.
@@ -51,15 +50,4 @@ fn a_documentation_fence_is_laid_out_as_notation() {
         laid.iter().map(|f| f.notation).collect::<Vec<_>>(),
         [true, false]
     );
-}
-
-/// A spec with no table of defined words is refused when `words.md` is built from it.
-#[test]
-fn sync_refuses_a_spec_with_no_table_of_defined_words() {
-    let text = design(KERNEL).replace("| Layer | Annotations |", "| Level | Annotations |");
-    let dir = spec_dir("sync_no_words", &text, "");
-    let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let zed = zed_dir("sync_no_words_zed");
-    let got = sync::sync_into(&spec, &zed.root(), false, &mut String::new());
-    assert_eq!(got, Err("DESIGN.md has no table of defined words".into()));
 }

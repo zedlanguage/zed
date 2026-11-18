@@ -1,8 +1,5 @@
-//! Infix calls (DESIGN.md sec:lexical, sec:power; author, Q36):
-//!
-//! ```peg
-//! InfixName = '~' Name '~'
-//! ```
+//! Infix calls (DESIGN.md sec:lexical, sec:power; author, Q36): the rule `InfixName` of
+//! `zed/grammar/lexical.peg`.
 //!
 //! `~f~` is one token, a tilde, a name and a tilde with no space inside; `a ~f~ b` is the call
 //! `f(a, b)`. A `~` starts nothing else, so every `~` is read here, and one that starts no

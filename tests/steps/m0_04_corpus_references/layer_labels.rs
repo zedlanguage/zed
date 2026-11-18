@@ -1,8 +1,7 @@
 //! M0.4's own check (TEST-m0-layer-label): each corpus program's `// layer` label is the layer
-//! its words and syntax enable. The `layer` tool reads the table of defined words; it reads this
-//! repository's copy, `zed/grammar/words.md`, which the hand-run `sync` writes from the spec
-//! (SPEC-standalone: no test reads the spec), so the check runs here with no spec checkout.
-//! `sync --check` is what finds a copy that differs from the spec.
+//! its words and syntax enable. The `layer` tool reads the table of defined words of the spec's
+//! DESIGN.md in place (feature `spec`) and this repository's grammars, `zed/grammar/`.
+#![cfg(feature = "spec")]
 
 use std::fs;
 
@@ -12,9 +11,10 @@ use zed_tools::spec::Spec;
 
 use super::corpus;
 
-/// The `layer` report on `files` against this repository's grammars and table of words.
+/// The `layer` report on `files` against this repository's grammars and the spec's table of
+/// words.
 fn report(files: &[String]) -> (Result<bool, String>, String) {
-    let spec = Spec::of_impl(&zed_tools::impl_root()).expect("the grammars and the table read");
+    let spec = Spec::open(&zed_tests::spec::root()).expect("the grammars and the table read");
     let files: Vec<&str> = files.iter().map(String::as_str).collect();
     let mut out = String::new();
     let outcome = layer::report(&spec, false, &files, &mut out);

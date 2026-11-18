@@ -6,7 +6,7 @@
 //! crates/zed-tools/src/layer.rs), so `#mcu` in a type or a pattern counted as an atom read of
 //! layer L31, where `#cpu` in the same place counts as nothing.
 
-use super::{Dir, grammar, tool};
+use super::{Dir, tool};
 use zed_tools::layer;
 
 /// A spec whose DESIGN.md table lists `words`, each at its own layer.
@@ -16,14 +16,8 @@ fn spec(name: &str, words: &[(u32, &str)]) -> Dir {
         .map(|(k, w)| format!("| L{k} | — | — | `{w}` |\n"))
         .collect();
     let table = format!("| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n{rows}");
-    let design = format!(
-        "# Test spec\n\n{table}\n```peg\n{}```\n\n```peg\n{}```\n\n```peg\n{}```\n\n\
-         ```desugar\n{}```\n",
-        grammar("lexical.peg"),
-        grammar("syntax.peg"),
-        grammar("notation.peg"),
-        grammar("desugar.txt"),
-    );
+    // The grammars are this repository's zed/grammar files, which the tool reads itself.
+    let design = format!("# Test spec\n\n{table}\n");
     let dir = Dir::new(name);
     dir.write("DESIGN.md", &design);
     dir.write("EXAMPLES.md", "");

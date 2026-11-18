@@ -1,8 +1,9 @@
 //! Step M0.3: the grammar tools and the hand-run commands of `zed-tools`.
 //!
-//! These tests do not read the spec repository: each builds a small spec of its own, the
-//! grammars `sync` copied into `zed/grammar`, a table of defined words, and the fences the test
-//! needs. A spec author runs these tools on the real spec; the tests here run the same `run`
+//! These tests, except those built with the feature `spec`, do not read the spec repository:
+//! each builds a small spec of its own, with a table of defined words and the fences the test
+//! needs, read against the grammars of `zed/grammar`, or against changed grammars the test
+//! writes. A spec author runs these tools on the real spec; the tests here run the same `run`
 //! functions the commands call.
 
 mod bench;
@@ -25,7 +26,7 @@ use zed_tools::spec::Spec;
 use zed_tools::{audit, cases, check, fence_layers, fences, fuzz, layer, progress, ring};
 
 pub(crate) use zed_tests::step_helpers::m0_03_grammar_tools::{
-    Dir, design, design_of, fence, grammar, spec_dir, tool,
+    Dir, design, design_of, fence, grammar, rules_of, spec_dir, tool, write_grammars,
 };
 
 /// A function that doubles a number, which parses at a low ring.
@@ -59,43 +60,65 @@ fn check_of_a_fence_that_is_not_there_says_so() {
     assert!(out.contains("NO FENCE AT DESIGN.md:1"), "{out}");
 }
 
+/// `check` of the spec in `dir`, whose grammars are the files `dir` holds ([`write_grammars`]).
+pub(crate) fn check_in(dir: &Dir) -> (zed_tools::Outcome, String) {
+    let spec = Spec::open_in(&dir.root(), &dir.root()).expect("the spec reads");
+    let mut out = String::new();
+    (check::report(&spec, "", false, &mut out), out)
+}
+
 #[test]
 fn check_rejects_a_rule_with_no_definition() {
     let syn = format!(
         "{}\nStray         = NoSuchRule     L1\n",
         grammar("syntax.peg")
     );
-    let text = design_of(
+    let dir = spec_dir("check_undefined", &design_of(&rules_of(&syn), ""), "");
+    write_grammars(
+        &dir,
         &grammar("lexical.peg"),
         &syn,
         &grammar("notation.peg"),
-        &grammar("desugar.txt"),
-        "",
     );
-    let dir = spec_dir("check_undefined", &text, "");
-    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    let (outcome, out) = check_in(&dir);
     assert_eq!(outcome, Ok(false), "{out}");
-    assert!(out.contains("NoSuchRule"), "{out}");
+    assert!(out.contains("UNDEFINED NoSuchRule in Stray"), "{out}");
 }
 
 #[test]
 fn check_rejects_a_production_with_no_desugaring_rule() {
-    let desugar: String = grammar("desugar.txt")
+    let desugar: String = rules_of(&grammar("syntax.peg"))
         .lines()
         .filter(|l| !l.starts_with("Name "))
         .map(|l| format!("{l}\n"))
         .collect();
-    let text = design_of(
-        &grammar("lexical.peg"),
-        &grammar("syntax.peg"),
-        &grammar("notation.peg"),
-        &desugar,
-        "",
-    );
-    let dir = spec_dir("check_desugar", &text, "");
+    let dir = spec_dir("check_desugar", &design_of(&desugar, ""), "");
     let (outcome, out) = tool(check::run, &[&dir.root()]);
     assert_eq!(outcome, Ok(false), "{out}");
-    assert!(out.contains("Name"), "{out}");
+    assert!(out.contains("DESUGAR missing a rule for Name"), "{out}");
+}
+
+/// The spec's own desugaring rules, read from DESIGN.md in place, have one rule per production
+/// of the grammar file `zed/grammar/syntax.peg`, the grammar's only copy (P375).
+#[cfg(feature = "spec")]
+#[test]
+fn the_specs_desugaring_rules_match_the_grammar_file() {
+    let dir = spec_dir(
+        "check_spec_desugar",
+        &design_of(zed_tests::spec::desugar(), ""),
+        "",
+    );
+    let (outcome, out) = tool(check::run, &[&dir.root()]);
+    assert_eq!(outcome, Ok(true), "{out}");
+    let rules = zed_tests::spec::desugar()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count();
+    let productions = rules_of(&grammar("syntax.peg")).lines().count();
+    assert!(
+        out.contains(&format!("desugar rules {rules} productions {productions}")),
+        "{out}"
+    );
 }
 
 #[test]
@@ -107,10 +130,12 @@ fn a_fence_left_open_stops_the_tool_with_its_line() {
 }
 
 #[test]
-fn a_spec_with_too_few_grammars_is_refused() {
-    let dir = spec_dir("few_pegs", "```peg\nA = 'a' L1\n```\n", "");
-    let why = Spec::open(&dir.root()).expect_err("two grammars are missing");
-    assert!(why.contains("fewer than three peg fences"), "{why}");
+fn a_missing_grammar_file_is_refused_with_its_path() {
+    let dir = spec_dir("few_pegs", &design(""), "");
+    dir.write("lexical.peg", &grammar("lexical.peg"));
+    dir.write("syntax.peg", &grammar("syntax.peg"));
+    let why = Spec::open_in(&dir.root(), &dir.root()).expect_err("notation.peg is missing");
+    assert!(why.contains(&dir.at("notation.peg")), "{why}");
 }
 
 #[test]
@@ -119,15 +144,9 @@ fn a_rule_defined_in_both_grammars_is_refused() {
         "{}\nUnit          = Name           L1\n",
         grammar("notation.peg")
     );
-    let text = design_of(
-        &grammar("lexical.peg"),
-        &grammar("syntax.peg"),
-        &doc,
-        &grammar("desugar.txt"),
-        "",
-    );
-    let dir = spec_dir("twice", &text, "");
-    let why = Spec::open(&dir.root()).expect_err("a duplicate rule");
+    let dir = spec_dir("twice", &design(""), "");
+    write_grammars(&dir, &grammar("lexical.peg"), &grammar("syntax.peg"), &doc);
+    let why = Spec::open_in(&dir.root(), &dir.root()).expect_err("a duplicate rule");
     assert!(why.contains("Unit"), "{why}");
 }
 
@@ -690,15 +709,14 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     let (outcome, out) = fuzz_of(&real, N, SEED);
     assert_eq!(outcome, Ok(true), "{out}");
 
-    let text = design_of(
+    let old = spec_dir("fuzz_old_break", &design(""), "");
+    write_grammars(
+        &old,
         &grammar("lexical.peg"),
         &syntax_with_old_break(),
         &grammar("notation.peg"),
-        &grammar("desugar.txt"),
-        "",
     );
-    let old = spec_dir("fuzz_old_break", &text, "");
-    let old = Spec::open(&old.root()).expect("the spec reads");
+    let old = Spec::open_in(&old.root(), &old.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&old, N, SEED);
     assert_eq!(outcome, Ok(false), "{out}");
     assert!(

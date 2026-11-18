@@ -2,9 +2,11 @@
 //! words by layer"): a use of one that no program name shadows is reported as a word this zedc
 //! does not compile yet, not as a name that is not defined.
 
+#[cfg(feature = "spec")]
 use std::collections::BTreeMap;
 
 use super::errors;
+#[cfg(feature = "spec")]
 use zedc::resolve::{ANNOTATIONS, LATER_TYPES, WORDS, annotation_layer, prelude_layer};
 
 #[test]
@@ -174,6 +176,7 @@ fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
 /// in source, a word of L1 that a later layer extends to more types, and `files`, which every
 /// function reads as `main::files`, a field of `main` (QUESTIONS A68), and which alone names
 /// nothing.
+#[cfg(feature = "spec")]
 const NOT_PRELUDE_NAMES: &[(&str, &str)] = &[
     ("L1", "main"),
     ("L1", "files"),
@@ -186,23 +189,28 @@ const NOT_PRELUDE_NAMES: &[(&str, &str)] = &[
 
 /// The words of later layers the table does not list, each a prelude function that enters with the
 /// types it takes and returns (the paragraph before the table): `count` takes a family.
+#[cfg(feature = "spec")]
 const UNLISTED: &[(&str, u32)] = &[("count", 3)];
 
 /// The lower-case names of the table that are types as well as words: the number algebras
 /// of L14 and the float formats of L1, which are applied to build a value as `int(…)` is.
+#[cfg(feature = "spec")]
 const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 
 /// The lower-case names of the table that are types and not words: the fixed-width aliases of L7
 /// (DESIGN.md sec:domains), which no program applies to a value.
+#[cfg(feature = "spec")]
 const ALIASES: &[&str] = &["i8", "i16", "i32", "i64", "u8"];
 
 /// The facets of the table's third column that a program defines, as examples of the rule
 /// "every facet a program defines": names of the program, not of the prelude.
+#[cfg(feature = "spec")]
 const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"), ("L12", "dist")];
 
 /// Names of the table whose rows are not built, each with the plan row that builds it: the test
 /// holds that each is not yet known, or, for an annotation, that it is listed at its layer and
 /// still refused as not compiled yet, so that row must take it out of this list.
+#[cfg(feature = "spec")]
 const PENDING: &[(&str, &str)] = &[
     ("failure", "PORT-ack-name"),
     ("keeps", "L7.4"),
@@ -277,6 +285,7 @@ const PENDING: &[(&str, &str)] = &[
 
 /// A row of the table "Defined words by layer": its layer, and its annotations, facet words and
 /// defined forms, each the text of its code spans.
+#[cfg(feature = "spec")]
 struct Row {
     layer: u32,
     annots: Vec<String>,
@@ -284,8 +293,8 @@ struct Row {
     forms: Vec<String>,
 }
 
-/// Each row of the table "Defined words by layer" in `design`: DESIGN.md, or the copy of the
-/// table the `sync` tool writes, `zed/grammar/words.md`.
+/// Each row of the table "Defined words by layer" in `design`, the spec's DESIGN.md.
+#[cfg(feature = "spec")]
 fn table(design: &str) -> Vec<Row> {
     let spans = |cell: &str| -> Vec<String> {
         cell.split('`')
@@ -296,7 +305,8 @@ fn table(design: &str) -> Vec<Row> {
     };
     design
         .lines()
-        .skip_while(|l| !l.starts_with("| L1 "))
+        .skip_while(|l| !l.starts_with("| Layer | Annotations | Facet words"))
+        .skip(2)
         .take_while(|l| l.starts_with("| L"))
         .map(|l| {
             let cells: Vec<&str> = l.split('|').map(str::trim).collect();
@@ -310,9 +320,10 @@ fn table(design: &str) -> Vec<Row> {
         .collect()
 }
 
+#[cfg(feature = "spec")]
 #[test]
 fn the_resolver_holds_every_word_and_type_of_the_table() {
-    let rows = table(include_str!("../../../zed/grammar/words.md"));
+    let rows = table(zed_tests::spec::design());
     assert!(rows.len() > 20, "the table has {} rows", rows.len());
     // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.
     let mut words: BTreeMap<String, u32> = BTreeMap::new();
@@ -431,6 +442,7 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
 
 /// Whether a function annotated `@name` is refused with the message that names the annotation
 /// as not compiled yet.
+#[cfg(feature = "spec")]
 fn not_compiled_yet(name: &str) -> bool {
     let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
     zedc::run::load(src.as_bytes())

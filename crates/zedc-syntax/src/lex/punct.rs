@@ -1,11 +1,5 @@
-//! Keywords, atoms, annotations, and operators (step L1.6):
-//!
-//! ```peg
-//! AtomLit  = '#' Name
-//! AnnotLit = '@' Name
-//! Keyword  = KeywordWord !NameChar
-//! Operator = '->?' | '->' | '...' | '..<' | '..=' | '..' | … | '#_' | [+\-*/<>=!&|\\:,;.?()\[\]{}]
-//! ```
+//! Keywords, atoms, annotations, and operators (step L1.6): the rules `AtomLit`, `AnnotLit`,
+//! `Keyword` and `Operator` of `zed/grammar/lexical.peg`.
 //!
 //! `where` and `sep` are reserved only by position, so the lexer reads them as names and the
 //! parser matches them by their text.

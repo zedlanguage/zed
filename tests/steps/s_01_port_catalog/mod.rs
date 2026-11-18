@@ -7,14 +7,19 @@
 mod bench;
 mod combinations;
 
-use std::collections::{HashMap, HashSet};
+#[cfg(feature = "spec")]
+use std::collections::HashMap;
+use std::collections::HashSet;
 
-use zed_tools::catalog::{self, Uses, check_zed, read_catalog, routine, scan, write_catalog};
+use zed_tools::catalog::{self, check_zed, read_catalog, routine, scan};
+#[cfg(feature = "spec")]
+use zed_tools::catalog::{Uses, write_catalog};
 use zed_tools::layer::WordTable;
+#[cfg(feature = "spec")]
 use zed_tools::plan::row_ids;
 use zed_tools::spec::Spec;
 
-use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, grammar, tool};
+use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, tool};
 
 fn varint(mut v: u64, out: &mut Vec<u8>) {
     while v >= 0x80 {
@@ -192,19 +197,14 @@ fn scan_rejects_a_damaged_index_with_its_own_message() {
     assert!(e.contains("no range"), "{e}");
 }
 
-/// A spec with the repository's grammars and a table with `len` at L1 and `deep` at L30.
+/// A spec with a table with `len` at L1 and `deep` at L30; the grammars are this repository's
+/// `zed/grammar` files, which `Spec::open` reads itself.
 fn spec_dir(name: &str) -> Dir {
     let dir = Dir::new(name);
     dir.write(
         "DESIGN.md",
-        &format!(
-            "# Test spec\n\n| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
-             | L1 | | | `len` |\n| L30 | | | `deep` |\n\n```peg\n{}```\n\n```peg\n{}```\n\n\
-             ```peg\n{}```\n",
-            grammar("lexical.peg"),
-            grammar("syntax.peg"),
-            grammar("notation.peg")
-        ),
+        "# Test spec\n\n| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
+         | L1 | | | `len` |\n| L30 | | | `deep` |\n",
     );
     dir.write("EXAMPLES.md", "");
     dir
@@ -511,8 +511,9 @@ fn a_routine_listed_twice_is_a_problem() {
 }
 
 /// The committed catalog: rows sorted with no repeat, each Zed column a form the tool takes under
-/// the grammars and words table of this repository (`zed/grammar/`, which the `sync` tool copies
-/// from the spec) and the plan, and each row surviving a rewrite.
+/// the grammars of this repository (`zed/grammar/`), the table of words of the spec's DESIGN.md,
+/// read in place, and the plan, and each row surviving a rewrite.
+#[cfg(feature = "spec")]
 #[test]
 fn the_committed_catalog_is_well_formed() {
     let root = zed_tools::impl_root();
@@ -524,7 +525,7 @@ fn the_committed_catalog_is_well_formed() {
         rows.windows(2).all(|w| w[0].routine < w[1].routine),
         "rows sorted and unique"
     );
-    let spec = Spec::of_impl(&root).expect("the grammars");
+    let spec = Spec::open(&zed_tests::spec::root()).expect("the spec and the grammars");
     let words = WordTable::read(&spec.design).expect("its table");
     let plan = std::fs::read_to_string(format!("{root}/docs/plan_dag.md")).expect("the plan");
     let plan_rows: HashSet<&str> = row_ids(&plan).expect("its rows").into_iter().collect();

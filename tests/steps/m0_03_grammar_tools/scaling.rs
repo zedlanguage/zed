@@ -231,11 +231,6 @@ pub(super) fn sync_body(m: usize) -> String {
     format!("{}\n{texts}{KERNEL}", many_fences(m))
 }
 
-/// The directory `sync` copies into under `d`.
-pub(super) fn sync_targets(d: &Dir) {
-    std::fs::create_dir_all(d.at("zed/grammar")).expect("a copy directory");
-}
-
 /// A `DESIGN.md` whose table of words has `m` words `w{i}` in row L3, each named again in a note
 /// of the same cell, as DESIGN.md's row L3 names `split` and `concat` again.
 pub(super) fn wide_words(m: usize) -> String {
@@ -251,23 +246,22 @@ pub(super) fn wide_words(m: usize) -> String {
     wide
 }
 
-/// `sync` copies the table of words of the spec in `d`, the `m` words of [`wide_words`] once each.
-pub(super) fn syncs_words_once(d: &Dir, m: usize) {
-    syncs(d);
-    let words = std::fs::read_to_string(d.at("zed/grammar/words.md")).expect("words.md");
-    let row = words
-        .lines()
-        .find(|l| l.starts_with("| L3 |"))
-        .expect("the row L3");
-    assert_eq!(row.matches('`').count(), 2 * (m + 1), "{row}");
+/// The table of words of the spec in `d`, read in place, gives each of the `m` words of
+/// [`wide_words`] the layer of its row.
+pub(super) fn reads_wide_words(d: &Dir, m: usize) {
+    let table = layer::WordTable::read(&d.at("DESIGN.md")).expect("the table reads");
+    for i in 0..m {
+        assert_eq!(table.layer_of(&format!("w{i}")), Some(3), "w{i}");
+    }
 }
 
-/// `sync` writes the grammars, desugaring rules and words of the spec in `d` into its `zed/`.
+/// `sync`'s checks of the prose of the spec in `d`: the kernel grammar is found. (The test spec
+/// states no prelude laws or build modes, so those checks fail; they read all of DESIGN.md
+/// even so.)
 pub(super) fn syncs(d: &Dir) {
-    let spec = Spec::open(&d.root()).expect("the spec reads");
-    let mut out = String::new();
-    let outcome = sync::sync_into(&spec, &d.at("zed"), false, &mut out);
-    assert_eq!(outcome, Ok(true), "{out}");
+    let text = std::fs::read_to_string(d.at("DESIGN.md")).expect("DESIGN.md");
+    let checks = sync::prose_checks(&text, "");
+    assert_eq!(checks[0].1, Ok(()), "{checks:?}");
 }
 
 /// Each benchmark of `bench/scaling.rs` at small sizes, through the same assertions: `check`,
@@ -313,10 +307,8 @@ fn each_tool_benchmark_passes_at_small_sizes() {
         let (plan, done) = progress_plan(m);
         renders_progress(&plan, &done);
         let s = spec_dir(&format!("small_scale_sync_{m}"), &design(&sync_body(m)), "");
-        sync_targets(&s);
         syncs(&s);
         let w = spec_dir(&format!("small_scale_words_{m}"), &wide_words(m), "");
-        sync_targets(&w);
-        syncs_words_once(&w, m);
+        reads_wide_words(&w, m);
     }
 }
