@@ -313,10 +313,11 @@ fn meets_of_many_arrows_narrow_values_in_linear_time() {
         let [.., pairs, triples]: &[Ty; 6] = &sides[&m];
         assert!(pairs.meet(triples).fns.is_empty());
     });
-    // Unions of many function types on both sides of a meet `Domains::meet` makes of parameter
-    // or value types: each pair is tried (`Pairs::fns_met`), so these are not met, and the
-    // meet is kept. Before, `keys_apart` and `results_apart` met them: 0.33 s to 6.5 s and 0.19
-    // s to 5.1 s from m = 32 or 64 to 256 (2026-11-18; TYPES-meet-fns-indexed).
+    // Unions of many function types on both sides of a meet, alone and as the parameter or
+    // value types `Domains::meet` meets: only the pairs whose domains are not proved apart are
+    // tried (`Pairs::fns_met`). Before (TYPES-meet-fns-indexed), each pair was tried: the meet
+    // of the two unions took 84 ms to 3.46 s from m = 32 to 256, and the meets of parameter
+    // and value types were skipped, which made them 0.33 s to 6.5 s and 0.19 s to 5.1 s.
     let union = |m: usize, key: &str| {
         let u = (0..m)
             .map(|i| format!("(#{key}{i} -> int)"))
@@ -332,25 +333,31 @@ fn meets_of_many_arrows_narrow_values_in_linear_time() {
             parse_type(&format!("{} ->? int", union(m, "j"))).expect("an arrow"),
             overload(m, &|i| format!("(#k{i} -> (#k{i} -> int))")),
             overload(m, &|i| format!("(#k{i} -> (#j{i} -> int))")),
+            parse_type(&union(m, "k")).expect("a union"),
+            parse_type(&union(m, "j")).expect("a union"),
         ]
     });
+    scaling::check("a meet of two unions of n functions apart", n, |m| {
+        let [.., ks, js]: &[Ty; 7] = &unions[&m];
+        assert!(ks.meet(js).fns.is_empty());
+    });
     scaling::check("a meet of arrows over unions of n functions", n, |m| {
-        let [wide, narrow, ..]: &[Ty; 5] = &unions[&m];
+        let [wide, narrow, ..]: &[Ty; 7] = &unions[&m];
         assert_eq!(wide.meet(narrow).fns.len(), 1);
     });
     scaling::check(
         "a meet of partial arrows over unions of n functions",
         n,
         |m| {
-            // Each parameter type is narrowed only where one pair is to be met; kept is sound.
-            let [wide, _, other, ..]: &[Ty; 5] = &unions[&m];
+            // The parameter types `#ki -> int` and `#ji -> int` share no function.
+            let [wide, _, other, ..]: &[Ty; 7] = &unions[&m];
             assert!(wide.meet(other).fns.len() <= 1);
         },
     );
     scaling::check("a meet of n arrows over functions as values", n, |m| {
-        // Empty is the exact answer, the values' domains differing; kept is sound.
-        let [.., own, other]: &[Ty; 5] = &unions[&m];
-        assert!(own.meet(other).fns.len() <= 1);
+        // The values' domains differ, so no function is of both.
+        let [.., own, other, _, _]: &[Ty; 7] = &unions[&m];
+        assert!(own.meet(other).fns.is_empty());
     });
     // Nested types are read and met on frames of their own, but kept smaller, as the texts
     // grow with the depth.

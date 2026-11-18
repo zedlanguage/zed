@@ -243,6 +243,12 @@ impl<T: Clone + std::hash::Hash + Eq> Members<T> {
         self.0.as_ref().map_or(0, |d| d.list.len())
     }
 
+    /// The address of its node, the same for each clone of it; none when it is empty. It
+    /// names the members while a clone is held, which keeps the node from being freed.
+    fn node(&self) -> Option<*const ()> {
+        self.0.as_ref().map(|d| Arc::as_ptr(d).cast())
+    }
+
     /// Whether it holds no member.
     pub fn is_empty(&self) -> bool {
         self.0.is_none()
@@ -7501,6 +7507,9 @@ thread_local! {
     /// Whether [`near_pairs`] gives every tuple of the length, as meeting and subtracting did
     /// before it: the form the differential test compares it with.
     static NEAR_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether [`FnList::tried`] gives every function of the list, as [`Pairs::fns_met`] tried
+    /// every pair before its index: the form the differential test compares it with.
+    static FNS_ALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -7555,6 +7564,8 @@ struct Search<'a> {
     searched: Searched<usize, Row>,
     /// The pins of the bindings in the buckets of its tuple shapes ([`Bound`]).
     bound: BoundTable<usize>,
+    /// Its functions filed once a function piece needs them ([`accepts`]).
+    fns: Option<Rc<FnIndex>>,
 }
 
 impl<'a> Search<'a> {
@@ -7564,6 +7575,7 @@ impl<'a> Search<'a> {
             filed: None,
             searched: Searched::new(),
             bound: BoundTable::new(),
+            fns: None,
         }
     }
 }
@@ -12336,6 +12348,7 @@ impl Ty {
         let pairs = Pairs {
             stack: Stack::default(),
             memo: &memo,
+            fn_index: RefCell::default(),
         };
         pairs
             .stack
@@ -12751,6 +12764,7 @@ impl Ty {
             let pairs = Pairs {
                 stack: Stack::default(),
                 memo: &memo,
+                fn_index: RefCell::default(),
             };
             pairs.stack.run(pairs.contains(self, items, &filed))
         })
@@ -12784,6 +12798,7 @@ impl Ty {
             let pairs = Pairs {
                 stack: Stack::default(),
                 memo: &memo,
+                fn_index: RefCell::default(),
             };
             pairs.stack.run(pairs.meets(self, other))
         })
@@ -12864,6 +12879,10 @@ struct Pairs<'m, K, V> {
     /// The answer for each pair walked, by the addresses of the two, both borrowed until the
     /// walk ends (above), or by their places; only read by key, never iterated.
     memo: &'m RefCell<HashMap<K, V>>,
+    /// The functions of each type the walk met another type's functions with, filed once
+    /// ([`FnIndex`]), by the address of its functions' node, with a clone of them that keeps
+    /// the node from being freed, so that its address names them for the whole walk.
+    fn_index: RefCell<HashMap<*const (), (Members<Arc<Sig>>, Rc<FnIndex>)>>,
 }
 
 impl<'m, K: std::hash::Hash + Eq + Copy + 'm, V: Clone + Unpin + 'm> Pairs<'m, K, V> {
@@ -13029,30 +13048,60 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
     /// share no value ([`fits_sig`]), so such a pair gives nothing. Before
     /// (FAIL-types-meet-function-union), `a`'s own functions were kept whenever `t` had any,
     /// and `(rat -> #b) & ((bool -> ()) | String)` was read as `rat -> #b`.
-    // Complexity tradeoff (COMPLEXITY.md F200): `t`'s functions are filed by parameter list in
-    // a hash map, O(m) expected for m functions, and each of the n functions of `a` is paired
-    // with those of its list only, so the cost is O(n + m) plus the pairs made, which are the
-    // meet itself. The naive method compares each of the n·m pairs, O(n·m) also where no two
-    // functions take the same parameters and the meet has no function. What each function's
-    // arrows say of its domain ([`Domains`]) is worked out once for each function, not once for
-    // each pair.
+    ///
+    /// Within one parameter list, a pair is not tried where the two permissions, each the
+    /// product of its `within` ([`Domains`]), share no value by the rule of [`Near`] (at some
+    /// parameter both types have a class and the classes differ, or both are one value and the
+    /// values differ), and one of the two has an exact arrow whose parameter types each hold a
+    /// value ([`Domains::witness`]). Proof: let that side be `s` and `w` the tuple of the
+    /// arrow's witnesses, values with no variable. A function of both has `w` in its domain
+    /// (`s`'s guarantee), and its domain lies within both permissions (DESIGN.md
+    /// sec:type_language, "Morphism types carry two domain bounds"), so `w` is in both, which
+    /// share no value: no function is of both, and the pair's meet has no value. A pair where
+    /// neither side has such an arrow is tried: the function of an empty domain may be of both.
+    // Complexity tradeoff (COMPLEXITY.md F200, F234): `t`'s functions are filed by parameter
+    // list in a hash map, O(m) expected for m functions, and each of the n functions of `a` is
+    // paired with those of its list only. Within a list, the naive way, which this replaced,
+    // tried each of the n·m pairs with [`Domains::meet`], O(n·m) also where every pair is
+    // empty: the meet of a union of m types `#ki -> int` with one of m types `#ji -> int` took
+    // 84 ms, 243 ms, 1.04 s and 3.46 s at m = 32 to 256 (TYPES-meet-fns-indexed). Used: `t`'s
+    // permissions filed by the classes and values of their parameter types ([`FnIndex`], the
+    // rule of [`Near`]), once for each type in the walk, so that the `a` meets of one
+    // [`Domains::meet`] with one union of m functions file it once, not `a` times (filing it
+    // anew at each call was O(a·m)); each function of `a` finds the functions of `t` not apart
+    // from it by one lookup for each group of kinds, expected O(n + m) plus the pairs tried,
+    // and those sorted into written order, O(k log k) for k pairs. Given up: pairs apart only by a value outside a class (`int - 0` against `0`),
+    // or whose permissions hold a variable, a function or the unknown at every parameter, or
+    // where neither side has a keyed exact arrow, are tried as before; n·m such pairs cost
+    // O(n·m). What each function's arrows say of its domain ([`Domains`]) is worked out once
+    // for each function, not once for each pair.
     async fn fns_met(&'m self, a: &Ty, t: &Ty) -> Vec<Arc<Sig>> {
-        // What each parameter type reads as from above and below, by its address: `a` and `t`
-        // are borrowed for the whole call, and every type read is held in them.
+        let Some(node) = t.fns.node() else {
+            return Vec::new();
+        };
+        let found = self.fn_index.borrow().get(&node).map(|(_, x)| x.clone());
+        let index = found.unwrap_or_else(|| {
+            let x = Rc::new(FnIndex::new(t));
+            self.fn_index
+                .borrow_mut()
+                .insert(node, (t.fns.clone(), x.clone()));
+            x
+        });
         let mut approx = Approx::default();
-        let mut by_params: HashMap<ParamList, Vec<(&Arc<Sig>, Domains)>> = HashMap::new();
-        for q in &t.fns {
-            let entry = (q, Domains::of(q, &mut approx));
-            by_params.entry(q.param_list()).or_default().push(entry);
-        }
         let mut have = HashSet::new();
         let mut out = Vec::new();
         for s in &a.fns {
-            let Some(qs) = by_params.get(&s.param_list()) else {
+            let Some(list) = index.list(s) else {
                 continue;
             };
             let ds = Domains::of(s, &mut approx);
-            for (q, dq) in qs {
+            let ds = &ds;
+            for (q, dq) in list
+                .tried(ds, Domains::keyed(s, ds))
+                .into_iter()
+                .map(|j| &list.fns[j])
+            {
+                let q = &q;
                 // Equal signatures have equal digests (`Hash for Sig` hashes the digest, and a
                 // set of functions relies on it), so unequal digests answer `==` at once.
                 // Complexity tradeoff: `==` alone walks the two signatures as deep as they
@@ -13063,7 +13112,7 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
                 let equal = s.digest() == q.digest() && s == *q;
                 let m = match equal {
                     true => Some(s.clone()),
-                    false => Domains::meet(self, (s, &ds), (q, dq)).await.map(Arc::new),
+                    false => Domains::meet(self, (s, ds), (q, dq)).await.map(Arc::new),
                 };
                 if let Some(m) = m
                     && have.insert(m.clone())
@@ -13302,12 +13351,44 @@ async fn accepts<'m>(
             Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,
             Piece::Tuple(cs) => c.row_in(cs, t, search, binds).await,
             // A type outside every comparison of function types holds its functions as written.
+            // Only the functions of `t` that [`FnList::tried`] gives are tried, in written order.
+            // Proof that each one left out does not fit, so the first that fits is the same:
+            // [`fits_in`] gives false at once where the parameter lists differ, and the lists
+            // of `t` are filed by [`Sig::param_list`]. Within a list, `s`'s `within` and `q`'s
+            // are apart, each free of variables ([`Domains::of`] gives none where one holds a
+            // variable, and such a `q` is in `open`, tried always), and one of the two is keyed
+            // ([`Domains::keyed`]). Where `s` is keyed, its exact arrow with a witness asks
+            // that `s` take a key within its `within`, which [`permitted`] finds outside `q`'s
+            // permission; where `q` is keyed, its exact arrow asks a cover ([`covers`]) by
+            // exact arrows of `s` of a key outside `s`'s permission. Either way [`fits_in`]
+            // answers no (it may refuse instead, and a refusal left out leaves the no).
+            // Checked against trying every function by
+            // `functions_met_through_the_index_are_those_met_pair_by_pair` (`FNS_ALL`).
+            //
+            // Complexity tradeoff: naive, as before, each piece tried with each function of
+            // `t` in turn, O(n·m) [`fits_in`] calls for a union of n functions within one of m,
+            // where none fits but one: the narrowing of a partial arrow over a union of 2m
+            // function types met with an exact one over m of them ([`Domains::meet`],
+            // `meets_of_many_arrows_narrow_values_in_linear_time`) took over 60 s at m = 8192.
+            // Used: `t`'s functions filed once for the search ([`FnIndex`], `Search::fns`),
+            // O(m) expected, and each piece finds those not apart from it by one lookup for
+            // each group of kinds; the pairs not apart and those with no `within` are tried as
+            // before. A `t` of one function is tried as before, with no index.
+            Piece::Fn(s) if t.fns.len() == 1 => {
+                let q = t.fns.iter().next().expect("one function");
+                c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await
+            }
             Piece::Fn(s) => {
+                let index = Rc::clone(search.fns.get_or_insert_with(|| Rc::new(FnIndex::new(t))));
                 let mut ok = false;
-                for q in &t.fns {
-                    if c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await {
-                        ok = true;
-                        break;
+                if let Some(list) = index.list(s) {
+                    let ds = Domains::of(s, &mut Approx::default());
+                    for j in list.tried(&ds, Domains::keyed(s, &ds)) {
+                        let q = &list.fns[j].0;
+                        if c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await {
+                            ok = true;
+                            break;
+                        }
                     }
                 }
                 ok
@@ -16113,6 +16194,130 @@ impl Approx {
     }
 }
 
+/// The functions of a type filed for [`Pairs::fns_met`]: by parameter list, and within a list
+/// by the classes and values of the parameter types whose product is each one's permission
+/// (`within`, [`Domains`]), as [`Near`] files tuples, so that a function met with them finds
+/// the ones whose permission may share a value with its own by one lookup for each group.
+/// Made once for each type in a walk ([`Pairs::fn_index`]): a meet of `a` arrows, each meeting
+/// a parameter or value type with one union of m functions ([`Domains::meet`]), files the
+/// union once, not `a` times.
+struct FnIndex {
+    lists: HashMap<ParamList, FnList>,
+}
+
+/// The functions of one parameter list of a [`FnIndex`].
+struct FnList {
+    /// Each function with what its arrows say of its domain, in written order.
+    fns: Vec<(Arc<Sig>, Domains)>,
+    /// The key of each parameter of each function's permission ([`class`]); none where it has
+    /// no `within`.
+    keys: Vec<Option<Box<[CompKey]>>>,
+    /// The functions with no `within`, tried with every function.
+    open: Vec<usize>,
+    /// The functions with a `within` and no keyed exact arrow ([`Domains::keyed`]).
+    unkeyed: Vec<usize>,
+    /// The functions with a `within`, by the [`Kind`] at each parameter.
+    groups: Vec<(Box<[Kind]>, Vec<usize>)>,
+    /// For each pattern of kinds of a function met, each group filed by the keys both read
+    /// ([`project`]), made the first time that pattern is met.
+    filed: RefCell<HashMap<Box<[Kind]>, Rc<Vec<FMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>>>>>>,
+}
+
+impl FnIndex {
+    fn new(t: &Ty) -> FnIndex {
+        // What each parameter type reads as from above and below, by its address: the types
+        // are held by `t`'s functions for the whole call.
+        let mut approx = Approx::default();
+        let mut lists: HashMap<ParamList, FnList> = HashMap::new();
+        for q in &t.fns {
+            let list = lists.entry(q.param_list()).or_insert_with(|| FnList {
+                fns: Vec::new(),
+                keys: Vec::new(),
+                open: Vec::new(),
+                unkeyed: Vec::new(),
+                groups: Vec::new(),
+                filed: RefCell::default(),
+            });
+            let j = list.fns.len();
+            let d = Domains::of(q, &mut approx);
+            let keys = d.within_keys();
+            match &keys {
+                None => list.open.push(j),
+                Some(_) if !Domains::keyed(q, &d) => list.unkeyed.push(j),
+                Some(_) => {}
+            }
+            list.keys.push(keys);
+            list.fns.push((q.clone(), d));
+        }
+        for list in lists.values_mut() {
+            let mut groups: HashMap<Box<[Kind]>, Vec<usize>> = HashMap::new();
+            for (j, ks) in list.keys.iter().enumerate() {
+                if let Some(ks) = ks {
+                    groups
+                        .entry(ks.iter().map(kind).collect())
+                        .or_default()
+                        .push(j);
+                }
+            }
+            list.groups = groups.into_iter().collect();
+        }
+        FnIndex { lists }
+    }
+
+    /// The functions of `s`'s parameter list, if `t` has any.
+    fn list(&self, s: &Sig) -> Option<&FnList> {
+        self.lists.get(&s.param_list())
+    }
+}
+
+impl FnList {
+    /// The functions to try with a function whose domain `d` gives, in written order: those
+    /// whose permission is not apart from its own by [`apart`], those with no `within`, and,
+    /// where it is not `keyed` ([`Domains::keyed`]), those not keyed either.
+    fn tried(&self, d: &Domains, keyed: bool) -> Vec<usize> {
+        #[cfg(test)]
+        if FNS_ALL.get() {
+            return (0..self.fns.len()).collect();
+        }
+        let Some(keys) = d.within_keys() else {
+            return (0..self.fns.len()).collect();
+        };
+        let kinds: Box<[Kind]> = keys.iter().map(kind).collect();
+        let found = self.filed.borrow().get(&kinds).cloned();
+        let filed = found.unwrap_or_else(|| {
+            let file = |(p, members): &(Box<[Kind]>, Vec<usize>)| {
+                let mut f: FMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>> = FMap::default();
+                for &j in members {
+                    let ks = self.keys[j].as_deref().unwrap_or(&[]);
+                    let key = project(ks, p, &kinds).into_iter();
+                    f.entry(key.map(|(k, v)| (k.clone(), v.cloned())).collect())
+                        .or_default()
+                        .push(j);
+                }
+                f
+            };
+            let filed = Rc::new(self.groups.iter().map(file).collect::<Vec<_>>());
+            self.filed.borrow_mut().insert(kinds.clone(), filed.clone());
+            filed
+        });
+        let mut js = Vec::new();
+        for (f, (p, _)) in filed.iter().zip(&self.groups) {
+            let key = project(&keys, &kinds, p).into_iter();
+            let key: Vec<_> = key.map(|(k, v)| (k.clone(), v.cloned())).collect();
+            if let Some(b) = f.get(&key) {
+                js.extend(b);
+            }
+        }
+        js.extend(&self.open);
+        if !keyed {
+            js.extend(&self.unkeyed);
+        }
+        js.sort_unstable();
+        js.dedup();
+        js
+    }
+}
+
 /// What the arrows of a signature say of its domain, for its meet with a signature of the same
 /// parameters ([`Pairs::fns_met`]). The domain of a function of the signature holds the parameter
 /// types of each exact arrow, its guarantee, and lies within those of all its arrows, its
@@ -16222,6 +16427,18 @@ impl Domains {
             below_in,
             keyed_up,
         }
+    }
+
+    /// Whether `s`, whose domain this is, has an exact arrow whose parameter types each hold a
+    /// value ([`Domains::witness`]): then every function of `s` has a key.
+    fn keyed(s: &Sig, d: &Domains) -> bool {
+        (s.arrows.iter().zip(&d.held)).any(|(b, ws)| !b.partial && ws.iter().all(|&(f, d)| f || d))
+    }
+
+    /// The key of each parameter type of `within` ([`class`]), by which [`FnIndex`] files the
+    /// permission; none where there is no `within`.
+    fn within_keys(&self) -> Option<Box<[CompKey]>> {
+        Some(self.within.as_ref()?.iter().map(class).collect())
     }
 
     /// Whether `t` holds no function type or family at any depth outside functions (in its
@@ -16720,12 +16937,14 @@ impl Domains {
     // meet for each parameter, each of one type with a union of O(a) types, each meet made
     // once by `pairs` and frames of its own on the walk's stack ([`Pairs::alone`]), so a
     // function over functions nested `n` deep costs one meet at each level. A parameter type
-    // and `within` that hold more than one function type between them to pair are not met:
-    // [`Pairs::fns_met`] tries each pair of one parameter list, so a parameter type holding m
-    // function types met with a `within` of 2m was O(m^2), 0.33 s to 6.5 s from m = 32 to 256
-    // where the meet before this check took 0.24 to 6.3 ms (2026-11-18; TYPES-meet-fns-
-    // indexed). Given up: a key outside the permission found only from another exact arrow, a
-    // parameter type holding a variable, and these: not compared, and the meet is kept, which
+    // and `within` that hold several function types between them are met too: until
+    // TYPES-meet-fns-indexed they were not, as [`Pairs::fns_met`] tried each pair of one
+    // parameter list, O(m^2) for a parameter type of m function types met with a `within` of
+    // 2m (0.33 s to 6.5 s from m = 32 to 256); it now tries only the pairs its index gives
+    // ([`FnIndex`]), and the meets of `a_meet_of_overloads_over_function_domains_scales` and
+    // `meets_of_many_arrows_narrow_values_in_linear_time` grow 8.0 to 8.4 times for 8 times
+    // the functions. Given up: a key outside the permission found only from another exact
+    // arrow, and a parameter type holding a variable: not compared, and the meet is kept, which
     // is sound.
     async fn keys_apart<'m>(
         pairs: &'m Pairs<'m, (MeetAt, MeetAt), Ty>,
@@ -16741,7 +16960,7 @@ impl Domains {
             return false;
         };
         for (p, u) in a.params.iter().zip(within) {
-            if p.holds_vars() || u.holds_vars() || p.fns.len() * u.fns.len() > 1 {
+            if p.holds_vars() || u.holds_vars() {
                 continue;
             }
             if pairs.alone(p.clone(), u.clone()).await.is_empty() {
@@ -16772,13 +16991,15 @@ impl Domains {
     // Complexity tradeoff: naive, each exact arrow of `s` against each arrow of `q`, O(a^2)
     // meets. Used: the results of `s`'s exact arrows joined into one union, and the value
     // types of `q`'s arrows into another, and one meet of the two, O(a) unions and one meet of
-    // types of size O(a). Two unions that hold more than one function type between them to
-    // pair are not met: [`Pairs::fns_met`] tries each pair of one parameter list, so m results
-    // `#ki -> int` met with m values `#ji -> int` took 0.19 s, 0.72 s and 5.1 s at m = 64, 128
-    // and 256, where the meet before this check took 5.6 to 24.5 ms (2026-11-18;
-    // TYPES-meet-fns-indexed). Given up: a result that shares no value with `V` beside another
-    // that does, a result that shares values only with arrows over keys `A` does not hold, and
-    // these: not compared, and the meet is kept, which is sound.
+    // types of size O(a). Two unions that hold several function types between them are met
+    // too: until TYPES-meet-fns-indexed they were not, as [`Pairs::fns_met`] tried each pair
+    // of one parameter list (m results `#ki -> int` met with m values `#ji -> int` took 0.19 s,
+    // 0.72 s and 5.1 s at m = 64, 128 and 256); it now tries only the pairs its index gives
+    // ([`FnIndex`]), and that meet grows 8.0 times for 8 times m ("a meet of two unions of n
+    // functions apart" in `meets_of_many_arrows_narrow_values_in_linear_time`). Given up: a
+    // result that shares no value with `V` beside another that does, and a result that shares
+    // values only with arrows over keys `A` does not hold: not compared, and the meet is kept,
+    // which is sound.
     async fn results_apart<'m>(
         pairs: &'m Pairs<'m, (MeetAt, MeetAt), Ty>,
         (s, ds): (&Sig, &Domains),
@@ -16797,9 +17018,6 @@ impl Domains {
         }
         let vs: Vec<Ty> = q.arrows.iter().map(|b| b.value().into_owned()).collect();
         let (r, v) = (Ty::union_all(rs), Ty::union_all(&vs));
-        if r.fns.len() * v.fns.len() > 1 {
-            return false;
-        }
         pairs.alone(r, v).await.is_empty()
     }
 
@@ -17005,24 +17223,23 @@ impl Domains {
                 // one whose `within` is a union of `a` function types, O(a^2) (3.9 times the
                 // time for each doubling of `a` in
                 // `a_meet_of_overloads_over_function_domains_scales`, which then took over 60 s at
-                // a = 2048 against 0.33 s before). Used: the meet where the two hold at most
-                // one function type between them to pair (`p.fns.len() * u.fns.len() <= 1`, the
-                // case of one pair as at [`Pairs::meets`]), one [`Domains::meet`] for each
-                // arrow, O(a) in all, and one comparison with the type. Given up: a parameter
-                // type and `within` that hold more than one function type between them to pair,
-                // left as they are, which is sound (each arrow bounds every key it bounded), only
-                // not within each side. Rejected, each measured from m = 32 to 256 function types
-                // a side (2026-11-18): narrowing such a type where it is the only one of its side,
-                // 56 ms to 5.0 s for one partial arrow over a union of m met with another (0.1 to
-                // 0.3 ms before); taking `within` where [`Ty::subtype`] proves it within the type,
-                // 129 ms to 20.3 s (0.2 to 6.3 ms before), for a partial arrow over a union of 2m
-                // met with an exact arrow over m of them. The first pays [`Pairs::fns_met`]'s
-                // pairing of each function type of one side with each of the other's, O(m^2);
-                // where the second's time goes in [`Ty::subtype`] was not profiled
-                // (TYPES-meet-fns-indexed).
+                // a = 2048 against 0.33 s before). Used: every such meet, its pairs found
+                // through [`FnIndex`] ([`Pairs::fns_met`]), and the comparison of the meet with
+                // the type, whose function pieces find the functions of the type the same way
+                // ([`accepts`]). Until TYPES-meet-fns-indexed, a parameter type and `within`
+                // that held more than one function type between them were left as they were
+                // (sound, only not within each side), since each way of narrowing them was
+                // O(m^2), measured from m = 32 to 256 function types a side (2026-11-18): the
+                // meet, 56 ms to 5.0 s for one partial arrow over a union of m met with another,
+                // for [`Pairs::fns_met`]'s pairing of every two function types; the comparison,
+                // 129 ms to 20.3 s for a partial arrow over a union of 2m met with an exact arrow
+                // over m of them, which a profile (perf and gdb stacks, 2026-11-18) put in
+                // [`accepts`] trying each function piece of the meet with every function of the
+                // type. Both now grow 8.1 to 8.3 times for 8 times m
+                // (`meets_of_many_arrows_narrow_values_in_linear_time`).
                 for (p, u) in a.params.iter_mut().zip(within) {
                     let plain = exact || Domains::plain(p);
-                    if !plain && (p.holds_vars() || p.fns.len() * u.fns.len() > 1) {
+                    if !plain && p.holds_vars() {
                         continue;
                     }
                     let met = pairs.alone(p.clone(), u.clone()).await;
@@ -17065,12 +17282,13 @@ impl Domains {
         // other side, O(a^2) meets. Used: one union of each side's value types, O(a), and one
         // meet of each arrow's value type with the other side's union; the cost of each such
         // meet is measured in `meets_of_many_arrows_narrow_values_in_linear_time`
-        // (COMPLEXITY.md F234). A value type and union that hold more than one function type
-        // between them to pair are not met, since [`Pairs::fns_met`] tries each pair: m arrows
-        // each over a value of one function type met with a union of m would be O(m^2)
-        // (TYPES-meet-fns-indexed). Given up: a side not read through its arrows alone, or
-        // holding a variable, and these: their values are left as they are, which is sound,
-        // only less narrow.
+        // (COMPLEXITY.md F234). A value type and union that hold several function types between
+        // them are met too: until TYPES-meet-fns-indexed they were not, as [`Pairs::fns_met`]
+        // tried each pair, O(m^2) for m arrows each over a value of one function type met with
+        // a union of m; it now tries only the pairs its index gives ([`FnIndex`]), 8.4 times
+        // the work for 8 times m ("a meet of n arrows over functions as values"). Given up: a
+        // side not read through its arrows alone, or holding a variable: its values are left as
+        // they are, which is sound, only less narrow.
         let read = |g: &Sig| Domains::by_arrows(g, false) && g.holds_no_var();
         if read(s) && read(q) {
             let union = |g: &Sig| {
@@ -17080,11 +17298,7 @@ impl Domains {
             let (vs, vq) = (union(s), union(q));
             for (i, a) in m.arrows.iter_mut().enumerate() {
                 let other = if i < n { &vq } else { &vs };
-                let value = a.value();
-                if value.fns.len() * other.fns.len() > 1 {
-                    continue;
-                }
-                let value = pairs.alone(value.into_owned(), other.clone()).await;
+                let value = pairs.alone(a.value().into_owned(), other.clone()).await;
                 let params = std::mem::take(&mut a.params);
                 *a = match a.partial {
                     true => Arrow::partial_of(params, value),
@@ -20893,6 +21107,77 @@ mod tests {
     fn union(rng: &mut Rng, open: bool) -> Ty {
         let k = 1 + rng.below(3);
         (0..k).fold(Ty::empty(), |t, _| t.union(&member(rng, open)))
+    }
+
+    /// TYPES-meet-fns-indexed: the meet of two unions of function types is the same whether
+    /// [`Pairs::fns_met`] tries only the pairs [`FnList::tried`] gives or every pair
+    /// (`FNS_ALL`), so no pair the index leaves out has a function in its meet. Function types
+    /// of one or two parameters, of one to three arrows each exact or partial, over random
+    /// unions of atoms, scalars, literals, payloads and, at times, a variable, `_` or a
+    /// function, so that the permissions share a class, differ in one, or have none.
+    #[test]
+    fn functions_met_through_the_index_are_those_met_pair_by_pair() {
+        let mut rng = Rng(crate::seed::seed(
+            "functions_met_through_the_index_are_those_met_pair_by_pair",
+        ));
+        let function = |rng: &mut Rng| {
+            let width = 1 + rng.below(2) as usize;
+            let k = if width == 1 { 1 + rng.below(3) } else { 1 };
+            let arrows = (0..k)
+                .map(|_| {
+                    let open = rng.below(4) == 0;
+                    let params = (0..width).map(|_| union(rng, open)).collect();
+                    let result = union(rng, false);
+                    match rng.below(2) {
+                        0 => Arrow::exact(params, result),
+                        _ => Arrow::partial_of(params, result),
+                    }
+                })
+                .collect();
+            Ty::func(Arc::new(sig(arrows, width, false)))
+        };
+        let side = |rng: &mut Rng| {
+            let k = 1 + rng.below(6);
+            (0..k).fold(Ty::empty(), |t, _| t.union(&function(rng)))
+        };
+        let (mut cases, mut kept, mut wrong) = (0, 0, Vec::new());
+        let (mut subs, mut within) = (0, 0);
+        for _ in 0..3000 {
+            let (a, b) = (side(&mut rng), side(&mut rng));
+            FNS_ALL.set(true);
+            let every = a.meet(&b);
+            FNS_ALL.set(false);
+            let indexed = a.meet(&b);
+            cases += 1;
+            kept += usize::from(!every.fns.is_empty());
+            if every.to_string() != indexed.to_string() && wrong.len() < 5 {
+                wrong.push(format!("{a} & {b}: every pair {every}, indexed {indexed}"));
+            }
+            // The same of [`accepts`], which tries a function piece with the functions of the
+            // other side the index gives: the meet within each side, and each side within the
+            // other and within their union.
+            let both = a.union(&b);
+            for (x, y) in [(&every, &a), (&every, &b), (&a, &b), (&b, &a), (&a, &both)] {
+                FNS_ALL.set(true);
+                let all = x.subtype(y);
+                FNS_ALL.set(false);
+                let some = x.subtype(y);
+                subs += 1;
+                within += usize::from(all);
+                if all != some && wrong.len() < 5 {
+                    wrong.push(format!("{x} <: {y}: every function {all}, indexed {some}"));
+                }
+            }
+        }
+        println!(
+            "{cases} cases, {kept} with a function in the meet; {subs} comparisons, {within} within"
+        );
+        assert!(kept > cases / 20, "too few meets keep a function: {kept}");
+        assert!(
+            within > subs / 10 && within < subs - subs / 10,
+            "too few of one verdict: {within}"
+        );
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// A signature of `width` named parameters with `arrows`, its own variables `T` and `B`,

@@ -249,6 +249,15 @@ fn printed_types_read_back_on_seeds_that_met_one_index_for_two_tuple_lengths() {
     }
 }
 
+/// The round trip and minimality test above on seed 76, which drew `a` =
+/// `((rat) ->? (_)) | ((#a) ->? (_))` in `a .. (a & (a | v)) -> b`: the reader left the meet
+/// `(rat | (#a ->? _) | (rat ->? _) | (#a -> bool)) ->? rat` unnarrowed, within neither side,
+/// until it narrowed parameter types pairing several function types (TYPES-meet-fns-indexed).
+#[test]
+fn printed_types_read_back_on_a_seed_that_met_unions_of_function_types() {
+    read_back_round(76);
+}
+
 /// The round trip and minimality test above on seeds that failed it
 /// (FAIL-parens-wrong-is-empty-seed). Seed 24 printed `(0 | ((T -> T) & (f64 -> _) for T in int |
 /// f64)) -> #notFound`, a pair too many around the intersection in a key union, since inside
@@ -750,9 +759,10 @@ fn kernel_generated_arrow(rng: &mut Rng, depth: usize) -> (Built, bool) {
         // the unknown; `(rat ->? #pair(int, ())) & ((rat .. (rat | int) -> bool) -> ((),))`, a
         // function type of two domain bounds; more in
         // `judgments::a_meet_of_functions_kept_before_is_within_each_side` of l01_23).
-        // Not drawn: an `a` whose meet with `a | v` pairs more than one function type
-        // ([`pairs_several_functions`]).
-        9 if pairs_several_functions(at, vt) => return leaf(rng),
+        // An `a` whose meet with `a | v` pairs more than one function type is drawn too, since
+        // the reader narrows such a parameter type (TYPES-meet-fns-indexed, COMPLEXITY.md F234);
+        // before, it was not drawn, as seed 76's `((rat) ->? (_)) | ((#a) ->? (_))`, which the
+        // reader left unnarrowed.
         9 => arrow(
             &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(&a.t | &v.t, b.t.clone()),
             format!("{at} .. ({at} & ({at} | {vt})) -> {bt}"),
@@ -997,34 +1007,6 @@ fn kernel_read_back(text: &str, printed: &str, wrong: &mut Vec<String>) -> bool 
         wrong.push(format!("`{text}`: {w}"));
     }
     false
-}
-
-/// Whether the reader's meet of a partial arrow over `a | v` with an exact arrow over `a`
-/// pairs more than one function type: the kernel prints `a .. (a & (a | v)) -> b` as
-/// `((a | v) ->? b) & (a -> b)`, whose meet is `a -> b` only where the reader narrows `a | v`
-/// to `a`, and it narrows a parameter type holding a function only where the two types hold
-/// at most one function type between them to pair (COMPLEXITY.md F234; FAIL-types-meet-fn-
-/// kept-not-within). Seed 76 drew `a` = `((rat) ->? (_)) | ((#a) ->? (_))`, and the reader
-/// left `(rat | (#a ->? _) | (rat ->? _) | (#a -> bool)) ->? rat` unnarrowed, within neither
-/// side. Narrowing these too is row TYPES-meet-fns-indexed.
-fn pairs_several_functions(at: &str, vt: &str) -> bool {
-    let fns = |t: &str| parse_type(t).map_or(0, |t| t.fns.len());
-    fns(at) * fns(&format!("{at} | {vt}")) > 1
-}
-
-/// The draws leave out seed 76's `a` and draw an `a` of one function type, or none.
-#[test]
-fn the_draws_leave_out_only_meets_pairing_several_functions() {
-    let seed76 = "(((rat) ->? (_)) | ((#a) ->? (_)))";
-    let v = "((rat) | ((#a) .. ((#a) & ((#a) | (bool))) -> (bool)))";
-    assert!(pairs_several_functions(seed76, v));
-    assert!(pairs_several_functions(
-        "((int) -> (int))",
-        "((bool) -> (int))"
-    ));
-    assert!(!pairs_several_functions("((int) -> (int))", "(bool)"));
-    assert!(!pairs_several_functions("(int)", "((bool) -> (int))"));
-    assert!(!pairs_several_functions("(int)", "(bool)"));
 }
 
 /// Each type of [`KERNEL_FORMS`] prints its form and reads back.
