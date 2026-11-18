@@ -159,7 +159,7 @@ Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with fea
 | `zir::Node` | 112 |
 | `zir::Op` | 40 |
 | `zir::Src` | 56 |
-| `zir::Edge` | 104 |
+| `zir::Edge` | 88 |
 | `zir::Region` | 80 |
 | `native Word` | 16 |
 | `native heap cell` | 96 |
@@ -169,6 +169,9 @@ tables, a 24-byte vector, which made a method declaration, its function and its 
 name, 264 bytes and every statement 280. Since item RED-main-2026-11-13 a method declaration
 is boxed, so the largest kind is a function declaration and a statement takes 248 bytes; a
 method declaration takes one allocation more.
+
+An edge took 104 bytes until item CHECK-literal-union-cost (2026-11-18) made the finite set of
+a domain a persistent treap, one 8-byte pointer in place of a 24-byte `BTreeSet`.
 
 Measured on the 10 step units the front end accepts (4 more are refused by design and give no
 record):

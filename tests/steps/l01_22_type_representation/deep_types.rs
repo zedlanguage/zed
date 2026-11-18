@@ -135,7 +135,8 @@ fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // of four samples (lines 13 to 15 and 30) and so the order of some operands.
     // FAIL-codex-r3-order-seed reads a union's arms in a group's canonical form as a set, as a
     // meet's operands are, which changes the digest of the `Tree` sample (line 16) and nothing
-    // else.
+    // else. CHECK-literal-union-cost keeps the sum of a set of literals in its treap's nodes, so
+    // a `Lits` writes no `sum` field; no digest changes.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());
