@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, Shared, project_each};
 use zedc::store::product::{Asked, Kept, Refused, Scope};
@@ -32,15 +33,23 @@ fn growth() -> Formula {
     ])
 }
 
+/// The solver alone ([`solver_alone`]) leaves the refused disjunct out and returns its cause
+/// with the wider set `0..`; the exact cover then asks whether the values below 5 have a
+/// point, which only the refused disjunct can give, so its question is refused for the same
+/// cause, and `v` is refused with it: the cause is returned with the symbol.
 #[test]
 fn the_cause_of_a_refused_disjunct_is_returned() {
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
         Formula::Or(Shared::new(vec![growth(), ge(&[("v", 1)], -5)])),
     ]);
-    let (hulls, skipped) = project_each(&f, &[sym("v")]).expect("the base has a point");
+    let alone = solver_alone(|| project_each(&f, &[sym("v")]));
+    let (hulls, skipped) = alone.expect("the base has a point");
     assert_eq!(skipped, vec![Refusal::Growth], "{hulls:?}");
     assert!(hulls[0].is_ok(), "{hulls:?}");
+    let (hulls, skipped) = project_each(&f, &[sym("v")]).expect("the base has a point");
+    assert!(skipped.is_empty(), "{skipped:?}");
+    assert_eq!(hulls[0], Err(Refusal::Growth), "{hulls:?}");
     // Without the refused disjunct, nothing is skipped.
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
@@ -230,6 +239,17 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
 /// which side is joined to which nor on the order the tests were assumed in.
 #[test]
 fn two_refused_arms_joined_give_both_warnings_in_one_order() {
+    solver_alone(two_refused_arms_joined);
+    // With the exact cover each name of a refused test is refused apart, a warning each; the
+    // joins still give one order.
+    let left = arm_scope(&growth_test(["x", "y", "z", "w"]), true);
+    let right = arm_scope(&growth_test(["a", "b", "c", "d"]), true);
+    assert_eq!(texts(&left.join(&right)), texts(&right.join(&left)));
+}
+
+/// [`two_refused_arms_joined_give_both_warnings_in_one_order`] with the solver alone, whose
+/// refusal of a test is one warning for all its names.
+fn two_refused_arms_joined() {
     let left = arm_scope(&growth_test(["x", "y", "z", "w"]), true);
     let right = arm_scope(&growth_test(["a", "b", "c", "d"]), true);
     let joined = texts(&left.join(&right));
@@ -272,8 +292,25 @@ fn a_scope_with_no_refusal_gives_no_warning() {
 
 /// The repair each warning above ends with, applied to the program's test, ends the warning
 /// on both arms: a value stated for one variable leaves the solver three, which it decides.
+/// Checked with the solver alone ([`solver_alone`]): with the exact cover, `w == 0` ends the
+/// refusals of the solver, but the cover's questions on `x` and `w` there pass its work limit
+/// (`Refusal::Questions`), so two warnings that the repair does not end take their place
+/// (row PRES-cover-refusals-where-exact).
 #[test]
 fn following_the_repair_of_each_warning_ends_it() {
+    solver_alone(following_the_repair);
+    let g = growth_test(["x", "y", "z", "w"]);
+    let s = arm_scope(&format!("w == 0 && {g}"), true);
+    let got = texts(&s);
+    assert!(
+        got.iter()
+            .all(|w| w.contains("longer than the checker allows")),
+        "{got:#?}"
+    );
+}
+
+/// [`following_the_repair_of_each_warning_ends_it`] with the solver alone.
+fn following_the_repair() {
     let g = growth_test(["x", "y", "z", "w"]);
     let zero = "4 * x - 12 * w - 10 * y - 12 * z >= 0 && 4 * w + 10 * x - 10 * y - 11 * z >= 0 \
                 && 11 * w + 4 * x - y + 12 * z >= 0 && 0 - 8 * w - 5 * x + 12 * y - z >= 0";
@@ -281,7 +318,7 @@ fn following_the_repair_of_each_warning_ends_it() {
         assert!(!texts(&arm_scope(&test, true)).is_empty(), "{test}");
         for outcome in [true, false] {
             let s = arm_scope(&format!("w == 0 && {test}"), outcome);
-            assert!(texts(&s).is_empty(), "{test}, {outcome}: {s}");
+            assert!(texts(&s).is_empty(), "{test}, {outcome}: {:#?}", texts(&s));
         }
     }
     let src = format!(
@@ -521,6 +558,13 @@ fn a_refused_projection_names_the_bounds_it_kept() {
 /// alternative its values are found exactly (PRES-project-each-cost).
 #[test]
 fn a_refused_projection_onto_one_name_names_its_bounds() {
+    solver_alone(refused_onto_one_name);
+}
+
+/// [`a_refused_projection_onto_one_name_names_its_bounds`] with the solver alone, which sets
+/// the refused cases of the alternatives aside; the exact cover asks of each name's values
+/// whole and sets no case aside.
+fn refused_onto_one_name() {
     let case = "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 \
                 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 \
                 && a + z1 <= b + c + 9 && a + b + 2 * c == z2 + 5";

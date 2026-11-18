@@ -101,6 +101,7 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_solvers::linear::{Q, Term};
 use zedc_solvers::{live3, twovar, utvpi};
 
+mod absorbing;
 mod deep;
 #[doc(hidden)]
 pub mod exact;
@@ -13138,58 +13139,6 @@ fn absorbed(f: &Formula, keep: &[Atom]) -> (Parts, Vec<(Atom, Vec<Con>)>) {
     (p, gone)
 }
 
-/// The rows over one atom on one side, read by [`absorb`]: each row `x + r >= 0` (a lower
-/// bound) or `-x + r >= 0` (an upper bound) by its rest `r`, written as its terms and its
-/// constant.
-#[derive(Default)]
-enum Side<'a> {
-    /// No row.
-    #[default]
-    Empty,
-    /// Every row has these terms; the least constant among them.
-    Shared(Vec<(&'a Atom, &'a Int)>, &'a Int),
-    /// Two rows differ in their terms.
-    Mixed,
-}
-
-impl<'a> Side<'a> {
-    /// Adds the row whose rest has the terms `terms` and the constant `k`.
-    fn add(&mut self, terms: Vec<(&'a Atom, &'a Int)>, k: &'a Int) {
-        match self {
-            Side::Empty => *self = Side::Shared(terms, k),
-            Side::Shared(t, least) if *t == terms => *least = (*least).min(k),
-            Side::Shared(..) => *self = Side::Mixed,
-            Side::Mixed => {}
-        }
-    }
-
-    /// Whether every lower bound of `self` and upper bound of `upper` sum to a constant at
-    /// least zero: their terms cancel, and the least constants sum to zero or more.
-    fn fits(&self, upper: &Side<'_>) -> bool {
-        match (self, upper) {
-            (Side::Empty, _) | (_, Side::Empty) => true,
-            (Side::Shared(l, kl), Side::Shared(u, ku)) => {
-                l.len() == u.len()
-                    && l.iter().zip(u).all(|((a, k), (b, j))| a == b && **k == -*j)
-                    && !(*kl + *ku).is_negative()
-            }
-            _ => false,
-        }
-    }
-}
-
-/// The row `c` read as a bound on `x` ([`Side`]): whether it is a lower bound, and the terms of
-/// its rest; `None` when it is an equality or the coefficient of `x` is not 1 or -1.
-fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)>)> {
-    let k = c.lin.terms.get(x)?;
-    let lower = *k == Int::ONE;
-    if c.rel != Rel::Ge || !(lower || *k == -&Int::ONE) {
-        return None;
-    }
-    let rest = c.lin.terms.iter().filter(|(a, _)| *a != x).collect();
-    Some((lower, rest))
-}
-
 /// Removes from `p` each top-level disjunction `D` one of whose disjuncts `d` shows that `D`
 /// removes no point once the atoms private to `d` are projected away, and gives, for each
 /// such atom, the rows over it (the base's and `d`'s), from which [`repair`] gives it a value.
@@ -13201,6 +13150,9 @@ fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)
 /// inequality too, with no other atom held by a disjunction alone. Writing each row over a
 /// private atom `x` as `x + l >= 0` or `u - x >= 0`, `d` serves when `l + u` is a constant at
 /// least zero for each pair of a lower and an upper bound of which one or both are `d`'s.
+///
+/// The rule is read by module `absorbing` ([`absorbing::removable`]), which the exact cover
+/// reads too, on the conjuncts of a formula (`exact::reduced`).
 ///
 /// Why this is exact: with each coefficient of `x` 1 or -1, an integer `x` lies between its
 /// bounds at a point of the other atoms exactly when each lower bound is at most each upper
@@ -13217,7 +13169,8 @@ fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)
 ///
 /// The cost is linear in the size of the parts, times a logarithm: the atoms of each disjunct
 /// are found once ([`Parts::atoms`]), each base row is read once, and each disjunct's rows
-/// once, compared with the base's bounds as two summaries per atom ([`Side`]).
+/// once, compared with the base's bounds as two summaries per atom (`Side` in module
+/// `absorbing`).
 ///
 /// Complexity tradeoff: only disjunctions shown removable by one disjunct over private atoms
 /// with unit coefficients are removed here; the rest are settled and searched ([`settle`],
@@ -13244,98 +13197,20 @@ fn absorb(p: &mut Parts, keep: &[Atom]) -> Vec<(Atom, Vec<Con>)> {
         return Vec::new();
     }
     let (removed, gone) = {
-        // The top-level disjunction that holds each atom of a disjunction, or `None` when two
-        // or more do.
-        let mut owner: HashMap<&Atom, Option<usize>> = HashMap::new();
-        for (j, ds) in p.ors.iter().enumerate() {
-            for a in ds.iter().flat_map(|d| d.atoms()) {
-                let o = owner.entry(a).or_insert(Some(j));
-                if *o != Some(j) {
-                    *o = None;
-                }
-            }
-        }
+        let base: Vec<&Con> = p.cons.iter().collect();
+        let ors: Vec<Vec<absorbing::Arm<'_>>> = (p.ors.iter())
+            .map(|ds| {
+                (ds.iter())
+                    .map(|d| absorbing::Arm {
+                        rows: d.cons.iter().collect(),
+                        nested: !d.ors.is_empty(),
+                        atoms: d.atoms().iter().collect(),
+                    })
+                    .collect()
+            })
+            .collect();
         let kept: HashSet<&Atom> = keep.iter().collect();
-        let mut factors: HashSet<Atom> = HashSet::new();
-        for a in (p.cons.iter().flat_map(|c| c.lin.terms.keys())).chain(owner.keys().copied()) {
-            if let Atom::Product(x, y) = a {
-                factors.insert(x.atom());
-                factors.insert(y.atom());
-            }
-        }
-        // The disjunction that alone holds `a`, when `a` may be private to one of its disjuncts.
-        let held_by = |a: &Atom| match (a, owner.get(a)) {
-            (Atom::Product(..), _) => None,
-            (_, Some(Some(j))) if !kept.contains(a) && !factors.contains(a) => Some(*j),
-            _ => None,
-        };
-        // The base's bounds on each such atom, its rows, and whether a row over it is not a
-        // unit inequality with no other such atom.
-        #[derive(Default)]
-        struct Bounds<'a> {
-            lower: Side<'a>,
-            upper: Side<'a>,
-            rows: Vec<&'a Con>,
-            bad: bool,
-        }
-        let mut base: HashMap<&Atom, Bounds<'_>> = HashMap::new();
-        for c in &p.cons {
-            let mut own = c.lin.terms.keys().filter(|a| held_by(a).is_some());
-            let Some(x) = own.next() else {
-                continue;
-            };
-            if own.next().is_some() {
-                for a in c.lin.terms.keys().filter(|a| held_by(a).is_some()) {
-                    base.entry(a).or_default().bad = true;
-                }
-                continue;
-            }
-            let b = base.entry(x).or_default();
-            b.rows.push(c);
-            match unit_bound(c, x) {
-                Some((true, rest)) => b.lower.add(rest, &c.lin.constant),
-                Some((false, rest)) => b.upper.add(rest, &c.lin.constant),
-                None => b.bad = true,
-            }
-        }
-        let none = Bounds::default();
-        // The rows of each private atom of `d`, a disjunct of disjunction `j`, when `d` shows
-        // that `j` removes no point.
-        let serves = |j: usize, d: &Parts| -> Option<Vec<(Atom, Vec<Con>)>> {
-            if !d.ors.is_empty() {
-                return None;
-            }
-            let mut own: BTreeMap<&Atom, (Side<'_>, Side<'_>, Vec<&Con>)> = BTreeMap::new();
-            for c in &d.cons {
-                let mut xs = (c.lin.terms.keys()).filter(|a| held_by(a) == Some(j));
-                let (Some(x), None) = (xs.next(), xs.next()) else {
-                    return None;
-                };
-                let (lower, rest) = unit_bound(c, x)?;
-                let (dl, du, rows) = own.entry(x).or_default();
-                (if lower { dl } else { du }).add(rest, &c.lin.constant);
-                rows.push(c);
-            }
-            let mut out = Vec::new();
-            for (x, (dl, du, rows)) in own {
-                let b = base.get(x).unwrap_or(&none);
-                if b.bad || !(b.lower.fits(&du) && dl.fits(&du) && dl.fits(&b.upper)) {
-                    return None;
-                }
-                let all = b.rows.iter().chain(&rows).map(|&c| c.clone());
-                out.push((x.clone(), all.collect()));
-            }
-            Some(out)
-        };
-        let mut removed = vec![false; p.ors.len()];
-        let mut gone = Vec::new();
-        for (j, ds) in p.ors.iter().enumerate() {
-            if let Some(rows) = ds.iter().find_map(|d| serves(j, d)) {
-                removed[j] = true;
-                gone.extend(rows);
-            }
-        }
-        (removed, gone)
+        absorbing::removable(&base, &ors, &|a| kept.contains(a))
     };
     let mut j = 0;
     p.ors.retain(|_| {
@@ -18897,16 +18772,14 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 }
 
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
-/// note): exact where the join of row sums answers (module `row_sums`), a set holding them
-/// otherwise. A bound past `i64` is read as no bound.
+/// note). A bound past `i64` is read as no bound.
 ///
-/// The solver's projection is not exact even with one disjunction or none: it gives each
+/// The solver's projection alone is not exact even with one disjunction or none: it gives each
 /// disjunct its hull, which loses the parity or the holes an equality forces (`x + 2 * y == 0`
 /// gives `x` its hull, not its even values), a wrong answer under author P197. The cover of
-/// module `exact` ([`project_each_exact`]) makes each set it answers the exact projection, and
-/// refuses the symbol with [`Refusal::Questions`] past its work limit (`meter::EXACT_LIMIT`);
-/// it is not yet on this path (row PRES-cover-wire, pending the benchmarks of row
-/// PRES-cover-bench-regressions).
+/// module `exact`, on this path since PRES-cover-wire, makes each set it answers the exact
+/// projection, and refuses the symbol with [`Refusal::Questions`] past its work limit
+/// (`meter::EXACT_LIMIT`). What follows is the solver's answer, which the cover starts from.
 ///
 /// Complexity tradeoff: with two or more disjunctions the answer is the meet of each
 /// disjunction's union of projections, with its two ends moved in by `tighten`; the gaps
@@ -19021,10 +18894,10 @@ fn memo_off() -> bool {
         || meter::EXACT_LIMIT_SET.with(|c| c.get().is_some())
 }
 
-/// [`project_each`] with no memo: the solver's answer alone, as [`project_each_solver`], until
-/// row PRES-cover-wire puts the cover of module `exact` ([`project_each_exact`]) on this path.
+/// [`project_each`] with no memo: the solver's answer made exact by the cover of module
+/// `exact` ([`project_each_exact`]).
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, false)
+    project_each_with(f, syms, true)
 }
 
 /// [`project_each`] made exact by the cover of module `exact` (Monniaux's model-guided
@@ -19114,9 +18987,13 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each, Re
     // Complexity tradeoff: one pass over `f` for each projection the cover checks, O(n log n)
     // in the size of `f` (`signed`, then `canonical_parts`), before the contradiction check
     // too, against reading `f` as written there, which let a contradiction be answered in one
-    // writing and refused in another.
+    // writing and refused in another. With the cover turned off (`meter::EXACT_OFF`) the
+    // solver reads `f` as written: `cover_input` writes a shared part `u` of one row as that
+    // row, which [`factored`] did not take out, and so it lost the narrowing of seed 0x5f5b's
+    // formula 9 (`b` in (-inf, inf) where the formula as written gives (-inf, 0]; test
+    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`).
     let written;
-    let f = if cover {
+    let f = if cover && !meter::EXACT_OFF.get() {
         written = cover_input(f);
         &written
     } else {
@@ -20843,7 +20720,7 @@ impl Level {
                             // when the projection is exact (PRES-project-exact-solver), since
                             // the exact projection is a function of the formula and the symbol
                             // alone. Tests: `batch_and_single_sound` over the random draws,
-                            // `seed_1446_case_7_single_alone_reports_a_cause`,
+                            // `seed_1446_case_7_single_hull_alone_reports_a_cause`,
                             // `batch_and_single_on_a_parity`.
                             _ => hull_from(g.base_of(r), s, &model),
                         }
@@ -29578,11 +29455,15 @@ mod by_halves_against_old {
     /// Equal hulls are not asserted (PROOF-batch-single-hull-agree): a symbol's hull depends on
     /// the other symbols asked with it (the note at the `hull_from` fallback of `Level::open`),
     /// so the two can differ with a cause on either side or on neither
-    /// ([`seed_1446_case_7_single_alone_reports_a_cause`]); and with no cause neither side is
-    /// the exact hull in general ([`project`]: parity, and the gaps between the disjuncts of two
-    /// or more disjunctions; [`batch_and_single_on_a_parity`]). Until 2026-11-15 this asserted
-    /// equality with no cause on either side and containment with a cause on one, an unproved
-    /// claim. Measured 2026-11-15 over seeds 1 to 2000, 298,958 comparisons: 298,558 with no
+    /// ([`seed_1446_case_7_single_hull_alone_reports_a_cause`], on the hulls before the
+    /// cover); and before the cover, with no cause neither side is the exact hull in general
+    /// ([`project`]: parity, and the gaps between the disjuncts of two or more disjunctions).
+    /// With the cover (PRES-project-exact-solver, PRES-pugh-work-budget) each set answered with
+    /// no cause is exact, so batch and single agree wherever both answer
+    /// ([`batch_and_single_on_a_parity`], [`seed_1446_case_7_batch_and_single_are_exact`]).
+    /// Until 2026-11-15 this asserted equality with no cause on either side and containment
+    /// with a cause on one, an unproved claim. Measured 2026-11-15 over seeds 1 to 2000,
+    /// 298,958 comparisons: 298,558 with no
     /// cause and equal hulls, none with no cause and different hulls; a cause on batch alone
     /// 80 times (4 with different hulls); on both 320 (all equal); on single alone never.
     fn batch_and_single_sound(
@@ -29770,28 +29651,26 @@ mod by_halves_against_old {
         Formula::and(fs)
     }
 
-    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch projection gives it, and
-    /// single projection gives a set holding it with the cause of the disjunction it left out.
-    /// The exact set, checked with no projection: each of 1 to 4 has the point listed below
-    /// (`holds` evaluates the formula), and no point has `v0` at 0 or above 4. By hand: rows
-    /// 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
+    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch and single projection give
+    /// it, with no cause. The exact set, checked with no projection: each of 1 to 4 has the
+    /// point listed below (`holds` evaluates the formula), and no point has `v0` at 0 or above
+    /// 4. By hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
     /// `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
     /// disjunction reads `v5 == v1 + 4`, `v5 >= v1 + 3` or `v1 == v5 + 6`; the last needs
     /// `v1 >= 6`, so `v5 >= v1 + 3 >= 3`. Rows 2, 10, 9 and 8 give
     /// `v2 >= v1 + v10 >= v1 + v6 + v9 - 1 >= v1 + v6 + v5 + v4 + v7 - 1`, and with
     /// `v2 <= 2 - 2·v7` that is `v1 + v4 + v5 + v6 + 3·v7 <= 3`: `v5 = 3` and the others 0. Row 6,
     /// `v6 >= v5 + v7 - 2`, then needs `v6 >= 1`, which is false.
-    /// Single projection gives `[0, 4]`: its question "is there a point with `v0 <= 1`" over
-    /// the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel of that disjunct for `v0` alone, is
-    /// refused for `Refusal::Growth`, and the hull keeps the 0 it cannot rule out. Until
-    /// FAIL-by-halves-seed-1446, [`project`] dropped that cause. That single projection gives
-    /// `[1, 4]` with no cause is row PRES-growth-hull-side-one-symbol, whose parked test is
-    /// /home/luke/Work/wt/failing-tests/PRES-growth-hull-side-one-symbol.rs; its fix makes the
-    /// "single reports a cause" assert below fail, and moves the exact assert back here. Batch
-    /// of all eleven symbols reports `[Growth]` too and is exact; batch of `v0` and `v10`
-    /// reports none.
+    /// Before the cover (`meter::EXACT_OFF`) single projection gives `[0, 4]`: its question "is
+    /// there a point with `v0 <= 1`" over the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel
+    /// of that disjunct for `v0` alone, is refused for `Refusal::Growth`, and the hull keeps the
+    /// 0 it cannot rule out ([`seed_1446_case_7_single_hull_alone_reports_a_cause`]). The cover
+    /// then finds that 0 has no point, so single projection is exact with no cause, the assert
+    /// of row PRES-growth-hull-side-one-symbol's parked test
+    /// (/home/luke/Work/wt/failing-tests/PRES-growth-hull-side-one-symbol.rs), met since
+    /// PRES-pugh-work-budget.
     #[test]
-    fn seed_1446_case_7_batch_is_exact_and_single_reports_its_cause() {
+    fn seed_1446_case_7_batch_and_single_are_exact() {
         let f = seed_1446_case_7();
         let syms: Vec<Atom> = (0..11).map(|i| Atom::Sym(format!("v{i}").into())).collect();
         for p in [
@@ -29812,29 +29691,29 @@ mod by_halves_against_old {
             .expect("batch of v0 and v10 answers");
         assert_eq!(two[0].as_ref().ok(), Some(&exact), "batch of v0 and v10");
         assert_eq!(causes, [], "batch of v0 and v10");
-        let (one, causes) = project(&f, &syms[0]).expect("single answers");
-        assert!(!causes.is_empty(), "single {one:?} reports no cause");
-        assert!(
-            exact.is_subset(&one),
-            "single {one:?} does not hold {exact:?}"
-        );
+        assert_eq!(project(&f, &syms[0]), Ok((exact, vec![])), "single");
     }
 
-    /// A draw where single projection alone reports a cause (PROOF-batch-single-hull-agree; no
-    /// random draw of [`answers_are_those_of_the_old_path`] over seeds 1 to 2000 reached it):
+    /// A draw where single projection alone reports a cause, on the hulls before the cover
+    /// (`meter::EXACT_OFF`; PROOF-batch-single-hull-agree; no random draw of
+    /// [`answers_are_those_of_the_old_path`] over seeds 1 to 2000 reached it):
     /// [`seed_1446_case_7`] with batch of `v0` and `v10` ([`project_each`], `[1, 4]`, no cause)
-    /// against `v0` alone ([`project`], a wider set with `Growth`), as
-    /// [`seed_1446_case_7_batch_is_exact_and_single_reports_its_cause`] shows. The hulls differ,
-    /// and [`batch_and_single_sound`] checks that each holds every value `v0` takes. When row
-    /// PRES-growth-hull-side-one-symbol is fixed the case returned here changes, and this test
-    /// needs another such draw.
+    /// against `v0` alone ([`project`], a wider set with `Growth`). The hulls differ, and
+    /// [`batch_and_single_sound`] checks that each holds every value `v0` takes. With the
+    /// cover both are exact ([`seed_1446_case_7_batch_and_single_are_exact`]); when the hull of
+    /// one symbol stops growing here (row PRES-growth-hull-side-one-symbol, whose answer the
+    /// cover already makes exact) this test needs another such draw.
     #[test]
-    fn seed_1446_case_7_single_alone_reports_a_cause() {
+    fn seed_1446_case_7_single_hull_alone_reports_a_cause() {
         let f = seed_1446_case_7();
         let (v0, v10) = (Atom::Sym("v0".into()), Atom::Sym("v10".into()));
-        let (two, causes) = project_each(&f, &[v0.clone(), v10]).expect("batch answers");
+        meter::EXACT_OFF.set(true);
+        let two = project_each(&f, &[v0.clone(), v10]);
+        let one = project(&f, &v0);
+        meter::EXACT_OFF.set(false);
+        let (two, causes) = two.expect("batch answers");
         let x = two[0].as_ref().expect("batch hull of v0");
-        let (one, one_causes) = project(&f, &v0).expect("single answers");
+        let (one, one_causes) = one.expect("single answers");
         assert_eq!(
             batch_and_single_sound(&f, &v0, (x, &causes), (&one, &one_causes), "seed 1446"),
             ((false, true), false),
@@ -29844,11 +29723,10 @@ mod by_halves_against_old {
 
     /// Batch and single projection meet the parity case of [`project`]'s note: over
     /// `x == 2·y + 1`, `0 <= y <= 3` and the disjunction `y <= 1 || y >= 3`, `x` takes 1, 3
-    /// and 7 only. Each side reports no cause and gives `x` the union of its disjuncts' hulls,
-    /// `[1, 3]` and `[7, 7]`, so 2 is in it and has no point: the set is not the exact one
-    /// though no cause is reported, on either side (PROOF-batch-single-hull-agree; the exact
-    /// projection is row PRES-project-exact-solver, whose fix changes the expected set here
-    /// to `{1, 3, 7}`).
+    /// and 7 only. Before PRES-pugh-work-budget each side gave `x` the union of its disjuncts'
+    /// hulls, `[1, 3]` and `[7, 7]`, which holds 2, a value with no point
+    /// (PROOF-batch-single-hull-agree). Each side now gives the exact set `{1, 3, 7}` with no
+    /// cause, the values the loop below finds by enumeration.
     #[test]
     fn batch_and_single_on_a_parity() {
         let k = Lin::constant;
@@ -29867,7 +29745,9 @@ mod by_halves_against_old {
                 "x = {val}"
             );
         }
-        let hull = IntervalSet::of(1, 3).join(&IntervalSet::single(7));
+        let hull = IntervalSet::single(1)
+            .join(&IntervalSet::single(3))
+            .join(&IntervalSet::single(7));
         let (each, causes) = project_each(&f, &syms).expect("batch answers");
         let (one, one_causes) = project(&f, &syms[0]).expect("single answers");
         assert_eq!(

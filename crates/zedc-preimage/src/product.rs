@@ -5293,6 +5293,10 @@ struct Block {
     names_at: imbl::OrdMap<Arc<str>, Product>,
     /// The keys of the parts added since the block was last kept ([`Seen::owners`]).
     added: Vec<PartKey>,
+    /// A name of the block was given a set of more than one piece by a step outside the
+    /// block's projection, and the block has not been projected whole since
+    /// ([`Block::gained_hole`], [`Scope::project_block`]).
+    hole_pending: bool,
 }
 
 impl Block {
@@ -5380,12 +5384,51 @@ impl Block {
             free,
             names_at: names.clone(),
             added: Vec::new(),
+            hole_pending: false,
         };
         for (g, k) in &core {
             out.enter(g, *k);
         }
         out.add_constraints();
+        // A new block has no products of its own from before, so a name it finds with more
+        // than one piece was given them outside its projection ([`Block::hole_pending`]).
+        // Cost: O(N) for N names, once per block made, which reads its N names already.
+        out.hole_pending = (out.users.keys()).any(|n| {
+            out.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
+        });
         out
+    }
+
+    /// Whether a name of the block changed since it was last kept and now holds more than one
+    /// piece, or such a change is still pending ([`Block::hole_pending`]).
+    ///
+    /// Complexity tradeoff: naive version, every name of the block compared with its product
+    /// when kept, O(N) for N names. Used: the names changed since then, from the persistent
+    /// maps' difference, O(c log N) for c changed, with the block's names compared only when
+    /// more than N changed, as [`Block::update`] walks them.
+    fn gained_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        if self.hole_pending {
+            return true;
+        }
+        // A star's leaf is left out, as the loop's trigger leaves it out
+        // ([`Scope::project_block`]): no part's projection onto the hubs reads it.
+        let holed = |n: &Arc<str>| {
+            self.users.contains_key(n)
+                && self.leaf.as_ref() != Some(n)
+                && !same_framed_opt(self.names_at.get(n), names.get(n))
+                && names.get(n).is_some_and(|p| p.ints().len() > 1)
+        };
+        let mut changed = Vec::new();
+        for d in self.names_at.diff(names) {
+            let (DiffItem::Add(n, _)
+            | DiffItem::Remove(n, _)
+            | DiffItem::Update { new: (n, _), .. }) = d;
+            changed.push(n.clone());
+            if changed.len() > self.users.len() {
+                return self.users.keys().any(holed);
+            }
+        }
+        changed.iter().any(holed)
     }
 
     /// Adds the constraints' own part, when there are constraints; returns where it stands.
@@ -7718,7 +7761,7 @@ impl Scope {
         type Before = (Projected, (IntervalSet, Congruence));
         let mut done: BTreeMap<conjuncts::Class, (Before, IntervalSet)> = BTreeMap::new();
         for id in blocks {
-            let (b, mut due) = self.block(&self.relation, id);
+            let (mut b, mut due) = self.block(&self.relation, id);
             if fresh {
                 let mut free = b.parts.iter().filter(|(_, p)| p.of.is_some());
                 if let (Some((at, _)), None) = (free.next(), free.next())
@@ -7726,8 +7769,10 @@ impl Scope {
                 {
                     due.push(at.clone());
                 }
-                // A block with nothing to project, as most in an eager scope, is kept as it is.
+                // A block with nothing to project, as most in an eager scope, is kept as it is,
+                // with a hole made since asking for the whole block ([`Block::hole_pending`]).
                 if due.is_empty() {
+                    b.hole_pending = b.gained_hole(self.names.view());
                     self.keep(b);
                     continue;
                 }
@@ -7756,6 +7801,7 @@ impl Scope {
                     let at = self.snapshot(&p.names);
                     self.projected.insert(p.key.clone(), (p.with.clone(), at));
                 }
+                b.hole_pending = b.gained_hole(self.names.view());
                 self.keep(b);
                 continue;
             }
@@ -12927,7 +12973,23 @@ impl Scope {
         // new to the block, or a name of another part, leaves it as it was, so a new conjunct
         // costs its own part and not the block's (the walk through a shared name). The parts
         // due come from the block kept from the last projection ([`Scope::block`]).
+        //
+        // A name of the block given a set of more than one piece by a step outside this loop
+        // (the atom of a linear test, `Scope::narrow_linear`) asks for the whole block, just
+        // as one given it inside the loop does (the trigger at `again` below): the parts then
+        // find it at their fixpoint and move nothing, so no move inside the loop asks. Audit
+        // seed 4 step 4 (`AUDIT_EVEN`): the atom `x == 3z - 4` gives x {-4, -1, 2, 5} at once
+        // through the exact cover, no part moves it, and x kept {-4, -1, 2, 5}, where the box
+        // answer [-4, 5] moves once more in the loop and the whole block gives x {-1, 2, 5},
+        // z [1, 3]: a more exact input gave a less exact output (P197). A block kept with
+        // nothing due carries the request to its next projection ([`Block::hole_pending`]),
+        // since keeping it moves its snapshot past the change. Cost: O(c log N) to find it
+        // ([`Block::gained_hole`]), and one whole-block projection where the loop's trigger
+        // would have asked for one had the hole come from a part.
+        let mut entry_hole = b.gained_hole(self.names.view());
+        b.hole_pending = false;
         if due.is_empty() {
+            b.hole_pending = entry_hole;
             self.keep(b);
             return;
         }
@@ -13125,7 +13187,7 @@ impl Scope {
                     } => (!same_framed(a, nb)).then(|| n.clone()),
                 })
                 .collect();
-            let mut again = false;
+            let mut again = std::mem::take(&mut entry_hole);
             let mut empty = false;
             let before = part_before.unwrap_or_else(|| self.block_before(&b, &start_part));
             for old in before.iter() {
@@ -13342,6 +13404,8 @@ impl Scope {
                 break;
             }
         }
+        // A request no projected part took stays for the next projection.
+        b.hole_pending = entry_hole;
         self.record(b, &start, &due, &ran, &released_loop);
     }
 

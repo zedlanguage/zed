@@ -570,9 +570,10 @@ fn an_end_only_case_reasoning_bounds_is_read_from_a_disjunct() {
 
 /// `z <= x + y` with `x <= 0` and `y <= 0` each by cases (`x <= 0 || p >= 1` with
 /// `x <= 0 || p <= 0`, the same for `y` with `q`): `z <= 0`, but no disjunct bounds `z` alone
-/// (`x <= 0` leaves `y` free), so no candidate end is found and the hull stays open, sound and
-/// wider than the exact `z <= 0` (the tradeoff of [`project_each`] at `tighten`, item
-/// PRES-pendants-wider).
+/// (`x <= 0` leaves `y` free), so the solver finds no candidate end and its hull stays open,
+/// sound and wider than the exact `z <= 0` (the tradeoff of [`project_each`] at `tighten`, item
+/// PRES-pendants-wider). The exact cover (PRES-pugh-work-budget) gives `z <= 0`: every `z <= 0`
+/// has the point `x = y = 0`.
 #[test]
 fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
     let (x, y, z, p, q) = (named("x"), named("y"), named("z"), named("p"), named("q"));
@@ -584,7 +585,9 @@ fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
         ]));
         fs.push(Formula::or(vec![ge(v.times(-1)), ge(w.times(-1))]));
     }
-    assert_hull(&Formula::and(fs), None, None);
+    let f = Formula::and(fs);
+    solver_alone(|| assert_hull(&f, None, None));
+    assert_hull(&f, None, Some(0));
 }
 
 /// A chain of `n` stages `y[i + 1] >= y[i] - 1` with `y[0] == 0`, and at the middle stage

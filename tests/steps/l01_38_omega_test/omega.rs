@@ -950,8 +950,10 @@ fn removals_by_values_cascade_in_any_order() {
 
 /// A disjunct is removed by the values of each form read alone: with `x` and `y` each 0 or 2,
 /// `x + y == 1` of `x + y == 1 || z >= 0` is kept, though `x + y` is 0, 2 or 4, so `z` keeps
-/// no lower bound. A sound hull, wider than the exact `[0..=5]` (the complexity tradeoff on
-/// `drop_outside_values`, COMPLEXITY.md PROJECT-hull-credit-lower).
+/// no lower bound: the solver's hull is wider than the exact `[0..=5]` (the complexity
+/// tradeoff on `drop_outside_values`, COMPLEXITY.md PROJECT-hull-credit-lower), and the
+/// cover of module `exact` (PRES-pugh-exact-projection-research) asks whether any `z` below 0
+/// has a point, finds none, and answers `[0..=5]`.
 #[test]
 fn a_sum_of_forms_with_gaps_is_not_read() {
     let f = Formula::and(vec![
@@ -964,7 +966,7 @@ fn a_sum_of_forms_with_gaps_is_not_read() {
     let z = each[0].as_ref().expect("not refused");
     let exact = IntervalSet::of(0, 5);
     assert_eq!(z.join(&exact), *z, "the exact hull is inside");
-    assert_eq!(z.to_string(), "[..=5]");
+    assert_eq!(z.to_string(), "[0..=5]");
     assert!(skipped.is_empty());
 }
 
@@ -1568,14 +1570,12 @@ fn twin_definitions_are_merged_before_a_tied_projection() {
     assert_eq!(values, (-40..=-3).chain(3..=11).collect::<Vec<_>>(), "{f}");
     // Case 1185 also needs a point of `f` with `i` at most a bound to show that `f` has a
     // point, where asking for `f` itself is refused (`Hull::asked`): its upper end is -9, the
-    // one value, where it was 4.
+    // one value, where it was 4. The solver keeps the lower end open; the cover of module
+    // `exact` (PRES-pugh-exact-projection-research) asks whether any `i` below -9 has a
+    // point, finds none, and answers -9 alone.
     let f = case_1185();
     let (each, _) = project_each(&f, &[sym("i")]).expect("answered");
     let got = each[0].clone().expect("answered");
-    assert_eq!(
-        got.bounds(),
-        Some((&End::NegInf, &End::Fin(Num::from(-9)))),
-        "{f}"
-    );
+    assert_eq!(got, set(&[(Some(-9), -9)]), "{f}");
     assert_eq!(values_of_i(&f, -40, 40), vec![-9], "{f}");
 }

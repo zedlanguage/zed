@@ -62,6 +62,7 @@ use std::rc::Rc;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
+use super::absorbing;
 use super::formula::Id;
 pub use super::meter::{
     EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK, QUESTION_WORK,
@@ -148,6 +149,27 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     let part_of: HashMap<&Atom, usize> = (parts.iter().enumerate())
         .flat_map(|(i, p)| p.atoms.iter().map(move |a| (a, i)))
         .collect();
+    // Each part as a smaller formula with the same values of every symbol at its points, and a
+    // point exactly where the part has one (`reduced`, every symbol kept), where one is found
+    // within an allowance of its own (`tried`, as [`direct`]); its covers ask their questions
+    // of it, and keep its points apart from those of the part, which they are not. A part
+    // whose reduced formula a cover shows to have a point has one (`shown`).
+    let kept: HashSet<&Atom> = syms.iter().collect();
+    let mut allowance = limit;
+    let small: Vec<Option<(Formula, u64)>> = (parts.iter())
+        .map(|p| {
+            if !p.factors.is_empty() {
+                return None;
+            }
+            let g = tried(&mut allowance, solver, |w| {
+                reduced(&p.f, &|a| kept.contains(a), w)
+            })?;
+            let size = constraints(&g);
+            Some((g, size))
+        })
+        .collect();
+    let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
+    let mut shown = vec![false; parts.len()];
     let mut wider = false;
     // Each symbol once, in the order of `Atom`, whatever the order of `syms`: a cover reads the
     // points the covers before it found in its part, so its work, and a refusal past the limit,
@@ -179,6 +201,30 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                     return Ok(IntervalSet::range(End::NegInf, End::PosInf));
                 };
                 let p = &parts[i];
+                // The cover of `s` over the part's smaller formula (above), with the limit of its
+                // own; where it is refused, the cover over `p.f` runs as it did before, with a
+                // limit of its own too, so no answer is refused that was answered before.
+                if let Some((g, size)) = &small[i] {
+                    let mut alone = Work {
+                        used: 0,
+                        limit,
+                        solver,
+                    };
+                    let got = cover(
+                        g,
+                        s,
+                        &h,
+                        *size,
+                        &p.factors,
+                        &mut small_points[i],
+                        &mut alone,
+                    );
+                    if let Ok((set, kept)) = got {
+                        shown[i] |= !set.is_empty();
+                        wider |= kept;
+                        return Ok(set);
+                    }
+                }
                 let (set, kept) =
                     cover(&p.f, s, &h, p.size, &p.factors, &mut points[i], &mut work)?;
                 wider |= kept;
@@ -203,7 +249,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         limit,
         solver,
     };
-    let has = has_points(&parts, &mut points, &mut call);
+    let has = has_points(&parts, &mut points, &small, &shown, &mut call);
     // A refusal, the solver's or the cover's, stays as it was; where a part has no point, `f`
     // has none, and every other answer is empty; where the check is refused, so is every
     // answer, which rests on it.
@@ -449,34 +495,48 @@ fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>,
 fn has_points(
     parts: &[Piece],
     points: &mut [Vec<Model>],
+    small: &[Option<(Formula, u64)>],
+    shown: &[bool],
     work: &mut Work,
 ) -> Result<bool, Refusal> {
     let none = Atom::Sym("#none".into());
     // The fast paths' allowance, the same work limit as the questions (`tried`, `POLY-nf-work`).
     let mut fast = work.limit;
-    for (p, found) in parts.iter().zip(points.iter_mut()) {
-        if !found.is_empty() {
+    let all = parts.iter().zip(points.iter_mut()).zip(small).zip(shown);
+    for (((p, found), small), shown) in all {
+        if !found.is_empty() || *shown {
             continue;
         }
+        // The part's smaller formula, with a point exactly where the part has one (`reduced`),
+        // is asked in its place; a point of it is not one of the part, so it is not kept.
+        let (f, size) = match small {
+            Some((g, size)) => (g, *size),
+            None => (&p.f, p.size),
+        };
+        let mut keep = |m: Model| {
+            if small.is_none() {
+                found.push(m);
+            }
+        };
         if p.factors.is_empty()
-            && let Some(m) = quick_point(&p.f, 2 * (p.size + 2), work)?
+            && let Some(m) = quick_point(f, 2 * (size + 2), work)?
         {
-            found.push(m);
+            keep(m);
             continue;
         }
         if p.factors.is_empty()
-            && let Some(set) = tried(&mut fast, work.solver, |w| direct(&p.f, &none, w))
+            && let Some(set) = tried(&mut fast, work.solver, |w| direct(f, &none, w))
         {
             if set.is_empty() {
                 return Ok(false);
             }
             continue;
         }
-        work.read(p.size)?;
+        work.read(size)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-        match work.ask(&p.f)? {
+        match work.ask(f)? {
             None => return Ok(false),
-            Some(m) => found.push(m),
+            Some(m) => keep(m),
         }
     }
     Ok(true)
@@ -1179,6 +1239,122 @@ fn direct(f: &Formula, s: &Atom, work: &mut Work) -> Result<Option<IntervalSet>,
         Part::Rows(rows) => projected(&rows, s, work),
         Part::Set(set, _) => Ok(Some(set)),
     }
+}
+
+/// A smaller formula `g` with the same values of each atom `keep` holds at its points as `f`,
+/// and a point exactly where `f` has one, by two exact steps on the conjuncts of `f`; `None`
+/// where neither changes `f`. `f` has no product atom.
+/// 1. Each disjunction that the rule of module `absorbing` shows to change no answer read over
+///    the atoms other than those private to one of its disjuncts is removed; an atom `keep`
+///    holds is never private, so `∃P f ≡ ∃P f'` over those atoms `P` (the proof: `absorb` in
+///    `presburger.rs`), and the values of each kept atom at the points of `f` and of `f'` are
+///    the same, as is whether there is a point.
+/// 2. The rows `R` of what is left, `R ∧ D` with `D` the conjuncts that are not rows, are
+///    replaced by `K`, `R` with every atom eliminated that `keep` does not hold and `D` does
+///    not read ([`super::eliminated`], exact over the integers, `None` where it is not, and
+///    `R` is then kept): `K` holds at a point of its atoms exactly where `R` holds at some
+///    values of the atoms eliminated, which `D` does not read, so `∃E (R ∧ D) ≡ K ∧ D`.
+///
+/// The cover then asks its questions of `g`, whose rows are those `D` and the kept atoms reach.
+// Complexity tradeoff: the cover asked each question of the whole formula, so a star of n
+// leaves, each with a disjunction tied to the hubs, cost a run of the solver on O(n) rows a
+// question, past the work limit at 770 leaves (`l01_38_omega_test::bench::names::project_each_
+// on_tied_disjunctions_scales`, refused with Questions). The solver itself removes those
+// disjunctions first (`absorb`, COMPLEXITY.md row DECIDE-disj-chain) and projects each
+// disjunct with the base eliminated onto its atoms (`project_parts`, its kernels, Pugh's exact
+// shadow, "The Omega test", 1992); the cover did neither. Used: the same two steps, once for
+// each part of a call, keeping every symbol of the call: the rule reads each row and each
+// disjunct once, O(t log t) for t terms, a conjunct that is not a disjunction of rows read once
+// for its atoms (a part shared by k such conjuncts is read k times). That reading is not
+// charged, as [`split`], the pass of the same kind before it, is not; the elimination is
+// metered as the solver meters it (`eliminated_counted`), so a shadow that grows is refused at
+// the limit and the formula is then covered whole. Run once for each symbol, with only that
+// symbol kept, it removed more, but cost O(k t) for k symbols, quadratic on the callers that
+// project every atom (`Scope::framed`). Naive alternative: the questions of the whole formula,
+// each O(n) or more. Trigger: a formula whose disjunctions are few or private, linked through
+// rows; a formula whose disjunctions read most of its atoms keeps them, and the cover asks its
+// questions of nearly the whole of it, as before.
+fn reduced(
+    f: &Formula,
+    keep: &dyn Fn(&Atom) -> bool,
+    work: &mut Work,
+) -> Result<Option<Formula>, Refusal> {
+    let conjuncts = f.conjuncts();
+    let mut rows: Vec<&Con> = Vec::new();
+    let mut rest: Vec<&Formula> = Vec::new();
+    for g in conjuncts {
+        match g {
+            Formula::Con(c) => rows.push(c),
+            g => rest.push(g),
+        }
+    }
+    if rest.is_empty() {
+        // A conjunction of rows, which [`direct`] reads as it is.
+        return Ok(None);
+    }
+    // Each conjunct as a disjunction of arms: a disjunct of rows alone is read by the rule, any
+    // other part is nested, and holds its atoms.
+    fn atoms_in(g: &Formula) -> Vec<&Atom> {
+        let mut out: Vec<&Atom> = Vec::new();
+        each_constraint(g, |c| out.extend(c.lin.terms.keys()));
+        out
+    }
+    fn arm(g: &Formula) -> absorbing::Arm<'_> {
+        let flat: Option<Vec<&Con>> = match g {
+            Formula::Con(c) => Some(vec![c]),
+            Formula::And(gs) => (gs.iter())
+                .map(|h| match h {
+                    Formula::Con(c) => Some(c),
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        };
+        let atoms = atoms_in(g);
+        match flat {
+            Some(rows) => absorbing::Arm {
+                rows,
+                nested: false,
+                atoms,
+            },
+            None => absorbing::Arm {
+                rows: Vec::new(),
+                nested: true,
+                atoms,
+            },
+        }
+    }
+    let arms: Vec<Vec<absorbing::Arm<'_>>> = (rest.iter())
+        .map(|g| match g {
+            Formula::Or(ds) => ds.iter().map(arm).collect(),
+            g => vec![absorbing::Arm {
+                rows: Vec::new(),
+                nested: true,
+                atoms: atoms_in(g),
+            }],
+        })
+        .collect();
+    let (removed, _) = absorbing::removable(&rows, &arms, keep);
+    let left: Vec<&Formula> = (rest.iter().zip(&removed))
+        .filter(|(_, r)| !**r)
+        .map(|(g, _)| *g)
+        .collect();
+    let want: HashSet<&Atom> = arms
+        .iter()
+        .zip(&removed)
+        .filter(|(_, r)| !**r)
+        .flat_map(|(ds, _)| ds.iter().flat_map(|d| d.atoms.iter().copied()))
+        .collect();
+    let owned: Vec<Con> = rows.iter().map(|&c| c.clone()).collect();
+    let counted = work.solver.eliminated_counted;
+    let kernel = work.metered(|| counted(&owned, &|a| keep(a) || want.contains(a)))?;
+    let changed_rows = kernel.as_ref().is_some_and(|k| *k != owned);
+    if !changed_rows && left.len() == rest.len() {
+        return Ok(None);
+    }
+    let rows = kernel.unwrap_or(owned);
+    let parts = (rows.into_iter().map(Formula::Con)).chain(left.into_iter().cloned());
+    Ok(Some(Formula::and(parts.collect())))
 }
 
 /// The values of `s` at which the conjunction `rows` has a point, by [`super::eliminated`];
@@ -1934,7 +2110,7 @@ fn factors(f: &Formula) -> HashSet<Atom> {
 
 /// Calls `at` on each constraint of `f`, a shared part read once (by [`Id`]), the parts
 /// waiting on an explicit stack (see [`fold`]).
-fn each_constraint(f: &Formula, mut at: impl FnMut(&Con)) {
+fn each_constraint<'a>(f: &'a Formula, mut at: impl FnMut(&'a Con)) {
     let mut seen: HashSet<Id> = HashSet::new();
     let mut stack = vec![f];
     while let Some(g) = stack.pop() {
