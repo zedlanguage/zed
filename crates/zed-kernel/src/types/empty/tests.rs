@@ -187,6 +187,62 @@ fn a_length_is_given_when_two_classes_taken_out_meet_and_their_shares_sum_to_one
     }
 }
 
+/// Two more sets of classes whose shares sum to one with two that meet, each missed by a
+/// plausible wrong choice (found by the XR-wlen cross-review, round 1). Lengths not 0 modulo 2,
+/// 1 modulo 6 nor 2 modulo 3 are those 3 modulo 6: weighing each class on a prime by all the
+/// residues left on the later primes, not by its own share of them, takes 0 modulo 2 and gives
+/// 6. Lengths not 0 or 1 modulo 3, 9 or 11 modulo 12, nor 2 modulo 6 are those 5 modulo 12:
+/// the choice by the expected number of classes alone gives 12 when it breaks ties toward the
+/// first residue and 11 when toward the last.
+#[test]
+fn a_length_is_given_where_plausible_wrong_choices_miss() {
+    for (none, period, left) in [
+        (vec![(2, 0), (6, 1), (3, 2)], 6u32, 3u32),
+        (vec![(3, 1), (12, 9), (3, 0), (12, 11), (6, 2)], 12, 5),
+    ] {
+        assert!(residues_meet(&[], &none) == Lengths::Some, "{none:?}");
+        let n = residue_length(&[], &none).expect("a length");
+        assert_eq!(&n % period, BigUint::from(left), "{none:?}");
+        assert_eq!(residue_agrees(&[], &none), (true, true));
+    }
+}
+
+/// Odd lengths not 1 modulo 6 are 3 or 5 modulo 6: a choice on 2 that weighs (6, 1) without
+/// the residues left on 3 takes 0 modulo 2 and gives 6 (XR-wlen round 1).
+#[test]
+fn residue_length_weights_the_next_prime() {
+    let none = [(2, 0), (6, 1)];
+    assert!(residues_meet(&[], &none) == Lengths::Some);
+    let length = residue_length(&[], &none).expect("a length 3 or 5 modulo 6");
+    let at = &length % 6u32;
+    assert!(
+        at == BigUint::from(3u32) || at == BigUint::from(5u32),
+        "{length}"
+    );
+}
+
+/// Lengths 1 modulo 4 and 2 modulo 9 are 29 or 65 modulo 72; (72, 29) and (8, 5) both hold 29
+/// and (4, 0) and (3, 0) hold neither, so only 65 modulo 72 is left: two positive classes, two
+/// classes taken out that are the same inside them, and two that miss them (XR-wlen round 1).
+#[test]
+fn residue_length_counts_an_overlap_inside_two_positive_classes() {
+    let all = [(4, 1), (9, 2)];
+    let none = [(72, 29), (8, 5), (4, 0), (3, 0)];
+    assert!(residues_meet(&all, &none) == Lengths::Some);
+    let length = residue_length(&all, &none).expect("a length 65 modulo 72");
+    assert_eq!(&length % 72u32, BigUint::from(65u32));
+}
+
+/// A power of a prime above 2^63: the step of the Chinese remainder theorem added two residues
+/// of it in `u64` and overflowed (XR-wlen round 1).
+#[test]
+fn residue_length_handles_a_prime_power_above_half_the_u64_range() {
+    let q = 3u64.pow(40);
+    let all = [(q, q - 1)];
+    assert!(residues_meet(&all, &[]) == Lengths::Some);
+    assert_eq!(residue_length(&all, &[]), Some(BigUint::from(q - 1)));
+}
+
 /// Checks `residue_length` on the lengths in every class of `all` and in no class of `none`:
 /// a length given is one, the rule (`residues_meet`) agrees with the scan where it decides,
 /// and a length is given whenever the rule finds one. Gives whether a length exists and
