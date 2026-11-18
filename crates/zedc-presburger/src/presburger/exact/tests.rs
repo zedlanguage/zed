@@ -2621,10 +2621,12 @@ fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
         "the reading stopped at {pass}, before {allowed}"
     );
     // The fast paths of the covers (`direct`) have nothing left after it, so the fast work of
-    // the symbols is the reading's: k limits and the one charge that passed them.
+    // the symbols is the reading's, k limits and the one charge that passed them, and the
+    // forward certificate's, which has a limit of its own for each of a symbol's at most two
+    // covers (`cover`): at most `2·k·L` more.
     assert!(
-        fast <= pass,
-        "the fast work {fast} passes the reading's {pass} (k * limit = {allowed})"
+        fast <= pass + 2 * allowed,
+        "the fast work {fast} passes the reading's {pass} and 2 * {allowed}"
     );
     // Each loop has a limit of its own, as with no reading: at most two meters a symbol (over
     // the reduced formula, then the part), each passing its limit by one stopping charge.
@@ -2634,4 +2636,323 @@ fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
             "{g:?}"
         );
     }
+}
+
+/// The counter of `l01_38_omega_test::repair::guards`, written with this module's helpers and
+/// names chosen by `name` (for `i`, `m` and `t(j)`): `t(0) == m`, and `t(j)` is `t(j-1)` where
+/// `i >= j`, else `t(j-1) + 1`, for `j` in `1..=k`; `i` in `[-w, w]`, `m` in `[-w, w]` where
+/// `bounded`; `t(k) >= 0` where `meet`, else `t(k) <= -1`.
+fn guards_named(
+    k: i64,
+    w: i64,
+    meet: bool,
+    bounded: bool,
+    name: &dyn Fn(&str, i64) -> String,
+) -> Formula {
+    let (i, m) = (name("i", 0), name("m", 0));
+    let t = |j: i64| name("t", j);
+    let mut fs = vec![
+        ge(&[(i.as_str(), 1)], w),
+        ge(&[(i.as_str(), -1)], w),
+        eq(&[(t(0).as_str(), 1), (m.as_str(), -1)], 0),
+    ];
+    if bounded {
+        fs.push(ge(&[(m.as_str(), 1)], w));
+        fs.push(ge(&[(m.as_str(), -1)], w));
+    }
+    for j in 1..=k {
+        let (tj, tp) = (t(j), t(j - 1));
+        fs.push(Formula::or(vec![
+            Formula::and(vec![
+                ge(&[(i.as_str(), 1)], -j),
+                eq(&[(tj.as_str(), 1), (tp.as_str(), -1)], 0),
+            ]),
+            Formula::and(vec![
+                ge(&[(i.as_str(), -1)], j - 1),
+                eq(&[(tj.as_str(), 1), (tp.as_str(), -1)], -1),
+            ]),
+        ]));
+    }
+    let tk = t(k);
+    fs.push(if meet {
+        ge(&[(tk.as_str(), 1)], 0)
+    } else {
+        ge(&[(tk.as_str(), -1)], -1)
+    });
+    Formula::and(fs)
+}
+
+fn guards_f(k: i64, w: i64, meet: bool, bounded: bool) -> Formula {
+    guards_named(k, w, meet, bounded, &|s, j| {
+        if s == "t" {
+            format!("t{j}")
+        } else {
+            s.to_string()
+        }
+    })
+}
+
+/// The values of `i` of [`guards_named`], by trying every `i` and `m` (with `m` from
+/// `-(k + 1)` to `k + 1` where it is unbounded, wide enough: `t(k)` is `m` plus 0 to `k`, so
+/// `m == -(k + 1)` gives `t(k) <= -1` and `m == 0` gives `t(k) >= 0`).
+fn guards_brute(k: i64, w: i64, meet: bool, bounded: bool) -> IntervalSet {
+    let r = if bounded { w } else { k + 1 };
+    let mut set = IntervalSet::empty();
+    for i in -w..=w {
+        if (-r..=r).any(|m| {
+            let t = m + (1..=k).filter(|&j| i < j).count() as i64;
+            (t >= 0) == meet
+        }) {
+            set = set.join(&IntervalSet::single(i));
+        }
+    }
+    set
+}
+
+/// The projection of [`guards_f`] onto `i` with the forward certificate and without it, with
+/// the questions each asks: (answer, questions).
+#[expect(
+    clippy::type_complexity,
+    reason = "two runs of one projection, compared in place"
+)]
+fn guards_both(
+    f: &Formula,
+) -> (
+    (Result<IntervalSet, Refusal>, u64),
+    (Result<IntervalSet, Refusal>, u64),
+) {
+    let run = |off: bool| {
+        GUARDED_OFF.set(off);
+        EXACT_QUESTIONS.set(0);
+        let got = project_each_exact(f, &[a("i")]).unwrap().0.remove(0);
+        GUARDED_OFF.set(false);
+        (got, EXACT_QUESTIONS.replace(0))
+    };
+    (run(false), run(true))
+}
+
+/// PRES-cover-bench-guards-beyond: the counter below zero, at the benchmark's sizes `k = 16`
+/// and `k = 128` on inputs `3k/4` wide, projects onto `i` as `k/4 + 1 ..= 3k/4` with no
+/// question: the forward certificate pins `m` and reads every `t(j)` from it. Without it the
+/// cover asks one question for each value of `i`, and at `k = 128` passes the work limit (the
+/// red case of the row).
+#[test]
+fn guards_beyond_the_inputs_are_certified_without_questions() {
+    for k in [16, 128] {
+        let w = 3 * k / 4;
+        let f = guards_f(k, w, false, true);
+        let want = IntervalSet::of(k / 4 + 1, w);
+        let ((got, asked), (old, old_asked)) = guards_both(&f);
+        assert_eq!(got, Ok(want.clone()), "k {k}");
+        assert_eq!(asked, 0, "k {k}: {asked} questions");
+        assert!(
+            old_asked > 0,
+            "k {k}: the certificate's case was not reached"
+        );
+        if k == 16 {
+            assert_eq!(old, Ok(want), "k {k}, without the certificate");
+        } else {
+            assert_eq!(
+                old,
+                Err(Refusal::Questions),
+                "k {k}, without the certificate"
+            );
+        }
+    }
+}
+
+/// The counter on both sides, small sizes, bounded and unbounded `m`: with the certificate
+/// the answer is the values of `i` found by trying every point, as without it.
+#[test]
+fn guards_on_both_sides_agree_with_their_points() {
+    for k in 1..=9 {
+        for w in 0..=4 {
+            for meet in [false, true] {
+                for bounded in [false, true] {
+                    let f = guards_f(k, w, meet, bounded);
+                    let want = guards_brute(k, w, meet, bounded);
+                    let ((got, _), (old, _)) = guards_both(&f);
+                    let at = format!("k {k} w {w} meet {meet} bounded {bounded}");
+                    assert_eq!(got, Ok(want.clone()), "{at}");
+                    assert_eq!(old, Ok(want), "{at}, without the certificate");
+                }
+            }
+        }
+    }
+}
+
+/// The certificate does not depend on the names or the order of the parts: the counter with
+/// its atoms renamed (so that another atom of the chain is the least, and the pin) and its
+/// conjuncts shuffled is certified alike, with no question.
+#[test]
+fn guards_renamed_and_shuffled_are_certified_alike() {
+    let mut rng = Rng(crate::seed::seed(
+        "guards_renamed_and_shuffled_are_certified_alike",
+    ));
+    type Name<'a> = &'a dyn Fn(&str, i64) -> String;
+    let names: [Name; 3] = [
+        &|s, j| {
+            if s == "t" {
+                format!("a{j}")
+            } else {
+                s.to_string()
+            }
+        },
+        &|s, j| match s {
+            "t" => format!("z{}", 99 - j),
+            "m" => "zz".to_string(),
+            _ => "i".to_string(),
+        },
+        &|s, j| match s {
+            "t" => format!("t{j}"),
+            "m" => "b".to_string(),
+            _ => "i".to_string(),
+        },
+    ];
+    for name in names {
+        let f = shuffled(&guards_named(16, 12, false, true, name), &mut rng);
+        let ((got, asked), _) = guards_both(&f);
+        assert_eq!(got, Ok(IntervalSet::of(5, 12)));
+        assert_eq!(asked, 0);
+    }
+}
+
+fn certify(f: &Formula, s: &str, h: &IntervalSet) -> Option<IntervalSet> {
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    guarded::forward(f, &a(s), h, &mut work).unwrap()
+}
+
+/// Where the set given is wider than the projection, the certificate declines, never
+/// answering with a value that has no point: the counter's set widened by one value below; a
+/// hole (`x != 0`) under a set that holds it; and given the set without the hole, it answers.
+#[test]
+fn a_set_wider_than_the_projection_is_never_certified() {
+    let f = guards_f(16, 12, false, true);
+    assert_eq!(
+        certify(&f, "i", &IntervalSet::of(5, 12)),
+        Some(IntervalSet::of(5, 12))
+    );
+    assert_eq!(certify(&f, "i", &IntervalSet::of(4, 12)), None);
+    let holed = Formula::and(vec![
+        Formula::Not(Shared::new(eq(&[("x", 1)], 0))),
+        ge(&[("x", 1)], 2),
+        ge(&[("x", -1)], 2),
+    ]);
+    assert_eq!(certify(&holed, "x", &IntervalSet::of(-2, 2)), None);
+    let apart = IntervalSet::of(-2, -1).join(&IntervalSet::of(1, 2));
+    assert_eq!(certify(&holed, "x", &apart), Some(apart));
+}
+
+/// The cases the certificate must decline, each with its set exact or wider: a guard reading
+/// the only free atom; a choice across the cut of its guard whose two equations give the pin
+/// other slopes (taken on one side of the cut, it answers); two guards that are not
+/// complements (`x >= 1`, `x <= -1`: `x == 0` takes neither); and a diamond, the head defined
+/// twice, whose second definition holds at no point.
+#[test]
+fn guards_on_the_pin_unequal_slopes_gaps_and_diamonds_decline() {
+    let box_x = |f: Formula| Formula::and(vec![f, ge(&[("x", 1)], 2), ge(&[("x", -1)], 2)]);
+    let on_pin = box_x(Formula::or(vec![
+        Formula::and(vec![ge(&[("y", 1)], 0), eq(&[("z", 1)], -1)]),
+        Formula::and(vec![ge(&[("y", -1)], -1), eq(&[("z", 1)], -2)]),
+    ]));
+    assert_eq!(certify(&on_pin, "x", &IntervalSet::of(-2, 2)), None);
+    let slopes = box_x(Formula::and(vec![
+        Formula::or(vec![
+            Formula::and(vec![ge(&[("x", 1)], 0), eq(&[("z", 1), ("y", -1)], 0)]),
+            Formula::and(vec![ge(&[("x", -1)], -1), eq(&[("z", 1), ("y", -2)], 0)]),
+        ]),
+        ge(&[("y", 1)], 0),
+    ]));
+    assert_eq!(certify(&slopes, "x", &IntervalSet::of(-2, 2)), None);
+    assert_eq!(
+        certify(&slopes, "x", &IntervalSet::of(0, 2)),
+        Some(IntervalSet::of(0, 2))
+    );
+    let gap = box_x(Formula::or(vec![
+        Formula::and(vec![ge(&[("x", 1)], -1), eq(&[("z", 1)], 0)]),
+        Formula::and(vec![ge(&[("x", -1)], -1), eq(&[("z", 1)], -1)]),
+    ]));
+    assert_eq!(certify(&gap, "x", &IntervalSet::of(-2, 2)), None);
+    assert_eq!(
+        project(&gap, "x"),
+        IntervalSet::of(-2, -1).join(&IntervalSet::of(1, 2))
+    );
+    // `b == x + 1`, `c == x + 1`, `d == b` and `d == c + 1`: no point at all.
+    let diamond = |shift: i64| {
+        box_x(Formula::and(vec![
+            eq(&[("b", 1), ("x", -1)], -1),
+            eq(&[("c", 1), ("x", -1)], -1),
+            eq(&[("d", 1), ("b", -1)], 0),
+            eq(&[("d", 1), ("c", -1)], -shift),
+        ]))
+    };
+    assert_eq!(certify(&diamond(1), "x", &IntervalSet::of(-2, 2)), None);
+    assert_eq!(certify(&diamond(1), "x", &IntervalSet::single(0)), None);
+    assert_eq!(project(&diamond(1), "x"), IntervalSet::empty());
+    // The same diamond with `d == c`: every value has a point; the certificate answers at
+    // each single value, where the intervals are exact.
+    assert_eq!(
+        certify(&diamond(0), "x", &IntervalSet::single(1)),
+        Some(IntervalSet::single(1))
+    );
+    assert_eq!(project(&diamond(0), "x"), IntervalSet::of(-2, 2));
+}
+
+/// The certificate's work limit on both sides: at every limit, either the certificate answers
+/// with no work of the loop and no question, or it stops (or declines) and the loop runs as it
+/// does with the certificate off, with the same loop work, questions and answer; both happen
+/// over the limits tried. A formula the certificate declines (the evens with one disjunction)
+/// gives the same answer and the same loop work with the certificate on and off.
+#[test]
+fn the_certificate_meets_the_work_limit_alike_on_both_sides() {
+    let f = guards_f(16, 12, false, true);
+    let want = IntervalSet::of(5, 12);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    EXACT_QUESTIONS.set(0);
+    assert_eq!(project(&f, "i"), want);
+    let needed = FAST_WORK.replace(0);
+    assert_eq!(EXACT_WORK.replace(0), needed);
+    assert_eq!(EXACT_QUESTIONS.replace(0), 0);
+    let run = |limit: u64, off: bool| {
+        EXACT_LIMIT_SET.set(Some(limit));
+        GUARDED_OFF.set(off);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        EXACT_QUESTIONS.set(0);
+        let got = project_each_exact(&f, &[a("i")]).unwrap().0;
+        GUARDED_OFF.set(false);
+        EXACT_LIMIT_SET.set(None);
+        let fast = FAST_WORK.replace(0);
+        (
+            got,
+            EXACT_WORK.replace(0) - fast,
+            EXACT_QUESTIONS.replace(0),
+        )
+    };
+    let (mut answered, mut stopped) = (false, false);
+    for limit in (0..16).map(|j| needed >> j) {
+        let on = run(limit, false);
+        if on == (vec![Ok(want.clone())], 0, 0) {
+            answered = true;
+        } else {
+            assert_eq!(on, run(limit, true), "limit {limit}");
+            stopped = true;
+        }
+    }
+    assert!(answered && stopped, "answered {answered} stopped {stopped}");
+    let g = evens(20);
+    let loop_run = |off: bool| {
+        GUARDED_OFF.set(off);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = project(&g, "x");
+        GUARDED_OFF.set(false);
+        (got, EXACT_WORK.replace(0) - FAST_WORK.replace(0))
+    };
+    assert_eq!(loop_run(false), loop_run(true));
 }

@@ -67,11 +67,12 @@ use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    QUESTION_WORK, SOLVER_UNIT,
+    GUARDED_OFF, QUESTION_WORK, SOLVER_UNIT,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
 
+mod guarded;
 mod projection;
 pub use projection::{METHOD, Method};
 use projection::{Strided, Tail, bounded, fin, holds_at, value};
@@ -236,7 +237,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // reduced formula, then over the part), so the fast work of the part is at most
     // `w + 2·(k·L - w) <= 2·k·L`, and its loops (`cells_cover`) at most two limits each, `2·k·L`,
     // as with no reading: in all `4·k·L`, the bound of the covers alone. Before, the reading
-    // came on top of that, up to `5·k·L`. Every meter may pass its limit by its one stopping
+    // came on top of that, up to `5·k·L`. The forward certificate of each cover ([`cover`]) has
+    // an allowance of its own, `L` for each of a symbol's at most two covers, so with it the
+    // bound is `6·k·L`; it is apart from `direct`'s, which the reading may have spent whole. Every meter may pass its limit by its one stopping
     // charge, as before; `reduced` and `has_points` (one limit for the call each) are outside
     // the symbols' limits, with or without the reading. A fast path with nothing left does not
     // run (`tried`), and its symbol is covered by the loop as with `direct` off: every answer
@@ -679,11 +682,31 @@ fn cover(
     // such an `f` empty before the cover runs in every case tried, so the test that reaches
     // this case gives `exact_each` sets that miss it (`tests::a_part_split_off_gets_the_same_
     // answer_with_and_without_direct`, which also compares `direct` on and off).
+    let mut fast = fast;
     if factors.is_empty()
         && !DIRECT_OFF.get()
-        && let Some(set) = tried(&mut { fast }, work.solver, |w| direct(f, s, &h.hull(), w))
+        && let Some(set) = tried(&mut fast, work.solver, |w| direct(f, s, &h.hull(), w))
     {
         return Ok((set, false));
+    } // The forward certificate (`guarded::forward`): `h` itself, where every value of it is shown
+    // to have a point by definitions taken in order from `s`, with no question. It runs on an
+    // allowance of its own, the loop's limit (`tried`), never on the loop's work: a decline
+    // leaves the loop's work, its limit and `points` as they were, so the loop below runs as
+    // without it. Not on what `direct` leaves: on the chain of absolute values the part's
+    // reading (`read_once`) spends 2,971,100 of 3,100,000 units at 1,100 levels and all of them
+    // at 8,800, `direct` the rest, and the certificate, 70,512 and 563,312 units there, would
+    // never run (traced in `exact_each`, PRES-cover-bench-chains-abs).
+    // Complexity tradeoff: the reading is O(r·t) for r conjuncts of t terms, then O(r·t) for each
+    // of the P pieces of `h`, with no question; the loop below asks at least one question a
+    // value where each value is its own cell (guards-beyond: one for each value of `i`, each a
+    // run of the solver on the whole formula, O(v·r·t) or more for v values). Where it declines,
+    // its work is spent for nothing, at most one limit for each cover (`exact_each`'s bound).
+    let mut own = work.limit;
+    if factors.is_empty()
+        && !GUARDED_OFF.get()
+        && let Some(set) = tried(&mut own, work.solver, |w| guarded::forward(f, s, h, w))
+    {
+        return Ok((Classed::plain(set), false));
     }
     let (set, kept) = cells_cover(f, s, h, size, factors, points, work)?;
     Ok((Classed::plain(set), kept))
