@@ -83,6 +83,17 @@ fn the_prose_checks_pass_on_the_spec() {
     }
 }
 
+/// Every label and step this repository cites is defined in the spec, as `sync` checks it
+/// (a comment of l07_03 that cited a section label DESIGN.md does not define passed every test
+/// and was named only by merge-push's step 0).
+#[cfg(feature = "spec")]
+#[test]
+fn the_citations_of_this_repository_pass_on_the_spec() {
+    let dir = zed_tests::spec::dir().to_string_lossy().into_owned();
+    let mut out = String::new();
+    assert_eq!(zed_tools::cite::run(&[dir], &mut out), Ok(true), "{out}");
+}
+
 /// The readers the tests use on DESIGN.md in place: a ```` ```text ```` fence inside a list
 /// item is given with its indentation taken off, the kernel grammar's rule names are listed,
 /// and the tables of M0.7's serialization are kept apart from tables of other shapes.

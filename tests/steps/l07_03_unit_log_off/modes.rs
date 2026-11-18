@@ -74,8 +74,8 @@ fn a_step_id_before_builds_is_not_a_kind_of_build() {
 }
 
 /// The pronoun "which" before the verb "builds" is its subject, not a kind of build (spec
-/// 2a73c74, sec:strings: "a format string, which builds the string at run time"; found by
-/// SPEC-copies-out, whose test runs these checks on the spec in place).
+/// ae3e62b, sec:ports: "..., which builds the string whether or not `#fine` lines ..."; found
+/// by SPEC-copies-out, whose test runs these checks on the spec in place).
 #[test]
 fn which_before_builds_is_not_a_kind_of_build() {
     let text = fixture("A format string, which builds the string at run time.\n");
