@@ -11345,6 +11345,32 @@ impl Side1 {
 // it keeps that core whole. A complete projection there grows the rows quadratically or worse
 // (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
 // the callers then solve the kept core with each question, as they did the whole group.
+//
+// Proof that the answer is exact or `None` (COMPLEXITY.md, "Proofs", PROOF-shadow-exact, read
+// on f88b48475 and checked again on 7492a92b3). Write `π(X)` for the integer points of `X`
+// read on the atoms of `keep`. Claim: `Some(T)` gives `π(T) = π(rows)`, and `None` holds only
+// where `rows` has no integer point. `shadow_logged` changes its live rows only by these steps,
+// each of which keeps `π` of the live rows or stops on a proof of no point: (1) of two `>=`
+// rows on one linear form the weaker is dropped, implied by the other; (2) `tidy` divides a
+// row by the gcd `g` of its terms, `g·t + c >= 0` iff `t + floor(c/g) >= 0` over the integers,
+// and an equation whose `g` does not divide `c`, or a false row with no atoms, has no point;
+// (3) substituting an equation in which `x` has coefficient 1 or -1 removes `x` and keeps the
+// points of the other atoms exactly; (4) Fourier–Motzkin where every lower or every upper bound
+// of `x` has coefficient 1 is the exact shadow (Pugh, "The Omega test", CACM 1992), and a
+// false combination, a nonnegative sum of rows, shows no real point; (5) with `dark`, a pair
+// with coefficients `a` and `b` is combined only where its real row `b·r + a·s >= 0` and its
+// dark row `b·r + a·s >= (a-1)(b-1)` have the same integer points (`Side1::dark_is_real`:
+// `floor(c/g) == floor((c - (a-1)(b-1))/g)`), and as the dark shadow lies inside the integer
+// projection, which lies inside the real shadow, the three are then equal; (6) a trial that is
+// undone restores the live rows; (7) a row made never names the atom eliminated, so that atom
+// never comes back. Every atom kept stays as it was. Changes since the proof was written
+// (checked 2026-11-19): `shadow_logged` gained `charged`, which adds a `None` where the meter of
+// the cover's work is spent (`meter::charge`, `meter::spent`); this function passes `false`, so
+// its `None` still means no point, and the callers that pass `true` (`eliminated_counted`,
+// `eliminated_whole`) run inside `meter::Work::metered`, which refuses their answer once the
+// meter is spent. The lazy projections of `by_halves_general` (the second part of the proof)
+// gained the same charge, `None` where the meter is spent and refused the same way, and a
+// second half now takes its parent's system rather than copying it, which no later leaf reads.
 pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> Option<Vec<Con>> {
     shadow_logged(&mut rows.iter(), keep, dark, false, false, None)
 }
