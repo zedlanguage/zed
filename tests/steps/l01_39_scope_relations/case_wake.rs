@@ -739,7 +739,6 @@ fn bounded_box_face_certificate_matches_from_scratch() {
     steps_hc.push(or(le(lin(&[(1, "x"), (3, "y")]), 30), ge(var("x"), 8)));
     check_steps(&axyz, &steps_hc);
 }
-||||||| parent of ac9b59e7c (case_wake: a test of later tests after a join of cases that recorded one part differently)
 
 /// The history of `a_test_joined_from_cases_projects_the_whole_block`, whose test splits into
 /// the cases `a == -2` and `y == 1`. Inside a case, `Scope::record` keeps the outer `projected`
