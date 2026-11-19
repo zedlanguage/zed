@@ -24302,7 +24302,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => {
                     // `left` holds no compact forward, which a need-by-need replacement would
                     // not decode: an admitted call leaves no need, and `replay` decodes the
-                    // forwards it is given before it leaves any.
+                    // forwards it is given before it leaves any. Checked in debug builds
+                    // (landing round 5, Claude F5-3), O(#left).
+                    debug_assert!(
+                        !left.iter().any(|n| matches!(n.kind, NeedKind::Fwd(_))),
+                        "a need left after a call is a compact forward"
+                    );
                     let needs = left.iter().map(|n| n.replace(&binds)).collect();
                     let (held, now) = hold(&result, needs, |v| self.is_class(v));
                     if !self.trying && held.may_hold_needs() {

@@ -5151,6 +5151,13 @@ impl FwdNeed {
             for run in &fin.runs {
                 gen_names.extend(run.names::<Arc<str>>());
             }
+            // The runs name each internal result once, so `holds_internal` reports exactly
+            // the names given here (landing round 5, Claude F5-5). O(need_count), debug only.
+            debug_assert_eq!(
+                gen_names.len(),
+                results.iter().filter(|r| r.is_none()).count(),
+                "the finish runs name each internal result once"
+            );
             let mut it = gen_names.into_iter();
             for slot in &mut results {
                 if slot.is_none() {

@@ -2357,8 +2357,11 @@ fn landing4_partial_application_of_a_kept_forward_agrees_with_e() {
         if let Err(why) = info_eq_full(name, &e, &d) {
             failures.push(format!("{name} (admitted {}): {why}", st.admitted));
         }
+        // The flat signature, so a `$k` left inside a kept forward is seen too (landing
+        // round 5, Claude F5-4).
         for (id, s) in &d.sigs {
-            let order = s.vars_order();
+            let flat = flat_of(s);
+            let order = flat.vars_order();
             if order.iter().any(|v| v.starts_with('$')) {
                 failures.push(format!(
                     "{name}: sig {id} holds an unnamed class: {order:?}"

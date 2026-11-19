@@ -296,6 +296,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // the sizes of `names` and `outer`, as round 4 did, misses a pair
                         // holding `A -> A` with `A` its own and `A -> A` with `A` free, whose
                         // sets are both `{A}` (landing round 4, Codex L4.Codex-own-facts).
+                        // No checker input is known to reach that pair: a free variable here is
+                        // a class `$k`, which `outer` does not list (landing round 5, Claude
+                        // F5-1, not proved), so the tests check the bit on public types.
                         // Complexity tradeoff: the naive test walks `names` against `outer`,
                         // O(v log v) for v variables held, and has the same flaw; used: one
                         // kept bit, O(1).
