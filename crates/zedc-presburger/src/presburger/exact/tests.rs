@@ -3564,6 +3564,87 @@ fn a_definition_that_reaches_two_new_atoms_declines_unless_another_supplies_one(
     on_off(&supplied, &h);
 }
 
+/// The work of the forward certificates of the one part `family(k)` (`guarded::prepare`, then
+/// `certificates` for every name, asked with the set given) at k = 64 and 512; at k = 8 the
+/// answers of `exact_each` agree with the cover alone. Returns the two counts.
+fn fast_work_of(family: impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>)) -> Vec<u64> {
+    let answers = |off: bool| {
+        let (f, syms, sets) = family(8);
+        GUARDED_OFF.set(off);
+        let got = exact_each(
+            &f,
+            &syms,
+            (sets.into_iter().map(Ok).collect(), vec![]),
+            SOLVER,
+        );
+        GUARDED_OFF.set(false);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        format!("{:?}", got.sets)
+    };
+    assert_eq!(
+        answers(false),
+        answers(true),
+        "the certificates against the cover alone"
+    );
+    let work = |k: usize| {
+        let (f, syms, sets) = family(k);
+        let mine: Vec<(&Atom, &IntervalSet)> = syms.iter().zip(&sets).collect();
+        let mut left = u64::MAX;
+        FAST_WORK.set(0);
+        if let Some(prep) = tried(&mut left, SOLVER, |w| guarded::prepare(&f, w)) {
+            certificates(&prep, &mine, &mut left, SOLVER);
+        }
+        FAST_WORK.replace(0)
+    };
+    [64, 512].into_iter().map(work).collect()
+}
+
+/// Names tied through equations of three atoms: `c(j+1) == c(j) + d`, `0 <= d <= 1`,
+/// `0 <= c0 <= 9`, every name asked with its exact set (`c(j) = c0 + j·d`). One reading for
+/// the part, not one a name (PRES-groupA-forward-per-name-order, part 2).
+#[test]
+fn names_tied_through_three_atoms_are_read_once_for_the_part() {
+    let used = fast_work_of(|k| {
+        let c = |j: usize| format!("c{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&c(j + 1), 1), (&c(j), -1), ("d", -1)], 0))
+            .collect();
+        rows.extend([ge(&[("d", 1)], 0), ge(&[("d", -1)], 1)]);
+        rows.extend([ge(&[("c0", 1)], 0), ge(&[("c0", -1)], 9)]);
+        let mut syms: Vec<Atom> = (0..=k).map(|j| a(&c(j))).collect();
+        syms.push(a("d"));
+        let mut sets: Vec<IntervalSet> = (0..=k as i64)
+            .map(|j| IntervalSet::of(0, 9).join(&IntervalSet::of(j, j + 9)))
+            .collect();
+        sets.push(IntervalSet::of(0, 1));
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// A class whose certificate declines: `z(j) == x + j`, `0 <= x <= 9`, `x >= 5 || x <= 3`,
+/// every name asked with a set holding a value with no point (`x = 4`), so every certificate
+/// declines. The class is tried once, not once a name (PRES-groupA-forward-per-name-order,
+/// part 2).
+#[test]
+fn a_class_whose_certificate_declines_is_tried_once() {
+    let used = fast_work_of(|k| {
+        let z = |j: usize| format!("z{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&z(j), 1), ("x", -1)], -(j as i64)))
+            .collect();
+        rows.extend([ge(&[("x", 1)], 0), ge(&[("x", -1)], 9)]);
+        rows.push(Formula::or(vec![ge(&[("x", 1)], -5), ge(&[("x", -1)], 3)]));
+        let syms: Vec<Atom> = (0..k).map(|j| a(&z(j))).collect();
+        let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 9)).collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
 /// Names tied with both signs and nonzero shifts (`b = 5 - a`, `c = a - 3`, `d = -c - 2`,
 /// with `e` in a second class over `e + f - s == 0`): each set moved from the first name of
 /// its class certified agrees with the cover alone, name by name, with every name asked.

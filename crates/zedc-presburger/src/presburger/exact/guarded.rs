@@ -40,6 +40,7 @@
 //! 1992, p. 106) extended to guarded definitions; the interval reading of the values given a
 //! pin is interval constraint propagation over the definition order.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use zedc_int::int::Int;
@@ -125,12 +126,26 @@ pub(super) struct Prep<'a> {
     defs: Vec<Option<Def<'a>>>,
     atoms: Vec<&'a Atom>,
     index: HashMap<&'a Atom, usize>,
-    guarded: Vec<bool>,
     by_atom: Vec<Vec<usize>>,
     reads: Vec<Vec<usize>>,
     /// Each atom `x` as `sign * r + shift` for the atom `r` (by number) of its class: the atoms
     /// tied through equations of two atoms with coefficients 1 or -1 ([`Prep::class`]).
     tie: Vec<(usize, Int, Int)>,
+    /// The definitions that read one atom, and the atoms no guard reads, in order.
+    single: Vec<usize>,
+    unguarded: Vec<usize>,
+    /// The marks of [`Prep::read`], kept between readings and set back after each.
+    scratch: RefCell<Scratch>,
+}
+
+/// The marks of one reading: the atoms known, the unknown atoms of each definition, the
+/// definitions taken, and where they were changed, so that they are set back in that time.
+struct Scratch {
+    known: Vec<bool>,
+    unknown: Vec<usize>,
+    taken: Vec<bool>,
+    atoms_set: Vec<usize>,
+    defs_set: Vec<usize>,
 }
 
 /// The classes of the atoms `atoms` tied through the equations among `defs` of exactly two
@@ -322,15 +337,26 @@ pub(super) fn prepare<'a>(f: &'a Formula, work: &mut Work) -> Result<Option<Prep
         }
     }
     let tie = ties(&defs, &index);
+    let single = (0..defs.len()).filter(|&i| reads[i].len() == 1).collect();
+    let unguarded = (0..atoms.len()).filter(|&j| !guarded[j]).collect();
+    let scratch = RefCell::new(Scratch {
+        known: vec![false; atoms.len()],
+        unknown: reads.iter().map(Vec::len).collect(),
+        taken: vec![false; defs.len()],
+        atoms_set: Vec::new(),
+        defs_set: Vec::new(),
+    });
     Ok(Some(Prep {
         parts,
         defs,
         atoms,
         index,
-        guarded,
         by_atom,
         reads,
         tie,
+        single,
+        unguarded,
+        scratch,
     }))
 }
 
@@ -371,80 +397,119 @@ impl<'a> Prep<'a> {
     /// atom must be left free.
     // Complexity tradeoff: Kahn's order over the atom incidence of the definitions, O(r·t) for
     // r conjuncts of t terms; the naive repeated pass over all definitions until none is taken
-    // is O(r²·t). For the k names of a part that pass the count of [`prepare`] it is still
-    // O(k·r·t) in all, each name's reading its own.
+    // is O(r²·t). The marks are the part's own (`Prep::scratch`), set back after each reading
+    // where it set them, and the definitions with one atom and the atoms no guard reads are
+    // listed once a part: a reading costs the atoms it learns and the definitions that read
+    // them, each charged a piece, not O(a + r) for every name whatever it reads. Before, each
+    // name built its marks anew, scanned every definition and every atom, and charged neither,
+    // so a part whose readings stop early cost O(k·(a + r)) unseen by the meter: 23.9 and 35.9
+    // times the time at 8 times k on `tests::names_tied_through_three_atoms_are_read_once_for_
+    // the_part` and `..._with_coefficients_past_one_...`, within 10.5 in the units charged. A
+    // reading that learns every atom is still O(r·t), so for the k names of such a part
+    // O(k·r·t) in all (PRES-groupA-forward-per-name-order, part 2, open).
     fn read<'p>(&'p self, s: &Atom, work: &mut Work) -> Result<Option<Reading<'p, 'a>>, Refusal> {
         let Prep {
             parts,
             defs,
             atoms,
             index,
-            guarded,
             by_atom,
             reads,
-            tie: _,
+            single,
+            unguarded,
+            scratch,
+            ..
         } = self;
-        let mut known = vec![false; atoms.len()];
-        let mut unknown: Vec<usize> = reads.iter().map(Vec::len).collect();
-        let mut left = atoms.len();
-        let mut queue: Vec<usize> = Vec::new();
-        let mut taken = vec![false; defs.len()];
-        let mut order: Vec<(usize, Atom)> = Vec::new();
-        let mut pin = None;
-        // Marks atom `x` known and queues the definitions left with one unknown atom.
-        let learn = |x: usize,
-                     known: &mut [bool],
-                     unknown: &mut [usize],
-                     queue: &mut Vec<usize>,
-                     left: &mut usize| {
-            if !known[x] {
-                known[x] = true;
-                *left -= 1;
-                for &i in &by_atom[x] {
-                    unknown[i] -= 1;
-                    if unknown[i] == 1 {
-                        queue.push(i);
+        let mut marks = scratch.borrow_mut();
+        let marks = &mut *marks;
+        let got = (|| {
+            let mut left = atoms.len();
+            let mut queue: Vec<usize> = single.clone();
+            let mut order: Vec<(usize, Atom)> = Vec::new();
+            let mut pin = None;
+            // Marks atom `x` known and queues the definitions left with one unknown atom; a
+            // piece for each definition that reads it.
+            let learn = |x: usize,
+                         marks: &mut Scratch,
+                         queue: &mut Vec<usize>,
+                         left: &mut usize,
+                         work: &mut Work|
+             -> Result<(), Refusal> {
+                if !marks.known[x] {
+                    work.charge(PIECE.saturating_mul(by_atom[x].len() as u64))?;
+                    marks.known[x] = true;
+                    marks.atoms_set.push(x);
+                    *left -= 1;
+                    for &i in &by_atom[x] {
+                        if marks.unknown[i] == reads[i].len() {
+                            marks.defs_set.push(i);
+                        }
+                        marks.unknown[i] -= 1;
+                        if marks.unknown[i] == 1 {
+                            queue.push(i);
+                        }
                     }
                 }
-            }
-        };
-        if let Some(&x) = index.get(s) {
-            learn(x, &mut known, &mut unknown, &mut queue, &mut left);
-        }
-        queue.extend((0..defs.len()).filter(|&i| unknown[i] == 1));
-        loop {
-            while let Some(i) = queue.pop() {
-                work.charge(PIECE)?;
-                let Some(d) = &defs[i] else { continue };
-                if taken[i] || unknown[i] != 1 {
-                    continue;
-                }
-                let Some(&x) = reads[i].iter().find(|&&j| !known[j]) else {
-                    continue;
-                };
-                if !d.may_define(atoms[x]) {
-                    continue;
-                }
-                taken[i] = true;
-                order.push((i, atoms[x].clone()));
-                learn(x, &mut known, &mut unknown, &mut queue, &mut left);
-            }
-            if left == 0 {
-                break;
-            }
-            if pin.is_some() {
-                return Ok(None);
-            }
-            // The least unknown atom read by no guard: a guard reading the pin would decline.
-            let Some(x) = (0..atoms.len()).find(|&j| !known[j] && !guarded[j]) else {
-                return Ok(None);
+                Ok(())
             };
-            pin = Some(atoms[x].clone());
-            learn(x, &mut known, &mut unknown, &mut queue, &mut left);
+            if let Some(&x) = index.get(s) {
+                learn(x, marks, &mut queue, &mut left, work)?;
+            }
+            // The least atom no guard reads not yet known: those before it are known for
+            // the rest of the reading, so the walk is at most the atoms learned.
+            let mut next_free = 0;
+            loop {
+                while let Some(i) = queue.pop() {
+                    work.charge(PIECE)?;
+                    let Some(d) = &defs[i] else { continue };
+                    if marks.taken[i] || marks.unknown[i] != 1 {
+                        continue;
+                    }
+                    let Some(&x) = reads[i].iter().find(|&&j| !marks.known[j]) else {
+                        continue;
+                    };
+                    if !d.may_define(atoms[x]) {
+                        continue;
+                    }
+                    marks.taken[i] = true;
+                    marks.defs_set.push(i);
+                    order.push((i, atoms[x].clone()));
+                    learn(x, marks, &mut queue, &mut left, work)?;
+                }
+                if left == 0 {
+                    break;
+                }
+                if pin.is_some() {
+                    return Ok(None);
+                }
+                // The least unknown atom read by no guard: a guard reading the pin would
+                // decline.
+                while next_free < unguarded.len() && marks.known[unguarded[next_free]] {
+                    next_free += 1;
+                }
+                let Some(&x) = unguarded.get(next_free) else {
+                    return Ok(None);
+                };
+                pin = Some(atoms[x].clone());
+                learn(x, marks, &mut queue, &mut left, work)?;
+            }
+            Ok(Some((order, pin)))
+        })();
+        // The marks set back where this reading set them.
+        for x in marks.atoms_set.drain(..) {
+            marks.known[x] = false;
         }
+        for i in marks.defs_set.drain(..) {
+            marks.unknown[i] = reads[i].len();
+            marks.taken[i] = false;
+        }
+        let Some((order, pin)) = got? else {
+            return Ok(None);
+        };
+        let taken: HashSet<usize> = order.iter().map(|(i, _)| *i).collect();
         let mut residuals = Vec::new();
         for (i, g) in parts.iter().enumerate() {
-            if !taken[i] {
+            if !taken.contains(&i) {
                 residuals.push(*g);
             }
         }

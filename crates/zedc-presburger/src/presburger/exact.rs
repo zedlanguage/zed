@@ -245,36 +245,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         if !GUARDED_OFF.get()
             && let Some(prep) = tried(&mut left, solver, |w| guarded::prepare(&p.f, w))
         {
-            // The first name of each class certified, by which the others of its class are
-            // answered with no reading of their own (`Prep::carried`).
-            // Complexity tradeoff: naive version, each name's certificate its own, O(r·t) for
-            // its reading and again for each piece of `h`, so O(k·r·t) for the k names of a
-            // part: on a chain of unit equations, k = r, 61 times the work at 8 times k
-            // (`tests::the_names_of_a_chain_of_unit_equations_are_certified_together`). Used:
-            // the classes of names tied by equations of two atoms with coefficients 1 or -1,
-            // built once a part in O(r·α(a)) (`guarded::ties`), one certificate for each class
-            // and O(P) to move its set to each other name, P pieces. A class whose certificates
-            // decline still tries each of its names, O(r·t) a name as before; so do names tied
-            // only through equations of three or more atoms, or through choices
-            // (PRES-groupA-forward-per-name-order, open).
-            let mut first: HashMap<usize, (&Atom, IntervalSet)> = HashMap::new();
-            for &(s, h) in mine {
-                let class = prep.class(s);
-                if let Some((from, set)) = class.and_then(|c| first.get(&c))
-                    && let Some(set) = prep.carried(s, from, set)
-                {
-                    certified.insert(s, set);
-                    open -= 1;
-                    continue;
-                }
-                if let Some(set) = tried(&mut left, solver, |w| guarded::forward_in(&prep, s, h, w))
-                {
-                    if let Some(c) = class {
-                        first.insert(c, (s, set.clone()));
-                    }
-                    certified.insert(s, set);
-                    open -= 1;
-                }
+            for (s, set) in certificates(&prep, mine, &mut left, solver) {
+                certified.insert(s, set);
+                open -= 1;
             }
         }
         let got = if open > 0 {
@@ -1362,6 +1335,63 @@ fn tried<T>(
     FAST_WORK.set(FAST_WORK.get().saturating_add(part.used));
     *fast = fast.saturating_sub(part.used);
     got.ok().flatten()
+}
+
+/// The names of `mine` the forward certificate answers, with their sets, each name's work
+/// taken from `left` as [`tried`] takes it.
+// Complexity tradeoff: naive version, each name's certificate its own, O(r·t) for its reading
+// and again for each piece of `h`, so O(k·r·t) for the k names of a part: on a chain of unit
+// equations, k = r, 61 times the work at 8 times k
+// (`tests::the_names_of_a_chain_of_unit_equations_are_certified_together`). Used: the classes
+// of names tied by equations of two atoms with coefficients 1 or -1, built once a part in
+// O(r·α(a)) (`guarded::ties`), one certificate for each class and O(P) to move its set to each
+// other name, P pieces. A class whose first certificate declines is tried no more (before, each
+// of its names was tried at O(r·t): 62.95 times at 8 times k on
+// `tests::a_class_whose_certificate_declines_is_tried_once`). Names tied only through equations
+// of three or more atoms, or with coefficients past 1, or through choices, are still each tried
+// at O(r·t) (PRES-groupA-forward-per-name-order, part 2, open).
+fn certificates<'s>(
+    prep: &guarded::Prep,
+    mine: &[(&'s Atom, &IntervalSet)],
+    left: &mut u64,
+    solver: Solver,
+) -> Vec<(&'s Atom, IntervalSet)> {
+    let mut out = Vec::new();
+    // The first name of each class certified, by which the others of its class are answered
+    // with no reading of their own (`Prep::carried`).
+    let mut first: HashMap<usize, (&Atom, IntervalSet)> = HashMap::new();
+    // The classes whose first try declined: the others of the class are left to the cover with
+    // no try of their own. A name of the class differs from the one tried by a sign and a
+    // shift, so its reading is the same but for that bijection and its certificate would
+    // decline on the same residual; where it would not, the cover still answers it exactly, so
+    // nothing but speed rests on this.
+    let mut declined: HashSet<usize> = HashSet::new();
+    for &(s, h) in mine {
+        let class = prep.class(s);
+        if class.is_some_and(|c| declined.contains(&c)) {
+            continue;
+        }
+        if let Some((from, set)) = class.and_then(|c| first.get(&c))
+            && let Some(set) = prep.carried(s, from, set)
+        {
+            out.push((s, set));
+            continue;
+        }
+        match tried(left, solver, |w| guarded::forward_in(prep, s, h, w)) {
+            Some(set) => {
+                if let Some(c) = class {
+                    first.insert(c, (s, set.clone()));
+                }
+                out.push((s, set));
+            }
+            None => {
+                if let Some(c) = class {
+                    declined.insert(c);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The exact projection of `f` onto `s`, read from the structure of `f` with no question of
