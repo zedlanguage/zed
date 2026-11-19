@@ -2443,13 +2443,12 @@ fn odd_x(bound: i64) -> Formula {
     ])
 }
 
-/// [`block_set`] with `list` (as [`cut_at_shared`] reads it) answers a stride as its range met
-/// with its class, a few pieces whatever the bound, not one piece per value
-/// (PRES-interval-strided-piece): the odd values of `-bound..=bound` are the range from the
-/// first odd value to the last, met with 1 mod 2. [`direct`] declines the stride
-/// (PRES-direct-stride-answer-downstream: its answer, one disjunct per value in the preimage
-/// stage's check, made `l01_25` `bench::s22::remainder_chains_in_the_linear_stage_scale` run
-/// past 60 s), and the public answer is still the odd values.
+/// [`block_set`] answers a stride as its range met with its class, a few pieces whatever the
+/// bound, not one piece per value (PRES-interval-strided-piece): the odd values of
+/// `-bound..=bound` are the range from the first odd value to the last, met with 1 mod 2.
+/// [`direct`] gives the same answer (PRES-direct-stride-answer-downstream, which declined the
+/// stride until the preimage stage's check wrote a progression as its range and a congruence,
+/// PRES-one-block-changes-goal), and the public answer is still the odd values.
 #[test]
 fn a_stride_is_answered_as_its_range_and_class() {
     let mut pieces = Vec::new();
@@ -2470,9 +2469,9 @@ fn a_stride_is_answered_as_its_range_and_class() {
             limit: super::super::meter::EXACT_LIMIT,
             solver: SOLVER,
         };
-        let got = block_set(&rows, &a("x"), &IntervalSet::top(), true, &mut work)
+        let got = block_set(&rows, &a("x"), &IntervalSet::top(), &mut work)
             .unwrap()
-            .expect("with `list`, the stride is answered");
+            .expect("the stride is answered");
         assert_eq!(
             got.class,
             Congruence::new(Num::from(2), Num::from(1)),
@@ -2487,8 +2486,12 @@ fn a_stride_is_answered_as_its_range_and_class() {
             limit: super::super::meter::EXACT_LIMIT,
             solver: SOLVER,
         };
-        let declined = direct(&f, &a("x"), &IntervalSet::top(), &mut work).unwrap();
-        assert_eq!(declined, None, "direct declines the stride");
+        let answered = direct(&f, &a("x"), &IntervalSet::top(), &mut work).unwrap();
+        assert_eq!(
+            answered,
+            Some(got),
+            "direct answers the stride as block_set does"
+        );
         assert_eq!(project(&f, "x"), brute_odd(bound));
     }
     assert_eq!(pieces, vec![1, 1]);

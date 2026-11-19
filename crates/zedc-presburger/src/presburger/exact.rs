@@ -1692,7 +1692,7 @@ fn direct_noting(
                         // holder, as before; blocks stay unprojected only on parts read once.
                         if let Part::Alts(_) = v {
                             pure = false;
-                            let Some((set, atoms)) = as_set(v, s, within, false, work)? else {
+                            let Some((set, atoms)) = as_set(v, s, within, work)? else {
                                 return Ok(None);
                             };
                             v = Part::Set(set, atoms);
@@ -1750,7 +1750,7 @@ fn direct_noting(
         let reads = |b: &[Con]| b.iter().any(|c| c.lin.terms.contains_key(s));
         let mut sets: Vec<Option<Classed>> = vec![None; blocks.len()];
         for (i, b) in blocks.iter().enumerate().filter(|(_, b)| !reads(b)) {
-            match block_set(b, s, within, false, work) {
+            match block_set(b, s, within, work) {
                 Ok(Some(p)) => sets[i] = Some(p),
                 Ok(None) => {
                     *fails = Some((atoms(&mut std::iter::once(b)), false));
@@ -1767,7 +1767,7 @@ fn direct_noting(
         for (b, done) in blocks.iter().zip(sets) {
             let p = match done {
                 Some(p) => p,
-                None => match block_set(b, s, within, false, work)? {
+                None => match block_set(b, s, within, work)? {
                     Some(p) => p,
                     None => return Ok(None),
                 },
@@ -1776,7 +1776,7 @@ fn direct_noting(
         }
         return Ok(Some(set));
     }
-    Ok(as_set(last, s, within, false, work)?.map(|(set, _)| set))
+    Ok(as_set(last, s, within, work)?.map(|(set, _)| set))
 }
 
 /// [`direct_noting`], with nothing noted.
@@ -3078,10 +3078,8 @@ fn others(rows: &[Con], s: &Atom) -> HashSet<Atom> {
 /// to lie in (the hull of the solver's set, or every value): [`projected`] where its
 /// elimination is exact; else, where `s` is read by `rows` and so the elimination stopped at a
 /// stride of another atom, Pugh's exact projection ([`projection::pugh`], a union of stride
-/// sets) of `rows` with the ends of `within` added as rows, its ranges kept and, with `list`,
-/// its strides as ranges met with a class. `None` where
-/// neither gives a set of ranges (a stride, without
-/// `list` or with no end).
+/// sets) of `rows` with the ends of `within` added as rows, its ranges kept and its strides as
+/// ranges met with a class. `None` where neither gives a set of ranges (a stride with no end).
 ///
 /// Why the ends may be added: every value of `s` with a point of the formula lies in the
 /// solver's set (`exact_each`), so in its hull, and the projection of `rows ∧ within` is that of
@@ -3091,7 +3089,6 @@ fn block_set(
     rows: &[Con],
     s: &Atom,
     within: &IntervalSet,
-    list: bool,
     work: &mut Work,
 ) -> Result<Option<Classed>, Refusal> {
     if let Some(set) = projected(rows, s, work)? {
@@ -3136,17 +3133,22 @@ fn block_set(
             ranges.push((lo, hi));
             continue;
         }
-        // A stride leaves `direct` only with `list` (the projection inside [`cut_at_shared`],
-        // read only for emptiness). Elsewhere it is declined: the preimage stage's check that
-        // the boxes are exact (`member` of each box, one disjunct a value, then `decide`) is
-        // slower than linear in the values: `l01_25`
-        // `bench::s22::remainder_chains_in_the_linear_stage_scale` (y even over
-        // [-100000, 100000]) ran past 60 s, 4.4 s with the stride left to the cover (profile
-        // 2026-11-18: 37% in `probe_kept_status` under `decide` from `preimage_in`), and still
-        // past 60 s with the stride kept as one class (16ffcad7e). 26 of the 48 cases of
-        // `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`
-        // are refused again (`REFUSED_AT_A_STRIDE`, PRES-direct-stride-answer-downstream).
-        let (true, Some(lo), Some(hi)) = (list, &p.lo, &p.hi) else {
+        // Complexity tradeoff (PRES-one-block-changes-goal, 2026-11-19): naive version, a
+        // stride declined here (except inside [`cut_at_shared`]) and left to the cover, which
+        // asks the solver of the whole formula and so does O(v) work for v values in every
+        // call: `l01_39_reduced_product::scaling::bench::changes_of_one_block_hold_bounded_memory`,
+        // where each step's `a + 2b == c` makes `a` a stride of about c/2 values, took 10.3
+        // times the work at 8n (`cells_cover` grew from 814 M to 1,362 M bytes at size 1280 as
+        // the stride grew). It was declined because the preimage stage's check that the boxes
+        // are exact wrote each box as one disjunct a value, slower than linear in the values
+        // (`l01_25` `bench::s22::remainder_chains_in_the_linear_stage_scale` past 60 s, 16ffcad7e).
+        // That check now writes a box that is a progression as its range and a congruence
+        // (`zedc-preimage` `linear`), so the stride is kept here as its range met with its class,
+        // O(1) pieces: 8.5 times the work at 8n on the bench above, 0.99 on the s22 bench, and
+        // the 25 cases of l01_25 `s22` refused while the stride was declined are answered
+        // (PRES-direct-stride-answer-downstream). The work charged is
+        // still that of listing each value, as below.
+        let (Some(lo), Some(hi)) = (&p.lo, &p.hi) else {
             return Ok(None);
         };
         let first = lo + &(&p.res - lo).mod_floor(&p.step);
@@ -3180,19 +3182,16 @@ fn as_set(
     p: Part,
     s: &Atom,
     within: &IntervalSet,
-    list: bool,
     work: &mut Work,
 ) -> Result<Option<(Classed, HashSet<Atom>)>, Refusal> {
     Ok(match p {
         Part::Set(set, atoms) => Some((set, atoms)),
-        Part::Rows(rows) => {
-            block_set(&rows, s, within, list, work)?.map(|set| (set, others(&rows, s)))
-        }
+        Part::Rows(rows) => block_set(&rows, s, within, work)?.map(|set| (set, others(&rows, s))),
         Part::Alts(blocks) => {
             let mut set = Classed::plain(IntervalSet::empty());
             let mut atoms = HashSet::new();
             for b in &blocks {
-                let Some(p) = block_set(b, s, within, list, work)? else {
+                let Some(p) = block_set(b, s, within, work)? else {
                     return Ok(None);
                 };
                 set = set.join(&p);
@@ -3225,7 +3224,7 @@ fn joined_parts(
     let mut set = Classed::plain(IntervalSet::empty());
     let mut atoms: HashSet<Atom> = HashSet::new();
     for p in parts {
-        let Some((p, more)) = as_set(p, s, within, false, work)? else {
+        let Some((p, more)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
         set = set.join(&p);
@@ -3346,14 +3345,14 @@ fn met(
     let mut set = Classed::plain(IntervalSet::top());
     for (group, held, ors) in groups.values() {
         let p = match (group.is_empty(), held.as_slice(), ors.as_slice()) {
-            (false, [], []) => match block_set(group, s, within, !cut, work)? {
+            (false, [], []) => match block_set(group, s, within, work)? {
                 Some(p) => p,
                 None => return Ok(None),
             },
             (true, [j], []) => sets[*j].0.clone(),
             (_, [], [j]) => {
                 let blocks = distribute(group, &alts[*j].0, work)?;
-                match as_set(Part::Alts(blocks), s, within, !cut, work)? {
+                match as_set(Part::Alts(blocks), s, within, work)? {
                     Some((p, _)) => p,
                     None => return Ok(None),
                 }
@@ -3433,7 +3432,7 @@ fn cut_at_shared(
     let set = match met(parts, &t, &top, false, work)? {
         None => return Ok(None),
         Some(Part::Set(set, _)) => set,
-        Some(p @ (Part::Rows(_) | Part::Alts(_))) => match as_set(p, &t, &top, true, work)? {
+        Some(p @ (Part::Rows(_) | Part::Alts(_))) => match as_set(p, &t, &top, work)? {
             Some((set, _)) => set,
             None => return Ok(None),
         },

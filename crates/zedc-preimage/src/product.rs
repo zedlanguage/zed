@@ -5159,6 +5159,44 @@ fn framed_class(p: &Product) -> Congruence {
     }
 }
 
+/// `(lo, hi, step)` when `set` is `{lo, lo + step, ..., hi}`, at least two singletons with a
+/// common step of at least 2, and `None` otherwise. O(pieces): the step of each pair of
+/// neighbors is compared with the first.
+pub(crate) fn singleton_progression(set: &IntervalSet) -> Option<(Int, Int, Int)> {
+    if set.len() < 2 {
+        return None;
+    }
+    let mut it = set.pieces();
+    let (Some((End::Fin(a0), End::Fin(b0))), Some((End::Fin(a1), End::Fin(b1)))) =
+        (it.next(), it.next())
+    else {
+        return None;
+    };
+    if a0 != b0 || a1 != b1 {
+        return None;
+    }
+    let lo = Int::from(a0);
+    let mut prev = Int::from(a1);
+    let step = &prev - &lo;
+    if step <= Int::ONE {
+        return None;
+    }
+    for (l, u) in it {
+        let (End::Fin(lv), End::Fin(uv)) = (l, u) else {
+            return None;
+        };
+        if lv != uv {
+            return None;
+        }
+        let cur = Int::from(lv);
+        if &cur - &prev != step {
+            return None;
+        }
+        prev = cur;
+    }
+    Some((lo, prev, step))
+}
+
 fn same_framed(a: &Product, b: &Product) -> bool {
     a.ints() == b.ints() && framed_class(a) == framed_class(b)
 }
@@ -15065,40 +15103,11 @@ impl Scope {
             // splits the disjuncts as before
             // (`families::audit_seed_4_keeps_its_exact_sets_with_the_cover`).
             // Exact over `Z` with fresh existential `"{n} prog"` (absent from `syms` and `part`).
-            let mut prog: Option<(Int, Int, Int)> = None;
-            if !presburger::exact::EXACT_OFF.get() && set.len() >= 2 {
-                let mut it = set.pieces();
-                if let (Some((End::Fin(a0), End::Fin(b0))), Some((End::Fin(a1), End::Fin(b1)))) =
-                    (it.next(), it.next())
-                    && a0 == b0
-                    && a1 == b1
-                {
-                    let lo = Int::from(a0);
-                    let mut prev = Int::from(a1);
-                    let step = &prev - &lo;
-                    if step > Int::ONE {
-                        let mut ok = true;
-                        for (l, u) in it {
-                            if let (End::Fin(lv), End::Fin(uv)) = (l, u)
-                                && lv == uv
-                            {
-                                let cur = Int::from(lv);
-                                if &cur - &prev != step {
-                                    ok = false;
-                                    break;
-                                }
-                                prev = cur;
-                            } else {
-                                ok = false;
-                                break;
-                            }
-                        }
-                        if ok {
-                            prog = Some((lo, prev, step));
-                        }
-                    }
-                }
-            }
+            let prog = if presburger::exact::EXACT_OFF.get() {
+                None
+            } else {
+                singleton_progression(set)
+            };
             if let Some((lo, hi, step)) = prog {
                 let var = Lin::atom(a.clone());
                 parts.push(Formula::Con(Con::ge(&var, &Lin::constant(lo.clone()))));

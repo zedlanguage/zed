@@ -3320,20 +3320,19 @@ boxes_at_modulus_tests! {
 /// Row PRES-cover-refusals-moduli, the shapes `two moduli of one input` and `remainders of two
 /// inputs`: at moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13 over `x` and `y` in
 /// `[-60, 60]`, the exact cover answers wherever the solver alone answers, with a box of `x`
-/// inside the solver's, except in the cases of [`REFUSED_AT_A_STRIDE`], which are refused
-/// (`Refusal::Questions`) and must stay exactly those. 94f38f6d3 answered them too by listing
-/// each value of a stride in `direct` (`block_set`), which made the preimage stage slower
-/// than linear in the pieces on `bench::s22::remainder_chains_in_the_linear_stage_scale`, so
-/// that listing was taken back (PRES-direct-stride-answer-downstream). The other three shapes
-/// have 24 refused cases
+/// inside the solver's. 25 of these cases were refused (`Refusal::Questions`) while `direct`
+/// (`block_set`) declined a stride, as the preimage stage's check that the boxes are exact
+/// wrote each value of a box as a disjunct of its own, slower than linear in the pieces on
+/// `bench::s22::remainder_chains_in_the_linear_stage_scale`; that check writes a progression
+/// as its range and a congruence since PRES-one-block-changes-goal, and `direct` keeps each
+/// stride as its range met with its class (PRES-direct-stride-answer-downstream). The other
+/// three shapes have 24 refused cases
 /// ([`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]).
 #[test]
 fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7() {
     let refused =
         refused_where_the_solver_answered(&["remainders of two inputs", "two moduli of one input"]);
-    let mut want = REFUSED_AT_A_STRIDE.to_vec();
-    want.sort();
-    assert_eq!(refused, want);
+    assert_eq!(refused, vec![]);
 }
 
 /// Row PRES-cover-refusals-moduli, the other three shapes of [`REMAINDER_SHAPES`]: as
@@ -3384,36 +3383,6 @@ fn refused_where_the_solver_answered(
     refused.sort();
     refused
 }
-
-/// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`]
-/// refused while `direct` does not list the values of a stride: modulus, seed, shape, k.
-const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 25] = [
-    (5, 1, "two moduli of one input", 5),
-    (5, 1, "two moduli of one input", 13),
-    (5, 2, "remainders of two inputs", 13),
-    (5, 2, "two moduli of one input", 2),
-    (5, 2, "two moduli of one input", 5),
-    (5, 2, "two moduli of one input", 13),
-    (5, 3, "remainders of two inputs", 13),
-    (5, 3, "two moduli of one input", 2),
-    (5, 3, "two moduli of one input", 5),
-    (5, 3, "two moduli of one input", 13),
-    (7, 1, "remainders of two inputs", 5),
-    (7, 1, "remainders of two inputs", 13),
-    (7, 1, "two moduli of one input", 1),
-    (7, 1, "two moduli of one input", 5),
-    (7, 1, "two moduli of one input", 13),
-    (7, 2, "remainders of two inputs", 5),
-    (7, 2, "remainders of two inputs", 13),
-    (7, 2, "two moduli of one input", 2),
-    (7, 2, "two moduli of one input", 5),
-    (7, 2, "two moduli of one input", 13),
-    (7, 3, "remainders of two inputs", 5),
-    (7, 3, "remainders of two inputs", 13),
-    (7, 3, "two moduli of one input", 2),
-    (7, 3, "two moduli of one input", 5),
-    (7, 3, "two moduli of one input", 13),
-];
 
 /// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
 /// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that

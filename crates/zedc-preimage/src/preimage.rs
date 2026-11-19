@@ -2346,9 +2346,48 @@ fn linear(
         if let Some(cause) = refused {
             return Err((out, cause));
         }
+        // Complexity tradeoff: the narrowed box is written for this one question with each
+        // input whose set is a progression of m >= 2 singletons `{lo, lo + d, ..., hi}` as
+        // `lo <= x <= hi && x == d*k + lo`, `k` a fresh name (`"{x} prog"`, which no program
+        // name can be, since it holds a space), as `framed` writes the sets it projects. The
+        // naive way, `within`, writes such a set as m disjuncts, and the solver answers a
+        // disjunction about once per disjunct, O(m) work per question: in
+        // `changes_of_one_block_hold_bounded_memory` the preimage of `a + 2*b == C` narrows
+        // `a` to about C/2 singletons and C grows with the step, so the run did O(n^2) work
+        // (10.3 times the work at 8 times the steps). This way is O(m) once to read the
+        // shape, then three rows. Both formulas hold at exactly the same points, over the
+        // integers, so the answer is the same where both are answered. As in `framed`, under
+        // `EXACT_OFF` (the solver alone) the disjunction is kept, so that the hull solver
+        // splits it as before.
+        let within_out = if presburger::exact::EXACT_OFF.get() {
+            within(&out)
+        } else {
+            let parts = out
+                .iter()
+                .map(|(k, v)| {
+                    let x = presburger::Atom::Sym(k.clone());
+                    match crate::product::singleton_progression(v) {
+                        Some((lo, hi, step)) => {
+                            let var = Lin::atom(x);
+                            let n = Lin::atom(presburger::Atom::Sym(format!("{k} prog").into()));
+                            Formula::and(vec![
+                                Formula::Con(Con::ge(&var, &Lin::constant(lo.clone()))),
+                                Formula::Con(Con::ge(&Lin::constant(hi), &var)),
+                                Formula::Con(Con::eq(
+                                    &var,
+                                    &n.times(step).plus(&Lin::constant(lo)),
+                                )),
+                            ])
+                        }
+                        None => presburger::member(&x, v),
+                    }
+                })
+                .collect();
+            Formula::and(parts)
+        };
         let outside = Formula::and(vec![
             rel.defined(),
-            within(&out),
+            within_out,
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
