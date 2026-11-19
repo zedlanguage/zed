@@ -4728,6 +4728,19 @@ impl FwdNeed {
             .collect()
     }
 
+    /// The results the block makes itself, without its exits (`O(need_count)`): the variables
+    /// of these join the own set of a signature that decodes the block. An exit is a type of
+    /// the caller, which may be a variable of a function around it, so it is never added.
+    pub fn internal_result_tys(&self) -> Vec<Ty> {
+        let exit_offs: BTreeSet<usize> = self.exits.iter().map(|(o, _)| *o).collect();
+        self.materialize_result_tys()
+            .into_iter()
+            .enumerate()
+            .filter(|(j, _)| !exit_offs.contains(j))
+            .map(|(_, t)| t)
+            .collect()
+    }
+
     /// Decodes this `FwdNeed` iteratively into its `need_count` flat `Need`s in `O(need_count)` time
     /// and `O(1)` call-stack depth (counted once in [`fwd_decode_count`]).
     /// Clears `Map.lambda` to `false` (matching `meet` -> `map_end` on `Arg::of`) and reconstructs
@@ -19432,7 +19445,7 @@ impl Sig {
         for n in &self.needs {
             match &n.kind {
                 NeedKind::Fwd(fwd) => {
-                    for rt in fwd.materialize_result_tys() {
+                    for rt in fwd.internal_result_tys() {
                         if let Some(v) = rt.as_var() {
                             own_out.insert(v.clone());
                         }

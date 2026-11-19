@@ -5560,7 +5560,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let mut f_copy = (**fwd).clone();
                         f_copy.finish_naming = f_copy.gen_naming.clone();
                         f_copy.base_class = None;
-                        for rt in f_copy.materialize_result_tys() {
+                        for rt in f_copy.internal_result_tys() {
                             if let Some(rv) = rt.as_var() {
                                 promoted_own.insert(rv.clone());
                             }

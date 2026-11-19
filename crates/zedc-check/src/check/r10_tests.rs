@@ -536,14 +536,17 @@ bad_into = h_into(1);\n";
 }
 
 /// M66 negative controls:
-/// (A) Skipping `clear_map_lambda` on decode (`keep_map_lambda_on_decode: true`) breaks `D = E`
-///     on `lambda n = 2` (reproducing Round 9's exact failure).
+/// (A) Skipping `clear_map_lambda` on decode (`keep_map_lambda_on_decode: true`) makes the
+///     decoder's output differ from E's needs on `lambda n = 2` when the decoder is called by
+///     hand. This checks the decoder alone: run through the checker, the flag changes nothing
+///     on the chains with or without `main` (landing review round 1, Opus F4), since a decoded
+///     need reaches stored state only when it is forced or expanded by N4.
 /// (B) Decoding forwards in `generalize` (`decode_in_generalize: true`) makes
 ///     `generalize_needs_walked` grow quadratically instead of linearly.
 #[test]
 fn r10_m66_neg_keep_map_lambda_and_decode_generalize() {
-    // Control A: decode without clearing Map.lambda (`clear_map_lambda = false`) breaks D=E on
-    // `lambda n = 2` (exact reproduction of Round 9's failure), whereas `clear_map_lambda = true`
+    // Control A: the decoder without clearing Map.lambda (`clear_map_lambda = false`) gives
+    // needs that differ from E's on `lambda n = 2`, whereas `clear_map_lambda = true`
     // matches E identically.
     let src_l2 = chain_src(2, "lambda", false);
     let (e_l2, _) = run_with_cfg(&src_l2, R10Config::eager());
@@ -1351,4 +1354,47 @@ fn r10_neon_b4_nested_lambdas_name_as_e() {
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Neon's landing round 1 note: a decoded forward adds the variables of the results it makes
+/// to the own set, and an exit is not one of them. An exit is a type of the caller, which can
+/// be a variable of a function around it; such a variable is not the caller's own, so adding
+/// it would make `Same::sig` and the digest's own set differ from E's. The exit of a kept
+/// forward on the chain is set here to a variable `Outer` of no function in the program, and
+/// the decoded own set must not hold it. Before the fix (`materialize_result_tys` in
+/// `decoded_needs_and_own`) it did.
+#[test]
+fn r10_decoded_own_set_leaves_out_the_exits() {
+    let src = chain_src(4, "f", false);
+    let (d, st) = run_with_cfg(&src, R10Config::default());
+    assert!(st.kept_at_generalize > 0, "no kept forward");
+    let mut tried = 0;
+    for sig in d.sigs.values() {
+        for (i, n) in sig.needs.iter().enumerate() {
+            let NeedKind::Fwd(fwd) = &n.kind else {
+                continue;
+            };
+            if fwd.exits.is_empty() {
+                continue;
+            }
+            let (_, own_before) = sig.decoded_needs_and_own();
+            assert!(
+                !own_before.contains("Outer"),
+                "the program has no variable Outer"
+            );
+            let mut f2 = (**fwd).clone();
+            for e in &mut f2.exits {
+                e.1 = zedc_types::ty::Ty::var("Outer".into());
+            }
+            let mut s2 = (**sig).clone();
+            s2.needs[i].kind = NeedKind::Fwd(std::sync::Arc::new(f2));
+            let (_, own) = s2.decoded_needs_and_own();
+            assert!(
+                !own.contains("Outer"),
+                "an exit entered the decoded own set: {own:?}"
+            );
+            tried += 1;
+        }
+    }
+    assert!(tried > 0, "no kept forward with an exit on the chain");
 }
