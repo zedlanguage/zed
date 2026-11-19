@@ -204,8 +204,8 @@ fn a_push_to_a_target_that_cannot_be_pushed_to_names_the_target() {
         assert_eq!(
             e.message,
             format!(
-                "`{target}` cannot be pushed to: a push target is a port, an accumulator or the \
-                 next generation, with at most one view, written last."
+                "Invalid push target `{target}`: a target is a name and its fields, then at most \
+                 one view, then its keys, as `m.stdout::bytes <- b;` or `hist[k] <- 1;`."
             ),
             "{src}"
         );

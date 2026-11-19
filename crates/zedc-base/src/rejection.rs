@@ -214,6 +214,13 @@ rows! {
     BidiControlInText => "`Bidi_Control` character in a comment or in the text of a string literal",
     PushWhereLessMeant => "`<-` written where a comparison with a negative operand was meant",
     PushTargetNotPushable => "Push to a target that cannot be pushed to",
+    PushToNameNotPort => "Push to a name that is not a port",
+    PushToInput => "Push to an input or a read view",
+    PushToReadOnlyView => "Push to a view that takes no push",
+    PushToFieldNotPort => "Push to a field that is not a port",
+    // No diagnostic uses this row yet: plan row PORT-process emits it, with `spawn`.
+    PushToMaybeFailure => "Push to a target that may be a failure",
+    GenerationPushOutsideLoop => "Generation push outside a loop",
     BindingInCondition => "`=` written in a condition where `==` was meant",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",

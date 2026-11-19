@@ -8,9 +8,12 @@ use std::collections::HashMap;
 
 use zed_tests::scaling::{check, inputs};
 use zed_tests::trees::parsed;
+use zedc::ast::unit;
+use zedc::rejection::Row;
 
 use super::scaling::{
-    Case, ELSE_IF_CHAIN, MANY_FUNCTIONS, NESTED_FUNCTIONS, Parsed, builds, nested, statements,
+    Case, ELSE_IF_CHAIN, MANY_FUNCTIONS, NESTED_FUNCTIONS, Parsed,
+    bindings_before_a_generation_push, builds, loops_with_generation_pushes, nested, statements,
     texts, texts_hold,
 };
 
@@ -53,6 +56,25 @@ fn a_long_else_if_chain_scales() {
     let built = trees(&ELSE_IF_CHAIN, 200);
     check("building an else if chain of n links", 200, |n| {
         builds(&ELSE_IF_CHAIN, &built[&n], n)
+    });
+}
+
+/// Placing a generation push walks the tree once per unit, however many pushes it holds
+/// (COMPLEXITY.md, PUSH-target-rules).
+#[test]
+fn placing_generation_pushes_is_linear() {
+    let many = inputs(500, |n| {
+        parsed(bindings_before_a_generation_push(n), "Unit")
+    });
+    check("n bindings before `x' <- 1;` outside a loop", 500, |n| {
+        let (text, tokens, tree) = &many[&n];
+        let e = unit(text, tokens, tree).unwrap_err();
+        assert_eq!(e.row, Some(Row::GenerationPushOutsideLoop));
+    });
+    let loops = inputs(500, |n| parsed(loops_with_generation_pushes(n), "Unit"));
+    check("n loops, each with a generation push", 500, |n| {
+        let (text, tokens, tree) = &loops[&n];
+        assert_eq!(unit(text, tokens, tree).unwrap().len(), n);
     });
 }
 

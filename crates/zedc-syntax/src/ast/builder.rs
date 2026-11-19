@@ -375,6 +375,9 @@ pub(super) struct Builder<'a, 's: 'a> {
     /// For each node, the nearest `loop` or `for` body, lambda, function or method above it,
     /// listed on the first `break;` ([`Builder::stop_of`]).
     pub(super) stops: std::cell::OnceCell<Vec<usize>>,
+    /// For each node, whether a `loop` or a method holds it, listed on the first generation
+    /// push ([`Builder::generation_push_placed`]).
+    pub(super) in_loops: std::cell::OnceCell<Vec<bool>>,
     /// For each node, whether it is on a path of an expression statement, listed on the first
     /// block that exports nothing ([`Builder::on_path`]).
     pub(super) paths: std::cell::OnceCell<Vec<bool>>,
@@ -498,52 +501,104 @@ impl<'a, 's> Builder<'a, 's> {
     /// The port the push target node `t`, `PushTarget = Name ('.' Name)* ('::' Name)?`,
     /// names: the name itself, or `m.stdout` and `m.stderr` for the parameter `m` of the
     /// `main` whose body holds it, recorded as pushed to ([`Mains`]); or why the target
-    /// cannot be pushed to. A target ending in a view (`m.stdout::bytes`, DESIGN step L7.3h)
-    /// is not compiled yet. The tokens alternate a name and a separator, `.` or `::`, and the
+    /// cannot be pushed to (DESIGN.md sec:ports, "What a push may name"): an input of `main`,
+    /// with or without a view; a field `MainArgs` does not have; a view other than `::bytes`,
+    /// the one view that takes a push; a generation push `x' <- e` that no `loop` or method
+    /// holds. `v` is the pushed value, whose text the repairs show. A target ending in
+    /// `::bytes` (`m.stdout::bytes`, DESIGN step L7.3h) and one with a field of another value
+    /// are not compiled yet. The tokens alternate a name and a separator, `.` or `::`, and the
     /// grammar allows `::` only before the last name.
-    pub(super) fn push_target(&self, t: usize) -> Result<String, Error> {
+    pub(super) fn push_target(&self, t: usize, v: usize) -> Result<String, Error> {
         let node = &self.tree.nodes[t];
-        if node.end - node.start > 1 && self.word(node.end - 2) == "::" {
-            return Err(self.later_as(t, "a push to a view of a port"));
-        }
         let names: Vec<&str> = (node.start..node.end)
             .step_by(2)
             .map(|i| self.word(i))
             .collect();
+        let view = (node.end - node.start > 1 && self.word(node.end - 2) == "::")
+            .then(|| names[names.len() - 1]);
+        let base = &names[..names.len() - view.is_some() as usize];
         let span = self.span(t);
+        let target = &self.text[span.start..span.end];
+        let value = {
+            let s = self.span(v);
+            let text = &self.text[s.start..s.end];
+            if text.contains('\n') { "…" } else { text }
+        };
         let main = self.mains.at(span.start);
         let m = main.and_then(|b| b.param.as_deref());
-        match names[..] {
-            [name] => Ok(name.into()),
-            [p, field] if Some(p) == m => {
-                let error = |message: String| Error {
-                    row: None,
-                    menu: String::new(),
+        let refuse = |row: Row, message: String, repair: Option<String>| Error {
+            row: Some(row),
+            menu: String::new(),
+            span,
+            message,
+            notes: (repair.into_iter())
+                .map(|r| Note {
                     span,
-                    message,
-                    notes: Vec::new(),
-                };
-                match field {
-                    "stdout" | "stderr" => {
-                        let main = main.expect("m is main's parameter");
-                        let i = (field == "stderr") as usize;
-                        first_use(&mut main.uses.borrow_mut().1[i], span);
-                        Ok(format!("{p}.{field}"))
-                    }
-                    "stdin" | "args" | "env" => Err(error(format!(
-                        "`{p}.{field} <- …` pushes to `{p}.{field}`, and `{p}.{field}` is an \
-                         input of the program, which `main` reads and never writes. Push the \
-                         lines the program writes to `{p}.stdout` (its standard output) or \
-                         `{p}.stderr` (its standard error), as `{p}.stdout <- lines;`."
-                    ))),
-                    _ => Err(error(format!(
-                        "`{p}.{field} <- …` pushes to `{p}.{field}`, and `{p}` is the argument \
-                         of `main`, of type `MainArgs`, which has no field `{field}`. The \
-                         program writes lines with a push to `{p}.stdout` (its standard \
-                         output) or `{p}.stderr` (its standard error), as `{p}.stdout <- \
-                         lines;`."
-                    ))),
+                    text: format!("repair: {r}"),
+                })
+                .collect(),
+        };
+        if let [p, field] = *base
+            && Some(p) == m
+        {
+            match field {
+                "stdout" | "stderr" => {}
+                "stdin" | "args" | "env" => {
+                    return Err(refuse(
+                        Row::PushToInput,
+                        format!(
+                            "Invalid push to `{target}`: `{p}.{field}` is an input of the \
+                             program, which `main` reads and never writes."
+                        ),
+                        Some(format!("`{p}.stdout <- {value};`")),
+                    ));
                 }
+                _ => {
+                    return Err(refuse(
+                        Row::PushToFieldNotPort,
+                        format!(
+                            "Invalid push to `{target}`: `{p}`, of type `MainArgs`, has no field \
+                             `{field}`; its outputs are `{p}.stdout` and `{p}.stderr`."
+                        ),
+                        Some(format!("`{p}.stdout <- {value};`")),
+                    ));
+                }
+            }
+        }
+        match view {
+            Some("bytes") => return Err(self.later_as(t, "a push to a view of a port")),
+            Some(w) => {
+                // The output the view was written on, or the one `m::stdout` names with `::`
+                // for `.`.
+                let output = match *base {
+                    [p, f] if Some(p) == m => Some(format!("{p}.{f}")),
+                    [p] if Some(p) == m && matches!(w, "stdout" | "stderr") => {
+                        Some(format!("{p}.{w}"))
+                    }
+                    _ => None,
+                };
+                return Err(refuse(
+                    Row::PushToReadOnlyView,
+                    format!(
+                        "Invalid push to `{target}`: of the views, only `::bytes` takes a push."
+                    ),
+                    output.map(|o| format!("`{o} <- {value};`")),
+                ));
+            }
+            None => {}
+        }
+        match names[..] {
+            [name] => {
+                if let Some(x) = name.strip_suffix('\'') {
+                    self.generation_push_placed(t, x, value)?;
+                }
+                Ok(name.into())
+            }
+            [p, field] if Some(p) == m => {
+                let main = main.expect("m is main's parameter");
+                let i = (field == "stderr") as usize;
+                first_use(&mut main.uses.borrow_mut().1[i], span);
+                Ok(format!("{p}.{field}"))
             }
             _ => Err(self.later_as(t, "a push to a field of a value")),
         }
@@ -588,6 +643,7 @@ impl<'a, 's> Builder<'a, 's> {
             parents: std::cell::OnceCell::new(),
             args: std::cell::OnceCell::new(),
             stops: std::cell::OnceCell::new(),
+            in_loops: std::cell::OnceCell::new(),
             paths: std::cell::OnceCell::new(),
         }
     }

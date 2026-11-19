@@ -29,6 +29,9 @@ pub struct Ports {
     pub writers: HashSet<usize>,
     /// Each error: its place, its headline and its notes.
     pub errors: Vec<(Span, String, Vec<Note>)>,
+    /// Each push to a name that is not a port, as `errors` (row "Push to a name that is not a
+    /// port", DESIGN.md sec:ports, "What a push may name").
+    pub not_ports: Vec<(Span, String, Vec<Note>)>,
 }
 
 /// What an argument of a call of a declared function fills.
@@ -80,20 +83,20 @@ pub fn ports(t: &Tables<'_>) -> Ports {
     let mut params: HashSet<usize> = HashSet::new();
     let mut todo: Vec<usize> = Vec::new();
     let mut first_push: HashMap<usize, Span> = HashMap::new();
+    let mut not_ports = Vec::new();
     for &s in &res.pushes {
         let ids = match res.uses.get(&s) {
             Some(Ref::Bound(ids)) => ids,
             Some(Ref::Prelude(n)) => {
-                errors.push((
+                not_ports.push((
                     s,
                     format!(
-                        "A push goes to an output port, and `{n}` is a prelude word: `{n} <- …;`."
+                        "Invalid push to `{n}`, a prelude word: a push goes to a port or a \
+                         declared accumulator."
                     ),
                     vec![Note {
                         span: s,
-                        text: "repair: push to an output of the program, as `m.stdout <- …;` in \
-                               `main`"
-                            .into(),
+                        text: "repair: `m.stdout <- …;` in `main`".into(),
                     }],
                 ));
                 continue;
@@ -117,30 +120,36 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                 if params.insert(b) {
                     todo.push(b);
                 }
-                errors.push((
+                not_ports.push((
                     s,
                     format!(
-                        "A push goes to an output port, and `{name}` is a parameter of `{}` not \
-                     declared `Lines`: `{name} <- …;`. Try `{name}: Lines` instead.",
+                        "Invalid push to `{name}`, a parameter of `{}` not declared `Lines`. Try \
+                         `{name}: Lines` instead.",
                         res.binders[f].name
                     ),
-                    vec![Note {
-                        span: p.span,
-                        text: format!("the parameter `{name}`"),
-                    }],
+                    vec![
+                        Note {
+                            span: p.span,
+                            text: format!("the parameter `{name}`"),
+                        },
+                        Note {
+                            span: p.span,
+                            text: format!("repair: `{name}: Lines`"),
+                        },
+                    ],
                 ))
             }
-            None => errors.push((
+            None => not_ports.push((
                 s,
                 format!(
-                    "A push goes to an output port, and `{name}` is {}: `{name} <- …;`.",
+                    "Invalid push to `{name}`, {}: a push goes to a port or a declared \
+                     accumulator.",
                     what(res.binders[b].kind)
                 ),
                 vec![Note {
                     span: s,
-                    text: "repair: push to an output of the program, as `m.stdout <- …;` in \
-                           `main`, or to a parameter declared `Lines` that `main` passes \
-                           `m.stdout` to"
+                    text: "repair: `m.stdout <- …;` in `main`, or a parameter declared `Lines` \
+                           that `main` passes `m.stdout` to"
                         .into(),
                 }],
             )),
@@ -393,6 +402,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
         params,
         writers,
         errors,
+        not_ports,
     }
 }
 

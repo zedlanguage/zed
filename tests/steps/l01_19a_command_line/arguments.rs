@@ -142,37 +142,39 @@ fn a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal() {
 #[test]
 fn the_arguments_are_an_input() {
     let src = "main(m: MainArgs) {\n  m.args <- \"a\";\n}\n";
-    assert_eq!(
-        zedc::run::load(src.as_bytes()).err().as_deref(),
-        Some(
-            "2:3: `m.args <- …` pushes to `m.args`, and `m.args` is an input of the program, \
-             which `main` reads and never writes. Push the lines the program writes to \
-             `m.stdout` (its standard output) or `m.stderr` (its standard error), as \
-             `m.stdout <- lines;`."
-        )
+    let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
+    assert!(
+        err.starts_with(
+            "2:3: Invalid push to `m.args`: `m.args` is an input of the program, which `main` \
+             reads and never writes."
+        ),
+        "{err}"
     );
 }
 
 #[test]
 fn a_push_target_may_end_in_one_view() {
     // `PushTarget = Name ('.' Name)* ('::' Name)?` (sec:grammar): `m.stdout::bytes` parses as
-    // the view `bytes` of `m.stdout` (DESIGN step L7.3h), which this zedc does not compile yet;
-    // `m::stdout` is the view `stdout` of `m`, never the field `m.stdout`.
-    for target in ["m.stdout::bytes", "m::stdout"] {
-        let src = format!("main(m: MainArgs) {{\n  {target} <- \"a\";\n}}\n");
-        assert_eq!(
-            zedc::run::load(src.as_bytes()).err().as_deref(),
-            Some(
-                format!(
-                    "2:3: a push to a view of a port `{target}` is part of the Zed language, and \
-                     this version of zedc does not compile it yet. Write the program without \
-                     it, with the forms this zedc compiles."
-                )
-                .as_str()
-            ),
-            "{target}"
-        );
-    }
+    // the view `bytes` of `m.stdout` (DESIGN step L7.3h), which this zedc does not compile yet.
+    let src = "main(m: MainArgs) {\n  m.stdout::bytes <- \"a\";\n}\n";
+    assert_eq!(
+        zedc::run::load(src.as_bytes()).err().as_deref(),
+        Some(
+            "2:3: a push to a view of a port `m.stdout::bytes` is part of the Zed language, and \
+             this version of zedc does not compile it yet. Write the program without it, with \
+             the forms this zedc compiles."
+        ),
+    );
+    // `m::stdout` is the view `stdout` of `m`, never the field `m.stdout`, and only `::bytes`
+    // takes a push (row "Push to a view that takes no push", DESIGN sec:ports).
+    let src = "main(m: MainArgs) {\n  m::stdout <- \"a\";\n}\n";
+    let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
+    assert!(
+        err.starts_with(
+            "2:3: Invalid push to `m::stdout`: of the views, only `::bytes` takes a push."
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -187,8 +189,8 @@ fn a_push_target_has_at_most_one_view_and_it_comes_last() {
         let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
         assert!(
             err.starts_with(&format!(
-                "{at}: `{target}` cannot be pushed to: a push target is a port, an accumulator \
-                 or the next generation, with at most one view, written last."
+                "{at}: Invalid push target `{target}`: a target is a name and its fields, then \
+                 at most one view, then its keys, as `m.stdout::bytes <- b;` or `hist[k] <- 1;`."
             )),
             "{target}: {err}"
         );

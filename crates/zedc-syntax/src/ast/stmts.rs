@@ -350,7 +350,7 @@ impl Builder<'_, '_> {
                 })
             }
             "WholePush" => StmtKind::Push {
-                port: self.push_target(kids[0])?,
+                port: self.push_target(kids[0], kids[1])?,
                 value: self.node(kids[1])?,
             },
             "Import" => StmtKind::Import(self.import(d)?),

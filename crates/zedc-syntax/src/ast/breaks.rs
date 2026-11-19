@@ -60,6 +60,56 @@ impl Builder<'_, '_> {
         }
     }
 
+    /// The error for the generation push `x' <- value` of target node `t` when no `loop` and
+    /// no method holds it (DESIGN.md sec:ports, "What a push may name"; row "Generation push
+    /// outside a loop"). A lambda or a `for` in a loop's body runs as part of the loop's step,
+    /// so a push in one is a push of the loop (sec:generations), and a method writes its
+    /// receiver's next value through primed fields; those stay for name resolution. In a string
+    /// hole, whose tree holds only the hole, the push is accepted here, as `break;` is.
+    // Complexity tradeoff: climbing from each push to the root costs O(depth) per push, O(n ·
+    // depth) in all; one walk from the root on the first generation push marks every node a
+    // `loop` or method holds, O(n) once and O(1) per push after.
+    pub(super) fn generation_push_placed(
+        &self,
+        t: usize,
+        x: &str,
+        value: &str,
+    ) -> Result<(), Error> {
+        let tree = self.tree;
+        if tree.name(tree.root) != "Unit" {
+            return Ok(());
+        }
+        let held = self.in_loops.get_or_init(|| {
+            let mut held = vec![false; tree.nodes.len()];
+            let mut stack = vec![tree.root];
+            while let Some(k) = stack.pop() {
+                let inside = held[k] || matches!(tree.name(k), "Loop" | "Method");
+                for &c in &tree.nodes[k].kids {
+                    held[c] = inside;
+                }
+                stack.extend(&tree.nodes[k].kids);
+            }
+            held
+        });
+        if held[t] {
+            return Ok(());
+        }
+        let span = self.span(t);
+        Err(Error {
+            row: Some(Row::GenerationPushOutsideLoop),
+            menu: String::new(),
+            span,
+            message: format!(
+                "Invalid push to `{x}'` outside a loop: only the body of a `loop`, or of a method \
+                 for a field of its receiver, writes a next generation."
+            ),
+            notes: vec![Note {
+                span,
+                text: format!("repair: `{x} = {value};`"),
+            }],
+        })
+    }
+
     /// The name a lambda of node `l` is bound to, `f` in `f = x -> …;`, if it is the whole
     /// value of a binding of one name.
     fn lambda_name(&self, l: usize) -> Option<&str> {

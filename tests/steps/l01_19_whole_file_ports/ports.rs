@@ -517,8 +517,8 @@ fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
     let out = run("untyped_out_parameter", src, "", &[]);
     assert!(
         out.stderr.contains(
-            "1:26: A push goes to an output port, and `out` is a parameter of `say` not declared \
-             `Lines`: `out <- …;`. Try `out: Lines` instead."
+            "1:26: Invalid push to `out`, a parameter of `say` not declared `Lines`. Try `out: \
+             Lines` instead."
         ),
         "{}",
         out.stderr
@@ -560,7 +560,7 @@ fn a_push_to_a_name_that_is_no_port_is_rejected() {
     let src = "main(m: MainArgs) {\n  x = 1;\n  x <- \"a\";\n}\n";
     assert_eq!(
         rejected("binding", src),
-        "3:3: A push goes to an output port, and `x` is a binding: `x <- …;`."
+        "3:3: Invalid push to `x`, a binding: a push goes to a port or a declared accumulator."
     );
 }
 

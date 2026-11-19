@@ -120,6 +120,40 @@ fn each_benchmark_unit_builds_and_is_written_at_small_sizes() {
     }
 }
 
+/// `main` with `n` bindings before the generation push `x' <- 1;`, which no loop holds.
+pub(super) fn bindings_before_a_generation_push(n: usize) -> String {
+    let lines: String = (0..n).map(|i| format!("  a{i} = {i};\n")).collect();
+    format!("main(m: MainArgs) {{\n{lines}  x' <- 1;\n  m.stdout <- \"b\";\n}}\n")
+}
+
+/// `n` functions, each a loop whose body holds a generation push.
+pub(super) fn loops_with_generation_pushes(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!("f{i}(n: int) = loop {{ initial x = 0; x' <- x + 1; until x' >= n; }}.x;\n")
+        })
+        .collect()
+}
+
+/// The row a unit is refused in by the builder, or `None` when it builds.
+pub(super) fn built_row(text: String) -> Option<zedc::rejection::Row> {
+    let (text, tokens, tree) = parsed(text, "Unit");
+    unit(&text, &tokens, &tree).err().map(|e| e.row.unwrap())
+}
+
+/// A generation push outside a loop is found after many statements, and many inside loops
+/// are taken; `bench.rs` holds the timing of each (COMPLEXITY.md, PUSH-target-rules).
+#[test]
+fn generation_pushes_are_placed_at_small_sizes() {
+    for n in [0, 1, 2, 9] {
+        assert_eq!(
+            built_row(bindings_before_a_generation_push(n)),
+            Some(zedc::rejection::Row::GenerationPushOutsideLoop)
+        );
+        assert_eq!(built_row(loops_with_generation_pushes(n)), None);
+    }
+}
+
 /// The text of functions nested a few deep, each level a `def` whose block holds the next;
 /// the same 100,000 deep is in `bench.rs`.
 #[test]

@@ -51,8 +51,8 @@ fn each_form_round_trips() {
             "g[i in 0..<n][j] = i + j with g[0][k in s] = 1, g[-1][k in s] = 2;\n",
         ),
         (
-            "f(x) = { out' <-x; g( x ); 0 };",
-            "f(x) = {\n  out' <- x;\n  g(x);\n  0\n};\n",
+            "f(x) = loop { initial out=0; out' <-x; g( x ); };",
+            "f(x) = loop {\n  initial out = 0;\n  out' <- x;\n  g(x);\n};\n",
         ),
         ("f(x) = g(x) *. h;", "f(x) = g(x)*.h;\n"),
         ("f(x) = pos'.x+c.y';", "f(x) = pos'.x + c.y';\n"),

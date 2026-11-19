@@ -92,8 +92,8 @@ fn indexed_definitions_build_with_their_keys_and_boundary() {
 fn pushes_and_expression_statements_build() {
     check(&[
         (
-            "f(x) = { out' <- x; g(x); 0 };",
-            "(def f (x) = (block (<- out' x) (do (call g x)) (return 0)))",
+            "f(x) = loop { initial out = 0; out' <- x; g(x); };",
+            "(def f (x) = (loop (block (initial (out) 0) (<- out' x) (do (call g x)))))",
         ),
         // A push reads the sentinel value an `initial` statement gives; a `with initial` item
         // is removed.

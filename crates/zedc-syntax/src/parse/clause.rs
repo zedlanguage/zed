@@ -415,8 +415,8 @@ fn value_if_without_else(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
 
 /// The [`Clause`] for a push statement whose target cannot be pushed to (row "Push to a target
 /// that cannot be pushed to", author P302): `m.stdout::bytes::len <- "a";`, where a push target
-/// is a name and its fields with at most one view, written last (`PushTarget` in
-/// sec:grammar), and any keys after it. The parse stops at the `<-`, outside a condition; the
+/// is a name and its fields, then at most one view (`PushTarget` in sec:grammar), then any
+/// keys. The parse stops at the `<-`, outside a condition; the
 /// row applies when the text before it, from the start of the statement, is a name followed by
 /// fields `.f`, views `::v` and keys `[k]`, and the statement parses with one name in its
 /// place. No repair: which target was meant is not known. One scan of the statement and one
@@ -448,9 +448,11 @@ fn push_target(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     }
     Some(Clause {
         row: Some(Row::PushTargetNotPushable),
+        // The shape only: whether a target of the right shape takes a push is decided when
+        // the push is compiled (DESIGN.md sec:ports, "What a push may name").
         message: format!(
-            "`{target}` cannot be pushed to: a push target is a port, an accumulator or the next \
-             generation, with at most one view, written last."
+            "Invalid push target `{target}`: a target is a name and its fields, then at most one \
+             view, then its keys, as `m.stdout::bytes <- b;` or `hist[k] <- 1;`."
         ),
         span: t.span(far),
         notes: Vec::new(),

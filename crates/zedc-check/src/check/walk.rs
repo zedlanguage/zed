@@ -69,9 +69,12 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     // stops the build: the walk would read the port as the value of its type, and its errors,
     // a port given to `len` among them, would offer repairs that read the port.
     let ports = super::ports::ports(t);
-    let stop = !ports.errors.is_empty();
+    let stop = !ports.errors.is_empty() || !ports.not_ports.is_empty();
     for (span, message, notes) in ports.errors {
         ck.error_with(span, message, notes);
+    }
+    for (span, message, notes) in ports.not_ports {
+        ck.rejects_with(Row::PushToNameNotPort, span, message, notes);
     }
     ck.port_params = ports.params;
     ck.port_writers = ports.writers;

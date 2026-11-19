@@ -58,11 +58,19 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
         (
-            "f(x) = { out' <- x; 0 };",
-            &[concat!(
-                zed_tests::not_yet!("a generation push `x' <- e`"),
-                " [out' <- x;]"
-            )],
+            // A generation push outside a loop or a method is refused (row "Generation push
+            // outside a loop"), and a loop's body is not walked, so the push stands in a method.
+            "String.f(x) { out' <- x; }",
+            &[
+                concat!(
+                    zed_tests::not_yet!("a method"),
+                    " [String.f(x) { out' <- x; }]"
+                ),
+                concat!(
+                    zed_tests::not_yet!("a generation push `x' <- e`"),
+                    " [out' <- x;]"
+                ),
+            ],
         ),
         (
             "cdf[i] = cdf[i - 1] + 1;",
