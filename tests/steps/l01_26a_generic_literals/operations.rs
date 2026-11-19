@@ -17,6 +17,67 @@ fn both(params: &[&str], body: &str, arg: &str, ty: &str) -> (String, String) {
     (value(&src(&generic), "y"), value(&src(&typed), "y"))
 }
 
+/// The value of `f` of `body` at the argument `arg`, `f`'s parameter `x` generic.
+fn eq_at_int(body: &str, arg: &str) -> String {
+    value(&format!("f(positional x) = {body};\ny = f({arg});\n"), "y")
+}
+
+#[test]
+fn an_int_compares_unequal_with_an_operation_that_holds_no_int() {
+    // Under `==` and `!=` the class keeps `int` (DESIGN.md L1.26a, "without removing carriers
+    // from it"), and a `/` or a decimal among the literals leaves the operation no value at
+    // `int` (`/` has no arrow at `int`, a decimal is never an `int`), so at an `int` the
+    // operation keeps its `f64` value and an `int` compares unequal with it, though `3 / 2 * 2`
+    // is a whole number, as `x == 4 / 2` and `x == 3.0` are (plan row
+    // FAIL-generic-eq-int-witness, which proposed refusing the call at `int`: that would remove
+    // `int` from the class by a comparison).
+    for (body, y) in [
+        ("x == 3 / 2 * 2", "false"),
+        ("x == 1 / 2 + 1", "false"),
+        ("x != 3 / 2 * 2", "true"),
+        ("3 / 2 * 2 == x", "false"),
+        ("x == 1.5 * 2", "false"),
+        ("x == 3.0", "false"),
+        ("x + 0 == 3 / 2 * 2", "false"),
+    ] {
+        assert_eq!(eq_at_int(body, "3"), y, "{body}");
+        // The declared `int` is refused: at one declared carrier a literal takes that carrier
+        // exactly or not at all, and these take none at `int`.
+        let typed = format!("f(positional x: int) = {body};\ny = f(3);\n");
+        assert!(elab(&typed).is_err(), "{typed}accepted");
+    }
+    // At the other carriers the operation is exact there, and the value is the declared one's.
+    for (arg, ty, y) in [
+        ("3r", "rat", "true"),
+        ("3.0f64", "f64", "true"),
+        ("3.0f32", "f32", "true"),
+        ("1r", "rat", "false"),
+    ] {
+        let (generic, typed) = both(&["x"], "x == 3 / 2 * 2", arg, ty);
+        assert_eq!((generic.as_str(), typed.as_str()), (y, y), "at {arg}");
+    }
+}
+
+#[test]
+fn an_int_reaches_an_operation_that_holds_no_int_only_through_a_comparison() {
+    // Every other use of such an operation takes `int` out of the class, so the call at an
+    // `int` is refused, and no `int` reaches the operation's last arm, which `without_int`
+    // (crates/zedc-elab/src/elab/walk.rs) gives the value at `f64`.
+    for def in [
+        "f(positional x) = if x == 0 { 1 / 2 } else { x };",
+        "f(positional x) = if x == 0 { 3 / 2 * 2 } else { x };",
+        "g(positional a, positional b) = a + b;\nf(positional x) = g(x, 1 / 2);",
+        "f(positional x) = (x, 1 / 2);",
+        "f(positional x) = [x, 1 / 2];",
+        "f(positional x) = x < 1 / 2;",
+        "f(positional x) = x + 1 / 2;",
+        "f(positional x) = x * (1.5 + 1);",
+    ] {
+        let src = format!("{def}\ny = f(3);\n");
+        assert!(elab(&src).is_err(), "{src}accepted");
+    }
+}
+
 #[test]
 fn an_operation_on_literals_alone_is_one_match_on_the_carrier() {
     assert_eq!(
@@ -62,6 +123,8 @@ fn operations_on_literals_give_each_carrier_s_value() {
         "x * ((1 / 2) ^ 2 + 1)",
         "x * (1 / 1180591620717411303424 + 1)",
         "x == 1 / 2 + 1",
+        "x == 3 / 2 * 2",
+        "x != 3 / 2 * 2",
         "x * (1 ^ 1180591620717411303424 + 1)",
         "x * ((1 + 1.5) + 0)",
         "x * (1 / 2 + 2 ^ 2 + 1)",
@@ -80,7 +143,20 @@ fn operations_on_literals_give_each_carrier_s_value() {
     for body in bodies {
         for (arg, ty) in args {
             // `/` and a decimal take no `int`, and `int ^ -1` is refused.
-            if ty == "int" && (body.contains('/') || body.contains('.') || body.contains("^ -")) {
+            let no_int = body.contains('/') || body.contains('.') || body.contains("^ -");
+            // Except under `==` and `!=`, which keep `int` in the class (L1.26a): the
+            // operation holds no `int`, so an `int` compares unequal with it, as with `0.5`,
+            // while the declared `int` is refused, as `x: int` beside `0.5` is (plan rows
+            // TEST-assume-documented-gaps and FAIL-generic-eq-int-witness).
+            let eq = body.starts_with("x == ") || body.starts_with("x != ");
+            if ty == "int" && no_int && eq {
+                let (generic, ne) = (eq_at_int(body, arg), body.starts_with("x != "));
+                assert_eq!(generic, ne.to_string(), "{body} at {arg}");
+                let typed = format!("f(positional x: int) = {body};\ny = f({arg});\n");
+                assert!(elab(&typed).is_err(), "{typed}accepted");
+                continue;
+            }
+            if ty == "int" && no_int {
                 continue;
             }
             let (generic, typed) = both(&["x"], body, arg, ty);
@@ -95,7 +171,9 @@ fn operations_on_literals_give_each_carrier_s_value() {
 /// exponent keeps the base's, and a literal following a decimal takes the decimal's arms, its
 /// own value where it lists no value at their carrier. An operation whose last arm would be at
 /// `int` and mix carriers, or divide two `int`s, has that arm at `f64` or at the carrier of the
-/// other operand's last arm, since no `int` reaches it (plan row STAGE-generic-fold-int-arm).
+/// other operand's last arm, since no `int` reaches it but through `==` or `!=`, where an `int`
+/// compares unequal with it (plan rows STAGE-generic-fold-int-arm and
+/// FAIL-generic-eq-int-witness).
 const FOLDED: [&str; 15] = [
     "x + (1 / 2 + 3)",
     "x + 3 * (1 / 2)",

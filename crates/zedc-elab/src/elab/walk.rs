@@ -3953,9 +3953,9 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 /// The kernel has no `+`, `-`, `*` or `/` on an `int` and a value of another carrier, nor `/` on
 /// two `int`s (`/` has no arrow at `int`, DESIGN sec:lexical; `zed_kernel::eval`), so a value of
 /// the witness reaching that last arm would stop the program with a bug in zedc. The checker
-/// is meant to accept no such program: a decimal or a `/` among the literals removes `int` from
-/// the class the witness belongs to (DESIGN step L1.26a), and so no `int` reaches the last
-/// arm; it does not hold under `==` (row FAIL-generic-eq-int-witness, below). The value
+/// accepts no such program but under `==` and `!=`: a decimal or a `/` among the literals
+/// removes `int` from the class the witness belongs to (DESIGN step L1.26a), except under a
+/// comparison, which keeps it (claim (2) below). The value
 /// of every value of the witness that does reach the operation is unchanged: the operands are
 /// laid out on the patterns of the one whose last arm is at `c` (at `/` on two `int`s, `c` is
 /// `f64`, a decimal's own format), less `is c`, each taking its arm `is q` at each `is q`, and
@@ -3964,24 +3964,27 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 // Complexity tradeoff: O(C²) pattern comparisons for the C ≤ 4 arms of each operand, against
 // the O(C) arms `per_carrier` builds; each arm moved, not copied. Not taken: the checker giving
 // these literals a value at another carrier in the last arm, as it gives `1.0` in `x == 1 / 2`;
-// the arm is dropped rather than given a value no run should reach (but see (2) below: under
-// `==` a run does reach it).
-// The claim split (PROOF-sweep-front-end). (1) Every witness value that is not an `int` gets
-// the value it had: derived above, arm by arm. (2) No `int` value of the witness reaches the
-// new last arm: a claim of the checker, not of this rewrite, which needs it since the new arm
-// takes each operand's value at `c`, so an `int` reaching it gets a value at `c` (`1.0 /
-// 2.0`) where the old arm stopped (`1 / 2` has no arrow at `int`). (2) is false today, a
-// fault of the checker, row FAIL-generic-eq-int-witness: `==` lets an `int` witness through,
-// so `f(positional x) = x == 3 / 2 * 2;` is accepted at `f(3)` and gives `false` (an `int`
-// compared with the `f64` `3.0`) where `f(3r)` gives `true`, and `f(positional x: int)` with
-// the same body is refused. Elaboration cannot refuse it: `check::Info` does not record, per
-// operation, whether `int` is left in the class, and the arms do not show it (`1 + 1.5` has
-// the same arms at the class {int, f64} as at {f64}); keeping a stopping `is int` arm here is
-// what STAGE-generic-fold-int-arm removed, since the build stage cannot build `int / int`.
-// The fix is the checker's: refuse that call, as it refuses the declared `int`, or record the
-// class in `Info` so this keeps `own` where `int` is in it. Evidence for the operators other
-// than `==`: `l01_26a_generic_literals::operations` (`FOLDED`, each body's value against a
-// declared carrier) and `l25_08_mutate::examples`.
+// the arm is dropped rather than given a value no run should reach outside a comparison.
+// The claim split (PROOF-sweep-front-end, FAIL-generic-eq-int-witness). (1) Every witness
+// value of a carrier other than `int` gets the value it had: derived above, arm by arm. (2) An
+// `int` value of the witness, or a value of no number, that reaches the new last arm gets the
+// value DESIGN gives, in two cases. (2a) The operation is an operand of `==` or `!=` with the
+// class, which keeps `int` in it (L1.26a, "without removing carriers from it"): the operation
+// holds a `/` or a decimal, so it takes no value at `int` (`/` has no arrow at `int`, a
+// decimal is never an `int`) and keeps its value at `c`, never an `int`, and the run compares
+// the `int` with it, which `Value::surface_eq` gives as `false` whatever the two values
+// (`number_eq`, numbers of two kinds), `true` under `!=`; a value of no number, as `"a"`, is
+// unequal to every number (`param_follows`, `g("a")` with `x == 1 / 2`). That is the value of `x == 0.5` and of `x == 4 / 2` at an `int`
+// (`l01_26a_generic_literals::param_follows`), and `x == 3 / 2 * 2` is `false` at `f(3)`
+// though `3 / 2 * 2` is whole, as `x == 3.0` is; the declared `x: int` is refused, since at
+// one declared carrier a literal takes it exactly or not at all. The old arm stopped there
+// (`1 / 2` has no arrow at `int`), a bug in zedc. (2b) Any other use: the checker takes `int`
+// out of the class and refuses the call at an `int`, so no `int` reaches the arm, a claim of
+// the checker, not of this rewrite, tested for an `if` branch, a call's argument, a tuple, a
+// list, `<` and the arithmetic operators. Row FAIL-generic-eq-int-witness proposed refusing
+// the call at `int` under `==` too; not taken, since that would remove `int` from the class
+// by a comparison. Evidence: `l01_26a_generic_literals::operations` (`FOLDED`, each body's
+// value against a declared carrier; the two `int` tests) and `l25_08_mutate::examples`.
 fn without_int(p: Prim, own: [Option<Carrier>; 2], args: &mut [Term]) -> [Option<Carrier>; 2] {
     use Carrier::{F64, Int};
     if !matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Div) {
