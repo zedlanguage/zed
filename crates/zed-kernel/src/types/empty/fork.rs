@@ -117,8 +117,8 @@ impl Reader {
         let first = self.add(t);
         let mut todo = vec![(t.clone(), first)];
         while let Some((t, i)) = todo.pop() {
-            let p = t.p();
-            if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(&p) {
+            let p: &Parts = &t.p();
+            if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(p) {
                 return None;
             }
             if p.atoms.cofinite() {
@@ -274,12 +274,16 @@ impl Fork {
         if let Some(r) = self.pos.get(&p) {
             return r.clone();
         }
+        // `Ints::meet` and `Ints::is_empty` are called by path, and `p` and `union_rows` in
+        // `decide` are typed, because the import-graph test (s_01f_import_graph) reads a call
+        // whose receiver it cannot type as a call of `TwoSat::meet` or `Type::is_empty`, which
+        // are written in empty.rs: an import cycle with empty.rs.
         let rows: Rc<[(Ints, usize)]> = match (&self.later, p == self.pi) {
             (Some(c), false) => self.r.states[p]
                 .rows
                 .iter()
-                .map(|(h, s)| (h.meet(c), *s))
-                .filter(|(h, _)| !h.is_empty())
+                .map(|(h, s)| (Ints::meet(h, c), *s))
+                .filter(|(h, _)| !Ints::is_empty(h))
                 .collect(),
             _ => self.r.states[p].rows.iter().cloned().collect(),
         };
@@ -391,8 +395,8 @@ impl Fork {
 
 /// The decision of the class above, or `None` outside it or when no stage decides.
 pub(super) fn decide(t: &Type) -> Option<Decided> {
-    let p = t.p();
-    if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(&p) {
+    let p: &Parts = &t.p();
+    if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(p) {
         return None;
     }
     if p.atoms.cofinite() {
@@ -443,7 +447,7 @@ pub(super) fn decide(t: &Type) -> Option<Decided> {
             .collect()
     };
     let taken_rows = read(&mut r, &taken)?;
-    let union_rows = read(&mut r, &union)?;
+    let union_rows: Vec<(Ints, usize)> = read(&mut r, &union)?;
     let refused_rows = read(&mut r, &refused)?;
     // Stage 0: the taken carriers as masks.
     let (mut first, mut later): (Option<Ints>, Option<Ints>) = (None, None);
@@ -451,8 +455,8 @@ pub(super) fn decide(t: &Type) -> Option<Decided> {
     let mut a_carrier = None;
     for (h, s) in taken_rows {
         if let Some(c) = r.carrier(s) {
-            later = Some(later.map_or_else(|| c.clone(), |l| l.meet(c)));
-            first = Some(first.map_or_else(|| h.clone(), |f| f.meet(&h)));
+            later = Some(later.map_or_else(|| c.clone(), |l| Ints::meet(&l, c)));
+            first = Some(first.map_or_else(|| h.clone(), |f| Ints::meet(&f, &h)));
             a_carrier.get_or_insert((h, s));
         } else {
             rest.push((h, s));
@@ -467,8 +471,15 @@ pub(super) fn decide(t: &Type) -> Option<Decided> {
     };
     let start: Vec<(Ints, usize)> = start
         .into_iter()
-        .map(|(h, s)| (first.as_ref().map_or_else(|| h.clone(), |c| h.meet(c)), s))
-        .filter(|(h, _)| !h.is_empty())
+        .map(|(h, s)| {
+            (
+                first
+                    .as_ref()
+                    .map_or_else(|| h.clone(), |c| Ints::meet(&h, c)),
+                s,
+            )
+        })
+        .filter(|(h, _)| !Ints::is_empty(h))
         .collect();
     let pi = r.states.len();
     r.states.push(State {
