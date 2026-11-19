@@ -21,7 +21,14 @@ pub(super) type Digests = BuildHasherDefault<Digest>;
 // using it for table identity gave b-way collisions and repeated structural comparisons.
 // The presentation hash separates those copies in expected O(1); genuine hash collisions
 // retain one inline key or a BTreeMap, O(log b) comparisons, each checking real contents.
-pub(super) struct ByType<V>(HashMap<u64, Tied<V>, Digests>);
+pub(super) struct ByType<V> {
+    map: HashMap<u64, Tied<V>, Digests>,
+    /// Test hook: the bits of each digest the map keys by. A unit test sets it to 0, so that
+    /// every key shares one digest and the arms for a digest of two keys or more
+    /// (`Tied::Many`) run in the normal build, where two types of one digest are not found.
+    #[cfg(test)]
+    mask: u64,
+}
 
 /// The keys of one digest in a [`ByType`], with their values.
 enum Tied<V> {
@@ -37,18 +44,40 @@ impl<V> Default for ByType<V> {
 
 impl<V> ByType<V> {
     pub(super) const fn new() -> Self {
-        ByType(HashMap::with_hasher(Digests::new()))
+        ByType {
+            map: HashMap::with_hasher(Digests::new()),
+            #[cfg(test)]
+            mask: !0,
+        }
+    }
+
+    /// A map that keys by the bits `mask` of each digest (test hook, see `mask`).
+    #[cfg(test)]
+    const fn with_mask(mask: u64) -> Self {
+        ByType {
+            map: HashMap::with_hasher(Digests::new()),
+            mask,
+        }
+    }
+
+    /// The digest `t` is keyed by.
+    fn digest(&self, t: &Type) -> u64 {
+        let d = t.name_digest();
+        #[cfg(test)]
+        let d = d & self.mask;
+        d
     }
 
     pub(super) fn get(&self, t: &Type) -> Option<&V> {
-        match self.0.get(&t.name_digest())? {
+        match self.map.get(&self.digest(t))? {
             Tied::One(k, v) => (k == t).then_some(v),
             Tied::Many(m) => m.get(t),
         }
     }
 
     pub(super) fn get_mut(&mut self, t: &Type) -> Option<&mut V> {
-        match self.0.get_mut(&t.name_digest())? {
+        let d = self.digest(t);
+        match self.map.get_mut(&d)? {
             Tied::One(k, v) => (*k == *t).then_some(v),
             Tied::Many(m) => m.get_mut(t),
         }
@@ -67,8 +96,8 @@ impl<V> ByType<V> {
     }
 
     pub(super) fn remove(&mut self, t: &Type) -> Option<V> {
-        let d = t.name_digest();
-        let tied = self.0.get_mut(&d)?;
+        let d = self.digest(t);
+        let tied = self.map.get_mut(&d)?;
         let (got, empty) = match tied {
             Tied::One(k, _) if *k != *t => return None,
             Tied::One(..) => (None, true),
@@ -80,18 +109,18 @@ impl<V> ByType<V> {
         if !empty {
             return got;
         }
-        match self.0.remove(&d) {
+        match self.map.remove(&d) {
             Some(Tied::One(_, v)) => Some(v),
             _ => got,
         }
     }
 
     pub(super) fn clear(&mut self) {
-        self.0.clear();
+        self.map.clear();
     }
 
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&Type, &mut V) -> bool) {
-        self.0.retain(|_, tied| match tied {
+        self.map.retain(|_, tied| match tied {
             Tied::One(k, v) => keep(k, v),
             Tied::Many(m) => {
                 m.retain(|k, v| keep(k, v));
@@ -128,7 +157,8 @@ pub(super) struct TypeEntry<'a, V> {
 
 impl<'a, V> TypeEntry<'a, V> {
     pub(super) fn or_insert_with(self, f: impl FnOnce() -> V) -> &'a mut V {
-        let tied = match self.map.0.entry(self.key.name_digest()) {
+        let d = self.map.digest(&self.key);
+        let tied = match self.map.map.entry(d) {
             Entry::Vacant(e) => {
                 let Tied::One(_, v) = e.insert(Tied::One(self.key, f())) else {
                     unreachable!("just put in")
@@ -320,7 +350,7 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
 
 #[cfg(test)]
 mod tests {
-    use super::ByType;
+    use super::{ByType, Tied};
     use crate::types::Type;
     use std::collections::BTreeMap;
 
@@ -330,8 +360,23 @@ mod tests {
     /// keys of one digest are one.
     #[test]
     fn a_map_by_type_agrees_with_an_ordered_map_also_where_digests_tie() {
+        same_as_an_ordered_map(ByType::new());
+    }
+
+    /// As above, with the map keyed by no bit of the digest (every key ties with every other,
+    /// so one `Tied::Many` holds them all) and by 4 bits (16 digests, each tied by about 37
+    /// keys): the arms for tied keys run in the normal build too, among them a removal that
+    /// leaves other keys of the digest and one that empties it.
+    #[test]
+    fn a_map_by_type_whose_digests_are_forced_to_tie_agrees_with_an_ordered_map() {
+        assert_eq!(same_as_an_ordered_map(ByType::with_mask(0)), 1);
+        assert_eq!(same_as_an_ordered_map(ByType::with_mask(0xF)), 16);
+    }
+
+    /// Runs the operations on `m` and a `BTreeMap` side by side, and gives the number of
+    /// digests whose keys tie (`Tied::Many`) once all 600 keys are in.
+    fn same_as_an_ordered_map(mut m: ByType<u32>) -> usize {
         let keys: Vec<Type> = (0..600).map(|i| Type::atom(&format!("k{i}"))).collect();
-        let mut m: ByType<u32> = ByType::new();
         let mut model: BTreeMap<Type, u32> = BTreeMap::new();
         let agree = |m: &ByType<u32>, model: &BTreeMap<Type, u32>| {
             for k in &keys {
@@ -344,6 +389,11 @@ mod tests {
             assert_eq!(*m.entry(k.clone()).or_insert_with(|| v), v);
             model.insert(k.clone(), v);
         }
+        let tied = m
+            .map
+            .values()
+            .filter(|t| matches!(t, Tied::Many(_)))
+            .count();
         // An entry of a key present keeps its value.
         for k in keys.iter().step_by(7) {
             assert_eq!(*m.entry(k.clone()).or_insert_with(|| 9999), model[k]);
@@ -368,7 +418,24 @@ mod tests {
         m.retain(|_, v| *v % 3 != 0);
         model.retain(|_, v| *v % 3 != 0);
         agree(&m, &model);
+        // Removing every key left empties each digest's keys, the last removal of each digest
+        // dropping its entry.
+        for k in keys.iter().skip(1).step_by(2) {
+            assert_eq!(m.remove(k), model.remove(k), "{k}");
+        }
+        agree(&m, &model);
+        assert!(m.map.is_empty(), "a digest left with no key");
+        for (i, k) in keys.iter().enumerate().take(40) {
+            m.insert(k.clone(), u32::try_from(i).expect("40 keys"));
+        }
+        // A `retain` that keeps no key of a digest drops the digest.
+        m.retain(|_, _| false);
+        assert!(m.map.is_empty(), "a digest left with no key");
+        for (i, k) in keys.iter().enumerate().take(40) {
+            m.insert(k.clone(), u32::try_from(i).expect("40 keys"));
+        }
         m.clear();
         assert!(keys.iter().all(|k| m.get(k).is_none()));
+        tied
     }
 }
