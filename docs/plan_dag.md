@@ -6538,6 +6538,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 3 | PERF-l139-under9, ST-case-points-later-link | `crates/zedc-preimage/src/product.rs` |
 | 3 | ST-relation-shared-disjunctions, ST-case-points-later-link | `crates/zedc-preimage/src/product.rs` |
 | 3 | ST-relation-shared-disjunctions, PRES-a99-per-call-or-symbol | `crates/zedc-presburger/src/presburger/meter.rs`, `crates/zedc-presburger/src/presburger/exact.rs` |
+| 3 | ST-relation-shared-disjunctions, PRES-two-pin-split-rays | `crates/zedc-presburger/src/presburger/exact/guarded/two_pins.rs` |
 | 4 | STR-types, T2 | `crates/zed-kernel/src/types/bdd.rs` |
 | 4 | STR-types, L6.6 | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/term.rs` |
 | 4 | STR-types, CONST-repair-build-trial | `crates/zedc-check/src/check/` |
