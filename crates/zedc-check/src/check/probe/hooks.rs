@@ -85,6 +85,7 @@ fn kind_name(k: &NeedKind) -> &'static str {
         NeedKind::Strings { .. } => "Strings",
         NeedKind::Concat { .. } => "Concat",
         NeedKind::Zip { .. } => "Zip",
+        NeedKind::Fwd(_) => "Fwd",
     }
 }
 

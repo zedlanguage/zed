@@ -16,8 +16,7 @@ use std::sync::Arc;
 use zed_kernel::Value;
 use zed_kernel::types::Type;
 use zedc::check::ty::{
-    self, Binds, CallPath, LevelWord, MapWord, Narrow, Need, NeedKind, SParam, Shape, Sig, Ty,
-    Vars, Via,
+    self, Binds, CallPath, LevelWord, MapWord, Narrow, Need, NeedKind, SParam, Shape, Sig, Ty, Vars,
 };
 
 pub(super) fn z() -> Ty {
@@ -393,11 +392,6 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
             shared: false,
         },
     ];
-    let via = Via {
-        at: at(7),
-        text: "h(x)".into(),
-        next: None,
-    };
     let needs: Vec<Need> = kinds
         .into_iter()
         .enumerate()
@@ -411,7 +405,11 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
             } else {
                 Arc::from([])
             },
-            via: CallPath((i % 4 == 0).then(|| Arc::new(via.clone()))),
+            via: if i % 4 == 0 {
+                CallPath::prepend(at(7), "h(x)".into(), &CallPath::default())
+            } else {
+                CallPath::default()
+            },
         })
         .collect();
     let mut s = sig(z(), z());

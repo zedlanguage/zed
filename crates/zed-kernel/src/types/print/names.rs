@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Which sequence a made-up name comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,20 +80,48 @@ fn run_ends(numbered: &HashSet<usize>) -> HashMap<usize, usize> {
 }
 
 /// The names of [`Names`] a program binds, as [`ProgramNames`] holds them.
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Held {
     /// Whether the program binds each of `T`, `U`, `V`, `W`.
     letters: [bool; 4],
     /// For each `n` such that the program binds `T{n + 1}`, the first `m > n` such that it
     /// binds none of `T{n + 1}` to `T{m}`: a run of bound names is stepped over at once.
     ends: HashMap<usize, usize>,
+    /// Sorted indices `n >= 4` where the program binds `T{n + 1}`.
+    sorted_numbered: Vec<usize>,
+    /// Prefix sums of `sorted_numbered`: `prefix_sums[i]` is the sum of `sorted_numbered[..i]`.
+    prefix_sums: Vec<u128>,
     /// The same for the names `Part{n + 1}`.
     part_ends: HashMap<usize, usize>,
 }
 
+/// Summary of `count` consecutive [`Names::Variables`] picks starting at `start_n`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FreshVarSpanStats {
+    /// Value of `n` immediately after picking the `count`th variable.
+    pub end_n: usize,
+    /// Bitmask (`0..4`) of which of `T, U, V, W` were picked.
+    pub letter_mask: u8,
+    /// Number of `T{m + 1}` (`m >= 4`) variables picked.
+    pub numbered_count: usize,
+    /// Sum of `m` (`m >= 4`) over all `T{m + 1}` variables picked.
+    pub numbered_index_sum: u128,
+}
+
+/// Immutable `O(1)`-cloneable snapshot of [`ProgramNames`] currently active on this thread,
+/// stored in compact signatures so post-check `Sig::digest()` and `FwdNeed::decode()` remain
+/// identical after `ProgramNames` is dropped.
+#[derive(Clone, Debug, Default)]
+pub struct HeldVarSnapshot(Arc<Held>);
+
+/// Returns an `O(1)` snapshot of the [`ProgramNames`] currently active on this thread.
+pub fn current_held_var_snapshot() -> HeldVarSnapshot {
+    HELD.with_borrow(|held| HeldVarSnapshot(held.clone()))
+}
+
 thread_local! {
     /// The names of the program being checked on this thread ([`ProgramNames`]).
-    static HELD: RefCell<Rc<Held>> = RefCell::default();
+    static HELD: RefCell<Arc<Held>> = RefCell::default();
 }
 
 /// The names a program binds, which no made-up name takes while it is held: a type a message
@@ -101,7 +129,7 @@ thread_local! {
 /// (DESIGN.md sec:diagnostics, "Types in a message"). Dropping it puts back the names held
 /// before, so a check started inside another, as of an operator alone, leaves them as it found
 /// them.
-pub struct ProgramNames(Rc<Held>);
+pub struct ProgramNames(Arc<Held>);
 
 impl ProgramNames {
     /// Holds `names`, the names the program binds, on this thread until it is dropped. Only
@@ -122,8 +150,17 @@ impl ProgramNames {
             }
         }
         held.ends = run_ends(&numbered);
+        let mut sorted: Vec<usize> = numbered.into_iter().filter(|&n| n >= 4).collect();
+        sorted.sort_unstable();
+        let mut prefix = Vec::with_capacity(sorted.len() + 1);
+        prefix.push(0u128);
+        for &x in &sorted {
+            prefix.push(prefix[prefix.len() - 1] + x as u128);
+        }
+        held.sorted_numbered = sorted;
+        held.prefix_sums = prefix;
         held.part_ends = run_ends(&parts);
-        ProgramNames(HELD.replace(Rc::new(held)))
+        ProgramNames(HELD.replace(Arc::new(held)))
     }
 }
 
@@ -131,6 +168,147 @@ impl Drop for ProgramNames {
     fn drop(&mut self) {
         HELD.set(std::mem::take(&mut self.0));
     }
+}
+
+/// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
+/// `held` and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
+pub fn fresh_variable_span_stats_with_held<'a>(
+    start_n: usize,
+    count: usize,
+    skip_names: impl IntoIterator<Item = &'a str>,
+    held: &HeldVarSnapshot,
+) -> FreshVarSpanStats {
+    if count == 0 {
+        return FreshVarSpanStats {
+            end_n: start_n,
+            letter_mask: 0,
+            numbered_count: 0,
+            numbered_index_sum: 0,
+        };
+    }
+    let held = &*held.0;
+    let mut skip_letters = [false; 4];
+    let mut skip_num = Vec::new();
+    for s in skip_names {
+        match place(s) {
+            Some(Place::Letter(i)) => skip_letters[i] = true,
+            Some(Place::Numbered(m)) if m >= 4 && !held.ends.contains_key(&m) => {
+                skip_num.push(m);
+            }
+            _ => {}
+        }
+    }
+    skip_num.sort_unstable();
+    skip_num.dedup();
+
+    let mut n = start_n;
+    let mut rem = count;
+    let mut letter_mask = 0u8;
+    while n < 4 && rem > 0 {
+        if !held.letters[n] && !skip_letters[n] {
+            letter_mask |= 1u8 << n;
+            rem -= 1;
+        }
+        n += 1;
+    }
+    if rem == 0 {
+        return FreshVarSpanStats {
+            end_n: n,
+            letter_mask,
+            numbered_count: 0,
+            numbered_index_sum: 0,
+        };
+    }
+    let p_n = held.sorted_numbered.partition_point(|&x| x < n);
+    let s_n = skip_num.partition_point(|&x| x < n);
+    let unblocked = |hi: usize| -> usize {
+        let p_hi = held.sorted_numbered.partition_point(|&x| x < hi);
+        let s_hi = skip_num.partition_point(|&x| x < hi);
+        (hi - n) - (p_hi - p_n) - (s_hi - s_n)
+    };
+    let mut lo = n + rem;
+    let mut hi = n + rem + (held.sorted_numbered.len() - p_n) + (skip_num.len() - s_n);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if unblocked(mid) >= rem {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    let p_hi = held.sorted_numbered.partition_point(|&x| x < lo);
+    let s_hi = skip_num.partition_point(|&x| x < lo);
+    let len = (lo - n) as u128;
+    let arith = (n as u128 + lo as u128 - 1) * len / 2;
+    let held_sum = if held.prefix_sums.is_empty() {
+        0
+    } else {
+        held.prefix_sums[p_hi] - held.prefix_sums[p_n]
+    };
+    let skip_sum: u128 = skip_num[s_n..s_hi].iter().map(|&x| x as u128).sum();
+    FreshVarSpanStats {
+        end_n: lo,
+        letter_mask,
+        numbered_count: rem,
+        numbered_index_sum: arith - held_sum - skip_sum,
+    }
+}
+
+/// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
+/// [`ProgramNames`] and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
+pub fn fresh_variable_span_stats<'a>(
+    start_n: usize,
+    count: usize,
+    skip_names: impl IntoIterator<Item = &'a str>,
+) -> FreshVarSpanStats {
+    let snap = current_held_var_snapshot();
+    fresh_variable_span_stats_with_held(start_n, count, skip_names, &snap)
+}
+
+/// Like [`fresh_name`], but skipping the captured [`HeldVarSnapshot`] instead of thread-local `HELD`.
+pub fn fresh_name_with_held<S>(
+    names: Names,
+    n: &mut usize,
+    held: &HeldVarSnapshot,
+    taken: impl Fn(&str) -> bool,
+) -> S
+where
+    S: From<&'static str> + From<String> + std::ops::Deref<Target = str>,
+{
+    let held = &*held.0;
+    loop {
+        let ends = match (names, *n) {
+            (Names::Variables, 0..4) if held.letters[*n] => {
+                *n += 1;
+                continue;
+            }
+            (Names::Variables, 0..4) => None,
+            (Names::Variables, _) => Some(&held.ends),
+            (Names::Definitions, _) => Some(&held.part_ends),
+        };
+        if let Some(&end) = ends.and_then(|e| e.get(n)) {
+            *n = end;
+        }
+        let name: S = names.nth(*n);
+        *n += 1;
+        if !taken(&name) {
+            break name;
+        }
+    }
+}
+
+/// Returns the `idx`th (0-indexed) fresh [`Names::Variables`] name starting from `start_n`,
+/// skipping [`ProgramNames`] and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
+pub fn nth_fresh_variable<'a, S>(
+    start_n: usize,
+    idx: usize,
+    skip_names: impl IntoIterator<Item = &'a str>,
+) -> S
+where
+    S: From<&'static str> + From<String>,
+{
+    let stats = fresh_variable_span_stats(start_n, idx + 1, skip_names);
+    Names::Variables.nth(stats.end_n - 1)
 }
 
 /// The next name of `names` from the `n`th on that the program being checked does not bind

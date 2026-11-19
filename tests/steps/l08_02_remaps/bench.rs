@@ -1078,3 +1078,32 @@ fn a_lambda_that_calls_a_parameter_n_families_deep_runs_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_maps_by_a_parameter_chained_check_in_linear_time() {
+    // Plan row FAIL-map-chain-needs-quadratic: link h{i} calls h{i-1} and maps its result by
+    // the parameter `f`, so the needs of a link's signature grow with its depth.
+    for lambda in [false, true] {
+        let by = if lambda { "x -> f(x)" } else { "f" };
+        let srcs = scaling::inputs(N_LEVELS, |n| {
+            let mut src = format!("h0(positional f, positional m) = m.map({by});\n");
+            for i in 1..n {
+                src.push_str(&format!(
+                    "h{i}(positional f, positional m) = h{}(f, m).map({by});\n",
+                    i - 1
+                ));
+            }
+            src.push_str(&format!(
+                "a = h{}(x -> x + 1, {{\"k\" -> 0}})[\"k\"];\n",
+                n - 1
+            ));
+            src
+        });
+        let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), n.to_string());
+        scaling::check(
+            &format!("n functions chained, each mapping by `{by}`, whole path"),
+            N_LEVELS,
+            run,
+        );
+    }
+}

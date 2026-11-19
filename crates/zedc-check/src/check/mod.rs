@@ -2410,6 +2410,8 @@ struct Ck<'t, 'a> {
     /// Each type read at a carrier so far, by the type's scalars and the carrier, with what
     /// the read gave ([`Ck::read_at_once`]).
     carrier_reads: std::cell::RefCell<CarrierReads>,
+    /// Round 10 fixed-D state (sparse store metadata, M63 pending slots, open forwards, stats).
+    pub(in crate::check) r10: probe::R10State,
 }
 
 /// Each type read at a carrier, by the type's scalars and the carrier, with what the read gave
@@ -2672,7 +2674,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// A check with the binder tables `t`, whose rejections' fixes `check_fixes` checks as
     /// written ([`Self::check_fixes`]).
     fn new(t: &'t Tables<'a>, check_fixes: fn(&mut Self, Span, &mut Msg)) -> Self {
-        Ck {
+        let mut ck = Ck {
             t,
             env: HashMap::new(),
             info: Info::default(),
@@ -2818,7 +2820,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             mixed: HashSet::new(),
             near: std::cell::Cell::new(None),
             carrier_reads: std::cell::RefCell::new(HashMap::new()),
+            r10: probe::R10State::new_for_ck(),
+        };
+        if ck.r10.uses_sparse() {
+            ck.classes.enable_sparse();
         }
+        ck
     }
 
     /// Records that the program writes the literal value `v`, without its `-`, at `span`; or,
@@ -3025,10 +3032,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         let cut = |t: &Ty, w: &KType| {
             let mut a = KType::empty();
             for (r, h) in strip {
-                if t.vars
-                    .iter()
-                    .any(|v| class_id(v).is_some_and(|k| self.find(k) == *r))
-                {
+                if t.vars.iter().any(|v| {
+                    class_id(v).is_some_and(|k| {
+                        k < self.classes.len()
+                            && !self.r10_is_closed_internal(k)
+                            && self.find(k) == *r
+                    })
+                }) {
                     a = &a | &(w & h);
                 }
             }
@@ -4501,6 +4511,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             unoffered: 0,
         });
         self.pending[self.level].push(id);
+        self.r10.on_class_pushed(self.level, id);
         id
     }
 
@@ -4515,8 +4526,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Logs class `r` before a change, while a repair is tried.
     fn touch(&mut self, r: usize) {
         if self.trying {
+            self.r10_force_root(r, "f6");
             #[cfg(any(test, feature = "forward-probe"))]
-            self.classes.event(r, "touch-trying");
+            if !self.r10_uses_sparse() {
+                self.classes.event(r, "touch-trying");
+            }
             self.log
                 .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
@@ -4659,12 +4673,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(k) = class_id(&v).filter(|&k| k < self.classes.len()) else {
                 continue;
             };
+            if self.r10_is_closed_internal(k) {
+                continue;
+            }
             let r = self.find(k);
             if self.classes[r].level <= level || self.classes[r].resolved.is_some() {
                 continue;
             }
+            self.r10_force_root(r, "f5");
             #[cfg(any(test, feature = "forward-probe"))]
-            self.classes.event(r, "lower-walk");
+            if !self.r10_uses_sparse() {
+                self.classes.event(r, "lower-walk");
+            }
             self.touch(r);
             self.classes[r].level = level;
             let mut more = Vars::default();
@@ -4999,7 +5019,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Piece::Var(v) = p else {
             return None;
         };
-        let r = self.find(class_id(v)?);
+        let k = class_id(v)?;
+        if self.r10_is_closed_internal(k) {
+            return None;
+        }
+        let r = self.find(k);
         self.classes[r].resolved.is_none().then_some(r)
     }
 
@@ -5008,7 +5032,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// for whatever type the caller passes, as a variable of a signature does, and a use that
     /// read the class's type in its place would read `v` again without end.
     fn class_root(&self, v: &str) -> Option<usize> {
-        let r = self.find(class_id(v).filter(|&k| k < self.classes.len())?);
+        let k = class_id(v).filter(|&k| k < self.classes.len())?;
+        if self.r10_is_closed_internal(k) {
+            return None;
+        }
+        let r = self.find(k);
         let resolved = self.classes[r].resolved.as_ref();
         let own = resolved.and_then(Ty::as_var).and_then(|w| class_id(w));
         let root = (own.map(|k| self.find(k)) != Some(r)).then_some(r);
@@ -5169,7 +5197,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn as_literals(&self, t: &Ty) -> Ty {
         let lits: Binds = (t.var_facts().classes.into_iter())
             .filter_map(|v| {
-                let r = self.find(class_id(&v).filter(|&k| k < self.classes.len())?);
+                let k = class_id(&v).filter(|&k| k < self.classes.len())?;
+                if self.r10_is_closed_internal(k) {
+                    return None;
+                }
+                let r = self.find(k);
                 let c = &self.classes[r];
                 if !c.generic || c.resolved.is_some() || c.lits.is_empty() {
                     return None;
@@ -5255,6 +5287,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(k) = class_id(v).filter(|&k| k < self.classes.len()) else {
                 continue;
             };
+            if self.r10_is_closed_internal(k) {
+                continue;
+            }
             // Every class variable is written `$k` for its class `k`, so a class that is its
             // own root and has no type yet stands for itself, and needs no binding.
             let r = self.find(k);
@@ -5278,6 +5313,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Self::generalize`]), and each reading of those functions reads it as this type.
     fn stale(&self, v: &str) -> Option<Ty> {
         let k = class_id(v).filter(|&k| k < self.classes.len())?;
+        if self.r10_is_closed_internal(k) {
+            return None;
+        }
         let t = self.classes[self.find(k)].resolved.as_ref()?;
         is_solved(t).then(|| t.clone())
     }
@@ -5350,6 +5388,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let s = s.solved_with(&|v| self.stale(v));
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
         for n in &s.needs {
+            if let NeedKind::Fwd(fwd) = &n.kind {
+                // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on` variable
+                // in it has a non-`Into` use, so `sig_text` must keep it as a type variable.
+                for t in &fwd.on_vars {
+                    if let Some(v) = t.as_var() {
+                        passed.insert(v.clone(), None);
+                    }
+                }
+                continue;
+            }
             let Some(v) = n.on.as_var() else { continue };
             let into = match &n.kind {
                 NeedKind::Into { ty, .. } => Some(ty),
@@ -5411,7 +5459,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn is_class(&self, v: &str) -> bool {
         class_id(v)
             .filter(|&k| k < self.classes.len())
-            .is_some_and(|k| self.classes[self.find(k)].name.is_none())
+            .is_some_and(|k| {
+                if self.r10_is_closed_internal(k) {
+                    return false;
+                }
+                self.classes[self.find(k)].name.is_none()
+            })
     }
 
     /// The names of the type variables `vars` holds that functions which ended named.
@@ -5419,6 +5472,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         vars.into_iter()
             .filter_map(|v| {
                 let k = class_id(&v).filter(|&k| k < self.classes.len())?;
+                if self.r10_is_closed_internal(k) {
+                    return None;
+                }
                 let name = self.classes[self.find(k)].name.clone()?;
                 Some((v, Ty::var(name)))
             })
@@ -5446,11 +5502,189 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
     /// types bound, with a hash set and map, so linear in their size, as the renaming that
     /// follows is.
-    fn finished(&self, s: &Arc<Sig>, made: &mut Renamings) -> Arc<Sig> {
-        // One that holds no class variable, as most do once settled, is as it is.
-        if s.facts().classes.is_empty() {
+    /// Decodes `NeedKind::Fwd` in `s` (and recursively in nested functions `s` holds) ONLY when
+    /// `s` holds an outer variable (`!s.holds_only_own_variables()`) alongside `NeedKind::Fwd`.
+    /// Never decodes on top-level chain functions `h_i` (`O(1)` per link).
+    fn r10_promote_open_fwds(s: &Arc<Sig>) -> Arc<Sig> {
+        if s.holds_only_own_variables() {
             return s.clone();
         }
+        let mut child_changed = false;
+        let map_ty = |t: &Ty, changed: &mut bool| -> Ty {
+            if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+                return t.clone();
+            }
+            t.with_held_fns(|f| {
+                let nf = Self::r10_promote_open_fwds(f);
+                if !Arc::ptr_eq(&nf, f) {
+                    *changed = true;
+                }
+                nf
+            })
+        };
+        let new_arrows: Vec<Arrow> = s
+            .arrows
+            .iter()
+            .map(|a| Arrow {
+                params: a
+                    .params
+                    .iter()
+                    .map(|p| map_ty(p, &mut child_changed))
+                    .collect(),
+                result: map_ty(&a.result, &mut child_changed),
+                partial: a.partial,
+                stores_not_found: a.stores_not_found,
+            })
+            .collect();
+        let new_needs: Vec<Need> = s
+            .needs
+            .iter()
+            .map(|n| n.map_tys(|t| map_ty(t, &mut child_changed)))
+            .collect();
+        let mut cur = if child_changed {
+            let mut copy = (**s).clone();
+            copy.arrows = new_arrows;
+            copy.needs = new_needs;
+            copy.facts = Default::default();
+            Arc::new(copy)
+        } else {
+            s.clone()
+        };
+        if cur.has_fwd_needs() && sig_vars(&cur).iter().any(|v| !cur.own.contains(v)) {
+            let mut decoded_sig = (*cur).clone();
+            let mut promoted_needs = Vec::new();
+            let mut promoted_own = decoded_sig.own.clone();
+            for n in &decoded_sig.needs {
+                match &n.kind {
+                    NeedKind::Fwd(fwd) => {
+                        let mut f_copy = (**fwd).clone();
+                        f_copy.finish_naming = f_copy.gen_naming.clone();
+                        f_copy.base_class = None;
+                        for rt in f_copy.materialize_result_tys() {
+                            if let Some(rv) = rt.as_var() {
+                                promoted_own.insert(rv.clone());
+                            }
+                        }
+                        promoted_needs.extend(f_copy.decode(n.span));
+                    }
+                    _ => promoted_needs.push(n.clone()),
+                }
+            }
+            decoded_sig.needs = promoted_needs;
+            decoded_sig.own = promoted_own;
+            decoded_sig.facts = Default::default();
+            cur = Arc::new(decoded_sig);
+        }
+        cur
+    }
+
+    /// Finishes any closed `$k`-owning nested `Sig` held inside `callee`'s needs, memoized by
+    /// `*const Sig` across the entire `Ck::finish` pass (`O(1)` per unique callee, 0 decodes).
+    fn r10_finish_fwd_callee(
+        &self,
+        callee: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+    ) -> Arc<Sig> {
+        let ptr = Arc::as_ptr(callee);
+        if let Some(done) = fwd_memo.get(&ptr) {
+            return done.clone();
+        }
+        let mut changed = false;
+        let mut new_needs = Vec::with_capacity(callee.needs.len());
+        for n in &callee.needs {
+            match &n.kind {
+                NeedKind::Fwd(child_fwd) => {
+                    let nc = self.r10_finish_fwd_callee(&child_fwd.callee, made, fwd_memo);
+                    if !Arc::ptr_eq(&nc, &child_fwd.callee) {
+                        changed = true;
+                        let mut updated = (**child_fwd).clone();
+                        updated.callee = nc;
+                        updated.digest_summary = None;
+                        let mut nn = n.clone();
+                        nn.kind = NeedKind::Fwd(Arc::new(updated));
+                        new_needs.push(nn);
+                    } else {
+                        new_needs.push(n.clone());
+                    }
+                }
+                _ => {
+                    new_needs.push(n.map_tys(|t| {
+                        if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+                            return t.clone();
+                        }
+                        t.with_held_fns(|f| {
+                            if f.holds_only_own_variables() && !f.facts().classes.is_empty() {
+                                let nf = self.finished_arc_with(f, made, fwd_memo);
+                                if !Arc::ptr_eq(&nf, f) {
+                                    changed = true;
+                                }
+                                nf
+                            } else {
+                                f.clone()
+                            }
+                        })
+                    }));
+                }
+            }
+        }
+        let out = if changed {
+            let mut copy = (**callee).clone();
+            copy.needs = new_needs;
+            copy.facts = Default::default();
+            Arc::new(copy)
+        } else {
+            callee.clone()
+        };
+        fwd_memo.insert(ptr, out.clone());
+        out
+    }
+
+    fn finished_with(
+        &self,
+        s: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+    ) -> Arc<Sig> {
+        // One that holds no class variable, as most do once settled, is as it is.
+        if s.facts().classes.is_empty() && !s.has_fwd_needs() {
+            return s.clone();
+        }
+        let promoted = Self::r10_promote_open_fwds(s);
+        let mut callee_changed = false;
+        let s_ref: Arc<Sig> = if promoted.has_fwd_needs() {
+            let mut new_needs = Vec::with_capacity(promoted.needs.len());
+            for n in &promoted.needs {
+                if let NeedKind::Fwd(fwd) = &n.kind {
+                    let nc = self.r10_finish_fwd_callee(&fwd.callee, made, fwd_memo);
+                    if !Arc::ptr_eq(&nc, &fwd.callee) {
+                        callee_changed = true;
+                        let mut uf = (**fwd).clone();
+                        uf.callee = nc;
+                        uf.digest_summary = None;
+                        let mut nn = n.clone();
+                        nn.kind = NeedKind::Fwd(Arc::new(uf));
+                        new_needs.push(nn);
+                        continue;
+                    }
+                }
+                new_needs.push(n.clone());
+            }
+            if callee_changed {
+                let mut copy = (*promoted).clone();
+                copy.needs = new_needs;
+                copy.facts = Default::default();
+                Arc::new(copy)
+            } else {
+                promoted
+            }
+        } else {
+            promoted
+        };
+        if s_ref.facts().classes.is_empty() && !callee_changed {
+            return s_ref;
+        }
+        let s = &s_ref;
         let vars = sig_vars(s);
         let b = self.solving(&vars);
         // What each variable printed stands for, with the name it is printed by; a class that
@@ -5458,6 +5692,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let printed = |v: &Arc<str>, held: bool| -> Option<(Printed, Arc<str>)> {
             match class_id(v).filter(|&k| k < self.classes.len()) {
                 Some(k) => {
+                    if self.r10_is_closed_internal(k) {
+                        return None;
+                    }
                     let r = self.find(k);
                     Some((Printed::Class(r), self.classes[r].name.clone()?))
                 }
@@ -5515,7 +5752,68 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|v| b.get(*v).is_none())
             .filter_map(|v| rename(v, false))
             .collect();
-        made.renamed_replaced(s, to, b)
+        let out = made.renamed_replaced(s, to, b);
+        if !callee_changed {
+            return out;
+        }
+        // Refresh `digest_summary` on any `NeedKind::Fwd` whose callee changed.
+        let mut arrow_param_vars: HashSet<Arc<str>> = HashSet::new();
+        for a in &out.arrows {
+            for p in &a.params {
+                if let Some(v) = p.as_var()
+                    && out.own.contains(v)
+                {
+                    arrow_param_vars.insert(v.clone());
+                }
+            }
+        }
+        let mut mat_result_ranks: HashMap<Arc<str>, usize> = HashMap::new();
+        let mut cur = 0usize;
+        for nd in &out.needs {
+            match &nd.kind {
+                NeedKind::Fwd(fwd) => {
+                    for &(off, ref ety) in &fwd.exits {
+                        if let Some(v) = ety.as_var()
+                            && out.own.contains(v)
+                            && !arrow_param_vars.contains(v)
+                        {
+                            mat_result_ranks.entry(v.clone()).or_insert(cur + off);
+                        }
+                    }
+                    cur += fwd.need_count;
+                }
+                _ => {
+                    if let Some(v) = nd.result.as_ref().and_then(Ty::as_var)
+                        && out.own.contains(v)
+                        && !arrow_param_vars.contains(v)
+                    {
+                        mat_result_ranks.entry(v.clone()).or_insert(cur);
+                    }
+                    cur += 1;
+                }
+            }
+        }
+        let mut copy = (*out).clone();
+        let mut br = 0usize;
+        for nd in &mut copy.needs {
+            if let NeedKind::Fwd(fwd_arc) = &mut nd.kind {
+                let sum = ty::r10_hash::build_fwd_summary_at_base(
+                    fwd_arc,
+                    nd.span,
+                    br,
+                    &mat_result_ranks,
+                    ty::r10_hash::R_BASE,
+                );
+                let inner = Arc::make_mut(fwd_arc);
+                inner.digest_base_rank = br;
+                inner.digest_summary = sum;
+                br += inner.need_count;
+            } else {
+                br += 1;
+            }
+        }
+        copy.facts = Default::default();
+        Arc::new(copy)
     }
 
     /// Puts each class's type in place of its variable in what the checker found. Each
@@ -5706,56 +6004,156 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the `.map` need on `mm`: such a call of the function meets the fold's need too, so
         // its needs are searched, each signature once (`seen`, by address), O(needs) in all.
         if !self.info.split_folds.is_empty() {
-            for (&id, sig) in &self.info.sigs {
-                let mut sites: Vec<Span> = Vec::new();
-                let mut seen: HashSet<*const Sig> = HashSet::new();
-                let mut parts: HashSet<*const Ty> = HashSet::new();
-                let mut todo: Vec<&Sig> = vec![sig];
-                while let Some(s) = todo.pop() {
-                    for n in &s.needs {
-                        if let NeedKind::Reduce(_, site, _) | NeedKind::SumMethod { site, .. } =
-                            n.kind
-                            && self.info.split_folds.contains_key(&site)
-                        {
-                            sites.push(site);
-                            // The folds alike to it, whose needs are its need.
-                            sites.extend(later_folds.get(&site).into_iter().flatten());
-                        }
-                        // A function held in a tuple, at any depth, is searched as one held
-                        // alone (REDUCE-generic-identity-values, form 3): `(f(y), f)` holds `f`.
-                        let mut tys: Vec<&Ty> = n.tys().collect();
-                        while let Some(t) = tys.pop() {
-                            for f in t.fns.iter() {
-                                if seen.insert(Arc::as_ptr(f)) {
-                                    todo.push(f);
+            if self.r10.cfg.no_split_memo {
+                // M31 negative control: old per-id `seen` walk (quadratic n^2/2 on chains!).
+                let skip_compact = self.r10.cfg.skip_compact_split_needs;
+                for (&id, sig) in &self.info.sigs {
+                    let mut sites: Vec<Span> = Vec::new();
+                    let mut seen: HashSet<*const Sig> = HashSet::new();
+                    let mut parts: HashSet<*const Ty> = HashSet::new();
+                    let mut todo: Vec<&Sig> = vec![sig];
+                    while let Some(s) = todo.pop() {
+                        self.r10.stats.finish_sigs_walked += 1;
+                        self.r10.stats.finish_needs_walked += s.needs.len();
+                        for n in &s.needs {
+                            if let NeedKind::Fwd(fwd) = &n.kind {
+                                if !skip_compact && seen.insert(Arc::as_ptr(&fwd.callee)) {
+                                    todo.push(&fwd.callee);
                                 }
+                            } else if let NeedKind::Reduce(_, site, _)
+                            | NeedKind::SumMethod { site, .. } = n.kind
+                                && self.info.split_folds.contains_key(&site)
+                            {
+                                sites.push(site);
+                                sites.extend(later_folds.get(&site).into_iter().flatten());
                             }
-                            for row in t.tuples.iter() {
-                                tys.extend(row.iter().filter(|c| parts.insert(*c as *const Ty)));
+                            let mut tys: Vec<&Ty> = n.tys().collect();
+                            while let Some(t) = tys.pop() {
+                                for f in t.fns.iter() {
+                                    if seen.insert(Arc::as_ptr(f)) {
+                                        todo.push(f);
+                                    }
+                                }
+                                for row in t.tuples.iter() {
+                                    tys.extend(
+                                        row.iter().filter(|c| parts.insert(*c as *const Ty)),
+                                    );
+                                }
                             }
                         }
                     }
+                    if sites.is_empty() {
+                        continue;
+                    }
+                    sites.sort_unstable();
+                    sites.dedup();
+                    self.info.split_needs.insert(id, sites);
                 }
-                if sites.is_empty() {
-                    continue;
+            } else {
+                // M31 fix: shared iterative post-order DAG memo across all `info.sigs` entries.
+                // Each unique `Arc<Sig>` is walked at most once in the entire `finish` pass!
+                let skip_compact = self.r10.cfg.skip_compact_split_needs;
+                let mut memo: HashMap<*const Sig, Arc<[Span]>> = HashMap::new();
+                for (&id, sig) in &self.info.sigs {
+                    let root_ptr = Arc::as_ptr(sig);
+                    if !memo.contains_key(&root_ptr) {
+                        let mut stack: Vec<(&Sig, Vec<&Sig>, Vec<Span>, bool)> =
+                            vec![(sig, Vec::new(), Vec::new(), false)];
+                        let mut on_stack: HashSet<*const Sig> = HashSet::from([root_ptr]);
+                        while let Some((s, children, own_sites, ready)) = stack.pop() {
+                            let s_ptr = s as *const Sig;
+                            if memo.contains_key(&s_ptr) {
+                                on_stack.remove(&s_ptr);
+                                continue;
+                            }
+                            if !ready {
+                                self.r10.stats.finish_sigs_walked += 1;
+                                self.r10.stats.finish_needs_walked += s.needs.len();
+                                let mut local_sites: Vec<Span> = Vec::new();
+                                let mut local_children: Vec<&Sig> = Vec::new();
+                                let mut seen_child: HashSet<*const Sig> = HashSet::new();
+                                let mut parts: HashSet<*const Ty> = HashSet::new();
+                                for n in &s.needs {
+                                    if let NeedKind::Fwd(fwd) = &n.kind {
+                                        if !skip_compact {
+                                            let cp = Arc::as_ptr(&fwd.callee);
+                                            if seen_child.insert(cp) {
+                                                local_children.push(&fwd.callee);
+                                            }
+                                        }
+                                    } else if let NeedKind::Reduce(_, site, _)
+                                    | NeedKind::SumMethod { site, .. } = n.kind
+                                        && self.info.split_folds.contains_key(&site)
+                                    {
+                                        local_sites.push(site);
+                                        local_sites
+                                            .extend(later_folds.get(&site).into_iter().flatten());
+                                    }
+                                    let mut tys: Vec<&Ty> = n.tys().collect();
+                                    while let Some(t) = tys.pop() {
+                                        for f in t.fns.iter() {
+                                            let fp = Arc::as_ptr(f);
+                                            if seen_child.insert(fp) {
+                                                local_children.push(f);
+                                            }
+                                        }
+                                        for row in t.tuples.iter() {
+                                            tys.extend(
+                                                row.iter()
+                                                    .filter(|c| parts.insert(*c as *const Ty)),
+                                            );
+                                        }
+                                    }
+                                }
+                                let uncached: Vec<&Sig> = local_children
+                                    .iter()
+                                    .copied()
+                                    .filter(|c| {
+                                        let cp = *c as *const Sig;
+                                        !memo.contains_key(&cp) && !on_stack.contains(&cp)
+                                    })
+                                    .collect();
+                                stack.push((s, local_children, local_sites, true));
+                                for c in uncached {
+                                    if on_stack.insert(c as *const Sig) {
+                                        stack.push((c, Vec::new(), Vec::new(), false));
+                                    }
+                                }
+                            } else {
+                                let mut all_sites = own_sites;
+                                for c in children {
+                                    if let Some(cs) = memo.get(&(c as *const Sig)) {
+                                        all_sites.extend_from_slice(cs);
+                                    }
+                                }
+                                all_sites.sort_unstable();
+                                all_sites.dedup();
+                                memo.insert(s_ptr, all_sites.into());
+                                on_stack.remove(&s_ptr);
+                            }
+                        }
+                    }
+                    if let Some(sites) = memo.get(&root_ptr)
+                        && !sites.is_empty()
+                    {
+                        self.info.split_needs.insert(id, sites.to_vec());
+                    }
                 }
-                sites.sort_unstable();
-                sites.dedup();
-                self.info.split_needs.insert(id, sites);
             }
         }
         // The signatures share the functions they hold, so they are named through one
-        // [`Renamings`], which makes a function shared by several once for each set of names.
+        // [`Renamings`] and one shared `fwd_memo` across all `info.sigs` and `info.calls`.
         let mut made = Renamings::default();
+        let mut fwd_memo: HashMap<*const Sig, Arc<Sig>> = HashMap::new();
         let sigs = std::mem::take(&mut self.info.sigs);
         self.info.sigs = sigs
             .into_iter()
-            .map(|(k, s)| (k, self.finished_arc(&s, &mut made)))
+            .map(|(k, s)| (k, self.finished_arc_with(&s, &mut made, &mut fwd_memo)))
             .collect();
         let calls = std::mem::take(&mut self.info.calls);
         self.info.calls = calls
             .into_iter()
-            .map(|(k, s)| (k, self.finished_arc(&s, &mut made)))
+            .map(|(k, s)| (k, self.finished_arc_with(&s, &mut made, &mut fwd_memo)))
             .collect();
         let tops = std::mem::take(&mut self.info.tops);
         self.info.tops = tops
@@ -5812,6 +6210,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())
             .map(|((span, r), kept)| refused_warning(span, &r, &kept))
             .collect();
+        self.r10.stats.alloc_classes = self.classes.alloc_count();
+        self.r10.stats.logical_classes = self.classes.len();
+        probe::save_r10_stats(&self.r10.stats);
     }
 
     /// Gives each key that computes of a remap whose need a signature left out
@@ -5892,9 +6293,273 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// [`Self::finished`] on `s` settled, which is `s` itself when it holds no class variable.
-    fn finished_arc(&self, s: &Arc<Sig>, made: &mut Renamings) -> Arc<Sig> {
-        self.finished(&s.settle(&|v| self.stale(v)), made)
+    /// [`Self::finished_with`] on `s` settled, sharing `fwd_memo` across calls.
+    fn finished_arc_with(
+        &self,
+        s: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+    ) -> Arc<Sig> {
+        self.finished_with(&s.settle(&|v| self.stale(v)), made, fwd_memo)
+    }
+
+    #[inline]
+    #[cfg(any(test, feature = "forward-probe"))]
+    pub(in crate::check) fn r10_uses_sparse(&self) -> bool {
+        self.r10.uses_sparse()
+    }
+
+    pub(in crate::check) fn r10_is_closed_internal(&self, k: usize) -> bool {
+        if self.classes.is_materialized(k) || !self.r10.uses_sparse() {
+            return false;
+        }
+        let idx = self
+            .r10
+            .closed_internal_ranges
+            .partition_point(|&(lo, _)| lo <= k);
+        idx > 0 && k < self.r10.closed_internal_ranges[idx - 1].1
+    }
+
+    pub(in crate::check) fn make_fresh_class(id: usize, level: usize, given: bool) -> Class {
+        Class {
+            parent: id,
+            rank: 0,
+            mask: EVERY,
+            level,
+            lits: Vec::new(),
+            reasons: Vec::new(),
+            resolved: None,
+            name: None,
+            uses: Vec::new(),
+            known: HashMap::new(),
+            orders: HashMap::new(),
+            order_of: None,
+            data: false,
+            flowed: Vec::new(),
+            size: 1,
+            proof: None,
+            binder: None,
+            generic: false,
+            asked: false,
+            floats: false,
+            rat: false,
+            given,
+            narrowed_to: Vec::new(),
+            narrows: false,
+            decimal: false,
+            alone: Vec::new(),
+            ops: Vec::new(),
+            refused: false,
+            unoffered: 0,
+        }
+    }
+
+    pub(in crate::check) fn build_fwd_need_from_open(&self, f: &probe::OpenForward) -> ty::FwdNeed {
+        let mut param_lookup: HashMap<&Arc<str>, &Ty> = HashMap::new();
+        for (pv, rty) in &f.param_map {
+            param_lookup.insert(pv, rty);
+        }
+        let on_vars: Vec<Ty> = f
+            .summary
+            .on_param_vars
+            .iter()
+            .filter_map(|pv| param_lookup.get(pv).map(|&t| t.clone()))
+            .collect();
+        let exits: Vec<(usize, Ty)> = f
+            .summary
+            .exit_offsets
+            .iter()
+            .zip(&f.exit_ids)
+            .map(|(&off, &eid)| (off, Ty::var(format!("${eid}").into())))
+            .collect();
+        let mut var_lookup: HashMap<Arc<str>, Ty> = f
+            .param_map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if let Some(k0) = f.summary.first_result_id {
+            for (&off, &eid) in f.summary.exit_offsets.iter().zip(&f.exit_ids) {
+                var_lookup.insert(
+                    format!("${}", k0 + off).into(),
+                    Ty::var(format!("${eid}").into()),
+                );
+            }
+        } else if let Some(exp) = &f.summary.explicit_result_vars {
+            for (&off, &eid) in f.summary.exit_offsets.iter().zip(&f.exit_ids) {
+                if let Some(v) = exp.get(off) {
+                    var_lookup.insert(v.clone(), Ty::var(format!("${eid}").into()));
+                }
+            }
+        }
+        let var_ties: Vec<Vec<Ty>> = f
+            .summary
+            .var_ties
+            .iter()
+            .map(|grp| {
+                grp.iter()
+                    .filter_map(|v| var_lookup.get(v).cloned())
+                    .collect()
+            })
+            .filter(|g: &Vec<Ty>| g.len() >= 2)
+            .collect();
+        let mut caller_steps: Vec<ty::FwdVarStep> = Vec::with_capacity(f.summary.var_steps.len());
+        for st in &f.summary.var_steps {
+            match st {
+                ty::FwdVarStep::InternalRun(cnt) => {
+                    if *cnt > 0 {
+                        if let Some(ty::FwdVarStep::InternalRun(prev)) = caller_steps.last_mut() {
+                            *prev += *cnt;
+                        } else {
+                            caller_steps.push(ty::FwdVarStep::InternalRun(*cnt));
+                        }
+                    }
+                }
+                ty::FwdVarStep::ClassVar(cv) => {
+                    if let Some(mv) = var_lookup.get(cv).and_then(Ty::as_var) {
+                        caller_steps.push(ty::FwdVarStep::ClassVar(mv.clone()));
+                    }
+                }
+            }
+        }
+        ty::FwdNeed {
+            callee: f.callee_sig.clone(),
+            what_note: f.what_note.clone(),
+            sigma: f.param_map.clone(),
+            exits,
+            on_vars,
+            var_ties,
+            base_class: f.is_consecutive().then_some(f.lo),
+            explicit_result_vars: (!f.is_consecutive()).then(|| {
+                (0..f.summary.total_results)
+                    .map(|j| format!("${}", f.lo + j).into())
+                    .collect()
+            }),
+            var_steps: caller_steps,
+            gen_naming: None,
+            finish_naming: None,
+            need_count: f.summary.total_needs,
+            held_free: f.summary.held_free,
+            held_names: f.summary.held_names.clone(),
+            held_outer: f.summary.held_outer.clone(),
+            held_classes: f.summary.held_classes.clone(),
+            digest_base_rank: 0,
+            digest_summary: None,
+        }
+    }
+
+    /// Forces open forward `fid`: pure leaf copy that materializes `I(F)`, fills `PendingSlot`,
+    /// and writes `uses`, `known`, and deferred `call_written` in exact sequence order.
+    /// Calls NO checker methods (`merge`, `flow`, `need`, `meet`, `touch`, `lower`, `resolve`).
+    pub(in crate::check) fn r10_force_forward(&mut self, fid: usize, why: &str) {
+        if self.r10.forwards[fid].status != probe::ForwardStatus::Open {
+            return;
+        }
+        self.r10.forwards[fid].status = probe::ForwardStatus::Forced;
+        self.r10.stats.forced += 1;
+        *self.r10.stats.force_reasons.entry(why.into()).or_default() += 1;
+
+        let f = self.r10.forwards[fid].clone();
+        let pending_mode = self.r10.cfg.pending_mode;
+        let skip_cw = self.r10.cfg.skip_call_written_on_force;
+        let clear_lambda = !self.r10.cfg.keep_map_lambda_on_decode;
+
+        for id in f.lo..f.hi {
+            if !self.classes.is_materialized(id) {
+                self.classes
+                    .materialize_at(id, Self::make_fresh_class(id, f.level, true));
+            }
+        }
+
+        self.r10.stats.pending_slot_fills += 1;
+        self.r10.pending_levels[f.level].fill_slot_ol(
+            f.pending_slot,
+            (f.lo..f.hi).collect(),
+            pending_mode,
+        );
+        for &w in &f.watched_roots {
+            if let Some(ws) = self.r10.root_watchers.get_mut(&w) {
+                ws.retain(|&x| x != fid);
+            }
+        }
+
+        let temp_fwd = self.build_fwd_need_from_open(&f);
+        let decoded = temp_fwd.decode_uncounted(f.call_span, clear_lambda);
+
+        let mut touched_roots = BTreeSet::new();
+        let mut exact_call_written = Vec::new();
+        for (idx, mut need) in decoded.into_iter().enumerate() {
+            let seq = f.seq_lo + idx;
+            if let NeedKind::Call {
+                positional, named, ..
+            } = &need.kind
+            {
+                let arity = positional.len() + named.len();
+                exact_call_written.push((f.call_span, Some(vec![None; arity].into())));
+            }
+            let Some(on_v) = need.on.as_var() else {
+                continue;
+            };
+            let Some(on_k) = class_id(on_v) else {
+                continue;
+            };
+            let r = self.find(on_k);
+            need.on = Ty::var(format!("${r}").into());
+            let site = match &need.kind {
+                NeedKind::Call { site, .. } => *site,
+                _ => None,
+            };
+            let gives = need.result.is_some();
+            let given = need.result.clone().unwrap_or_else(Ty::empty);
+            let key = (site_free(&need.kind).into_owned(), gives);
+            let c = &mut self.classes[r];
+            c.uses.push((seq, need));
+            c.known.entry(key).or_insert((given, f.call_span, site));
+            self.r10.stats.records_written += 2;
+            touched_roots.insert(r);
+        }
+
+        if !skip_cw && !exact_call_written.is_empty() {
+            let cw_len = exact_call_written.len();
+            let entry = self.call_written.entry(f.call_span).or_default();
+            let mut combined = exact_call_written;
+            combined.append(entry);
+            *entry = combined;
+            self.r10.stats.call_written_entries += cw_len;
+        }
+
+        for r in touched_roots {
+            self.classes[r].uses.sort_by_key(|(s, _)| *s);
+        }
+    }
+
+    /// Forces every open forward watching root `k` (`f3`, `f4`, `f5`, `f6`, `f7`).
+    /// `r10_force_forward` is a pure leaf copy, so `self.r10.forcing` is never true on entry (`M56(c)`).
+    pub(in crate::check) fn r10_force_root(&mut self, k: usize, barrier: &'static str) {
+        if !self.r10.cfg.enabled || self.r10.barrier_skipped(barrier) {
+            return;
+        }
+        assert!(
+            !self.r10.forcing,
+            "M56(c): r10_force_root must never be re-entered while forcing"
+        );
+        if !self.classes.is_materialized(k) {
+            return;
+        }
+        let r = self.find(k);
+        let Some(fids) = self.r10.root_watchers.get(&r).cloned() else {
+            return;
+        };
+        if fids.is_empty() {
+            return;
+        }
+        self.r10.forcing = true;
+        let mut sorted = fids;
+        sorted.sort_unstable();
+        sorted.dedup();
+        for fid in sorted {
+            self.r10_force_forward(fid, barrier);
+        }
+        self.r10.forcing = false;
     }
 
     /// `text` with each class variable replaced by its type. A `$k` is left in a text by the
@@ -13344,7 +14009,7 @@ fn port(key: Carrier, io: bool) -> Ty {
     }))
 }
 
-/// What a type variable that a finished signature prints stands for ([`Ck::finished`]).
+/// What a type variable that a finished signature prints stands for ([`Ck::finished_with`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Printed {
     /// One of the signature's own, by name.
@@ -13507,7 +14172,7 @@ impl Ck<'_, '_> {
     /// when its level ends ([`Self::generalize`]), and a class's level only goes down.
     fn lasting(&self, v: &str) -> bool {
         class_id(v)
-            .filter(|&k| k < self.classes.len())
+            .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))
             .is_some_and(|k| {
                 let c = &self.classes[self.find(k)];
                 c.name.is_none() && c.level <= self.level
@@ -14430,6 +15095,9 @@ pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
 
 #[cfg(test)]
 mod completeness;
+
+#[cfg(test)]
+mod r10_tests;
 
 #[cfg(test)]
 mod tests {

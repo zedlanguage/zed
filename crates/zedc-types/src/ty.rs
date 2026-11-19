@@ -18,7 +18,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
-pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
+pub use zed_kernel::types::names::{
+    FreshVarSpanStats, HeldVarSnapshot, Names, ProgramNames, current_held_var_snapshot, fresh_name,
+    fresh_name_with_held, fresh_variable_span_stats, fresh_variable_span_stats_with_held,
+    nth_fresh_variable,
+};
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
 use zed_kernel::{Items, Universe, Value};
@@ -980,8 +984,8 @@ impl<'a> Same<'a> {
             dense,
             keys,
             word,
-            needs,
-            own,
+            needs: _,
+            own: _,
             held,
             named,
             hull,
@@ -1004,8 +1008,7 @@ impl<'a> Same<'a> {
             && *dense == y.dense
             && *word == y.word
             // No needs, the common case, and the slice compare is not free.
-            && ((needs.is_empty() && y.needs.is_empty()) || *needs == y.needs)
-            && *own == y.own
+            && Sig::same_needs_and_own(x, y)
             && *held == y.held
             && *named == y.named
     }
@@ -1670,7 +1673,8 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::Sum
         | NeedKind::Entries
         | NeedKind::Reduce(..)
-        | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
+        | NeedKind::InDomain { .. }
+        | NeedKind::Fwd(_)) => parts.push(Dbg::Leaf(k)),
     }
     parts.push(Dbg::Text(", result: "));
     match result {
@@ -1896,11 +1900,22 @@ impl Sig {
             tys.extend(a.params);
             tys.push(a.result);
         }
-        tys.extend(
-            std::mem::take(&mut self.needs)
-                .into_iter()
-                .flat_map(Need::into_tys),
-        );
+        for mut n in std::mem::take(&mut self.needs) {
+            if let NeedKind::Fwd(fwd) = &mut n.kind {
+                let placeholder = Arc::clone(fwd);
+                n.kind = NeedKind::Entries;
+                if let Ok(mut inner) = Arc::try_unwrap(placeholder) {
+                    sigs.push(inner.callee);
+                    tys.extend(std::mem::take(&mut inner.sigma).into_iter().map(|(_, t)| t));
+                    tys.extend(std::mem::take(&mut inner.exits).into_iter().map(|(_, t)| t));
+                    tys.extend(std::mem::take(&mut inner.on_vars));
+                    for group in std::mem::take(&mut inner.var_ties) {
+                        tys.extend(group);
+                    }
+                }
+            }
+            tys.extend(n.into_tys());
+        }
         sigs.extend(self.facts.1.take());
     }
 }
@@ -2653,7 +2668,19 @@ impl<'b> Replacer<'b> {
 
     /// The signature `s` with its arrows and needs replaced in, `arrows` and `needs`: its own
     /// and held variables and its bounds as the variables hidden now replace them.
-    fn sig_of(&self, s: &Sig, arrows: Vec<Arrow>, needs: Vec<Need>) -> Sig {
+    fn sig_of(&self, s: &Sig, arrows: Vec<Arrow>, mut needs: Vec<Need>) -> Sig {
+        if self.mode == Mode::Rename {
+            for n in &mut needs {
+                if let NeedKind::Fwd(fwd) = &mut n.kind
+                    && fwd.finish_naming.is_none()
+                    && fwd.gen_naming.is_some()
+                {
+                    let inner = Arc::make_mut(fwd);
+                    inner.finish_naming = inner.gen_naming.clone();
+                    inner.base_class = None;
+                }
+            }
+        }
         // Its own or held variable `v` under `binds`: renamed, kept, or dropped as replaced.
         let keep = |v: &Arc<str>| match self.bound(v) {
             None => Some(v.clone()),
@@ -3472,6 +3499,7 @@ pub struct Facts(
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
+    pub(crate) std::sync::OnceLock<r10_hash::NeedBlockSummary>,
 );
 
 /// What the entries of a family hold at any depth, outside functions: a family is data only
@@ -3637,6 +3665,22 @@ impl VarFacts {
         extra.for_each(|v| {
             g.add_to(false, v, &mut added);
         });
+        for n in &s.needs {
+            if let NeedKind::Fwd(fwd) = &n.kind {
+                g.free = g.free.max(fwd.held_free);
+                for nm in &fwd.held_names {
+                    g.add_to(false, nm, &mut added);
+                }
+                for ov in &fwd.held_outer {
+                    if !s.own.contains(ov) {
+                        add(&mut g.outer, ov);
+                    }
+                }
+                for cv in &fwd.held_classes {
+                    g.add_to(true, cv, &mut added);
+                }
+            }
+        }
         g.free = g.free.max(s.named);
         while g.names.contains(&*var_name(g.free)) {
             g.free += 1;
@@ -3968,8 +4012,141 @@ pub struct Need {
 /// of the path, O(d) to make at each of the d calls of a chain, O(d²) in all; used, each link
 /// holds the one before it shared, so passing a need on adds one link, O(1), and the notes
 /// are written from the path only for an error, O(d).
+/// A node of a [`CallPath`]: either a single outer-to-inner link (`Cons`) or a shared
+/// inner-to-outer prefix (`Join`) created in O(1) per forward level by [`FwdNeed::decode`].
+#[allow(missing_docs)]
+#[derive(Clone, Debug)]
+pub enum ViaLink {
+    Cons {
+        at: Span,
+        text: Arc<str>,
+        next: Option<Arc<ViaLink>>,
+    },
+    Join {
+        /// Stored inner-to-outer so all leaves in a forward subtree share one `Arc<Via>` chain
+        /// in O(1) per level; emitted outer-to-inner (reversed) before `tail`.
+        prefix_rev: Arc<Via>,
+        tail: Option<Arc<ViaLink>>,
+    },
+}
+
+impl Drop for ViaLink {
+    /// Unlinks the chain iteratively so a chain of any length needs O(1) call stack.
+    fn drop(&mut self) {
+        let mut stack: Vec<Arc<ViaLink>> = Vec::new();
+        match self {
+            ViaLink::Cons { next, .. } => {
+                if let Some(n) = next.take() {
+                    stack.push(n);
+                }
+            }
+            ViaLink::Join { tail, .. } => {
+                if let Some(t) = tail.take() {
+                    stack.push(t);
+                }
+            }
+        }
+        while let Some(node) = stack.pop() {
+            if let Ok(mut inner) = Arc::try_unwrap(node) {
+                match &mut inner {
+                    ViaLink::Cons { next, .. } => {
+                        if let Some(n) = next.take() {
+                            stack.push(n);
+                        }
+                    }
+                    ViaLink::Join { tail, .. } => {
+                        if let Some(t) = tail.take() {
+                            stack.push(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The calls that passed a need on ([`Need::via`]).
 #[derive(Clone, Debug, Default)]
-pub struct CallPath(pub Option<Arc<Via>>);
+pub struct CallPath(pub Option<Arc<ViaLink>>);
+
+impl CallPath {
+    /// Prepends one outer link `(at, text)` onto `tail` in O(1).
+    pub fn prepend(at: Span, text: Arc<str>, tail: &CallPath) -> CallPath {
+        CallPath(Some(Arc::new(ViaLink::Cons {
+            at,
+            text,
+            next: tail.0.clone(),
+        })))
+    }
+
+    /// Combines a shared inner-to-outer `prefix_rev` with one leaf link `(at, text)` and `tail`
+    /// in O(1) (used by [`FwdNeed::decode`]).
+    pub fn with_prefix_and_cons(
+        prefix_rev: Option<Arc<Via>>,
+        at: Span,
+        text: Arc<str>,
+        tail: &CallPath,
+    ) -> CallPath {
+        let leaf = Arc::new(ViaLink::Cons {
+            at,
+            text,
+            next: tail.0.clone(),
+        });
+        match prefix_rev {
+            None => CallPath(Some(leaf)),
+            Some(p) => CallPath(Some(Arc::new(ViaLink::Join {
+                prefix_rev: p,
+                tail: Some(leaf),
+            }))),
+        }
+    }
+
+    /// The text of the outermost link, if any (`Ck::need` alike-entry propagation).
+    pub fn top_text(&self) -> Option<Arc<str>> {
+        match self.0.as_deref()? {
+            ViaLink::Cons { text, .. } => Some(text.clone()),
+            ViaLink::Join { prefix_rev, .. } => {
+                let mut cur = prefix_rev.as_ref();
+                while let Some(next) = cur.next.as_deref() {
+                    cur = next;
+                }
+                Some(cur.text.clone())
+            }
+        }
+    }
+
+    /// Calls `f(span, text)` for each link from outermost to innermost, iteratively (error path).
+    pub fn for_each_note(&self, mut f: impl FnMut(Span, &str)) {
+        let Some(root) = self.0.as_deref() else {
+            return;
+        };
+        let mut stack: Vec<&ViaLink> = vec![root];
+        while let Some(node) = stack.pop() {
+            match node {
+                ViaLink::Cons { at, text, next } => {
+                    f(*at, text);
+                    if let Some(n) = next.as_deref() {
+                        stack.push(n);
+                    }
+                }
+                ViaLink::Join { prefix_rev, tail } => {
+                    let mut rev: Vec<&Via> = Vec::new();
+                    let mut cur = Some(prefix_rev.as_ref());
+                    while let Some(v) = cur {
+                        rev.push(v);
+                        cur = v.next.as_deref();
+                    }
+                    for v in rev.into_iter().rev() {
+                        f(v.at, &v.text);
+                    }
+                    if let Some(t) = tail.as_deref() {
+                        stack.push(t);
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl PartialEq for CallPath {
     fn eq(&self, _: &CallPath) -> bool {
@@ -4412,6 +4589,302 @@ pub enum NeedKind {
         /// (CHK-pow-component-bound).
         path: Arc<[PathStep]>,
     },
+    /// Compact inherited forward block (`M66`, `M65`): holds the callee signature, parameter
+    /// substitution `sigma`, exit results, variable ties, implicit internal-variable naming spans,
+    /// and `O(1)`-composable `M65` rank-encoded polynomial summary.
+    Fwd(Arc<FwdNeed>),
+}
+
+thread_local! {
+    /// Counter of counted `FwdNeed::decode` calls on this thread (read by the `M66` tests to
+    /// verify zero decodes on chain links). Per thread, so tests that check in parallel do not
+    /// count each other's decodes: a check runs on the thread that calls it.
+    static FWD_DECODE_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The number of counted `FwdNeed` decodes on this thread since the last [`reset_fwd_decode_count`].
+pub fn fwd_decode_count() -> u64 {
+    FWD_DECODE_COUNT.with(Cell::get)
+}
+
+/// Sets this thread's count of `FwdNeed` decodes to 0.
+pub fn reset_fwd_decode_count() {
+    FWD_DECODE_COUNT.with(|c| c.set(0));
+}
+
+/// Naming spans for a `FwdNeed`'s unmaterialized internal result variables (`M66`, `M62`, `M56`).
+#[derive(Clone, Debug)]
+pub struct FwdFinishNaming {
+    /// Runs of `(start_n, count)` in `Names::Variables` (`O(1)` runs on chains).
+    pub runs: Vec<(usize, usize)>,
+    /// Variable names skipped by `fresh_name` (`facts.names` in `generalize`).
+    pub skip: Arc<BTreeSet<Arc<str>>>,
+    /// Snapshot of `ProgramNames` active when `generalize` ran (`O(1)` Arc clone).
+    pub held: HeldVarSnapshot,
+}
+
+/// First-appearance step across a `FwdNeed`'s variables for `generalize`'s `O(1)` naming pass.
+#[derive(Clone, Debug)]
+pub enum FwdVarStep {
+    /// Materialized caller variable `v` (`sigma` or `exits`).
+    ClassVar(Arc<str>),
+    /// Run of `count` consecutive unmaterialized internal result variables in `I(F)`.
+    InternalRun(usize),
+}
+
+/// Compact inherited block of needs for an admitted forward call (`M66`, `M65`).
+#[derive(Clone, Debug)]
+pub struct FwdNeed {
+    /// Callee signature whose `needs` are inherited (`O(1)` `Arc` clone).
+    pub callee: Arc<Sig>,
+    /// Pre-formatted call-path note (`"{what} needs this of its argument here"`) for `Need::via`.
+    pub what_note: Arc<str>,
+    /// Substitution from callee arrow parameter variables to caller types (`O(#params)`).
+    pub sigma: Vec<(Arc<str>, Ty)>,
+    /// Materialized exit results `(result_index_in_block, caller_exit_ty)`.
+    pub exits: Vec<(usize, Ty)>,
+    /// Caller variables appearing as `.on` of at least one leaf need in this block (`domain_test`).
+    pub on_vars: Vec<Ty>,
+    /// Connected groups of visible (`sigma` + `exits`) variables tied by needs in this block (`unfixed_args`).
+    pub var_ties: Vec<Vec<Ty>>,
+    /// Pre-`finished` starting class ID `lo` for this forward's `need_count` results (`lo .. lo + need_count`).
+    pub base_class: Option<usize>,
+    /// Explicit caller result variables when `#26` is dropped in a negative-control test.
+    pub explicit_result_vars: Option<Vec<Arc<str>>>,
+    /// Compressed first-appearance steps for `generalize` (`O(1)` length on chains).
+    pub var_steps: Vec<FwdVarStep>,
+    /// `generalize`-time naming spans for internal variables, promoted to `finish_naming` on `Mode::Rename`.
+    pub gen_naming: Option<FwdFinishNaming>,
+    /// Post-`finished` naming spans once `Sig::renamed` replaces `$k` with `T, U, ...`.
+    pub finish_naming: Option<FwdFinishNaming>,
+    /// Total number of leaf `Need`s represented (`L >= 1`).
+    pub need_count: usize,
+    /// Cached `VarFacts::free` floor from functions held inside `callee`'s needs.
+    pub held_free: usize,
+    /// Cached `VarFacts::names` from functions held inside `callee`'s needs.
+    pub held_names: BTreeSet<Arc<str>>,
+    /// Cached `VarFacts::outer` from functions held inside `callee`'s needs.
+    pub held_outer: BTreeSet<Arc<str>>,
+    /// Cached outer class variables if `#4` is dropped in a negative-control test.
+    pub held_classes: BTreeSet<Arc<str>>,
+    /// Base rank at which `digest_summary` was built (so `emit_sig` never double-shifts).
+    pub digest_base_rank: usize,
+    /// Pre-instantiated `M65` rank-encoded polynomial summary at `R_BASE` (`O(1)` composition).
+    pub digest_summary: Option<r10_hash::NeedBlockSummary>,
+}
+
+impl FwdNeed {
+    /// Materializes the `need_count` result `Ty`s for this block (`O(need_count)`).
+    pub fn materialize_result_tys(&self) -> Vec<Ty> {
+        let mut results: Vec<Option<Ty>> = vec![None; self.need_count];
+        for &(off, ref ety) in &self.exits {
+            if off < results.len() {
+                results[off] = Some(ety.clone());
+            }
+        }
+        if let Some(fin) = &self.finish_naming {
+            let mut gen_names: Vec<Arc<str>> =
+                Vec::with_capacity(self.need_count.saturating_sub(self.exits.len()));
+            for &(start_n, count) in &fin.runs {
+                let mut cur_n = start_n;
+                for _ in 0..count {
+                    let nm: Arc<str> =
+                        fresh_name_with_held(Names::Variables, &mut cur_n, &fin.held, |s| {
+                            fin.skip.contains(s)
+                        });
+                    gen_names.push(nm);
+                }
+            }
+            let mut it = gen_names.into_iter();
+            for slot in &mut results {
+                if slot.is_none() {
+                    let nm = it
+                        .next()
+                        .unwrap_or_else(|| Arc::from("_fwd_internal_missing"));
+                    *slot = Some(Ty::var(nm));
+                }
+            }
+        } else if let Some(lo) = self.base_class {
+            for (j, slot) in results.iter_mut().enumerate() {
+                if slot.is_none() {
+                    *slot = Some(Ty::var(format!("${}", lo + j).into()));
+                }
+            }
+        } else if let Some(exp) = &self.explicit_result_vars {
+            for (j, slot) in results.iter_mut().enumerate() {
+                if slot.is_none() {
+                    let v = exp
+                        .get(j)
+                        .cloned()
+                        .unwrap_or_else(|| format!("${j}").into());
+                    *slot = Some(Ty::var(v));
+                }
+            }
+        }
+        results
+            .into_iter()
+            .enumerate()
+            .map(|(j, opt)| opt.unwrap_or_else(|| Ty::var(format!("${j}").into())))
+            .collect()
+    }
+
+    /// Decodes this `FwdNeed` iteratively into its `need_count` flat `Need`s in `O(need_count)` time
+    /// and `O(1)` call-stack depth (counted once in [`fwd_decode_count`]).
+    /// Clears `Map.lambda` to `false` (matching `meet` -> `map_end` on `Arg::of`) and reconstructs
+    /// `Need::via` via shared inner-to-outer `Via` prefixes in `O(1)` per forward level + `O(1)` per leaf.
+    pub fn decode(&self, outer_call_span: Span) -> Vec<Need> {
+        self.decode_with_opts(outer_call_span, true)
+    }
+
+    /// Like [`FwdNeed::decode`], with `clear_map_lambda` exposed for the `Map.lambda` negative control.
+    pub fn decode_with_opts(&self, outer_call_span: Span, clear_map_lambda: bool) -> Vec<Need> {
+        FWD_DECODE_COUNT.with(|c| c.set(c.get() + 1));
+        self.decode_uncounted(outer_call_span, clear_map_lambda)
+    }
+
+    /// Like [`FwdNeed::decode_with_opts`], not counted in [`fwd_decode_count`]: for the checker's
+    /// own expansions at a forward's release and at a merge, which `M66` does not count.
+    pub fn decode_uncounted(&self, outer_call_span: Span, clear_map_lambda: bool) -> Vec<Need> {
+        let results = self.materialize_result_tys();
+        let mut out = Vec::with_capacity(self.need_count);
+        enum Task<'s> {
+            EnterSig {
+                sig: &'s Sig,
+                what_note: Arc<str>,
+                param_binds: HashMap<Arc<str>, Ty>,
+                res_offset: usize,
+                eff_span: Span,
+                prefix_rev: Option<Arc<Via>>,
+            },
+            EmitLeaf(Box<Need>),
+        }
+        let mut tasks = vec![Task::EnterSig {
+            sig: &self.callee,
+            what_note: self.what_note.clone(),
+            param_binds: self.sigma.iter().cloned().collect(),
+            res_offset: 0,
+            eff_span: outer_call_span,
+            prefix_rev: None,
+        }];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::EmitLeaf(nd) => out.push(*nd),
+                Task::EnterSig {
+                    sig,
+                    what_note,
+                    param_binds,
+                    res_offset,
+                    eff_span,
+                    prefix_rev,
+                } => {
+                    let mut local_binds: Binds = param_binds
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    let mut cur_off = res_offset;
+                    for item in &sig.needs {
+                        match &item.kind {
+                            NeedKind::Fwd(child) => {
+                                for &(off, ref ety) in &child.exits {
+                                    if let Some(ev) = ety.as_var()
+                                        && let Some(target) = results.get(cur_off + off)
+                                    {
+                                        local_binds.insert(ev.clone(), target.clone());
+                                    }
+                                }
+                                cur_off += child.need_count;
+                            }
+                            _ => {
+                                if let Some(rv) = item.result.as_ref().and_then(Ty::as_var)
+                                    && let Some(target) = results.get(cur_off)
+                                {
+                                    local_binds.insert(rv.clone(), target.clone());
+                                }
+                                cur_off += 1;
+                            }
+                        }
+                    }
+                    let push_base = tasks.len();
+                    let mut off = res_offset;
+                    for item in &sig.needs {
+                        match &item.kind {
+                            NeedKind::Fwd(child) => {
+                                let mut child_params = HashMap::with_capacity(child.sigma.len());
+                                for (cp, parent_ty) in &child.sigma {
+                                    let mapped = if local_binds.is_empty() {
+                                        parent_ty.clone()
+                                    } else {
+                                        parent_ty.replace(&local_binds)
+                                    };
+                                    child_params.insert(cp.clone(), mapped);
+                                }
+                                // One shared `Via` link for all leaves in `child`, O(1).
+                                let child_prefix = Some(Arc::new(Via::new(
+                                    item.span,
+                                    what_note.clone(),
+                                    prefix_rev.clone(),
+                                )));
+                                tasks.push(Task::EnterSig {
+                                    sig: &child.callee,
+                                    what_note: child.what_note.clone(),
+                                    param_binds: child_params,
+                                    res_offset: off,
+                                    eff_span,
+                                    prefix_rev: child_prefix,
+                                });
+                                off += child.need_count;
+                            }
+                            _ => {
+                                let mut mapped = if local_binds.is_empty() {
+                                    item.clone()
+                                } else {
+                                    item.replace(&local_binds)
+                                };
+                                if clear_map_lambda
+                                    && let NeedKind::Map { lambda, .. } = &mut mapped.kind
+                                {
+                                    *lambda = false;
+                                }
+                                let leaf_span = mapped.span;
+                                mapped.span = eff_span;
+                                mapped.via = CallPath::with_prefix_and_cons(
+                                    prefix_rev.clone(),
+                                    leaf_span,
+                                    what_note.clone(),
+                                    &item.via,
+                                );
+                                tasks.push(Task::EmitLeaf(Box::new(mapped)));
+                                off += 1;
+                            }
+                        }
+                    }
+                    tasks[push_base..].reverse();
+                }
+            }
+        }
+        out
+    }
+}
+
+impl PartialEq for FwdNeed {
+    fn eq(&self, other: &Self) -> bool {
+        self.need_count == other.need_count
+            && self.exits == other.exits
+            && self.sigma == other.sigma
+            && Arc::ptr_eq(&self.callee, &other.callee)
+    }
+}
+
+impl Eq for FwdNeed {}
+
+impl std::hash::Hash for FwdNeed {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.need_count.hash(h);
+        if let Some(s) = &self.digest_summary {
+            s.body.val.hash(h);
+            s.body.len.hash(h);
+        }
+    }
 }
 
 /// A step from a value to a part of it, of [`NeedKind::InDomain`]'s path.
@@ -4631,26 +5104,17 @@ impl ParamRange {
 pub struct Width(pub Value);
 
 impl std::hash::Hash for Width {
-    /// A machine int hashes as itself and a wider one as nothing, which equal widths agree on.
+    /// Hashes the full `Value` (`M55`), distinguishing wide ints beyond 64 bits too.
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        if let Value::Int(n) = &self.0 {
-            n.hash(h);
-        }
+        self.0.hash(h);
     }
 }
 
 /// A call that passed its function's parameter on as the argument of a parameter with a
 /// [`NeedKind::InDomain`] need, and the calls that passed that one on before it.
 ///
-/// Two are compared one call at a time, and the same chain at once, and only the first call is
-/// hashed, so a chain of `n` calls costs O(1) to hash, not O(n) at each of its `n` links.
-///
-/// Complexity tradeoff: naive version, each need holds its own copy of the chain, with its
-/// notes written out, so a chain of `n` wrappers costs O(n) at each wrapper and O(n²) in all
-/// (built at every call, the notes took 28.4 times the bytes from 200 to 1,600 wrappers).
-/// Used: each link holds the one before it shared, so a wrapper adds one link, O(1), and the
-/// notes are written from the chain only for an error, O(links). Tradeoffs: a chain lives as
-/// long as any need that holds a link of it. COMPLEXITY.md row F123.
+/// Two are compared one call at a time, and the same chain at once, and `chain_hash` memoizes
+/// the whole-chain `M54` digest in O(1) per link.
 #[derive(Clone, Debug)]
 pub struct Via {
     /// The call.
@@ -4659,6 +5123,22 @@ pub struct Via {
     pub text: Arc<str>,
     /// The call before it.
     pub next: Option<Arc<Via>>,
+    /// Whole-chain `M54` digest, filled in O(1) per link.
+    pub chain_hash: std::sync::OnceLock<u64>,
+}
+
+impl Via {
+    /// Constructs a `Via` link and pre-computes its whole-chain `M54` digest in O(1).
+    pub fn new(at: Span, text: Arc<str>, next: Option<Arc<Via>>) -> Self {
+        let v = Via {
+            at,
+            text,
+            next,
+            chain_hash: std::sync::OnceLock::new(),
+        };
+        let _ = r10_hash::hash_via_chain(&v);
+        v
+    }
 }
 
 impl PartialEq for Via {
@@ -4740,7 +5220,8 @@ impl Need {
     }
 
     /// It with `f` applied to each of the types [`Need::tys`] gives, in that order.
-    fn map_tys(&self, mut f: impl FnMut(&Ty) -> Ty) -> Need {
+    /// Maps `f` over every type held in this need.
+    pub fn map_tys(&self, mut f: impl FnMut(&Ty) -> Ty) -> Need {
         Need {
             on: f(&self.on),
             kind: match &self.kind {
@@ -4848,6 +5329,67 @@ impl Need {
                     first: *first,
                     shared: *shared,
                 },
+                NeedKind::Fwd(fwd) => {
+                    let mut renames: HashMap<Arc<str>, Arc<str>> = HashMap::new();
+                    let mut non_var_subst = false;
+                    let new_sigma: Vec<(Arc<str>, Ty)> = fwd
+                        .sigma
+                        .iter()
+                        .map(|(p, old_t)| {
+                            let new_t = f(old_t);
+                            if new_t != *old_t {
+                                match (old_t.as_var(), new_t.as_var()) {
+                                    (Some(ov), Some(nv)) => {
+                                        renames.insert(ov.clone(), nv.clone());
+                                    }
+                                    _ => non_var_subst = true,
+                                }
+                            }
+                            (p.clone(), new_t)
+                        })
+                        .collect();
+                    let new_exits: Vec<(usize, Ty)> = fwd
+                        .exits
+                        .iter()
+                        .map(|(off, old_t)| {
+                            let new_t = f(old_t);
+                            if new_t != *old_t {
+                                match (old_t.as_var(), new_t.as_var()) {
+                                    (Some(ov), Some(nv)) => {
+                                        renames.insert(ov.clone(), nv.clone());
+                                    }
+                                    _ => non_var_subst = true,
+                                }
+                            }
+                            (*off, new_t)
+                        })
+                        .collect();
+                    let new_on_vars: Vec<Ty> = fwd.on_vars.iter().map(&mut f).collect();
+                    let new_var_ties: Vec<Vec<Ty>> = fwd
+                        .var_ties
+                        .iter()
+                        .map(|g| g.iter().map(&mut f).collect())
+                        .collect();
+                    if new_sigma == fwd.sigma
+                        && new_exits == fwd.exits
+                        && new_on_vars == fwd.on_vars
+                        && new_var_ties == fwd.var_ties
+                    {
+                        NeedKind::Fwd(fwd.clone())
+                    } else {
+                        let mut updated = (**fwd).clone();
+                        if non_var_subst {
+                            updated.digest_summary = None;
+                        } else if let Some(ref cur_sum) = updated.digest_summary {
+                            updated.digest_summary = cur_sum.rename_params(&renames);
+                        }
+                        updated.sigma = new_sigma;
+                        updated.exits = new_exits;
+                        updated.on_vars = new_on_vars;
+                        updated.var_ties = new_var_ties;
+                        NeedKind::Fwd(Arc::new(updated))
+                    }
+                }
             },
             result: self.result.as_ref().map(f),
             span: self.span,
@@ -4905,9 +5447,24 @@ impl Need {
         self.tys().for_each(|t| t.vars_in(out));
     }
 
+    /// Whether `v` stands in `.on` of this need (or in `.on` of any leaf need inside `NeedKind::Fwd`).
+    pub fn on_holds_var(&self, v: &str) -> bool {
+        match &self.kind {
+            NeedKind::Fwd(fwd) => fwd.on_vars.iter().any(|t| t.vars.contains(v)),
+            _ => self.on.vars.contains(v),
+        }
+    }
+
     /// The types in it that [`Need::replace`] replaces in, in order.
     pub fn tys(&self) -> impl Iterator<Item = &Ty> {
-        let (index, positional, named): (_, &[Ty], &[(Arc<str>, Ty)]) = match &self.kind {
+        let (index, positional, named, fwd_exits, fwd_on_vars, fwd_ties): (
+            _,
+            &[Ty],
+            &[(Arc<str>, Ty)],
+            &[(usize, Ty)],
+            &[Ty],
+            &[Vec<Ty>],
+        ) = match &self.kind {
             NeedKind::Component { .. }
             | NeedKind::Destructure { .. }
             | NeedKind::Data(..)
@@ -4920,7 +5477,7 @@ impl Need {
             | NeedKind::Into { .. }
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
-            | NeedKind::Narrow(_) => (None, &[], &[]),
+            | NeedKind::Narrow(_) => (None, &[], &[], &[], &[], &[]),
             NeedKind::Index(k)
             | NeedKind::Order { other: k, .. }
             | NeedKind::Concat { other: k, .. }
@@ -4928,16 +5485,29 @@ impl Need {
             | NeedKind::Map { f: k, .. }
             | NeedKind::Group { f: k, .. }
             | NeedKind::Level { f: k, .. }
-            | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[]),
+            | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
             NeedKind::Call {
                 positional, named, ..
-            } => (None, positional, named),
-            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => (None, tys, &[]),
+            } => (None, positional, named, &[], &[], &[]),
+            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => {
+                (None, tys, &[], &[], &[], &[])
+            }
+            NeedKind::Fwd(fwd) => (
+                None,
+                &[],
+                &fwd.sigma,
+                &fwd.exits,
+                &fwd.on_vars,
+                &fwd.var_ties,
+            ),
         };
         std::iter::once(&self.on)
             .chain(index)
             .chain(positional)
             .chain(named.iter().map(|(_, t)| t))
+            .chain(fwd_exits.iter().map(|(_, t)| t))
+            .chain(fwd_on_vars)
+            .chain(fwd_ties.iter().flat_map(|g| g.iter()))
             .chain(&self.result)
     }
 
@@ -4973,6 +5543,14 @@ impl Need {
                 .chain(named.iter().map(|(_, t)| t))
                 .collect(),
             NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => tys.iter().collect(),
+            NeedKind::Fwd(fwd) => fwd
+                .sigma
+                .iter()
+                .map(|(_, t)| t)
+                .chain(fwd.exits.iter().map(|(_, t)| t))
+                .chain(fwd.on_vars.iter())
+                .chain(fwd.var_ties.iter().flat_map(|g| g.iter()))
+                .collect(),
         };
         std::iter::once(&self.on)
             .chain(more)
@@ -5014,6 +5592,17 @@ impl Need {
                 positional
             }
             NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => tys,
+            NeedKind::Fwd(fwd) => match Arc::try_unwrap(fwd) {
+                Ok(inner) => inner
+                    .sigma
+                    .into_iter()
+                    .map(|(_, t)| t)
+                    .chain(inner.exits.into_iter().map(|(_, t)| t))
+                    .chain(inner.on_vars)
+                    .chain(inner.var_ties.into_iter().flatten())
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
         };
         std::iter::once(self.on).chain(more).chain(self.result)
     }
@@ -18809,17 +19398,71 @@ impl Sig {
             .collect()
     }
 
-    /// Its hash, made at the first call from its parts, each function it holds by its own
-    /// hash: so it is asked of a signature held in a type, which no longer changes. Hashed
-    /// whole, a set of the functions of `g(0)(1)…(n)` cost the depth of each (CHK-carrier).
+    /// Whether any item of `self.needs` is a compact [`NeedKind::Fwd`].
+    #[inline]
+    pub fn has_fwd_needs(&self) -> bool {
+        self.needs
+            .iter()
+            .any(|n| matches!(n.kind, NeedKind::Fwd(_)))
+    }
+
+    /// Returns decoded flat needs as a `Cow<[Need]>` (borrowing `&self.needs` in O(1) when flat).
+    pub fn decoded_needs_cow(&self) -> Cow<'_, [Need]> {
+        if !self.has_fwd_needs() {
+            return Cow::Borrowed(&self.needs);
+        }
+        let mut out = Vec::new();
+        for n in &self.needs {
+            match &n.kind {
+                NeedKind::Fwd(fwd) => out.extend(fwd.decode(n.span)),
+                _ => out.push(n.clone()),
+            }
+        }
+        Cow::Owned(out)
+    }
+
+    /// Returns `(decoded_needs, decoded_own)` with all implicit internal `FwdNeed` variables included.
+    pub fn decoded_needs_and_own(&self) -> (Cow<'_, [Need]>, Cow<'_, BTreeSet<Arc<str>>>) {
+        if !self.has_fwd_needs() {
+            return (Cow::Borrowed(&self.needs), Cow::Borrowed(&self.own));
+        }
+        let mut needs_out = Vec::new();
+        let mut own_out = self.own.clone();
+        for n in &self.needs {
+            match &n.kind {
+                NeedKind::Fwd(fwd) => {
+                    for rt in fwd.materialize_result_tys() {
+                        if let Some(v) = rt.as_var() {
+                            own_out.insert(v.clone());
+                        }
+                    }
+                    needs_out.extend(fwd.decode(n.span));
+                }
+                _ => needs_out.push(n.clone()),
+            }
+        }
+        (Cow::Owned(needs_out), Cow::Owned(own_out))
+    }
+
+    /// Compares `(needs, own)` of `x` and `y` in `Same::sig` (`M66`), decoding `FwdNeed` only if reached.
+    fn same_needs_and_own(x: &Sig, y: &Sig) -> bool {
+        if !x.has_fwd_needs() && !y.has_fwd_needs() {
+            return ((x.needs.is_empty() && y.needs.is_empty()) || x.needs == y.needs)
+                && x.own == y.own;
+        }
+        let (xn, xo) = x.decoded_needs_and_own();
+        let (yn, yo) = y.decoded_needs_and_own();
+        *xn == *yn && *xo == *yo
+    }
+
+    /// Its hash (`M47`–`M57`, `M65`), made at the first call from its parts in `O(1)` per compact
+    /// link, each function it holds by its own hash: so it is asked of a signature held in a type,
+    /// which no longer changes.
     pub fn digest(&self) -> u64 {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let hash = |s: &Sig| {
-            *s.facts.2.get_or_init(|| {
-                let parts = (&s.params, &s.arrows, &s.bounds, s.data, s.dense, &s.word);
-                let more = (&s.needs, &s.own, &s.held, s.named, &s.hull, &s.keys);
-                BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
-            })
+            *s.facts
+                .2
+                .get_or_init(|| r10_hash::sig_digest_with_base(s, r10_hash::R_BASE))
         };
         if let Some(&d) = self.facts.2.get() {
             return d;
@@ -19031,9 +19674,14 @@ impl Sig {
                 true => n.every_ty(),
                 false => n.tys().collect(),
             });
+            let fwd_callees = s.needs.iter().filter_map(|n| match (&n.kind, whole) {
+                (NeedKind::Fwd(fwd), true) => Some(&*fwd.callee),
+                _ => None,
+            });
             arrows
                 .chain(needs)
                 .flat_map(|t| t.fns.iter().map(|f| &**f))
+                .chain(fwd_callees)
                 .collect()
         };
         // `seen` by address: every signature is borrowed from `self` for the whole walk, so no
@@ -26126,13 +26774,15 @@ mod tests {
     #[test]
     fn two_chains_of_calls_are_equal_link_by_link() {
         use std::hash::{BuildHasher, RandomState};
-        let link = |at: usize, text: &str, next: Option<Via>| Via {
-            at: Span {
-                start: at,
-                end: at + 1,
-            },
-            text: text.into(),
-            next: next.map(Arc::new),
+        let link = |at: usize, text: &str, next: Option<Via>| {
+            Via::new(
+                Span {
+                    start: at,
+                    end: at + 1,
+                },
+                text.into(),
+                next.map(Arc::new),
+            )
         };
         let chain =
             |last: &str, n: usize| (1..n).fold(link(0, last, None), |v, i| link(i, "w", Some(v)));
@@ -26204,5 +26854,1556 @@ mod tests {
         assert!(one.subtype(&one));
         assert!(many.subtype(&many));
         assert!(many.subtype(&Ty::dynamic()));
+    }
+}
+
+/// M47-M57 / M65 prefix-free preorder Rabin-Karp signature encoder over `Z_P` (`P = 2^61 - 1`),
+/// inline in `ty.rs` so `zedc-types` has no cross-file import cycle (`s_01f_import_graph`).
+#[allow(missing_docs)]
+pub mod r10_hash {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+    use zed_kernel::types::Type as KType;
+    use zedc_syntax::ast::BinaryOp;
+
+    /// Mersenne prime `P = 2^61 - 1`.
+    pub const P: u64 = (1u64 << 61) - 1;
+    /// Fixed deterministic base `r` (`M59`).
+    pub const R_BASE: u64 = 0x13B5_2A7D_94E1_6C3B % P;
+
+    const C0_CLS: u64 = 0x0A1B_2C3D_4E5F_6071 % P;
+    const C1_CLS: u64 = 0x1F2E_3D4C_5B6A_7989 % P;
+    const C0_FIN: u64 = 0x0516_2738_495A_6B7D % P;
+    const C1_FIN: u64 = 0x1123_3547_596B_7D8F % P;
+    const C_LET: [u64; 4] = [
+        0x0C3A_91B2_E4D5_F601 % P,
+        0x14D8_72E3_A9C1_B507 % P,
+        0x09E2_4B71_C3D8_6A19 % P,
+        0x1B6F_3E92_D0A4_8C2B % P,
+    ];
+    const C0_NRANK: u64 = 0x0D7C_6B5A_4938_2717 % P;
+    const C1_NRANK: u64 = 0x19E7_C5A3_816F_4D2D % P;
+    const C_ARROW_RANK: u64 = 0x0F5E_4D3C_2B1A_0987 % P;
+    const C_BMUL: u64 = 0x1234_5678_9ABC_DEF1 % P;
+    const C_BMASK: u64 = 0x0FED_CBA9_8765_4323 % P;
+
+    const TAG_END: u64 = 0x1001;
+    const TAG_NONE: u64 = 0x1002;
+    const TAG_SOME: u64 = 0x1003;
+    const TAG_SIG: u64 = 0x1010;
+    const TAG_SPARAM: u64 = 0x1011;
+    const TAG_ARROW: u64 = 0x1012;
+    const TAG_WRANGE: u64 = 0x1013;
+    const TAG_PRANGE_INT: u64 = 0x1014;
+    const TAG_PRANGE_PARTS: u64 = 0x1015;
+    const TAG_NEEDS_LIST: u64 = 0x1016;
+    const TAG_NEED: u64 = 0x1017;
+    const TAG_TY: u64 = 0x1018;
+    const TAG_ROW: u64 = 0x1019;
+    const TAG_SHAPE: u64 = 0x101A;
+    const TAG_PAYLOAD_NONE: u64 = 0x101B;
+    const TAG_PAYLOAD_SOME: u64 = 0x101C;
+    const TAG_VAR_SET: u64 = 0x1020;
+    const TAG_OWN_SET: u64 = 0x1021;
+    const TAG_HELD_SET: u64 = 0x1022;
+    const TAG_BOUNDS_SET: u64 = 0x1023;
+    const TAG_VAR_SET_FALLBACK: u64 = 0x1024;
+    const TAG_CLS_FALLBACK: u64 = 0x1025;
+    const TAG_ALIKE: u64 = 0x1026;
+
+    const TAG_NK_COMPONENT: u64 = 0x2001;
+    const TAG_NK_INDEX: u64 = 0x2002;
+    const TAG_NK_DESTRUCTURE: u64 = 0x2003;
+    const TAG_NK_CALL: u64 = 0x2004;
+    const TAG_NK_DATA: u64 = 0x2005;
+    const TAG_NK_INTO: u64 = 0x2006;
+    const TAG_NK_PAYLOAD: u64 = 0x2007;
+    const TAG_NK_NARROW: u64 = 0x2008;
+    const TAG_NK_ORDER: u64 = 0x2009;
+    const TAG_NK_NOINT: u64 = 0x200A;
+    const TAG_NK_POWER: u64 = 0x200B;
+    const TAG_NK_SUM: u64 = 0x200C;
+    const TAG_NK_ENTRIES: u64 = 0x200D;
+    const TAG_NK_SUM_METHOD: u64 = 0x200E;
+    const TAG_NK_MAP: u64 = 0x200F;
+    const TAG_NK_GROUP: u64 = 0x2010;
+    const TAG_NK_LEVEL: u64 = 0x2011;
+    const TAG_NK_REMAP: u64 = 0x2012;
+    const TAG_NK_REDUCE: u64 = 0x2013;
+    const TAG_NK_FOLD: u64 = 0x2014;
+    const TAG_NK_STRINGS: u64 = 0x2015;
+    const TAG_NK_CONCAT: u64 = 0x2016;
+    const TAG_NK_ZIP: u64 = 0x2017;
+    const TAG_NK_INDOMAIN: u64 = 0x2018;
+
+    #[inline]
+    pub fn mod_p(x: u128) -> u64 {
+        let p = P as u128;
+        let lo = x & p;
+        let hi = x >> 61;
+        let s = lo + hi;
+        let s2 = (s & p) + (s >> 61);
+        if s2 >= p { (s2 - p) as u64 } else { s2 as u64 }
+    }
+
+    #[inline]
+    pub fn add_p(a: u64, b: u64) -> u64 {
+        let s = a + b;
+        if s >= P { s - P } else { s }
+    }
+
+    #[inline]
+    pub fn sub_p(a: u64, b: u64) -> u64 {
+        if a >= b { a - b } else { a + P - b }
+    }
+
+    #[inline]
+    pub fn mul_p(a: u64, b: u64) -> u64 {
+        mod_p((a as u128) * (b as u128))
+    }
+
+    struct DetHasher(u64);
+    impl Default for DetHasher {
+        fn default() -> Self {
+            DetHasher(0xCBF2_9CE4_8422_2325)
+        }
+    }
+    impl Hasher for DetHasher {
+        #[inline]
+        fn finish(&self) -> u64 {
+            let mut z = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        #[inline]
+        fn write(&mut self, bytes: &[u8]) {
+            for &b in bytes {
+                self.0 ^= b as u64;
+                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+    }
+
+    #[inline]
+    fn leaf_digest<T: Hash + ?Sized>(v: &T) -> u64 {
+        let mut h = DetHasher::default();
+        v.hash(&mut h);
+        mod_p(h.finish() as u128)
+    }
+
+    pub fn parse_class_u64(v: &str) -> Option<u64> {
+        let rest = v.strip_prefix('$')?;
+        if rest.is_empty() || (rest.len() > 1 && rest.starts_with('0')) {
+            return None;
+        }
+        if !rest.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        rest.parse::<u64>().ok()
+    }
+
+    pub fn parse_var_seq_index(v: &str) -> Option<usize> {
+        match v {
+            "T" => Some(0),
+            "U" => Some(1),
+            "V" => Some(2),
+            "W" => Some(3),
+            _ => {
+                let rest = v.strip_prefix('T')?;
+                if rest.starts_with('0') || !rest.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                let k: usize = rest.parse().ok()?;
+                (k >= 5).then_some(k - 1)
+            }
+        }
+    }
+
+    #[inline]
+    pub fn tok_cls_small(k: u64) -> u64 {
+        debug_assert!(k < P);
+        add_p(C0_CLS, mul_p(C1_CLS, k))
+    }
+
+    #[inline]
+    pub fn tok_need_rank(rank: usize) -> u64 {
+        add_p(C0_NRANK, mul_p(C1_NRANK, (rank as u64) % P))
+    }
+
+    #[inline]
+    pub fn tok_var_plain(v: &str) -> Option<u64> {
+        if let Some(k) = parse_class_u64(v) {
+            return (k < P).then(|| tok_cls_small(k));
+        }
+        if let Some(n) = parse_var_seq_index(v) {
+            return Some(match n {
+                0..4 => C_LET[n],
+                _ => add_p(C0_FIN, mul_p(C1_FIN, (n as u64) % P)),
+            });
+        }
+        Some(add_p(0x0123_4567_89AB_CDEF % P, leaf_digest(&v)))
+    }
+
+    #[inline]
+    pub fn sum_cls_range_o1(k0: u64, len: usize) -> u64 {
+        if len == 0 {
+            return 0;
+        }
+        let l = (len as u128) % (P as u128);
+        let base = mod_p(l * (C0_CLS as u128));
+        let tri = ((len as u128) * ((len - 1) as u128)) / 2;
+        let idx_sum = add_p(mod_p(l * (k0 as u128)), mod_p(tri));
+        add_p(base, mul_p(C1_CLS, idx_sum))
+    }
+
+    pub fn sum_fresh_vars_o1(
+        start_n: usize,
+        count: usize,
+        skip: &BTreeSet<Arc<str>>,
+        held: &HeldVarSnapshot,
+    ) -> u64 {
+        if count == 0 {
+            return 0;
+        }
+        let stats = fresh_variable_span_stats_with_held(
+            start_n,
+            count,
+            skip.iter().map(|s| s.as_ref()),
+            held,
+        );
+        let mut s = 0u64;
+        for (i, &c) in C_LET.iter().enumerate() {
+            if stats.letter_mask & (1u8 << i) != 0 {
+                s = add_p(s, c);
+            }
+        }
+        let cnt_term = mod_p((stats.numbered_count as u128) * (C0_FIN as u128));
+        let sum_term = mul_p(C1_FIN, mod_p(stats.numbered_index_sum));
+        add_p(s, add_p(cnt_term, sum_term))
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PartHash {
+        pub val: u64,
+        pub pow: u64,
+        pub len: usize,
+    }
+
+    impl PartHash {
+        #[inline]
+        pub fn empty() -> Self {
+            PartHash {
+                val: 0,
+                pow: 1,
+                len: 0,
+            }
+        }
+        #[inline]
+        pub fn push(&mut self, tok: u64, r: u64) {
+            self.val = add_p(self.val, mul_p(self.pow, tok % P));
+            self.pow = mul_p(self.pow, r % P);
+            self.len += 1;
+        }
+        #[inline]
+        pub fn concat(self, rhs: PartHash) -> PartHash {
+            PartHash {
+                val: add_p(self.val, mul_p(self.pow, rhs.val)),
+                pow: mul_p(self.pow, rhs.pow),
+                len: self.len + rhs.len,
+            }
+        }
+        #[inline]
+        pub fn finalize(self) -> u64 {
+            add_p(self.val, mul_p(self.pow, TAG_END))
+        }
+    }
+
+    /// `M54`: Whole-chain hash of `Via`, memoized per link in `Via::chain_hash` (`O(1)` per new link).
+    pub fn hash_via_chain(via: &Via) -> u64 {
+        if let Some(&cached) = via.chain_hash.get() {
+            return cached;
+        }
+        let mut frames: Vec<&Via> = Vec::new();
+        let mut cur = Some(via);
+        while let Some(v) = cur {
+            if v.chain_hash.get().is_some() {
+                break;
+            }
+            frames.push(v);
+            cur = v.next.as_deref();
+        }
+        for v in frames.into_iter().rev() {
+            let mut h = DetHasher::default();
+            1u8.hash(&mut h);
+            v.at.start.hash(&mut h);
+            v.at.end.hash(&mut h);
+            v.text.hash(&mut h);
+            match v.next.as_deref() {
+                Some(nv) => {
+                    let nh = *nv.chain_hash.get().expect("tail hashed first");
+                    1u8.hash(&mut h);
+                    nh.hash(&mut h);
+                }
+                None => 0u8.hash(&mut h),
+            }
+            let val = mod_p(h.finish() as u128);
+            let _ = v.chain_hash.set(val);
+        }
+        *via.chain_hash.get().expect("filled above")
+    }
+
+    #[inline]
+    pub fn hash_width_value(w: &Width) -> u64 {
+        leaf_digest(&w.0)
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum SigmaTarget {
+        ParamVar(Arc<str>),
+        NeedRank(usize),
+    }
+
+    /// Composable rank-encoded summary of a block of `Need` items (`M51`–`M56`, `M65`).
+    #[derive(Clone, Debug)]
+    pub struct NeedBlockSummary {
+        pub body: PartHash,
+        pub need_count: usize,
+        pub s_rank: u64,
+        pub s_params: HashMap<Arc<str>, u64>,
+        pub span_contrib: u64,
+        pub s_span_start: u64,
+        pub s_span_end: u64,
+        /// Sum of `r^pos` over positions where `NeedKind::Map { lambda: true, .. }` emitted `2`.
+        /// Subtracting this from `body.val` clears `lambda: true -> false` (`2 -> 1`) in O(1)!
+        pub s_map_lambda_true: u64,
+        pub fallback_large_id: bool,
+    }
+
+    impl NeedBlockSummary {
+        pub fn empty() -> Self {
+            NeedBlockSummary {
+                body: PartHash::empty(),
+                need_count: 0,
+                s_rank: 0,
+                s_params: HashMap::new(),
+                span_contrib: 0,
+                s_span_start: 0,
+                s_span_end: 0,
+                s_map_lambda_true: 0,
+                fallback_large_id: false,
+            }
+        }
+
+        pub fn with_call_span_and_clear_lambda(&self, call_span: Span) -> Self {
+            let new_contrib = add_p(
+                mul_p(mod_p(call_span.start as u128), self.s_span_start),
+                mul_p(mod_p(call_span.end as u128), self.s_span_end),
+            );
+            let mut out = self.clone();
+            let v1 = add_p(sub_p(self.body.val, self.span_contrib), new_contrib);
+            // Clear `Map.lambda`: every `true` (`2`) becomes `false` (`1`), subtracting `1 * s_map_lambda_true`.
+            out.body.val = sub_p(v1, self.s_map_lambda_true);
+            out.span_contrib = new_contrib;
+            out.s_map_lambda_true = 0;
+            out
+        }
+
+        pub fn shift_ranks(&self, rank_shift: usize) -> Self {
+            if rank_shift == 0 {
+                return self.clone();
+            }
+            let mut out = self.clone();
+            let d = (rank_shift as u64) % P;
+            out.body.val = add_p(out.body.val, mul_p(mul_p(d, C1_NRANK), self.s_rank));
+            out
+        }
+
+        pub fn instantiate(
+            &self,
+            base_rank: usize,
+            sigma: &HashMap<Arc<str>, SigmaTarget>,
+            call_span: Span,
+        ) -> Option<NeedBlockSummary> {
+            if self.fallback_large_id {
+                return None;
+            }
+            let mut cur = self.with_call_span_and_clear_lambda(call_span);
+            if base_rank > 0 {
+                let d = (base_rank as u64) % P;
+                cur.body.val = add_p(cur.body.val, mul_p(mul_p(d, C1_NRANK), cur.s_rank));
+            }
+            let mut new_s_rank = cur.s_rank;
+            let mut new_s_params: HashMap<Arc<str>, u64> = HashMap::with_capacity(sigma.len());
+            for (p, &weight) in &cur.s_params {
+                let old_tok = tok_var_plain(p)?;
+                match sigma.get(p) {
+                    Some(SigmaTarget::ParamVar(w)) => {
+                        let new_tok = tok_var_plain(w)?;
+                        let diff = sub_p(new_tok, old_tok);
+                        cur.body.val = add_p(cur.body.val, mul_p(diff, weight));
+                        let e = new_s_params.entry(w.clone()).or_insert(0);
+                        *e = add_p(*e, weight);
+                    }
+                    Some(SigmaTarget::NeedRank(caller_rank)) => {
+                        let new_tok = tok_need_rank(*caller_rank);
+                        let diff = sub_p(new_tok, old_tok);
+                        cur.body.val = add_p(cur.body.val, mul_p(diff, weight));
+                        new_s_rank = add_p(new_s_rank, weight);
+                    }
+                    None => {
+                        let e = new_s_params.entry(p.clone()).or_insert(0);
+                        *e = add_p(*e, weight);
+                    }
+                }
+            }
+            cur.s_rank = new_s_rank;
+            cur.s_params = new_s_params;
+            Some(cur)
+        }
+
+        pub fn rename_params(
+            &self,
+            renames: &HashMap<Arc<str>, Arc<str>>,
+        ) -> Option<NeedBlockSummary> {
+            if self.fallback_large_id {
+                return None;
+            }
+            if renames.is_empty() || !self.s_params.keys().any(|k| renames.contains_key(k)) {
+                return Some(self.clone());
+            }
+            let mut out = self.clone();
+            let mut new_s_params = HashMap::with_capacity(self.s_params.len());
+            for (p, &weight) in &self.s_params {
+                let old_tok = tok_var_plain(p)?;
+                if let Some(new_w) = renames.get(p) {
+                    let new_tok = tok_var_plain(new_w)?;
+                    let diff = sub_p(new_tok, old_tok);
+                    out.body.val = add_p(out.body.val, mul_p(diff, weight));
+                    let e = new_s_params.entry(new_w.clone()).or_insert(0);
+                    *e = add_p(*e, weight);
+                } else {
+                    let e = new_s_params.entry(p.clone()).or_insert(0);
+                    *e = add_p(*e, weight);
+                }
+            }
+            out.s_params = new_s_params;
+            Some(out)
+        }
+
+        pub fn concat(&self, rhs: &NeedBlockSummary) -> NeedBlockSummary {
+            let shift_pow = self.body.pow;
+            let mut s_params = self.s_params.clone();
+            for (v, &w) in &rhs.s_params {
+                let e = s_params.entry(v.clone()).or_insert(0);
+                *e = add_p(*e, mul_p(shift_pow, w));
+            }
+            NeedBlockSummary {
+                body: self.body.concat(rhs.body),
+                need_count: self.need_count + rhs.need_count,
+                s_rank: add_p(self.s_rank, mul_p(shift_pow, rhs.s_rank)),
+                s_params,
+                span_contrib: add_p(self.span_contrib, mul_p(shift_pow, rhs.span_contrib)),
+                s_span_start: add_p(self.s_span_start, mul_p(shift_pow, rhs.s_span_start)),
+                s_span_end: add_p(self.s_span_end, mul_p(shift_pow, rhs.s_span_end)),
+                s_map_lambda_true: add_p(
+                    self.s_map_lambda_true,
+                    mul_p(shift_pow, rhs.s_map_lambda_true),
+                ),
+                fallback_large_id: self.fallback_large_id || rhs.fallback_large_id,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum ScopePhase {
+        Arrows,
+        Needs,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SigScope {
+        pub own: BTreeSet<Arc<str>>,
+        pub mat_result_ranks: HashMap<Arc<str>, usize>,
+        pub phase: ScopePhase,
+        pub is_root: bool,
+    }
+
+    pub struct Encoder {
+        pub r: u64,
+        pub part: PartHash,
+        pub stream: Option<Vec<u64>>,
+        pub scopes: Vec<SigScope>,
+        pub tracked_params: Option<HashSet<Arc<str>>>,
+        pub s_rank: u64,
+        pub s_params: HashMap<Arc<str>, u64>,
+        pub span_contrib: u64,
+        pub s_span_start: u64,
+        pub s_span_end: u64,
+        pub s_map_lambda_true: u64,
+        pub fallback_large_id: bool,
+        closed_memo: HashMap<*const (), PartHash>,
+    }
+
+    impl Encoder {
+        pub fn new(r: u64, keep_stream: bool) -> Self {
+            Encoder {
+                r: r % P,
+                part: PartHash::empty(),
+                stream: keep_stream.then(Vec::new),
+                scopes: Vec::new(),
+                tracked_params: None,
+                s_rank: 0,
+                s_params: HashMap::new(),
+                span_contrib: 0,
+                s_span_start: 0,
+                s_span_end: 0,
+                s_map_lambda_true: 0,
+                fallback_large_id: false,
+                closed_memo: HashMap::new(),
+            }
+        }
+
+        #[inline]
+        fn emit(&mut self, tok: u64) {
+            let t = tok % P;
+            if let Some(s) = &mut self.stream {
+                s.push(t);
+            }
+            self.part.push(t, self.r);
+        }
+
+        #[inline]
+        fn emit_usize(&mut self, n: usize) {
+            self.emit(mod_p(n as u128));
+        }
+
+        #[inline]
+        fn emit_bool(&mut self, b: bool) {
+            self.emit(if b { 2 } else { 1 });
+        }
+
+        #[inline]
+        fn emit_str(&mut self, s: &str) {
+            self.emit(leaf_digest(s));
+        }
+
+        #[inline]
+        fn emit_span(&mut self, s: Span) {
+            self.emit_usize(s.start);
+            self.emit_usize(s.end);
+        }
+
+        #[inline]
+        fn emit_tracked_span(&mut self, s: Span) {
+            let p_start = self.part.pow;
+            self.emit_usize(s.start);
+            let p_end = self.part.pow;
+            self.emit_usize(s.end);
+            self.s_span_start = add_p(self.s_span_start, p_start);
+            self.s_span_end = add_p(self.s_span_end, p_end);
+            let contrib = add_p(
+                mul_p(mod_p(s.start as u128), p_start),
+                mul_p(mod_p(s.end as u128), p_end),
+            );
+            self.span_contrib = add_p(self.span_contrib, contrib);
+        }
+
+        fn emit_opt<T: ?Sized>(&mut self, opt: Option<&T>, f: impl FnOnce(&mut Self, &T)) {
+            match opt {
+                None => self.emit(TAG_NONE),
+                Some(v) => {
+                    self.emit(TAG_SOME);
+                    f(self, v);
+                }
+            }
+        }
+
+        fn emit_var_set<'s>(
+            &mut self,
+            tag: u64,
+            len: usize,
+            iter: impl Iterator<Item = &'s Arc<str>> + Clone,
+            in_ty: bool,
+        ) {
+            let mut sum = 0u64;
+            let mut any_large = false;
+            let mut rank_mult = 0u64;
+            let mut param_hits: Vec<&'s Arc<str>> = Vec::new();
+
+            for v in iter.clone() {
+                if in_ty && let Some(sc) = self.scopes.iter().rev().find(|sc| sc.own.contains(v)) {
+                    if sc.phase == ScopePhase::Needs
+                        && let Some(&rank) = sc.mat_result_ranks.get(v)
+                    {
+                        sum = add_p(sum, tok_need_rank(rank));
+                        if sc.is_root {
+                            rank_mult += 1;
+                        }
+                        continue;
+                    }
+                    match tok_var_plain(v) {
+                        Some(mut tv) => {
+                            if sc.phase == ScopePhase::Arrows
+                                && let Some(&rank) = sc.mat_result_ranks.get(v)
+                            {
+                                tv = mul_p(tv, add_p(C_ARROW_RANK, (rank as u64 + 1) % P));
+                            }
+                            sum = add_p(sum, tv);
+                            if sc.is_root
+                                && self
+                                    .tracked_params
+                                    .as_ref()
+                                    .is_some_and(|tp| tp.contains(v))
+                            {
+                                param_hits.push(v);
+                            }
+                        }
+                        None => {
+                            any_large = true;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                match tok_var_plain(v) {
+                    Some(tv) => {
+                        sum = add_p(sum, tv);
+                        if in_ty
+                            && self.scopes.len() <= 1
+                            && self
+                                .tracked_params
+                                .as_ref()
+                                .is_some_and(|tp| tp.contains(v))
+                        {
+                            param_hits.push(v);
+                        }
+                    }
+                    None => {
+                        any_large = true;
+                        break;
+                    }
+                }
+            }
+
+            if !any_large {
+                self.emit(tag);
+                self.emit_usize(len);
+                let pos_pow = self.part.pow;
+                if rank_mult > 0 {
+                    self.s_rank = add_p(self.s_rank, mul_p(mod_p(rank_mult as u128), pos_pow));
+                }
+                for v in param_hits {
+                    let e = self.s_params.entry(v.clone()).or_insert(0);
+                    *e = add_p(*e, pos_pow);
+                }
+                self.emit(sum);
+            } else {
+                self.fallback_large_id = true;
+                self.emit(TAG_VAR_SET_FALLBACK);
+                self.emit(tag);
+                self.emit_usize(len);
+                let mut names: Vec<&str> = iter.map(|s| s.as_ref()).collect();
+                names.sort_unstable();
+                for name in names {
+                    if let Some(k) = parse_class_u64(name) {
+                        if k < P {
+                            self.emit(tok_cls_small(k));
+                        } else {
+                            self.emit(TAG_CLS_FALLBACK);
+                            self.emit(k & ((1u64 << 60) - 1));
+                            self.emit(k >> 60);
+                        }
+                    } else {
+                        self.emit_str(name);
+                    }
+                }
+            }
+        }
+
+        fn emit_bounds(&mut self, bounds: &BTreeMap<Arc<str>, u8>) {
+            let mut sum = 0u64;
+            let mut any_large = false;
+            for (v, &m) in bounds {
+                match tok_var_plain(v) {
+                    Some(tv) => {
+                        let entry = add_p(mul_p(tv, C_BMUL), mul_p((m as u64) + 1, C_BMASK));
+                        sum = add_p(sum, entry);
+                    }
+                    None => {
+                        any_large = true;
+                        break;
+                    }
+                }
+            }
+            if !any_large {
+                self.emit(TAG_BOUNDS_SET);
+                self.emit_usize(bounds.len());
+                self.emit(sum);
+            } else {
+                self.fallback_large_id = true;
+                self.emit(TAG_VAR_SET_FALLBACK);
+                self.emit(TAG_BOUNDS_SET);
+                self.emit_usize(bounds.len());
+                for (v, &m) in bounds {
+                    if let Some(k) = parse_class_u64(v) {
+                        self.emit(TAG_CLS_FALLBACK);
+                        self.emit(k & ((1u64 << 60) - 1));
+                        self.emit(k >> 60);
+                    } else {
+                        self.emit_str(v);
+                    }
+                    self.emit((m as u64) + 1);
+                }
+            }
+        }
+
+        fn emit_wrange(&mut self, wr: &WrittenRange) {
+            self.emit(TAG_WRANGE);
+            self.emit_opt(wr.low.as_ref(), |e, v| e.emit(leaf_digest(v)));
+            self.emit_opt(wr.high.as_ref(), |e, v| e.emit(leaf_digest(v)));
+            self.emit_str(&wr.text);
+        }
+
+        fn emit_prange(&mut self, pr: &ParamRange) {
+            match pr {
+                ParamRange::Int(wr) => {
+                    self.emit(TAG_PRANGE_INT);
+                    self.emit_wrange(wr);
+                }
+                ParamRange::Parts(parts) => {
+                    self.emit(TAG_PRANGE_PARTS);
+                    self.emit_usize(parts.len());
+                    for p in parts.iter() {
+                        self.emit_opt(p.as_ref(), |e, wr| e.emit_wrange(wr));
+                    }
+                }
+            }
+        }
+
+        fn emit_sparam(&mut self, sp: &SParam) {
+            self.emit(TAG_SPARAM);
+            self.emit_str(&sp.name);
+            self.emit_bool(sp.positional);
+            match sp.default {
+                None => self.emit(TAG_NONE),
+                Some((b, idx, closed)) => {
+                    self.emit(TAG_SOME);
+                    self.emit_usize(b);
+                    self.emit_usize(idx);
+                    self.emit_bool(closed);
+                }
+            }
+            self.emit_opt(sp.range.as_ref(), |e, r| e.emit_prange(r));
+        }
+
+        fn emit_arrow(&mut self, a: &Arrow) {
+            self.emit(TAG_ARROW);
+            self.emit_bool(a.partial);
+            self.emit_bool(a.stores_not_found);
+            self.emit_usize(a.params.len());
+            for p in &a.params {
+                self.emit_ty(p);
+            }
+            self.emit_ty(&a.result);
+        }
+
+        fn emit_ktype(&mut self, kt: &KType) {
+            self.emit(leaf_digest(kt));
+        }
+
+        fn emit_row(&mut self, row: &Row) {
+            let addr = row.addr();
+            let closed = !row.holds_vars() && self.stream.is_none();
+            if closed && let Some(&cached) = self.closed_memo.get(&addr) {
+                self.part = self.part.concat(cached);
+                return;
+            }
+            let saved = self.part;
+            if closed {
+                self.part = PartHash::empty();
+            }
+            self.emit(TAG_ROW);
+            self.emit_usize(row.len());
+            for c in row.iter() {
+                self.emit_ty(c);
+            }
+            if closed {
+                let sub = self.part;
+                self.closed_memo.insert(addr, sub);
+                self.part = saved.concat(sub);
+            }
+        }
+
+        fn emit_shape(&mut self, sh: &Shape) {
+            let addr: *const () = sh.as_ptr().cast();
+            let closed = !sh.holds_vars() && self.stream.is_none();
+            if closed && let Some(&cached) = self.closed_memo.get(&addr) {
+                self.part = self.part.concat(cached);
+                return;
+            }
+            let saved = self.part;
+            if closed {
+                self.part = PartHash::empty();
+            }
+            self.emit(TAG_SHAPE);
+            self.emit_usize(sh.items.len());
+            for t in &sh.items {
+                self.emit_ty(t);
+            }
+            self.emit_usize(sh.fields.len());
+            for (fname, fty) in &sh.fields {
+                self.emit_str(fname);
+                self.emit_ty(fty);
+            }
+            self.emit_bool(sh.open);
+            if closed {
+                let sub = self.part;
+                self.closed_memo.insert(addr, sub);
+                self.part = saved.concat(sub);
+            }
+        }
+
+        pub fn emit_ty(&mut self, t: &Ty) {
+            self.emit(TAG_TY);
+            self.emit_ktype(&t.set);
+            self.emit_usize(t.tuples.len());
+            for r in t.tuples.iter() {
+                self.emit_row(r);
+            }
+            self.emit_usize(t.fns.len());
+            for f in t.fns.iter() {
+                self.emit_nested_sig(f);
+            }
+            self.emit_var_set(TAG_VAR_SET, t.vars.len(), t.vars.iter(), true);
+            self.emit_bool(t.dynamic);
+            self.emit_ktype(&t.family);
+            self.emit_usize(t.payloads.len());
+            for (aname, shapes) in &t.payloads {
+                self.emit_str(aname);
+                match shapes {
+                    None => self.emit(TAG_PAYLOAD_NONE),
+                    Some(ss) => {
+                        self.emit(TAG_PAYLOAD_SOME);
+                        self.emit_usize(ss.len());
+                        for sh in ss {
+                            self.emit_shape(sh);
+                        }
+                    }
+                }
+            }
+        }
+
+        fn emit_nested_sig(&mut self, s: &Arc<Sig>) {
+            if self.stream.is_none() && s.holds_only_own_variables() {
+                let d = sig_digest_with_base(s, self.r);
+                self.emit(d);
+                return;
+            }
+            self.emit_sig(s);
+        }
+
+        fn emit_binop(&mut self, op: BinaryOp) {
+            self.emit_str(op.as_str());
+        }
+
+        fn emit_reducer(&mut self, red: Reducer) {
+            match red {
+                Reducer::Op(op) => {
+                    self.emit(1);
+                    self.emit_binop(op);
+                }
+                Reducer::Min => self.emit(2),
+                Reducer::Max => self.emit(3),
+            }
+        }
+
+        fn emit_fold_form(&mut self, ff: FoldForm) {
+            self.emit(match ff {
+                FoldForm::Infix => 1,
+                FoldForm::Reduce => 2,
+                FoldForm::Sum => 3,
+                FoldForm::Scan => 4,
+            });
+        }
+
+        fn emit_level_word(&mut self, lw: LevelWord) {
+            match lw {
+                LevelWord::Count => self.emit(1),
+                LevelWord::First => self.emit(2),
+                LevelWord::Last => self.emit(3),
+                LevelWord::Any => self.emit(4),
+                LevelWord::All => self.emit(5),
+                LevelWord::Find => self.emit(6),
+                LevelWord::Scan(r) => {
+                    self.emit(7);
+                    self.emit_reducer(r);
+                }
+                LevelWord::ChunkBy => self.emit(8),
+            }
+        }
+
+        fn emit_map_word(&mut self, mw: MapWord) {
+            self.emit(match mw {
+                MapWord::Map => 1,
+                MapWord::Where => 2,
+                MapWord::FlatMap => 3,
+            });
+        }
+
+        fn emit_data_use(&mut self, du: DataUse) {
+            self.emit(match du {
+                DataUse::Show => 1,
+                DataUse::Compare => 2,
+                DataUse::Key => 3,
+                DataUse::Merge => 4,
+            });
+        }
+
+        fn emit_slot(&mut self, sl: &Slot) {
+            match sl {
+                Slot::Field(f) => {
+                    self.emit(1);
+                    self.emit_str(f);
+                }
+                Slot::Item(i) => {
+                    self.emit(2);
+                    self.emit_usize(*i);
+                }
+            }
+        }
+
+        fn emit_narrow(&mut self, nar: &Narrow) {
+            match nar {
+                Narrow::Loose => self.emit(1),
+                Narrow::Atom(a) => {
+                    self.emit(2);
+                    self.emit_str(a);
+                }
+                Narrow::Not(t) => {
+                    self.emit(3);
+                    self.emit_ty(t);
+                }
+            }
+        }
+
+        fn emit_key_use(&mut self, ku: &KeyUse) {
+            self.emit_opt(ku.family.as_deref(), |e, s| e.emit_str(s));
+            self.emit_usize(ku.ranges.len());
+            for (idx, wr) in &ku.ranges {
+                self.emit_opt(idx.as_ref(), |e, &i| e.emit_usize(i));
+                self.emit_wrange(wr);
+            }
+        }
+
+        fn emit_int_domain(&mut self, d: &IntDomain) {
+            self.emit_str(&d.what);
+            self.emit_str(&d.name);
+            self.emit_opt(d.below_two_pow.as_ref(), |e, w| e.emit(hash_width_value(w)));
+            self.emit_opt(d.written.as_ref(), |e, wr| e.emit_wrange(wr));
+            self.emit_opt(d.key.as_deref(), |e, ku| e.emit_key_use(ku));
+        }
+
+        fn emit_path_step(&mut self, ps: PathStep) {
+            match ps {
+                PathStep::Part { i, n } => {
+                    self.emit(1);
+                    self.emit_usize(i);
+                    self.emit_usize(n);
+                }
+                PathStep::Index(k) => {
+                    self.emit(2);
+                    self.emit_usize(k);
+                }
+            }
+        }
+
+        fn emit_power_use(&mut self, p: &PowerUse) {
+            self.emit_opt(p.exponent.as_deref(), |e, s| e.emit_str(s));
+            self.emit_opt(p.base.as_ref(), |e, &s| e.emit_span(s));
+            self.emit_opt(p.exponent_at.as_ref(), |e, &s| e.emit_span(s));
+            self.emit_span(p.at);
+            self.emit_bool(p.negative);
+            self.emit_usize(p.steps.len());
+            for note in p.steps.iter() {
+                self.emit_span(note.span);
+                self.emit_str(&note.text);
+            }
+            self.emit_opt(p.param.as_deref(), |e, s| e.emit_str(s));
+            self.emit_opt(p.tested.as_deref(), |e, s| e.emit_str(s));
+            self.emit_bool(p.test);
+            self.emit_bool(p.exponent_takes_float);
+            self.emit_bool(p.base_takes_float);
+            self.emit_bool(p.base_int);
+            self.emit_opt(p.base_var.as_deref(), |e, s| e.emit_str(s));
+        }
+
+        pub fn emit_flat_need(&mut self, n: &Need, track_top_spans: bool) {
+            self.emit(TAG_NEED);
+            self.emit_ty(&n.on);
+            let is_sited = n.site().is_some();
+            match &n.kind {
+                NeedKind::Component { i, key, site } => {
+                    self.emit(TAG_NK_COMPONENT);
+                    self.emit_opt(i.as_ref(), |e, &idx| e.emit_usize(idx));
+                    self.emit_ty(key);
+                    self.emit_span(*site);
+                }
+                NeedKind::Index(k) => {
+                    self.emit(TAG_NK_INDEX);
+                    self.emit_ty(k);
+                }
+                NeedKind::Destructure { i, n: len } => {
+                    self.emit(TAG_NK_DESTRUCTURE);
+                    self.emit_usize(*i);
+                    self.emit_usize(*len);
+                }
+                NeedKind::Call {
+                    what,
+                    positional,
+                    named,
+                    curry,
+                    site,
+                } => {
+                    self.emit(TAG_NK_CALL);
+                    self.emit_str(what);
+                    self.emit_usize(positional.len());
+                    for t in positional {
+                        self.emit_ty(t);
+                    }
+                    self.emit_usize(named.len());
+                    for (k, t) in named {
+                        self.emit_str(k);
+                        self.emit_ty(t);
+                    }
+                    self.emit_bool(*curry);
+                    self.emit_opt(site.as_ref(), |e, &s| e.emit_span(s));
+                }
+                NeedKind::Data(what, du) => {
+                    self.emit(TAG_NK_DATA);
+                    self.emit_str(what);
+                    self.emit_data_use(*du);
+                }
+                NeedKind::Into { what, ty } => {
+                    self.emit(TAG_NK_INTO);
+                    self.emit_str(what);
+                    self.emit_ty(ty);
+                }
+                NeedKind::Payload { atom, slot } => {
+                    self.emit(TAG_NK_PAYLOAD);
+                    self.emit_str(atom);
+                    self.emit_slot(slot);
+                }
+                NeedKind::Narrow(nar) => {
+                    self.emit(TAG_NK_NARROW);
+                    self.emit_narrow(nar);
+                }
+                NeedKind::Order {
+                    what,
+                    word,
+                    other,
+                    first,
+                } => {
+                    self.emit(TAG_NK_ORDER);
+                    self.emit_str(what);
+                    self.emit_str(word);
+                    self.emit_ty(other);
+                    self.emit_bool(*first);
+                }
+                NeedKind::NoInt(d) => {
+                    self.emit(TAG_NK_NOINT);
+                    self.emit_int_domain(d);
+                }
+                NeedKind::Power(p) => {
+                    self.emit(TAG_NK_POWER);
+                    self.emit_power_use(p);
+                }
+                NeedKind::Sum => self.emit(TAG_NK_SUM),
+                NeedKind::Entries => self.emit(TAG_NK_ENTRIES),
+                NeedKind::SumMethod { site, beside } => {
+                    self.emit(TAG_NK_SUM_METHOD);
+                    self.emit_span(*site);
+                    self.emit_ty(beside);
+                }
+                NeedKind::Map { f, word, lambda } => {
+                    self.emit(TAG_NK_MAP);
+                    self.emit_ty(f);
+                    self.emit_map_word(*word);
+                    if track_top_spans && *lambda {
+                        let p_lam = self.part.pow;
+                        self.s_map_lambda_true = add_p(self.s_map_lambda_true, p_lam);
+                    }
+                    self.emit_bool(*lambda);
+                }
+                NeedKind::Group { f, recv } => {
+                    self.emit(TAG_NK_GROUP);
+                    self.emit_ty(f);
+                    self.emit_span(*recv);
+                }
+                NeedKind::Level { word, f, site } => {
+                    self.emit(TAG_NK_LEVEL);
+                    self.emit_level_word(*word);
+                    self.emit_ty(f);
+                    self.emit_span(*site);
+                }
+                NeedKind::Remap { at, src, rank } => {
+                    self.emit(TAG_NK_REMAP);
+                    self.emit_span(*at);
+                    self.emit_ty(src);
+                    self.emit_usize(rank.0);
+                    self.emit_usize(rank.1);
+                }
+                NeedKind::Reduce(red, site, ff) => {
+                    self.emit(TAG_NK_REDUCE);
+                    self.emit_reducer(*red);
+                    self.emit_span(*site);
+                    self.emit_fold_form(*ff);
+                }
+                NeedKind::Fold { tys, right, by } => {
+                    self.emit(TAG_NK_FOLD);
+                    self.emit_usize(tys.len());
+                    for t in tys {
+                        self.emit_ty(t);
+                    }
+                    self.emit_bool(*right);
+                    self.emit_bool(*by);
+                }
+                NeedKind::Strings { word, tys } => {
+                    self.emit(TAG_NK_STRINGS);
+                    self.emit_str(word);
+                    self.emit_usize(tys.len());
+                    for t in tys {
+                        self.emit_ty(t);
+                    }
+                }
+                NeedKind::Concat { other, first } => {
+                    self.emit(TAG_NK_CONCAT);
+                    self.emit_ty(other);
+                    self.emit_bool(*first);
+                }
+                NeedKind::Zip {
+                    other,
+                    first,
+                    shared,
+                } => {
+                    self.emit(TAG_NK_ZIP);
+                    self.emit_ty(other);
+                    self.emit_bool(*first);
+                    self.emit_bool(*shared);
+                }
+                NeedKind::InDomain {
+                    domain,
+                    param,
+                    via,
+                    bits,
+                    path,
+                } => {
+                    self.emit(TAG_NK_INDOMAIN);
+                    self.emit_int_domain(domain);
+                    self.emit_usize(*param);
+                    self.emit_opt(via.as_deref(), |e, v| e.emit(hash_via_chain(v)));
+                    self.emit_opt(bits.as_ref(), |e, &s| e.emit_span(s));
+                    self.emit_usize(path.len());
+                    for &ps in path.iter() {
+                        self.emit_path_step(ps);
+                    }
+                }
+                NeedKind::Fwd(_) => unreachable!("NeedKind::Fwd handled in emit_sig / summary"),
+            }
+            self.emit_opt(n.result.as_ref(), |e, r| e.emit_ty(r));
+            if track_top_spans {
+                self.emit_tracked_span(n.span);
+            } else {
+                self.emit_span(n.span);
+            }
+            // `Need::alike` holds `(Span, Span, CallPath)`; `CallPath` is ignored by Eq/Hash.
+            self.emit(TAG_ALIKE);
+            self.emit_usize(n.alike.len());
+            for (at, site, _) in n.alike.iter() {
+                if track_top_spans && is_sited {
+                    self.emit_tracked_span(*at);
+                } else {
+                    self.emit_span(*at);
+                }
+                self.emit_span(*site);
+            }
+            // `Need::via` (`CallPath`) is ignored by `PartialEq` and `Hash` for `Need`, so not emitted.
+        }
+
+        pub fn emit_sig(&mut self, s: &Sig) {
+            let mut arrow_param_vars: HashSet<Arc<str>> = HashSet::new();
+            for a in &s.arrows {
+                for p in &a.params {
+                    if let Some(v) = p.as_var()
+                        && s.own.contains(v)
+                    {
+                        arrow_param_vars.insert(v.clone());
+                    }
+                }
+            }
+
+            let mut mat_result_ranks: HashMap<Arc<str>, usize> = HashMap::new();
+            let mut total_needs = 0usize;
+            let mut any_needs_fallback = false;
+            for n in &s.needs {
+                match &n.kind {
+                    NeedKind::Fwd(fwd) => {
+                        for &(off, ref exit_ty) in &fwd.exits {
+                            if let Some(v) = exit_ty.as_var()
+                                && s.own.contains(v)
+                                && !arrow_param_vars.contains(v)
+                            {
+                                mat_result_ranks
+                                    .entry(v.clone())
+                                    .or_insert(total_needs + off);
+                            }
+                        }
+                        let can_fast = self.r == R_BASE
+                            && fwd
+                                .digest_summary
+                                .as_ref()
+                                .is_some_and(|ds| !ds.fallback_large_id)
+                            && fwd.sigma.iter().all(|(_, t)| t.as_var().is_some());
+                        if !can_fast && !fwd.sigma.iter().all(|(_, t)| t.as_var().is_some()) {
+                            any_needs_fallback = true;
+                        }
+                        total_needs += fwd.need_count;
+                    }
+                    _ => {
+                        if let Some(v) = n.result.as_ref().and_then(Ty::as_var)
+                            && s.own.contains(v)
+                            && !arrow_param_vars.contains(v)
+                        {
+                            mat_result_ranks.entry(v.clone()).or_insert(total_needs);
+                        }
+                        total_needs += 1;
+                    }
+                }
+            }
+
+            let is_root = self.scopes.is_empty();
+            self.scopes.push(SigScope {
+                own: s.own.clone(),
+                mat_result_ranks: mat_result_ranks.clone(),
+                phase: ScopePhase::Arrows,
+                is_root,
+            });
+            self.emit(TAG_SIG);
+            self.emit_usize(s.params.len());
+            for p in &s.params {
+                self.emit_sparam(p);
+            }
+            self.emit_opt(s.hull.as_ref(), |e, wr| e.emit_wrange(wr));
+            self.emit_opt(s.keys.as_ref(), |e, wr| e.emit_wrange(wr));
+            self.emit_usize(s.arrows.len());
+            for a in &s.arrows {
+                self.emit_arrow(a);
+            }
+            self.emit_bounds(&s.bounds);
+            self.emit_bool(s.data);
+            self.emit(match s.dense {
+                Dense::No => 1,
+                Dense::Interval => 2,
+                Dense::Ranks => 3,
+            });
+            self.emit_opt(s.word.as_deref(), |e, w| e.emit_str(w));
+
+            self.emit(TAG_NEEDS_LIST);
+            self.emit_usize(total_needs);
+            if self.stream.is_some() || any_needs_fallback {
+                let (decoded_needs, decoded_own) = s.decoded_needs_and_own();
+                let mut full_ranks: HashMap<Arc<str>, usize> = HashMap::new();
+                for (idx, dn) in decoded_needs.iter().enumerate() {
+                    if let Some(v) = dn.result.as_ref().and_then(Ty::as_var)
+                        && decoded_own.contains(v)
+                        && !arrow_param_vars.contains(v)
+                    {
+                        full_ranks.entry(v.clone()).or_insert(idx);
+                    }
+                }
+                if let Some(sc) = self.scopes.last_mut() {
+                    sc.own = decoded_own.as_ref().clone();
+                    sc.mat_result_ranks = full_ranks;
+                    sc.phase = ScopePhase::Needs;
+                }
+                for dn in decoded_needs.iter() {
+                    self.emit_flat_need(dn, false);
+                }
+            } else {
+                if let Some(sc) = self.scopes.last_mut() {
+                    sc.phase = ScopePhase::Needs;
+                }
+                let mut cur_rank = 0usize;
+                for n in &s.needs {
+                    match &n.kind {
+                        NeedKind::Fwd(fwd)
+                            if self.r == R_BASE
+                                && fwd
+                                    .digest_summary
+                                    .as_ref()
+                                    .is_some_and(|ds| !ds.fallback_large_id)
+                                && fwd.digest_base_rank == cur_rank =>
+                        {
+                            let ds = fwd.digest_summary.as_ref().expect("checked above");
+                            self.part = self.part.concat(ds.body);
+                            cur_rank += fwd.need_count;
+                        }
+                        NeedKind::Fwd(fwd) => {
+                            if let Some(sub) = build_fwd_summary_at_base(
+                                fwd,
+                                n.span,
+                                cur_rank,
+                                &mat_result_ranks,
+                                self.r,
+                            ) {
+                                self.part = self.part.concat(sub.body);
+                                cur_rank += fwd.need_count;
+                            } else {
+                                // Exact fallback for `$k >= P` or non-var sigma:
+                                let decoded = fwd.decode(n.span);
+                                if let Some(sc) = self.scopes.last_mut() {
+                                    for (j, dn) in decoded.iter().enumerate() {
+                                        if let Some(v) = dn.result.as_ref().and_then(Ty::as_var)
+                                            && !arrow_param_vars.contains(v)
+                                        {
+                                            sc.own.insert(v.clone());
+                                            sc.mat_result_ranks
+                                                .entry(v.clone())
+                                                .or_insert(cur_rank + j);
+                                        }
+                                    }
+                                }
+                                for dn in &decoded {
+                                    self.emit_flat_need(dn, false);
+                                }
+                                cur_rank += decoded.len();
+                            }
+                        }
+                        _ => {
+                            self.emit_flat_need(n, false);
+                            cur_rank += 1;
+                        }
+                    }
+                }
+            }
+            self.scopes.pop();
+
+            self.emit_sig_own_set(s);
+            self.emit_var_set(TAG_HELD_SET, s.held.len(), s.held.iter(), false);
+            self.emit_usize(s.named);
+        }
+
+        fn emit_sig_own_set(&mut self, s: &Sig) {
+            if !s.has_fwd_needs() {
+                self.emit_var_set(TAG_OWN_SET, s.own.len(), s.own.iter(), false);
+                return;
+            }
+            let mut sum = 0u64;
+            let mut total_len = s.own.len();
+            let mut any_large = false;
+            for v in &s.own {
+                match tok_var_plain(v) {
+                    Some(tv) => sum = add_p(sum, tv),
+                    None => {
+                        any_large = true;
+                        break;
+                    }
+                }
+            }
+            if !any_large {
+                for n in &s.needs {
+                    if let NeedKind::Fwd(fwd) = &n.kind {
+                        let internal = fwd.need_count.saturating_sub(fwd.exits.len());
+                        if internal == 0 {
+                            continue;
+                        }
+                        if let Some(fin) = &fwd.finish_naming {
+                            for &(start_n, count) in &fin.runs {
+                                total_len += count;
+                                sum = add_p(
+                                    sum,
+                                    sum_fresh_vars_o1(start_n, count, &fin.skip, &fin.held),
+                                );
+                            }
+                        } else if let Some(k0) = fwd.base_class {
+                            if (k0 as u64).saturating_add(fwd.need_count as u64) <= P {
+                                total_len += internal;
+                                let mut range_sum = sum_cls_range_o1(k0 as u64, fwd.need_count);
+                                for &(off, _) in &fwd.exits {
+                                    range_sum = sub_p(range_sum, tok_cls_small((k0 + off) as u64));
+                                }
+                                sum = add_p(sum, range_sum);
+                            } else {
+                                any_large = true;
+                                break;
+                            }
+                        } else {
+                            any_large = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !any_large {
+                self.emit(TAG_OWN_SET);
+                self.emit_usize(total_len);
+                self.emit(sum);
+            } else {
+                let (_, decoded_own) = s.decoded_needs_and_own();
+                self.emit_var_set(TAG_OWN_SET, decoded_own.len(), decoded_own.iter(), false);
+            }
+        }
+    }
+
+    pub fn build_sig_needs_summary(s: &Sig, r: u64) -> NeedBlockSummary {
+        if r == R_BASE
+            && let Some(cached) = s.facts.11.get()
+        {
+            return cached.clone();
+        }
+        let mut arrow_param_vars: HashSet<Arc<str>> = HashSet::new();
+        for a in &s.arrows {
+            for p in &a.params {
+                if let Some(v) = p.as_var()
+                    && s.own.contains(v)
+                {
+                    arrow_param_vars.insert(v.clone());
+                }
+            }
+        }
+        let mut mat_result_ranks: HashMap<Arc<str>, usize> = HashMap::new();
+        let mut total_needs = 0usize;
+        for n in &s.needs {
+            match &n.kind {
+                NeedKind::Fwd(fwd) => {
+                    for &(off, ref exit_ty) in &fwd.exits {
+                        if let Some(v) = exit_ty.as_var()
+                            && s.own.contains(v)
+                            && !arrow_param_vars.contains(v)
+                        {
+                            mat_result_ranks
+                                .entry(v.clone())
+                                .or_insert(total_needs + off);
+                        }
+                    }
+                    total_needs += fwd.need_count;
+                }
+                _ => {
+                    if let Some(v) = n.result.as_ref().and_then(Ty::as_var)
+                        && s.own.contains(v)
+                        && !arrow_param_vars.contains(v)
+                    {
+                        mat_result_ranks.entry(v.clone()).or_insert(total_needs);
+                    }
+                    total_needs += 1;
+                }
+            }
+        }
+
+        let mut summary = NeedBlockSummary::empty();
+        let mut cur_rank = 0usize;
+        for n in &s.needs {
+            let piece = match &n.kind {
+                NeedKind::Fwd(fwd)
+                    if r == R_BASE
+                        && fwd
+                            .digest_summary
+                            .as_ref()
+                            .is_some_and(|ds| !ds.fallback_large_id)
+                        && fwd.digest_base_rank == cur_rank =>
+                {
+                    fwd.digest_summary.as_ref().expect("checked above").clone()
+                }
+                NeedKind::Fwd(fwd) => {
+                    match build_fwd_summary_at_base(fwd, n.span, cur_rank, &mat_result_ranks, r) {
+                        Some(sub) => sub,
+                        None => {
+                            let mut bad = NeedBlockSummary::empty();
+                            bad.need_count = fwd.need_count;
+                            bad.fallback_large_id = true;
+                            bad
+                        }
+                    }
+                }
+                _ => {
+                    let mut enc = Encoder::new(r, false);
+                    enc.scopes.push(SigScope {
+                        own: s.own.clone(),
+                        mat_result_ranks: mat_result_ranks.clone(),
+                        phase: ScopePhase::Needs,
+                        is_root: true,
+                    });
+                    enc.tracked_params = Some(arrow_param_vars.clone());
+                    enc.emit_flat_need(n, true);
+                    NeedBlockSummary {
+                        body: enc.part,
+                        need_count: 1,
+                        s_rank: enc.s_rank,
+                        s_params: enc.s_params,
+                        span_contrib: enc.span_contrib,
+                        s_span_start: enc.s_span_start,
+                        s_span_end: enc.s_span_end,
+                        s_map_lambda_true: enc.s_map_lambda_true,
+                        fallback_large_id: enc.fallback_large_id,
+                    }
+                }
+            };
+            cur_rank += piece.need_count;
+            summary = summary.concat(&piece);
+        }
+
+        if r == R_BASE {
+            let _ = s.facts.11.set(summary.clone());
+        }
+        summary
+    }
+
+    pub fn build_fwd_summary_at_base(
+        fwd: &FwdNeed,
+        call_span: Span,
+        base_rank: usize,
+        caller_result_ranks: &HashMap<Arc<str>, usize>,
+        r: u64,
+    ) -> Option<NeedBlockSummary> {
+        let callee_sum = build_sig_needs_summary(&fwd.callee, r);
+        let mut sigma_map = HashMap::with_capacity(fwd.sigma.len());
+        for (param_var, arg_ty) in &fwd.sigma {
+            let w = arg_ty.as_var()?;
+            if let Some(&rk) = caller_result_ranks.get(w) {
+                sigma_map.insert(param_var.clone(), SigmaTarget::NeedRank(rk));
+            } else {
+                sigma_map.insert(param_var.clone(), SigmaTarget::ParamVar(w.clone()));
+            }
+        }
+        callee_sum.instantiate(base_rank, &sigma_map, call_span)
+    }
+
+    pub fn sig_digest(s: &Sig) -> u64 {
+        if let Some(&d) = s.facts.2.get() {
+            return d;
+        }
+        sig_digest_with_base(s, R_BASE)
+    }
+
+    pub fn sig_digest_with_base(s: &Sig, r: u64) -> u64 {
+        if r == R_BASE
+            && let Some(&d) = s.facts.2.get()
+        {
+            return d;
+        }
+        let mut enc = Encoder::new(r, false);
+        enc.emit_sig(s);
+        enc.part.finalize()
+    }
+
+    pub fn encode_sig_stream(
+        s: &Sig,
+        r: u64,
+        keep_stream: bool,
+    ) -> (u64, PartHash, Option<Vec<u64>>) {
+        let mut enc = Encoder::new(r, keep_stream);
+        enc.emit_sig(s);
+        let fin = enc.part.finalize();
+        (fin, enc.part, enc.stream)
     }
 }

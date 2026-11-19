@@ -25,6 +25,7 @@ use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 
 mod fp_ops;
+mod r10_forward;
 mod remap;
 
 use fp_ops::Quantifier;
@@ -2598,12 +2599,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let alone: Vec<(usize, Span)> = (alone.into_iter())
             .filter_map(|(t, at)| {
-                let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+                let k = class_id(t.as_var()?)
+                    .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))?;
                 Some((self.find(k), at))
             })
             .collect();
         for x in found {
-            let Some(r) = class_id(&x).filter(|&k| k < self.classes.len()) else {
+            let Some(r) =
+                class_id(&x).filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))
+            else {
                 continue;
             };
             let r = self.find(r);
@@ -2772,7 +2776,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut binds = Vec::new();
         for v in vars.order {
-            let Some(k) = class_id(&v).filter(|&k| k < self.classes.len()) else {
+            let Some(k) =
+                class_id(&v).filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))
+            else {
                 continue;
             };
             match self.class_takes(self.find(k), Carrier::NUMBER_BITS) {
@@ -2859,6 +2865,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// function's end. The naive alternative, checking each repair by checking the function
     /// again with it written in, costs the function's size per repair.
     fn powers_bound(&mut self, r: usize, mask: u8, c: Carrier, carried: Option<Span>) {
+        self.r10_force_root(r, "f7");
         let f = Fixing {
             class: r,
             mask,
@@ -3473,6 +3480,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.pending.len() <= s.level {
             self.pending.push(Vec::new());
         }
+        self.r10_open_level(s.level);
         self.open_type_vars(s.level);
         let given = std::mem::take(&mut s.given);
         for ((id, p), g) in s.ids.iter().zip(&f.params).zip(given) {
@@ -6369,7 +6377,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// mask-met error twice (the prototype on branch wt/share1, 833261673).
     pub(super) fn sweep_unchecked_uses(&mut self) {
         let mut left = Vec::new();
-        for k in 0..self.classes.len() {
+        // Only classes with a record: under D a kept forward's internal classes have none,
+        // and their uses are checked when the forward is forced or replayed.
+        for k in self.classes.materialized_ids() {
             if self.find(k) != k || self.classes[k].uses.is_empty() {
                 continue;
             }
@@ -9686,6 +9696,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.pending.len() <= level {
             self.pending.push(Vec::new());
         }
+        self.r10_open_level(level);
         self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
         for p in slots {
@@ -12359,18 +12370,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             "the level that ends is the innermost one"
         );
         #[cfg(any(test, feature = "forward-probe"))]
-        self.probe_generalize(level);
+        if !self.r10_uses_sparse() {
+            self.probe_generalize(level);
+        }
+        self.r10_f8_before_resolve_if_configured(level);
         // The roots of this level, and the classes whose roots have a type by now: each of
         // the latter takes its root's type in `sig`. A class of a function around goes to
         // that function's list.
         let mut own = Vec::new();
         let mut done = Vec::new();
-        for k in std::mem::take(&mut self.pending[level]) {
+        let pending_list = self
+            .r10_take_pending(level)
+            .unwrap_or_else(|| std::mem::take(&mut self.pending[level]));
+        for k in pending_list {
             let r = self.find(k);
             let at = self.classes[r].level;
             if self.classes[r].resolved.is_none() {
                 if at < level {
                     self.pending[at].push(k);
+                    self.r10_push_outer_pending(at, k);
                     continue;
                 }
                 self.resolve(r);
@@ -12378,6 +12396,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             done.push(k);
         }
+        let kept_fids = self.r10_after_resolve_and_detach(level, &mut own, &mut done);
+        self.r10.stats.generalize_done_items += done.len();
         let mut needs: Vec<(usize, Need)> = Vec::new();
         let mut now = Vec::new();
         for &r in &own {
@@ -12405,7 +12425,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.check_on(n, t, n.span, None);
         }
         needs.sort_by_key(|(n, _)| *n);
-        let (kept, merged) = self.share_alike(needs.into_iter().map(|(_, n)| n).collect());
+        let ordered = self.r10_merge_direct_and_kept_needs(&kept_fids, needs);
+        let (kept, merged) = self.share_alike(ordered);
+        let kept = self.r10_n4_expand_if_merged(kept, &merged);
         sig.needs = kept;
         // Only the classes listed for this level are replaced here, not every class `sig`
         // holds. A type variable keeps its class's name `$k` until `finish`, so a function
@@ -12447,42 +12469,48 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
         }
         deep.extend(merged.iter().map(|(v, t)| (v.clone(), t.clone())));
+        self.r10_check_m56c_deep_outside(&sig, &deep, &outside);
         let mut sig = sig.replace(&deep).replace_outside(&outside);
-        // The classes of this level that are type variables, named in order of appearance.
-        // The names it holds, inside the functions it holds too, are taken; the facts of
-        // those functions are shared, not walked again. A class `outside` replaced is still
-        // inside those functions, and is no type variable.
-        let facts = VarFacts::of(&sig);
-        let mine: HashSet<Arc<str>> = own
-            .iter()
-            .map(|r| Arc::from(format!("${r}")))
-            .filter(|v| facts.classes.contains(v) && !outside.contains_key(v))
-            .collect();
-        // The names before `free` are all taken.
-        let mut n = facts.free;
-        let mut mine_seen = BTreeSet::new();
-        for v in sig.first_seen(&mine) {
-            let r = class_id(&v).expect("a class variable");
-            let name = fresh_name(Names::Variables, &mut n, |name| facts.names.contains(name));
-            if self.classes[r].mask != EVERY {
-                sig.bounds.insert(v.clone(), self.classes[r].mask);
+        if self.r10.cfg.enabled && sig.has_fwd_needs() {
+            self.r10_name_compact_sig_in_generalize(&mut sig, &own, &outside);
+        } else {
+            // The classes of this level that are type variables, named in order of appearance.
+            // The names it holds, inside the functions it holds too, are taken; the facts of
+            // those functions are shared, not walked again. A class `outside` replaced is still
+            // inside those functions, and is no type variable.
+            let facts = VarFacts::of(&sig);
+            let mine: HashSet<Arc<str>> = own
+                .iter()
+                .map(|r| Arc::from(format!("${r}")))
+                .filter(|v| facts.classes.contains(v) && !outside.contains_key(v))
+                .collect();
+            // The names before `free` are all taken.
+            let mut n = facts.free;
+            let mut mine_seen = BTreeSet::new();
+            for v in sig.first_seen(&mine) {
+                let r = class_id(&v).expect("a class variable");
+                let name = fresh_name(Names::Variables, &mut n, |name| facts.names.contains(name));
+                self.r10.stats.names_drawn += 1;
+                if self.classes[r].mask != EVERY {
+                    sig.bounds.insert(v.clone(), self.classes[r].mask);
+                }
+                self.classes[r].name = Some(name);
+                mine_seen.insert(v);
             }
-            self.classes[r].name = Some(name);
-            mine_seen.insert(v);
-        }
-        // A type variable that does not reach the signature means nothing outside it.
-        for &r in &own {
-            if self.classes[r].name.is_none()
-                && let Some(t) = &self.classes[r].resolved
-                && t.vars.iter().any(|v| class_id(v).is_some())
-            {
-                self.classes[r].resolved = Some(Ty::dynamic());
+            // A type variable that does not reach the signature means nothing outside it.
+            for &r in &own {
+                if self.classes[r].name.is_none()
+                    && let Some(t) = &self.classes[r].resolved
+                    && t.vars.iter().any(|v| class_id(v).is_some())
+                {
+                    self.classes[r].resolved = Some(Ty::dynamic());
+                }
             }
+            sig.own = mine_seen;
+            sig.named = n;
+            sig.facts = Default::default();
+            sig.note_held();
         }
-        sig.own = mine_seen;
-        sig.named = n;
-        sig.facts = Default::default();
-        sig.note_held();
         // The rows [`Self::clean`] found at this level may hold its classes, which it named.
         self.ends += 1;
         if self.gens.len() <= level {
@@ -12566,6 +12594,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.alike_sites.is_empty() {
             return (needs, Binds::new());
         }
+        self.r10.stats.share_alike_needs_walked += needs.len();
         let mut kept: Vec<Need> = Vec::with_capacity(needs.len());
         let mut members: Vec<Vec<(Span, Span, CallPath)>> = Vec::with_capacity(needs.len());
         // What a need's result is, as needs are grouped by it.
@@ -12586,7 +12615,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             let on = (n.on.as_var().and_then(|v| class_id(v)))
-                .filter(|&k| k < self.classes.len())
+                .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))
                 .map(|k| Ty::var(format!("${}", self.find(k)).into()));
             // The use's key with each class written as its root, so that a use on the result
             // of a use joined here before (`t.scan(f).count` after `t.scan(f)`) is paired too.
@@ -12665,7 +12694,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn with_roots(&self, t: &Ty) -> Ty {
         let binds: Binds = (t.var_facts().classes.iter())
             .filter_map(|v| {
-                let k = class_id(v).filter(|&k| k < self.classes.len())?;
+                let k = class_id(v)
+                    .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))?;
                 let r = self.find(k);
                 (r != k).then(|| (v.clone(), Ty::var(format!("${r}").into())))
             })
@@ -12691,7 +12721,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// function that ends: a class not yet resolved (its root resolved to its own variable
     /// `$r`) at this level ([`Self::share_alike`]).
     fn own_result(&self, t: &Ty) -> Option<usize> {
-        let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+        let k = class_id(t.as_var()?)
+            .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))?;
         let r = self.find(k);
         let c = &self.classes[r];
         let var = c.resolved.as_ref().and_then(Ty::as_var);
@@ -12707,7 +12738,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if is_solved(t) {
             return Some(t.clone());
         }
-        let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+        let k = class_id(t.as_var()?)
+            .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k))?;
         let c = &self.classes[self.find(k)];
         let r = c.resolved.as_ref()?;
         (c.level == self.level && is_solved(r)).then(|| r.clone())
@@ -12768,8 +12800,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     // newer classes, which holds since a test's class is made after the class it tests.
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
-        for i in 0..self.pending[level].len() {
-            let r = self.find(self.pending[level][i]);
+        let pending_list = self
+            .r10_peek_pending(level)
+            .unwrap_or_else(|| self.pending[level].clone());
+        for k in pending_list {
+            let r = self.find(k);
             if self.classes[r].level == level && !self.classes[r].narrowed_to.is_empty() {
                 from.push(r);
             }
@@ -12829,6 +12864,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let m = self.classes[a].mask & self.classes[b].mask;
         if m == 0 {
             return false;
+        }
+        self.r10_force_root(a, "f3");
+        if !self.r10.cfg.force_skip_second_on_merge {
+            self.r10_force_root(b, "f3");
         }
         self.touch(a);
         self.touch(b);
@@ -13009,8 +13048,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => None,
         };
         let key = (kind, gives);
+        self.r10_on_need(r, &key);
         #[cfg(any(test, feature = "forward-probe"))]
-        self.probe_need(r, &key, span);
+        if !self.r10_uses_sparse() {
+            self.probe_need(r, &key, span);
+        }
         // The arguments this use writes, kept under the span of the use the need keeps, the
         // first of equal uses, with those of each equal use met after it: a function each
         // passes on is rebuilt where each writes it ([`Self::need_arg_via`]). One written by a
@@ -13028,6 +13070,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .entry(first)
                 .or_default()
                 .push((span, spans));
+            self.r10.stats.call_written_entries += 1;
+            self.r10.stats.records_written += 1;
         }
         if let Some((result, first, at)) = self.classes[r].known.get(&key) {
             let (result, first, at) = (result.clone(), *first, *at);
@@ -13092,15 +13136,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             && !alike.is_empty()
             && need.site() == Some(site)
         {
-            let link = self.passing_on.last().and_then(|p| p.0.clone());
+            let link_text = self.passing_on.last().and_then(CallPath::top_text);
             need.alike = (alike.iter())
                 .map(|(at, s, via)| {
-                    let via = match &link {
-                        Some(l) => CallPath(Some(Arc::new(Via {
-                            at: *at,
-                            text: l.text.clone(),
-                            next: via.0.clone(),
-                        }))),
+                    let via = match &link_text {
+                        Some(text) => CallPath::prepend(*at, text.clone(), via),
                         None => via.clone(),
                     };
                     (if span == met { *at } else { span }, *s, via)
@@ -13115,15 +13155,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.needs += 1;
         let seq = self.needs;
         let class = &mut self.classes[r];
+        let mut written_here = 2usize;
         if let NeedKind::Order { word, first, .. } = &need.kind {
             let at = class.uses.len();
             class.orders.insert((word.clone(), *first, span), at);
+            written_here += 1;
         }
         class.uses.push((seq, need.clone()));
         let given = result.clone().unwrap_or_else(Ty::empty);
         let key = (site_free(&need.kind).into_owned(), gives);
         class.known.insert(key, (given, span, site));
         class.data |= data;
+        self.r10.stats.records_written += written_here;
         for v in &flowed {
             self.check_on(&need, &v.ty, v.at, Some(v));
         }
@@ -13562,6 +13605,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
                 self.zip_end(x, y, span, *shared, Self::need)
             }
+            NeedKind::Fwd(_) => unreachable!("NeedKind::Fwd decoded before meet"),
         };
         // An entry read from a family that lies in an argument lies there too, as each entry
         // of it, where every entry that is no atom has the one type the read gives: then a
@@ -13617,6 +13661,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         mut defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Vec<Need> {
+        let decoded: Option<Vec<Need>> = needs
+            .iter()
+            .any(|n| matches!(n.kind, NeedKind::Fwd(_)))
+            .then(|| {
+                let clear_lambda = !self.r10.cfg.keep_map_lambda_on_decode;
+                let mut out = Vec::new();
+                for n in needs {
+                    match &n.kind {
+                        NeedKind::Fwd(fwd) => {
+                            out.extend(fwd.decode_with_opts(n.span, clear_lambda));
+                        }
+                        _ => out.push(n.clone()),
+                    }
+                }
+                out
+            });
+        let needs: &[Need] = decoded.as_deref().unwrap_or(needs);
         self.lambda_entries_placed(needs, binds);
         let mut left = Vec::new();
         for n in needs {
@@ -13699,12 +13760,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let shape = self.bound(&on, &mut Binds::new());
         // A need this meeting makes, on a class of the function around the call, came through
         // the callee's need at its line: one link before the callee's own path, O(1).
-        let link = Via {
-            at: n.span,
-            text: format!("{what} needs this of its argument here").into(),
-            next: n.via.0.clone(),
-        };
-        self.passing_on.push(CallPath(Some(Arc::new(link))));
+        self.passing_on.push(CallPath::prepend(
+            n.span,
+            format!("{what} needs this of its argument here").into(),
+            &n.via,
+        ));
         let got = match self.open.iter_mut().find(|o| o.span == n.span) {
             _ if on.dynamic => {
                 self.any(&format!("{what}, which needs this of its argument,"), span);
@@ -13778,7 +13838,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 got
             }
         };
-        let path = self.passing_on.pop().expect("the link pushed above").0;
+        let path = self.passing_on.pop().expect("the link pushed above");
         // What the use gives is within its result: a variable there joins it, as for an
         // argument, and one it leaves unbound gives nothing.
         if let Some(r) = &n.result {
@@ -13808,14 +13868,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // at each of the d calls, O(d²) for a chain (as for [`Via`], COMPLEXITY.md F123).
         self.also_notes(from, |_| {
             let mut notes = Vec::new();
-            let mut link = path.as_deref();
-            while let Some(l) = link {
+            path.for_each_note(|span, text| {
                 notes.push(Note {
-                    span: l.at,
-                    text: l.text.to_string(),
+                    span,
+                    text: text.to_string(),
                 });
-                link = l.next.as_deref();
-            }
+            });
             built(notes.len() as u64);
             notes
         });
@@ -14277,6 +14335,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             if matches!(p, Piece::Tuple(_) | Piece::Fn(_)) {
                 let r = self.find(k);
+                self.r10_force_root(r, "f4");
                 let uses: Vec<Need> = self.classes[r]
                     .uses
                     .iter()
@@ -16515,11 +16574,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Name(name) => name.to_string(),
             _ => self.code(Some(e.span)).unwrap_or("this value").to_string(),
         };
-        let link = Via {
+        let link = Via::new(
             at,
-            text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
-            next: via.clone(),
-        };
+            format!("`{name}` is passed on as `{p}` of {what} here").into(),
+            via.clone(),
+        );
         let need = Need {
             on: Ty::empty(),
             kind: NeedKind::InDomain {
@@ -17176,11 +17235,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             if !self.trying {
                 let name = self.code(Some(e.span)).unwrap_or("this value").to_string();
-                let link = Via {
-                    at: a.at.unwrap_or(e.span),
-                    text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
-                    next: use_at.1.clone(),
-                };
+                let link = Via::new(
+                    a.at.unwrap_or(e.span),
+                    format!("`{name}` is passed on as `{p}` of {what} here").into(),
+                    use_at.1.clone(),
+                );
                 let need = Need {
                     on: Ty::empty(),
                     kind: NeedKind::InDomain {
@@ -24078,8 +24137,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.note_fn_uses(&mut frame, sig, &arrow.result);
         self.call_frames.push(frame);
         #[cfg(any(test, feature = "forward-probe"))]
-        let rec = self.probe_admit(sig, args, partial, span);
-        let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
+        let rec = if !self.r10_uses_sparse() {
+            self.probe_admit(sig, args, partial, span)
+        } else {
+            None
+        };
+        let mut left =
+            match self.r10_try_admit(what, sig, arrow, args, partial, &mut binds, &defer, span) {
+                Some(l) => l,
+                None => self.replay(what, &sig.needs, &mut binds, defer, span),
+            };
         #[cfg(any(test, feature = "forward-probe"))]
         if let Some(rec) = rec {
             let result = arrow.result.replace(&binds);
@@ -24258,6 +24325,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut sets = VarSets::default();
         for need in &sig.needs {
+            if let NeedKind::Fwd(fwd) = &need.kind {
+                for group in &fwd.var_ties {
+                    let mut vs = Vars::default();
+                    for t in group {
+                        t.vars_in(&mut vs);
+                    }
+                    let mut it = vs.order.iter();
+                    if let Some(first) = it.next() {
+                        let a = sets.id(first);
+                        for v in it {
+                            let b = sets.id(v);
+                            sets.union(a, b);
+                        }
+                    }
+                }
+                continue;
+            }
             let mut vs = Vars::default();
             need.vars_in(&mut vs);
             let mut it = vs.order.iter();
@@ -27473,7 +27557,7 @@ fn domain_test(s: &Sig, ranges: Vec<Option<ParamRange>>) -> Result<Domain, (usiz
             p.vars_in(&mut vars);
         }
     }
-    let used = |v: &str| (s.needs.iter()).any(|n| n.on.vars.contains(v));
+    let used = |v: &str| (s.needs.iter()).any(|n| n.on_holds_var(v));
     let mut binds = Binds::new();
     for v in &vars.order {
         match s.bounds.get(v) {
@@ -27816,7 +27900,7 @@ fn guarded_needs(s: &Sig, e: &Sig) -> Vec<Need> {
         && e.arrows.iter().all(|a| a.partial)
         && s.arrows.iter().any(|a| !a.partial)
         && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_ok();
-    (s.needs.iter())
+    (s.decoded_needs_cow().iter())
         .filter(|n| !(guarded && range_need_of(s, n).is_some()))
         .cloned()
         .collect()
