@@ -1091,3 +1091,47 @@ fn two_units_with_read_fits_at_one_span_are_checked_apart() {
         assert!(db.front(text).is_ok(), "{text}");
     }
 }
+
+/// `(x0: (X0 | X1,) | (X2,) | (X4 | X5,)) -> int` fits itself renamed `Y`, every variable
+/// bounded to several carriers, and so do the same shapes of k = 3 and 10 components with one
+/// variable at the places whose bit is set in the shape's number and two at the others
+/// (`bench::fits::shapes_at_different_sets_of_places` at n = 3 and 4). The first row binds
+/// `X0` to `Y0` and `X1` to `Y1` alone, so the first shape holds no other row: each later row
+/// passes it and is held by its own shape. Before (FAIL-types-joined-shape-first) `(Y2,)` and
+/// `(Y4 | Y5,)` both failed the first shape, and the second was refused. Controls: with the
+/// last shape missing, the rows are not held.
+#[test]
+fn shapes_after_a_shape_of_two_bound_variables_at_every_place_hold_their_rows() {
+    use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig, why_unfit};
+    for k in [1usize, 3, 10] {
+        for n in [3usize, 4] {
+            let var = |p: &str, r: usize, j: usize, s: usize| {
+                Ty::var(format!("{p}{}", (r * k + j) * 2 + s).into())
+            };
+            let row = |p: &str, r: usize| {
+                Ty::tuple(
+                    (0..k)
+                        .map(|j| match (r >> j) & 1 {
+                            1 => var(p, r, j, 0),
+                            _ => var(p, r, j, 0).union(&var(p, r, j, 1)),
+                        })
+                        .collect(),
+                )
+            };
+            let rows = |p: &str, n: usize| {
+                (0..n)
+                    .map(|r| row(p, r))
+                    .reduce(|a, b| a.union(&b))
+                    .expect("one row at least")
+            };
+            let int = Ty::carrier(Carrier::Int);
+            let c = 2 * k * n;
+            let s = own_sig("X", c, Some(EVERY), rows("X", n), int.clone());
+            let q = own_sig("Y", c, Some(EVERY), rows("Y", n), int.clone());
+            assert_eq!(why_unfit(&s, &q), None, "k {k}, n {n}: {q} in {s}");
+            assert!(fits_sig(&s, &q), "k {k}, n {n}: {q} in {s}");
+            let fewer = own_sig("X", c, Some(EVERY), rows("X", n - 1), int);
+            assert!(!fits_sig(&fewer, &q), "k {k}, n {n}: {q} in {fewer}");
+        }
+    }
+}

@@ -181,11 +181,13 @@ fn shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales(
 }
 
 /// The signatures `(x0: shapes) -> int` and `(x0: written) -> int` for `n` shapes of one tuple
-/// of 10 components: shape r has one variable at each place whose bit is set in r + 1 and two
+/// of 10 components: shape r has one variable at each place whose bit is set in r and two
 /// variables, `X_a | X_b`, at the others, so no two shapes are pinned at the same set of
-/// places and each at one place at least; `written` is the same rows of the variables `Y`.
-/// (A shape of two variables at every place, with two others after it, is refused: the
-/// members that need the later shapes both fail the first, FAIL-types-joined-shape-first.)
+/// places, and the first, of two variables at every place, is pinned nowhere; `written` is
+/// the same rows of the variables `Y`. Once the first row binds its variables alone, the first
+/// shape is filed under them (`Bound::unions` in ty.rs) and the later rows, of other
+/// variables, skip it. Before, each later row tried it, and the second to fail it was refused
+/// (FAIL-types-joined-shape-first).
 fn shapes_at_different_sets_of_places(n: usize) -> [zedc::check::ty::Sig; 2] {
     const K: usize = 10;
     assert!(n < 1 << K);
@@ -194,7 +196,7 @@ fn shapes_at_different_sets_of_places(n: usize) -> [zedc::check::ty::Sig; 2] {
     };
     let row = |p: &str, r: usize| {
         let cs = (0..K)
-            .map(|j| match ((r + 1) >> j) & 1 {
+            .map(|j| match (r >> j) & 1 {
                 1 => var(p, r, j, 0),
                 _ => var(p, r, j, 0).union(&var(p, r, j, 1)),
             })
@@ -231,6 +233,97 @@ fn shapes_pinned_at_n_different_sets_of_places_scale() {
     let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|n| (n, shapes_at_different_sets_of_places(n)))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let [s, written] = &sigs[&n];
+        assert!(fits_sig(s, written), "{what} at {n}");
+    });
+}
+
+/// The signatures `(x0: shapes) -> int` and `(x0: written) -> int` for `p` shapes `T_m` of `p`
+/// places: `T_m` has the variable `X_k` at each place `k <= m` and a variable of its own at
+/// each place after; `written` is the same rows of the variables `Y`. Row m is held by `T_m`,
+/// which binds `X_m` alone, so the bindings pin `X_m` in each later shape at place m: shape
+/// m' gains one place at each of the m' rows before it, one call of `Bound::grow` each
+/// (TEST-types-bound-pin-moves-adversarial). The input has p² + p components.
+fn shapes_pinned_one_place_a_row(p: usize) -> [zedc::check::ty::Sig; 2] {
+    let var = |pre: &str, i: usize| Ty::var(format!("{pre}{i}").into());
+    let row = |pre: &str, m: usize| {
+        let cs = (0..p)
+            .map(|k| match k <= m {
+                true => var(pre, k),
+                false => var(pre, p + m * p + k),
+            })
+            .collect();
+        Ty::tuple(cs)
+    };
+    let rows = |pre: &str| {
+        (0..p)
+            .map(|m| row(pre, m))
+            .reduce(|a, b| a.union(&b))
+            .expect("one shape at least")
+    };
+    let int = Ty::carrier(Carrier::Int);
+    let c = p + p * p;
+    [
+        own_sig("X", c, Some(EVERY), rows("X"), int.clone()),
+        own_sig("Y", c, Some(EVERY), rows("Y"), int),
+    ]
+}
+
+/// [`shapes_pinned_one_place_a_row`] with p² components, n = 3200 and 25600 (p = 56 and 160):
+/// when `Bound::pin` took a shape from its node and filed it again from the root under its
+/// whole path at each place added, shape m' cost 1 + 2 + … + m' steps, p³/6 in all, O(N^1.5)
+/// for N components (TEST-types-bound-pin-moves-adversarial): 9.07 times the instructions at
+/// 8n (5385 million at 25600), and 8.59 at n = 400, where the moves weigh less. Moved down
+/// from its node by its new steps only, 8.89 (5071 million). Besides its ratio: the rows fit
+/// at each size.
+#[test]
+fn shapes_pinned_one_place_a_row_scale() {
+    let what = "p shapes each pinned one more place by each row before it, against the rows \
+                written out, p² components";
+    let n = 3200;
+    let p = |n: usize| n.isqrt();
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, shapes_pinned_one_place_a_row(p(n))))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let [s, written] = &sigs[&n];
+        assert!(fits_sig(s, written), "{what} at {n}");
+    });
+}
+
+/// n shapes `(X_2r | X_2r+1,)`, n = 100 and 800, against the same rows of the variables `Y`,
+/// every variable bounded to several carriers. Row r binds `X_2r` to `Y_2r` and `X_2r+1` to
+/// `Y_2r+1` alone; the shape, pinned by no one variable, is then filed under `Y_2r` and
+/// `Y_2r+1` (`Bound::unions` in ty.rs), so a later row, of other variables, skips it
+/// (FAIL-types-joined-shape-first). Before, the third row was refused; with the rows only
+/// passing such shapes (`left_out_by_vars`), each row tried every shape before it, 61.7 times
+/// the instructions at 8n; filed, 8.97. Besides its ratio: the rows fit at each size.
+#[test]
+fn shapes_of_two_bound_variables_scale() {
+    let what = "n shapes of two bounded variables against the rows written out";
+    let make = |n: usize| {
+        let rows = |pre: &str| {
+            (0..n)
+                .map(|r| {
+                    let v = |i: usize| Ty::var(format!("{pre}{i}").into());
+                    Ty::tuple(vec![v(2 * r).union(&v(2 * r + 1))])
+                })
+                .reduce(|a, b| a.union(&b))
+                .expect("one shape at least")
+        };
+        let int = Ty::carrier(Carrier::Int);
+        [
+            own_sig("X", 2 * n, Some(EVERY), rows("X"), int.clone()),
+            own_sig("Y", 2 * n, Some(EVERY), rows("Y"), int),
+        ]
+    };
+    let n = 100;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, make(n)))
         .collect();
     scaling::check_order(what, n, 1, |n| {
         let [s, written] = &sigs[&n];
