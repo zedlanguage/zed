@@ -1104,7 +1104,6 @@ fn r6_random_carrier_chains_against_masks() {
 pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize) {
     {
         let (mut rng, _) = Rng::fresh("R6 two-predicate selector reduction");
-        let domain = ONE | TWO | (1 << 8); // values 1,2,3
         for id in 0..count {
             let k = 1 + rng.below(4);
             let m = 1 + rng.below(4);
@@ -1116,46 +1115,7 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize
                     .iter()
                     .all(|cl| cl.iter().any(|&(i, b)| ((a >> i) & 1 != 0) == b))
             });
-            let mut ds = vec![D {
-                nil: true,
-                rows: vec![(INT, 0)],
-            }];
-            let len = k + m;
-            let mut positive = 0;
-            for j in (0..len).rev() {
-                ds.push(D {
-                    nil: false,
-                    rows: vec![(if j < k { ONE | TWO } else { domain }, positive)],
-                });
-                positive = ds.len() - 1;
-            }
-            let mut neg = Vec::new();
-            for (c, cl) in clauses.iter().enumerate() {
-                for (j, &(i, b)) in cl.iter().enumerate() {
-                    let mut root = 0;
-                    for s in (0..len).rev() {
-                        // Escape root iff selector != j OR the chosen literal is true.
-                        let hole = if s == k + c {
-                            domain & ![ONE, TWO, 1 << 8][j]
-                        } else if s == i {
-                            if b { TWO } else { ONE }
-                        } else {
-                            0
-                        };
-                        ds.push(D {
-                            nil: false,
-                            rows: vec![(INT & !hole, root)],
-                        });
-                        root = ds.len() - 1;
-                    }
-                    neg.push((0, root));
-                }
-            }
-            let spec = Spec { groups: vec![ds] };
-            let term = Term {
-                pos: vec![(0, positive)],
-                neg,
-            };
+            let (spec, term) = selector_reduction(k, &clauses);
             assert_eq!(
                 spec.inhabited(&term),
                 sat,
@@ -1175,6 +1135,310 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize
             count
         );
     };
+}
+
+/// The selector reduction of [`r6_two_predicate_reduction_matches_boolean_bruteforce`] for `k`
+/// variables and the 3-clauses `clauses` (variable, sign): the term is inhabited iff the
+/// formula is satisfiable.
+fn selector_reduction(k: usize, clauses: &[Vec<(usize, bool)>]) -> (Spec, Term) {
+    let domain = ONE | TWO | (1 << 8); // values 1,2,3
+    let mut ds = vec![D {
+        nil: true,
+        rows: vec![(INT, 0)],
+    }];
+    let len = k + clauses.len();
+    let mut positive = 0;
+    for j in (0..len).rev() {
+        ds.push(D {
+            nil: false,
+            rows: vec![(if j < k { ONE | TWO } else { domain }, positive)],
+        });
+        positive = ds.len() - 1;
+    }
+    let mut neg = Vec::new();
+    for (c, cl) in clauses.iter().enumerate() {
+        for (j, &(i, b)) in cl.iter().enumerate() {
+            let mut root = 0;
+            for s in (0..len).rev() {
+                // Escape root iff selector != j OR the chosen literal is true.
+                let hole = if s == k + c {
+                    domain & ![ONE, TWO, 1 << 8][j]
+                } else if s == i {
+                    if b { TWO } else { ONE }
+                } else {
+                    0
+                };
+                ds.push(D {
+                    nil: false,
+                    rows: vec![(INT & !hole, root)],
+                });
+                root = ds.len() - 1;
+            }
+            neg.push((0, root));
+        }
+    }
+    let spec = Spec { groups: vec![ds] };
+    let term = Term {
+        pos: vec![(0, positive)],
+        neg,
+    };
+    (spec, term)
+}
+
+/// One case of [`the_u6_fork_cases_are_answered_or_refused_soundly`]: checked against the
+/// oracle in both orders by [`both_orders`], then the verdicts, each asked afresh, of the build
+/// as given (tag `tag`) and of the reversed build (tag `{tag}r`), and the oracle's answer.
+fn u6_case(spec: &Spec, term: &Term, tag: &str) -> (bool, Verdict, Verdict) {
+    let mut tally = Tally::default();
+    both_orders(&mut tally, spec, term, tag, tag);
+    let a = spec.ty(&spec.build(tag), term);
+    let (rspec, rterm) = spec.reversed(term);
+    let b = rspec.ty(&rspec.build_in(&format!("{tag}r"), true), &rterm);
+    Type::forget_emptiness();
+    let va = a.verdict();
+    Type::forget_emptiness();
+    let vb = b.verdict();
+    Type::forget_emptiness();
+    (spec.inhabited(term), va, vb)
+}
+
+/// The 22 cases of REFUSAL-front-post-r11-forks (zed-impl docs/handoff/REFUSAL-front-unsolved.md,
+/// U6): answers kernel 19bc4e25 gave that a later kernel refused at a fork. U6 names one build
+/// of each (the reversed one for a tag ending in `r`, the one as given otherwise); here both
+/// builds of each of the 17 specs are pinned at their verdict now, which is the same in both
+/// orders, and checked against the oracle. Four of the 22 are answered: `_xc1930` Inhabited,
+/// and `_xc2359`, `_xp1550` and `_xp1550r` Empty, by the value search at the K26 fork in
+/// `tuples_on` (a value of one tuple type of a plain union proves it inhabited). The other 18
+/// are still refused, and never wrong: the twelve `_r6sat` are the selector reduction of 3-SAT,
+/// and the rest need the subset construction (row REFUSAL-front-u6-subset). `_r7rc_343f` and
+/// `_r7rc_343r` are in [`r7_random_carrier_plus_chains_both_orders_against_bruteforce`]. The
+/// control: two cases of the same builds that every kernel answers, one inhabited and one
+/// empty.
+#[test]
+fn the_u6_fork_cases_are_answered_or_refused_soundly() {
+    use Verdict::{Empty, Inhabited};
+    let fork = Verdict::Refused(Refusal::Fork);
+    let d = |nil: bool, rows: &[(u16, usize)]| D {
+        nil,
+        rows: rows.to_vec(),
+    };
+    let term = |pos: &[usize], neg: &[usize]| Term {
+        pos: pos.iter().map(|&i| (0, i)).collect(),
+        neg: neg.iter().map(|&i| (0, i)).collect(),
+    };
+    // (tag, spec, term, the oracle's answer, the verdict in both orders).
+    let mut cases: Vec<(String, Spec, Term, bool, Verdict)> = Vec::new();
+    let xc284r = Spec {
+        groups: vec![vec![
+            d(false, &[(1287, 2)]),
+            d(true, &[(775, 0), (4, 2)]),
+            d(true, &[(6, 4)]),
+            d(true, &[(1799, 3), (4, 3)]),
+            d(true, &[(512, 1)]),
+            d(true, &[(1799, 5)]),
+        ]],
+    };
+    let (s, t) = xc284r.reversed(&term(&[5], &[0, 2, 3, 4]));
+    cases.push(("_xc284".into(), s, t, false, fork));
+    let xc363r = Spec {
+        groups: vec![vec![
+            d(false, &[(6, 0)]),
+            d(false, &[(775, 4)]),
+            d(false, &[(1797, 2), (1287, 3)]),
+            d(false, &[(775, 4), (1799, 0)]),
+            d(true, &[(2, 4)]),
+            d(false, &[(2, 2), (1541, 3)]),
+            d(true, &[(1799, 6)]),
+        ]],
+    };
+    let (s, t) = xc363r.reversed(&term(&[6], &[0, 1, 2, 3, 4, 5]));
+    cases.push(("_xc363".into(), s, t, true, fork));
+    let xc1930 = || Spec {
+        groups: vec![vec![
+            d(true, &[(1799, 0)]),
+            d(false, &[(1287, 1)]),
+            d(true, &[(6, 5), (1541, 3)]),
+            d(true, &[(1287, 3), (775, 0)]),
+            d(true, &[(775, 5), (1543, 1)]),
+            d(false, &[(512, 4), (1541, 3)]),
+        ]],
+    };
+    cases.push((
+        "_xc1930".into(),
+        xc1930(),
+        term(&[0], &[2, 4, 5]),
+        true,
+        Inhabited,
+    ));
+    let xc2359 = || Spec {
+        groups: vec![vec![
+            d(true, &[(1799, 0)]),
+            d(true, &[(1799, 4)]),
+            d(false, &[(1797, 0)]),
+            d(false, &[(6, 1)]),
+            d(false, &[(1287, 1), (1797, 0)]),
+            d(true, &[(4, 3)]),
+        ]],
+    };
+    cases.push((
+        "_xc2359".into(),
+        xc2359(),
+        term(&[0], &[1, 2, 3, 5]),
+        false,
+        Empty,
+    ));
+    let xp43 = || Spec {
+        groups: vec![vec![
+            d(true, &[(1799, 0)]),
+            d(false, &[(128, 0)]),
+            d(false, &[(1287, 6)]),
+            d(false, &[(128, 4)]),
+            d(false, &[(1543, 6), (1927, 6)]),
+            d(false, &[(1543, 6)]),
+            d(false, &[(1287, 0), (1543, 0)]),
+            d(true, &[(1927, 7)]),
+        ]],
+    };
+    let t = term(&[4, 0, 7], &[3, 5, 6]);
+    cases.push(("_xp43".into(), xp43(), t, false, fork));
+    let xp1550 = || Spec {
+        groups: vec![vec![
+            d(true, &[(1799, 0)]),
+            d(false, &[(1797, 5)]),
+            d(false, &[(1543, 6)]),
+            d(false, &[(128, 4), (1287, 5)]),
+            d(false, &[(1287, 7), (1543, 5)]),
+            d(false, &[(1287, 7)]),
+            d(false, &[(128, 7)]),
+            d(true, &[(2, 0)]),
+            d(true, &[(1543, 8)]),
+        ]],
+    };
+    let t = term(&[3, 8], &[1, 4, 5, 7]);
+    cases.push(("_xp1550".into(), xp1550(), t, false, Empty));
+    // The `_r6sat` cases: (id, k, clauses); all satisfiable. U6 names the reversed build of 6,
+    // 19 and 133, both builds of 18 and 158, and the one as given of the rest.
+    type Clause = [(usize, bool); 3];
+    let r6: [(usize, usize, &[Clause]); 10] = [
+        (
+            6,
+            4,
+            &[
+                [(1, true), (1, false), (1, false)],
+                [(0, false), (3, true), (2, true)],
+                [(3, true), (0, true), (3, false)],
+                [(3, true), (3, true), (3, false)],
+            ],
+        ),
+        (
+            18,
+            2,
+            &[
+                [(1, true), (1, false), (1, true)],
+                [(1, true), (1, true), (1, false)],
+                [(1, false), (0, true), (1, true)],
+            ],
+        ),
+        (
+            19,
+            4,
+            &[
+                [(2, true), (1, true), (3, true)],
+                [(1, true), (2, false), (2, false)],
+                [(1, false), (0, true), (1, true)],
+            ],
+        ),
+        (
+            48,
+            2,
+            &[
+                [(0, false), (0, false), (0, true)],
+                [(0, true), (0, false), (0, false)],
+                [(0, true), (1, false), (0, false)],
+            ],
+        ),
+        (
+            56,
+            2,
+            &[
+                [(0, true), (1, true), (1, true)],
+                [(0, false), (0, false), (1, false)],
+                [(0, true), (0, false), (1, false)],
+            ],
+        ),
+        (
+            90,
+            2,
+            &[
+                [(0, true), (1, false), (1, true)],
+                [(1, true), (0, true), (0, false)],
+                [(1, true), (1, true), (0, true)],
+                [(0, true), (0, false), (0, false)],
+            ],
+        ),
+        (
+            124,
+            3,
+            &[
+                [(0, false), (2, false), (1, false)],
+                [(2, true), (2, false), (1, true)],
+                [(1, true), (0, true), (1, true)],
+            ],
+        ),
+        (
+            133,
+            4,
+            &[
+                [(1, false), (1, true), (1, false)],
+                [(0, false), (3, false), (0, true)],
+                [(3, true), (1, true), (0, false)],
+            ],
+        ),
+        (
+            147,
+            3,
+            &[
+                [(2, true), (1, false), (1, true)],
+                [(0, true), (2, true), (2, true)],
+                [(2, true), (1, false), (2, true)],
+                [(0, false), (2, true), (2, false)],
+            ],
+        ),
+        (
+            158,
+            2,
+            &[
+                [(1, true), (0, true), (0, true)],
+                [(1, true), (1, false), (0, true)],
+                [(1, false), (1, false), (1, true)],
+                [(0, true), (0, true), (1, false)],
+            ],
+        ),
+    ];
+    for &(id, k, clauses) in &r6 {
+        let clauses: Vec<Vec<(usize, bool)>> = clauses.iter().map(|c| c.to_vec()).collect();
+        let (s, t) = selector_reduction(k, &clauses);
+        cases.push((format!("_r6sat{id}"), s, t, true, fork));
+    }
+    for (tag, spec, term, inhabited, want) in &cases {
+        let (oracle, va, vb) = u6_case(spec, term, tag);
+        assert_eq!(oracle, *inhabited, "{tag}: the oracle");
+        assert_eq!(
+            (va, vb),
+            (*want, *want),
+            "{tag}: the verdicts in both orders"
+        );
+    }
+    // The control: `_xc1930` less nothing holds `nil`; `_xc2359` less its own positive side is
+    // empty. Both are answered in both orders.
+    for (tag, spec, term, want) in [
+        ("_u6c1", xc1930(), term(&[0], &[]), Inhabited),
+        ("_u6c2", xc2359(), term(&[0], &[0, 1]), Empty),
+    ] {
+        let (oracle, va, vb) = u6_case(&spec, &term, tag);
+        assert_eq!(oracle, want == Inhabited, "{tag}: the oracle");
+        assert_eq!((va, vb), (want, want), "{tag}: the verdicts");
+    }
 }
 
 /// R6-C2: avoiding the leaf head at an optional spine arrival is a
@@ -2207,6 +2471,46 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
                 ],
             };
             check_case(&fixed, "fixed");
+        }
+        // Case 343 of a fixed seed, two of the 22 cases of REFUSAL-front-post-r11-forks (U6):
+        // inhabited by [0, 1]; kernel 19bc4e25 answered it in both orders, and the search now
+        // refuses it at a fork in both (row REFUSAL-front-u6-subset), which is never wrong.
+        {
+            let p = |cof: bool, mask: u8| Pred { cof, mask };
+            use TailRef::{Car, Node};
+            let case = ChainCase {
+                car_head: p(true, 0),
+                nodes: vec![
+                    (false, p(false, 2), Car),
+                    (false, p(true, 5), Node(0)),
+                    (false, p(true, 1), Node(1)),
+                    (false, p(true, 8), Node(2)),
+                    (false, p(true, 2), Car),
+                    (false, p(false, 7), Car),
+                ],
+                pos: vec![(p(true, 0), Node(5)), (p(true, 0), Car)],
+                neg: vec![
+                    (p(true, 5), Node(0)),
+                    (p(true, 8), Node(2)),
+                    (p(true, 12), Node(4)),
+                ],
+            };
+            assert_eq!(brute_force_inhabited(&case), Some(vec![0, 1]));
+            check_case(&case, "343");
+            for rev in [false, true] {
+                let t = build_case(
+                    &case,
+                    &format!("_r7rc_343{}", ["f", "r"][usize::from(rev)]),
+                    rev,
+                );
+                Type::forget_emptiness();
+                assert_eq!(
+                    t.verdict(),
+                    Verdict::Refused(Refusal::Fork),
+                    "r7 case 343, reversed {rev}"
+                );
+            }
+            Type::forget_emptiness();
         }
         let mut chain_decided = 0usize;
         let mut chain_empty = 0usize;

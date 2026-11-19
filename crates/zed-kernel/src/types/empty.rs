@@ -6229,6 +6229,31 @@ impl<'m> Searching<'m> {
                 // several roots refuses only those that read the type being decided
                 // (`Search::causes`). Used: the refusal, so the search stays polynomial in the
                 // types written (module comment).
+                //
+                // Complexity tradeoff (COMPLEXITY.md K134, REFUSAL-front-post-r11-forks): when
+                // the part is a plain union of tuple types (`Part::union_rows`: no tuple type
+                // taken out), one candidate value per tuple type of it before the refusal: the
+                // row met with that tuple type, a value of it kept when it is in the part
+                // (`row_rep`, an exact membership test). A value found proves the part
+                // inhabited, so the fork needs no following and the answer is exact. Naive
+                // version: the refusal alone, which refused 4 of the 22 U6 cases that kernel
+                // 19bc4e25 answered. Cost: one value search per tuple type of the union at each
+                // fork, the work the seeding does once per tuple part (`Searching::find_rep`).
+                // Not done: the same candidates for a part that takes tuple types out; each
+                // candidate's membership test then reads the n tuple types taken out, n
+                // candidates by n, and the forked-differences benches
+                // (`refusals::bench::a_pair_type_met_with_forked_differences`,
+                // `a_union_of_forked_differences`, `a_difference_of_forked_unions`) timed out
+                // at their limits (63 to 108 s). Given up: a part whose values lie in no single tuple type
+                // of it, or that takes tuple types out, still needs the subset construction and
+                // is refused (REFUSAL-front-u6-subset). Tests:
+                // `sweep_agreement::the_u6_fork_cases_are_answered_or_refused_soundly`.
+                for a in f.union_rows().unwrap_or_default() {
+                    let row: Vec<Type> = g.r.iter().zip(a.iter()).map(|(x, y)| x & y).collect();
+                    if self.row_rep(&row, &f).await.is_some() {
+                        return false;
+                    }
+                }
                 self.refuse_fork();
                 return true;
             }

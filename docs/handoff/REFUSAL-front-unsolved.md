@@ -389,6 +389,27 @@ This is filed as REFUSAL-front-post-r11-forks. The keys, the dumps and the switc
 under /home/luke/Work/wt/scratch/front1-u6 (x1nar.k and the cmp* directories). The scratch
 trees are removed.
 
+Bisect and fix (front2, 2026-11-19). Each of the 22 cases was rebuilt from its family's spec
+with its seed and run at each commit, so this does not rest on the printed-type keys:
+
+- 5d72f0689 (`open_fork`) refuses 4: `_r6sat6r`, `_r6sat124`, `_r6sat147`, `_xc363r`.
+- 502dc1de5 refuses 15 more.
+- 514df5f03 refuses the last 3, reversed builds: `_r6sat133r`, `_r6sat158r`, `_xc284r`.
+
+The fix tries one value per tuple type of a plain union before the K26 fork refusal
+(COMPLEXITY K134). It decides 4: `_xc1930` Inhabited, and `_xc2359`, `_xp1550` and
+`_xp1550r` Empty. The other 18 stay refused, which is never wrong:
+
+- 12 are selector reductions of satisfiable 3-SAT;
+- 6 need the subset construction.
+
+They are filed as REFUSAL-front-u6-subset, with the cases pinned in
+`sweep_agreement::the_u6_fork_cases_are_answered_or_refused_soundly`.
+
+Front1's key doubt holds. Runs d and bx1 have 210 and 213 keys with more than one answer, and
+6 of those mix Refused(Fork) with another answer in one run. Those are filed as
+REFUSAL-front-u6-keys.
+
 ## U7. Case A proof and Mutant 2 (needs a second reader)
 
 Codex R11 wrote the per-child transition and dominance argument for narrowing r0 to
