@@ -223,7 +223,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // A symbol the certificate answers needs no reading, and where it answers every symbol of
     // the part the reading does not run.
     // Complexity tradeoff: the certificate is O(r·t) for r conjuncts of t terms, then O(r·t) for
-    // each of the P pieces of `h`, with no question; the loop of the cover asks at least one
+    // each of the P pieces of `h`, with no question; the part is prepared for it once
+    // (`guarded::prepare`), not once a name, and a part with more atoms than its definitions
+    // plus 2 is rejected there for all its names (PRES-groupA-forward-per-part); the loop of the cover asks at least one
     // question a value where each value is its own cell (guards-beyond: one for each value of
     // `i`, each a run of the solver on the whole formula, O(v·r·t) or more for v values), and on
     // the chain of absolute values the reading alone spent 2,971,100 of 3,100,000 units at 1,100
@@ -240,9 +242,12 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         let allowed = limit.saturating_mul(k);
         let mut left = allowed;
         let mut open = k;
-        if !GUARDED_OFF.get() {
+        if !GUARDED_OFF.get()
+            && let Some(prep) = tried(&mut left, solver, |w| guarded::prepare(&p.f, w))
+        {
             for &(s, h) in mine {
-                if let Some(set) = tried(&mut left, solver, |w| guarded::forward(&p.f, s, h, w)) {
+                if let Some(set) = tried(&mut left, solver, |w| guarded::forward_in(&prep, s, h, w))
+                {
                     certified.insert(s, set);
                     open -= 1;
                 }

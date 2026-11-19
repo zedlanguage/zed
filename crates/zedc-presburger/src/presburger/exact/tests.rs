@@ -2656,6 +2656,18 @@ fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
         reduced(&f, &|s| kept.contains(s), w)
     });
     let reduce = EXACT_WORK.replace(0);
+    // The certificates' preparation of the part, which declines (48 atoms, no definition), then
+    // the reading on what it leaves of the allowance, as `exact_each` runs them.
+    let mut left = allowed;
+    let prepared = tried(&mut left, SOLVER, |w| guarded::prepare(&f, w)).is_some();
+    let prep = allowed - left;
+    EXACT_WORK.set(0);
+    let read_left = tried(&mut left, SOLVER, |w| read_once(&f, w));
+    let read_after = EXACT_WORK.replace(0);
+    assert!(
+        !prepared && prep > 0 && read_left.is_none() && left == 0,
+        "prepared {prepared} with {prep}; the reading on the rest answered or left {left}"
+    );
     EXACT_LIMIT_SET.set(Some(LIMIT));
     FAST_WORK.set(0);
     let found = (vec![Ok(IntervalSet::of(0, 9)); syms.len()], vec![]);
@@ -2674,11 +2686,14 @@ fn a_reading_that_gives_up_late_leaves_the_covers_only_what_is_left() {
         "the reading stopped at {pass}, before {allowed}"
     );
     // The fast paths of the covers (`direct`) have nothing left after it, so the fast work of
-    // the symbols is the reading's: k limits and the one charge that passed them. The forward
-    // certificates run first on the same allowance (`exact_each`), so their work is within it.
-    assert!(
-        fast <= pass,
-        "the fast work {fast} passes the reading's {pass} (k * limit = {allowed})"
+    // the symbols is the certificates' preparation, which runs first on the same allowance
+    // (`exact_each`), and the reading on the rest: k limits and the one charge that passed
+    // them, here the reading's, larger on the smaller rest (it stops within a bulk charge).
+    assert_eq!(
+        fast,
+        prep + read_after,
+        "the fast work passes the preparation's {prep} and the reading's {read_after} \
+         (k * limit = {allowed})"
     );
     // Each loop has a limit of its own, as with no reading: at most two meters a symbol (over
     // the reduced formula, then the part), each passing its limit by one stopping charge.
@@ -3429,5 +3444,52 @@ fn a_cell_with_a_gap_still_asks_its_question() {
     assert_eq!(
         format!("{:?}", alone[0]),
         format!("{:?}", Ok::<_, Refusal>(x_set))
+    );
+}
+
+/// The family `wide_pairs` of l01_39 at `k` names: one disjunction of two arms, each the
+/// conjunction of `z(j) + z(j+1) >= 0` (`-` in the other arm) over the adjacent pairs of `z0`
+/// to `z(k-1)`. It has no definition, so the forward certificate declines for every name.
+fn wide_pairs(k: usize) -> Formula {
+    let z: Vec<String> = (0..k).map(|j| format!("z{j}")).collect();
+    let arm = |c: i64| {
+        Formula::And(Shared::new(
+            (0..k - 1)
+                .map(|j| ge(&[(&z[j], 1), (&z[j + 1], c)], 0))
+                .collect(),
+        ))
+    };
+    Formula::Or(Shared::new(vec![arm(1), arm(-1)]))
+}
+
+/// The certificates of a part's k names read the part once, not once a name: on `wide_pairs`
+/// at 128 names, the work they add to the fast work is one piece for each of its constraints
+/// read (so the meter sees what they read), and not 128 times that. Before, each name's
+/// certificate read the whole part, k times the formula in all (O(k²) here), and charged one
+/// piece for the disjunction, not one for each constraint read in it: 32.7 times the
+/// instructions at 8n on `wide_pairs_scale` (PRES-groupA-forward-per-part).
+#[test]
+fn the_certificates_of_a_part_read_it_once_not_once_a_name() {
+    let k = 128;
+    let f = wide_pairs(k);
+    let syms: Vec<Atom> = (0..k).map(|j| a(&format!("z{j}"))).collect();
+    let run = |off: bool| {
+        GUARDED_OFF.set(off);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let found = ((0..k).map(|_| Ok(IntervalSet::top())).collect(), vec![]);
+        let got = exact_each(&f, &syms, found, SOLVER);
+        GUARDED_OFF.set(false);
+        EXACT_WORK.set(0);
+        (got.sets, FAST_WORK.replace(0))
+    };
+    let (on, fast_on) = run(false);
+    let (off, fast_off) = run(true);
+    assert_eq!(on, off);
+    let read = PIECE * 2 * (k as u64 - 1);
+    let added = fast_on.saturating_sub(fast_off);
+    assert!(
+        (read..=2 * read).contains(&added),
+        "the certificates added {added} units of work for {read} units of constraints read"
     );
 }

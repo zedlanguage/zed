@@ -108,12 +108,26 @@ impl Val {
     }
 }
 
-/// The compiled reading of `f`: the definitions taken, in Kahn's order with their heads, the
-/// residuals, and the pin.
-struct Reading<'a> {
-    order: Vec<(Def<'a>, Atom)>,
+/// The compiled reading of `f` from one atom: the definitions taken, in Kahn's order with their
+/// heads, the residuals, and the pin.
+struct Reading<'p, 'a> {
+    order: Vec<(&'p Def<'a>, Atom)>,
     residuals: Vec<&'a Formula>,
     pin: Option<Atom>,
+}
+
+/// What [`Prep::read`] needs of `f` that does not depend on the atom read from, built once for
+/// all the names of a part ([`prepare`]): the conjuncts and those read as definitions, the
+/// atoms numbered in the order of `Atom`, which of them a guard reads, and the incidence of
+/// atoms and definitions.
+pub(super) struct Prep<'a> {
+    parts: Vec<&'a Formula>,
+    defs: Vec<Option<Def<'a>>>,
+    atoms: Vec<&'a Atom>,
+    index: HashMap<&'a Atom, usize>,
+    guarded: Vec<bool>,
+    by_atom: Vec<Vec<usize>>,
+    reads: Vec<Vec<usize>>,
 }
 
 /// `lin` divided by the gcd of its coefficients, the constant rounded down: the same integer
@@ -173,31 +187,40 @@ fn choice(f: &Formula) -> Option<Def<'_>> {
     })
 }
 
-/// The definitions and residuals of `f` from `s` ([module note](self)); `None` where a second
-/// atom must be left free, or a product is read.
-// Complexity tradeoff: Kahn's order over the atom incidence of the definitions, O(r·t) for r
-// conjuncts of t terms, plus O(a log a) to number the a atoms in their order (so the pin does
-// not depend on the order of the parts); the naive repeated pass over all definitions until
-// none is taken is O(r²·t).
-fn read<'a>(f: &'a Formula, s: &Atom, work: &mut Work) -> Result<Option<Reading<'a>>, Refusal> {
+/// The part of the reading of `f` that does not depend on the atom read from ([`Prep`]), once
+/// for all the names of a part; `None` where a product is read, or where no atom could be read
+/// from: a reading learns the atom it starts from, at most one pin, and one head for each
+/// definition it takes, so with more atoms than the definitions plus 2 it declines from every
+/// atom, and so does each certificate of the part.
+// Complexity tradeoff: one pass over the constraints, O(r·t) for r constraints of t terms, a
+// piece charged for each constraint read (not one for each conjunct, which left the meter
+// blind to a disjunction's constraints), plus O(a log a) to number the a atoms in their order
+// (so that the pin does not depend on the order of the parts). Built once a part, not once a
+// name: built for each name, it was O(k·r·t) for the k names of a part whatever the readings
+// did, 32.7 times the instructions at 8n on `wide_pairs_scale` (k = r = n, so O(n²)), and its
+// time ran out on the disjoint groups (PRES-groupA-forward-per-part). The count of atoms
+// against definitions rejects such a part with no reading at all.
+pub(super) fn prepare<'a>(f: &'a Formula, work: &mut Work) -> Result<Option<Prep<'a>>, Refusal> {
     let parts = f.conjuncts();
     let mut defs: Vec<Option<Def<'a>>> = Vec::with_capacity(parts.len());
     let mut all: HashSet<&Atom> = HashSet::new();
     let mut found = false;
     for g in &parts {
-        work.charge(PIECE)?;
+        let mut read = 0;
         each_constraint(g, |c| {
+            read += 1;
             for a in c.lin.terms.keys() {
                 found |= matches!(a, Atom::Product(..));
                 all.insert(a);
             }
         });
+        work.charge(PIECE.saturating_mul(read))?;
         defs.push(match g {
             Formula::Con(Con { lin, rel: Rel::Eq }) => Some(Def::Eq(lin)),
             _ => choice(g),
         });
     }
-    if found {
+    if found || all.len() > defs.iter().flatten().count() + 2 {
         return Ok(None);
     }
     // The atoms numbered, in the order of `Atom` (so that the pin chosen below, the least, does
@@ -223,78 +246,107 @@ fn read<'a>(f: &'a Formula, s: &Atom, work: &mut Work) -> Result<Option<Reading<
             }
         }
     }
-    let mut known = vec![false; atoms.len()];
-    let mut unknown: Vec<usize> = reads.iter().map(Vec::len).collect();
-    let mut left = atoms.len();
-    let mut queue: Vec<usize> = Vec::new();
-    let mut taken = vec![false; defs.len()];
-    let mut order: Vec<(usize, Atom)> = Vec::new();
-    let mut pin = None;
-    // Marks atom `x` known and queues the definitions left with one unknown atom.
-    let learn = |x: usize,
-                 known: &mut [bool],
-                 unknown: &mut [usize],
-                 queue: &mut Vec<usize>,
-                 left: &mut usize| {
-        if !known[x] {
-            known[x] = true;
-            *left -= 1;
-            for &i in &by_atom[x] {
-                unknown[i] -= 1;
-                if unknown[i] == 1 {
-                    queue.push(i);
+    Ok(Some(Prep {
+        parts,
+        defs,
+        atoms,
+        index,
+        guarded,
+        by_atom,
+        reads,
+    }))
+}
+
+impl<'a> Prep<'a> {
+    /// The definitions and residuals from `s` ([module note](self)); `None` where a second
+    /// atom must be left free.
+    // Complexity tradeoff: Kahn's order over the atom incidence of the definitions, O(r·t) for
+    // r conjuncts of t terms; the naive repeated pass over all definitions until none is taken
+    // is O(r²·t). For the k names of a part that pass the count of [`prepare`] it is still
+    // O(k·r·t) in all, each name's reading its own.
+    fn read<'p>(&'p self, s: &Atom, work: &mut Work) -> Result<Option<Reading<'p, 'a>>, Refusal> {
+        let Prep {
+            parts,
+            defs,
+            atoms,
+            index,
+            guarded,
+            by_atom,
+            reads,
+        } = self;
+        let mut known = vec![false; atoms.len()];
+        let mut unknown: Vec<usize> = reads.iter().map(Vec::len).collect();
+        let mut left = atoms.len();
+        let mut queue: Vec<usize> = Vec::new();
+        let mut taken = vec![false; defs.len()];
+        let mut order: Vec<(usize, Atom)> = Vec::new();
+        let mut pin = None;
+        // Marks atom `x` known and queues the definitions left with one unknown atom.
+        let learn = |x: usize,
+                     known: &mut [bool],
+                     unknown: &mut [usize],
+                     queue: &mut Vec<usize>,
+                     left: &mut usize| {
+            if !known[x] {
+                known[x] = true;
+                *left -= 1;
+                for &i in &by_atom[x] {
+                    unknown[i] -= 1;
+                    if unknown[i] == 1 {
+                        queue.push(i);
+                    }
                 }
             }
-        }
-    };
-    if let Some(&x) = index.get(s) {
-        learn(x, &mut known, &mut unknown, &mut queue, &mut left);
-    }
-    queue.extend((0..defs.len()).filter(|&i| unknown[i] == 1));
-    loop {
-        while let Some(i) = queue.pop() {
-            work.charge(PIECE)?;
-            let Some(d) = &defs[i] else { continue };
-            if taken[i] || unknown[i] != 1 {
-                continue;
-            }
-            let Some(&x) = reads[i].iter().find(|&&j| !known[j]) else {
-                continue;
-            };
-            if !d.may_define(atoms[x]) {
-                continue;
-            }
-            taken[i] = true;
-            order.push((i, atoms[x].clone()));
+        };
+        if let Some(&x) = index.get(s) {
             learn(x, &mut known, &mut unknown, &mut queue, &mut left);
         }
-        if left == 0 {
-            break;
+        queue.extend((0..defs.len()).filter(|&i| unknown[i] == 1));
+        loop {
+            while let Some(i) = queue.pop() {
+                work.charge(PIECE)?;
+                let Some(d) = &defs[i] else { continue };
+                if taken[i] || unknown[i] != 1 {
+                    continue;
+                }
+                let Some(&x) = reads[i].iter().find(|&&j| !known[j]) else {
+                    continue;
+                };
+                if !d.may_define(atoms[x]) {
+                    continue;
+                }
+                taken[i] = true;
+                order.push((i, atoms[x].clone()));
+                learn(x, &mut known, &mut unknown, &mut queue, &mut left);
+            }
+            if left == 0 {
+                break;
+            }
+            if pin.is_some() {
+                return Ok(None);
+            }
+            // The least unknown atom read by no guard: a guard reading the pin would decline.
+            let Some(x) = (0..atoms.len()).find(|&j| !known[j] && !guarded[j]) else {
+                return Ok(None);
+            };
+            pin = Some(atoms[x].clone());
+            learn(x, &mut known, &mut unknown, &mut queue, &mut left);
         }
-        if pin.is_some() {
-            return Ok(None);
+        let mut residuals = Vec::new();
+        for (i, g) in parts.iter().enumerate() {
+            if !taken[i] {
+                residuals.push(*g);
+            }
         }
-        // The least unknown atom read by no guard: a guard reading the pin would decline.
-        let Some(x) = (0..atoms.len()).find(|&j| !known[j] && !guarded[j]) else {
-            return Ok(None);
-        };
-        pin = Some(atoms[x].clone());
-        learn(x, &mut known, &mut unknown, &mut queue, &mut left);
+        let order = (order.into_iter())
+            .map(|(i, x)| (defs[i].as_ref().expect("a taken definition"), x))
+            .collect();
+        Ok(Some(Reading {
+            order,
+            residuals,
+            pin,
+        }))
     }
-    let mut residuals = Vec::new();
-    for (i, g) in parts.iter().enumerate() {
-        if !taken[i] {
-            residuals.push(*g);
-        }
-    }
-    let order = (order.into_iter())
-        .map(|(i, x)| (defs[i].take().expect("a taken definition"), x))
-        .collect();
-    Ok(Some(Reading {
-        order,
-        residuals,
-        pin,
-    }))
 }
 
 /// The value of `lin` given the atoms' values; every atom of `lin` has one (Kahn's order).
@@ -524,14 +576,29 @@ fn certified(r: &Reading, s: &Atom, lo: &End, hi: &End, work: &mut Work) -> Resu
 }
 
 /// `h`, where every value of it is shown to have a point of `f` ([module note](self)); `None`
-/// where the reading or a piece declines.
+/// where the reading or a piece declines. For one name; the names of a part share one
+/// [`prepare`] through [`forward_in`].
+#[cfg(test)]
 pub(super) fn forward(
     f: &Formula,
     s: &Atom,
     h: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<IntervalSet>, Refusal> {
-    let Some(r) = read(f, s, work)? else {
+    let Some(prep) = prepare(f, work)? else {
+        return Ok(None);
+    };
+    forward_in(&prep, s, h, work)
+}
+
+/// [`forward`] on the part `prep` was prepared from.
+pub(super) fn forward_in(
+    prep: &Prep,
+    s: &Atom,
+    h: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<IntervalSet>, Refusal> {
+    let Some(r) = prep.read(s, work)? else {
         return Ok(None);
     };
     for (lo, hi) in h.pieces() {
