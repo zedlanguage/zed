@@ -80,9 +80,12 @@ impl F {
 const VALUES: usize = 4;
 const OUTSIDE: usize = 99;
 
-/// A random part on the components `on` (at least one), of depth at most `depth`. An `&` takes
-/// operands on two halves of `on`, so the part is one the pass decides, unless `shared`, when
-/// one `&` in four takes both operands on all of `on`.
+/// A random part on the components `on` (at least one), of depth at most `depth`. An `&` or `|`
+/// takes operands on two halves of `on`, so the part is one the pass decides, unless `shared`,
+/// when one `&` in four and every `|` take both operands on all of `on`. A `|` is an `&` under
+/// `!`, so a `|` of operands on shared components is a meet the pass refuses with `SharedCells`:
+/// seed 5209457136016310372 drew `!(!list | (xor | xor))` on two components
+/// (FAIL-subtyping-sharedcells-5209457136016310372).
 fn random(g: &mut Rng, on: &[usize], depth: usize, shared: bool) -> F {
     let atom = |g: &mut Rng| (on[g.below(on.len())], g.below(VALUES));
     let k = if depth == 0 { g.below(3) } else { g.below(7) };
@@ -101,18 +104,19 @@ fn random(g: &mut Rng, on: &[usize], depth: usize, shared: bool) -> F {
                 .collect(),
         ),
         3 => F::Not(Box::new(random(g, on, depth - 1, shared))),
-        4 => F::Or(
+        4 if shared => F::Or(
             Box::new(random(g, on, depth - 1, shared)),
             Box::new(random(g, on, depth - 1, shared)),
         ),
         _ => {
+            let meet = |x, y| if k == 4 { F::Or(x, y) } else { F::And(x, y) };
             if on.len() < 2 && !shared {
                 // One component cannot be split in two, so the operands share it, and only a
                 // meet of two decision lists or exclusive ors under `!` is read exactly
                 // (EMPTY-overlap-fast); another meet there, such as a list met with a union of
                 // two lists, is refused with `SharedCells` as the header says. Seed 71 drew
                 // none of those; new seeds do (TEST-bench-move-l0123).
-                return F::And(Box::new(random_leaf(g, on)), Box::new(random_leaf(g, on)));
+                return meet(Box::new(random_leaf(g, on)), Box::new(random_leaf(g, on)));
             }
             if on.len() < 2 || (shared && g.below(4) == 0) {
                 return F::And(
@@ -121,7 +125,7 @@ fn random(g: &mut Rng, on: &[usize], depth: usize, shared: bool) -> F {
                 );
             }
             let cut = 1 + g.below(on.len() - 1);
-            F::And(
+            meet(
                 Box::new(random(g, &on[..cut], depth - 1, shared)),
                 Box::new(random(g, &on[cut..], depth - 1, shared)),
             )
@@ -541,6 +545,34 @@ fn an_orthogonal_vectors_meet_is_refused_naming_its_component() {
         m.contains("component 0") && m.contains("grows with the square of their number"),
         "{m}"
     );
+}
+
+/// `!(!list | (xor | xor))` on two components is `list & !xor & !xor`, three operands met on
+/// shared components, out of the class the one pass reads: it is refused naming component 0
+/// and counted inhabited by `is_empty`, though empty (FAIL-subtyping-sharedcells-
+/// 5209457136016310372, seed 5209457136016310372 of
+/// `random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them`, whose
+/// parts now meet only on components apart).
+#[test]
+fn a_list_met_with_a_union_of_exclusive_ors_on_shared_components_is_refused() {
+    let f = F::Not(Box::new(F::Or(
+        Box::new(F::Not(Box::new(F::Chain(vec![
+            (1, 0, true),
+            (0, 1, false),
+            (1, 3, true),
+        ])))),
+        Box::new(F::Or(
+            Box::new(F::Xor(vec![(0, 1), (0, 1), (0, 1), (1, 0), (0, 0)])),
+            Box::new(F::Xor(vec![(1, 1), (0, 1), (1, 3), (1, 2), (1, 0)])),
+        )),
+    )));
+    let all: Vec<usize> = (0..VALUES).chain([OUTSIDE]).collect();
+    assert!(!by_enumeration(&f, &[all.clone(), all]));
+    let t = &Type::tuple(vec![Type::top(), Type::top()]) & &f.ty(2);
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Refused(Refusal::SharedCells(0)));
+    Type::forget_emptiness();
+    assert!(!t.is_empty());
 }
 
 /// Small instance of

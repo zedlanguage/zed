@@ -1037,8 +1037,27 @@ fn check_classes(case: usize, ts: &[Type], met: &mut usize, apart: &mut usize) {
 /// ([`check_classes`]).
 #[test]
 fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
-    let mut s =
-        crate::seed::seed("types_that_meet_are_joined_in_random_groups_holding_lower_types") | 1;
+    joined_in_random_groups_holding_lower_types(crate::seed::seed(
+        "types_that_meet_are_joined_in_random_groups_holding_lower_types",
+    ));
+}
+
+/// The seeds of [`types_that_meet_are_joined_in_random_groups_holding_lower_types`] that split
+/// by order before the shared-chain shortcut waited for the chain's first cell
+/// (FLAKE-empty-random-groups-joined, found by share1; the cause of
+/// FAIL-overlaps-order-ddc1ec274, fixed by 8de5fdf5b): classes `[[0, 2, 3, 4], [1], [5, 7],
+/// [6]]` against `[[0, 1, 2, 3, 4], [5, 7], [6]]`, and `[[0, 2, 3, 4, 5, 7], [1, 6]]` against
+/// one class of all eight.
+#[test]
+fn types_that_meet_are_joined_at_the_seeds_that_split_by_order() {
+    for seed in [7851126336577227156, 11248837811923780436] {
+        joined_in_random_groups_holding_lower_types(seed);
+    }
+}
+
+/// 400 cases of random groups from `seed` ([`check_classes`]).
+fn joined_in_random_groups_holding_lower_types(seed: u64) {
+    let mut s = seed | 1;
     let (mut met, mut apart) = (0, 0);
     for case in 0..400 {
         let ts = random_cells(&mut s);
