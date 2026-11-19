@@ -927,6 +927,28 @@ fn project_read(
     // Each row of the shadow is charged as it is made, its terms and one more, which is what the
     // call below would read of it, and that call does not read it again (`project_read`): `held`
     // is not done there, as nothing above changed it since this call found it not done.
+    // Proof that a shadow not refused is charged exactly what `project(shadow, ..)` charged
+    // before ac390b499 (TEST-shadow-charge-totals):
+    // 1. `held` is not done here. `project_read` is entered only from `project`, after
+    //    `held.done()` was false, or from the call below, with `held` as at this point. Within
+    //    one call nothing before this point changes `held`: only `Held::push` does, and it is
+    //    called only where no atom other than `t` is left, a branch that returns. By induction
+    //    on the depth of the calls, `held` is not done at every entry and here. So the old
+    //    `project(shadow, ..)` passed its `held.done()` test and charged `work.read(s)` for
+    //    `s` the size of `shadow`, its rows' terms and one more each, before the same
+    //    `project_read`.
+    // 2. That `s` is `others_size` plus each made row's `terms + 1`, the reads below, as
+    //    `shadow` is `others` and then those rows.
+    // 3. `work.read(r)` is `charge(r * 100)` and `charge` adds with saturation, so reads of
+    //    `r1, .., rk` leave `used` and `EXACT_WORK` at `min(old + 100·Σ ri, u64::MAX)`, as one
+    //    read of `Σ ri` does (each partial product or sum that saturates makes both the
+    //    maximum). They refuse iff some partial total passes the limit, which, the totals
+    //    rising, holds iff the last does: the same refusal, which the row-by-row reads give
+    //    within one row of the limit.
+    debug_assert!(
+        !held.done(),
+        "a shadow is made only for a goal not yet held"
+    );
     // Complexity tradeoff: before, the shadow was made whole and then read by the call below,
     // so its |lower|·|upper| rows were built uncharged before the limit was checked: on the
     // windows of `l01_38_presburger::exp_families` at seed 1096302828291 one shadow held
