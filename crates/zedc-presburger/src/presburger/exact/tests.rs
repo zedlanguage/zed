@@ -1,4 +1,4 @@
-use super::super::meter::SOLVER_STEP;
+use super::super::meter::{SOLVER_STEP, TWO_PIN_READINGS};
 use super::super::{SOLVER, Shared, member, project_each_exact};
 use super::*;
 
@@ -3886,6 +3886,126 @@ fn names_over_an_unbounded_polygon_are_read_once_for_the_part() {
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
+/// The tangents `q >= 2·j·p - j²` to `q = p²` for `j` from 0 to k and `p >= -k`, with no
+/// upper side: the polygon is open, its edges grow with k, and names `y(j) == 2·p + 3·q + j`
+/// over it cost no work of their number (PRES-two-pin-prune, part a).
+fn open_tangents(k: usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
+    let y = |j: usize| format!("y{j}");
+    let kk = k as i64;
+    let mut rows: Vec<Formula> = (0..k)
+        .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
+        .collect();
+    rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+    rows.push(ge(&[("p", 1)], kk));
+    let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+    let sets = (0..k)
+        .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
+        .collect();
+    (Formula::And(Shared::new(rows)), syms, sets)
+}
+
+/// Names over an open polygon of many true edges (`open_tangents`): before PRES-two-pin-prune
+/// each name read every half-plane, O(h²) a name (Fourier-Motzkin and Pugh's dark shadow).
+#[test]
+fn names_over_an_open_polygon_of_many_true_edges_cost_log_of_them() {
+    let used = exact_work_of(open_tangents);
+    // As `names_over_a_polygon_of_many_true_edges_cost_log_of_them`: O(k log k) a part and
+    // O(log k) a name, predicted 8 · 11/8 = 11 times at 8 times k (P300).
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(
+        ratio <= 11.0,
+        "work {used:?}, {ratio:.2} times at 8 times k"
+    );
+}
+
+/// Every set over an open region is exactly the values at its integer points, counted one by
+/// one in a box large enough for the window checked, and is answered by the two-pin reading
+/// with no question of the cover: the open tangents in many directions, a half-strip, a wedge,
+/// a strip and a half-plane, each with redundant half-planes beside its edges, and names that
+/// fall, rise or stay along the open side (PRES-two-pin-prune, part a).
+#[test]
+fn names_over_open_regions_are_exact() {
+    // Each region: its name and its half-planes `(A, B, C)`, `A·p + B·q + C >= 0`.
+    type Halves = Vec<(i64, i64, i64)>;
+    let tangents: Halves = (0..=6)
+        .map(|j| (-2 * j, 1, j * j))
+        .chain([(1, 0, 6)])
+        .collect();
+    let regions: Vec<(&str, Halves)> = vec![
+        ("tangents", tangents),
+        // `p >= 0`, `0 <= q <= 3`, and looser copies.
+        (
+            "half-strip",
+            vec![(1, 0, 0), (0, 1, 0), (0, -1, 3), (0, -1, 5), (1, 0, 4)],
+        ),
+        // `q >= p`, `q >= -2·p`, and `q >= -p - 3` (no edge).
+        ("wedge", vec![(-1, 1, 0), (2, 1, 0), (1, 1, 3)]),
+        // `0 <= p + q <= 2`, and a looser copy.
+        ("strip", vec![(1, 1, 0), (-1, -1, 2), (1, 1, 1)]),
+        // `p + 2·q >= 3`, and a looser copy.
+        ("half-plane", vec![(1, 2, -3), (2, 4, -1)]),
+    ];
+    // The names `α·p + β·q`, none with a common factor (an open class declines, as before)
+    // and none crossing the strip in a stretch shorter than 1 (`3·p - 2·q` there is three
+    // classes modulo 5, which no one class holds).
+    let dirs: [(i64, i64); 8] = [
+        (1, 0),
+        (0, 1),
+        (2, 3),
+        (-1, 0),
+        (1, -1),
+        (3, 1),
+        (-2, -3),
+        (1, 1),
+    ];
+    // Every value of the window has a point in the box where it has one at all (`-p == -40`
+    // over the tangents needs `q >= 444`).
+    let (pbox, qbox, window) = (120i64, 600i64, 40i64);
+    for (region, halves) in &regions {
+        let y = |j: usize| format!("y{j}");
+        let mut rows: Vec<Formula> = dirs
+            .iter()
+            .enumerate()
+            .map(|(j, &(al, be))| eq(&[(&y(j), 1), ("p", -al), ("q", -be)], 0))
+            .collect();
+        rows.extend(
+            halves
+                .iter()
+                .map(|&(a_, b, c)| ge(&[("p", a_), ("q", b)], c)),
+        );
+        let f = Formula::And(Shared::new(rows));
+        let syms: Vec<Atom> = (0..dirs.len()).map(|j| a(&y(j))).collect();
+        let sets = dirs
+            .iter()
+            .map(|_| Ok(IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)])))
+            .collect();
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(&f, &syms, (sets, vec![]), SOLVER);
+        let covered = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+        let mut want = vec![std::collections::BTreeSet::new(); dirs.len()];
+        for p in -pbox..=pbox {
+            for q in -qbox..=qbox {
+                if halves.iter().all(|&(a_, b, c)| a_ * p + b * q + c >= 0) {
+                    for (j, &(al, be)) in dirs.iter().enumerate() {
+                        want[j].insert(al * p + be * q);
+                    }
+                }
+            }
+        }
+        for (j, want) in want.iter().enumerate() {
+            let Ok(set) = &got.sets[j] else {
+                panic!("{region}: y{j} refused: {:?}", got.sets[j]);
+            };
+            for v in -window..=window {
+                let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+                assert_eq!(has, want.contains(&v), "{region}: y{j} at {v}: {set:?}");
+            }
+        }
+        assert_eq!(covered, 0, "{region}: a name was covered");
+    }
+}
+
 /// `y(j) == 2·p + 3·q + j` with `0 <= p, q <= 9` and one choice, `z == max(p, q)` (`z == p`
 /// where `p - q >= 0`, `z == q` where `q - p - 1 >= 0`), under `z <= 7`: the choice splits the
 /// polygon in two, and the part is still read once, not once a name (PRES-two-pin-choices).
@@ -4067,6 +4187,253 @@ fn names_over_a_choice_are_exact() {
     }
     let (_, covered) = run(&["y0", "y1", "y2", "y3", "y4", "y6"]);
     assert_eq!(covered, 0, "a name was covered");
+}
+
+/// `0 <= p, q <= 9`, three shared choices `z(i) == q + 1` where `p - i >= 0`, else
+/// `z(i) == q - 1`, for `i` from 1 to 3, each read by `z(i) >= -100`, and names
+/// `y(j) == 2·p + 3·q + j` for `j < 8`. Of the 8 cells of the three guards only 4 have
+/// points (`p <= 0`, `p == 1`, `p == 2`, `p >= 3`); at a choice whose one arm would make the
+/// cell empty, the reading takes the other arm and goes on, so no empty cell is read and the
+/// search reads 7 times (2·4 - 1, a binary tree with the 4 cells as leaves), not 15 (every
+/// cell of the 8), and each set is exact (PRES-two-pin-prune, part b).
+#[test]
+fn empty_cells_are_pruned_before_they_are_read() {
+    let y = |j: usize| format!("y{j}");
+    let z = |i: i64| format!("z{i}");
+    let mut rows: Vec<Formula> = (0..8)
+        .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
+        .collect();
+    for i in 1..=3 {
+        let zi = z(i);
+        rows.push(Formula::or(vec![
+            Formula::And(Shared::new(vec![
+                eq(&[(&zi, 1), ("q", -1)], -1),
+                ge(&[("p", 1)], -i),
+            ])),
+            Formula::And(Shared::new(vec![
+                eq(&[(&zi, 1), ("q", -1)], 1),
+                ge(&[("p", -1)], i - 1),
+            ])),
+        ]));
+        rows.push(ge(&[(&zi, 1)], 100));
+    }
+    rows.extend([ge(&[("p", 1)], 0), ge(&[("p", -1)], 9)]);
+    rows.extend([ge(&[("q", 1)], 0), ge(&[("q", -1)], 9)]);
+    let f = Formula::And(Shared::new(rows));
+    let syms: Vec<Atom> = (0..8).map(|j| a(&y(j))).collect();
+    let sets = (0..8)
+        .map(|_| Ok(IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)])))
+        .collect();
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    TWO_PIN_READINGS.set(0);
+    let got = exact_each(&f, &syms, (sets, vec![]), SOLVER);
+    let readings = TWO_PIN_READINGS.replace(0);
+    let covered = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+    let mut want = std::collections::BTreeSet::new();
+    for p in 0..=9 {
+        for q in 0..=9 {
+            want.insert(2 * p + 3 * q);
+        }
+    }
+    for j in 0..8i64 {
+        let Ok(set) = &got.sets[j as usize] else {
+            panic!("y{j} refused: {:?}", got.sets[j as usize]);
+        };
+        for v in -10..=60i64 {
+            let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+            assert_eq!(has, want.contains(&(v - j)), "y{j} at {v}: {set:?}");
+        }
+    }
+    assert_eq!(covered, 0, "a name was covered");
+    assert_eq!(readings, 7, "the readings of the part");
+}
+
+/// The search stop of the two-pin reading where the pass before it counts nothing: a choice
+/// `a + b == p` where `p >= 0`, else `a + b == -p`, with `b >= 0`. Its possible heads are `a`,
+/// read by nothing else (so the choice could be a leaf, and the pass does not count it), and
+/// `b`; but the reading makes `p` its first pin and `a` its second, so `b` is the head, read by
+/// `b >= 0`, and the choice splits the part. With one name two cells would cost more than the
+/// per-name path, and the search stops at that branch after one reading; with two it reads the
+/// part and both cells (PRES-two-pin-prune).
+#[test]
+fn a_choice_shared_only_through_the_head_the_reading_gives_it_stops_the_search() {
+    let f = Formula::And(Shared::new(vec![
+        Formula::or(vec![
+            Formula::And(Shared::new(vec![
+                eq(&[("a", 1), ("b", 1), ("p", -1)], 0),
+                ge(&[("p", 1)], 0),
+            ])),
+            Formula::And(Shared::new(vec![
+                eq(&[("a", 1), ("b", 1), ("p", 1)], 0),
+                ge(&[("p", -1)], -1),
+            ])),
+        ]),
+        ge(&[("b", 1)], 0),
+    ]));
+    for (names, read, readings) in [(1, false, 1), (2, true, 3)] {
+        let mut work = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let prep = guarded::prepare(&f, &mut work).unwrap().unwrap();
+        TWO_PIN_READINGS.set(0);
+        let got = prep.two_pins(names, &mut work).unwrap();
+        assert_eq!(got.is_some(), read, "with {names} names");
+        assert_eq!(TWO_PIN_READINGS.replace(0), readings, "with {names} names");
+    }
+}
+
+/// A leaf choice for each name over a polygon of many true edges: `y(j) == p + 2·q + j` where
+/// `q - 4·p - m >= 0`, else `y(j) == 2·p + q + j`, `m = j mod 7`, over the tangents of
+/// `names_over_a_polygon_of_many_true_edges_cost_log_of_them`. Each arm's query is over the
+/// polygon cut by its guard, which is clipped in O(log V) rather than its edges found again in
+/// O(V log V) (PRES-two-pin-prune, part c).
+fn leaf_choices_over_tangents(k: usize, open: bool) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
+    let y = |j: usize| format!("y{j}");
+    let kk = k as i64;
+    let mut rows: Vec<Formula> = (0..k)
+        .map(|j| {
+            let (yj, m) = (y(j), (j % 7) as i64);
+            Formula::or(vec![
+                Formula::And(Shared::new(vec![
+                    eq(&[(&yj, 1), ("p", -1), ("q", -2)], -(j as i64)),
+                    ge(&[("q", 1), ("p", -4)], -m),
+                ])),
+                Formula::And(Shared::new(vec![
+                    eq(&[(&yj, 1), ("p", -2), ("q", -1)], -(j as i64)),
+                    ge(&[("q", -1), ("p", 4)], m - 1),
+                ])),
+            ])
+        })
+        .collect();
+    rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+    rows.push(ge(&[("p", 1)], kk));
+    if !open {
+        rows.push(ge(&[("q", -1)], kk * kk));
+    }
+    let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+    let sets = (0..k)
+        .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
+        .collect();
+    (Formula::And(Shared::new(rows)), syms, sets)
+}
+
+/// Leaf choices over many true edges (`leaf_choices_over_tangents`): before
+/// PRES-two-pin-prune each query found the cut polygon's edges again, O(V log V) a name.
+#[test]
+fn leaf_choices_over_a_polygon_of_many_true_edges_cost_log_of_them() {
+    for open in [false, true] {
+        let used = exact_work_of(|k| leaf_choices_over_tangents(k, open));
+        // O(k log k) a part and O(log k) a name: 11 times at 8 times k, as above (P300).
+        let ratio = used[1] as f64 / used[0].max(1) as f64;
+        assert!(
+            ratio <= 11.0,
+            "open {open}: work {used:?}, {ratio:.2} times at 8 times k"
+        );
+    }
+}
+
+/// Each name: the guard `(A, B, C)` and the arms `(α, β)`, `y == α·p + β·q`.
+type Leaf = ((i64, i64, i64), [(i64, i64); 2]);
+
+/// The sets of the names `y(j)`, each a leaf choice of `leaves[j]`, over the tangents of
+/// `leaf_choices_over_tangents` at k = 6 (closed under `q <= 36`, or open), checked against the
+/// values at the integer points counted one by one; returns the work the cover spent.
+fn leaf_choices_checked(leaves: &[Leaf], open: bool) -> u64 {
+    let k = 6i64;
+    {
+        let y = |j: usize| format!("y{j}");
+        let mut rows: Vec<Formula> = leaves
+            .iter()
+            .enumerate()
+            .map(|(j, &((ga, gb, gc), [(a0, b0), (a1, b1)]))| {
+                let yj = y(j);
+                Formula::or(vec![
+                    Formula::And(Shared::new(vec![
+                        eq(&[(&yj, 1), ("p", -a0), ("q", -b0)], 0),
+                        ge(&[("p", ga), ("q", gb)], gc),
+                    ])),
+                    Formula::And(Shared::new(vec![
+                        eq(&[(&yj, 1), ("p", -a1), ("q", -b1)], 0),
+                        ge(&[("p", -ga), ("q", -gb)], -gc - 1),
+                    ])),
+                ])
+            })
+            .collect();
+        rows.extend((0..=k).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+        rows.push(ge(&[("p", 1)], k));
+        if !open {
+            rows.push(ge(&[("q", -1)], k * k));
+        }
+        let f = Formula::And(Shared::new(rows));
+        let syms: Vec<Atom> = (0..leaves.len()).map(|j| a(&y(j))).collect();
+        let sets = leaves
+            .iter()
+            .map(|_| Ok(IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)])))
+            .collect();
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(&f, &syms, (sets, vec![]), SOLVER);
+        let covered = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+        let mut want = vec![std::collections::BTreeSet::new(); leaves.len()];
+        for p in -k..=120 {
+            for q in 0..=600 {
+                let inside = (0..=k).all(|j| q - 2 * j * p + j * j >= 0) && (open || q <= k * k);
+                if !inside {
+                    continue;
+                }
+                for (j, &((ga, gb, gc), [(a0, b0), (a1, b1)])) in leaves.iter().enumerate() {
+                    want[j].insert(if ga * p + gb * q + gc >= 0 {
+                        a0 * p + b0 * q
+                    } else {
+                        a1 * p + b1 * q
+                    });
+                }
+            }
+        }
+        for (j, want) in want.iter().enumerate() {
+            let Ok(set) = &got.sets[j] else {
+                panic!("open {open}: y{j} refused: {:?}", got.sets[j]);
+            };
+            for v in -40..=40i64 {
+                let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+                assert_eq!(has, want.contains(&v), "open {open}: y{j} at {v}: {set:?}");
+            }
+        }
+        covered
+    }
+}
+
+/// Leaf choices whose guards cut the tangents (closed under `q <= 36` and open) across, touch
+/// them at a corner (`-p - q - 6 >= 0`, only `(-6, 0)`) or along an edge (`-p - 6 >= 0`, in the
+/// open case the ray `p == -6`, `q >= 0`), miss them (`-p - 100 >= 0`) or hold on all of them
+/// (`q + 1000 >= 0`): each set is exactly the values at the integer points, counted one by one,
+/// with no question of the cover (PRES-two-pin-prune, part c). On the ray `p == -6` an arm
+/// `y == p + 2·q` takes the even values from -6 on, infinitely many and periodic, which no runs
+/// of `u` give: there the reading declines (the module note of `two_pins`), and the cover
+/// answers the name exactly.
+#[test]
+fn leaf_choices_over_many_edges_are_exact() {
+    let leaves: [Leaf; 6] = [
+        ((-4, 1, -1), [(1, 2), (2, 1)]),
+        ((-1, -1, -6), [(1, 2), (2, 1)]),
+        ((-1, 0, -6), [(0, 1), (1, 2)]),
+        ((-1, 0, -100), [(1, 2), (2, 1)]),
+        ((0, 1, 1000), [(1, 2), (2, 1)]),
+        ((1, 0, -3), [(0, 1), (1, 0)]),
+    ];
+    for open in [false, true] {
+        let covered = leaf_choices_checked(&leaves, open);
+        assert_eq!(covered, 0, "open {open}: a name was covered");
+    }
+    let periodic: [Leaf; 1] = [((-1, 0, -6), [(1, 2), (0, 1)])];
+    assert_eq!(leaf_choices_checked(&periodic, false), 0, "closed: covered");
+    assert!(
+        leaf_choices_checked(&periodic, true) > 0,
+        "open: the periodic values on the ray were answered by the reading"
+    );
 }
 
 /// The two-pin reading on a polygon with slanted sides, where the dark shadow is narrower

@@ -67,6 +67,9 @@ thread_local! {
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.
     pub static EXACT_WORK: Cell<u64> = const { Cell::new(0) };
+    /// The readings of parts with two pins (`exact::guarded::two_pins`, one a cell or a
+    /// branch) on this thread, read by tests.
+    pub static TWO_PIN_READINGS: Cell<u64> = const { Cell::new(0) };
 }
 
 /// A solver step that eliminates the atoms a test picks from constraints ([`Solver`]).
