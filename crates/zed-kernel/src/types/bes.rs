@@ -850,7 +850,7 @@ fn one_cycle_but_union_chords(
     // Each node's distinct children inside `tc`, by their place in `tc`.
     let (mut at, mut inner) = (Vec::with_capacity(n + 1), Vec::new());
     at.push(0);
-    let mut indegree = vec![0u32; n];
+    let mut indegree = vec![0usize; n];
     let mut fits = true;
     for &v in tc {
         stamp.advance();
@@ -876,23 +876,24 @@ fn one_cycle_but_union_chords(
         return false;
     }
     let is_or = |i: usize| g.kind(tc[i]) == Kind::Or;
-    // A topological order of the `Or` edges, by Kahn's algorithm.
+    // A topological order of the `Or` edges, by Kahn's algorithm, last ready first.
     let mut rank = vec![u32::MAX; n];
-    let mut ready: Vec<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
+    let mut ready: Vec<usize> = zed_graph::sources(&indegree).collect();
     let mut ranked = 0u32;
-    while let Some(i) = ready.pop() {
-        rank[i] = ranked;
-        ranked += 1;
-        if is_or(i) {
-            for &j in &inner[at[i]..at[i + 1]] {
-                indegree[j as usize] -= 1;
-                if indegree[j as usize] == 0 {
-                    ready.push(j as usize);
-                }
-            }
-        }
-    }
-    if ranked as usize != n {
+    let placed = zed_graph::kahn(
+        &mut indegree,
+        &mut ready,
+        // Only an `Or` node's edges are counted in `indegree`.
+        |i| {
+            let end = if is_or(i) { at[i + 1] } else { at[i] };
+            inner[at[i]..end].iter().map(|&j| j as usize)
+        },
+        |i| {
+            rank[i] = ranked;
+            ranked += 1;
+        },
+    );
+    if placed != n {
         return false;
     }
     let next: Vec<usize> = (0..n)

@@ -206,12 +206,11 @@ impl<'u> Cones<'u> {
     /// unit, in its order.
     pub fn reach(&self, roots: &[&Term]) -> Vec<usize> {
         let mut seen = BTreeSet::new();
-        let mut todo: Vec<usize> = roots.iter().flat_map(|t| self.positions(t)).collect();
-        while let Some(i) = todo.pop() {
-            if seen.insert(i) {
-                todo.extend(self.reads(i));
-            }
-        }
+        zed_graph::reach(
+            roots.iter().flat_map(|t| self.positions(t)),
+            |&i| seen.insert(i),
+            |&i| self.reads(i).iter().copied(),
+        );
         seen.into_iter().collect()
     }
 
@@ -1504,15 +1503,17 @@ fn reach<'a, C>(roots: &[&'a str], edges: &'a HashMap<&str, C>) -> HashSet<&'a s
 where
     &'a C: IntoIterator<Item = &'a Arc<str>>,
 {
-    let mut seen: HashSet<&str> = roots.iter().copied().collect();
-    let mut todo: Vec<&str> = roots.to_vec();
-    while let Some(d) = todo.pop() {
-        for x in edges.get(d).into_iter().flatten() {
-            if edges.contains_key(&**x) && seen.insert(x) {
-                todo.push(x);
-            }
-        }
-    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    // Every root is kept, a definition or not; a name read is followed only when it is one.
+    zed_graph::reach(
+        roots.iter().copied(),
+        |&d| seen.insert(d),
+        |&d| {
+            (edges.get(d).into_iter().flatten())
+                .map(|x| &**x)
+                .filter(|x| edges.contains_key(x))
+        },
+    );
     seen
 }
 

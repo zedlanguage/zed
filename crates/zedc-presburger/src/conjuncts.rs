@@ -1937,28 +1937,7 @@ pub fn reach_eqs(
     rels: &[&Conjuncts],
     seeds: impl IntoIterator<Item = Arc<str>>,
 ) -> (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>) {
-    let mut found: BTreeSet<Arc<Formula>> = BTreeSet::new();
-    let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
-    let mut work: Vec<Arc<str>> = Vec::new();
-    for n in seeds {
-        if seen.insert(n.clone()) {
-            work.push(n);
-        }
-    }
-    while let Some(n) = work.pop() {
-        for g in rels.iter().flat_map(|r| r.eq_users.of(&n)) {
-            if found.contains(g) {
-                continue;
-            }
-            found.insert(g.clone());
-            for m in names(g) {
-                if seen.insert(m.clone()) {
-                    work.push(m);
-                }
-            }
-        }
-    }
-    (found, seen)
+    linked(rels, seeds, |r| &r.eq_users, |_| true)
 }
 
 /// The conjuncts of `rels` linked to `seeds` by chains of conjuncts that share a name, only
@@ -1969,27 +1948,33 @@ pub fn reach(
     seeds: impl IntoIterator<Item = Arc<str>>,
     follow: impl Fn(&Formula) -> bool,
 ) -> (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>) {
+    linked(rels, seeds, |r| &r.users, follow)
+}
+
+/// The search of [`reach`] and [`reach_eqs`] ([`zed_graph::reach`] over the names, the
+/// visited set `seen`): from each name to the conjuncts `uses` files under it that `follow`
+/// keeps and that are not yet `found`, and on to the names they mention.
+fn linked<'r>(
+    rels: &[&'r Conjuncts],
+    seeds: impl IntoIterator<Item = Arc<str>>,
+    uses: impl Fn(&'r Conjuncts) -> &'r Uses<Arc<Formula>>,
+    follow: impl Fn(&Formula) -> bool,
+) -> (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>) {
     let mut found: BTreeSet<Arc<Formula>> = BTreeSet::new();
     let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
-    let mut work: Vec<Arc<str>> = Vec::new();
-    for n in seeds {
-        if seen.insert(n.clone()) {
-            work.push(n);
-        }
-    }
-    while let Some(n) = work.pop() {
-        for g in rels.iter().flat_map(|r| r.users.of(&n)) {
-            if !follow(g) || found.contains(g) {
-                continue;
-            }
-            found.insert(g.clone());
-            for m in names(g) {
-                if seen.insert(m.clone()) {
-                    work.push(m);
+    zed_graph::reach(
+        seeds,
+        |n| seen.insert(n.clone()),
+        |n| {
+            let mut next = Vec::new();
+            for g in rels.iter().flat_map(|r| uses(r).of(n)) {
+                if follow(g) && found.insert(g.clone()) {
+                    next.extend(names(g));
                 }
             }
-        }
-    }
+            next
+        },
+    );
     (found, seen)
 }
 

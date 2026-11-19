@@ -1855,17 +1855,17 @@ impl<A: Literal> Part<A> {
             }
         };
         let mut known: Vec<Option<bool>> = vec![None; exprs.len()];
-        let mut ready: Vec<usize> = (0..exprs.len()).filter(|&i| waiting[i] == 0).collect();
-        while let Some(i) = ready.pop() {
-            let v = step(&exprs[i], &|c| known[c]);
-            known[i] = v;
-            for &q in &parents[i] {
-                waiting[q] -= 1;
-                if waiting[q] == 0 {
-                    ready.push(q);
-                }
-            }
-        }
+        // Each expression after its parts (Kahn's order, last ready first).
+        let mut ready: Vec<usize> = zed_graph::sources(&waiting).collect();
+        zed_graph::kahn(
+            &mut waiting,
+            &mut ready,
+            |i| parents[i].iter().copied(),
+            |i| {
+                let v = step(&exprs[i], &|c| known[c]);
+                known[i] = v;
+            },
+        );
         let mut fixed = vec![false; exprs.len()];
         let carry = |i: usize,
                      v: bool,

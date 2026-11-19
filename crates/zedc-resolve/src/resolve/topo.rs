@@ -114,36 +114,51 @@ fn place(deps: &[Vec<usize>], items: usize, out: &[bool]) -> (Vec<usize>, Vec<bo
             users[d].push(i);
         }
     }
-    let mut ready: BinaryHeap<Reverse<usize>> = (0..items)
+    let ready: BinaryHeap<Reverse<usize>> = (0..items)
         .filter(|&i| !out[i] && waits[i] == 0)
         .map(Reverse)
         .collect();
-    let mut passed: Vec<usize> = (items..n).filter(|&j| waits[j] == 0).collect();
+    let passed: Vec<usize> = (items..n).filter(|&j| waits[j] == 0).collect();
     let mut done = vec![false; n];
     let mut order = Vec::with_capacity(items);
-    loop {
-        let i = match passed.pop() {
-            Some(j) => j,
-            None => match ready.pop() {
-                Some(Reverse(i)) => {
-                    order.push(i);
-                    i
-                }
-                None => break,
-            },
-        };
-        done[i] = true;
-        for &u in &users[i] {
-            waits[u] -= 1;
-            if waits[u] == 0 {
-                match u < items {
-                    true => ready.push(Reverse(u)),
-                    false => passed.push(u),
-                }
+    zed_graph::kahn(
+        &mut waits,
+        &mut JoinsFirst {
+            items,
+            passed,
+            ready,
+        },
+        |i| users[i].iter().copied(),
+        |i| {
+            done[i] = true;
+            if i < items {
+                order.push(i);
             }
+        },
+    );
+    (order, done)
+}
+
+/// The ready nodes of [`place`]: a join ready is passed before any item is taken (last ready
+/// first, as the order among joins changes nothing), and the items are taken least first.
+struct JoinsFirst {
+    items: usize,
+    passed: Vec<usize>,
+    ready: BinaryHeap<Reverse<usize>>,
+}
+
+impl zed_graph::Ready for JoinsFirst {
+    fn push(&mut self, v: usize) {
+        match v < self.items {
+            true => self.ready.push(Reverse(v)),
+            false => self.passed.push(v),
         }
     }
-    (order, done)
+    fn pop(&mut self) -> Option<usize> {
+        self.passed
+            .pop()
+            .or_else(|| self.ready.pop().map(|Reverse(i)| i))
+    }
 }
 
 /// The cycle reached from the first item left by `next`, which gives the item left that an

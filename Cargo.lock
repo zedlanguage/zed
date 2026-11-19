@@ -1338,6 +1338,7 @@ dependencies = [
 name = "zedc-stage"
 version = "0.0.0"
 dependencies = [
+ "zed-graph",
  "zed-kernel",
  "zedc-base",
  "zedc-syntax",

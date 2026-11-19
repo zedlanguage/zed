@@ -21301,19 +21301,19 @@ fn twins_merged(
     let mut number: HashMap<Atom, Atom> = HashMap::new();
     let mut seen: HashMap<Formula, Atom> = HashMap::new();
     let mut merged = false;
-    while let Some(k) = ready.pop_front() {
-        let x = order[k];
-        let key = numbered(conjuncts[def[x]], x, &number);
-        let n = seen.entry(key).or_insert_with(|| x.clone()).clone();
-        merged |= n != *x;
-        number.insert(x.clone(), n);
-        for w in mem::take(&mut waiting[k]) {
-            waits[w] -= 1;
-            if waits[w] == 0 {
-                ready.push_back(w);
-            }
-        }
-    }
+    // Each atom after the atoms it waits for (Kahn's order, first ready first).
+    zed_graph::kahn(
+        &mut waits,
+        &mut ready,
+        |k| mem::take(&mut waiting[k]),
+        |k| {
+            let x = order[k];
+            let key = numbered(conjuncts[def[x]], x, &number);
+            let n = seen.entry(key).or_insert_with(|| x.clone()).clone();
+            merged |= n != *x;
+            number.insert(x.clone(), n);
+        },
+    );
     if !merged {
         return None;
     }

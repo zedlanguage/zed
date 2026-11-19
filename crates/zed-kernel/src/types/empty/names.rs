@@ -14,6 +14,7 @@
 //! and without the arms [`absorb`] drops.
 
 use super::super::bes::{Bes, Kind};
+use std::collections::VecDeque;
 
 /// A copy of `b` without the arms of each union node whose type (`same`, by node) is an arm of
 /// another union node that it reaches through unions, when the dominators or the
@@ -81,14 +82,9 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     // The dominator tree from the unions no union names, and the post-dominator tree from the
     // unions with no union arm; a node's immediate (post-)dominator is the lowest common
     // ancestor of its parents (children) in the union graph, all placed before it.
-    let mut dom = Lift::new(k);
-    for &v in &order {
-        dom.attach(v, idom(&dom, &up[v as usize], k as u32));
-    }
-    let mut post = Lift::new(k);
-    for &v in order.iter().rev() {
-        post.attach(v, idom(&post, &down[v as usize], k as u32));
-    }
+    let dom = zed_graph::dag_idom(k, &order, |v| down[v].iter().map(|&c| c as usize));
+    let back: Vec<usize> = order.iter().rev().copied().collect();
+    let post = zed_graph::dag_idom(k, &back, |v| up[v].iter().map(|&c| c as usize));
     let (dom, post) = (dom.intervals(), post.intervals());
     // Each arm's type with the union that has it, grouped by type.
     let mut pairs: Vec<(u32, u32)> = (unions.iter().enumerate())
@@ -161,122 +157,24 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     Some(a)
 }
 
-/// The union graph's nodes, each after its parents (Kahn's algorithm); the graph is acyclic,
-/// since a member's body is contractive.
-fn topological(down: &[Vec<u32>], up: &[Vec<u32>]) -> Vec<u32> {
-    let mut need: Vec<usize> = up.iter().map(Vec::len).collect();
-    let mut order: Vec<u32> = (0..down.len() as u32)
-        .filter(|&v| need[v as usize] == 0)
-        .collect();
-    let mut i = 0;
-    while let Some(&v) = order.get(i) {
-        i += 1;
-        for &c in &down[v as usize] {
-            need[c as usize] -= 1;
-            if need[c as usize] == 0 {
-                order.push(c);
-            }
-        }
-    }
+/// The union graph's nodes, each after its parents (Kahn's algorithm, first ready first); the
+/// graph is acyclic, since a member's body is contractive.
+fn topological(down: &[Vec<u32>], up: &[Vec<u32>]) -> Vec<usize> {
+    let mut waits: Vec<usize> = up.iter().map(Vec::len).collect();
+    let mut ready: VecDeque<usize> = zed_graph::sources(&waits).collect();
+    let mut order = Vec::with_capacity(down.len());
+    zed_graph::kahn(
+        &mut waits,
+        &mut ready,
+        |v| down[v].iter().map(|&c| c as usize),
+        |v| order.push(v),
+    );
     debug_assert_eq!(
         order.len(),
         down.len(),
         "unions through names form no cycle"
     );
     order
-}
-
-/// The lowest common ancestor in `tree` of `parents`, or `root` when there is none.
-fn idom(tree: &Lift, parents: &[u32], root: u32) -> u32 {
-    (parents.iter().copied())
-        .reduce(|a, c| tree.lca(a, c))
-        .unwrap_or(root)
-}
-
-/// A tree grown leaf by leaf, with each node's ancestors at powers of two for lowest common
-/// ancestors in O(log n); node `k` of `k + 1` is the root.
-struct Lift {
-    levels: usize,
-    depth: Vec<u32>,
-    /// The ancestor 2^j above node `v` at `v * levels + j`, the root above the root.
-    up: Vec<u32>,
-}
-
-impl Lift {
-    fn new(k: usize) -> Self {
-        let levels = (usize::BITS - k.leading_zeros()) as usize + 1;
-        let mut up = vec![0; (k + 1) * levels];
-        up[k * levels..].fill(k as u32);
-        Lift {
-            levels,
-            depth: vec![0; k + 1],
-            up,
-        }
-    }
-
-    fn attach(&mut self, v: u32, parent: u32) {
-        let (v, l) = (v as usize, self.levels);
-        self.depth[v] = self.depth[parent as usize] + 1;
-        self.up[v * l] = parent;
-        for j in 1..l {
-            self.up[v * l + j] = self.up[self.up[v * l + j - 1] as usize * l + j - 1];
-        }
-    }
-
-    fn lca(&self, mut a: u32, mut c: u32) -> u32 {
-        let l = self.levels;
-        if self.depth[a as usize] < self.depth[c as usize] {
-            std::mem::swap(&mut a, &mut c);
-        }
-        let mut rise = self.depth[a as usize] - self.depth[c as usize];
-        let mut j = 0;
-        while rise > 0 {
-            if rise & 1 == 1 {
-                a = self.up[a as usize * l + j];
-            }
-            rise >>= 1;
-            j += 1;
-        }
-        if a == c {
-            return a;
-        }
-        for j in (0..l).rev() {
-            let (x, y) = (self.up[a as usize * l + j], self.up[c as usize * l + j]);
-            if x != y {
-                (a, c) = (x, y);
-            }
-        }
-        self.up[a as usize * l]
-    }
-
-    /// Each node's preorder number and the largest in its subtree, children in any order.
-    fn intervals(&self) -> Intervals {
-        let n = self.depth.len();
-        let root = n - 1;
-        let mut kids = vec![Vec::new(); n];
-        for v in 0..root {
-            kids[self.up[v * self.levels] as usize].push(v as u32);
-        }
-        let (mut pre, mut last) = (vec![0u32; n], vec![0u32; n]);
-        let (mut next, mut stack) = (0u32, vec![(root as u32, false)]);
-        while let Some((v, closing)) = stack.pop() {
-            if closing {
-                last[v as usize] = next - 1;
-                continue;
-            }
-            pre[v as usize] = next;
-            next += 1;
-            stack.push((v, true));
-            stack.extend(kids[v as usize].iter().map(|&c| (c, false)));
-        }
-        Intervals { pre, last }
-    }
-}
-
-/// A tree's preorder numbers: `w` is in `v`'s subtree when `pre[v] <= pre[w] <= last[v]`.
-struct Intervals {
-    pre: Vec<u32>,
-    last: Vec<u32>,
 }
 
 /// `b` with the nodes that play alike made one node, and for each node of `b` its node in the
@@ -686,41 +584,7 @@ impl Partition {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bes, Kind, Lift, merged};
-
-    /// Item TEST-kernel-unreached-paths-6: [`Lift::lca`] agrees with the walk up the parents on
-    /// every pair of a tree of 200 nodes whose branches part at many depths. The dominator trees
-    /// of the tests elsewhere part only below the root's children, so the climb of two nodes of
-    /// one depth by their ancestors 2^j above (the line `(a, c) = (x, y)`) never ran.
-    #[test]
-    fn the_lowest_common_ancestor_by_doubling_agrees_with_the_walk_up_the_parents() {
-        let k = 200u32;
-        let mut tree = Lift::new(k as usize);
-        let mut parent = vec![k; k as usize + 1];
-        // Nodes 0 to 2 hang from the root and node `v` from node `(v - 3) / 3`: three children
-        // each, so the depth grows with the logarithm of `v`.
-        for v in 0..k {
-            let p = if v < 3 { k } else { (v - 3) / 3 };
-            parent[v as usize] = p;
-            tree.attach(v, p);
-        }
-        let ancestors = |mut v: u32| {
-            let mut up = vec![v];
-            while v != k {
-                v = parent[v as usize];
-                up.push(v);
-            }
-            up
-        };
-        for a in 0..=k {
-            let ua = ancestors(a);
-            for c in 0..=k {
-                let uc = ancestors(c);
-                let expected = *ua.iter().find(|x| uc.contains(x)).expect("the root");
-                assert_eq!(tree.lca(a, c), expected, "lca({a}, {c})");
-            }
-        }
-    }
+    use super::{Bes, Kind, merged};
 
     /// Item TEST-kernel-unreached-paths-6: [`merged`] on a system with a union of one distinct
     /// arm (node 4, `Or[1, 1]`) and no two other nodes alike gives the contracted copy itself,

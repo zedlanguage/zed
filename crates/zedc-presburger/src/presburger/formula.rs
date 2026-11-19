@@ -247,21 +247,22 @@ impl Id {
     pub(super) fn reached_twice(f: &Formula) -> HashSet<Id> {
         let mut seen: HashSet<Id> = HashSet::new();
         let mut twice: HashSet<Id> = HashSet::new();
-        let mut stack = vec![f];
-        while let Some(g) = stack.pop() {
-            for h in g.kids() {
+        // The root is held by nothing below it, so its id in `seen` changes nothing.
+        zed_graph::reach(
+            [f],
+            |&h| {
                 if matches!(h, Formula::Con(_)) {
-                    continue;
+                    return false;
                 }
                 let id = Id::any(h);
-                if seen.contains(&id) {
-                    twice.insert(id);
-                } else {
-                    seen.insert(id);
-                    stack.push(h);
+                if seen.insert(id) {
+                    return true;
                 }
-            }
-        }
+                twice.insert(id);
+                false
+            },
+            |&g| g.kids(),
+        );
         twice
     }
 }

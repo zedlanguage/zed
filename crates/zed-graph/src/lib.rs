@@ -303,3 +303,9 @@ mod tests;
 
 mod biconnected;
 pub use biconnected::{biconnected, block_of_edges};
+
+mod lift;
+pub use lift::{Intervals, Lift, dag_idom};
+
+mod order;
+pub use order::{Ready, kahn, reach, sources};

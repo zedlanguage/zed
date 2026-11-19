@@ -2340,9 +2340,11 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         }
     }
     // Where some atom is read by two nodes, or a conjunction holds a box: the order of a walk of
-    // the tree from the root, and the ancestors of each node 2^j steps up.
+    // the tree from the root, and the tree by binary lifting (`zed_graph::Lift`), its own root
+    // above `root`. A parent has a higher index than its parts (pass 2 runs down the indices),
+    // so each reached node is attached after its parent.
     let mut order = vec![0usize; nodes.len()];
-    let mut lift: Vec<Vec<usize>> = Vec::new();
+    let mut tree = None;
     if any_and_unary || occ_of.values().any(|os| os.len() > 1) {
         let mut stack = vec![root];
         let mut at = 0;
@@ -2353,37 +2355,17 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                 stack.extend(cs.iter().copied());
             }
         }
-        lift.push(parent.clone());
-        while 1usize << lift.len() <= at {
-            let up = lift.last().expect("one level");
-            let next = (0..nodes.len()).map(|i| up[up[i]]).collect();
-            lift.push(next);
+        let deepest = (0..nodes.len()).filter(|&i| reached[i]).map(|i| depth[i]);
+        let mut lift = zed_graph::Lift::with_depth(nodes.len(), deepest.max().unwrap_or(0) + 1);
+        for i in (0..nodes.len()).rev().filter(|&i| reached[i]) {
+            lift.attach(i, if i == root { lift.root() } else { parent[i] });
         }
+        tree = Some(lift);
     }
-    let up_to = |mut i: usize, d: usize| {
-        let mut steps = depth[i].saturating_sub(d);
-        let mut j = 0;
-        while steps > 0 {
-            if steps & 1 == 1 {
-                i = lift[j][i];
-            }
-            steps >>= 1;
-            j += 1;
-        }
-        i
-    };
-    let lca = |a: usize, b: usize| {
-        let (mut a, mut b) = (up_to(a, depth[b]), up_to(b, depth[a]));
-        if a == b {
-            return a;
-        }
-        for up in lift.iter().rev() {
-            if up[a] != up[b] {
-                a = up[a];
-                b = up[b];
-            }
-        }
-        parent[a]
+    // Asked only for an atom read by two nodes or more, which is where the tree is built.
+    let tree = || {
+        tree.as_ref()
+            .expect("the tree is built where two nodes read an atom")
     };
     let ends_set = |e: &Ends| {
         if ends_empty(e) {
@@ -2422,13 +2404,13 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         work.read(os.len() as u64)?;
         os.sort_by_key(|&v| order[v]);
         let mut vs = os.clone();
-        vs.extend(os.windows(2).map(|w| lca(w[0], w[1])));
+        vs.extend(os.windows(2).map(|w| tree().lca(w[0], w[1])));
         vs.sort_by_key(|&v| order[v]);
         vs.dedup();
         let mut vkids: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
         for w in vs.windows(2) {
-            let x = lca(w[0], w[1]);
-            let c = up_to(w[1], depth[x] + 1);
+            let x = tree().lca(w[0], w[1]);
+            let c = tree().up_to(w[1], tree().depth(x) + 1);
             vkids.entry(x).or_default().push((w[1], c));
         }
         for (&x, edges) in &vkids {

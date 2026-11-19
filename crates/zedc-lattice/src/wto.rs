@@ -248,7 +248,7 @@ pub fn show(order: &[Element]) -> String {
 /// component again at every level of nesting, `O(d·(V + E))` for nesting depth `d`, so
 /// `O(V·(V + E))` on a nest of loops. Used: one depth-first traversal and the loop-nesting
 /// forest, each edge read once, `O((V + E) log V)`. The `log V` is the common ancestor of an
-/// edge's ends by binary lifting (`Traversal::ancestors`, `V log V` words of memory); the
+/// edge's ends by binary lifting (`zed_graph::Lift`, `V log V` words of memory); the
 /// union-find of the sets has path halving without union by rank, which is `O(log V)` per
 /// find amortized. Nothing is refused and the order is the recursive algorithm's. Test:
 /// `m0_05_widening_and_iteration::bench::scaling::the_order_of_nested_loops_takes_time_linear_in_the_depth`;
@@ -260,12 +260,12 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
     // Each non-back edge, filed at the common ancestor of its ends where it can first lie
     // inside a component.
     let mut filed: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
-    let up = t.ancestors();
+    let tree = t.tree();
     for (u, ws) in succ.iter().enumerate() {
         for &w in ws {
             if t.ancestor_or_self(w, u) {
                 preds_back[w].push(u);
-            } else if let Some(a) = t.common_ancestor(&up, u, w) {
+            } else if let Some(a) = Traversal::common_ancestor(&tree, u, w) {
                 filed[a].push((u, w));
             }
         }
@@ -398,40 +398,26 @@ impl Traversal {
         self.pre[a] <= self.pre[v] && self.pre[v] < self.end[a]
     }
 
-    /// For each `k`, each vertex's ancestor `2^k` levels up, or itself at a root.
-    fn ancestors(&self) -> Vec<Vec<usize>> {
-        let n = self.pre.len();
-        let first = (0..n)
-            .map(|v| {
-                if self.parent[v] == NONE {
-                    v
-                } else {
-                    self.parent[v]
-                }
-            })
-            .collect();
-        let mut up: Vec<Vec<usize>> = vec![first];
-        while (1usize << up.len()) < n.max(1) {
-            let last = up.last().expect("one level");
-            let next = (0..n).map(|v| last[last[v]]).collect();
-            up.push(next);
+    /// The traversal's forest by binary lifting, each tree's root hung from the root of the
+    /// lifting (`n`), so two vertices of different trees have that root as their common
+    /// ancestor. A vertex is reached after its parent, so attached after it.
+    fn tree(&self) -> zed_graph::Lift {
+        let mut tree = zed_graph::Lift::new(self.pre.len());
+        for &v in &self.order {
+            let p = if self.parent[v] == NONE {
+                tree.root()
+            } else {
+                self.parent[v]
+            };
+            tree.attach(v, p);
         }
-        up
+        tree
     }
 
     /// The deepest common ancestor of `u` and `w`, if they are in one tree.
-    fn common_ancestor(&self, up: &[Vec<usize>], u: usize, w: usize) -> Option<usize> {
-        if self.ancestor_or_self(u, w) {
-            return Some(u);
-        }
-        let mut a = u;
-        for level in up.iter().rev() {
-            if !self.ancestor_or_self(level[a], w) {
-                a = level[a];
-            }
-        }
-        let p = up[0][a];
-        self.ancestor_or_self(p, w).then_some(p)
+    fn common_ancestor(tree: &zed_graph::Lift, u: usize, w: usize) -> Option<usize> {
+        let a = tree.lca(u, w);
+        (a != tree.root()).then_some(a)
     }
 }
 

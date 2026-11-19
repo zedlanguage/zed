@@ -385,18 +385,18 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
     }
 
     let mut level = vec![0; rows.len()];
-    let mut ready: Vec<usize> = (0..rows.len()).filter(|&i| waiting[i] == 0).collect();
-    let mut placed = 0;
-    while let Some(j) = ready.pop() {
-        placed += 1;
-        for &i in &needed_by[j] {
-            level[i] = level[i].max(level[j] + 1);
-            waiting[i] -= 1;
-            if waiting[i] == 0 {
-                ready.push(i);
+    let mut ready: Vec<usize> = zed_graph::sources(&waiting).collect();
+    // A row placed passes its level, one up, to each row that needs it.
+    let placed = zed_graph::kahn(
+        &mut waiting,
+        &mut ready,
+        |j| needed_by[j].iter().copied(),
+        |j| {
+            for &i in &needed_by[j] {
+                level[i] = level[i].max(level[j] + 1);
             }
-        }
-    }
+        },
+    );
     if placed < rows.len() {
         let left: Vec<&str> = rows
             .iter()

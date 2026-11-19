@@ -86,7 +86,7 @@ pub fn placed(body: &Formula, defs: &[Placing]) -> (Formula, Formula) {
     let mut place: Vec<Option<usize>> = vec![None; defs.len()];
     let meet = |place: &mut Vec<Option<usize>>, i: usize, at: usize| {
         place[i] = Some(match place[i] {
-            Some(p) => parts.lca(p, at),
+            Some(p) => parts.tree.lca(p, at),
             None => at,
         });
     };
@@ -162,9 +162,9 @@ struct Parts<'f> {
     /// For each part, the deepest part of the tree that holds every place it is held at: the
     /// part itself on the tree.
     anchor: Vec<usize>,
-    /// `up[k][v]`: the ancestor of `v` on the tree `2^k` levels up, the root its own.
-    up: Vec<Vec<usize>>,
-    depth: Vec<usize>,
+    /// The tree, by binary lifting, its own root above part 0; only the parts on the tree are
+    /// attached.
+    tree: zed_graph::Lift,
     /// The parts, each after every part that holds it.
     order: Vec<usize>,
 }
@@ -200,22 +200,20 @@ impl<'f> Parts<'f> {
             kids[v] = mine;
         }
         let n = nodes.len();
-        // Each part after all that hold it (Kahn's order).
+        // Each part after all that hold it (Kahn's order, last ready first).
         let mut left: Vec<usize> = parents.iter().map(Vec::len).collect();
         let mut order = Vec::with_capacity(n);
-        let mut ready = vec![0];
-        while let Some(v) = ready.pop() {
-            order.push(v);
-            for &c in kids[v].iter().flatten() {
-                left[c] -= 1;
-                if left[c] == 0 {
-                    ready.push(c);
-                }
-            }
-        }
+        zed_graph::kahn(
+            &mut left,
+            &mut vec![0],
+            |v| kids[v].iter().flatten().copied(),
+            |v| order.push(v),
+        );
+        // The tree's own root is `n`, above part 0 (`zed_graph::Lift`); a part off the tree is
+        // not attached and never asked about.
         let mut on_tree = vec![false; n];
+        let mut tree_parent: Vec<usize> = vec![n; n];
         let mut depth: Vec<usize> = vec![0; n];
-        let mut up0: Vec<usize> = (0..n).collect();
         on_tree[0] = true;
         for &v in &order[1..] {
             let compound = matches!(nodes[v], Formula::And(_) | Formula::Or(_));
@@ -225,23 +223,22 @@ impl<'f> Parts<'f> {
             {
                 on_tree[v] = true;
                 depth[v] = depth[p] + 1;
-                up0[v] = p;
+                tree_parent[v] = p;
             }
         }
-        let levels = (usize::BITS - depth.iter().max().copied().unwrap_or(0).leading_zeros()).max(1)
-            as usize;
-        let mut up = vec![up0];
-        for k in 1..levels {
-            let next = (0..n).map(|v| up[k - 1][up[k - 1][v]]).collect();
-            up.push(next);
+        // Part 0 is at depth 1 below the tree's root, so the deepest part at one more.
+        let mut tree = zed_graph::Lift::with_depth(n, depth.iter().max().map_or(1, |d| d + 1));
+        for &v in &order {
+            if on_tree[v] {
+                tree.attach(v, tree_parent[v]);
+            }
         }
         let mut parts = Parts {
             nodes,
             kids,
             on_tree,
             anchor: vec![0; n],
-            up,
-            depth,
+            tree,
             order,
         };
         for i in 0..n {
@@ -254,38 +251,12 @@ impl<'f> Parts<'f> {
                 let mut a: Option<usize> = None;
                 for &p in &parents[v] {
                     let at = parts.anchor[p];
-                    a = Some(a.map_or(at, |a| parts.lca(a, at)));
+                    a = Some(a.map_or(at, |a| parts.tree.lca(a, at)));
                 }
                 a.unwrap_or(0)
             };
         }
         parts
-    }
-
-    /// The deepest common ancestor of `a` and `b` on the tree. O(log d).
-    fn lca(&self, mut a: usize, mut b: usize) -> usize {
-        if self.depth[a] < self.depth[b] {
-            std::mem::swap(&mut a, &mut b);
-        }
-        let mut diff = self.depth[a] - self.depth[b];
-        let mut k = 0;
-        while diff > 0 {
-            if diff & 1 == 1 {
-                a = self.up[k][a];
-            }
-            diff >>= 1;
-            k += 1;
-        }
-        if a == b {
-            return a;
-        }
-        for k in (0..self.up.len()).rev() {
-            if self.up[k][a] != self.up[k][b] {
-                a = self.up[k][a];
-                b = self.up[k][b];
-            }
-        }
-        self.up[0][a]
     }
 
     /// The root with the definitions `at[v]` of `defs` conjoined to each part `v` of the tree,
@@ -305,7 +276,7 @@ impl<'f> Parts<'f> {
                 if u == 0 {
                     break;
                 }
-                u = self.up[0][u];
+                u = self.tree.parent(u);
             }
         }
         let mut built: Vec<Option<Formula>> = vec![None; n];

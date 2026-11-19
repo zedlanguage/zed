@@ -102,92 +102,25 @@ fn topological(nodes: &[Node<'_>]) -> Vec<usize> {
 
 /// The immediate dominator of each node, the root its own: the lowest common ancestor, in the
 /// tree of dominators built so far, of the nodes that hold it, taken in topological order,
-/// which is exact on a graph without cycles. Also the depth of each node in that tree.
+/// which is exact on a graph without cycles ([`zed_graph::dag_idom`]). Also the tree's
+/// preorder intervals: `a` dominates `b` exactly when `a`'s interval holds `b`'s.
 // Complexity tradeoff: the naive method walks every path from the root, 2^d of them for d
 // nested `if`s over one shared arm; here each node is read once and each of its E holders costs
 // one ancestor query by binary lifting, O(E log n) time and O(n log n) memory in all.
-fn dominators(nodes: &[Node<'_>], order: &[usize]) -> Vec<usize> {
+fn dominators(nodes: &[Node<'_>], order: &[usize]) -> (Vec<usize>, zed_graph::Intervals) {
     let n = nodes.len();
-    let levels = (usize::BITS - n.leading_zeros()).max(1) as usize;
-    let mut up = vec![vec![0usize; n]; levels];
-    let mut depth = vec![0usize; n];
-    let mut idom = vec![usize::MAX; n];
+    let tree = zed_graph::dag_idom(n, order, |v| nodes[v].kids.iter().map(|&(c, _)| c));
+    // Node 0, the root of the part, hangs from the tree's own root `n`; every other node is
+    // held by a node it is reached from, so hangs from a node.
+    let mut idom: Vec<usize> = (0..n).map(|v| tree.parent(v)).collect();
     idom[0] = 0;
-    let lca = |up: &[Vec<usize>], depth: &[usize], mut a: usize, mut b: usize| {
-        if depth[a] < depth[b] {
-            std::mem::swap(&mut a, &mut b);
-        }
-        let mut diff = depth[a] - depth[b];
-        let mut j = 0;
-        while diff > 0 {
-            if diff & 1 == 1 {
-                a = up[j][a];
-            }
-            diff >>= 1;
-            j += 1;
-        }
-        if a == b {
-            return a;
-        }
-        for j in (0..up.len()).rev() {
-            if up[j][a] != up[j][b] {
-                a = up[j][a];
-                b = up[j][b];
-            }
-        }
-        up[0][a]
-    };
-    let mut held_by = vec![usize::MAX; n];
-    for &v in order {
-        if v != 0 {
-            idom[v] = held_by[v];
-            depth[v] = depth[idom[v]] + 1;
-            up[0][v] = idom[v];
-            for j in 1..levels {
-                up[j][v] = up[j - 1][up[j - 1][v]];
-            }
-        }
-        for &(c, _) in &nodes[v].kids {
-            held_by[c] = match held_by[c] {
-                usize::MAX => v,
-                u => lca(&up, &depth, u, v),
-            };
-        }
-    }
-    idom
-}
-
-/// When each node is entered and left by a depth-first walk of the tree of dominators: `a`
-/// dominates `b` exactly when `a`'s span holds `b`'s.
-fn spans(idom: &[usize]) -> Vec<(usize, usize)> {
-    let n = idom.len();
-    let mut children = vec![Vec::new(); n];
-    for v in 1..n {
-        children[idom[v]].push(v);
-    }
-    let mut span = vec![(0, 0); n];
-    let mut clock = 0;
-    let mut todo = vec![(0, 0)];
-    while let Some((v, i)) = todo.pop() {
-        if i == 0 {
-            span[v].0 = clock;
-            clock += 1;
-        }
-        match children[v].get(i) {
-            Some(&c) => {
-                todo.push((v, i + 1));
-                todo.push((c, 0));
-            }
-            None => span[v].1 = clock,
-        }
-    }
-    span
+    (idom, tree.intervals())
 }
 
 /// The names that may mean different things at the places of a part: each name bound in two or
 /// more places, and each name bound in one place that is read where its binder's scope does
 /// not dominate the read (or whose scope is also reached without the binder).
-fn rebound(nodes: &[Node<'_>], idom: &[usize]) -> HashSet<Arc<str>> {
+fn rebound(nodes: &[Node<'_>], dom: &zed_graph::Intervals) -> HashSet<Arc<str>> {
     // For each name: the number of places that bind it, and the scope of the last one.
     let mut binders: HashMap<Arc<str>, (usize, usize)> = HashMap::new();
     for v in nodes {
@@ -198,13 +131,12 @@ fn rebound(nodes: &[Node<'_>], idom: &[usize]) -> HashSet<Arc<str>> {
             });
         }
     }
-    let span = spans(idom);
     let mut out = HashSet::new();
     for (v, node) in nodes.iter().enumerate() {
         if let Term::Var(x) = node.term
             && let Some(&(count, scope)) = binders.get(x)
         {
-            let inside = span[scope].0 <= span[v].0 && span[v].1 <= span[scope].1;
+            let inside = dom.holds(scope, v);
             if count > 1 || !inside || nodes[scope].preds > 1 {
                 out.insert(x.clone());
             }
@@ -823,8 +755,8 @@ pub(super) fn shared_form(
         return None;
     }
     let order = topological(&nodes);
-    let idom = dominators(&nodes, &order);
-    let rebound = rebound(&nodes, &idom);
+    let (idom, dom) = dominators(&nodes, &order);
+    let rebound = rebound(&nodes, &dom);
     // For each node, the lowest node at or above it in the tree of dominators that is the root
     // or the scope, held in one place, of a binder of a name not rebound: where a part it
     // dominates is defined. A scope held in two places binds no name that is read and not
