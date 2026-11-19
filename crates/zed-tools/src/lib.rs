@@ -33,6 +33,7 @@ pub mod split;
 pub mod step_targets;
 pub mod sync;
 pub mod syntax;
+pub mod table;
 pub mod text;
 
 /// What a tool's `run` returns: whether it passed. An `Err` is the message of a failure that

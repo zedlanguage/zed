@@ -60,25 +60,9 @@ pub(crate) struct Row<'a> {
 /// written `\|` is text (see the module comment); `None` unless `l` starts and ends with a `|`
 /// that splits.
 fn cells(l: &str) -> Option<Vec<&str>> {
-    let mut cells = Vec::new();
-    let mut start = None;
-    let mut escaped = false;
-    for (at, b) in l.bytes().enumerate() {
-        match b {
-            b'|' if !escaped => {
-                if let Some(s) = start {
-                    cells.push(l[s..at].trim());
-                } else if at != 0 {
-                    return None;
-                }
-                start = Some(at + 1);
-            }
-            _ => {}
-        }
-        escaped = b == b'\\';
-    }
-    // The line must end at a splitting bar: nothing but the empty text after the last one.
-    (start == Some(l.len()) && !cells.is_empty()).then_some(cells)
+    // The line must start with a bar and end at a splitting one, with nothing after it.
+    let inner = l.strip_prefix('|')?.strip_suffix('|')?;
+    (!inner.ends_with('\\')).then(|| crate::table::split_cells(inner))
 }
 
 /// The rows of the table in `text`, read as the module comment states; refused with one line per

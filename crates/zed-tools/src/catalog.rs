@@ -341,21 +341,6 @@ fn unescape(cell: &str) -> String {
     cell.replace("\\|", "|")
 }
 
-/// The cells of a table line, split at the `|` that `\` does not escape.
-fn cells(line: &str) -> Vec<&str> {
-    let inner = line.trim().trim_start_matches('|');
-    let mut out = Vec::new();
-    let (mut start, mut prev) = (0, ' ');
-    for (i, c) in inner.char_indices() {
-        if c == '|' && prev != '\\' {
-            out.push(inner[start..i].trim());
-            start = i + 1;
-        }
-        prev = c;
-    }
-    out
-}
-
 /// The catalog's text split around its table: the text before the counts line, the rows, and
 /// the text after the table.
 pub fn read_catalog(text: &str) -> Result<(String, Vec<Row>, String), String> {
@@ -376,7 +361,7 @@ pub fn read_catalog(text: &str) -> Result<(String, Vec<Row>, String), String> {
             after.push_str(l);
             break;
         }
-        let c = cells(l);
+        let c = crate::table::cells(l);
         let [routine, _, _, _, zed] = c[..] else {
             return Err(format!(
                 "a catalog row without five cells: {}",

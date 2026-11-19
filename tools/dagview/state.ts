@@ -92,7 +92,12 @@ export interface ViewNode {
   questions: string[]; // the unanswered author questions that hold it
 }
 
-// Table cells may hold a `|` inside code, so the cells are counted from both ends.
+// A row splits at each `|` not written `\|`, as zed-tools' table.rs splits it (the plan tool's
+// rule); a `\|` in the title reads as `|`, and every other backslash stays. This is a second copy
+// of that splitter because the server cannot run the plan tool: the release `plan` in the main
+// checkout is not rebuilt when main moves, and on 2026-11-19 it did not start at all (exit 127, its
+// libstd gone with the old toolchain). A row with a stray `|` in its title, which the plan tool
+// refuses, is still read: its cells are counted from both ends. board-check-rows.mjs imports this.
 export function parsePlan(markdown: string): PlanRow[] {
   const lines = markdown.split("\n");
   const start = lines.findIndex((l) => l.startsWith("## Items by level"));
@@ -101,7 +106,7 @@ export function parsePlan(markdown: string): PlanRow[] {
   for (let i = start + 1; i < lines.length && !lines[i].startsWith("## "); i++) {
     const line = lines[i];
     if (!line.startsWith("|")) continue;
-    const p = line.split("|");
+    const p = line.split(/(?<!\\)\|/);
     const n = p.length;
     if (n < 9) continue;
     const level = Number(p[1].trim());
@@ -110,7 +115,7 @@ export function parsePlan(markdown: string): PlanRow[] {
     rows.push({
       id: p[2].trim(),
       level,
-      title: p.slice(3, n - 5).join("|").trim().replaceAll("\\", ""),
+      title: p.slice(3, n - 5).join("|").trim().replaceAll("\\|", "|"),
       size: p[n - 5].trim(),
       hard: p[n - 4].trim() === "yes",
       needs: needs === "none" || needs === "" ? [] : needs.split(/,\s*/),

@@ -217,7 +217,7 @@ fn read_row<'a>(
     } else {
         why.push("it does not end with a bar `|`, as a row of a table does".to_string());
     }
-    let cells: Vec<&str> = inner.split('|').collect();
+    let cells = crate::table::split_cells(inner);
     let [layer, alts, words] = cells[..] else {
         why.push(format!(
             "it has {}, but a row of Part A has 3 cells: the layer, the grammar alternatives and \

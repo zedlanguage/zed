@@ -328,7 +328,7 @@ fn row<'a>(bullet: &'a str, first: &str) -> Result<Vec<&'a str>, String> {
         .lines()
         .find(|l| l.starts_with('|') && l[1..].trim_start().starts_with(first))
         .ok_or_else(|| format!("the build modes table has no row \"{first}\""))?;
-    Ok(line.trim_matches('|').split('|').map(str::trim).collect())
+    Ok(crate::table::cells(line))
 }
 
 /// The places in `design` outside the bullet where a word names a kind of build that the

@@ -140,7 +140,10 @@ impl WordTable {
     }
 
     fn read_row(&mut self, l: &str) -> Result<(), String> {
-        let cols: Vec<&str> = strip(l).trim_matches('|').split('|').map(strip).collect();
+        let cols: Vec<&str> = crate::table::cells(strip(l))
+            .into_iter()
+            .map(strip)
+            .collect();
         let [layer, c1, c2, c3, ..] = cols[..] else {
             return Err(format!("a table row with too few columns: {l}"));
         };

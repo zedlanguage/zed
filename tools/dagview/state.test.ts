@@ -26,6 +26,14 @@ test("plan rows keep their columns when a title holds a pipe", () => {
   assert.equal(rows[1].hard, true);
 });
 
+test("a backslash not before a bar stays in the title", () => {
+  const rows = parsePlan(
+    "## Items by level\n| 0 | D | at `f64 \\ \\| rat`, `&` and `\\`, `\\u{1B}` | S | no | none |  |\n",
+  );
+  assert.equal(rows[0].title, "at `f64 \\ | rat`, `&` and `\\`, `\\u{1B}`");
+  assert.deepEqual([rows[0].size, rows[0].needs], ["S", []]);
+});
+
 test("log lines split into item, role and attempt, and text may hold a bar", () => {
   const [a, b, c] = parseLog(
     "2026-11-02 10:00:00 | A:repair#2 | one | two\n" +
