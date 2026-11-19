@@ -925,7 +925,8 @@ Found, not fixed: one recursive type written by two types of one message is defi
 per type (`Part1` and `(Part2, Part2)`, with `Part1 = (int, Part1) | #stop` and
 `Part2 = (int, Part2) | #stop`). A cycle's places are merged with none (`defs::reserve`), and
 `Printer::remember` keeps no part holding a recursive node. Row FAIL-print-cycle-defined-twice,
-test in /home/luke/Work/wt/failing-tests/FAIL-print-cycle-defined-twice.rs.
+test in /home/luke/Work/wt/failing-tests/FAIL-print-cycle-defined-twice.rs. Fixed in the
+eleventh round (below).
 
 Counts: the ninth round's open list, line by line from the list file, has 47 lines, not 46
 (`collect` lists 12 lines, `escape.rs` 9). Closed by a test 20 (bdd 3, print 1005 and 1022,
@@ -933,3 +934,48 @@ Counts: the ninth round's open list, line by line from the list file, has 47 lin
 group 567, hash 9); reached without a control 2 (group 205-206); open 21 (print 1964; group 566,
 569, 570, 805, 820; unfold 78, 137, 170; escape 7; refused 5). The 102 lines outside the row's
 functions were not examined in this round either; they stay in this row.
+
+Eleventh round (kernel14, 2026-11-19): the tenth round's 21 open lines, line numbers at
+23b16794b. Each test below was run with a control (the change named) that it fails while the
+other tests pass, unless the row says otherwise.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `print.rs` 1964, `collect`'s arm `(false, false)` | test | `print::tests::a_recursive_type_whose_body_is_a_tuple_is_defined_by_the_tuple`: `KP0 = (int, KP1)`, `KP1 = #pa \| #pb(KP0)`, alone and with `(KP0, 1)` in one message | the arm given a reserved place, as a waiting body is: the message defines `Part3 = Part2` and `Part4 = Part2` |
+| `rec/group.rs` 566, 569, 570, `instance`, an entry holding a dead handle | proof, code removed | `instance` now inserts `env` without looking: the dead-handle arm did what the vacant arm did, and the live arm (567) is proved not reached (the proof at the site: between the two locks the thread runs only `eval` of plain bodies, which calls no `instance`); a `debug_assert` checks the handle replaced is dead or missing | none needed: the arms are gone |
+| `rec/group.rs` 805, `Drop for Env`, an entry no longer its own | test | `an_instance_dropped_after_its_entry_was_handed_on_leaves_the_entry` | `mine` read as `true`: the second instance's entry is removed |
+| `rec/group.rs` 820, `Drop for Checked` on a poisoned lock | fixed bug and test | `a_poisoned_group_table_is_used_as_it_is`. Bug: after one panic holding `GROUPS`, every later `Group::new` panicked (`expect`) and `Drop for Checked` left its dead handles; both now take the lock with `PoisonError::into_inner`, since the map is whole between steps | either lock taken as before |
+| `rec/unfold.rs` 78, `end_unit` after the thread's unit is dropped | test | `a_unit_ended_after_its_thread_dropped_it_is_left` (a thread-local whose destructor runs after the unit's) | `UNIT.with` for `UNIT.try_with`: the destructor panics and the process aborts |
+| `rec/unfold.rs` 137, `member`, a cell set by another thread | proof, made structural | the cell always holds the node made here (proof at the site, from `Env::node` giving one live node per place); `register` is unconditional, with a `debug_assert` | none needed: the branch is gone |
+| `rec/unfold.rs` 170, `node`, a node made while the place's node is made | test | `a_node_made_while_its_place_is_made_again_gives_way_to_the_one_kept_first` | the node just made kept in place of the arm `Some(n)` |
+| `empty/escape.rs` 1127, the 2-SAT with no model | test | `node_tests::clauses_with_no_model_give_empty` (three bits, six refused lists whose clauses read `x2 = x1`, `x3 = x2`, `x3 != x1`) | `return None` in place of `Empty` |
+| `empty/escape.rs` 1350-1351, a carrier with an empty head | test | `node_tests::a_carrier_with_an_empty_head_gives_no_longer_list` (`H = int & #z(L)`, kept recursive, holds no value) | the check removed: `decide` panics picking a value of the empty cell |
+| `empty/escape.rs` 1442-1443, `take` on a cell inside the head | proof | `unreachable!` at the site. The pair listing is the one caller; for a finite `pl[j]` list `x` holds `excl[x]` and the finite heads without `x`, and for a cofinite one the cons nodes are filtered by `subset`, so `pl[j]` is never within `hv` | none |
+| `empty/escape.rs` 2112-2113, the re-sort for another modulus | test | `a_list_sorted_for_another_modulus_is_sorted_again` (12 nodes, five rows; about one random input in 200,000 reaches the sort) | the sort removed: row 2 loses its atom at place 6 |
+| `empty/refused.rs` 130, a fixed node read as `Bot` in the re-check's low run | test | `l01_23_subtyping::group_refusal::a_repair_re_check_reads_an_arm_with_no_value_as_empty` (B's extra arm `int & #k`) | `Kind::Top` for `Kind::Bot`: the repair names `A` alone |
+| `empty/refused.rs` 146, 500, 510, a repair that lets the checker decide | test | `group_refusal::a_member_reaching_no_meet_is_decided_once_repaired` (a group of five members, one holding a type refused outside it) | `Decided` read as `Searched`: the message names `Node` with the search ending |
+| `empty/refused.rs` 469, a refused member with no tuple | proof | `unreachable!` with the proof at the site: every refusal lists a tuple (`branching_and >= 1`), and every refused node reaches one along refused children, by the four ways a node is refused in a run | none |
+
+Fixed, FAIL-print-cycle-defined-twice: `Printer::collect` keeps the reference it gave each part
+of a cycle by the part's key (`Kept.cycles`), so a later type of the message that meets the
+part takes that reference and the cycle is defined once. Test
+`print::tests::a_cycle_written_by_two_types_of_a_message_is_defined_once` (the failing test,
+moved into the crate), in both orders of the two types and for a mutual pair.
+
+Group 567 is now structural (the item the tenth round left as a proof in a comment): the
+`Some(first)` arm is gone with the others above.
+
+Correction to the tenth round, escape 455 and 526: the controls with each arm falling through
+do fail the tests `a_tail_that_links_by_another_atom_is_outside_the_class` and
+`a_tail_that_ends_at_another_stop_is_outside_the_class` (`decide` answers `Empty` and
+`is_empty` `true` for an inhabited type); the tenth round's note that they did not was not
+reproduced. Both arms are needed for the answer.
+
+Observation, not a defect: in `print.rs` 1964 the arm's body is one reference in every input
+found (a tuple's, or a part reused from an earlier print), and writing that reference itself,
+as an alias is written, passes every print test. The arm is kept as it is.
+
+Counts: 21 lines; closed by a test 14 (print 1964; group 805, 820; unfold 78, 170; escape 1127,
+1350, 1351, 2112, 2113; refused 130, 146, 500, 510), by a proof 7 (group 566, 569, 570; unfold
+137; escape 1442, 1443; refused 469), open 0. One bug fixed (group 820, the poisoned lock). The
+102 lines outside the row's functions were not examined in this round either.

@@ -723,6 +723,182 @@ fn a_message_collects_the_definitions_of_a_cycle() {
     );
 }
 
+/// Item TEST-kernel-unreached-paths-4 (kernel14, `Printer::collect`'s arm `(false, false)`): a
+/// recursive type whose body is a tuple, `KP0 = (int, KP1)` with `KP1 = #pa | #pb(KP0)`. `KP1`'s
+/// union waits on `KP0` and gets a place first; the tuple `(int, Part1)` then waits on nothing
+/// and gets its reference, so `KP0`'s node, a recursive type with a definition (no alias, not
+/// named by count), has a body that waits on nothing: the arm, which puts it in the table,
+/// merged with an equal definition there. In a message of two types it is defined once.
+/// Control (kernel14): the arm given a place of its own, as a body that waits gets
+/// (`defs::reserve`), defines `Part3 = Part2` and `Part4 = Part2` in the message of `KP0` and
+/// `(KP0, 1)`, and the test fails. Writing the body itself in place of the arm's reference (as
+/// an alias is written) passes, since the body here is one reference, the tuple's.
+#[test]
+fn a_recursive_type_whose_body_is_a_tuple_is_defined_by_the_tuple() {
+    use super::super::rec::{Def, Expr, Group};
+    let g = Group::new(vec![
+        Def {
+            name: "KP0".into(),
+            params: vec![],
+            body: Expr::Tuple(vec![Expr::Type(Type::int()), Expr::Ref(1, vec![])]),
+        },
+        Def {
+            name: "KP1".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("pa")),
+                Expr::Atom("pb".into(), vec![Expr::Ref(0, vec![])]),
+            ]),
+        },
+    ])
+    .expect("a group")
+    .instance(vec![]);
+    let in_a_message = |t: &Type| {
+        let _on = collect();
+        let mut root = t.surface().root;
+        let defs = lift(&mut [&mut root], &|_| false);
+        (root, defs)
+    };
+    let def = |name: &str, body: &str| (name.to_string(), body.to_string());
+    assert_eq!(
+        in_a_message(&g[0]),
+        (
+            "Part2".to_string(),
+            vec![
+                def("Part1", "#pa | #pb(Part2)"),
+                def("Part2", "(int, Part1)")
+            ]
+        )
+    );
+    assert_eq!(
+        in_a_message(&g[1]),
+        (
+            "Part2".to_string(),
+            vec![
+                def("Part1", "(int, Part2)"),
+                def("Part2", "#pa | #pb(Part1)")
+            ]
+        )
+    );
+    let in_turn = |ts: &[&Type]| {
+        let _on = collect();
+        let mut roots: Vec<String> = ts.iter().map(|t| t.surface().root).collect();
+        let mut refs: Vec<&mut String> = roots.iter_mut().collect();
+        let defs = lift(&mut refs, &|_| false);
+        (roots, defs)
+    };
+    let words = |ws: &[&str]| ws.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+    let two = Type::tuple(vec![g[0].clone(), lit(1)]);
+    let kp0 = vec![
+        def("Part1", "#pa | #pb(Part2)"),
+        def("Part2", "(int, Part1)"),
+    ];
+    assert_eq!(
+        in_turn(&[&g[0], &two]),
+        (words(&["Part2", "(Part2, 1)"]), kp0.clone())
+    );
+    assert_eq!(
+        in_turn(&[&two, &g[0]]),
+        (words(&["(Part2, 1)", "Part2"]), kp0)
+    );
+    assert_eq!(
+        in_turn(&[&g[1], &g[0], &two]),
+        (
+            words(&["Part2", "Part1", "(Part1, 1)"]),
+            vec![
+                def("Part1", "(int, Part2)"),
+                def("Part2", "#pa | #pb(Part1)")
+            ]
+        )
+    );
+}
+
+/// One recursive type written by two types of one message is defined once: the later print
+/// takes the reference the earlier one gave the cycle (FAIL-print-cycle-defined-twice), in
+/// either order of the two types, and so does a pair of types defined by each other.
+#[test]
+fn a_cycle_written_by_two_types_of_a_message_is_defined_once() {
+    use super::super::rec::{Def, Expr, Group};
+    let tl = Group::new(vec![Def {
+        name: "KT".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("stop")),
+            Expr::Tuple(vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])]),
+        ]),
+    }])
+    .expect("a group")
+    .instance(vec![])
+    .remove(0);
+    let pair = Type::tuple(vec![tl.clone(), tl.clone()]);
+    let in_turn = |ts: &[&Type]| {
+        let _on = collect();
+        let mut roots: Vec<String> = ts.iter().map(|t| t.surface().root).collect();
+        let mut refs: Vec<&mut String> = roots.iter_mut().collect();
+        let defs = lift(&mut refs, &|_| false);
+        (roots, defs)
+    };
+    let def = |name: &str, body: &str| (name.to_string(), body.to_string());
+    let words = |ws: &[&str]| ws.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+    let kt = vec![def("Part1", "(int, Part1) | #stop")];
+    assert_eq!(
+        in_turn(&[&tl, &pair]),
+        (words(&["Part1", "(Part1, Part1)"]), kt.clone())
+    );
+    assert_eq!(
+        in_turn(&[&pair, &tl]),
+        (words(&["(Part1, Part1)", "Part1"]), kt.clone())
+    );
+    assert_eq!(
+        in_turn(&[&tl, &tl, &pair]),
+        (words(&["Part1", "Part1", "(Part1, Part1)"]), kt)
+    );
+    let mutual = Group::new(vec![
+        Def {
+            name: "KM0".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("ma")),
+                Expr::Atom("ml".into(), vec![Expr::Ref(1, vec![])]),
+            ]),
+        },
+        Def {
+            name: "KM1".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("mb")),
+                Expr::Atom("mm".into(), vec![Expr::Ref(0, vec![])]),
+            ]),
+        },
+    ])
+    .expect("a group")
+    .instance(vec![]);
+    let (m0, m1) = (&mutual[0], &mutual[1]);
+    assert_eq!(
+        in_turn(&[m0, &Type::tuple(vec![m0.clone(), lit(1)])]),
+        (
+            words(&["Part2", "(Part2, 1)"]),
+            vec![
+                def("Part1", "#mb | #mm(Part2)"),
+                def("Part2", "#ma | #ml(Part1)")
+            ]
+        )
+    );
+    // `KM1` is a definition of the first print, written here by its reference.
+    let (roots, defs) = in_turn(&[m0, m1]);
+    assert_eq!(defs.len(), 2, "{roots:?} {defs:?}");
+    // A later type that holds a union and a part printed before is printed again with every
+    // part printed anew (`Printer::print`); the cycle is still defined once.
+    let ab = Type::tuple(vec![lit(1), lit(2)]);
+    let both = Type::union_all([ab.clone(), Type::tuple(vec![ab.clone(), tl.clone()])]);
+    let (roots, defs) = in_turn(&[&Type::tuple(vec![ab.clone(), tl.clone()]), &both]);
+    let cycles = defs
+        .iter()
+        .filter(|(_, body)| body.contains("#stop"))
+        .count();
+    assert_eq!(cycles, 1, "{roots:?} {defs:?}");
+}
+
 /// `Printer::meet_of_literals` walks an `&` whose operands share a part: `x & (m & x)`, with
 /// `x` an exclusive or and `m` a meet of two morphism literals, is kept as that form. When the
 /// digests put `m & x` on top of the stack, `x` is pushed twice and popped the second time

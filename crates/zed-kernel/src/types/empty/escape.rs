@@ -1452,13 +1452,19 @@ fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) 
     Some(())
 }
 
-/// Reads the cell of row `r` at place `j`, where the row's node has the head `hv`: a kill, an
-/// atom, or nothing. Whether the row is done (killed, or three atoms).
+/// Reads the cell of row `r` at place `j`, where the row's node has the head `hv`: a kill or an
+/// atom, never nothing. Whether the row is done (killed, or three atoms).
 fn take(r: &mut Root, j: usize, pl: &[Ints], hv: &Ints, counts: &mut (usize, usize)) -> bool {
     counts.0 += 1;
+    // The pair listing, `take`'s one caller, gives it only cells that are not empty
+    // (TEST-kernel-unreached-paths-4, kernel14). It reads the node `v` at place `j` from the
+    // lists of `pv[j]`. For a finite `pl[j]` those are the lists of its values `x`, and list `x`
+    // holds the cofinite heads that leave `x` out (`excl[x]`) and the finite heads that do not
+    // hold it (the gaps of `holds[x]`), so `x` is in `pl[j]` and not in `hv`. For a cofinite
+    // `pl[j]` it is the list of all cons nodes, and the filter beside it drops each `v` with
+    // `pl[j]` within its head. So `pl[j]` is never within `hv` here.
     if pl[j].subset(hv) {
-        counts.1 += 1;
-        return false;
+        unreachable!("the pair listing reads no empty cell")
     }
     if pl[j].disjoint(hv) {
         r.kill = Some(r.kill.map_or(j, |k| k.min(j)));
@@ -2364,6 +2370,75 @@ mod windows_tests {
                     "case {case}, row {k}"
                 );
             }
+        }
+    }
+
+    /// Item TEST-kernel-unreached-paths-4 (kernel14, way P's list sorted again): a forest of
+    /// 12 nodes and five rows where a window prices the pair listing exactly with one modulus
+    /// (its lists sorted by it), then with a second (a shared list sorted by that one), and
+    /// takes the first: the read sorts that list again before searching it by class. Found by a
+    /// random search over forests of up to 15 nodes: about 1 input in 200,000 reaches the sort,
+    /// and some of those need it. `cells_windows` gives each row the walk's cells. Control
+    /// (kernel14): without the sort, the list is searched in the other modulus's order, and
+    /// row 2 (tail node 6) loses its atom at place 6.
+    #[test]
+    fn a_list_sorted_for_another_modulus_is_sorted_again() {
+        let ints =
+            |cof: bool, vs: &[i64]| Ints::new(cof, vs.iter().map(|&v| Value::Int(v)).collect());
+        let heads: [(Option<usize>, bool, &[i64]); 12] = [
+            (None, false, &[]),
+            (Some(0), false, &[1, 4]),
+            (Some(1), true, &[0, 1]),
+            (Some(2), false, &[0]),
+            (Some(2), false, &[4]),
+            (Some(3), false, &[]),
+            (Some(5), true, &[3]),
+            (Some(6), false, &[2, 4]),
+            (Some(1), false, &[]),
+            (Some(1), false, &[3]),
+            (Some(0), false, &[2, 3]),
+            (Some(7), false, &[0]),
+        ];
+        let mut nodes: Vec<Node> = Vec::new();
+        for &(next, cof, vs) in &heads {
+            let ht = next.map_or(0, |p| nodes[p].ht + 1);
+            nodes.push(Node {
+                stop: false,
+                head: ints(cof, vs),
+                next,
+                carrier: false,
+                ht,
+            });
+        }
+        let pl = vec![
+            ints(false, &[]),
+            ints(false, &[0]),
+            ints(true, &[]),
+            ints(false, &[]),
+            ints(false, &[]),
+            ints(false, &[]),
+            ints(true, &[0]),
+            ints(false, &[]),
+        ];
+        let l0 = 7;
+        let root = |s| Root {
+            row: Row::new(Vec::new()),
+            s,
+            kill: None,
+            atoms: Vec::new(),
+        };
+        let mut roots: Vec<Root> = [3, 4, 6, 9, 11].into_iter().map(root).collect();
+        let mut want: Vec<Cells> = Vec::new();
+        for r in &roots {
+            let mut w = root(r.s);
+            walk(&mut w, &nodes, &pl, l0);
+            want.push((w.kill, w.atoms));
+        }
+        let anc = Ancestors::new(&nodes);
+        cells_windows(&nodes, &anc, &pl, &mut roots, l0, &mut (0, 0));
+        for (k, r) in roots.iter_mut().enumerate() {
+            r.atoms.sort_unstable_by_key(|a| a.0);
+            assert_eq!((r.kill, &r.atoms), (want[k].0, &want[k].1), "row {k}");
         }
     }
 }

@@ -220,7 +220,8 @@ fn a_members_message_is_the_same_when_the_definitions_are_listed_in_another_orde
 /// `B & (_, _)`, so the decider's "inhabited" does not decide it (GROUP-setop) and the message
 /// says the member is then left to the search; the search builds a value of `A` and of `C`, and
 /// for `B` stops at a fork, though `B` has a value (see [`refused`], GROUP-search-meet-values).
-/// No fixture now gives the other ending of the message, "lets the checker decide it".
+/// The other ending of the message, "lets the checker decide it", needs a member that reaches no
+/// meet ([`a_member_reaching_no_meet_is_decided_once_repaired`]).
 #[test]
 fn the_repair_offered_removes_the_group_refusal() {
     Type::forget_emptiness();
@@ -1213,6 +1214,56 @@ fn a_repair_over_several_definitions_lists_them_by_name() {
     );
 }
 
+/// The group of [`a_repair_over_several_definitions_lists_them_by_name`] with one more arm of
+/// `B`, `int & #k`, which has no value (TEST-kernel-unreached-paths-4, kernel14). The re-check of
+/// a repair sets that arm, which reaches no refused node, to its answer, empty, in each run, so
+/// `B` is refused under each smaller repair as before, and the message names the same three
+/// definitions. Control (kernel14): a node set to an empty answer set inhabited instead
+/// (`Why::recheck`) makes `B` a union with a case that has a value under the first repair
+/// tried, `| #end` on `A`, the tuple's definition, and the message names `A` alone.
+#[test]
+fn a_repair_re_check_reads_an_arm_with_no_value_as_empty() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let one = |a: Expr| Expr::Tuple(vec![a]);
+    let two = || Expr::Type(Type::tuple(vec![Type::top(), Type::top()]));
+    let (a, b, c) = (|| r(0), || r(1), || r(2));
+    let none = and(vec![int(), Expr::Type(Type::atom("k"))]);
+    Type::forget_emptiness();
+    let types = group(vec![
+        (
+            "A".into(),
+            or(vec![
+                pair(c(), and(vec![b(), a()])),
+                pair(a(), and(vec![a(), a()])),
+                f(b()),
+            ]),
+        ),
+        (
+            "B".into(),
+            or(vec![
+                pair(and(vec![a(), c()]), and(vec![c(), two()])),
+                pair(and(vec![a(), two()]), c()),
+                none,
+            ]),
+        ),
+        (
+            "C".into(),
+            or(vec![
+                one(and(vec![c(), a()])),
+                pair(and(vec![c(), f(b())]), and(vec![b(), f(b())])),
+                f(and(vec![b(), a()])),
+            ]),
+        ),
+    ]);
+    let text = message(&types[1]);
+    assert!(
+        text.contains(
+            "; adding the case `| #end` to each of `A`, `B` and `C` removes this obstacle,"
+        ),
+        "{text}"
+    );
+}
+
 /// The one-cycle group of [`a_refused_definition_that_refers_only_to_itself_makes_one_cycle`]
 /// with two more arms, each writing the union `#p | #q | #r`. The site, asked for outside a
 /// checker's message, declares that union once after the definitions, as `type Part1 = …;`,
@@ -1292,6 +1343,44 @@ fn a_type_reading_no_group_has_no_refusal_site() {
     let t = Type::tuple(vec![Type::int(), Type::atom("k")]);
     assert_eq!(t.refusal_site(Refusal::Group), None);
     assert_eq!(t.refusal_site(Refusal::Fork), None);
+}
+
+/// A member read through no meet and no difference, refused, whose repair the decider decides
+/// (TEST-kernel-unreached-paths-4, kernel14): the former fixture of
+/// [`the_former_fixtures_are_inhabited`], which the decider refuses and the search inhabits,
+/// with a fifth definition `Q = (Pair, R)`, `R` a refused member of another group. The decider
+/// reads `R` as a part it does not take, empty in one run and inhabited in the other, so it
+/// refuses `Q` in the second; the search finds no value of `R`, so none of `Q`. The first
+/// repair tried, `| #end` on `Node` (the tuple's definition), leaves `Q` empty in one run and
+/// inhabited in the other, so to the search; the second, on all five, makes `Q` inhabited in
+/// both runs, and as `Q` reaches no meet the decider decides it, so the message names that one
+/// and says it lets the checker decide `Q`. No other test reaches this ending. Control
+/// (kernel14): `Recheck::Decided` read as `Recheck::Searched` names the first repair, `Node`,
+/// with the ending that leaves `Q` to the search.
+#[test]
+fn a_member_reaching_no_meet_is_decided_once_repaired() {
+    Type::forget_emptiness();
+    let outside = group(placed(IN_ORDER)).remove(0);
+    assert_eq!(outside.verdict(), Verdict::Refused(Refusal::Group));
+    let (pair_, tree, thunk, node) = (|| r(0), || r(1), || r(2), || r(3));
+    let types = group(vec![
+        ("Pair".into(), pair(thunk(), node())),
+        (
+            "Tree".into(),
+            or(vec![pair(pair_(), thunk()), pair(pair_(), node())]),
+        ),
+        ("Thunk".into(), f(tree())),
+        ("Node".into(), or(vec![f(pair_()), pair(tree(), thunk())])),
+        ("Q".into(), pair(pair_(), Expr::Type(outside))),
+    ]);
+    let text = message(&types[4]);
+    assert!(
+        text.ends_with(
+            "; adding the case `| #end` to each of `Node`, `Pair`, `Q`, `Thunk` and `Tree` lets \
+             the checker decide it"
+        ),
+        "{text}"
+    );
 }
 
 mod bench;

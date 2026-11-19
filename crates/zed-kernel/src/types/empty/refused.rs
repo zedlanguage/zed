@@ -466,6 +466,22 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
             listed(&open)
         );
         fixes.insert(0, BTreeSet::from([def]));
+    } else {
+        // Never reached (TEST-kernel-unreached-paths-4, kernel14): `reached` holds a refusal,
+        // and every refusal lists a tuple. The second: `bes::refusal` returns a refusal only for
+        // a cycle with `branching_and >= 1`, and keeps that cycle's `And` nodes in `tuples`. The
+        // first: in `bes::decide`, a node is refused in a run (1) in a component of a refusal,
+        // and so in `of`, or in the same strongly connected component as one of its nodes, so
+        // with a refused child on a path to it; (2) in a strongly connected component that
+        // reaches a refused or undecided node, so with a refused child (a node of the
+        // component, or that node); (3) by `refuse_upward`, as the parent of a refused node; or
+        // (4) left undecided, which `settle`, the deletion cascade and the pass for one
+        // morphism do only to a node with an undecided child, and so a refused one. Each case
+        // but the first gives a refused child, and the graph is finite and acyclic between
+        // components, so the walk above from member `i` along refused children meets a node
+        // of `of`. `decide` reads `simplify`'s copy of the system, whose edges are among the
+        // edges of the system `why.graph` holds, so the path is there too.
+        unreachable!("a refused member reaches a refusal, which lists a tuple")
     }
     text += &format!(
         "; the known ways to settle such a group take time that grows with the square of its \

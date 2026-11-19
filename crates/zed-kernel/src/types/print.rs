@@ -553,6 +553,10 @@ type Printed = (bool, bool, Key);
 #[derive(Default)]
 struct Kept {
     parts: BTreeMap<Printed, (String, Class)>,
+    /// The reference of each part placed before its body, as a cycle's parts are
+    /// ([`Printer::collect`]), by its key: a later print of the message that meets the same
+    /// part takes it, so the message defines the cycle once (FAIL-print-cycle-defined-twice).
+    cycles: BTreeMap<Printed, String>,
 }
 
 /// Runs `f` on the parts kept so far, made empty if there are none.
@@ -1887,8 +1891,20 @@ impl Printer<'_> {
     /// `counted` node gets a reference that the message names from its first step that uses
     /// the part twice or more ([`defs::add_counted`]), so its text is the same in every type.
     /// A definition whose body uses one not placed yet, as in a cycle, gets a place of its own
-    /// first and its body after the others; a counted node whose body waits so is named as
-    /// this type names it, and else written where it stands.
+    /// first and its body after the others, or the place an earlier print of the message gave
+    /// the same part, whose body that print wrote; a counted node whose body waits so is named
+    /// as this type names it, and else written where it stands.
+    // A place is shared by the part's key, its type, not by its body's text: a type that
+    // writes a cycle's part again, as `(KT, KT)` after `KT`, would write the body as anew,
+    // with references to places of its own, and so define the cycle twice. The key names the
+    // same type in every print of the message, so the earlier definition is this one's. A
+    // print that enters the cycle at another part meets the part placed before inside it,
+    // takes its reference there, and the part it enters at then no longer waits: its body
+    // is the earlier print's text and merges with it ([`defs::add`]). Not covered: a cycle
+    // that no part of an earlier print's cycle is met in by its key, which would need the
+    // definitions compared up to a renaming of their references. Cost: the keys of this
+    // print's nodes, O(n), and, once the message has placed such a part, one search of its
+    // table per node, O(log m) comparisons of keys in the m parts placed so.
     fn collect(&self, same: &[Option<usize>], counted: &[bool], named: &mut [Option<String>]) {
         let marked = |i: usize| counted[i] || self.named(i);
         let defined = |i: usize| marked(i) && same[i].is_none_or(|j| j == i);
@@ -1908,9 +1924,32 @@ impl Printer<'_> {
             body
         };
         let mut waiting = Vec::new();
+        let mut keys: Vec<Option<&Key>> = vec![None; self.texts.len()];
+        for (key, &j) in self.index.iter() {
+            keys[j] = Some(key);
+        }
+        let printed = |i: usize| -> Printed {
+            let key = keys[i].expect("every node is reached by its key");
+            (self.by_name, self.spell.is_some(), key.clone())
+        };
+        let earlier = with_kept(|kept| !kept.cycles.is_empty()).unwrap_or(false);
         for &i in &self.post {
             if marked(i) && !defined(i) {
                 // Named by the node of equal text it is an alias of.
+                continue;
+            }
+            // A part an earlier print of the message placed before its body, met here at any
+            // place of the cycle, as `KM1`'s own type is inside `KM0`'s (a type printed with
+            // `KM1` alone enters the cycle there). Its definition is this part's.
+            let placed = match earlier {
+                true => with_kept(|kept| kept.cycles.get(&printed(i)).cloned()).flatten(),
+                false => None,
+            };
+            if let Some(r) = placed {
+                for &a in &aliases[i] {
+                    named[a] = Some(r.clone());
+                }
+                named[i] = Some(r);
                 continue;
             }
             // A tuple goes into the table as a part that `defs::lift` names only if it is
@@ -1959,7 +1998,9 @@ impl Printer<'_> {
                 (true, _) => {
                     let k = defs::reserve();
                     waiting.push((i, k));
-                    defs::reference(k)
+                    let r = defs::reference(k);
+                    with_kept(|kept| kept.cycles.insert(printed(i), r.clone()));
+                    r
                 }
                 (false, false) => defs::reference(defs::add(b)),
             };

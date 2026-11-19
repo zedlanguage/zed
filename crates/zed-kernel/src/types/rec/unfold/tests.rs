@@ -210,3 +210,59 @@ fn a_nest_of_parts_prints_as_it_did_before_names_were_shared() {
         assert_eq!(plain, expected_plain, "k = {k}, plain");
     }
 }
+
+/// Item TEST-kernel-unreached-paths-4 (kernel14, `Env::node`): a node of a place made while
+/// the place's node is being made gives way to the one kept first, so the place has one node.
+/// Two threads making one place at once meet this; here the second making runs inside the
+/// first's `make`, which has the same order of steps. Control: the arm `Some(n) => Type(n)`
+/// replaced by keeping the node just made gives the outer node, and the test fails.
+#[test]
+fn a_node_made_while_its_place_is_made_again_gives_way_to_the_one_kept_first() {
+    let env = Env::ground(vec![]);
+    let at = At::Member(0);
+    let mut inner = None;
+    let outer = env.node(at, || {
+        inner = Some(env.node(at, || Type::atom("UnfoldNodeInner")));
+        Type::atom("UnfoldNodeOuter")
+    });
+    let inner = inner.expect("made inside");
+    assert_eq!(outer.node_addr(), inner.node_addr());
+    assert_eq!(
+        env.node(at, || unreachable!("kept")).node_addr(),
+        inner.node_addr()
+    );
+}
+
+/// A thread-local value that ends this thread's unit when the thread's values are dropped,
+/// and sends whether the unit was already gone.
+struct EndsUnitLate(std::sync::mpsc::Sender<bool>);
+
+impl Drop for EndsUnitLate {
+    fn drop(&mut self) {
+        let gone = UNIT.try_with(|_| ()).is_err();
+        end_unit();
+        self.0.send(gone).expect("the test waits");
+    }
+}
+
+thread_local! {
+    static LATE: RefCell<Option<EndsUnitLate>> = const { RefCell::new(None) };
+}
+
+/// Item TEST-kernel-unreached-paths-4 (kernel14, `end_unit`): a unit ended while its thread
+/// ends, after the thread's unit is dropped, does nothing. The value that ends it is made
+/// before the unit is first read, so its destructor runs after the unit's (thread-local
+/// destructors run in the reverse order of their registration, on Linux by
+/// `__cxa_thread_atexit_impl`); the test checks that the unit was gone. Control: `UNIT.with`
+/// in place of `UNIT.try_with` panics in the destructor, which aborts the test process.
+#[test]
+fn a_unit_ended_after_its_thread_dropped_it_is_left() {
+    let (send, gone) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        LATE.with_borrow_mut(|l| *l = Some(EndsUnitLate(send)));
+        thread();
+    })
+    .join()
+    .expect("the thread ends");
+    assert_eq!(gone.recv(), Ok(true), "the unit was dropped first");
+}

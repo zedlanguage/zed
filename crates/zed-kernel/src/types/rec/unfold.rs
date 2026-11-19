@@ -116,8 +116,7 @@ impl Env {
 
     /// Member `i`: a recursive member is a node that unfolds to its body, made when first read
     /// in a unit, or the one still held from an earlier unit ([`Env::node`]), and kept, by the
-    /// instance, until the unit ends. Another thread that made it at the same time may have
-    /// kept its own first, which is then the one.
+    /// instance, until the unit ends. Threads reading it at the same time get one node.
     fn member(self: &Arc<Env>, i: usize) -> Type {
         if let Some(t) = &*self.cell(i) {
             return t.clone();
@@ -131,12 +130,17 @@ impl Env {
                 move || eval(&e.group().0.bodies[i], &e),
             )
         });
+        // The cell holds `made` (kernel14, TEST-kernel-unreached-paths-4: before, a cell found
+        // holding another node, kept by another thread, was left unregistered; that is not
+        // reached). The cell holds only nodes `node` gave for this member, and kept them alive
+        // since. `node` gives the node the map holds for the place while it is alive, and
+        // replaces it only when it is dead. So when another thread set the cell after the
+        // read above, its node `c` was alive from when `node` gave it until now: had `c` been
+        // given before `made`, `node` would have given `c` here; had it been given after,
+        // `node` would have given `made`, alive and held here, to the other thread.
         let kept = self.cell(i).get_or_insert_with(|| made.clone()).clone();
-        if kept.node_addr() == made.node_addr() {
-            self.register();
-        }
-        // `made` is dropped here, after the lock, when another thread kept its own.
-        drop(made);
+        debug_assert!(kept.node_addr() == made.node_addr(), "one node per member");
+        self.register();
         kept
     }
 

@@ -5,7 +5,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
@@ -196,7 +196,11 @@ impl Group {
         // The groups looked at are dropped after the lock is released, as `g` is when an equal
         // one is found.
         let mut seen = Vec::new();
-        let mut groups = GROUPS.lock().expect("no thread panics holding the groups");
+        // Under the lock the map changes only by an empty bucket added and one weak handle pushed,
+        // each whole before the next step, so a panic under it (in `Def` equality) leaves the
+        // map whole, and a poisoned lock is taken as it is: before, every later `Group::new`
+        // panicked after one panic here.
+        let mut groups = GROUPS.lock().unwrap_or_else(PoisonError::into_inner);
         let bucket = groups.entry(digest).or_default();
         for h in bucket.iter().filter_map(Weak::upgrade) {
             if h.defs == g.0.defs {
@@ -560,31 +564,28 @@ impl Group {
             let t = eval(&self.0.bodies[i], &env);
             *env.cell(i) = Some(t);
         }
-        // Only this thread inserts into its own table (`made_by`); another thread only removes
-        // from it, when it drops the last handle of one of this thread's instances. So the entry
-        // is either vacant or holds a dead handle: one whose instance another thread dropped
-        // last, before or while this one ran (`Drop for Env` removes it under this lock, so a
-        // dead handle is found only in the time between). The arm `Some(first)` is not reached
-        // (kernel13, TEST-kernel-unreached-paths-4): between the two locks this thread runs only
-        // `eval`, and no product code of the crate calls `instance` (every call is in a test),
-        // so nothing of this group at these arguments is made meanwhile. It stays, so that the
-        // first instance kept is the one should `eval` ever make instances.
-        let mut table = lock();
-        let kept = match table.entry(made_by).or_default().entry(key) {
-            Entry::Occupied(mut o) => match o.get().upgrade() {
-                Some(first) => first,
-                None => {
-                    o.insert(Arc::downgrade(&env));
-                    env.clone()
-                }
-            },
-            Entry::Vacant(v) => {
-                v.insert(Arc::downgrade(&env));
-                env.clone()
-            }
-        };
-        drop(table);
-        kept.members()
+        // The entry is vacant or holds a dead handle, so `env` is kept in it (kernel14,
+        // TEST-kernel-unreached-paths-4). Only this thread inserts into its own table
+        // (`made_by`), and only here; another thread only removes from it, in `Drop for Env`,
+        // and only the entry that points to the instance being dropped. Between the two locks
+        // this thread runs only `eval` of plain bodies, which reads arguments, cells already
+        // set (a plain member names only plain members, set before it) and types already
+        // built, and calls the type constructors; none of these calls `instance`. So the
+        // handle found at the first lock, dead or missing, is still dead or missing here. A
+        // dead handle's instance is being dropped by another thread, whose `Drop for Env`
+        // finds this entry no longer its own and leaves it. Should a later change make `eval`
+        // reach `instance` for this key, the assertion fails in every test build.
+        let old = lock()
+            .entry(made_by)
+            .or_default()
+            .insert(key, Arc::downgrade(&env));
+        debug_assert!(
+            old.as_ref().is_none_or(|w| w.strong_count() == 0),
+            "no live instance of this group at these arguments is made while one is made"
+        );
+        // A dead handle holds no type, so it is dropped after the lock at no cost.
+        drop(old);
+        env.members()
     }
 
     /// `e`, an expression of definition `def`, in the surface syntax.
@@ -824,9 +825,9 @@ fn free_types(types: Vec<Type>) {
 /// A group leaves [`GROUPS`], with the dead entries of its bucket.
 impl Drop for Checked {
     fn drop(&mut self) {
-        let Ok(mut groups) = GROUPS.lock() else {
-            return;
-        };
+        // A panic under the lock leaves the map whole (see `Group::new`), so a poisoned lock is
+        // taken as it is.
+        let mut groups = GROUPS.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(bucket) = groups.get_mut(&self.digest) {
             // Its own handle is dead now, as are those of groups dropped before. Only weak
             // handles are dropped here, which drop no group.
@@ -864,9 +865,10 @@ mod tests {
     /// the digest, as the tests run in parallel and a digest of the short-addresses build has 8
     /// bits (plan row TEST-kernel-units-short-addresses), so the group is told by its number.
     fn grouped(digest: u64, number: u64) -> bool {
+        // A test poisons the lock on purpose (`a_poisoned_group_table_is_used_as_it_is`).
         GROUPS
             .lock()
-            .expect("no panic under the lock")
+            .unwrap_or_else(PoisonError::into_inner)
             .get(&digest)
             .is_some_and(|b| {
                 b.iter()
@@ -1101,5 +1103,69 @@ mod tests {
             "{}",
             r.message
         );
+    }
+
+    /// Item TEST-kernel-unreached-paths-4 (kernel14, `Drop for Env`): an instance whose table
+    /// entry points to another instance leaves the entry. This is the state where another
+    /// thread dropped the last handle of the first instance, and this thread, finding the
+    /// handle dead, made a second instance and kept it in the entry before the first one's
+    /// `Drop for Env` took the lock. Here the entry is handed over by the test, under the lock.
+    /// Control: the check `mine` replaced by `true` drops the second instance's entry, and the
+    /// last assertion fails.
+    #[test]
+    fn an_instance_dropped_after_its_entry_was_handed_on_leaves_the_entry() {
+        let g = Group::new(defs("HandedOn", 9_005, true)).expect("a recursive group");
+        let first = g.instance(vec![]);
+        let first_env = env_of(&first[0]);
+        let key = (g.0.number, vec![]);
+        // The entry given up, as when it held a dead handle and was replaced.
+        let given_up = (INSTANCES.lock().expect("no panic under the lock"))
+            .get_mut(&thread())
+            .and_then(|mine| mine.remove(&key));
+        assert!(given_up.is_some_and(|w| w.ptr_eq(&first_env)));
+        let second = g.instance(vec![]);
+        assert!(!Arc::ptr_eq(&first[0].0, &second[0].0));
+        drop(first);
+        // The first instance is freed at the end of its unit, when its cycle is broken.
+        Type::forget_emptiness();
+        assert!(
+            first_env.upgrade().is_none(),
+            "the first instance is dropped"
+        );
+        let second_env = env_of(&second[0]);
+        let entry = (INSTANCES.lock().expect("no panic under the lock"))
+            .get(&thread())
+            .and_then(|mine| mine.get(&key))
+            .cloned();
+        assert!(
+            entry.is_some_and(|w| w.ptr_eq(&second_env)),
+            "the second instance's entry stays"
+        );
+    }
+
+    /// Item TEST-kernel-unreached-paths-4 (kernel14): after a thread panics holding the group
+    /// table, groups are still made, found again and leave the table. Before, `Group::new`
+    /// panicked on the poisoned lock, so one panic there made every later group fail, and
+    /// `Drop for Checked` left its bucket's dead handles. Control: either lock taken as before
+    /// (`expect`, or `let Ok(..) else { return }`) fails this test.
+    #[test]
+    fn a_poisoned_group_table_is_used_as_it_is() {
+        let poisoner = std::thread::spawn(|| {
+            let _held = GROUPS.lock().unwrap_or_else(PoisonError::into_inner);
+            panic!("a panic holding the group table (expected by the test)");
+        });
+        assert!(poisoner.join().is_err());
+        assert!(GROUPS.is_poisoned());
+        let g = Group::new(defs("Poisoned", 9_006, false)).expect("a plain group");
+        let again = Group::new(defs("Poisoned", 9_006, false)).expect("a plain group");
+        assert!(Arc::ptr_eq(&g.0, &again.0));
+        let (number, digest) = (g.0.number, g.0.digest);
+        assert!(grouped(digest, number));
+        let handle = Arc::downgrade(&g.0);
+        drop((g, again));
+        let left = (GROUPS.lock().unwrap_or_else(PoisonError::into_inner))
+            .get(&digest)
+            .is_some_and(|b| b.iter().any(|w| w.ptr_eq(&handle)));
+        assert!(!left, "the dropped group's handle leaves its bucket");
     }
 }
