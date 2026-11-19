@@ -3246,6 +3246,7 @@ impl Blocks {
     // O(k^2 log^2 k) on `split4` (2,142 member re-insertions at k = 64 vs 42 at k = 8). Used:
     // probe the first and last remaining conjunct of `syms` for each name of `g`, O(s log k)
     // per removed conjunct; falls back to `split` when no single witness covers `g`.
+    // COMPLEXITY.md PERF-refused-shape-disjunctions-quadratic.
     fn remove_covered(&mut self, b: BlockId, out: &[&Arc<Formula>]) -> bool {
         let mut atom_sets: Vec<BTreeSet<Atom>> = Vec::with_capacity(out.len());
         for g in out {

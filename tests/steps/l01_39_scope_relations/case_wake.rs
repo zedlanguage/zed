@@ -638,6 +638,15 @@ fn tests_on_punctured_lines_at_seed_6838338168874375281() {
     run_at(Aim::Puncture, 6838338168874375281);
 }
 
+/// The random test on punctured lines at seed 5, one of the two seeds of 1 to 130 (5 and 22)
+/// that fail when `Block::cone_certified` always says a key may be skipped (at case 5, step 1,
+/// the test `3a - 3z >= 4 && 3x + y + 3z >= -1` false): the test in this file that a direction
+/// certificate skipping a part it must wake makes fail at every run. It passes on main.
+#[test]
+fn tests_on_punctured_lines_at_seed_5() {
+    run_at(Aim::Puncture, 5);
+}
+
 /// Bounded-box disjunctions (with idle parts, narrowing parts, distinct unary thresholds, holes,
 /// classes, and a third name) match the projection from scratch after every step.
 #[test]
@@ -738,6 +747,130 @@ fn bounded_box_face_certificate_matches_from_scratch() {
     }
     steps_hc.push(or(le(lin(&[(1, "x"), (3, "y")]), 30), ge(var("x"), 8)));
     check_steps(&axyz, &steps_hc);
+}
+
+/// The split4 and four-name families of PERF-refused-shape-disjunctions-quadratic (parts on
+/// four names, neither chains nor stars, skipped in the cases by `Block::cone_certified`),
+/// then a disjunction whose first case closes the free directions, so that the parts must
+/// narrow a name inside that case: each step matches the projection from scratch, and the
+/// last leaves the hole the parts make. These histories reach the parts by other paths as well
+/// (with `Block::cone_certified` always true, or no case group woken, they still pass); the
+/// tests that fail when the certificate skips a part it must wake are
+/// `tests_on_punctured_lines_at_seed_5`.
+#[test]
+fn four_name_disjunctions_match_the_projection_from_scratch_when_their_directions_close() {
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let le = |t: Term, c: i64| prim(Prim::Le, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let and = |a, b| prim(Prim::And, a, b);
+    let check_steps = |ns: &[Arc<str>], steps: &[Term]| -> Scope {
+        let mut s = ints(ns);
+        for (idx, t) in steps.iter().enumerate() {
+            let got = s.assume(t, true, &p);
+            let mut fresh = s.clone();
+            fresh.forget_projections();
+            let mut want = fresh.assume(t, true, &p);
+            want.forget_projections();
+            want.reduce();
+            assert_eq!(
+                intervals(&got, ns),
+                intervals(&want, ns),
+                "step {idx} mismatch on {t:?}"
+            );
+            s = got;
+        }
+        s
+    };
+
+    // split4: the star `a >= x + y`, then `x + j*y + w >= 1 || x - j*y + v >= 1`; then
+    // `w`, `v` and `x` pinned to 0, which leaves `j*y >= 1 || -j*y >= 1`, so `y != 0`.
+    let names: Vec<Arc<str>> = ["a", "x", "y", "w", "v"]
+        .iter()
+        .map(|&n| n.into())
+        .collect();
+    let mut steps = vec![ge(lin(&[(1, "a"), (-1, "x"), (-1, "y")]), 0)];
+    for j in 1..=6i64 {
+        steps.push(or(
+            ge(lin(&[(1, "x"), (j, "y"), (1, "w")]), 1),
+            ge(lin(&[(1, "x"), (-j, "y"), (1, "v")]), 1),
+        ));
+    }
+    steps.push(le(var("y"), 3));
+    steps.push(ge(var("y"), -3));
+    // The first case's `x + w <= 0 && x + v <= 0` moves no interval and leaves the parts
+    // `j*y >= 1 || -j*y >= 1`, so `y != 0`; the second case leaves `y >= 2`.
+    let rel = and(
+        le(lin(&[(1, "x"), (1, "w")]), 0),
+        le(lin(&[(1, "x"), (1, "v")]), 0),
+    );
+    let mut related = steps.clone();
+    related.push(or(rel, ge(var("y"), 2)));
+    let s = check_steps(&names, &related);
+    assert!(!s.get("y").ints().contains(0), "{:?}", s.get("y").ints());
+    // The same reached through names the parts do not mention: `x <= u`, `w <= s`, `v <= t`
+    // before the parts, and the first case `u + s <= 0 && u + t <= 0`, which touches no name
+    // of a part.
+    let far: Vec<Arc<str>> = ["a", "x", "y", "w", "v", "u", "s", "t"]
+        .iter()
+        .map(|&n| n.into())
+        .collect();
+    let mut via = vec![
+        ge(lin(&[(1, "u"), (-1, "x")]), 0),
+        ge(lin(&[(1, "s"), (-1, "w")]), 0),
+        ge(lin(&[(1, "t"), (-1, "v")]), 0),
+    ];
+    via.extend(steps.iter().cloned());
+    let rel = and(
+        le(lin(&[(1, "u"), (1, "s")]), 0),
+        le(lin(&[(1, "u"), (1, "t")]), 0),
+    );
+    via.push(or(rel, ge(var("y"), 2)));
+    let s = check_steps(&far, &via);
+    assert!(!s.get("y").ints().contains(0), "{:?}", s.get("y").ints());
+    // The same with `w`, `v` and `x` pinned to 0 in the first case.
+    let pins = ["w", "v", "x"]
+        .iter()
+        .map(|n| and(le(var(n), 0), ge(var(n), 0)))
+        .reduce(and)
+        .expect("three pins");
+    steps.push(or(pins, ge(var("y"), 2)));
+    let s = check_steps(&names, &steps);
+    assert!(!s.get("y").ints().contains(0), "{:?}", s.get("y").ints());
+
+    // Four names: `x4 >= x0 + x1 + x2 + x3`, then `x0 + j x1 + (j+1) x2 + (j+2) x3 >= 1 ||
+    // x0 - j x1 - (j+1) x2 - (j+2) x3 >= 1`; then x0, x2, x3 pinned to 0, which leaves
+    // `j x1 >= 1 || -j x1 >= 1`, so `x1 != 0`.
+    let names: Vec<Arc<str>> = ["x0", "x1", "x2", "x3", "x4"]
+        .iter()
+        .map(|&n| n.into())
+        .collect();
+    let mut steps = vec![ge(
+        lin(&[(1, "x4"), (-1, "x0"), (-1, "x1"), (-1, "x2"), (-1, "x3")]),
+        0,
+    )];
+    for j in 1..=6i64 {
+        steps.push(or(
+            ge(
+                lin(&[(1, "x0"), (j, "x1"), (j + 1, "x2"), (j + 2, "x3")]),
+                1,
+            ),
+            ge(
+                lin(&[(1, "x0"), (-j, "x1"), (-j - 1, "x2"), (-j - 2, "x3")]),
+                1,
+            ),
+        ));
+    }
+    steps.push(le(var("x1"), 3));
+    steps.push(ge(var("x1"), -3));
+    let pins = ["x0", "x2", "x3"]
+        .iter()
+        .map(|n| and(le(var(n), 0), ge(var(n), 0)))
+        .reduce(and)
+        .expect("three pins");
+    steps.push(or(pins, ge(var("x1"), 2)));
+    let s = check_steps(&names, &steps);
+    assert!(!s.get("x1").ints().contains(0), "{:?}", s.get("x1").ints());
 }
 
 /// The history of `a_test_joined_from_cases_projects_the_whole_block`, whose test splits into

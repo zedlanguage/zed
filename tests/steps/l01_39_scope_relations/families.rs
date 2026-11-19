@@ -1540,6 +1540,21 @@ fn boxstar_against_the_oracle() {
 }
 
 #[test]
+fn box_cases_and_split4_against_the_oracle() {
+    // The families of PERF-refused-shape-disjunctions-quadratic: their parts are neither
+    // chains nor stars, and box_cases and box_cases_y are skipped in the cases by the
+    // bounded-box face certificate (`Block::box_face_uncertified`), split4 by the cone
+    // certificate (`Block::cone_certified`). Their tests narrow no name past the box; the
+    // narrowing forms are in case_wake.rs.
+    for k in 1..=3 {
+        for name in ["box_cases", "box_cases_y"] {
+            exact(name, k, "a=[..] x=[0..=10] y=[0..=10]");
+        }
+        exact("split4", k, "a=[..] x=[..] y=[..] w=[..] v=[..]");
+    }
+}
+
+#[test]
 fn chain_against_the_oracle() {
     exact("chain", 1, "a=[-7..] x=[-3..=3] y=[-4..=-1, 1..=4]");
     exact("chain", 2, "a=[-15..] x=[-7..=6] y=[-8..=-2, 2..=8]");

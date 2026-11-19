@@ -6388,6 +6388,7 @@ impl Block {
     // (22.56x and 21.38x instructions at 8n). Used: index each two-variable arm's dual point in
     // a persistent Overmars-van Leeuwen `LowerHullTree` guarded by a rotation-free
     // `ThreshHullTrie` on any unary arm: O(log^2 k) insert, O(log k) query when 0 parts fail.
+    // COMPLEXITY.md PERF-refused-shape-disjunctions-quadratic.
     fn box_face_uncertified(
         &self,
         rkey: &RecKey,
@@ -9761,6 +9762,14 @@ impl Scope {
         // hull is taken over the names linked by equalities to a name or a conjunct the sides
         // do not share: the rest of the two hulls is one, which their join keeps as it is and
         // the shared conjuncts already state.
+        // Complexity tradeoff: naive version (main before 8ecea2e9f), `conjuncts::reach` over
+        // every conjunct of each name reached, keeping the equalities by a filter: O(c log c)
+        // per join for the c conjuncts of the seeds' names, so O(k) per join and O(k^2) over k
+        // joins when k disjunctions share two names (`split4`, `box_cases`), with no equality
+        // found. Used: `conjuncts::reach_eqs` walks the equalities alone (`eq_users`), with a
+        // visited set: O((s + e) log e) for s seeds and the e equalities reached, O(s log s)
+        // when there are none. Same result (`reach_eqs_matches_reach_with_is_eq_filter`).
+        // COMPLEXITY.md PERF-refused-shape-disjunctions-quadratic.
         let (eqs, near) =
             conjuncts::reach_eqs(&[&self.relation, &other.relation], seeds.iter().cloned());
         let hull = self.hull(&eqs, &near).join(&other.hull(&eqs, &near));
