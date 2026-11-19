@@ -6533,6 +6533,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             digest_base_rank: 0,
             digest_summary: None,
             digest_sigma_ranks: Vec::new(),
+            digest_call_span: None,
         }
     }
 

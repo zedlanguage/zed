@@ -2031,3 +2031,427 @@ fn r10_promoted_forward_results_are_own_variables() {
         }
     }
 }
+
+/// D against E over a sweep of 197 programs: five leaf mapping functions, chains 0 to 2
+/// links deep, 13 bodies that place the forward beside siblings, captures and a written type
+/// variable, and two lambdas that capture an outer variable in a nested leaf. Codex's
+/// landing round 3 audit test (land/r3/codex/audit/extra-test.rs), kept under P328 with two
+/// changes: it fails if no forward is kept (so it cannot pass with D turned off), and a
+/// negative control drops condition `#16` (a class at another generalize level) and requires
+/// D to differ from E then (27 of the 197 differ). Dropping any other single condition
+/// changes nothing on this sweep; dropping all of them gives 28 that differ (chainxr4,
+/// 2026-11-19).
+#[test]
+fn r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e() {
+    fn sweep(cfg: &R10Config) -> (usize, usize, Vec<String>) {
+        let mut srcs = Vec::new();
+        for by in [
+            "f",
+            "x -> f(x)",
+            "x -> (f(x), x)",
+            "x -> f(1)",
+            "(x: int) -> f(x)",
+        ] {
+            let base = format!("h0(positional f, positional m) = m.map({by}).map(f);\n");
+            for level in 0..=2 {
+                let mut head = base.clone();
+                for i in 1..=level {
+                    head += &format!(
+                        "h{i}(positional f, positional m) = h{}(f, m).map(f);\n",
+                        i - 1
+                    );
+                }
+                for body in [
+                    "((f,m) -> H(f,m), (g,n) -> H(g,n), a)",
+                    "((f,m) -> (H(f,m), a), (g,n) -> H(g,n))",
+                    "((f,m) -> H(f,m), (g,n) -> (H(g,n), a))",
+                    "((f,m) -> { _ = H(f,m); a }, (g,n) -> H(g,n))",
+                    "((f,m) -> (H(f,m), f), (g,n) -> (H(g,n), g), a)",
+                    "((f,m) -> (H(f,m), m), (g,n) -> (H(g,n), n), a)",
+                    "((f,m) -> { r = H(f,m); (x) -> (r, x) }, (g,n) -> H(g,n), a)",
+                    "((f,m) -> { r = H(f,m); (x) -> (m, r, x) }, (g,n) -> H(g,n), a)",
+                    "((f,m) -> H(a,m), (g,n) -> H(g,n))",
+                    "((f,m) -> H(f,a), (g,n) -> H(g,n))",
+                    "((f,m) -> (H(f,m), x -> (x, a, f)), (g,n) -> H(g,n))",
+                    "((f,m) -> (H(f,m), (x: T6, y: T6) -> x), (g,n) -> H(g,n), a)",
+                    "(a.map(x -> ((f,m) -> H(f,m), (g,n) -> H(g,n))))",
+                ] {
+                    let call = format!("h{level}");
+                    srcs.push(format!(
+                        "{head}outer(positional a) = {};\n",
+                        body.replace('H', &call)
+                    ));
+                }
+            }
+        }
+        for leaf in ["x -> (f(x), a)", "x -> f(x)"] {
+            srcs.push(format!(
+                "outer(positional a) = {{\n  h = (f,m) -> m.map({leaf}).map(f);\n  \
+                 ((k,p) -> h(k,p), (k,p) -> h(k,p), a)\n}};"
+            ));
+        }
+        let mut kept = 0;
+        let mut mismatches = Vec::new();
+        for src in &srcs {
+            let (e, _) = run_with_cfg(src, R10Config::eager());
+            let (d, st) = run_with_cfg(src, cfg.clone());
+            kept += usize::from(st.kept_at_generalize > 0);
+            if let Err(why) = info_eq_full("forward sweep", &e, &d) {
+                mismatches.push(format!("{src}{why}"));
+            }
+        }
+        (srcs.len(), kept, mismatches)
+    }
+    let (tried, kept, mismatches) = sweep(&R10Config::default());
+    assert_eq!(tried, 197);
+    assert!(kept > 0, "D kept no forward in the sweep");
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    let dropped = R10Config {
+        drop_conds: ["#16".to_string()].into_iter().collect(),
+        ..R10Config::default()
+    };
+    let (_, _, mismatches) = sweep(&dropped);
+    assert!(
+        !mismatches.is_empty(),
+        "negative control: D agrees with E on the sweep with #16 dropped"
+    );
+}
+
+#[test]
+fn landing4_cached_digest_must_follow_need_span() {
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (sig, i) = d
+        .sigs
+        .values()
+        .find_map(|s| {
+            s.needs
+                .iter()
+                .position(|n| matches!(&n.kind, NeedKind::Fwd(f) if f.digest_summary.is_some()))
+                .map(|i| (s, i))
+        })
+        .unwrap();
+
+    let compare = |compact: &Sig| {
+        let mut flat = compact.clone();
+        let (needs, own) = compact.decoded_needs_and_own();
+        flat.needs = needs.into_owned();
+        flat.own = own.into_owned();
+        assert_eq!(compact, &flat);
+        (compact.digest(), flat.digest())
+    };
+    let original = compare(sig);
+    assert_eq!(original.0, original.1, "original");
+
+    let mut revised = Sig::clone(sig);
+    let need = &revised.needs[i];
+    let new_span = zedc_syntax::lex::Span {
+        start: need.span.start + 1,
+        end: need.span.end + 1,
+    };
+    revised.needs[i] = need.alike_at(new_span, new_span, &need.via);
+    let revised_hash = compare(&revised);
+    eprintln!(
+        "changed span: compact={} flat={}",
+        revised_hash.0, revised_hash.1
+    );
+
+    let NeedKind::Fwd(fwd) = &mut revised.needs[i].kind else {
+        unreachable!()
+    };
+    std::sync::Arc::make_mut(fwd).digest_summary = None;
+    revised.facts = Default::default();
+    let cleared = compare(&revised);
+    assert_eq!(cleared.0, cleared.1, "cache cleared");
+    assert_eq!(revised_hash.0, revised_hash.1, "with cached digest");
+}
+
+#[test]
+fn landing4_compound_first_appearance() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let mut compact = d
+        .sigs
+        .values()
+        .find(|s| {
+            s.needs.iter().any(|n| {
+                matches!(&n.kind, NeedKind::Fwd(f)
+            if f.need_count > f.exits.len() && !f.sigma.is_empty())
+            })
+        })
+        .map(|s| Sig::clone(s))
+        .unwrap();
+
+    // Isolate the needs' first appearances from the arrow's appearances.
+    for arrow in &mut compact.arrows {
+        arrow.params.fill(Ty::empty());
+        arrow.result = Ty::empty();
+    }
+    let mut flat = compact.clone();
+    let (needs, own) = compact.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+
+    let NeedKind::Fwd(fwd) = &compact.needs[0].kind else {
+        panic!("expected the forward first")
+    };
+    let arg = fwd.sigma[0].1.as_var().unwrap().clone();
+    let earlier = Ty::var("FirstNew".into());
+    let later = Ty::var("SecondNew".into());
+    let compound = earlier.union(&later);
+    let binds: Binds = [(arg, compound)].into_iter().collect();
+    let expand_order = |s: &Sig| {
+        let mut result = Vec::new();
+        for i in 0..=s.vars_order().len() {
+            for mark in s.vars_marks().iter().filter(|m| m.at == i) {
+                for run in &mark.runs {
+                    result.extend(run.names::<std::sync::Arc<str>>());
+                }
+            }
+            result.extend(s.vars_order().get(i).cloned());
+        }
+        result
+    };
+    assert_eq!(expand_order(&compact), expand_order(&flat), "original");
+    let (compact, flat) = (compact.replace(&binds), flat.replace(&binds));
+    assert_eq!(compact, flat, "equal after substitution");
+    eprintln!(
+        "compound compact={:?} flat={:?}",
+        expand_order(&compact),
+        expand_order(&flat)
+    );
+    assert_eq!(
+        expand_order(&compact),
+        expand_order(&flat),
+        "compound argument"
+    );
+}
+
+#[test]
+fn landing4_bound_name_can_also_be_free_in_a_sibling() {
+    use std::sync::Arc;
+    use zedc_types::ty::Ty;
+
+    let (d, _) = run_with_cfg("id(positional x) = x;", R10Config::eager());
+    let bound = d.sigs.values().next().unwrap().clone();
+    let v = bound.arrows[0].params[0].as_var().unwrap();
+    assert!(bound.own.contains(v));
+    let ty = Ty::func(bound.clone());
+    let facts = ty.var_facts();
+    assert!(facts.names.contains(v));
+    assert!(!facts.outer.contains(v), "closed function control");
+
+    let mut free = Sig::clone(&bound);
+    free.own.remove(v);
+    let pair = Ty::tuple(vec![ty, Ty::func(Arc::new(free.clone()))]);
+    let facts = pair.var_facts();
+    assert!(facts.outer.iter().all(|v| facts.names.contains(v)));
+    assert!(
+        facts.outer.contains(v),
+        "a sibling still refers to that spelling freely"
+    );
+    assert_eq!(
+        facts.names.len(),
+        facts.outer.len(),
+        "the size test misses the binder"
+    );
+    // The bit `#4-own-vars` reads does not (landing round 4, Codex L4.Codex-own-facts).
+    assert!(facts.binds, "the pair holds a function that binds `v`");
+    let open = Ty::func(Arc::new(free)).var_facts();
+    assert!(!open.binds, "the open function alone binds nothing");
+}
+
+#[test]
+fn landing4_public_replace_reaches_hidden_results() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (compact, hidden) = d
+        .sigs
+        .values()
+        .find_map(|s| {
+            s.needs
+                .iter()
+                .find_map(|n| match &n.kind {
+                    NeedKind::Fwd(f) => f.internal_result_tys().into_iter().next(),
+                    _ => None,
+                })
+                .map(|t| (s, t.as_var().unwrap().clone()))
+        })
+        .unwrap();
+    let mut flat = Sig::clone(compact);
+    let (needs, own) = compact.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+    assert_eq!(**compact, flat);
+    assert!(!compact.own.contains(&hidden));
+    assert!(flat.own.contains(&hidden));
+    let missing: Binds = [("FreshlyAbsent".into(), Ty::empty())]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        compact.replace(&missing),
+        flat.replace(&missing),
+        "absent name control"
+    );
+    let bind: Binds = [(hidden.clone(), Ty::var("OuterReplacement".into()))]
+        .into_iter()
+        .collect();
+    let (c, f) = (compact.replace(&bind), flat.replace(&bind));
+    eprintln!(
+        "replacing hidden {hidden}: compact owns it = {}, flat owns it = {}",
+        c.decoded_needs_and_own().1.contains(&hidden),
+        f.own.contains(&hidden)
+    );
+    assert_eq!(c, f);
+}
+
+/// Landing round 4, Gemini F-R4-1: a partial application `h1(1, ...)` of a function that keeps a
+/// forward defers the forward's needs into the result function. D and E must agree on every
+/// signature, and no unnamed class (`$k`) may reach a finished one. The one-need program is the
+/// control: its forward has no internal result.
+#[test]
+fn landing4_partial_application_of_a_kept_forward_agrees_with_e() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "one_need_control",
+            "h0(positional a, m) = m.map((x: int) -> a);\n\
+             h1(positional a, m) = h0(a, m: m);\n\
+             g() = h1(1, ...);\n",
+        ),
+        (
+            "one_need_beside",
+            "h0(positional a, m) = m.map((x: int) -> a);\n\
+             h1(positional a, m) = h0(a, m: m);\n\
+             g(positional y) = (h1(1, ...), y);\n",
+        ),
+        (
+            "two_needs_beside",
+            "h0(positional a, m) = m.map((x: int) -> a).map((x: int) -> a);\n\
+             h1(positional a, m) = h0(a, m: m);\n\
+             g(positional y) = (h1(1, ...), y);\n",
+        ),
+        (
+            "two_needs",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g() = h1(1, ...);\n",
+        ),
+        (
+            "two_needs_called",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g() = h1(1, ...);\n\
+             k(positional f, positional m) = g()(f: f, m: m);\n",
+        ),
+        (
+            "two_needs_misused",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g() = h1(1, ...);\n\
+             bad() = g()(f: x -> x + 1, m: 42);\n",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, src) in cases {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, st) = run_with_cfg(src, R10Config::default());
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failures.push(format!("{name} (admitted {}): {why}", st.admitted));
+        }
+        for (id, s) in &d.sigs {
+            let order = s.vars_order();
+            if order.iter().any(|v| v.starts_with('$')) {
+                failures.push(format!(
+                    "{name}: sig {id} holds an unnamed class: {order:?}"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Landing round 4, Gemini F-R4-2: the exit guard of round 4 for a callee's forward, applied to
+/// a callee's direct need. A direct need's result replaced by an outer variable must keep the
+/// flat digest, as `r10_exit_replaced_in_a_callee_keeps_the_flat_digest` checks for an exit.
+#[test]
+fn landing4_direct_result_replaced_in_a_callee_keeps_the_flat_digest() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+    let src = "h0(positional f, positional m) = m.map(f).map(f);\n\
+               h1(positional f, positional m) = h0(f, m);\n";
+    let (d, st) = run_with_cfg(src, R10Config::default());
+    assert_eq!(st.kept_at_generalize, 1, "h1 must keep a forward");
+    let sig = (d.sigs.values().find(|s| s.has_fwd_needs())).expect("h1 keeps a forward");
+    let index = (sig
+        .needs
+        .iter()
+        .position(|n| matches!(n.kind, NeedKind::Fwd(_))))
+    .expect("a forward");
+    let NeedKind::Fwd(outer) = &sig.needs[index].kind else {
+        unreachable!()
+    };
+    let callee = &outer.callee;
+    assert_eq!(callee.needs.len(), 2, "h0 has two direct needs");
+    let r0 = (callee.needs[0].result.as_ref().and_then(Ty::as_var))
+        .expect("the first need's result is a variable")
+        .clone();
+    let binds: Binds = [(r0.clone(), Ty::var("Outer".into()))]
+        .into_iter()
+        .collect();
+    let mut new_callee = callee.replace(&binds);
+    new_callee.own.remove(&r0);
+    new_callee.facts = Default::default();
+    let mut parent = Sig::clone(sig);
+    let NeedKind::Fwd(fwd) = &mut parent.needs[index].kind else {
+        unreachable!()
+    };
+    let fwd = Arc::make_mut(fwd);
+    fwd.callee = Arc::new(new_callee);
+    fwd.digest_summary = None;
+    parent.facts = Default::default();
+    let mut flat = parent.clone();
+    let (needs, own) = parent.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+    flat.facts = Default::default();
+    assert_eq!(parent, flat);
+    assert_eq!(
+        parent.digest(),
+        flat.digest(),
+        "direct result replaced in the callee"
+    );
+}
+
+/// Landing round 4, Gemini F-R4-3: binding the variable a held lambda reads (`a`) to `int`
+/// closes the lambda. The compact signature must then answer `holds_only_own_variables` as the
+/// flat one does, so that a signature holding it hashes alike.
+#[test]
+fn landing4_replace_closing_a_held_function_keeps_the_flat_digest() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    assert_info_eq("closing_initial", &e, &d);
+    let (&id, compact) =
+        (d.sigs.iter().find(|(_, s)| s.has_fwd_needs())).expect("h1 keeps a forward");
+    let flat = &e.sigs[&id];
+    let a = (compact.arrows[0].params[0].as_var())
+        .expect("a is a variable")
+        .clone();
+    let bind: Binds = [(a, Ty::carrier(Carrier::Int))].into_iter().collect();
+    let (e_sub, d_sub) = (flat.replace(&bind), compact.replace(&bind));
+    assert_eq!(e_sub, d_sub);
+    assert_eq!(
+        e_sub.holds_only_own_variables(),
+        d_sub.holds_only_own_variables()
+    );
+    let outer_e = Sig::one(vec![], vec![], Ty::func(Arc::new(e_sub)));
+    let outer_d = Sig::one(vec![], vec![], Ty::func(Arc::new(d_sub)));
+    assert_eq!(outer_e, outer_d);
+    assert_eq!(
+        outer_e.digest(),
+        outer_d.digest(),
+        "held function closed by replace"
+    );
+}

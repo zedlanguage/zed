@@ -290,13 +290,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // named by E with the caller's variables around it, which a kept
                         // forward does not carry, so D and E gave different digests (landing
                         // round 3, Gemini L3-G1); refuse, under its own label so a test can
-                        // drop it as a negative control (`drop_conds`). Such
-                        // a variable is in `names` and, being bound in the nest, not in
-                        // `outer` (`outer` is `names` less every variable a signature of the
-                        // nest binds), so the test is that the two sets differ in size.
+                        // drop it as a negative control (`drop_conds`). The test is
+                        // `VarFacts::binds`, which each signature of the nest sets when it
+                        // binds a variable and ORs up from the functions it holds. Comparing
+                        // the sizes of `names` and `outer`, as round 4 did, misses a pair
+                        // holding `A -> A` with `A` its own and `A -> A` with `A` free, whose
+                        // sets are both `{A}` (landing round 4, Codex L4.Codex-own-facts).
                         // Complexity tradeoff: the naive test walks `names` against `outer`,
-                        // O(v log v) for v variables held; used: two kept lengths, O(1).
-                        if vf.names.len() > vf.outer.len() {
+                        // O(v log v) for v variables held, and has the same flaw; used: one
+                        // kept bit, O(1).
+                        if vf.binds {
                             intrinsic_fails.insert("#4-own-vars");
                         }
                         held_free = held_free.max(vf.free);
@@ -1266,6 +1269,44 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         expanded
+    }
+
+    /// Makes, resolves and names the internal classes of `sig`'s compact forwards that are not
+    /// made yet, for a partial application of `sig` that leaves their needs to the function it
+    /// gives (landing round 4, Gemini F-R4-1). The decoded needs name those results `$k`, so
+    /// they become the given function's own variables. The flat form made each one when the
+    /// callee was checked, resolved it, and named it at the callee's `generalize`; a kept
+    /// forward made none and keeps those names in its runs (`gen_naming`), so finishing would
+    /// leave each `$k` unnamed in the finished caller. Each class takes the name its run gives
+    /// it, as in the flat form. A forward named at `finish` already decodes to names, not
+    /// classes, and needs none.
+    // Complexity tradeoff: O(need_count) per forward, as the decode `replay` already made for
+    // this call. The naive alternative, decoding every kept forward when its function is
+    // generalized, costs that much at every link of a chain; this costs it only at a partial
+    // application, which is never a link of a chain.
+    pub(in crate::check) fn r10_make_left_internal_classes(&mut self, sig: &Sig) {
+        for n in &sig.needs {
+            let NeedKind::Fwd(fwd) = &n.kind else {
+                continue;
+            };
+            let (Some(lo), None) = (fwd.base_class, &fwd.finish_naming) else {
+                continue;
+            };
+            let exits: HashSet<usize> = fwd.exits.iter().map(|(o, _)| *o).collect();
+            let runs = fwd.gen_naming.iter().flat_map(|g| g.runs.iter());
+            let mut names = runs.flat_map(|r| r.names::<Arc<str>>());
+            for j in (0..fwd.need_count).filter(|j| !exits.contains(j)) {
+                let name = names.next();
+                let id = lo + j;
+                if self.classes.is_materialized(id) {
+                    continue;
+                }
+                let class = Self::make_fresh_class(id, self.level, true);
+                self.classes.materialize_at(id, class);
+                self.resolve(id);
+                self.classes[id].name = name;
+            }
+        }
     }
 
     /// M56(c) counter: checks whether `deep` or `outside` binds any variable of any kept `FwdNeed`.

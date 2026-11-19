@@ -2758,6 +2758,10 @@ struct Replacer<'b> {
     /// New names for the internal runs of compact forwards, when renaming
     /// ([`Ty::renamed_runs`]): each signature met is looked up by address.
     runs: Option<&'b RunRenames>,
+    /// The signatures the walk decoded and walked in place of those met ([`Self::must_decode`]),
+    /// kept for as long as the memos, which are keyed by their addresses and those of the types
+    /// they hold.
+    kept: Vec<Arc<Sig>>,
 }
 
 /// New names for the internal runs of compact forwards ([`FwdFinishNaming::runs`]), by the
@@ -2848,7 +2852,69 @@ impl<'b> Replacer<'b> {
             memos: vec![Memo::default()],
             entered: Vec::new(),
             runs: None,
+            kept: Vec::new(),
         }
+    }
+
+    /// Whether the walk must replace in `s` with its compact forwards decoded into the needs
+    /// they stand for, as the flat signature holds them (landing round 4, Codex L4.Codex-order
+    /// and L4.Codex-hidden). A forward's steps follow an argument or exit renamed to another
+    /// variable ([`renamed_steps`]), but not one replaced by another type, whose variables the
+    /// flat needs first show where the leaf needs use it, not after the forward's runs; and a
+    /// binding of one of the forward's internal results, which no type of the signature shows,
+    /// would leave it in the compact signature and replace it in the flat one. `nested`: `s` is
+    /// held in a type, so outside renaming its own variables are hidden in it
+    /// ([`Self::known_held`]), and the internal results with them, as the flat signature owns
+    /// them.
+    // Complexity tradeoff: the naive version decodes every forward a walk meets, O(need_count)
+    // each, which is the flat form's cost on every substitution. Used: per forward, the
+    // arguments and exits looked up in `binds`, O(#sigma + #exits), and for the internal results
+    // the smaller side: each variable bound tested with [`FwdNeed::holds_internal`],
+    // O(#binds·runs) index lookups, or the results listed and each looked up in `binds`,
+    // O(need_count). Only a forward this finds is decoded, at the flat form's cost.
+    fn must_decode(&self, s: &Sig, nested: bool) -> bool {
+        if self.binds.is_empty() || !s.has_fwd_needs() {
+            return false;
+        }
+        let hides_own = nested && self.mode != Mode::Rename;
+        let bound = |v: &Arc<str>| {
+            (!hides_own || !s.own.contains(v))
+                .then(|| self.bound(v))
+                .flatten()
+        };
+        let binds_internal = |fwd: &FwdNeed| {
+            let internal = fwd.need_count.saturating_sub(fwd.exits.len());
+            if self.binds.len() >= internal {
+                (fwd.internal_result_tys().iter())
+                    .filter_map(Ty::as_var)
+                    .any(|v| self.bound(v).is_some())
+            } else {
+                (self.binds.keys()).any(|v| self.bound(v).is_some() && fwd.holds_internal(v))
+            }
+        };
+        s.needs.iter().any(|n| {
+            let NeedKind::Fwd(fwd) = &n.kind else {
+                return false;
+            };
+            let typed = (fwd.sigma.iter().map(|(_, t)| t))
+                .chain(fwd.exits.iter().map(|(_, t)| t))
+                .filter_map(Ty::as_var)
+                .any(|v| bound(v).is_some_and(|t| t.as_var().is_none()));
+            typed || (!hides_own && binds_internal(fwd))
+        })
+    }
+
+    /// `s` with its compact forwards decoded into flat needs and their internal results among
+    /// its own variables, as the flat form holds it: O(need_count) per forward.
+    fn decoded(&mut self, s: &Sig) -> Arc<Sig> {
+        let (needs, own) = s.decoded_needs_and_own();
+        let mut flat = s.clone();
+        flat.needs = needs.into_owned();
+        flat.own = own.into_owned();
+        flat.facts = Facts::default();
+        let flat = Arc::new(flat);
+        self.kept.push(flat.clone());
+        flat
     }
 
     /// A renaming that also gives compact forwards the new runs `runs` names.
@@ -2884,6 +2950,10 @@ impl<'b> Replacer<'b> {
 
     /// [`Sig::replace_in`]: renamed, its own and held variables take their new names.
     fn sig(&mut self, s: &Sig) -> Sig {
+        if self.must_decode(s, false) {
+            let flat = self.decoded(s);
+            return self.sig(&flat);
+        }
         let tys = rebuild_tys(self, sig_tys(s));
         let (arrows, needs) = sig_parts(s, tys.into_iter(), &*self);
         self.sig_of(s, arrows, needs)
@@ -3013,6 +3083,17 @@ impl Rebuild for Replacer<'_> {
             self.memo().sigs.insert(Arc::as_ptr(s), s.clone());
             return Some(s.clone());
         }
+        // Walked decoded, by a walk of its own: the flat signature holds no forward, so that
+        // walk enters it as below, one level deeper only where a decoded block holds a function
+        // that must be decoded too.
+        if self.must_decode(s, true) {
+            let flat = self.decoded(s);
+            let mut out = Rebuilt::default();
+            rebuild(self, vec![Step::Held(&flat)], &mut out);
+            let done = (out.sigs.pop()).expect("a walk makes one signature of a held one");
+            self.memo().sigs.insert(Arc::as_ptr(s), done.clone());
+            return Some(done);
+        }
         let hide: Vec<Arc<str>> = match self.mode {
             Mode::Rename => Vec::new(),
             _ => (s.own.iter())
@@ -3128,18 +3209,26 @@ impl Renamings {
             }
         };
         let r = &mut at[i];
-        let walk = |mut w: Replacer<'_>, memo: &mut Memo, s: &Arc<Sig>| -> Arc<Sig> {
+        // Each walk gives the signatures it decoded ([`Replacer::kept`]) to `walked`, which
+        // keeps them as long as the memos keyed by their addresses.
+        let walk = |mut w: Replacer<'_>,
+                    memo: &mut Memo,
+                    walked: &mut Vec<Arc<Sig>>,
+                    s: &Arc<Sig>|
+         -> Arc<Sig> {
             if w.binds.is_empty() && w.runs.is_none() {
                 return s.clone();
             }
             w.memos[0] = std::mem::take(memo);
             let out = Arc::new(w.sig(s));
             *memo = w.memos.swap_remove(0);
+            walked.append(&mut w.kept);
             out
         };
-        let renamed = walk(Replacer::renaming(&r.to, &r.runs), &mut r.renamed, s);
+        let renaming = Replacer::renaming(&r.to, &r.runs);
+        let renamed = walk(renaming, &mut r.renamed, &mut r.walked, s);
         let replaced = Replacer::new(&r.binds, Mode::Replace);
-        let out = walk(replaced, &mut r.replaced, &renamed);
+        let out = walk(replaced, &mut r.replaced, &mut r.walked, &renamed);
         r.walked.push(s.clone());
         r.walked.push(renamed);
         out
@@ -3897,6 +3986,13 @@ pub struct VarFacts {
     pub outer_classes: imbl::OrdSet<Arc<str>>,
     /// The first `n` such that `names` lacks the `n`th variable name (`var_name`).
     pub free: usize,
+    /// Whether a signature of the nest binds a variable as its own, bounded or held, or keeps
+    /// a forward whose held functions do: each variable of `names` that is not in `outer` is
+    /// such a one. Unlike a comparison of `names` with `outer`, it does not depend on the
+    /// spelling: a pair holding `A -> A` with `A` its own and `A -> A` with `A` free has
+    /// `names` and `outer` both `{A}` (landing round 4, Codex L4.Codex-own-facts). Each
+    /// signature ORs its functions' bits, O(1) per function held.
+    pub binds: bool,
 }
 
 impl VarFacts {
@@ -3915,6 +4011,7 @@ impl VarFacts {
             g.outer.remove(v);
             g.outer_classes.remove(v);
         }
+        g.binds |= !s.own.is_empty() || !s.bounds.is_empty() || !s.held.is_empty();
         let extra = s.bounds.keys().chain(&s.own).chain(&s.held);
         extra.for_each(|v| {
             g.add_to(false, v, &mut added);
@@ -3924,6 +4021,9 @@ impl VarFacts {
                 g.free = g.free.max(fwd.held_free);
                 for nm in &fwd.held_names {
                     g.add_to(false, nm, &mut added);
+                    // A held name the forward does not list as outer is bound in its nest.
+                    // O(log v) per name, beside the insert above.
+                    g.binds |= !fwd.held_outer.contains(nm);
                 }
                 for ov in &fwd.held_outer {
                     if !s.own.contains(ov) {
@@ -3985,6 +4085,7 @@ impl VarFacts {
         merge(&mut self.outer, &f.outer);
         merge(&mut self.outer_classes, &f.outer_classes);
         self.free = self.free.max(f.free);
+        self.binds |= f.binds;
     }
 
     /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
@@ -4921,8 +5022,10 @@ pub struct FwdNeed {
     /// Whether a function held, outside functions, in the needs the block stands for holds a
     /// variable that is not its own. The flat needs show such a function to
     /// [`Sig::holds_only_own_variables`]; the block hides it, so `fns_outside` reads this bit
-    /// instead (landing round 2, Neon L2-B1). A substitution leaves it as it is: it changes
-    /// no function's own variables.
+    /// instead (landing round 2, Neon L2-B1). It is true only of the block as made: a
+    /// substitution that binds a sigma or exit variable to a non-variable can close a held
+    /// function over this one's variables, so such a substitution decodes the block first
+    /// (`Replacer::must_decode`) and never reads a stale bit (landing round 4, Gemini F-R4-3).
     pub held_foreign_fn: bool,
     /// Cached outer class variables if `#4` is dropped in a negative-control test.
     pub held_classes: BTreeSet<Arc<str>>,
@@ -4936,6 +5039,11 @@ pub struct FwdNeed {
     /// result a parameter, or a parameter a result, changes it (landing round 3, Codex
     /// L3.Codex-2). Set with `digest_summary` by [`r10_hash::set_fwd_digest_summary`].
     pub digest_sigma_ranks: Vec<Option<usize>>,
+    /// The span of the need that holds it when `digest_summary` was built: the summary hashes
+    /// the decoded needs, whose spans and paths are made from it, so a need moved to another
+    /// span ([`Need::alike_at`]) needs a new one (landing round 4, Codex L4.Codex-span).
+    /// `None` while no summary is stored.
+    pub digest_call_span: Option<Span>,
 }
 
 impl FwdNeed {
@@ -4984,6 +5092,31 @@ impl FwdNeed {
             .enumerate()
             .map(|(j, opt)| opt.unwrap_or_else(|| Ty::var(format!("${j}").into())))
             .collect()
+    }
+
+    /// Whether `name` is the variable of a result the block makes itself, one of
+    /// [`Self::internal_result_tys`], named as [`Self::materialize_result_tys`] names it.
+    // Complexity tradeoff (landing round 4, Codex L4.Codex-hidden): the naive test lists the
+    // results, O(need_count). Used: for named runs, [`NameRun::holds`] on each run, O(runs)
+    // index lookups; for class names `$k`, the number against the block's range and its exits,
+    // O(exits). The names a negative control gives (`explicit_result_vars`) and the
+    // fallback `$j` of a block with none are read in full, O(need_count).
+    pub fn holds_internal(&self, name: &str) -> bool {
+        let exit_at = |j: usize| self.exits.iter().any(|(o, _)| *o == j);
+        let class = |name: &str| {
+            let k = name.strip_prefix('$')?;
+            (!k.starts_with('+') && (k == "0" || !k.starts_with('0')))
+                .then(|| k.parse::<usize>().ok())
+                .flatten()
+        };
+        if let Some(fin) = &self.finish_naming {
+            return fin.runs.iter().any(|run| run.holds(name));
+        }
+        if let Some(lo) = self.base_class {
+            return class(name)
+                .is_some_and(|k| k >= lo && k - lo < self.need_count && !exit_at(k - lo));
+        }
+        (self.internal_result_tys().iter()).any(|t| t.as_var().is_some_and(|v| &**v == name))
     }
 
     /// The results the block makes itself, without its exits (`O(need_count)`): the variables
@@ -13915,7 +14048,9 @@ impl Ty {
 
     /// `self` with the variables `names` gives other names, at every depth, inside the
     /// functions it holds too, their own variables among them: each value of `names` is one
-    /// variable, and no two keys share one.
+    /// variable, and no two keys share one. The results a compact forward makes inside are
+    /// not variables of the signature it sits in until decoded, so `names` does not reach
+    /// them: their names are in the forward's runs, which [`Ty::renamed_runs`] renames.
     pub fn renamed(&self, names: &Binds) -> Ty {
         self.replace_in(names, Mode::Rename)
     }
@@ -28418,13 +28553,9 @@ pub mod r10_hash {
                                 any_needs_fallback = true;
                             }
                         }
-                        let can_fast = self.r == R_BASE
-                            && fwd
-                                .digest_summary
-                                .as_ref()
-                                .is_some_and(|ds| !ds.fallback_large_id)
-                            && fwd.sigma.iter().all(|(_, t)| t.as_var().is_some());
-                        if !can_fast && !fwd.sigma.iter().all(|(_, t)| t.as_var().is_some()) {
+                        // A sigma entry replaced by a non-variable is not what the summary
+                        // hashes, so the needs are hashed flat.
+                        if !fwd.sigma.iter().all(|(_, t)| t.as_var().is_some()) {
                             any_needs_fallback = true;
                         }
                         total_needs += fwd.need_count;
@@ -28497,8 +28628,13 @@ pub mod r10_hash {
                 for n in &s.needs {
                     match &n.kind {
                         NeedKind::Fwd(fwd)
-                            if let Some(ds) =
-                                cached_fwd_summary(fwd, cur_rank, &mat_result_ranks, self.r) =>
+                            if let Some(ds) = cached_fwd_summary(
+                                fwd,
+                                n.span,
+                                cur_rank,
+                                &mat_result_ranks,
+                                self.r,
+                            ) =>
                         {
                             self.part = self.part.concat(ds.body);
                             cur_rank += fwd.need_count;
@@ -28655,11 +28791,19 @@ pub mod r10_hash {
                     total_needs += fwd.need_count;
                 }
                 _ => {
-                    if let Some(v) = n.result.as_ref().and_then(Ty::as_var)
-                        && s.own.contains(v)
-                        && !arrow_param_vars.contains(v)
-                    {
-                        mat_result_ranks.entry(v.clone()).or_insert(total_needs);
+                    // A forward over this signature decodes each variable result as the
+                    // result it makes at that rank ([`FwdNeed::decode_uncounted`]), so the
+                    // summary holds only where each is an own result first met there, as the
+                    // exits above. A result replaced by a variable of a function around, a
+                    // parameter or an earlier result refuses it (landing round 4, Gemini
+                    // F-R4-2). Not taken on the chains.
+                    if let Some(v) = n.result.as_ref().and_then(Ty::as_var) {
+                        if s.own.contains(v) && !arrow_param_vars.contains(v) {
+                            let first = *mat_result_ranks.entry(v.clone()).or_insert(total_needs);
+                            exit_not_own_result |= first != total_needs;
+                        } else {
+                            exit_not_own_result = true;
+                        }
                     }
                     total_needs += 1;
                 }
@@ -28680,7 +28824,8 @@ pub mod r10_hash {
         for n in &s.needs {
             let piece = match &n.kind {
                 NeedKind::Fwd(fwd)
-                    if let Some(ds) = cached_fwd_summary(fwd, cur_rank, &mat_result_ranks, r) =>
+                    if let Some(ds) =
+                        cached_fwd_summary(fwd, n.span, cur_rank, &mat_result_ranks, r) =>
                 {
                     ds.clone()
                 }
@@ -28740,26 +28885,32 @@ pub mod r10_hash {
         fwd.digest_summary =
             build_fwd_summary_at_base(fwd, call_span, base_rank, caller_result_ranks, R_BASE);
         fwd.digest_base_rank = base_rank;
+        fwd.digest_call_span = Some(call_span);
         fwd.digest_sigma_ranks = (fwd.sigma.iter())
             .map(|(_, t)| t.as_var().and_then(|w| caller_result_ranks.get(w).copied()))
             .collect();
     }
 
     /// `fwd`'s stored summary, when it is the one [`build_fwd_summary_at_base`] would give now:
-    /// built at `cur_rank`, at `R_BASE`, and with each argument at the rank the caller gives it
-    /// now. A stored summary hashes each argument by the rank it had when it was built, so an
-    /// argument whose rank has changed since (a result bound to a parameter by a substitution,
-    /// landing round 3, Codex L3.Codex-2) needs a new one. `O(#sigma)` hash lookups, `O(1)` on
-    /// the chains. The naive alternative, building the summary each time, costs `O(#sigma)` too
-    /// while the callee's own summary is cached in its facts, but the callee's whole needs when
-    /// a clone has cleared them.
+    /// built at `cur_rank`, at `R_BASE`, for the need at `call_span`, and with each argument at
+    /// the rank the caller gives it now. A stored summary hashes each argument by the rank it
+    /// had when it was built, so an argument whose rank has changed since (a result bound to a
+    /// parameter by a substitution, landing round 3, Codex L3.Codex-2) needs a new one, as does
+    /// a need moved to another span (landing round 4, Codex L4.Codex-span). `O(#sigma)` hash
+    /// lookups, `O(1)` on the chains. The naive alternative, building the summary each time,
+    /// costs `O(#sigma)` too while the callee's own summary is cached in its facts, but the
+    /// callee's whole needs when a clone has cleared them.
     pub fn cached_fwd_summary<'a>(
         fwd: &'a FwdNeed,
+        call_span: Span,
         cur_rank: usize,
         caller_result_ranks: &HashMap<Arc<str>, usize>,
         r: u64,
     ) -> Option<&'a NeedBlockSummary> {
         let ds = fwd.digest_summary.as_ref()?;
+        if fwd.digest_call_span != Some(call_span) {
+            return None;
+        }
         let same_ranks = fwd.digest_sigma_ranks.len() == fwd.sigma.len()
             && (fwd.sigma.iter().zip(&fwd.digest_sigma_ranks)).all(|((_, t), &built)| {
                 t.as_var().and_then(|w| caller_result_ranks.get(w).copied()) == built

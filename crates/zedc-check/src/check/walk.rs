@@ -19084,6 +19084,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         if missing.is_empty() {
             return result;
         }
+        if sig.has_fwd_needs() {
+            self.r10_make_left_internal_classes(sig);
+        }
         let params = missing
             .iter()
             .map(|&j| match section {
@@ -19132,7 +19135,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             // take two tuples only when both are given (sec:reduction, item 5).
             word: None,
             needs,
-            own: sig.own.clone(),
+            // The needs left are decoded from `sig`'s compact forwards ([`Self::replay`]), so
+            // the results those forwards make inside are the rest's own, as the flat signature
+            // lists them, and their classes are made and named above
+            // ([`Self::r10_make_left_internal_classes`]); without either, the finished caller
+            // differs from the flat form's (landing round 4, Gemini F-R4-1). O(need_count) per
+            // forward, as the decode in `replay` already is; no work when `sig` keeps none.
+            own: {
+                let mut own = sig.own.clone();
+                for n in &sig.needs {
+                    if let NeedKind::Fwd(fwd) = &n.kind {
+                        let made = fwd.internal_result_tys();
+                        own.extend(made.iter().filter_map(Ty::as_var).cloned());
+                    }
+                }
+                own
+            },
             held: BTreeSet::new(),
             named: sig.named,
             // The rest returns what the whole call would.

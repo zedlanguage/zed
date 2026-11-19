@@ -413,6 +413,21 @@ impl NameRun {
         fresh_variable_span_stats_indexed(p, 1, &self.skip, &self.held).end_n - 1
     }
 
+    /// Whether `name` is one of its names: the places from `start_n` to [`Self::end_n`] that
+    /// neither `held` nor `skip` takes, as [`Self::names`] picks them.
+    // Complexity tradeoff (landing round 4, Codex L4.Codex-hidden): the naive test lists the
+    // names, O(count); used, the place of `name` against the run's ends and one lookup in each
+    // index, O(log(2 + h + s)·(log(2 + h) + log(2 + s))) for `end_n` (h held, s skipped names),
+    // independent of `count`.
+    pub fn holds(&self, name: &str) -> bool {
+        var_place(name).is_some_and(|p| {
+            p >= self.start_n
+                && !held_at(&self.held.0, p)
+                && !self.skip.contains(name)
+                && p < self.end_n()
+        })
+    }
+
     /// Its names, in order: O(count).
     pub fn names<S>(&self) -> Vec<S>
     where
@@ -497,7 +512,7 @@ pub enum NameItem {
 // Since `given` is merged where intervals touch, two passes in a row at intervals of `given`
 // have between them only places the run skips or the program binds. So a run with t kept
 // stretches and s skipped or bound places in its range makes at most 2t + 1 + s passes, each
-// O(log k), and the fresh loop's jumps over intervals of `used` cost O(log k) each, at most
+// O(log k + c) (c below), and the fresh loop's jumps over intervals of `used` cost O(log k) each, at most
 // one per interval of `used` in all, since `n` only grows. The work is then O(log k) times
 // the input (V names, and 1 + s per run) plus the runs given. Before `given` was merged, a run
 // over names given one at a time met each of them: v names under m such runs gave m·2v runs
@@ -520,9 +535,14 @@ pub enum NameItem {
 // Each such place is counted at most twice, so the run adds at most
 // t + s_in - 2(t - 1) + 2 s_out <= 2 - t + 2s to P, that is t + (its change of P) <= 2 + 2s.
 // Summing (a), (b), (c) over the whole call with P >= 0 at the end gives the bound. So the
-// passes and the jumps are O(V + sum of (1 + s)) in all, each O(log k). Tradeoff: a run with
-// many kept stretches costs O(log k) for each, against O(1) for each name in the naive
-// version.
+// passes and the jumps are O(V + sum of (1 + s)) in all, each O(log k + c), where c is the
+// cost of the name-index searches a pass makes (`first_at` and `end_n` call
+// `fresh_variable_span_stats_indexed`): a bisection over an interval as wide as the h places
+// of the skip index it reads, each probe a search of that index, O(log(h + s) (log h +
+// log s)); h counts the places of the indexes read, not the holes inside a run, so a run of
+// one place with no holes still pays it (landing round 4, Codex L4.Codex-run-cost). Tradeoff:
+// a run with many kept stretches costs O(log k + c) for each, against O(1) for each name in
+// the naive version.
 //
 // Proof that it gives the names the naive version gives:
 // (1) No two intervals of `given` overlap, since each insert merges with every interval it
@@ -973,6 +993,35 @@ mod tests {
             assert_eq!(m - 1 + kept, 2 * m - 1, "m = {m}: {last:?}");
             assert!(m - 1 + kept <= 2 * m, "the proved bound");
             assert_eq!(written_out(&out), one_at_a_time(&items));
+        }
+    }
+
+    /// [`NameRun::holds`] answers as [`NameRun::names`] lists, for runs that start at a letter
+    /// and at a numbered place, over places the program binds and places the run skips, and
+    /// for names no pick gives (landing round 4, Codex L4.Codex-hidden).
+    #[test]
+    fn a_run_holds_the_names_it_lists() {
+        let _names = ProgramNames::hold(["U", "T7", "T8", "T12"]);
+        let snap = current_held_var_snapshot();
+        let skip = Arc::new(SkipIndex::new(["V", "T10", "T13"], &snap));
+        let all: Vec<String> = (0..30).map(|n| Names::Variables.nth(n)).collect();
+        let odd = ["x", "T0", "T1", "T4", "T05", "Part1", "$3"];
+        for (start_n, count) in [(0, 1), (0, 6), (1, 3), (4, 5), (6, 2), (9, 7)] {
+            let run = NameRun {
+                start_n,
+                count,
+                skip: skip.clone(),
+                held: snap.clone(),
+            };
+            let listed: HashSet<String> = run.names::<String>().into_iter().collect();
+            assert_eq!(listed.len(), count);
+            for name in all.iter().map(String::as_str).chain(odd) {
+                assert_eq!(
+                    run.holds(name),
+                    listed.contains(name),
+                    "{name} in the run at {start_n} of {count}: {listed:?}"
+                );
+            }
         }
     }
 }
