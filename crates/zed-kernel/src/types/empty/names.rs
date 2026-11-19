@@ -683,3 +683,65 @@ impl Partition {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Bes, Kind, Lift, merged};
+
+    /// Item TEST-kernel-unreached-paths-6: [`Lift::lca`] agrees with the walk up the parents on
+    /// every pair of a tree of 200 nodes whose branches part at many depths. The dominator trees
+    /// of the tests elsewhere part only below the root's children, so the climb of two nodes of
+    /// one depth by their ancestors 2^j above (the line `(a, c) = (x, y)`) never ran.
+    #[test]
+    fn the_lowest_common_ancestor_by_doubling_agrees_with_the_walk_up_the_parents() {
+        let k = 200u32;
+        let mut tree = Lift::new(k as usize);
+        let mut parent = vec![k; k as usize + 1];
+        // Nodes 0 to 2 hang from the root and node `v` from node `(v - 3) / 3`: three children
+        // each, so the depth grows with the logarithm of `v`.
+        for v in 0..k {
+            let p = if v < 3 { k } else { (v - 3) / 3 };
+            parent[v as usize] = p;
+            tree.attach(v, p);
+        }
+        let ancestors = |mut v: u32| {
+            let mut up = vec![v];
+            while v != k {
+                v = parent[v as usize];
+                up.push(v);
+            }
+            up
+        };
+        for a in 0..=k {
+            let ua = ancestors(a);
+            for c in 0..=k {
+                let uc = ancestors(c);
+                let expected = *ua.iter().find(|x| uc.contains(x)).expect("the root");
+                assert_eq!(tree.lca(a, c), expected, "lca({a}, {c})");
+            }
+        }
+    }
+
+    /// Item TEST-kernel-unreached-paths-6: [`merged`] on a system with a union of one distinct
+    /// arm (node 4, `Or[1, 1]`) and no two other nodes alike gives the contracted copy itself,
+    /// with node 4 read as node 1. Node 0 is read first, and its arm node 1 is pushed twice
+    /// (once by node 0 and once by its arm node 2) before it is read, so the walk of
+    /// `contracted` meets a node already read (the `continue` inside its loop).
+    #[test]
+    fn a_union_of_one_arm_with_no_two_nodes_alike_gives_the_contracted_copy() {
+        let mut b = Bes::new();
+        b.add(Kind::Or, vec![1, 2]);
+        b.add(Kind::Top, Vec::new());
+        b.add(Kind::Or, vec![1, 3]);
+        b.add(Kind::Bot, Vec::new());
+        b.add(Kind::Or, vec![1, 1]);
+        b.seal();
+        let (c, to, union) =
+            merged(&b, &[false; 5], &[true, false, true, false, true]).expect("node 4 is node 1");
+        assert_eq!(to, [0, 1, 2, 3, 1]);
+        assert_eq!(union, [true, false, true, false]);
+        assert_eq!(c.len(), 4);
+        assert_eq!(c.children(0), [1, 2]);
+        assert_eq!(c.children(2), [1, 3]);
+    }
+}
