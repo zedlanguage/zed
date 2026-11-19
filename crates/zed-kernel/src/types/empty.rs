@@ -1029,8 +1029,8 @@ impl Type {
     }
 
     /// A value of `self` built by the two searches of `verdict_alone`, the first that builds one,
-    /// as a plain value; `None` when neither builds one, or when the one built holds a value
-    /// with no plain form (a closure). Nothing is kept: each call searches again. For tests, so
+    /// as a value (`Search::value`); `None` when neither builds one, or when the one built
+    /// holds a closure or a struct. Nothing is kept: each call searches again. For tests, so
     /// an `Inhabited` verdict can be checked with [`Type::contains`] on the value it rests on.
     // Complexity tradeoff: the cost of `verdict_alone`'s searches, with no front sweep (it gives
     // a verdict, never a value) and no cache, against keeping the value of every verdict for a
@@ -1046,7 +1046,7 @@ impl Type {
         s.solve(self);
         if s.refused.is_none()
             && let Some(r) = s.rep(self)
-            && let Some(v) = s.plain(r)
+            && let Some(v) = s.value(r)
         {
             return Some(v);
         }
@@ -1056,7 +1056,7 @@ impl Type {
             ..Search::default()
         };
         let r = s.rep(self)?;
-        s.plain(r)
+        s.value(r)
     }
 
     /// Whether a search that does not end at a fork proves `self` empty with no fork under it:
@@ -3459,6 +3459,81 @@ impl Search {
             todo.pop();
         }
         self.plain[&v].clone()
+    }
+
+    /// The value numbered `v` as a value, for [`Type::witness`]: what [`Search::plain`] gives,
+    /// and atoms and lists too, values of other searches read in ([`Search::local`]); `None`
+    /// when it holds a closure or a struct. Each value is read once, from a list rather than
+    /// the thread's stack, as in `plain`.
+    // Complexity tradeoff: kept apart from `plain`, which `Searching::holds_known` reads in place
+    // of a membership test, so the search's path and cost are as they were; `plain` alone gave
+    // no value for any list, so `witness` gave none for an inhabited type of lists (the lists
+    // of only 1s, BENCH-row-rep-many-tuples). A `Rep::List` is built link by link, linear in its
+    // length, which the search keeps as a number since a meet of pure cycles can make it
+    // exponential in the cycles; that length is the size of the value asked for. Read only by
+    // `witness`, a query for tests.
+    fn value(&mut self, v: usize) -> Option<Value> {
+        let mut made: HashMap<usize, Option<Value>> = HashMap::new();
+        // The values whose parts were pushed once: met again with a part still missing, that
+        // part waits on it, a cycle (only a closure can close one, and a closure is a leaf
+        // here, but nothing else rules it out), so it gives no value rather than loop.
+        let mut entered: HashSet<usize> = HashSet::new();
+        let mut todo = vec![v];
+        while let Some(&w) = todo.last() {
+            if made.contains_key(&w) {
+                todo.pop();
+                continue;
+            }
+            let at = self.local(w);
+            let parts: Vec<usize> = match &self.shown[at] {
+                Rep::Tuple(vs) => vs.clone(),
+                Rep::Atom(_, p) => vec![*p],
+                Rep::List { item, .. } => vec![*item],
+                _ => vec![],
+            };
+            let missing: Vec<usize> = parts
+                .iter()
+                .copied()
+                .filter(|p| !made.contains_key(p))
+                .collect();
+            if !missing.is_empty() {
+                if entered.insert(w) {
+                    todo.extend(missing);
+                } else {
+                    made.insert(w, None);
+                    todo.pop();
+                }
+                continue;
+            }
+            let got = |p: usize| made[&p].clone();
+            let x = match &self.shown[at] {
+                Rep::Value(x) => Some(x.clone()),
+                Rep::Tuple(vs) => (vs.iter().map(|&p| got(p)))
+                    .collect::<Option<Vec<Value>>>()
+                    .map(Value::tuple),
+                Rep::Atom(name, p) => match got(*p) {
+                    Some(Value::Tuple(items)) => {
+                        Some(Value::atom_with(name.clone(), items.as_slice().to_vec()))
+                    }
+                    _ => None,
+                },
+                Rep::List {
+                    stop,
+                    link,
+                    item,
+                    len,
+                } => match (got(*item), usize::try_from(len)) {
+                    (Some(x), Ok(n)) => Some((0..n).fold(Value::atom(stop), |rest, _| {
+                        Value::atom_with(link.clone(), vec![x.clone(), rest])
+                    })),
+                    _ => None,
+                },
+                Rep::Of { .. } | Rep::Closure(_) | Rep::Struct => None,
+            };
+            made.insert(w, x);
+            todo.pop();
+        }
+        made.remove(&v).flatten()
     }
 
     /// The key of the value numbered `v` ([`Columns`]): the last value along its first
@@ -10879,12 +10954,35 @@ impl<'m> Searching<'m> {
                 // `a_difference_of_forked_unions_is_refused_in_its_size` does (K80). `all_inside`
                 // says whether every candidate was skipped so.
                 let mut all_inside = true;
+                // Complexity tradeoff (COMPLEXITY.md K135, BENCH-row-rep-many-tuples): when the
+                // narrowed part is a plain union of its tuple types (`Part::union_rows`), each
+                // candidate is the box met with its tuple type, checked by `row_rep` with no
+                // narrowing. Proof that nothing is lost: on the box `b`, `g` is `f` (narrowing
+                // only drops values outside `f`), so with `g` the union of the `a`, every value
+                // of `b.r & a` is a value of `f`; narrowing the candidate drops only values outside
+                // `f`, so it leaves the same values, and `row_rep` searches them either way.
+                // Naive version: each candidate narrowed, which tests the changed components
+                // against every open cell, `n` candidates by `n` cells: 115,094 cell tests at
+                // `n` 128, and the verdict 0.66 s at 64 and 47.3 s at 512, on `n` pairs of a list
+                // of `i` and a morphism type with no value built, met with the pairs of a list of
+                // integers and any value (71 times the time per 8 times `n`, load about 95).
+                // Used: one meet and one `row_rep` per candidate, `O(n)` meets; 37 ms to 338 ms
+                // from `n` 64 to 512 (9.1 times, load 74 to 80, debug build). Bench:
+                // `refusals::bench::a_plain_union_of_forked_tuple_types_without_values_is_refused_in_its_size`.
+                let union = g.union_rows().is_some();
                 for a in g.distinct_atoms() {
                     let k = b.index[&a];
                     if refused[k] || self.inside_excluded(&b, k, &sharing).await {
                         continue;
                     }
                     all_inside = false;
+                    if union {
+                        let row: Vec<Type> = b.r.iter().zip(a.iter()).map(|(x, y)| x & y).collect();
+                        if let Some(v) = self.row_rep(&row, f).await {
+                            return Some(v);
+                        }
+                        continue;
+                    }
                     let mark = b.log.len();
                     for j in 0..b.r.len() {
                         if b.is_open(k, j) {

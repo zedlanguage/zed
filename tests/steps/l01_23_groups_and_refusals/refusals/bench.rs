@@ -1754,3 +1754,87 @@ fn r11_payload_name_prefixes_must_scale() {
         });
     });
 }
+
+/// `make` at `n` and `8 * n` with the verdict `want` at both, each run on a type built before
+/// any run is timed. `tag` keeps the names of each run's types apart.
+fn forked_tuples_scale(
+    what: &str,
+    tag: &str,
+    n: usize,
+    want: Verdict,
+    make: fn(usize, &str) -> Type,
+) {
+    big(|| {
+        let (s_runs, l_runs) = scaling::Meter::new().runs();
+        let copies = |k: usize, runs: usize| -> Vec<Type> {
+            (0..runs)
+                .map(|i| make(k, &format!("_{tag}_{k}_{i}")))
+                .collect()
+        };
+        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        scaling::check(what, n, |k| {
+            Type::forget_emptiness();
+            let t = if k == n {
+                &small[si.fetch_add(1, Relaxed)]
+            } else {
+                &large[li.fetch_add(1, Relaxed)]
+            };
+            assert_eq!(t.verdict(), want, "{what} at {k}");
+        });
+    });
+}
+
+// A plain union of `n` tuple types met at one fork, and many forks of four tuple types each
+// (BENCH-row-rep-many-tuples). Both sides of the search at a fork: the first candidate a value
+// (Inhabited), and every candidate failing (the refusal at the fork). Before the union was
+// searched one candidate row at a time with no narrowing (COMPLEXITY.md K135), the refused side
+// was quadratic: 40 ms at `n` 16 and 2.5 s at 128 (62 times, load 56, debug build). With the
+// change, instructions at `n` and 8n, load 46.75 to 47.49: one fork with values 8.048 (1x
+// 454 ms), without 7.981 (502 ms); many forks with values 7.962 (522 ms), without 8.015
+// (359 ms). Small instances:
+// `refusals::a_plain_union_of_forked_tuple_types_is_tried_one_tuple_type_at_a_time`.
+
+#[test]
+fn a_plain_union_of_forked_tuple_types_with_values_is_inhabited_in_its_size() {
+    forked_tuples_scale(
+        "plain union of forked tuple types, with values",
+        "ftv",
+        512,
+        Verdict::Inhabited,
+        forked_tuples_with_values,
+    );
+}
+
+#[test]
+fn a_plain_union_of_forked_tuple_types_without_values_is_refused_in_its_size() {
+    forked_tuples_scale(
+        "plain union of forked tuple types, without values",
+        "ftw",
+        512,
+        Verdict::Refused(Refusal::Fork),
+        forked_tuples_without_values,
+    );
+}
+
+#[test]
+fn many_forks_of_plain_unions_with_values_are_inhabited_in_their_size() {
+    forked_tuples_scale(
+        "many forks of plain unions, with values",
+        "ftmv",
+        256,
+        Verdict::Inhabited,
+        |n, tag| forked_tuples_at_many_forks(n, tag, forked_tuples_with_values),
+    );
+}
+
+#[test]
+fn many_forks_of_plain_unions_without_values_are_refused_in_their_size() {
+    forked_tuples_scale(
+        "many forks of plain unions, without values",
+        "ftmw",
+        256,
+        Verdict::Refused(Refusal::Fork),
+        forked_unions_without_values,
+    );
+}

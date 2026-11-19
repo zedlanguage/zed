@@ -9406,3 +9406,134 @@ fn r10_precision_case(tag: &str, reverse: bool) -> Type {
     assert!(r3_oracle(&ns, &[1, 2, 3, 7, 8], 63));
     r3_build(&ns, &[1, 2, 3, 7, 8], 63, reverse, tag, 0)
 }
+
+// A plain union of many tuple types met at forks (BENCH-row-rep-many-tuples). Before it refuses
+// a part whose open tuple types fork, `Searching::tuples_on` tries one candidate value per tuple
+// type when the part is a plain union (`row_rep`, COMPLEXITY.md K134). The benches
+// `refusals::bench::a_plain_union_of_forked_tuple_types_*` hold that work to the size of the
+// union on both sides: the first candidate a value, and every candidate failing before the
+// refusal.
+
+/// For each `i` up to `n`, the pairs of a list of only `i`s and `second(i, tag)`, joined, met
+/// with the pairs of a list of integers and `box_second`. On that box the tuple types of the
+/// union fork: their first components are `n` recursive types, each on a cycle of its group.
+fn forked_tuples_met(
+    n: usize,
+    tag: &str,
+    second: impl Fn(usize, &str) -> Type,
+    box_second: Type,
+) -> Type {
+    let union = (1..=n).fold(Type::empty(), |u, i| {
+        let t = format!("{tag}_{i}");
+        &u | &Type::tuple(vec![list_named(lit(i as i64), &t), second(i, &t)])
+    });
+    &Type::tuple(vec![list_named(Type::int(), tag), box_second]) & &union
+}
+
+/// [`forked_tuples_met`] with the second component the lists of `i`'s length parity, on pairs
+/// of lists of integers: inhabited, and the first candidate tried at the fork is a value.
+fn forked_tuples_with_values(n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), &format!("{tag}b"));
+    forked_tuples_met(n, tag, |i, t| period_named(2, i % 2, t), l)
+}
+
+/// [`forked_tuples_met`] with the second component [`morphism_between`], whose verdict is
+/// refused for want of a value (no closure is built for it): at the fork no candidate has a
+/// value of its second component, so every candidate fails and the part is refused there.
+fn forked_tuples_without_values(n: usize, tag: &str) -> Type {
+    forked_tuples_met(n, tag, |_, _| morphism_between(), Type::top())
+}
+
+/// The tuple of `n` components, the `j`th `make(4, ..)` named apart: `n` forks, each met with a
+/// union of four tuple types of its own. Inhabited only when every component is, so with
+/// [`forked_tuples_with_values`] each fork is searched to its value.
+fn forked_tuples_at_many_forks(n: usize, tag: &str, make: fn(usize, &str) -> Type) -> Type {
+    Type::tuple((0..n).map(|j| make(4, &format!("{tag}_{j}f"))).collect())
+}
+
+/// The union of `n` copies of [`forked_tuples_without_values`] at 4, named apart: `n` forks,
+/// each refused after its four candidates fail, and none of them can be skipped, since a value
+/// at any one would make the union inhabited.
+fn forked_unions_without_values(n: usize, tag: &str) -> Type {
+    (0..n).fold(Type::empty(), |u, j| {
+        &u | &forked_tuples_without_values(4, &format!("{tag}_{j}u"))
+    })
+}
+
+/// Small instance of the benches `a_plain_union_of_forked_tuple_types_*`
+/// (BENCH-row-rep-many-tuples): the verdicts they hold at each size. With values the type is
+/// inhabited and the value given is in it; without, every candidate at the fork fails and the
+/// verdict is the refusal at the fork, never Empty or Inhabited. From 2 tuple types, the fewest
+/// that fork (with one, the type without values is refused for want of a value instead).
+#[test]
+fn a_plain_union_of_forked_tuple_types_is_tried_one_tuple_type_at_a_time() {
+    big(|| {
+        for n in 2..=6 {
+            let cases = [
+                (forked_tuples_with_values(n, &format!("_ptv{n}")), true),
+                (forked_tuples_without_values(n, &format!("_ptw{n}")), false),
+                (
+                    forked_tuples_at_many_forks(n, &format!("_ptmv{n}"), forked_tuples_with_values),
+                    true,
+                ),
+                (forked_unions_without_values(n, &format!("_ptmw{n}")), false),
+            ];
+            for (k, (t, inhabited)) in cases.into_iter().enumerate() {
+                Type::forget_emptiness();
+                if inhabited {
+                    assert_eq!(t.verdict(), Verdict::Inhabited, "case {k} at {n}");
+                    Type::forget_emptiness();
+                    let x = t
+                        .witness()
+                        .unwrap_or_else(|| panic!("case {k} at {n} is Inhabited with no value"));
+                    assert!(t.contains(&x), "case {k} at {n}: {x} is not in the type");
+                } else {
+                    assert_eq!(
+                        t.verdict(),
+                        Verdict::Refused(Refusal::Fork),
+                        "case {k} at {n}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// `Type::witness` gives a value for inhabited types of lists, alone, in tuples and met with
+/// other lists, and the value is in the type. Before `Search::value` it gave `None` for every
+/// list, so an `Inhabited` verdict on lists could not be checked with `contains`
+/// (BENCH-row-rep-many-tuples).
+#[test]
+fn witness_gives_a_value_for_types_of_lists() {
+    big(|| {
+        let odd = period_named(2, 1, "_wl1");
+        let ones = list_named(lit(1), "_wl1");
+        let l = list_named(Type::int(), "_wl1l");
+        let cases = [
+            ("odd", odd.clone()),
+            ("ones", ones.clone()),
+            ("pair", Type::tuple(vec![ones.clone(), odd.clone()])),
+            (
+                "meet",
+                &Type::tuple(vec![l.clone(), odd.clone()])
+                    & &Type::tuple(vec![ones.clone(), odd.clone()]),
+            ),
+            (
+                "meet-l",
+                &Type::tuple(vec![l.clone(), l.clone()])
+                    & &Type::tuple(vec![ones.clone(), odd.clone()]),
+            ),
+            ("ones&l", &ones & &l),
+            ("odd&l", &odd & &l),
+        ];
+        for (name, t) in cases {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited, "{name}");
+            Type::forget_emptiness();
+            let x = t
+                .witness()
+                .unwrap_or_else(|| panic!("{name} is Inhabited with no value"));
+            assert!(t.contains(&x), "{name}: {x} is not in the type");
+        }
+    });
+}
