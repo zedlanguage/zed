@@ -61,12 +61,26 @@ impl Ord for Lin {
     // constraints of a set; the walk only when they are equal. The same order, O(1) when the
     // first pairs differ and O(t) at worst as before. Test
     // `l01_38_presburger::shared::terms_compare_as_their_derived_order`, COMPLEXITY.md row
-    // ST-chain-raise-reverse-log.
+    // ST-chain-raise-reverse-log. When the first pairs are equal and either term has only
+    // that pair, it is a prefix of the other, so the terms are ordered by their number of
+    // pairs, and by the constant when both have one: O(1) without the walk, which the
+    // constraints `x - c >= 0` of a set, all with the first pair `(x, 1)`, took at each
+    // comparison (COMPLEXITY.md row PERF-l139-lin-prefix). When both have two pairs, the
+    // last pairs are the second, so they are read directly too, as for `x + j * y - 1 >= 0`
+    // and `x - j * y - 1 >= 0`.
     fn cmp(&self, other: &Lin) -> std::cmp::Ordering {
         if let (Some(a), Some(b)) = (self.terms.first_key_value(), other.terms.first_key_value()) {
             match a.cmp(&b) {
                 std::cmp::Ordering::Equal => {}
                 o => return o,
+            }
+            let (m, n) = (self.terms.len(), other.terms.len());
+            if m == 1 || n == 1 {
+                return m.cmp(&n).then_with(|| self.constant.cmp(&other.constant));
+            }
+            if m == 2 && n == 2 {
+                return (self.terms.last_key_value().cmp(&other.terms.last_key_value()))
+                    .then_with(|| self.constant.cmp(&other.constant));
             }
         }
         self.terms

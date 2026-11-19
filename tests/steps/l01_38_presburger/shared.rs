@@ -1143,9 +1143,10 @@ fn nodes_of_constraints_alone_compare_as_written_out() {
 
 /// Terms compare as their derived order would, the pairs of atom and coefficient in order and
 /// then the constant, though the first pairs are read apart from the rest (COMPLEXITY.md row
-/// ST-chain-raise-reverse-log): terms with no pairs, one a prefix of another, the same first
-/// pair and another second, first atoms or coefficients that differ, symbols against
-/// auxiliary variables, and equal pairs with other constants. Each pair of terms is also
+/// ST-chain-raise-reverse-log), and when one has a single pair or both two, the last pairs
+/// (PERF-l139-lin-prefix): terms with no pairs, one a prefix of another, the same first pair
+/// and another second, first atoms or coefficients that differ, symbols against auxiliary
+/// variables, and equal pairs with other constants, of one pair and of two. Each pair of terms is also
 /// compared as constraints, which the conjuncts of a relation are kept in the order of.
 #[test]
 fn terms_compare_as_their_derived_order() {
@@ -1171,6 +1172,7 @@ fn terms_compare_as_their_derived_order() {
         lin(&[(x.clone(), 1)], 2),
         lin(&[(x.clone(), -1)], 0),
         lin(&[(x.clone(), 1), (y.clone(), -1)], 0),
+        lin(&[(x.clone(), 1), (y.clone(), -1)], 3),
         lin(&[(x.clone(), 1), (y.clone(), 1)], 0),
         lin(&[(x.clone(), 1), (z.clone(), -1)], 0),
         lin(&[(x.clone(), 1), (y.clone(), -1), (z.clone(), 1)], 0),
