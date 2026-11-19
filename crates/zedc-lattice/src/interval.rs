@@ -1193,8 +1193,6 @@ impl IntervalSet {
 /// adjacent, as [`normal_pieces`] gives them; the result is in the same form. Revision caps the
 /// lists it works on with it, so that no set is built for a list that is read once.
 pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> {
-    use std::cmp::Reverse;
-    use std::collections::BinaryHeap;
     let limit = limit.max(1);
     let n = pieces.len();
     if n <= limit {
@@ -1210,12 +1208,12 @@ pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> 
         (Fin(hi), Fin(lo)) => lo - hi,
         _ => unreachable!("only the outer endpoints are infinite"),
     };
-    let mut heap: BinaryHeap<Reverse<(Num, usize, usize)>> = (0..n - 1)
-        .map(|i| Reverse((gap(&pieces[i], &pieces[i + 1]), i, i + 1)))
+    let mut heap: zed_graph::MinHeap<(Num, usize, usize)> = (0..n - 1)
+        .map(|i| (gap(&pieces[i], &pieces[i + 1]), i, i + 1))
         .collect();
     let mut count = n;
     while count > limit {
-        let Reverse((_, at, right_was)) = heap.pop().expect("a gap for each pair");
+        let (_, at, right_was) = heap.pop().expect("a gap for each pair");
         let right = next[at];
         if !alive[at] || right >= n || right != right_was {
             continue;
@@ -1225,7 +1223,7 @@ pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> 
         next[at] = next[right];
         if next[at] < n {
             let r = next[at];
-            heap.push(Reverse((gap(&pieces[at], &pieces[r]), at, r)));
+            heap.push((gap(&pieces[at], &pieces[r]), at, r));
         }
         count -= 1;
     }

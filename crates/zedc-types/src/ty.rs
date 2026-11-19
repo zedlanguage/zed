@@ -10074,7 +10074,6 @@ impl<'m, 's> Comparing<'m, 's> {
         binds: &mut Binds,
         fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
     ) -> Result<bool, (M, usize, Bucket)> {
-        use std::cmp::Reverse;
         let buckets = {
             let cx = self.cx.borrow();
             if cx.unchosen.is_some() {
@@ -10133,17 +10132,16 @@ impl<'m, 's> Comparing<'m, 's> {
         }
         // Each list's next shape, by the shape first, so the heap yields written order; a list
         // replaced by new pins of its bucket is no longer `live`.
-        let mut heads: std::collections::BinaryHeap<Reverse<(usize, usize, usize)>> =
-            (lists.iter().enumerate())
-                .filter_map(|(i, (_, l))| {
-                    let (r, n) = l.after(None)?;
-                    Some(Reverse((r, i, n)))
-                })
-                .collect();
+        let mut heads: Heads = (lists.iter().enumerate())
+            .filter_map(|(i, (_, l))| {
+                let (r, n) = l.after(None)?;
+                Some((r, i, n))
+            })
+            .collect();
         let mut live = vec![true; lists.len()];
         // The lists of the bucket `k` from past the shape `r` on put in place of those read so
         // far, which are no longer live.
-        type Heads = std::collections::BinaryHeap<Reverse<(usize, usize, usize)>>;
+        type Heads = zed_graph::MinHeap<(usize, usize, usize)>;
         fn replace<'c>(
             k: usize,
             r: usize,
@@ -10159,7 +10157,7 @@ impl<'m, 's> Comparing<'m, 's> {
             }
             for l in new {
                 if let Some((first, n)) = l.after(Some(r)) {
-                    heads.push(Reverse((first, lists.len(), n)));
+                    heads.push((first, lists.len(), n));
                 }
                 lists.push((k, l));
                 live.push(true);
@@ -10169,13 +10167,13 @@ impl<'m, 's> Comparing<'m, 's> {
         // that shape.
         let mut failed = vec![false; buckets.len()];
         let mut past = vec![false; buckets.len()];
-        while let Some(Reverse((r, i, n))) = heads.pop() {
+        while let Some((r, i, n)) = heads.pop() {
             if !live[i] {
                 continue;
             }
             let k = lists[i].0;
             if let Some((next, n)) = lists[i].1.next(r, n) {
-                heads.push(Reverse((next, i, n)));
+                heads.push((next, i, n));
             }
             if failed[k] && !past[k] && !scan_all {
                 match searched.by.entry(at(k)) {

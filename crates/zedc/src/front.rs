@@ -5,9 +5,10 @@
 //! (`crate::run`) read them through the queries, so this file is below all three.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use zed_graph::MinHeap;
 use zed_kernel::{Shared, Term};
 
 use crate::address::ContentAddress;
@@ -481,10 +482,10 @@ fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
 fn rows(items: impl Iterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
     let mut rows: Vec<Vec<usize>> = Vec::new();
     // Each row by the first column free after its last item.
-    let mut free: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
+    let mut free: MinHeap<(usize, usize)> = MinHeap::new();
     for (k, (from, after)) in items.enumerate() {
         let row = match free.peek() {
-            Some(&Reverse((at, row))) if at <= from => {
+            Some(&(at, row)) if at <= from => {
                 free.pop();
                 row
             }
@@ -494,7 +495,7 @@ fn rows(items: impl Iterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
             }
         };
         rows[row].push(k);
-        free.push(Reverse((after, row)));
+        free.push((after, row));
     }
     rows
 }

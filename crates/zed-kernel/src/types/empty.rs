@@ -3979,8 +3979,7 @@ impl Heights {
         let mut nodes: Vec<HeightNode> = Vec::new();
         let mut users: Vec<Vec<usize>> = Vec::new();
         let mut rules: Vec<Rule> = Vec::new();
-        let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<(u64, usize)>> =
-            std::collections::BinaryHeap::new();
+        let mut ready: zed_graph::MinHeap<(u64, usize)> = zed_graph::MinHeap::new();
         index.insert(root.clone(), 0);
         nodes.push(root.clone());
         users.push(Vec::new());
@@ -4000,13 +3999,13 @@ impl Heights {
                         || p.morphisms.is_leaf() != Some(false)
                         || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
                     {
-                        ready.push(std::cmp::Reverse((0, n)));
+                        ready.push((0, n));
                     }
                     if p.tuples.rest {
-                        ready.push(std::cmp::Reverse((1, n)));
+                        ready.push((1, n));
                     }
                     if p.atoms.bare_names() > 0 {
-                        ready.push(std::cmp::Reverse((0, n)));
+                        ready.push((0, n));
                     }
                     if let Some(pr) = p.atoms.payload_dag() {
                         children.push((0, vec![HeightNode::Payloads(pr.clone())]));
@@ -4022,7 +4021,7 @@ impl Heights {
                                 }),
                             );
                         } else {
-                            ready.push(std::cmp::Reverse((1, n)));
+                            ready.push((1, n));
                         }
                     }
                 }
@@ -4059,13 +4058,13 @@ impl Heights {
                     }
                 }
                 if rule.waiting == 0 && rule.base != u64::MAX {
-                    ready.push(std::cmp::Reverse((rule.base, n)));
+                    ready.push((rule.base, n));
                 }
                 rules.push(rule);
             }
         }
         let mut height = vec![u64::MAX; nodes.len()];
-        while let Some(std::cmp::Reverse((h, n))) = ready.pop() {
+        while let Some((h, n)) = ready.pop() {
             if height[n] != u64::MAX {
                 continue;
             }
@@ -4075,7 +4074,7 @@ impl Heights {
                 rule.base = rule.base.max(h.saturating_add(rule.add));
                 rule.waiting -= 1;
                 if rule.waiting == 0 && rule.base != u64::MAX && height[rule.node] == u64::MAX {
-                    ready.push(std::cmp::Reverse((rule.base, rule.node)));
+                    ready.push((rule.base, rule.node));
                 }
             }
         }

@@ -9,9 +9,9 @@
 
 mod brooks;
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+use zed_graph::MinHeap;
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -1050,10 +1050,10 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     };
     let mut row_weight: Vec<u64> = top_cons.iter().map(|c| con_bit_weight(c)).collect();
     let mut queued = vec![true; top_cons.len()];
-    let mut queue: BinaryHeap<Reverse<(u64, usize)>> = row_weight
+    let mut queue: MinHeap<(u64, usize)> = row_weight
         .iter()
         .enumerate()
-        .map(|(i, &w)| Reverse((w, i)))
+        .map(|(i, &w)| (w, i))
         .collect();
     // Puts the rows of a modified class back in the priority worklist with at least `trigger_w`.
     fn requeue(
@@ -1061,7 +1061,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         trigger_w: u64,
         row_weight: &mut [u64],
         queued: &mut [bool],
-        queue: &mut BinaryHeap<Reverse<(u64, usize)>>,
+        queue: &mut MinHeap<(u64, usize)>,
     ) {
         for &i in rows.into_iter().flatten() {
             if trigger_w > row_weight[i] {
@@ -1069,11 +1069,11 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             }
             if !queued[i] {
                 queued[i] = true;
-                queue.push(Reverse((row_weight[i], i)));
+                queue.push((row_weight[i], i));
             }
         }
     }
-    while let Some(Reverse((_, i))) = queue.pop() {
+    while let Some((_, i)) = queue.pop() {
         queued[i] = false;
         let c = &top_cons[i];
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);

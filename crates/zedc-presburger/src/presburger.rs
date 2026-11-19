@@ -25395,12 +25395,12 @@ impl<'a> Differences<'a> {
         // or more; and how far it has been expanded: 0 not yet, 1 with one source, 2 with none.
         let mut label: Vec<Option<(Int, Option<usize>)>> = vec![None; edges.len()];
         let mut expanded = vec![0u8; edges.len()];
-        let mut heap = std::collections::BinaryHeap::new();
+        let mut heap = zed_graph::MinHeap::new();
         for &s in sources {
             label[s] = Some((Int::ZERO, Some(s)));
-            heap.push(std::cmp::Reverse((Int::ZERO, s)));
+            heap.push((Int::ZERO, s));
         }
-        while let Some(std::cmp::Reverse((d, u))) = heap.pop() {
+        while let Some((d, u)) = heap.pop() {
             let Some((du, from)) = label[u].clone() else {
                 continue;
             };
@@ -25427,7 +25427,7 @@ impl<'a> Differences<'a> {
                     _ => from,
                 };
                 label[*v] = Some((nd.clone(), next));
-                heap.push(std::cmp::Reverse((nd, *v)));
+                heap.push((nd, *v));
             }
         }
         // Back from reduced distances: `d(v) = d'(v) - sign·(p(s) - p(v))` for the source `s`.

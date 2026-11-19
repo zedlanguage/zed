@@ -15,6 +15,7 @@ crate-type = ["rlib", "dylib"]
 [dependencies]
 blake3.workspace = true
 imbl.workspace = true
+zed-graph.workspace = true
 zed-kernel.workspace = true
 zedc-syntax.workspace = true
 

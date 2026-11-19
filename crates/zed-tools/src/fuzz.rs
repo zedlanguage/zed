@@ -2,10 +2,10 @@
 //! seed 1): sentences generated from ring k must parse at k with the same tree at every ring
 //! above, and a generated sentence whose derivation satisfied every lookahead must parse at all.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::RangeBounds;
 
+use zed_graph::MinHeap;
 use zedc::parse::{Expr, Grammar, Kind, Parser, TOP};
 
 use crate::random::Random;
@@ -86,17 +86,17 @@ impl Depths {
             }
         }
         let mut done = vec![false; g.rules.len()];
-        let mut heap = BinaryHeap::new();
+        let mut heap = MinHeap::new();
         for (r, rule) in g.rules.iter().enumerate() {
             for alt in rule.alts.iter().filter(|a| a.layer <= ring) {
                 let depth = d.of(&alt.expr);
                 if depth < d.0[r] {
                     d.0[r] = depth;
-                    heap.push(Reverse((depth, r)));
+                    heap.push((depth, r));
                 }
             }
         }
-        while let Some(Reverse((depth, r))) = heap.pop() {
+        while let Some((depth, r)) = heap.pop() {
             if done[r] || depth != d.0[r] {
                 continue;
             }
@@ -105,7 +105,7 @@ impl Depths {
                 let depth = d.of(e);
                 if depth < d.0[user] {
                     d.0[user] = depth;
-                    heap.push(Reverse((depth, user)));
+                    heap.push((depth, user));
                 }
             }
         }

@@ -22,8 +22,7 @@
 //! work that took 250 ms on the machine and at the load it was measured at (QUESTIONS A99).
 
 use std::borrow::Cow;
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -31,6 +30,7 @@ use std::sync::Arc;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
+use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
 use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
@@ -1861,15 +1861,15 @@ impl<K: Key> Poly<K> {
             .collect();
         // Ties go to the earlier part, so the merge order, and so the charges, depend only on
         // the parts.
-        let mut heap: BinaryHeap<Reverse<(usize, usize)>> = parts
+        let mut heap: MinHeap<(usize, usize)> = parts
             .iter()
             .enumerate()
-            .map(|(i, (p, _))| Reverse((p.terms.len(), i)))
+            .map(|(i, (p, _))| (p.terms.len(), i))
             .collect();
         loop {
-            let Reverse((_, a)) = heap.pop().expect("a part to sum");
+            let (_, a) = heap.pop().expect("a part to sum");
             let (pa, ma) = slots[a].take().expect("each slot is popped once");
-            let Some(Reverse((_, b))) = heap.pop() else {
+            let Some((_, b)) = heap.pop() else {
                 return if ma {
                     pa.neg(budget)
                 } else {
@@ -1879,7 +1879,7 @@ impl<K: Key> Poly<K> {
             let (pb, mb) = slots[b].take().expect("each slot is popped once");
             // `pa + pb` is `pa - pb` when their signs differ, and keeps `pa`'s sign.
             let s = pa.add(&pb, ma != mb, budget)?;
-            heap.push(Reverse((s.terms.len(), a)));
+            heap.push((s.terms.len(), a));
             slots[a] = Some((Cow::Owned(s), ma));
         }
     }
