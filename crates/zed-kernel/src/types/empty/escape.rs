@@ -1263,8 +1263,21 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 for &s in &zero_rows {
                     let fc = first_change(s);
                     if fc == usize::MAX {
-                        // A single refused row holds every length >= l0 and has no separating
-                        // cell on any place >= 1 (since `cur` is at the carrier and `e1` holds).
+                        // Proof that the type is empty. The positive values have lengths
+                        // `L >= l0` only (`cur` is the first stop), with cells `pl[1 ..= l0]` and,
+                        // as `cur` is the carrier (no `next`), cell `H` at every place past `l0`.
+                        // Row `s` read at `l0` kept no atom, so each of its cells at places
+                        // `1 ..= l0` holds the positive cell there. `fc == MAX` gives, at every
+                        // `L > l0`: (a) `next_no_stop` is MAX from the node of place `l0 + 1`, so
+                        // every node from there is a stop and the row's terminal is the carrier,
+                        // so the row holds at `L` (`holds` in `solve_at_len`); (b) `next_sep` is
+                        // MAX from that node, so each of the row's nodes for places
+                        // `l0 + 1 ..= ht + 1` has a head containing `H`, and places past `ht + 1`
+                        // are carrier cells, read as not separating because every positive cell
+                        // from place 2 on lies within `H` (checked above, the `return None`
+                        // before `solve_at_len`). Places `1 ..= l0` read the same cells and
+                        // nodes as at `l0`. So at every `L >= l0` the row holds with no atom:
+                        // it refuses every positive value, and no value is left.
                         return Some(ChainPlan::Empty);
                     }
                     clear = clear.max(fc);
