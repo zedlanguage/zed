@@ -5142,11 +5142,9 @@ enum Kind {
     Str,
     Atom,
     Tuple(usize),
-    /// A path or a function, which no maker makes.
-    Other,
 }
 
-/// The kind of `x` itself.
+/// The kind of `x` itself, a value [`makeable`] holds of.
 fn kind(x: &Value) -> Kind {
     match x {
         Value::Bool(_) => Kind::Bool,
@@ -5157,7 +5155,12 @@ fn kind(x: &Value) -> Kind {
         Value::Str(_) => Kind::Str,
         Value::Atom(_) => Kind::Atom,
         Value::Tuple(items) => Kind::Tuple(items.len()),
-        Value::Path(_) | Value::Family(_) => Kind::Other,
+        // `kind` is read only by `Chains::descent`, which only `RowIndex::holds_in` calls, on
+        // the components of a makeable tuple and their first components ([`makeable`], where
+        // the proof is), so never on a path or a function.
+        Value::Path(_) | Value::Family(_) => {
+            unreachable!("a row index reads only makeable values")
+        }
     }
 }
 
@@ -5316,7 +5319,6 @@ fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> 
         Kind::Float32 => Some(p.f32s.cofinite),
         Kind::Str => Some(p.strings.cofinite),
         Kind::Atom => Some(p.atoms.cofinite()),
-        Kind::Other => None,
         Kind::Tuple(len) => match p.tuples.lens.get(len) {
             None => Some(p.tuples.rest),
             // The empty tuple is a key where a type holds it.
@@ -5401,6 +5403,20 @@ fn whole(x: &Value) -> bool {
 
 /// Whether `x` is a value of the kinds a [`RowIndex`] reads ([`Keyed`]): a scalar, a bare atom,
 /// or a tuple of such values. An atom with a payload, a path and a function are not.
+///
+/// Every value `RowIndex::holds_in` is given is a tuple of makeable values, which is why
+/// [`kind`] and [`spine`] treat a path and a function as unreachable. Its three callers:
+/// `Membership::contains` tests `makeable` first; `Searching::holds_known` in `empty.rs` reads
+/// values through `Search::plain`, which gives a value only when `makeable` holds of it or it is
+/// a tuple of such values; and `Maker::step` passes the values of the makers below, `made`,
+/// which `Maker::new` starts with [`scalars`] and `Maker::step` extends only with tuples of
+/// values already made. `scalars` gives booleans, bare atoms and the values of the five `Lits`
+/// of a `Parts`. A `Lits` holds only values of its own kind: its fields are private to this
+/// module, a value enters one only through `Type::lit`, which picks the `Lits` by the value's
+/// kind, `Type::ints_of`, which asserts integers, and `Parts::join_literals`, which copies from
+/// the same field of another `Parts`; every other write (`Lits::zip`, `Lits::not`, the copies in
+/// `Type::split` and `empty.rs`) combines or copies the same field. So by induction on the steps
+/// that make them, every value made is makeable.
 fn makeable(x: &Value) -> bool {
     match x {
         Value::Tuple(items) => items.as_slice().iter().all(makeable),
@@ -5457,7 +5473,7 @@ enum Bone {
     /// A tuple of this length along the first components.
     Len(usize),
     /// A component other than the first, by its sequence: the same sequence is the same value.
-    Seq(bool, Id),
+    Seq(Id),
     /// A component other than the first that is no sequence and no scalar or bare atom
     /// ([`erasable`]).
     Value(Value),
@@ -5503,8 +5519,9 @@ fn spine(x: &Value, mut region: impl FnMut(usize, usize, usize, &Value) -> usize
     {
         out.push(Bone::Len(items.len()));
         out.extend(rest.iter().enumerate().map(|(m, y)| match y {
-            Value::Tuple(ys) => Bone::Seq(false, ys.id()),
-            Value::Path(ys) => Bone::Seq(true, ys.id()),
+            Value::Tuple(ys) => Bone::Seq(ys.id()),
+            // `x` is a component of a makeable tuple ([`makeable`], where the proof is).
+            Value::Path(_) => unreachable!("a row index reads only makeable values"),
             _ => match erasable(y) {
                 Some(kind) => Bone::Region(kind, region(depth, items.len(), m + 1, y)),
                 None => Bone::Value(y.clone()),

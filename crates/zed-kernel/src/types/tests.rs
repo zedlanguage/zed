@@ -1186,10 +1186,10 @@ fn a_recursive_node_is_rewritten_only_where_level_keeps_its_unfolding() {
 /// TEST-kernel-unreached-paths-4: a `Membership` of tuple types keyed by `f32` values, at
 /// tuples of `f32` values and at tuples holding a path, answers as `Type::contains` does. A path
 /// is not `makeable`, so its tuple is tested the naive way (the `Value::Path` arm of
-/// `makeable`, reached here; the `Float32` arms of `erasable` and `witness` are not, see
-/// COMPLETENESS.md, seventh round). Control run: with that arm answering `true` the test still
-/// passes, since the row index then reads the path as `Kind::Other` and answers alike; the
-/// arm saves work, not a verdict.
+/// `makeable`, reached here; the `Float32` arms of `erasable` and `witness` are reached by
+/// `a_membership_reading_f32_values_by_their_spine_agrees_with_contains`). Control run: with
+/// that arm answering `true` the row index is given the path and panics at the
+/// `unreachable!` in `kind`, so the arm is what keeps a path out of the row index.
 #[test]
 fn a_membership_keyed_by_f32_values_and_asked_of_a_path_agrees_with_contains() {
     let f = |x: f32| Type::lit(&Value::float32(x)).expect("an f32 literal");
@@ -1230,4 +1230,42 @@ fn a_membership_keyed_by_f32_values_and_asked_of_a_path_agrees_with_contains() {
         }
     }
     assert!(yes > 0 && yes < firsts.len() * seconds.len());
+}
+
+/// TEST-kernel-unreached-paths-4: a `Membership` whose open rows the kinds leave undecided reads
+/// a tuple by its spine and its tuple erased ([`spine`], [`erase`]), here with `f32` values both
+/// along the first components and beside them, so the `Float32` arms of `erasable` and
+/// `witness` are taken; it answers as `Type::contains` does. The open row
+/// `((f32 - 0.0, int),)` lists the key `0.0`, so the erased `f32` is the next candidate, `1.0`.
+/// Control run: with `witness` giving an `f64` for `Float32`, the erased tuple is in no row and
+/// the tuples of `f32` values are answered outside.
+#[test]
+fn a_membership_reading_f32_values_by_their_spine_agrees_with_contains() {
+    let f = |x: f32| Type::lit(&Value::float32(x)).expect("an f32 literal");
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let one = |a: Type| Type::tuple(vec![a]);
+    let t = Type::union_all([
+        one(pair(Type::f32(), Type::int())),
+        one(pair(Type::int(), Type::f32())),
+        one(pair(&Type::f32() - &f(0.0), Type::int())),
+        one(pair(Type::int(), &Type::f32() - &f(2.0))),
+    ]);
+    let x = |a: Value, b: Value| Value::tuple(vec![Value::tuple(vec![a, b])]);
+    let values = [
+        x(Value::float32(0.0), Value::Int(3)),
+        x(Value::float32(1.5), Value::Int(3)),
+        x(Value::Int(3), Value::float32(2.0)),
+        x(Value::Int(3), Value::float32(2.5)),
+        x(Value::float32(1.5), Value::float32(2.5)),
+        x(Value::float(1.5), Value::Int(3)),
+        x(Value::Int(3), Value::float(2.5)),
+    ];
+    let mut m = t.membership();
+    let mut yes = 0;
+    for v in &values {
+        let want = t.contains(v);
+        assert_eq!(m.contains(v), want, "{v:?}");
+        yes += usize::from(want);
+    }
+    assert_eq!(yes, 4);
 }
