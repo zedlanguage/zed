@@ -407,6 +407,12 @@ impl<'t, 'a> Ck<'t, 'a> {
 
         // Compose `exposed_needs`, `#7'` check, and compressed `var_steps` in `O(|sig.needs|)` = `O(1)`.
         let mut exposed_needs = Vec::new();
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
+        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
+        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
+        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
+        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        #[allow(clippy::mutable_key_type)]
         let mut seen_7p_keys = HashSet::new();
         let mut var_steps = Vec::new();
         let mut seen_step_vars: HashSet<Arc<str>> = HashSet::new();
@@ -742,6 +748,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     subst.insert(v.clone(), mapped);
                 }
             }
+            // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
+            // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
+            // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
+            // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
+            // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+            #[allow(clippy::mutable_key_type)]
             let mut seen_keys = HashSet::new();
             for tpl in &summary.exposed_needs {
                 let on_ty = subst

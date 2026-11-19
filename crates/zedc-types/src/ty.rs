@@ -5248,6 +5248,18 @@ pub enum Slot {
     Item(usize),
 }
 
+/// The parts of a need that [`Need::tys`] reads, in order: the index or function type of a
+/// need on one, the positional and named types of a call (the named place holds a compact
+/// forward's `sigma`), and a forward's exits, `on` variables and ties.
+type NeedTyParts<'a> = (
+    Option<&'a Ty>,
+    &'a [Ty],
+    &'a [(Arc<str>, Ty)],
+    &'a [(usize, Ty)],
+    &'a [Ty],
+    &'a [Vec<Ty>],
+);
+
 impl Need {
     /// It with its variables replaced by `binds` at every depth.
     pub fn replace(&self, binds: &Binds) -> Need {
@@ -5502,50 +5514,44 @@ impl Need {
 
     /// The types in it that [`Need::replace`] replaces in, in order.
     pub fn tys(&self) -> impl Iterator<Item = &Ty> {
-        let (index, positional, named, fwd_exits, fwd_on_vars, fwd_ties): (
-            _,
-            &[Ty],
-            &[(Arc<str>, Ty)],
-            &[(usize, Ty)],
-            &[Ty],
-            &[Vec<Ty>],
-        ) = match &self.kind {
-            NeedKind::Component { .. }
-            | NeedKind::Destructure { .. }
-            | NeedKind::Data(..)
-            | NeedKind::NoInt(_)
-            | NeedKind::Power(_)
-            | NeedKind::InDomain { .. }
-            | NeedKind::Sum
-            | NeedKind::Entries
-            | NeedKind::SumMethod { .. }
-            | NeedKind::Into { .. }
-            | NeedKind::Reduce(..)
-            | NeedKind::Payload { .. }
-            | NeedKind::Narrow(_) => (None, &[], &[], &[], &[], &[]),
-            NeedKind::Index(k)
-            | NeedKind::Order { other: k, .. }
-            | NeedKind::Concat { other: k, .. }
-            | NeedKind::Zip { other: k, .. }
-            | NeedKind::Map { f: k, .. }
-            | NeedKind::Group { f: k, .. }
-            | NeedKind::Level { f: k, .. }
-            | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
-            NeedKind::Call {
-                positional, named, ..
-            } => (None, positional, named, &[], &[], &[]),
-            NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => {
-                (None, tys, &[], &[], &[], &[])
-            }
-            NeedKind::Fwd(fwd) => (
-                None,
-                &[],
-                &fwd.sigma,
-                &fwd.exits,
-                &fwd.on_vars,
-                &fwd.var_ties,
-            ),
-        };
+        let (index, positional, named, fwd_exits, fwd_on_vars, fwd_ties): NeedTyParts<'_> =
+            match &self.kind {
+                NeedKind::Component { .. }
+                | NeedKind::Destructure { .. }
+                | NeedKind::Data(..)
+                | NeedKind::NoInt(_)
+                | NeedKind::Power(_)
+                | NeedKind::InDomain { .. }
+                | NeedKind::Sum
+                | NeedKind::Entries
+                | NeedKind::SumMethod { .. }
+                | NeedKind::Into { .. }
+                | NeedKind::Reduce(..)
+                | NeedKind::Payload { .. }
+                | NeedKind::Narrow(_) => (None, &[], &[], &[], &[], &[]),
+                NeedKind::Index(k)
+                | NeedKind::Order { other: k, .. }
+                | NeedKind::Concat { other: k, .. }
+                | NeedKind::Zip { other: k, .. }
+                | NeedKind::Map { f: k, .. }
+                | NeedKind::Group { f: k, .. }
+                | NeedKind::Level { f: k, .. }
+                | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
+                NeedKind::Call {
+                    positional, named, ..
+                } => (None, positional, named, &[], &[], &[]),
+                NeedKind::Fold { tys, .. } | NeedKind::Strings { tys, .. } => {
+                    (None, tys, &[], &[], &[], &[])
+                }
+                NeedKind::Fwd(fwd) => (
+                    None,
+                    &[],
+                    &fwd.sigma,
+                    &fwd.exits,
+                    &fwd.on_vars,
+                    &fwd.var_ties,
+                ),
+            };
         std::iter::once(&self.on)
             .chain(index)
             .chain(positional)
@@ -10178,6 +10184,12 @@ impl<'m, 's> Comparing<'m, 's> {
                 continue;
             }
             let Some(gs) = fns.get(&spot) else { continue };
+            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+            // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+            // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+            // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+            // changed in place, so neither the hash nor the equality of a key can change while it is held.
+            #[allow(clippy::mutable_key_type)]
             let all = whole.fns.get(&spot).unwrap_or(gs);
             let every = fs.len() == 1 || gs.len() == 1;
             let compared: Vec<&Arc<Sig>> =
@@ -11764,6 +11776,12 @@ fn star_pairs<P: Placed>(
     right: &[(&P, &[Arc<Sig>])],
 ) -> Option<Vec<(Arc<Sig>, Arc<Sig>)>> {
     let mut budget: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
+    // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+    // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+    // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+    // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+    // changed in place, so neither the hash nor the equality of a key can change while it is held.
+    #[allow(clippy::mutable_key_type)]
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     match by_domain(left, right) {
@@ -11782,6 +11800,12 @@ fn star_pairs<P: Placed>(
 
 /// The pairs of functions of [`star_pairs`] between `left` and `right`, put in `out`, each
 /// once by `seen`; None as soon as they come to more than `budget`, which they use up.
+// An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+// the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+// chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+// Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+// changed in place, so neither the hash nor the equality of a key can change while it is held.
+#[allow(clippy::mutable_key_type)]
 fn near_fn_pairs<P: Placed>(
     left: &[(&P, &[Arc<Sig>])],
     right: &[(&P, &[Arc<Sig>])],
@@ -12051,6 +12075,12 @@ fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<(Binds, Named)> {
         rows.chain(c.payload_shapes().filter(|s| s.open).map(Walk::Shape))
     }
     let mut binds = Binds::new();
+    // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+    // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+    // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+    // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+    // changed in place, so neither the hash nor the equality of a key can change while it is held.
+    #[allow(clippy::mutable_key_type)]
     let mut named = Named::new();
     // Binds each variable of `c` that stands for a function: to that function where it reads
     // alike in every environment, else to a token of its own ([`fn_token`]). False at the
@@ -12426,6 +12456,12 @@ impl Forms {
         // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
         left.spots(right).find_map(|(spot, fs)| {
+            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+            // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+            // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+            // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+            // changed in place, so neither the hash nor the equality of a key can change while it is held.
+            #[allow(clippy::mutable_key_type)]
             let gs = right.get(&spot)?;
             let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
             (unlike >= 2 && gs.len() >= 2 && !starred.contains_key(&spot)).then_some(spot)
@@ -14221,6 +14257,12 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
             x
         });
         let mut approx = Approx::default();
+        // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
+        // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
+        // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
+        // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
+        // changed in place, so neither the hash nor the equality of a key can change while it is held.
+        #[allow(clippy::mutable_key_type)]
         let mut have = HashSet::new();
         let mut out = Vec::new();
         for s in &a.fns {

@@ -12622,6 +12622,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             Var(u8),
             Fixed(Ty),
         }
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
+        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
+        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
+        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
+        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        #[allow(clippy::mutable_key_type)]
         let mut heads: HashMap<(Ty, NeedKind, Gives), usize> = HashMap::new();
         // The first site met for each key written with roots, in the order of `needs`.
         let mut firsts: HashMap<AlikeSite, Span> = HashMap::new();
@@ -12926,6 +12932,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut ops = std::mem::take(&mut self.classes[child].ops);
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
+        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
+        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
+        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
+        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        #[allow(clippy::mutable_key_type)]
         let mut known = std::mem::take(&mut self.classes[child].known);
         let mut orders = std::mem::take(&mut self.classes[child].orders);
         let data = self.classes[child].data;
