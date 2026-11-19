@@ -899,14 +899,16 @@ fn splitting_a_shared_conjunction_reads_it_once() {
     assert!(parts.iter().all(|p| p.size == 1));
 }
 
-/// [`evens`] with a second disjunction on `z`, `z <= 2k or y <= -1`, which holds wherever
-/// `evens` does, so that `direct` declines it: two disjunctions tied through `z` in one group
-/// (since PRES-cover-refusals-moduli `direct` answers `evens` itself, one disjunction with the
-/// bound on `z`).
+/// [`evens`] with a second disjunction, `y + z >= 0 or y <= -1`, which holds wherever `evens`
+/// does (`z >= 0`, so `y >= 0` gives `y + z >= 0`), so that `direct` declines it: two
+/// disjunctions tied through `y` and `z` in one group (since PRES-cover-refusals-moduli
+/// `direct` answers `evens` itself, one disjunction with the bound on `z`). No bound implies a
+/// disjunct, `y` having none: the tie `z <= 2k or y <= -1` used before is implied by the box on
+/// `z`, so `direct` dropped it and answered (exactchain1, PRES-cover-bench-regressions).
 fn evens_tied(k: i64) -> Formula {
     Formula::and(vec![
         evens(k),
-        Formula::or(vec![ge(&[("z", -1)], 2 * k), ge(&[("y", -1)], -1)]),
+        Formula::or(vec![ge(&[("y", 1), ("z", 1)], 0), ge(&[("y", -1)], -1)]),
     ])
 }
 
@@ -1143,11 +1145,11 @@ fn an_unbounded_conjunction_needs_one_cell() {
 /// `[-4, 15]`. Every `b` in `-4..=15` has a point (all points of the box with `c` in
 /// `-3..=8` listed, PRES-pugh-findings; 15: `a == 2, c == -3, z2 == 6, z1 == -7`) and 16
 /// has none (`a + b + 2·c == z2 + 5` with `z2 <= 6`, `a >= 2` gives `c <= -4`, and
-/// `a + 2·c >= -4` gives `c >= -3`), so `[-4, 15]` is the exact set. But the cover's
-/// question of the piece `-4..=0` (or `-4..=-2`, by the in-cell method) is refused by the
-/// solver (`Refusal::Growth`), so `b` is refused for that cause: a piece not confirmed is
-/// never kept as the solver's set had it (PRES-pugh-work-budget; the caller reports it and
-/// keeps the box of the rows).
+/// `a + 2·c >= -4` gives `c >= -3`), so `[-4, 15]` is the exact set, which `direct` now
+/// gives. With `direct` off, the cover's question of the piece `-4..=0` (or `-4..=-2`, by the
+/// in-cell method) is refused by the solver (`Refusal::Growth`), so `b` is refused for that
+/// cause: a piece not confirmed is never kept as the solver's set had it (PRES-pugh-work-
+/// budget; the caller reports it and keeps the box of the rows).
 #[test]
 fn the_pendants_part_of_row_3_refuses_b_for_its_refused_question() {
     let mem = |s: &str, l: Option<i64>, u: Option<i64>| {
@@ -1174,14 +1176,22 @@ fn the_pendants_part_of_row_3_refuses_b_for_its_refused_question() {
         ge(&[("a", 1), ("c", 1), ("z0", -1)], 12),
         eq(&[("a", 1), ("b", 1), ("c", 2), ("z2", -1)], -5),
     ]);
+    // `direct` reads the rows into each block and projects them exactly (PRES-cover-bench-
+    // regressions: `met` distributes the rows over the one disjunction its bounds leave), so
+    // the default route gives the exact set with no question.
+    let want = IntervalSet::from_pieces(vec![(End::of(-4), End::of(15))]);
     let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
+    assert_eq!(b, Ok(want.clone()), "{b:?}");
+    // The cover alone still meets the refused question, and refuses `b` for it.
+    DIRECT_OFF.set(true);
+    let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
+    DIRECT_OFF.set(false);
     assert_eq!(b, Err(Refusal::Growth), "{b:?}");
     // By model-based projection the cells hold the disjuncts that hold their points, and no
     // question is refused: the exact set (2026-11-18, PRES-cover-refusals-where-exact).
     METHOD.set(Some(Method::Liaproj));
     let b = project_each_exact(&f, &[a("b")]).unwrap().0.remove(0);
     METHOD.set(None);
-    let want = IntervalSet::from_pieces(vec![(End::of(-4), End::of(15))]);
     assert_eq!(b, Ok(want), "{b:?}");
 }
 
@@ -4679,6 +4689,92 @@ fn the_names_of_a_chain_of_unit_equations_are_certified_together() {
         for (g, w) in got.sets.iter().zip(&want) {
             assert_eq!(&g.as_ref().unwrap().ranges, w, "at k = {k}");
         }
+    }
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// The shape of an `if` chain whose guards are equations, as the preimage writes it
+/// (`l01_25_preimage_catalog::bench::s22::relational_chain`): with `d = x - y` and
+/// `top = 2(k - 1)`, the chain at `top` is `d == top`, and the chain at each even `j` below is
+/// `d != j + skip && d != j + 1 + skip && (chain at j + 2) || arm`, the arm `d == j && (z == 1
+/// || z == 3)` (`d == j` a group of its own, apart from the atom `z` of the disjunction, as the
+/// guard is apart from the case split of a `min` in the preimage). The chain is shared by two
+/// conjunctions, each with a box on `x` alone: `-1 <= x <= 7`, and `100 <= x <= 120`. With
+/// `skip == 0` each `!=` holds wherever the chain below does (`d >= j + 2` there), so the
+/// chain is `d` even in `0..=top`.
+fn equal_guard_chain(k: i64, skip: i64) -> Formula {
+    let is = |j: i64| eq(&[("x", 1), ("y", -1)], -j);
+    let ne = |j: i64| Formula::Not(Shared::new(is(j)));
+    let arm = |j: i64| {
+        let z = Formula::Or(Shared::new(vec![eq(&[("z", 1)], -1), eq(&[("z", 1)], -3)]));
+        Formula::And(Shared::new(vec![is(j), z]))
+    };
+    let top = 2 * (k - 1);
+    let mut chain = is(top);
+    for j in (0..k - 1).rev().map(|i| 2 * i) {
+        let held = Formula::And(Shared::new(vec![ne(j + skip), ne(j + 1 + skip), chain]));
+        chain = Formula::Or(Shared::new(vec![held, arm(j)]));
+    }
+    let boxed = |lo: i64, hi: i64| {
+        Formula::And(Shared::new(vec![
+            ge(&[("x", 1)], -lo),
+            ge(&[("x", -1)], hi),
+            chain.clone(),
+        ]))
+    };
+    Formula::Or(Shared::new(vec![boxed(-1, 7), boxed(100, 120)]))
+}
+
+/// [`direct`] reads the chain of [`equal_guard_chain`] with no question: each implied `!=` is
+/// dropped ([`implied_dropped`]), and each box is distributed over the blocks of the shared
+/// chain, which its projection alone would lose (`y` is any value there). Where the `!=` are
+/// not implied (`skip == 2`) the answers still agree with the cover's (`DIRECT_OFF`). The work
+/// grows linearly in k (about 7,500 units a level, measured 2026-11-19): at 8 times k, under
+/// the limit of 10.5 times (before, `direct` declined, and the cover asked O(k) questions of
+/// O(k) work each, refused at k = 64 in the preimage benchmark).
+#[test]
+fn an_if_chain_of_equal_guards_is_read_with_no_question() {
+    let (x, y) = (a("x"), a("y"));
+    // `y = x - d`, `d` even in `0..=top`.
+    let want = |k: i64| {
+        let top = 2 * (k - 1);
+        IntervalSet::of(-1 - top, 7).join(&IntervalSet::of(100 - top, 120))
+    };
+    for k in [2i64, 3, 5, 8] {
+        for skip in [0, 2] {
+            let f = equal_guard_chain(k, skip);
+            let on = project_each_exact(&f, &[x.clone(), y.clone()]).unwrap().0;
+            DIRECT_OFF.set(true);
+            let off = project_each_exact(&f, &[x.clone(), y.clone()]).unwrap().0;
+            DIRECT_OFF.set(false);
+            for (o, f) in on.iter().zip(&off) {
+                assert_eq!(
+                    o.as_ref().unwrap(),
+                    f.as_ref().unwrap(),
+                    "k {k}, skip {skip}"
+                );
+            }
+            if skip == 0 {
+                assert_eq!(on[1].as_ref().unwrap(), &want(k), "k = {k}");
+            }
+        }
+    }
+    let mut used = Vec::new();
+    for k in [32i64, 256] {
+        let f = equal_guard_chain(k, 0);
+        let mut work = Work {
+            used: 0,
+            limit: EXACT_LIMIT,
+            solver: SOLVER,
+        };
+        let got = direct(&f, &y, &IntervalSet::top(), &mut work).unwrap();
+        assert_eq!(
+            got.expect("direct reads the chain").met(),
+            want(k),
+            "k = {k}"
+        );
+        used.push(work.used);
     }
     let ratio = used[1] as f64 / used[0].max(1) as f64;
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");

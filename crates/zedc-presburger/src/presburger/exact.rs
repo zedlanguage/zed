@@ -1426,12 +1426,102 @@ fn ray_from(
 /// projection of the part onto the symbol, with the atoms other than the symbol it reads; or a
 /// disjunction of conjunctions of constraints not yet projected (`Alts`, each block one
 /// disjunct), so that a conjunction above it can project each block with the constraints beside
-/// it (PRES-cover-refusals-moduli).
+/// it (PRES-cover-refusals-moduli). A projected part and a disjunction of blocks come with
+/// bounds that hold at every point of the part ([`Dirs`]; none is always sound). A shared
+/// disjunction, projected, keeps its blocks (see `direct_noting`).
 #[derive(Clone)]
 enum Part {
     Rows(Vec<Con>),
-    Set(Classed, HashSet<Atom>),
-    Alts(Vec<Vec<Con>>),
+    Set(Classed, HashSet<Atom>, Dirs, Option<Rc<[Vec<Con>]>>),
+    Alts(Vec<Vec<Con>>, Dirs),
+}
+
+/// Bounds on terms that hold at every point of a part: for each term (a row's terms, its sign
+/// fixed so that the first coefficient is positive), the least and greatest values it takes
+/// there, as far as they are known (each end `None` where it is not). A term absent has no
+/// bound known. [`met`] reads them to drop a disjunction that the other conjuncts imply.
+type Dirs = HashMap<BTreeMap<Atom, Int>, Ends>;
+
+/// The term of `c`, its sign fixed so that its first coefficient is positive, with the bounds
+/// `c` puts on it; `None` for a row with no atom.
+fn dir_of(c: &Con) -> Option<(BTreeMap<Atom, Int>, Ends)> {
+    let first = c.lin.terms.values().next()?;
+    let k = &c.lin.constant;
+    Some(if first.is_positive() {
+        // `t + k >= 0` is `t >= -k`; `t + k == 0` is `t == -k`.
+        let v = -k;
+        let ends = match c.rel {
+            Rel::Ge => (Some(v), None),
+            Rel::Eq => (Some(v.clone()), Some(v)),
+        };
+        (c.lin.terms.clone(), ends)
+    } else {
+        // With `u = -t`: `-u + k >= 0` is `u <= k`; `-u + k == 0` is `u == k`.
+        let terms = (c.lin.terms.iter()).map(|(a, v)| (a.clone(), -v)).collect();
+        let ends = match c.rel {
+            Rel::Ge => (None, Some(k.clone())),
+            Rel::Eq => (Some(k.clone()), Some(k.clone())),
+        };
+        (terms, ends)
+    })
+}
+
+/// The bounds that hold at every point of the conjunction `rows`.
+fn dirs_of(rows: &[Con]) -> Dirs {
+    let mut d = Dirs::new();
+    for (t, e) in rows.iter().filter_map(dir_of) {
+        let met = d
+            .get(&t)
+            .map_or_else(|| e.clone(), |old| ends_meet(old, &e));
+        d.insert(t, met);
+    }
+    d
+}
+
+/// `a` met with `b`: the bounds of a conjunction of two parts, each of which holds at every
+/// point of it. O(|b|).
+fn dirs_meet(a: &mut Dirs, b: Dirs) {
+    for (t, e) in b {
+        let met = a
+            .get(&t)
+            .map_or_else(|| e.clone(), |old| ends_meet(old, &e));
+        a.insert(t, met);
+    }
+}
+
+/// The bounds of a disjunction of two parts with bounds `a` and `b`: the terms bounded in both,
+/// each end the wider of the two, a term with neither end dropped. O(min(|a|, |b|)).
+fn dirs_join(a: Dirs, b: Dirs) -> Dirs {
+    let (small, big) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let mut out = Dirs::new();
+    for (t, (l1, h1)) in small {
+        let Some((l2, h2)) = big.get(&t) else {
+            continue;
+        };
+        let lo = l1.zip(l2.clone()).map(|(x, y)| x.min(y));
+        let hi = h1.zip(h2.clone()).map(|(x, y)| x.max(y));
+        if lo.is_some() || hi.is_some() {
+            out.insert(t, (lo, hi));
+        }
+    }
+    out
+}
+
+/// Whether every point where the bounds `d` hold satisfies `c`: its term's bound in `d` lies
+/// within what `c` asks (a row with no atom: its constant).
+fn implied(c: &Con, d: &Dirs) -> bool {
+    let Some((t, (lo, hi))) = dir_of(c) else {
+        return match c.rel {
+            Rel::Ge => !c.lin.constant.is_negative(),
+            Rel::Eq => c.lin.constant == Int::ZERO,
+        };
+    };
+    let Some((dl, dh)) = d.get(&t) else {
+        return false;
+    };
+    let above = lo.is_none_or(|l| dl.as_ref().is_some_and(|x| *x >= l));
+    let below = hi.is_none_or(|h| dh.as_ref().is_some_and(|x| *x <= h));
+    above && below
 }
 
 /// `run`, a fast path, given what is left of `fast`, the fast paths' own allowance (a quarter
@@ -1633,7 +1723,7 @@ fn direct_noting(
                     if let Some(v) = Id::of(g).and_then(|k| memo.get(&(k, pos))) {
                         match v {
                             Part::Rows(rows) => work.read(rows.len() as u64)?,
-                            Part::Alts(blocks) => {
+                            Part::Alts(blocks, _) => {
                                 work.read(blocks.iter().map(|b| b.len() as u64).sum())?
                             }
                             Part::Set(..) => {}
@@ -1647,11 +1737,15 @@ fn direct_noting(
                             values.push(match (pos, c.rel) {
                                 (true, _) => Part::Rows(vec![c.clone()]),
                                 (false, Rel::Ge) => Part::Rows(vec![negated(c, &Int::from(-1))]),
-                                // `t != 0` is `t <= -1 or t >= 1`, two blocks.
-                                (false, Rel::Eq) => Part::Alts(vec![
-                                    vec![negated(c, &Int::from(-1))],
-                                    vec![negated(c, &Int::from(1))],
-                                ]),
+                                // `t != 0` is `t <= -1 or t >= 1`, two blocks, which bound
+                                // `t` on no common side, so no bound holds on both.
+                                (false, Rel::Eq) => Part::Alts(
+                                    vec![
+                                        vec![negated(c, &Int::from(-1))],
+                                        vec![negated(c, &Int::from(1))],
+                                    ],
+                                    Dirs::new(),
+                                ),
                             });
                         }
                         Formula::Not(h) => stack.push(Go::Read(h, !pos)),
@@ -1690,12 +1784,15 @@ fn direct_noting(
                         // exponential in its length, until each call spent its allowance (past 60 s
                         // where 4.2 s before 94f38f6d3). Projected, it is one set read by each
                         // holder, as before; blocks stay unprojected only on parts read once.
-                        if let Part::Alts(_) = v {
+                        // The blocks are kept with the set, shared, not copied: a holder that
+                        // meets the set with rows reading its other atoms distributes those rows
+                        // over them once, and gets a set (`met`), so no copy holds another.
+                        if let Part::Alts(blocks, d) = v {
                             pure = false;
-                            let Some((set, atoms)) = as_set(v, s, within, work)? else {
+                            let Some((set, atoms)) = blocks_set(&blocks, s, within, work)? else {
                                 return Ok(None);
                             };
-                            v = Part::Set(set, atoms);
+                            v = Part::Set(set, atoms, d, Some(Rc::from(blocks)));
                         }
                         memo.insert((k, pos), v.clone());
                     }
@@ -1741,7 +1838,7 @@ fn direct_noting(
     // so the first symbol of the first block notes the second and the others are not run
     // (from the Gemini 4 Neon seat of PRES-cover-hybrid, `disjoint_uneliminable`, which tests
     // each block's groups once a part; here the blocks are read by the runs already made).
-    if let (true, Part::Alts(blocks)) = (pure, &last) {
+    if let (true, Part::Alts(blocks, _)) = (pure, &last) {
         let atoms = |bs: &mut dyn Iterator<Item = &Vec<Con>>| -> HashSet<Atom> {
             bs.flatten()
                 .flat_map(|c| c.lin.terms.keys().cloned())
@@ -3185,21 +3282,30 @@ fn as_set(
     work: &mut Work,
 ) -> Result<Option<(Classed, HashSet<Atom>)>, Refusal> {
     Ok(match p {
-        Part::Set(set, atoms) => Some((set, atoms)),
+        Part::Set(set, atoms, ..) => Some((set, atoms)),
         Part::Rows(rows) => block_set(&rows, s, within, work)?.map(|set| (set, others(&rows, s))),
-        Part::Alts(blocks) => {
-            let mut set = Classed::plain(IntervalSet::empty());
-            let mut atoms = HashSet::new();
-            for b in &blocks {
-                let Some(p) = block_set(b, s, within, work)? else {
-                    return Ok(None);
-                };
-                set = set.join(&p);
-                atoms.extend(others(b, s));
-            }
-            Some((set, atoms))
-        }
+        Part::Alts(blocks, _) => blocks_set(&blocks, s, within, work)?,
     })
+}
+
+/// A disjunction of blocks as a set: the union of their projections, with the atoms other than
+/// `s` the blocks read.
+fn blocks_set(
+    blocks: &[Vec<Con>],
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<(Classed, HashSet<Atom>)>, Refusal> {
+    let mut set = Classed::plain(IntervalSet::empty());
+    let mut atoms = HashSet::new();
+    for b in blocks {
+        let Some(p) = block_set(b, s, within, work)? else {
+            return Ok(None);
+        };
+        set = set.join(&p);
+        atoms.extend(others(b, s));
+    }
+    Ok(Some((set, atoms)))
 }
 
 /// The union of disjuncts for [`direct`]: where every disjunct is rows or blocks of rows, the
@@ -3210,20 +3316,42 @@ fn joined_parts(
     within: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<Part>, Refusal> {
+    // Complexity tradeoff: naive version, the blocks of every part copied into a new list, so a
+    // chain of k disjunctions each holding the one below (an `if` chain) moved O(k) blocks at
+    // each, O(k^2). Used: each list moved into the longest, O(k log k) moves over the chain,
+    // and the bounds joined in O(min) each ([`dirs_join`]).
     if parts.iter().all(|p| !matches!(p, Part::Set(..))) {
         let mut blocks: Vec<Vec<Con>> = Vec::new();
+        let mut dirs: Option<Dirs> = None;
         for p in parts {
-            match p {
-                Part::Rows(rows) => blocks.push(rows),
-                Part::Alts(more) => blocks.extend(more),
+            let (mut more, d) = match p {
+                Part::Rows(rows) => {
+                    let d = dirs_of(&rows);
+                    (vec![rows], d)
+                }
+                Part::Alts(more, d) => (more, d),
                 Part::Set(..) => unreachable!("no set among the parts"),
+            };
+            if more.len() > blocks.len() {
+                std::mem::swap(&mut blocks, &mut more);
             }
+            blocks.append(&mut more);
+            dirs = Some(match dirs {
+                None => d,
+                Some(have) => dirs_join(have, d),
+            });
         }
-        return Ok(Some(Part::Alts(blocks)));
+        return Ok(Some(Part::Alts(blocks, dirs.unwrap_or_default())));
     }
     let mut set = Classed::plain(IntervalSet::empty());
     let mut atoms: HashSet<Atom> = HashSet::new();
+    let mut dirs: Option<Dirs> = None;
     for p in parts {
+        let d = part_dirs(&p);
+        dirs = Some(match dirs {
+            None => d,
+            Some(have) => dirs_join(have, d),
+        });
         let Some((p, more)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
@@ -3234,7 +3362,70 @@ fn joined_parts(
             atoms.extend(more);
         }
     }
-    Ok(Some(Part::Set(set, atoms)))
+    Ok(Some(Part::Set(set, atoms, dirs.unwrap_or_default(), None)))
+}
+
+/// The bounds of a part ([`Dirs`]).
+fn part_dirs(p: &Part) -> Dirs {
+    match p {
+        Part::Rows(rows) => dirs_of(rows),
+        Part::Set(_, _, d, _) | Part::Alts(_, d) => d.clone(),
+    }
+}
+
+/// The conjuncts `parts` less each disjunction of one-row blocks (a negated equation `t != 0`,
+/// say) that the other conjuncts imply: one of its rows holds wherever the bounds of the rows
+/// and of the other disjunctions of blocks hold ([`implied`]). Such a disjunction holds at every
+/// point of the others, so the conjunction has the same points without it. Only rows, projected
+/// parts and disjunctions with a block of two or more rows give bounds, so no dropped part is
+/// read as evidence for another. The bounds of a projected part hold at the points of the
+/// formula it was read from, so the formula, and its projection, are those of the conjunction.
+// Complexity tradeoff: in an `if` chain whose guards are equations (`s22`
+// `relational_equal_guards_scale`), each level is `t_i != 0 ∧ (inner ∨ arm)`, which `met`
+// declined (a group with two disjunctions), and the cover then asked O(k) questions of the
+// whole formula, one for each few values of the answer, O(k^2) in all, past the work limit at
+// k = 64. Distributing the two disjunctions keeps it exact but copies the inner blocks at each
+// level, O(k^2) too. Used: bounds kept with each disjunction ([`Dirs`], joined at a
+// disjunction in O(min) and met at a conjunction in O(rows)); every block of `inner ∨ arm`
+// has the equation of a later guard, whose bound on `t_i`'s term implies `t_i != 0`, so it is
+// dropped here in O(|bounds|) and the level costs O(1) more. A disjunction not shown implied
+// is kept, and `met` goes on as before.
+fn implied_dropped(mut parts: Vec<Part>, work: &mut Work) -> Result<Vec<Part>, Refusal> {
+    let candidate = |p: &Part| matches!(p, Part::Alts(bs, _) if bs.iter().all(|b| b.len() == 1));
+    if parts.len() < 2 || !parts.iter().any(candidate) {
+        return Ok(parts);
+    }
+    let mut d = Dirs::new();
+    for p in &parts {
+        match p {
+            Part::Rows(rows) => {
+                work.read(rows.len() as u64)?;
+                dirs_meet(&mut d, dirs_of(rows));
+            }
+            Part::Set(_, _, more, _) => {
+                work.read(more.len() as u64)?;
+                dirs_meet(&mut d, more.clone());
+            }
+            Part::Alts(_, more) if !candidate(p) => {
+                work.read(more.len() as u64)?;
+                dirs_meet(&mut d, more.clone());
+            }
+            Part::Alts(..) => {}
+        }
+    }
+    if d.is_empty() {
+        return Ok(parts);
+    }
+    let mut checked = 0u64;
+    parts.retain(|p| match p {
+        Part::Alts(bs, _) if candidate(p) => {
+            checked += bs.len() as u64;
+            !bs.iter().any(|b| implied(&b[0], &d))
+        }
+        _ => true,
+    });
+    work.read(checked)?;
+    Ok(parts)
 }
 
 /// The meet of conjuncts for [`direct`]: rows alone stay rows; else the groups that share no
@@ -3248,6 +3439,12 @@ fn met(
     cut: bool,
     work: &mut Work,
 ) -> Result<Option<Part>, Refusal> {
+    let mut parts = implied_dropped(parts, work)?;
+    // A lone part is the conjunction: kept as it is, a disjunction's blocks not copied (the
+    // steps below give the same part, a copy of it).
+    if parts.len() == 1 {
+        return Ok(parts.pop());
+    }
     if parts.iter().all(|p| matches!(p, Part::Rows(_))) {
         let mut all: Vec<Con> = Vec::new();
         for p in parts {
@@ -3266,13 +3463,23 @@ fn met(
     // Each disjunction of blocks, with the atoms other than `s` its blocks read, an item of its
     // own after the sets.
     let mut alts: Vec<(Vec<Vec<Con>>, HashSet<Atom>)> = Vec::new();
+    // The bounds of each of `sets` and `alts`, in their order, and the blocks each of `sets`
+    // was projected from, where it was a shared disjunction.
+    let mut set_blocks: Vec<Option<Rc<[Vec<Con>]>>> = Vec::new();
+    let mut set_dirs: Vec<Dirs> = Vec::new();
+    let mut alt_dirs: Vec<Dirs> = Vec::new();
     for p in parts {
         match p {
             Part::Rows(r) => rows.extend(r),
-            Part::Set(set, atoms) => sets.push((set, atoms)),
-            Part::Alts(blocks) => {
+            Part::Set(set, atoms, d, blocks) => {
+                sets.push((set, atoms));
+                set_dirs.push(d);
+                set_blocks.push(blocks);
+            }
+            Part::Alts(blocks, d) => {
                 let atoms = blocks.iter().flat_map(|b| others(b, s)).collect();
                 alts.push((blocks, atoms));
+                alt_dirs.push(d);
             }
         }
     }
@@ -3337,10 +3544,24 @@ fn met(
         }
         Ok::<_, Refusal>(out)
     };
-    if groups.len() == 1 && sets.is_empty() && alts.len() == 1 {
-        let (group, _, _) = groups.into_values().next().expect("one group");
+    // One disjunction and rows: `R ∧ (B1 ∨ … ∨ Bn)` is `(R ∧ B1) ∨ … ∨ (R ∧ Bn)` whether or
+    // not the rows read the blocks' atoms, so every row is distributed, and the part stays
+    // blocks. Projected by groups instead, rows apart from the blocks would lose their link
+    // to the rows of a holder (an `if` arm `x == y + j && (case split of q)`: `x == y + j` is
+    // a group of its own, its projection on `y` the whole line, and the box on `x` of the
+    // holder could not be met with it).
+    // Complexity tradeoff: O(|R| · n) rows copied, charged, where projecting each group is
+    // O(|R|) and a set; the set made `direct` decline the holder, and the cover asked O(k)
+    // questions of O(k) work on an `if` chain of k equation guards
+    // (`l01_25_preimage_catalog::bench::s22::relational_equal_guards_scale`, refused at
+    // k = 64). Each level of a chain that adds rows beside the chain below copies them into
+    // every block below, as the single group always did.
+    if sets.is_empty() && alts.len() == 1 {
         let (blocks, _) = alts.pop().expect("one disjunction");
-        return Ok(Some(Part::Alts(distribute(&group, &blocks, work)?)));
+        // Every block of `R ∧ Bi` holds `R` and `Bi`, so both one's bounds.
+        let mut dirs = alt_dirs.pop().expect("one disjunction");
+        dirs_meet(&mut dirs, dirs_of(&rows));
+        return Ok(Some(Part::Alts(distribute(&rows, &blocks, work)?, dirs)));
     }
     let mut set = Classed::plain(IntervalSet::top());
     for (group, held, ors) in groups.values() {
@@ -3350,9 +3571,26 @@ fn met(
                 None => return Ok(None),
             },
             (true, [j], []) => sets[*j].0.clone(),
+            // Rows linked to a shared disjunction, projected, through its other atoms: its set
+            // lost the link, its blocks keep it. `R ∧ (B1 ∨ … ∨ Bn)` is `(R ∧ B1) ∨ … ∨
+            // (R ∧ Bn)`, each projected exactly.
+            // Complexity tradeoff: declining here sent the whole formula to the cover, one
+            // question for each gap piece at O(size) work each, so O(k²) on an `if` chain of k
+            // equation guards (`l01_25_preimage_catalog::bench::s22::relational_equal_guards_
+            // scale`, refused at k = 64). Distributed, it is O(|R| · Σ|Bi|) work, charged, read
+            // once by this holder; the result is a set, never blocks, so no holder copies a copy
+            // and the exponential growth of distributing shared parts (`direct_noting`) cannot
+            // return. Two or more holders each pay their own copy, as each pays its own rows.
+            (false, [j], []) if set_blocks[*j].is_some() => {
+                let held = set_blocks[*j].as_deref().expect("blocks kept");
+                match blocks_set(&distribute(group, held, work)?, s, within, work)? {
+                    Some((p, _)) => p,
+                    None => return Ok(None),
+                }
+            }
             (_, [], [j]) => {
                 let blocks = distribute(group, &alts[*j].0, work)?;
-                match as_set(Part::Alts(blocks), s, within, work)? {
+                match as_set(Part::Alts(blocks, Dirs::new()), s, within, work)? {
                     Some((p, _)) => p,
                     None => return Ok(None),
                 }
@@ -3373,7 +3611,12 @@ fn met(
     for (_, more) in alts {
         atoms.extend(more);
     }
-    Ok(Some(Part::Set(set, atoms)))
+    // Every point of the conjunction holds each part, so each part's bounds.
+    let mut dirs = dirs_of(&rows);
+    for d in set_dirs.into_iter().chain(alt_dirs) {
+        dirs_meet(&mut dirs, d);
+    }
+    Ok(Some(Part::Set(set, atoms, dirs, None)))
 }
 
 /// Whether a group of [`met`] with rows `group` and two or more disjunctions `ors` of `alts`
@@ -3427,12 +3670,13 @@ fn cut_at_shared(
         return Ok(None);
     };
     let mut parts = vec![Part::Rows(group.to_vec())];
-    parts.extend(ors.iter().map(|j| Part::Alts(alts[*j].0.clone())));
+    // No bounds kept with them: none is always sound, and `met` here has no `if` chain to cut.
+    parts.extend((ors.iter()).map(|j| Part::Alts(alts[*j].0.clone(), Dirs::new())));
     let top = IntervalSet::top();
     let set = match met(parts, &t, &top, false, work)? {
         None => return Ok(None),
-        Some(Part::Set(set, _)) => set,
-        Some(p @ (Part::Rows(_) | Part::Alts(_))) => match as_set(p, &t, &top, work)? {
+        Some(Part::Set(set, ..)) => set,
+        Some(p @ (Part::Rows(_) | Part::Alts(..))) => match as_set(p, &t, &top, work)? {
             Some((set, _)) => set,
             None => return Ok(None),
         },

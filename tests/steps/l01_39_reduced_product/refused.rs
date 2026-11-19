@@ -6,7 +6,7 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
-use zedc::store::interval::IntervalSet;
+use zedc::store::interval::{End, IntervalSet};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, Shared, project_each};
 use zedc::store::product::{Asked, Kept, Refused, Scope};
 
@@ -34,14 +34,22 @@ fn growth() -> Formula {
 }
 
 /// The solver alone ([`solver_alone`]) leaves the refused disjunct out and returns its cause
-/// with the wider set `0..`; the exact cover then asks whether the values below 5 have a
-/// point, which only the refused disjunct can give, so its question is refused for the same
-/// cause, and `v` is refused with it: the cause is returned with the symbol.
+/// with the wider set `0..`. With a second disjunction on `v` beside it, the exact cover asks
+/// whether the values below 5 have a point, which only the refused disjunct can give, so its
+/// question is refused for the same cause, and `v` is refused with it: the cause is returned
+/// with the symbol. With the one disjunction alone, the row `v >= 0` is distributed into its
+/// blocks, so the refused disjunct's block reads `v` and is projected by Pugh's exact
+/// projection, which finds its points (`x = 4, w = 0, y = 0, z = 1` is one): `v` is `0..`
+/// exactly, and nothing is refused.
 #[test]
 fn the_cause_of_a_refused_disjunct_is_returned() {
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
         Formula::Or(Shared::new(vec![growth(), ge(&[("v", 1)], -5)])),
+        Formula::Or(Shared::new(vec![
+            ge(&[("v", -1)], 1000),
+            ge(&[("v", 1)], -2000),
+        ])),
     ]);
     let alone = solver_alone(|| project_each(&f, &[sym("v")]));
     let (hulls, skipped) = alone.expect("the base has a point");
@@ -50,6 +58,18 @@ fn the_cause_of_a_refused_disjunct_is_returned() {
     let (hulls, skipped) = project_each(&f, &[sym("v")]).expect("the base has a point");
     assert!(skipped.is_empty(), "{skipped:?}");
     assert_eq!(hulls[0], Err(Refusal::Growth), "{hulls:?}");
+    // The one disjunction alone: exact.
+    let f = Formula::and(vec![
+        ge(&[("v", 1)], 0),
+        Formula::Or(Shared::new(vec![growth(), ge(&[("v", 1)], -5)])),
+    ]);
+    let (hulls, skipped) = project_each(&f, &[sym("v")]).expect("the base has a point");
+    assert!(skipped.is_empty(), "{skipped:?}");
+    assert_eq!(
+        hulls[0],
+        Ok(IntervalSet::range(End::from(0i64), End::PosInf)),
+        "{hulls:?}"
+    );
     // Without the refused disjunct, nothing is skipped.
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
