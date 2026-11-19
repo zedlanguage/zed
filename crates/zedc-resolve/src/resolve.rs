@@ -4859,7 +4859,7 @@ fn field_type_var(n: &str, span: Span) -> Error {
 /// replacement, when `e` is of a row whose menu DESIGN.md sec:diagnostics offers "only when the
 /// definition then checks" and name resolution gives that menu: the nearest type name in place
 /// of an unknown one (`Resolver::unknown_type`), or a parameter with its type, a type variable
-/// written once, dropped from the `:` on ([`written_once`]). Name resolution cannot tell
+/// written once, dropped from the `:` on (`written_once`). Name resolution cannot tell
 /// whether the definition then checks, so the front end makes the edit, checks the unit, and
 /// otherwise withholds the menu ([`withhold_checked_menu`]).
 pub fn checked_menu_edit(e: &Error, text: &str) -> Option<(Span, String)> {
