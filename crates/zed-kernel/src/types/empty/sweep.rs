@@ -1763,9 +1763,9 @@ fn check_list_value(t: &Type, value: &Value) -> bool {
             roots.push((x, sign));
         }
     }
-    let Some(c) = sw.c.clone() else {
-        return false;
-    };
+    // `shape` gives a clause only in the branch that first sets `c` to the payload's name
+    // (`get_or_insert_with`), and the `let` above requires that clause.
+    let c = (sw.c.clone()).expect("a list shape with a clause has its name");
     let mut items = Vec::new();
     let mut v = value;
     let last = loop {
@@ -2227,6 +2227,17 @@ mod r4_checker_tests {
         // type the checker does not read as a list confirms no value.
         assert!(!check_actual(&one, &Value::Int(7)));
         assert!(!check_actual(&Type::int(), &Value::Int(7)));
+        // An atom with named fields, `#cons(head: 7, tail: #nil)`, is not the list's
+        // `#cons(7, #nil)`.
+        let named = Value::atom_named(
+            "cons",
+            vec![
+                ("head".into(), Value::Int(7)),
+                ("tail".into(), Value::atom("nil")),
+            ],
+        )
+        .expect("distinct field names");
+        assert!(!check_actual(&one, &named));
         assert!(!check_actual(
             &one,
             &Value::atom_with("cons", vec![Value::Bool(true), Value::atom("nil")])
