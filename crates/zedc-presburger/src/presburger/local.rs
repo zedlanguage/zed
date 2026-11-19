@@ -112,7 +112,9 @@ pub(super) fn cluster_sides(
             }
         }
     }
-    let (blocks, block_of_edge) = biconnected(&adj, edges.len());
+    // No edge is a self-loop (an item to one of its atoms, or two distinct atoms), so every
+    // edge is in a block and the cut nodes are the nodes in two blocks or more.
+    let (blocks, block_of_edge) = zed_graph::block_of_edges(&adj, edges.len(), None);
     // The nodes of each block, and the blocks of each node, block by block.
     let mut edges_of: Vec<Vec<usize>> = vec![Vec::new(); blocks];
     for (e, &b) in block_of_edge.iter().enumerate() {
@@ -391,61 +393,4 @@ pub(super) fn cluster_sides(
         }
     }
     out
-}
-
-/// The biconnected components of the graph with adjacency `adj` (each entry a neighbor and the
-/// edge's number) and `edges` edges: their number, and the component of each edge. Tarjan's
-/// depth-first pass with a stack of edges, with an explicit stack of nodes, so a long path
-/// does not deepen the call stack; O(nodes + edges).
-fn biconnected(adj: &[Vec<(usize, usize)>], edges: usize) -> (usize, Vec<usize>) {
-    let n = adj.len();
-    let (mut disc, mut low) = (vec![usize::MAX; n], vec![0; n]);
-    let mut block_of = vec![usize::MAX; edges];
-    let mut on_stack: Vec<usize> = Vec::new();
-    let (mut blocks, mut time) = (0, 0);
-    for s in 0..n {
-        if disc[s] != usize::MAX {
-            continue;
-        }
-        disc[s] = time;
-        low[s] = time;
-        time += 1;
-        // Each frame: a node, the edge it was reached by, and its next edge to read.
-        let mut stack: Vec<(usize, usize, usize)> = vec![(s, usize::MAX, 0)];
-        while let Some(top) = stack.last_mut() {
-            let (v, by, k) = *top;
-            if let Some(&(w, e)) = adj[v].get(k) {
-                top.2 += 1;
-                if e == by {
-                    continue;
-                }
-                if disc[w] == usize::MAX {
-                    on_stack.push(e);
-                    disc[w] = time;
-                    low[w] = time;
-                    time += 1;
-                    stack.push((w, e, 0));
-                } else if disc[w] < disc[v] {
-                    on_stack.push(e);
-                    low[v] = low[v].min(disc[w]);
-                }
-                continue;
-            }
-            stack.pop();
-            let Some(&(u, _, _)) = stack.last() else {
-                continue;
-            };
-            low[u] = low[u].min(low[v]);
-            if low[v] >= disc[u] {
-                while let Some(f) = on_stack.pop() {
-                    block_of[f] = blocks;
-                    if f == by {
-                        break;
-                    }
-                }
-                blocks += 1;
-            }
-        }
-    }
-    (blocks, block_of)
 }

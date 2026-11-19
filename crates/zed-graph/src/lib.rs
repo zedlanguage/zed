@@ -300,3 +300,6 @@ mod bench;
 
 #[cfg(test)]
 mod tests;
+
+mod biconnected;
+pub use biconnected::{biconnected, block_of_edges};

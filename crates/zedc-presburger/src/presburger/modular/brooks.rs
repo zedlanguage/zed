@@ -1,7 +1,7 @@
 //! A three-color witness for graphs of maximum degree three. This is the
 //! block decomposition and reverse tree coloring of Baetz and Wood,
 //! arXiv:1401.8023, Lemmata 1--3. A four-clique gives no witness.
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 type Edge = (usize, usize);
 
@@ -80,64 +80,54 @@ fn vertices(edges: &[Edge]) -> Vec<usize> {
     out
 }
 
-/// Tarjan's edge stack, with explicit DFS frames. All indices below come from
-/// rows checked by color, or from its own local adjacency lists. The clock is
-/// at most the length of an allocated `Vec<Vec<usize>>`, hence cannot overflow.
+/// The blocks of `adj` without `excluded`, each as its edges, by the workspace's one search
+/// ([`zed_graph::biconnected`]), in the order this file's own search gave them: blocks in the
+/// order completed, each block's edges last read first. A self-loop is a block of its own, and
+/// parallel edges share a block; this file's own copy of the search, before DRY-graph-shared,
+/// skipped every edge back to a node's parent and so dropped the second of two parallel edges
+/// and every self-loop (`zed_graph` test
+/// `parallel_edges_share_a_block_and_a_self_loop_is_a_block_of_its_own`). Each undirected edge
+/// is listed at both ends of `adj`, a self-loop twice at its node; `None` when an edge is
+/// listed at one end only. O(v + e) and one hash operation per listing.
 fn blocks(adj: &[Vec<usize>], excluded: Option<usize>) -> Option<Vec<Vec<Edge>>> {
-    let n = adj.len();
-    let mut entered = vec![usize::MAX; n];
-    let mut low = vec![0; n];
-    let mut parent = vec![usize::MAX; n];
-    let mut clock = 0;
-    let mut edges = Vec::new();
-    let mut out = Vec::new();
-    for start in 0..n {
-        if Some(start) == excluded || entered[start] != usize::MAX {
-            continue;
-        }
-        entered[start] = clock;
-        low[start] = clock;
-        clock += 1;
-        let mut stack = vec![(start, 0usize)];
-        while let Some((v, next)) = stack.last_mut() {
-            let v = *v;
-            if *next < adj[v].len() {
-                let w = adj[v][*next];
-                *next += 1;
-                if Some(w) == excluded {
-                    continue;
-                }
-                if entered[w] == usize::MAX {
-                    parent[w] = v;
-                    edges.push((v, w));
-                    entered[w] = clock;
-                    low[w] = clock;
-                    clock += 1;
-                    stack.push((w, 0));
-                } else if w != parent[v] && entered[w] < entered[v] {
-                    low[v] = low[v].min(entered[w]);
-                    edges.push((v, w));
-                }
+    let mut ends: Vec<Edge> = Vec::new();
+    // The edges listed at their first end and not yet at their second, by their two ends,
+    // lower first. The rows are read in order, so an edge is first listed at its lower end,
+    // and a self-loop's two listings come one after the other at its node. Two parallel edges
+    // are alike, so which of them a second listing is matched with does not matter.
+    let mut open: HashMap<Edge, Vec<usize>> = HashMap::new();
+    let mut numbered: Vec<Vec<(usize, usize)>> = Vec::with_capacity(adj.len());
+    for (v, row) in adj.iter().enumerate() {
+        let mut mine = Vec::with_capacity(row.len());
+        for &w in row {
+            let key = (v.min(w), v.max(w));
+            let second = if w <= v {
+                open.get_mut(&key).and_then(Vec::pop)
             } else {
-                stack.pop();
-                let p = parent[v];
-                if p != usize::MAX {
-                    low[p] = low[p].min(low[v]);
-                    if low[v] >= entered[p] {
-                        let mut block = Vec::new();
-                        loop {
-                            let edge = edges.pop()?;
-                            block.push(edge);
-                            if edge == (p, v) {
-                                break;
-                            }
-                        }
-                        out.push(block);
-                    }
+                None
+            };
+            let e = second.unwrap_or_else(|| {
+                if w < v {
+                    // Listed at its higher end only: no pair to match, found below.
+                    open.entry(key).or_default().push(usize::MAX);
                 }
-            }
+                ends.push((v, w));
+                if w >= v {
+                    open.entry(key).or_default().push(ends.len() - 1);
+                }
+                ends.len() - 1
+            });
+            mine.push((w, e));
         }
+        numbered.push(mine);
     }
+    if !open.values().all(Vec::is_empty) {
+        return None;
+    }
+    let mut out = Vec::new();
+    zed_graph::biconnected(&numbered, ends.len(), excluded, |es| {
+        out.push(es.iter().rev().map(|&e| ends[e]).collect());
+    });
     Some(out)
 }
 
