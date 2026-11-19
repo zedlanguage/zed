@@ -89,19 +89,33 @@ fn timed(f: &Formula) -> (u128, u128, u64, u64) {
 /// 43 ms of its 42 to 109 ms (load 60 to 77, 2026-11-17), the cover's share about 58 ns a
 /// unit. A fixed cost outside the cover, divided by 137,785 units and multiplied by
 /// `EXACT_LIMIT`, counted 22 times over.
+///
+/// Each case is checked to reach the cover (a question or more) and to count 10^5 units or
+/// more (BENCH-cover-per-unit-few-units). The cases once had the evens written as one multiple,
+/// `x == 2 * v2`; since the two-pin reading (zed-impl cd403f3b0, `guarded::two_pins`) a part
+/// with no choice is read off its polygon with no question, and `evens n=4000` counted 1,056 to
+/// 1,312 units, so the fixed costs of the projection, some 0.3 ms, gave 290 to 515 ns a unit and
+/// 900 ms or more at the limit. The evens are now `x == 2 * v2 or x == 4 * v4`, the same set
+/// through a choice, which the two-pin reading declines; `n=2000 pad=50` replaces `n=1000
+/// pad=50`, which counted 63,332 units with one multiple and 102,959 with the choice.
 #[test]
 fn the_cover_takes_a_bounded_time_per_unit_of_work() {
     use zedc::store::presburger::exact::EXACT_LIMIT;
     let cases: Vec<(&str, Formula)> = vec![
-        ("evens n=4000", multiples(&[2], 4000, 0)),
+        ("2, 4 n=4000", multiples(&[2, 4], 4000, 0)),
         ("2, 3 n=3000", multiples(&[2, 3], 3000, 0)),
         ("2, 3, 5, 7 n=1000", multiples(&[2, 3, 5, 7], 1000, 0)),
-        ("evens n=1000 pad=50", multiples(&[2], 1000, 50)),
-        ("evens n=400 pad=400", multiples(&[2], 400, 400)),
+        ("2, 4 n=2000 pad=50", multiples(&[2, 4], 2000, 50)),
+        ("2, 4 n=400 pad=400", multiples(&[2, 4], 400, 400)),
     ];
     let mut worst = 0f64;
     for (name, f) in &cases {
         let (with, alone, units, questions) = timed(f);
+        assert!(
+            units >= 100_000 && questions >= 1,
+            "exact cover: {name}: {units} units, {questions} questions; the case must reach the \
+             cover and count 10^5 units or more, or its time is the fixed costs"
+        );
         let ns = with.saturating_sub(alone);
         let per = ns as f64 / units as f64;
         worst = worst.max(per);
