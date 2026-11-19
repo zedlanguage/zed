@@ -30,7 +30,7 @@ fn every_binder_is_named_through_the_function() {
     );
     assert_eq!(
         written(&t, before_at, &|_| true),
-        "{ g = (x, y) -> (x + y); g(x, $3) }"
+        "{ g = (x, y) -> x + y; g(x, $3) }"
     );
     // Display is unchanged.
     assert_eq!(
@@ -40,26 +40,23 @@ fn every_binder_is_named_through_the_function() {
 }
 
 /// `a && b` elaborates to `if a { b } else { false }` and `a || b` to `if a { true } else { b }`
-/// (elab/walk.rs): written, each is the operator again, in parentheses as every binary
-/// operator is. Any other `if` is written as it is, and `pretty` keeps the `if` form.
+/// (elab/walk.rs): written, each is the operator again, parenthesized only where precedence
+/// needs it. Any other `if` is written as it is, and `pretty` keeps the `if` form.
 #[test]
 fn the_elaborated_and_and_or_are_written_as_operators() {
     let and = if_(ge0("x@1"), ge0("y@2"), lit(false));
-    assert_eq!(
-        written(&and, before_at, &|_| true),
-        "((x >= 0) && (y >= 0))"
-    );
+    assert_eq!(written(&and, before_at, &|_| true), "x >= 0 && y >= 0");
     let or = if_(ge0("x"), lit(true), ge0("y"));
-    assert_eq!(written(&or, before_at, &|_| true), "((x >= 0) || (y >= 0))");
+    assert_eq!(written(&or, before_at, &|_| true), "x >= 0 || y >= 0");
     let nested = if_(if_(ge0("a"), ge0("b"), lit(false)), lit(true), ge0("c"));
     assert_eq!(
         written(&nested, before_at, &|_| true),
-        "(((a >= 0) && (b >= 0)) || (c >= 0))"
+        "a >= 0 && b >= 0 || c >= 0"
     );
     let other = if_(ge0("x"), lit(1), lit(0));
     assert_eq!(
         written(&other, before_at, &|_| true),
-        "if (x >= 0) { 1 } else { 0 }"
+        "if x >= 0 { 1 } else { 0 }"
     );
     assert_eq!(
         pretty(&and, usize::MAX),
@@ -86,19 +83,229 @@ fn a_short_chain_of_and_is_written_with_each_operator() {
     for left in [true, false] {
         for k in [1, 2, 9] {
             let text = written(&chain(k, left), before_at, &|_| true);
-            assert_eq!(text.matches("(v >= 0)").count(), k, "{text}");
+            assert_eq!(text.matches("v >= 0").count(), k, "{text}");
             assert_eq!(text.matches(" && ").count(), k - 1, "{text}");
             assert!(!text.contains('@') && !text.contains("if"), "{text}");
         }
     }
+    // `&&` groups from the left, so only the chain nested to the right keeps parentheses.
     assert_eq!(
         written(&chain(3, true), before_at, &|_| true),
-        "(((v >= 0) && (v >= 0)) && (v >= 0))"
+        "v >= 0 && v >= 0 && v >= 0"
     );
     assert_eq!(
         written(&chain(3, false), before_at, &|_| true),
-        "((v >= 0) && ((v >= 0) && (v >= 0)))"
+        "v >= 0 && (v >= 0 && v >= 0)"
     );
+}
+
+/// Parentheses only where the grammar's precedence needs them (P191), by the formatter's
+/// level table (`zed_kernel::print::level`): the operators of one level group from the left,
+/// comparisons do not chain, `^` groups from the right, a prefix on a prefix is grouped, and
+/// a term whose text is itself parenthesized, such as a lambda's `(x, y) -> …`, is grouped
+/// all the same (the copy in zedc-preimage this printer replaced left `(a) + (b)` bare).
+#[test]
+fn operands_are_parenthesized_only_where_precedence_needs_it() {
+    let w = |t: &Term| written(t, before_at, &|_| true);
+    let p = |q: Prim, x: Term, y: Term| prim(q, vec![x, y]);
+    let (a, b, c) = (var("a@1"), var("b@1"), var("c@1"));
+    let cases = [
+        (
+            p(Prim::Sub, p(Prim::Sub, a.clone(), b.clone()), c.clone()),
+            "a - b - c",
+        ),
+        (
+            p(Prim::Sub, a.clone(), p(Prim::Sub, b.clone(), c.clone())),
+            "a - (b - c)",
+        ),
+        (
+            p(Prim::Add, a.clone(), p(Prim::Mul, b.clone(), c.clone())),
+            "a + b * c",
+        ),
+        (
+            p(Prim::Mul, p(Prim::Add, a.clone(), b.clone()), c.clone()),
+            "(a + b) * c",
+        ),
+        (
+            p(Prim::Pow, a.clone(), p(Prim::Pow, b.clone(), c.clone())),
+            "a^b^c",
+        ),
+        (
+            p(Prim::Pow, p(Prim::Pow, a.clone(), b.clone()), c.clone()),
+            "(a^b)^c",
+        ),
+        (
+            p(Prim::Pow, prim(Prim::Neg, vec![a.clone()]), lit(2)),
+            "(-a)^2",
+        ),
+        (
+            prim(Prim::Neg, vec![p(Prim::Pow, a.clone(), lit(2))]),
+            "-a^2",
+        ),
+        (
+            p(Prim::Pow, a.clone(), prim(Prim::Neg, vec![b.clone()])),
+            "a^-b",
+        ),
+        (
+            prim(Prim::Neg, vec![prim(Prim::Neg, vec![a.clone()])]),
+            "-(-a)",
+        ),
+        (prim(Prim::Neg, vec![lit(-3)]), "-(-3)"),
+        (p(Prim::Sub, a.clone(), lit(-3)), "a - -3"),
+        (
+            p(Prim::Lt, p(Prim::Lt, a.clone(), b.clone()), c.clone()),
+            "(a < b) < c",
+        ),
+        (
+            p(Prim::Eq, p(Prim::Lt, a.clone(), b.clone()), c.clone()),
+            "a < b == c",
+        ),
+        (
+            p(Prim::TupleGet, p(Prim::Add, a.clone(), b.clone()), lit(0)),
+            "(a + b)[0]",
+        ),
+        // A number before a postfix is parenthesized, as the formatter writes it.
+        (
+            p(Prim::TupleGet, p(Prim::TupleGet, lit(5), lit(1)), lit(0)),
+            "(5)[1][0]",
+        ),
+        (p(Prim::TupleGet, lit(-5), lit(1)), "(-5)[1]"),
+        (
+            prim(Prim::Neg, vec![p(Prim::TupleGet, a.clone(), lit(0))]),
+            "-a[0]",
+        ),
+        (if_(a.clone(), lit(false), b.clone()), "!a && b"),
+        (if_(a.clone(), b.clone(), lit(true)), "!a || b"),
+        (
+            if_(if_(a.clone(), lit(true), b.clone()), c.clone(), lit(false)),
+            "(a || b) && c",
+        ),
+        (
+            if_(if_(a.clone(), b.clone(), lit(false)), lit(true), c.clone()),
+            "a && b || c",
+        ),
+        (
+            p(
+                Prim::Eq,
+                lam(&["x@1", "y@1"], p(Prim::Add, var("x@1"), var("y@1"))),
+                a.clone(),
+            ),
+            "((x, y) -> x + y) == a",
+        ),
+        (
+            p(
+                Prim::Mul,
+                p(Prim::Add, a.clone(), b.clone()),
+                p(Prim::Add, b.clone(), c.clone()),
+            ),
+            "(a + b) * (b + c)",
+        ),
+    ];
+    for (t, text) in cases {
+        assert_eq!(w(&t), text, "{t}");
+    }
+}
+
+/// A random term of the arithmetic, comparison, logical, prefix and index forms, `d` deep,
+/// with `&&` and `||` in the forms elaboration gives them and no negative literal, so that the
+/// text reads back to exactly one term (`-3` would also read back as `-(3)`).
+fn random_operators(rng: &mut zed_tests::instances::Rng, d: usize) -> Term {
+    let leaf = |rng: &mut zed_tests::instances::Rng| match rng.below(3) {
+        0 => lit(rng.int(0, 9)),
+        _ => var(&format!("{}@1", rng.pick(&["a", "b", "c"]))),
+    };
+    if d == 0 || rng.below(4) == 0 {
+        return leaf(rng);
+    }
+    let ops = [
+        Prim::Add,
+        Prim::Sub,
+        Prim::Concat,
+        Prim::Mul,
+        Prim::Div,
+        Prim::IntDiv,
+        Prim::Mod,
+        Prim::Pow,
+        Prim::Eq,
+        Prim::Ne,
+        Prim::Lt,
+        Prim::Ge,
+    ];
+    match rng.below(6) {
+        0 => {
+            let q = rng.pick(&[Prim::Neg, Prim::Not]);
+            prim(q, vec![random_operators(rng, d - 1)])
+        }
+        1 => prim(
+            Prim::TupleGet,
+            vec![random_operators(rng, d - 1), lit(rng.int(0, 2))],
+        ),
+        2 => {
+            let (x, y) = (random_operators(rng, d - 1), random_operators(rng, d - 1));
+            match rng.below(2) {
+                0 => if_(x, y, lit(false)),
+                _ => if_(x, lit(true), y),
+            }
+        }
+        _ => {
+            let q = rng.pick(&ops);
+            prim(
+                q,
+                vec![random_operators(rng, d - 1), random_operators(rng, d - 1)],
+            )
+        }
+    }
+}
+
+/// The term the expression `e` of a program reads as, for the forms of
+/// [`random_operators`]: `&&` and `||` as elaboration writes them.
+fn read_operators(e: &zedc::ast::Expr) -> Term {
+    use zedc::ast::{BinaryOp, ExprKind, UnaryOp};
+    match &e.kind {
+        ExprKind::Name(n) => var(&format!("{n}@1")),
+        ExprKind::Int { digits, .. } => lit(digits.parse::<i64>().expect("a digit")),
+        ExprKind::Unary(op, x) => {
+            let q = match op {
+                UnaryOp::Neg => Prim::Neg,
+                UnaryOp::Not => Prim::Not,
+            };
+            prim(q, vec![read_operators(x)])
+        }
+        ExprKind::Index(x, k) => prim(Prim::TupleGet, vec![read_operators(x), read_operators(k)]),
+        ExprKind::Binary(BinaryOp::And, x, y) => {
+            if_(read_operators(x), read_operators(y), lit(false))
+        }
+        ExprKind::Binary(BinaryOp::Or, x, y) => {
+            if_(read_operators(x), lit(true), read_operators(y))
+        }
+        ExprKind::Binary(op, x, y) => prim(op.prim(), vec![read_operators(x), read_operators(y)]),
+        _ => panic!("not a form of random_operators: {e:?}"),
+    }
+}
+
+/// Each random term of operators is written with the parentheses its precedence needs and no
+/// others (P191): the text reads back to the same term, and the source formatter, which writes
+/// only the parentheses the grammar needs, leaves it as it is. 512 terms up to five deep.
+#[test]
+fn random_operator_terms_read_back_with_minimal_parentheses() {
+    let mut rng = zed_tests::instances::Rng::new(191);
+    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+        let t = random_operators(&mut rng, 5);
+        let text = written(&t, before_at, &|_| true);
+        let src = format!("x = {text};\n");
+        let tokens = zedc::lex::lex(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let tree = zedc::parse::parse(&src, &tokens, "Unit", zedc::parse::TOP)
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        let stmts = zedc::ast::unit(&src, &tokens, &tree).unwrap_or_else(|e| panic!("{src}: {e}"));
+        let value = (stmts.iter())
+            .find_map(|s| match &s.kind {
+                zedc::ast::StmtKind::Bind { value, .. } => Some(value),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{src}: no definition"));
+        assert_eq!(read_operators(value), t, "{src}");
+        assert_eq!(zedc::format::format(&src, &tokens, &stmts), src, "{src}");
+    }
 }
 /// A type test in a pattern writes `(is T)`, sec:grammar's `IsPat`, with its type as a program
 /// writes it, the empty type as `Never` (DESIGN.md, the L1 row of "Defined words by layer"),

@@ -8,6 +8,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::lex::{Digits, Span};
+use zed_kernel::Prim;
 use zed_kernel::num::FloatFormat;
 use zedc_base::address::ContentAddress;
 
@@ -299,6 +300,30 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
+    /// The kernel primitive the operator names. Elaboration writes `&&` and `||` as `if`s,
+    /// which the kernel printer writes back as these operators; its other operators and the
+    /// checker's tables read this map. O(1).
+    pub fn prim(self) -> Prim {
+        match self {
+            BinaryOp::Or => Prim::Or,
+            BinaryOp::And => Prim::And,
+            BinaryOp::Eq => Prim::Eq,
+            BinaryOp::Ne => Prim::Ne,
+            BinaryOp::Lt => Prim::Lt,
+            BinaryOp::Le => Prim::Le,
+            BinaryOp::Gt => Prim::Gt,
+            BinaryOp::Ge => Prim::Ge,
+            BinaryOp::Add => Prim::Add,
+            BinaryOp::Sub => Prim::Sub,
+            BinaryOp::Concat => Prim::Concat,
+            BinaryOp::Mul => Prim::Mul,
+            BinaryOp::Div => Prim::Div,
+            BinaryOp::IntDiv => Prim::IntDiv,
+            BinaryOp::Mod => Prim::Mod,
+            BinaryOp::Pow => Prim::Pow,
+        }
+    }
+
     /// The operator as written.
     pub fn as_str(self) -> &'static str {
         match self {

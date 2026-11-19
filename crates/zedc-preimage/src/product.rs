@@ -11133,9 +11133,7 @@ impl Scope {
                 .collect();
             let t = balanced(Prim::And, shown);
             let free = stage::free(&t);
-            plain_text(&t, &|u| {
-                print::written(u, written_name, &|x| free.contains(x))
-            })
+            print::written(&t, written_name, &|x| free.contains(x))
         };
         let l = loops::check(&t, outcome, &text)?;
         let free = stage::free(test);
@@ -16493,80 +16491,6 @@ fn negated_if(t: &Term, negate: bool) -> Term {
         Term::Prim(Prim::Not, a) if a.len() == 1 => a[0].clone(),
         _ => Term::Prim(Prim::Not, vec![t.clone()]),
     }
-}
-
-/// `t` written as a program writes it, with the parentheses the operators' precedence needs
-/// and no others: `x - y >= 1 || x >= 0`. Comparisons, `+`, `-`, `*`, `-x`, `&&`, `||`, `!`,
-/// names and integers are written here; any other term is `other` of it, in parentheses
-/// below an operator. O(the size of `t`) besides `other`.
-fn plain_text(t: &Term, other: &dyn Fn(&Term) -> String) -> String {
-    /// `t` inside an operator of precedence `at`: 1 `||`, 2 `&&`, 3 comparisons, 4 `+ -`,
-    /// 5 `*`, 6 a prefix operator.
-    fn go(t: &Term, at: u8, other: &dyn Fn(&Term) -> String, out: &mut String) {
-        let binary = |p: Prim| match p {
-            Prim::Or => Some((1, "||")),
-            Prim::And => Some((2, "&&")),
-            Prim::Eq => Some((3, "==")),
-            Prim::Ne => Some((3, "!=")),
-            Prim::Lt => Some((3, "<")),
-            Prim::Le => Some((3, "<=")),
-            Prim::Gt => Some((3, ">")),
-            Prim::Ge => Some((3, ">=")),
-            Prim::Add => Some((4, "+")),
-            Prim::Sub => Some((4, "-")),
-            Prim::Mul => Some((5, "*")),
-            _ => None,
-        };
-        let (p, a): (Prim, Vec<&Term>) = match t {
-            Term::Prim(p, a) => (*p, a.iter().collect()),
-            Term::If(..) => match connective(t) {
-                Some((and, [(x, px), (y, py)])) if py => {
-                    let x = if px { x.clone() } else { negated_if(x, true) };
-                    let op = if and { Prim::And } else { Prim::Or };
-                    return go(&Term::Prim(op, vec![x, y.clone()]), at, other, out);
-                }
-                _ => return paren(&other(t), at, out),
-            },
-            Term::Var(n) => return out.push_str(written_name(n)),
-            Term::Lit(Value::Int(k)) => return out.push_str(&k.to_string()),
-            _ => return paren(&other(t), at, out),
-        };
-        match (p, &a[..]) {
-            (Prim::Neg | Prim::Not, [x]) => {
-                out.push(if p == Prim::Neg { '-' } else { '!' });
-                go(x, 6, other, out);
-            }
-            (_, [x, y]) if binary(p).is_some() => {
-                let (q, op) = binary(p).expect("matched");
-                if q < at {
-                    out.push('(');
-                }
-                // Comparisons do not chain, and `-` is not associative: the right side of
-                // either, and the left side of a comparison, are one level up.
-                go(x, if q == 3 { 4 } else { q }, other, out);
-                out.push_str(&format!(" {op} "));
-                go(
-                    y,
-                    if q == 3 || p == Prim::Sub { q + 1 } else { q },
-                    other,
-                    out,
-                );
-                if q < at {
-                    out.push(')');
-                }
-            }
-            _ => paren(&other(t), at, out),
-        }
-    }
-    fn paren(s: &str, at: u8, out: &mut String) {
-        match at > 0 && s.contains(' ') && !(s.starts_with('(') && s.ends_with(')')) {
-            true => out.push_str(&format!("({s})")),
-            false => out.push_str(s),
-        }
-    }
-    let mut out = String::new();
-    go(t, 0, other, &mut out);
-    out
 }
 
 /// The connective `p` over `sides`, nested in a balanced way: depth logarithmic in their

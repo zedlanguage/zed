@@ -60,21 +60,13 @@ pub fn format_type(t: &Type) -> String {
     f.run(Job::Ty { t, min: 0 })
 }
 
-/// Precedence levels, from the loosest form of `Expr` to `Primary`, as sec:grammar orders
-/// them; an operand written at a lower level than its position needs is parenthesized.
-const LAMBDA: u8 = 0;
-const ELSE: u8 = 1;
-const OR: u8 = 2;
-const EQUALITY: u8 = 4;
-const RELATION: u8 = 5;
-const REDUCE: u8 = 6;
-const RANGE: u8 = 7;
-const INFIX: u8 = 8;
-const ADDITIVE: u8 = 9;
-const PREFIX: u8 = 11;
-const POWER: u8 = 12;
-const POSTFIX: u8 = 13;
-const PRIMARY: u8 = 14;
+// Precedence levels, from the loosest form of `Expr` to `Primary`, as sec:grammar orders
+// them; an operand written at a lower level than its position needs is parenthesized. The
+// kernel printer's message text reads the same table.
+use zed_kernel::print::level::{
+    self, ADDITIVE, ELSE, INFIX, LAMBDA, OR, POSTFIX, POWER, PREFIX, PRIMARY, RANGE, REDUCE,
+    RELATION,
+};
 
 fn level(e: &Expr) -> u8 {
     if infix_call(e).is_some() {
@@ -160,25 +152,12 @@ fn infix_right(b: &Expr) -> u8 {
 }
 
 fn binary_level(op: BinaryOp) -> u8 {
-    match op {
-        BinaryOp::Or => OR,
-        BinaryOp::And => OR + 1,
-        BinaryOp::Eq | BinaryOp::Ne => EQUALITY,
-        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => RELATION,
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Concat => ADDITIVE,
-        BinaryOp::Mul | BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod => ADDITIVE + 1,
-        BinaryOp::Pow => POWER,
-    }
+    level::binary(op.prim()).expect("each binary operator of the grammar has a level")
 }
 
 /// The lowest levels the left and the right operand of `op` are written at with no parentheses.
 fn operand_levels(op: BinaryOp) -> (u8, u8) {
-    let l = binary_level(op);
-    match l {
-        POWER => (POSTFIX, PREFIX),
-        EQUALITY | RELATION => (l + 1, l + 1),
-        _ => (l, l + 1),
-    }
+    level::operands(binary_level(op))
 }
 
 /// Whether `e`, written as the left operand of `op` (`right` false) or its right operand,

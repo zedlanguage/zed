@@ -19,9 +19,12 @@
 //! [`written`] writes a term as the program it came from wrote it, as far as the term shows:
 //! each name through a function the caller gives, which maps a name elaboration made back to
 //! the one the program wrote, and the `if` forms that elaboration gives `&&` and `||` as those
-//! operators, for a message about the term (sec:diagnostics).
+//! operators, for a message about the term (sec:diagnostics). It writes parentheses only
+//! where the grammar's precedence needs them (P191), by the level table of module [`level`],
+//! which the source formatter reads too.
 
 mod dag;
+pub mod level;
 
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
@@ -80,10 +83,12 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
 
 /// `t` on one line as the program wrote it, for a message, written where the names `resolves`
 /// accepts are in scope, as by [`pretty_in`]: each name a variable, a binder or a call's head
-/// writes is `name` of it, and `if c { b } else { false }` and `if c { true } else { b }`, the
-/// terms elaboration gives `c && b` and `c || b`, are written `(c && b)` and `(c || b)`,
-/// parenthesized as every binary operator is. A program that wrote the `if` itself reads the
-/// operator, which means the same. Otherwise the text is that of [`pretty_in`] on one line,
+/// writes is `name` of it; `if c { b } else { false }` and `if c { true } else { b }`, the
+/// terms elaboration gives `c && b` and `c || b`, are written `c && b` and `c || b`, and
+/// `if c { false } else { b }` and `if c { a } else { true }` are written `!c && b` and
+/// `!c || a`, which mean the same; and an operator's operands are parenthesized only where
+/// the grammar's precedence needs it (P191, module [`level`]): `x - y >= 1 || x >= 0`,
+/// `a - (b - c)`, `-(-x)`, `(-x)^2`. Otherwise the text is that of [`pretty_in`] on one line,
 /// and costs the same.
 pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
     let local = defs::local();
@@ -378,6 +383,9 @@ enum Piece<'a> {
     /// unless it is written as a primary or a postfix expression (sec:grammar, Prefix and
     /// Postfix).
     Operand(&'a Term),
+    /// A term in a place that needs at least the given precedence level, in [`written`]'s
+    /// text: parenthesized when its own level ([`written_level`]) is lower.
+    At(&'a Term, u8),
     Pattern(&'a Pattern),
 }
 
@@ -403,6 +411,22 @@ impl<'a> Pieces<'a> {
     fn operand(&mut self, t: &'a Term) -> &mut Self {
         self.0.push(Piece::Operand(t));
         self
+    }
+
+    /// `t` in a place that needs the precedence level `min`: in [`written`]'s text,
+    /// parenthesized only when its level is lower; in the other printers' text, which
+    /// parenthesizes each binary operator, as [`Pieces::operand`] writes it.
+    fn at(&mut self, t: &'a Term, min: u8) -> &mut Self {
+        self.0.push(match self.1 {
+            Some(_) => Piece::At(t, min),
+            None => Piece::Operand(t),
+        });
+        self
+    }
+
+    /// Whether the text is [`written`]'s, which writes minimal parentheses.
+    fn minimal(&self) -> bool {
+        self.1.is_some()
     }
 
     fn pattern(&mut self, p: &'a Pattern) -> &mut Self {
@@ -554,8 +578,13 @@ impl<'a> Pieces<'a> {
                 self.end();
             }
             // `-x` and `!x`: the operator before its operand (sec:grammar, Prefix).
+            // In [`written`]'s text the operand is at least a power, so a prefix on a prefix
+            // is written `-(-x)`, as the formatter writes it.
             Term::Prim(p @ (Prim::Neg | Prim::Not), args) if args.len() == 1 => {
-                self.cat().text(p.written()).operand(&args[0]).end();
+                self.cat()
+                    .text(p.written())
+                    .at(&args[0], level::POWER)
+                    .end();
             }
             // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
             // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop, so
@@ -570,13 +599,38 @@ impl<'a> Pieces<'a> {
                     keys.push(&inner[1]);
                     receiver = &inner[0];
                 }
-                self.cat().operand(receiver);
+                // A number receiver is parenthesized, `(5)[1]`, as the formatter writes every
+                // postfix of a number (zedc-syntax format.rs, `Job::Postfix`: a `.` after it
+                // would read as a decimal point), so that the formatter leaves this text as it
+                // is. `PRIMARY + 1` is above every level, so `at` always parenthesizes it.
+                let number = matches!(
+                    receiver,
+                    Term::Lit(
+                        Value::Int(_)
+                            | Value::Big(_)
+                            | Value::Rat(_)
+                            | Value::Float(_)
+                            | Value::Float32(_)
+                    )
+                );
+                let min = if number {
+                    level::PRIMARY + 1
+                } else {
+                    level::POSTFIX
+                };
+                self.cat().at(receiver, min);
                 for k in keys.into_iter().rev() {
                     self.list("[", ", ", "]").term(k).end();
                 }
                 self.end();
             }
             Term::Prim(p, args) => match (infix(*p), &args[..]) {
+                // In [`written`]'s text each operand is parenthesized only below the level
+                // its side of the operator needs.
+                (Some(sep), [a, b]) if self.minimal() => {
+                    let (l, r) = level::operands(level::binary(*p).expect("an infix operator"));
+                    self.cat().at(a, l).text(sep).at(b, r).end();
+                }
                 // The left operand of `^` is a postfix expression (sec:grammar, Power), so
                 // `-x^2` would read as `-(x^2)`.
                 (Some(sep), [a, b]) => {
@@ -610,18 +664,21 @@ impl<'a> Pieces<'a> {
                 }
                 self.term(t).end();
             }
-            // `c && b` and `c || b` as elaboration gives them, written as the operators when
-            // the text is for a message ([`written`]).
-            Term::If(c, a, b)
-                if self.1.is_some()
-                    && (matches!(**b, Term::Lit(Value::Bool(false)))
-                        || matches!(**a, Term::Lit(Value::Bool(true)))) =>
-            {
-                let (sep, rhs) = match **b {
-                    Term::Lit(Value::Bool(false)) => (" && ", a),
-                    _ => (" || ", b),
+            // `c && b` and `c || b` as elaboration gives them, and `!c && b` and `!c || a`,
+            // written as the operators when the text is for a message ([`written`]).
+            Term::If(c, a, b) if self.minimal() && connective(a, b).is_some() => {
+                let (and, not, rhs) = connective(a, b).expect("matched");
+                let (op, sep) = match and {
+                    true => (Prim::And, " && "),
+                    false => (Prim::Or, " || "),
                 };
-                self.list("(", sep, ")").term(c).sep().term(rhs).end();
+                let (l, r) = level::operands(level::binary(op).expect("an infix operator"));
+                self.cat();
+                match not {
+                    true => self.cat().text("!").at(c, level::POWER).end(),
+                    false => self.at(c, l),
+                };
+                self.text(sep).at(rhs, r).end();
             }
             Term::If(c, a, b) => {
                 self.cat()
@@ -836,6 +893,74 @@ fn primary(t: &Term) -> bool {
     }
 }
 
+/// The connective `if c { a } else { b }` is, as [`written`] writes it: whether it is `&&`,
+/// whether its left side is `!c` rather than `c`, and its right side. `if c { a } else { false }`
+/// is `c && a`, `if c { true } else { b }` is `c || b`, `if c { false } else { b }` is
+/// `!c && b`, and `if c { a } else { true }` is `!c || a`; tried in that order, so
+/// `if c { true } else { false }` is `c && true`. O(1).
+fn connective<'t>(a: &'t Term, b: &'t Term) -> Option<(bool, bool, &'t Term)> {
+    let lit = |t: &Term| match t {
+        Term::Lit(Value::Bool(v)) => Some(*v),
+        _ => None,
+    };
+    match (lit(a), lit(b)) {
+        (_, Some(false)) => Some((true, false, a)),
+        (Some(true), _) => Some((false, false, b)),
+        (Some(false), _) => Some((true, true, b)),
+        (_, Some(true)) => Some((false, true, a)),
+        _ => None,
+    }
+}
+
+/// The precedence level (module [`level`]) of `t` as [`written`] writes it. A literal's is
+/// that of its text: a sign makes it a prefix expression (`-3`), a slash a quotient (`1/3`),
+/// and a key path or a family, which has no written form of its own, is parenthesized
+/// wherever it is an operand. O(1), but for a big number, a rational or a float, whose text
+/// is written to read it.
+fn written_level(t: &Term) -> u8 {
+    match t {
+        Term::Lit(v) => match v {
+            Value::Int(n) if *n < 0 => level::PREFIX,
+            Value::Int(_) | Value::Bool(_) | Value::Str(_) | Value::Atom(_) | Value::Tuple(_) => {
+                level::PRIMARY
+            }
+            Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Float32(_) => {
+                let s = v.to_string();
+                if s.starts_with('-') {
+                    level::PREFIX
+                } else if s.contains('/') {
+                    level::MULTIPLICATIVE
+                } else {
+                    level::PRIMARY
+                }
+            }
+            Value::Path(_) | Value::Family(_) => level::LAMBDA,
+        },
+        Term::Prim(Prim::Neg | Prim::Not, args) if args.len() == 1 => level::PREFIX,
+        Term::Prim(p, args) if args.len() == 2 && infix(*p).is_some() => {
+            level::binary(*p).expect("an infix operator")
+        }
+        Term::Prim(Prim::Tuple | Prim::Atom, _) => level::PRIMARY,
+        Term::If(_, a, b) => match connective(a, b) {
+            Some((true, ..)) => level::AND,
+            Some((false, ..)) => level::OR,
+            None => level::PRIMARY,
+        },
+        Term::Lam(..) => level::LAMBDA,
+        Term::Var(_) | Term::PrimFn(_) | Term::Let(..) | Term::Match(..) => level::PRIMARY,
+        Term::App(..)
+        | Term::Prim(..)
+        | Term::Fam { .. }
+        | Term::Reindex { .. }
+        | Term::Discard { .. }
+        | Term::Fold { .. }
+        | Term::Fix { .. }
+        | Term::Gen { .. }
+        | Term::Read(_)
+        | Term::Push(..) => level::POSTFIX,
+    }
+}
+
 /// What is left of a group being broken: a `Cat` or `Together` whose parts from `at` are still to
 /// write, or a `List` whose items are.
 enum Frame {
@@ -868,6 +993,7 @@ impl<'a> Doc<'a> {
             let whole = match piece {
                 Piece::Term(t) => Some(t),
                 Piece::Operand(t) if primary(t) => Some(t),
+                Piece::At(t, min) if written_level(t) >= min => Some(t),
                 _ => None,
             };
             if let Some(t) = whole
@@ -893,6 +1019,10 @@ impl<'a> Doc<'a> {
                 Piece::Term(t) => out.lay_out(t),
                 Piece::Operand(t) if primary(t) => out.lay_out(t),
                 Piece::Operand(t) => {
+                    out.cat().text("(").term(t).text(")").end();
+                }
+                Piece::At(t, min) if written_level(t) >= min => out.lay_out(t),
+                Piece::At(t, _) => {
                     out.cat().text("(").term(t).text(")").end();
                 }
                 Piece::Pattern(p) => out.pattern_out(p),
