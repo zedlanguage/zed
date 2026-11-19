@@ -12,7 +12,7 @@ use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::{Blocks, Conjuncts, edges, names};
 use zedc::store::interval::End;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel, Shared};
+use zedc::store::presburger::{Atom, Con, Factor, Formula, Lin, Rel, Shared};
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
@@ -2147,6 +2147,143 @@ fn a_satellite_built_in_any_order_merges_into_the_same_well_formed_blocks() {
             1,
             "bounds {bounds}: the blocks depend on the order"
         );
+    }
+}
+
+/// `a >= b` of two atoms.
+fn atom_ge(a: Atom, b: Atom) -> Arc<Formula> {
+    Arc::new(Formula::Con(Con::ge(&Lin::atom(a), &Lin::atom(b))))
+}
+
+/// `d` triangles of names joined in a balanced tree: at each level the blocks of each pair are
+/// linked by one conjunct and closed into one by a second, so every merge joins two blocks of
+/// equal size. The names are numbered in bit-reversed order, so that the names of the two
+/// blocks of a merge alternate in the order of names.
+fn balanced_triangles(d: usize) -> Vec<Arc<Formula>> {
+    assert!(d.is_power_of_two());
+    let name = |i: usize, side: &str| {
+        let id = i.reverse_bits().rotate_left(d.ilog2());
+        Atom::Sym(format!("{side}{id:08}").into())
+    };
+    let mut gs = Vec::new();
+    for i in 0..d {
+        let (a, b, c) = (name(i, "a"), name(i, "b"), name(i, "c"));
+        gs.extend([
+            atom_ge(a.clone(), b.clone()),
+            atom_ge(a, c.clone()),
+            atom_ge(b, c),
+        ]);
+    }
+    for level in 0..d.ilog2() {
+        let width = 1 << level;
+        for i in (0..d).step_by(2 * width) {
+            gs.push(atom_ge(name(i, "a"), name(i + width, "b")));
+            gs.push(atom_ge(name(i, "b"), name(i + width, "c")));
+        }
+    }
+    gs
+}
+
+/// The one block of `blocks`, as a set of conjuncts.
+fn one_block(blocks: &Blocks) -> BTreeSet<Arc<Formula>> {
+    assert_eq!(blocks.all().count(), 1);
+    let b = blocks.all().next().expect("one block");
+    blocks.members(b).cloned().collect()
+}
+
+/// Merges of blocks of equal size whose names alternate (cross-review R1-CODEX, Q5): after each
+/// conjunct, added in order or in reverse, the forest is well formed; before the last conjunct
+/// there are three blocks, after it one of every conjunct; and taking the last conjunct away and
+/// adding it again splits and merges the two halves, three times over.
+#[test]
+fn blocks_of_equal_size_whose_names_alternate_merge_into_one() {
+    for d in [1, 2, 4, 8, 16, 32, 64] {
+        let gs = balanced_triangles(d);
+        let all: BTreeSet<Arc<Formula>> = gs.iter().cloned().collect();
+        let mut blocks = Blocks::default();
+        for (i, g) in gs.iter().enumerate() {
+            blocks.add(g);
+            if let Err(e) = blocks.well_formed() {
+                panic!("d {d}, after {g}: {e}");
+            }
+            if d > 1 && i == gs.len() - 2 {
+                assert_eq!(blocks.all().count(), 3, "d {d}: before the last conjunct");
+            }
+        }
+        assert_eq!(one_block(&blocks), all, "d {d}");
+        let mut reversed = Blocks::default();
+        for g in gs.iter().rev() {
+            reversed.add(g);
+            if let Err(e) = reversed.well_formed() {
+                panic!("d {d}, in reverse, after {g}: {e}");
+            }
+        }
+        assert_eq!(one_block(&reversed), all, "d {d}, in reverse");
+        if d > 1 {
+            for _ in 0..3 {
+                blocks.remove(&gs[gs.len() - 1..]);
+                if let Err(e) = blocks.well_formed() {
+                    panic!("d {d}, the last conjunct taken away: {e}");
+                }
+                assert_eq!(blocks.all().count(), 3, "d {d}: split");
+                blocks.add(&gs[gs.len() - 1]);
+                if let Err(e) = blocks.well_formed() {
+                    panic!("d {d}, the last conjunct added again: {e}");
+                }
+                assert_eq!(one_block(&blocks), all, "d {d}: merged again");
+            }
+        }
+    }
+}
+
+/// A name met only in products (`z` in `a * z` and `b * z`) is moving in each block that holds
+/// such a conjunct not hung at it, through a merge of the two blocks, and in none once both are
+/// hung; it has no tree of its own (cross-review R1-CODEX, Q1).
+#[test]
+fn a_name_met_only_in_products_is_moving_where_it_is_not_hung() {
+    let z: Arc<str> = "z".into();
+    let product = |n: &str| Atom::Product(Factor::Sym(n.into()), Factor::Sym(z.clone()));
+    let gs = [
+        atom_ge(product("a"), Atom::Aux(0)),
+        atom_ge(product("b"), Atom::Aux(1)),
+        atom_ge(Atom::Aux(0), Atom::Aux(1)),
+    ];
+    let mut blocks = Blocks::default();
+    blocks.add(&gs[0]);
+    blocks.add(&gs[1]);
+    assert_eq!(blocks.well_formed(), Ok(()));
+    assert_eq!(blocks.moving_blocks("z").count(), 2);
+    blocks.hang(&z, &gs[0], true);
+    assert_eq!(blocks.well_formed(), Ok(()));
+    assert_eq!(blocks.moving_blocks("z").count(), 1);
+    blocks.add(&gs[2]);
+    assert_eq!(blocks.well_formed(), Ok(()));
+    let b = blocks.of(&gs[2]).expect("the block of the last conjunct");
+    assert_eq!(blocks.moving_blocks("z").collect::<Vec<_>>(), [b]);
+    assert!(blocks.names_of(b).any(|n| *n == z));
+    blocks.hang(&z, &gs[1], true);
+    assert_eq!(blocks.well_formed(), Ok(()));
+    assert_eq!(blocks.moving_blocks("z").count(), 0);
+    assert!(names(&gs[1]).contains(&z));
+    assert!(blocks.tree_of_name("z").is_none());
+}
+
+/// 64 conjuncts `x_i * z >= aux` are in one block when they share one auxiliary atom and in 64
+/// when each has its own; `z`, met only in products, is moving in each of those blocks and has
+/// no tree (cross-review R1-CODEX, Q5).
+#[test]
+fn a_name_met_only_in_products_is_moving_in_each_block_that_holds_it() {
+    for shared in [false, true] {
+        let mut blocks = Blocks::default();
+        for i in 0..64 {
+            let product =
+                Atom::Product(Factor::Sym(format!("x{i}").into()), Factor::Sym("z".into()));
+            blocks.add(&atom_ge(product, Atom::Aux(if shared { 0 } else { i })));
+        }
+        assert_eq!(blocks.well_formed(), Ok(()), "shared {shared}");
+        let want = if shared { 1 } else { 64 };
+        assert_eq!(blocks.moving_blocks("z").count(), want, "shared {shared}");
+        assert!(blocks.tree_of_name("z").is_none(), "shared {shared}");
     }
 }
 

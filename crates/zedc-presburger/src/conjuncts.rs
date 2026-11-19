@@ -610,16 +610,22 @@ fn alone(g: &Formula) -> Option<Arc<str>> {
 
 /// The names `f` mentions, alone or in a product.
 pub fn names(f: &Formula) -> BTreeSet<Arc<str>> {
+    names_of_atoms(&f.atoms())
+}
+
+/// The names the atoms `atoms` mention, alone or in a product: [`names`] for a caller that
+/// already holds a formula's atoms, so that they are not collected twice.
+fn names_of_atoms(atoms: &BTreeSet<Atom>) -> BTreeSet<Arc<str>> {
     let mut out = BTreeSet::new();
-    for a in f.atoms() {
+    for a in atoms {
         match a {
             Atom::Sym(n) => {
-                out.insert(n);
+                out.insert(n.clone());
             }
             Atom::Product(x, y) => {
                 for f in [x, y] {
                     if let Factor::Sym(n) = f {
-                        out.insert(n);
+                        out.insert(n.clone());
                     }
                 }
             }
@@ -2280,7 +2286,9 @@ impl Blocks {
         if was == to {
             return was;
         }
-        for n in names(g) {
+        // `atoms` are `g`'s atoms (each caller passes `g.atoms()`, or for `replace` those of a
+        // conjunct of the same atoms), so its names are read from them, not collected again.
+        for n in names_of_atoms(atoms) {
             if let Some(w) = was {
                 tally(&mut self.names_in, (w, n.clone()), -1);
             }
@@ -2393,7 +2401,7 @@ impl Blocks {
     }
 
     /// Checks the forest, for tests: each conjunct of the forest is in the block that holds
-    /// it, conjuncts that share an atom other than a name are in one block, each name is
+    /// it and each conjunct held is in a block, conjuncts that share an atom other than a name are in one block, each name is
     /// mentioned, and each name's conjuncts by block, and its moving conjuncts' counts by block
     /// ([`Blocks::moving_blocks`]), are those of the blocks; the parent
     /// links are exactly the pairs of a block and a name it mentions, each tree has one root
@@ -2456,6 +2464,11 @@ impl Blocks {
                 }
             }
             names_of.insert(b, ns);
+        }
+        // Each member is held in its own block, so no conjunct is in two; with as many
+        // conjuncts held as there are members, no conjunct is held that is in no block.
+        if self.of.len() != self.members.values().map(OrdSet::len).sum::<usize>() {
+            return Err("the conjuncts with a block are not those of the blocks".into());
         }
         let held = self
             .at
@@ -2905,6 +2918,11 @@ impl Blocks {
     /// Puts `new` in the place of `old`, a conjunct of the same atoms.
     pub fn replace(&mut self, old: &Arc<Formula>, new: &Arc<Formula>) {
         let atoms = old.atoms();
+        debug_assert_eq!(
+            atoms,
+            new.atoms(),
+            "replace takes a conjunct of the same atoms"
+        );
         let Some(b) = self.put(old, &atoms, None) else {
             return self.add(new);
         };
@@ -4023,5 +4041,60 @@ mod tests {
                 .collect()
         };
         assert_eq!(parts(&rel), parts(&fresh));
+    }
+
+    /// Two conjuncts of the pair `a`, `b` in one block, added in order or in reverse: the
+    /// pair's count is checked by [`Blocks::well_formed`] (the block's pair counts taken away
+    /// are caught), and taking one of the two away keeps the block and the other's place
+    /// (cross-review R1-CODEX, Q3).
+    #[test]
+    fn a_pair_held_twice_keeps_its_block_when_one_is_taken_away() {
+        let edge = |a, b, c| Arc::new(row(&[(a, 1), (b, -1)], c, Rel::Ge));
+        let gs = [
+            edge("a", "b", 0),
+            edge("a", "c", 0),
+            edge("b", "c", 0),
+            edge("a", "b", 1),
+        ];
+        for order in [[0, 1, 2, 3], [3, 2, 1, 0]] {
+            let mut blocks = Blocks::default();
+            for i in order {
+                blocks.add(&gs[i]);
+                assert_eq!(blocks.well_formed(), Ok(()), "order {order:?}");
+            }
+            let b = blocks.of(&gs[0]).expect("the block of the first conjunct");
+            assert_eq!(blocks.members(b).count(), 4);
+            let mut broken = blocks.clone();
+            broken.pairs = broken
+                .pairs
+                .into_iter()
+                .filter(|((k, _, _), _)| *k != b)
+                .collect();
+            assert_eq!(
+                broken.well_formed(),
+                Err("the counts of the pairs of the blocks are not those of the blocks".into())
+            );
+            blocks.remove(&gs[0..1]);
+            assert_eq!(blocks.well_formed(), Ok(()), "order {order:?}");
+            assert_eq!(blocks.members(b).count(), 3);
+            assert_eq!(blocks.of(&gs[3]), Some(b));
+        }
+    }
+
+    /// A conjunct held in a block but listed in none is caught by [`Blocks::well_formed`]
+    /// (cross-review R1-CODEX-01): the members only check `of` one way.
+    #[test]
+    fn well_formed_refuses_a_conjunct_held_in_no_block() {
+        let mut blocks = Blocks::default();
+        let g = Arc::new(row(&[("x", 1), ("y", -1)], 0, Rel::Ge));
+        blocks.add(&g);
+        assert_eq!(blocks.well_formed(), Ok(()));
+        let stray = Arc::new(row(&[("u", 1)], -1, Rel::Ge));
+        let b = blocks.of(&g).expect("the block of the conjunct added");
+        blocks.of.insert(stray, b);
+        assert_eq!(
+            blocks.well_formed(),
+            Err("the conjuncts with a block are not those of the blocks".to_string())
+        );
     }
 }
