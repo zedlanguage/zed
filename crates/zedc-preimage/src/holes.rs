@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use zed_graph::{Dijkstra, NegativeReducedWeight, reduced};
+use zed_graph::{Dijkstra, NegativeReducedWeight, OffsetUnionFind, reduced};
 use zedc_int::int::Int;
 
 /// A system of difference constraints: each name's integers and the edges between names.
@@ -185,25 +185,9 @@ fn merge(
             *e = w.clone();
         }
     }
-    let mut parent: Vec<usize> = (0..n).collect();
-    let mut off: Vec<Int> = vec![Int::ZERO; n];
-    // The root of `v` and `x_v - x_root`, with the path compressed.
-    fn find(parent: &mut [usize], off: &mut [Int], v: usize) -> (usize, Int) {
-        let mut path = Vec::new();
-        let mut r = v;
-        while parent[r] != r {
-            path.push(r);
-            r = parent[r];
-        }
-        // From the name nearest the root down, each offset to the root.
-        let mut acc = Int::ZERO;
-        for &x in path.iter().rev() {
-            acc = &acc + &off[x];
-            off[x] = acc.clone();
-            parent[x] = r;
-        }
-        (r, off[v].clone())
-    }
+    // Each class's root is the root of its `u` side at the union, which fixes the order of
+    // `roots` below and so the classes' numbers.
+    let mut uf: OffsetUnionFind<Int> = OffsetUnionFind::new(n);
     for ((u, v), w) in &best {
         if u > v {
             continue;
@@ -218,20 +202,14 @@ fn merge(
         if sum != Int::ZERO {
             continue;
         }
-        // x_v = x_u + w.
-        let (ru, ou) = find(&mut parent, &mut off, *u);
-        let (rv, ov) = find(&mut parent, &mut off, *v);
-        if ru == rv {
-            if &ov - &ou != *w {
-                return None;
-            }
-        } else {
-            // x_rv = x_v - ov = x_u + w - ov = x_ru + ou + w - ov.
-            parent[rv] = ru;
-            off[rv] = &(&ou + w) - &ov;
+        // x_v = x_u + w; within one class, a difference other than `w` leaves no point.
+        if let Err(held) = uf.union_into(*u, *v, w)
+            && held != *w
+        {
+            return None;
         }
     }
-    let of: Vec<(usize, Int)> = (0..n).map(|v| find(&mut parent, &mut off, v)).collect();
+    let of: Vec<(usize, Int)> = (0..n).map(|v| uf.find(v)).collect();
     let mut index = vec![usize::MAX; n];
     let mut roots = Vec::new();
     for (v, (r, _)) in of.iter().enumerate() {

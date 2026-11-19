@@ -21,11 +21,12 @@
 //! writer's own" and "every case but this one", so the graph has O(N) nodes and edges for a
 //! test of N atom terms, and a path through them stands for exactly one edge of the naive
 //! graph. Tarjan's algorithm (R. Tarjan, "Depth-first search and linear graph algorithms",
-//! SIAM J. Comput. 1(2), 1972) then costs O(N). The union-finds link without rank and compress
-//! (`Offsets`) or halve (`root`) paths, which is O(N log N) for N operations (R. Tarjan and
-//! J. van Leeuwen, "Worst-case analysis of set union algorithms", J. ACM 31(2), 1984), not the
-//! O(N α(N)) of union by rank: rank would add a field per name for a factor that the
-//! O(N log N) of the other two kinds bounds anyway. The covered-part test, the repair and the
+//! SIAM J. Comput. 1(2), 1972) then costs O(N). The two union-finds (`zed_graph`'s
+//! `OffsetUnionFind` and `UnionFind`) keep the root this code chooses and halve paths, which is
+//! O(N log N) for N operations (R. Tarjan and J. van Leeuwen, "Worst-case analysis of set union
+//! algorithms", J. ACM 31(2), 1984), not the O(N α(N)) of union by rank: the root is chosen
+//! because the failure reported is the first in root order, and the O(N log N) of the other
+//! two kinds bounds the total anyway. The covered-part test, the repair and the
 //! steps are O(N log N) too, so the classification is O(N log N). Measured on a chain of k
 //! choices, k = 200 and 1600, in instructions and bytes allocated, with the GLIBC_TUNABLES of
 //! tools/run_tests.sh (load5 about 57): open chain 8.8x and 8.0x, closed chain with its
@@ -36,6 +37,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
+use zed_graph::{OffsetUnionFind, UnionFind};
 use zedc_int::int::Int;
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc_stage::defs::written_name;
@@ -137,63 +139,6 @@ fn write_of(v: usize, a: &Int) -> usize {
     2 * v + usize::from(a.is_negative())
 }
 
-/// A union-find over name indexes with offsets: `v = parent + offset`.
-struct Offsets {
-    parent: Vec<usize>,
-    off: Vec<Int>,
-}
-
-impl Offsets {
-    fn new(n: usize) -> Offsets {
-        Offsets {
-            parent: (0..n).collect(),
-            off: vec![Int::ZERO; n],
-        }
-    }
-
-    /// The root of `v` and `v - root`, compressing the path.
-    fn find(&mut self, v: usize) -> (usize, Int) {
-        let mut path = Vec::new();
-        let mut r = v;
-        while self.parent[r] != r {
-            path.push(r);
-            r = self.parent[r];
-        }
-        // From the node next to the root down, each offset made relative to the root.
-        let mut acc = Int::ZERO;
-        for &u in path.iter().rev() {
-            acc = &acc + &self.off[u];
-            self.off[u] = acc.clone();
-            self.parent[u] = r;
-        }
-        let o = if v == r {
-            Int::ZERO
-        } else {
-            self.off[v].clone()
-        };
-        (r, o)
-    }
-
-    /// Records `a = b + d`.
-    fn union(&mut self, a: usize, b: usize, d: &Int) {
-        let (ra, oa) = self.find(a);
-        let (rb, ob) = self.find(b);
-        if ra != rb {
-            self.parent[ra] = rb;
-            self.off[ra] = &(&ob + d) - &oa;
-        }
-    }
-}
-
-/// A plain union-find over name indexes.
-fn root(p: &mut [usize], mut v: usize) -> usize {
-    while p[v] != v {
-        p[v] = p[p[v]];
-        v = p[v];
-    }
-    v
-}
-
 /// Whether `test` is in the class; when it is not, the message, with `text(id)` the program's
 /// text of an atom, case or part, and `outcome` the outcome the test narrows by.
 pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) -> Option<Looped> {
@@ -226,7 +171,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     }
     let k = names.len();
     // The offset equalities of the base, written as one atom (two opposite `>=`) or two.
-    let mut uf = Offsets::new(k);
+    let mut uf: OffsetUnionFind<Int> = OffsetUnionFind::new(k);
     let mut diffs: BTreeMap<(usize, usize), BTreeSet<Int>> = BTreeMap::new();
     for (_, l) in &test.base {
         let t: Vec<(usize, &Int)> = (l.terms.iter())
@@ -243,34 +188,37 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
             };
             // `p - n + c >= 0`; with `n - p - c >= 0` too, `p = n - c`.
             if (diffs.get(&(n, p))).is_some_and(|cs| cs.contains(&-&l.constant)) {
-                uf.union(p, n, &-&l.constant);
+                // `p = n - c`, `n`'s root kept; a record inside one class is dropped, the
+                // atoms below reading it as they are.
+                let _ = uf.union_into(n, p, &-&l.constant);
             }
             diffs.entry((p, n)).or_default().insert(l.constant.clone());
         }
     }
     // The atoms over the roots.
     let mut atoms: Vec<A> = Vec::new();
-    let mut put = |uf: &mut Offsets, l: &Lin, part: usize, case: usize, text: usize| {
-        let mut terms: BTreeMap<usize, Int> = BTreeMap::new();
-        let mut c = l.constant.clone();
-        for (a, x) in &l.terms {
-            let Atom::Sym(n) = a else { unreachable!() };
-            let (r, o) = uf.find(index[n]);
-            c = &c + &(x * &o);
-            let e = terms.entry(r).or_insert(Int::ZERO);
-            *e = &*e + x;
-        }
-        terms.retain(|_, x| !x.is_zero());
-        if !terms.is_empty() {
-            atoms.push(A {
-                terms: terms.into_iter().collect(),
-                c,
-                part,
-                case,
-                text,
-            });
-        }
-    };
+    let mut put =
+        |uf: &mut OffsetUnionFind<Int>, l: &Lin, part: usize, case: usize, text: usize| {
+            let mut terms: BTreeMap<usize, Int> = BTreeMap::new();
+            let mut c = l.constant.clone();
+            for (a, x) in &l.terms {
+                let Atom::Sym(n) = a else { unreachable!() };
+                let (r, o) = uf.find(index[n]);
+                c = &c + &(x * &o);
+                let e = terms.entry(r).or_insert(Int::ZERO);
+                *e = &*e + x;
+            }
+            terms.retain(|_, x| !x.is_zero());
+            if !terms.is_empty() {
+                atoms.push(A {
+                    terms: terms.into_iter().collect(),
+                    c,
+                    part,
+                    case,
+                    text,
+                });
+            }
+        };
     for (t, l) in &test.base {
         put(&mut uf, l, BASE, 0, *t);
     }
@@ -547,12 +495,12 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
         scc_name[comp[b]].get_or_insert(b / 2);
     }
     // The components of names joined by a shared atom.
-    let mut cp: Vec<usize> = (0..k).collect();
+    // The first term's root stays each class's root, as `fails` and `by_comp` below are keyed
+    // and read in root order, which picks the failure reported.
+    let mut cp = UnionFind::new(k);
     for a in &atoms {
-        let r0 = root(&mut cp, a.terms[0].0);
         for (v, _) in &a.terms[1..] {
-            let r = root(&mut cp, *v);
-            cp[r] = r0;
+            cp.union_into(a.terms[0].0, *v);
         }
     }
     // The failures, by component of names: (i) before (iii), and of (i) a loop of moving edges
@@ -562,7 +510,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
         let (Some(any), Some(v)) = (pair[c][0], scc_name[c]) else {
             continue;
         };
-        let r = root(&mut cp, v);
+        let r = cp.find(v);
         let new = match pair[c][1] {
             Some((e1, e2)) => Fail::Two(e1, e2, true),
             None => Fail::Two(any.0, any.1, false),
@@ -577,7 +525,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     }
     for ((p, w), cs) in &writers {
         if cs.len() >= 2 && cyclic[comp[*w]] && mixed[comp[*w]] {
-            let r = root(&mut cp, *w / 2);
+            let r = cp.find(*w / 2);
             fails.entry(r).or_insert(Fail::Twice(*p, *w, cs[0], cs[1]));
         }
     }
@@ -588,7 +536,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     // for the component it lies in alone: O(N log N) over all of them.
     let mut by_comp: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (i, a) in atoms.iter().enumerate() {
-        let r = root(&mut cp, a.terms[0].0);
+        let r = cp.find(a.terms[0].0);
         if fails.contains_key(&r) {
             by_comp.entry(r).or_default().push(i);
         }
@@ -637,7 +585,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     }
     // The names of the failing component, as the headline names them.
     let mut shown: Vec<String> = (0..names.len())
-        .filter(|&v| root(&mut cp, v) == c)
+        .filter(|&v| cp.find(v) == c)
         .map(|v| format!("`{}`", written_name(&names[v])))
         .collect();
     shown.sort();
