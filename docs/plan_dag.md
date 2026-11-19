@@ -5365,7 +5365,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-direct-stride-answer-downstream, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, FAIL-exact-refusals-13733945893095969990 | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 0 | PRES-direct-stride-answer-downstream, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-direct-stride-answer-downstream, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
