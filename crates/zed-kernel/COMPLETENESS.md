@@ -1153,3 +1153,40 @@ Counts: 314 lines. Closed by a test with a control 16, by a proof 2 (one arm rem
 `expect`). Reached by existing tests in both runs 30, and in one run only 1 (12778). Open 265,
 seven of them reached in the base run by a random draw. Rows: the 265 open lines go to the row
 TEST-kernel-unreached-paths-7.
+
+Fourteenth round (kernel17, 2026-11-19), row TEST-kernel-unreached-paths-7: the 265 lines the
+thirteenth round left open (list at c53a7410d, in
+`wt/coverage/TEST-kernel-unreached-paths-6-kernel16-c53a7410d.txt`). This round did the seven
+lines that only a random draw reached, gave each a fixed input, and closed eleven `print.rs`
+lines by proof. Coverage was not measured again this round: the coordinator asked for the
+commit to land first, so the new measurement goes to TEST-kernel-unreached-paths-8. Each line
+below is shown reached by its own control (a control that fails the named test), not by a
+coverage count.
+
+Line numbers are at c53a7410d.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `empty.rs` 411-413, `group_verdicts`: a member shown only with closures taken to have values | test | `group_oracle::meets_with_a_member_shown_only_with_closures_taken_to_have_values`, the meets of seed 24669 | the line made a panic fails it. A wrong index there fails no test: the line only fills a cache (`SHARED`), and `Searching::shared` reads it back without a check |
+| `empty.rs` 4380, `Heights::part_heights` of a part kept as an expression | test | `a_tuple_part_kept_as_an_expression_holding_other_tuples_is_not_bounded` | a control at the line fails it |
+| `empty.rs` 10768-10774, the `no_keys` calls in `find_rep` | test | `judgments::a_closure_whose_keys_hold_no_value_is_shown_for_a_meet_with_a_union_of_morphisms` (the system of seed 20) | a control at these lines fails it |
+| `empty.rs` 12425, a third refusal on one component in `Choices::list_index` | test | `nested_cover::a_component_refused_in_three_blocks_agrees_with_enumeration`; the reason the arm changes nothing is now a comment at the site | a control at the arm fails it |
+| `empty.rs` 12826, `Side::unseen`: the lesser of two candidates | test | `the_least_wanted_unseen_cell_of_a_list_is_the_lesser_of_two_candidates`, on a list component built by hand | `a.min(b)` made `a` fails it (`[(3,12),(2,11)]` against `[(3,12),(0,10)]`) |
+| `print.rs` 1559, 1560, 1573, `Printer::list`: a block of value `false` met with the one atom of the next block (`merged`) | proof, removed | No list in its one form (module `list` in `bdd.rs`) has that shape; the proof is at the site. `valued`, `merged` and every branch that read them are removed | none |
+| `print.rs` 1622, 1623, 1628, 1629, 1659, 1665-1667: a block with no class before the last, and the turn before no text | proof, `debug_assert!` | The values of a list in its one form alternate and its default is the value the last block does not have, so every block has a class and the text after a turn has a value; the proof is at the site, and `debug_assert!`s check the default, the turn and each block's class. The early return for a turn before no text is removed | none |
+
+A bug found on the way, fixed with a test that fails before the fix: `group_verdicts` moved the
+first search's values (`d.shown`) into STORES before a member left undecided sent that search on
+(`settle_canonical_blame`), which reads them again by their numbers (`Searching::member_known`).
+The meets of seed 8639 panicked there ("index out of bounds: the len is 0 but the index is 9").
+The values are now copied when a member is left undecided, O(n) once per group in that case
+only; test `group_oracle::meets_with_a_member_left_undecided`.
+
+Also seen: the meets of seed 39491 give a verdict that depends on the order of the members
+(Refused(Group) in one order, Empty in the others). That is the known class of
+GROUP-order-verdicts; it is recorded in the ledger and filed with the open lines below.
+
+Counts: 265 lines. Closed by a test with a control 12 (`empty.rs`), by proof 11 (`print.rs`).
+Open 242, carried to TEST-kernel-unreached-paths-8: `empty.rs` 210 (the 222 of the
+thirteenth round less 411-413, 4380, 10768-10770, 10772-10774, 12425 and 12826), `empty/sweep.rs`
+20, `print.rs` 6 (734, 1072, 1794, 2038, 2117, 2132), `bdd.rs` 6.
