@@ -914,22 +914,21 @@ impl Face {
             let n = index.len();
             index.entry(a).or_insert(n);
         }
-        let mut up: Vec<usize> = (0..index.len()).collect();
+        let mut up = zed_graph::UnionFind::new(index.len());
         for atoms in &reads {
             let mut atoms = atoms.iter().map(|a| index[a]);
             let Some(first) = atoms.next() else { continue };
             for a in atoms {
-                let (r, s) = (root(&mut up, first), root(&mut up, a));
-                up[s] = r;
+                up.union(first, a);
             }
         }
         let kept: HashSet<usize> = (keep.iter())
             .filter_map(|a| index.get(a).copied())
-            .map(|a| root(&mut up, a))
+            .map(|a| up.find(a))
             .collect();
         // A clause with no atom holds, since the conjunction does, and is dropped.
         let mut read = (reads.iter())
-            .map(|atoms| (atoms.first()).is_some_and(|a| kept.contains(&root(&mut up, index[a]))));
+            .map(|atoms| (atoms.first()).is_some_and(|a| kept.contains(&up.find(index[a]))));
         let rows: Vec<Con> = (rows.into_iter())
             .filter(|_| read.next().expect("a row's group"))
             .collect();
@@ -1085,15 +1084,6 @@ fn bindings(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, (Int, Atom, Int
         }
     }
     out
-}
-
-/// The group of the atom at `a`, by the index each points to, the path halved on the way.
-fn root(up: &mut [usize], mut a: usize) -> usize {
-    while up[a] != a {
-        up[a] = up[up[a]];
-        a = up[a];
-    }
-    a
 }
 
 /// The terms and constant of a congruence, each a residue modulo `modulus`.
@@ -1500,13 +1490,12 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
         let n = index.len();
         index.entry(a).or_insert(n);
     }
-    let mut up: Vec<usize> = (0..index.len()).collect();
+    let mut up = zed_graph::UnionFind::new(index.len());
     for atoms in &reads {
         let mut atoms = atoms.iter().map(|a| index[a]);
         let Some(first) = atoms.next() else { continue };
         for a in atoms {
-            let (r, s) = (root(&mut up, first), root(&mut up, a));
-            up[s] = r;
+            up.union(first, a);
         }
     }
     // Each group's rows and disjunctions, by the index of each item, in the order met.
@@ -1522,7 +1511,7 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
             }
             continue;
         };
-        let r = root(&mut up, index[a]);
+        let r = up.find(index[a]);
         let g = *at.entry(r).or_insert_with(|| {
             groups.push((Vec::new(), Vec::new()));
             groups.len() - 1

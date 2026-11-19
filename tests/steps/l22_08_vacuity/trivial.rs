@@ -3803,14 +3803,7 @@ pub fn render(t: &Theory, r: &Report) -> String {
 /// Whether every group is in the proved fragment: each law is one equation or inequation, or a
 /// conjunction of them, and the fields and the conjuncts form a forest.
 pub fn in_forest_fragment(t: &Theory) -> bool {
-    let mut parent: Vec<usize> = (0..t.fields.len()).collect();
-    fn find(parent: &mut [usize], mut x: usize) -> usize {
-        while parent[x] != x {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
-        }
-        x
-    }
+    let mut parent = zed_graph::UnionFind::new(t.fields.len());
     for law in &t.laws {
         if law.refused() || law.clauses().iter().any(|clause| clause.len() != 1) {
             return false;
@@ -3818,14 +3811,11 @@ pub fn in_forest_fragment(t: &Theory) -> bool {
         for clause in law.clauses() {
             let scope = t.atom_scope(&clause[0]);
             // A forest: no edge closes a cycle. The atom is a node joined to each of its fields.
-            let atom = parent.len();
-            parent.push(atom);
+            let atom = parent.push();
             for f in scope {
-                let (x, y) = (find(&mut parent, atom), find(&mut parent, f));
-                if x == y {
+                if !parent.union(atom, f) {
                     return false;
                 }
-                parent[x] = y;
             }
         }
     }

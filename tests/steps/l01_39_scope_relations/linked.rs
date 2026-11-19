@@ -307,23 +307,12 @@ pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Fo
         .collect()
 }
 
-/// The root of `i` in the union-find `g`.
-fn find(g: &mut [usize], i: usize) -> usize {
-    if g[i] == i {
-        i
-    } else {
-        let r = find(g, g[i]);
-        g[i] = r;
-        r
-    }
-}
-
 /// The blocks of the conjuncts `gs`, stars left aside, by brute force: those that share an
 /// atom other than a name are one group, and two groups are in one block when no single name
 /// separates them in the graph of groups and the names they mention as atoms of their own.
 fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
     let n = gs.len();
-    let mut group: Vec<usize> = (0..n).collect();
+    let mut group = zed_graph::UnionFind::new(n);
     let atoms: Vec<BTreeSet<Atom>> = gs.iter().map(|g| g.atoms()).collect();
     for i in 0..n {
         for j in 0..i {
@@ -331,12 +320,11 @@ fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
                 .iter()
                 .any(|a| !matches!(a, Atom::Sym(_)) && atoms[j].contains(a))
             {
-                let (a, b) = (find(&mut group, i), find(&mut group, j));
-                group[a] = b;
+                group.union(i, j);
             }
         }
     }
-    let group: Vec<usize> = (0..n).map(|i| find(&mut group, i)).collect();
+    let group: Vec<usize> = (0..n).map(|i| group.find(i)).collect();
     let syms: Vec<BTreeSet<Arc<str>>> = atoms
         .iter()
         .map(|s| {
@@ -957,18 +945,17 @@ fn pairs_checked(b: &Blocks, set: &BTreeSet<Arc<Formula>>, log: &[String], at: &
     let got: BTreeSet<_> = got.into_values().collect();
     assert_eq!(got, want, "{at} after {log:#?}");
     // The trees: the conjuncts linked by any atom they share.
-    let mut comp: Vec<usize> = (0..gs.len()).collect();
+    let mut comp = zed_graph::UnionFind::new(gs.len());
     let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
     for (i, g) in gs.iter().enumerate() {
         for a in g.atoms() {
             let j = *first.entry(a).or_insert(i);
-            let (x, y) = (find(&mut comp, i), find(&mut comp, j));
-            comp[x] = y;
+            comp.union(i, j);
         }
     }
     let (mut tree_of, mut comp_of) = (BTreeMap::new(), BTreeMap::new());
     for (i, g) in gs.iter().enumerate() {
-        let (c, t) = (find(&mut comp, i), b.tree(b.of(g).expect("a block")));
+        let (c, t) = (comp.find(i), b.tree(b.of(g).expect("a block")));
         assert_eq!(*tree_of.entry(c).or_insert(t), t, "{at}: {g}");
         assert_eq!(*comp_of.entry(t).or_insert(c), c, "{at}: {g}");
     }

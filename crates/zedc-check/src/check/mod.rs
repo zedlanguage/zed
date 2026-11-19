@@ -11374,17 +11374,16 @@ fn unfixed_binding(
 
 /// The type variables of a signature in sets that its needs tie together, each set marked
 /// fixed where a value other than a literal with no suffix reaches it ([`Ck::unfixed_args`]):
-/// a union-find by size with path halving.
+/// a [`zed_graph::UnionFind`] with the marks kept at each root.
 #[derive(Default)]
 struct VarSets {
     /// Each variable's number.
     ix: HashMap<Arc<str>, usize>,
     /// Each variable by its number.
     names: Vec<Arc<str>>,
-    /// The number of the variable toward the root of each set.
-    up: Vec<usize>,
-    /// The size of each root's set.
-    size: Vec<usize>,
+    /// The sets. Which root survives a union does not change a mark read: `by` is read only
+    /// where `many` is false, and two fixed sets joined with different `by` set `many`.
+    up: zed_graph::UnionFind,
     /// Whether each root's set is fixed.
     fixed: Vec<bool>,
     /// The place that first fixed each root's set ([`VarSets::fix_by`]), `0` for a fix from
@@ -11400,11 +11399,9 @@ impl VarSets {
         if let Some(&i) = self.ix.get(v) {
             return i;
         }
-        let i = self.up.len();
+        let i = self.up.push();
         self.ix.insert(v.clone(), i);
         self.names.push(v.clone());
-        self.up.push(i);
-        self.size.push(1);
         self.fixed.push(false);
         self.by.push(0);
         self.many.push(false);
@@ -11412,27 +11409,18 @@ impl VarSets {
     }
 
     /// The root of the set of `i`.
-    fn find(&mut self, mut i: usize) -> usize {
-        while self.up[i] != i {
-            self.up[i] = self.up[self.up[i]];
-            i = self.up[i];
-        }
-        i
+    fn find(&mut self, i: usize) -> usize {
+        self.up.find(i)
     }
 
     /// The sets of `a` and `b` made one, fixed where either was.
     fn union(&mut self, a: usize, b: usize) {
         let (a, b) = (self.find(a), self.find(b));
-        if a == b {
+        if !self.up.union(a, b) {
             return;
         }
-        let (big, small) = if self.size[a] < self.size[b] {
-            (b, a)
-        } else {
-            (a, b)
-        };
-        self.up[small] = big;
-        self.size[big] += self.size[small];
+        let big = self.up.find(a);
+        let small = if big == a { b } else { a };
         match (self.fixed[big], self.fixed[small]) {
             (false, true) => {
                 self.by[big] = self.by[small];

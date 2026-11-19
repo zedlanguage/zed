@@ -127,40 +127,27 @@ impl<'t> Items<'t> {
     /// with those of `b`; the places the items of a join take in `order` are given to them in
     /// written order. A join may hold two items with no name in common, which then also keep
     /// their written order: a coarser restriction than each name's, and still a permutation.
-    /// O(i·α(i)) for i items, by union-find with union by size and path halving, over one hash
-    /// lookup per declared name.
+    /// O(i·α(i)) for i items, by [`zed_graph::UnionFind`], over one hash lookup per declared
+    /// name.
     fn keep_names(&self, order: Vec<usize>) -> Vec<usize> {
         let n = self.len();
-        let mut parent: Vec<usize> = (0..n).collect();
-        let mut size = vec![1usize; n];
-        let find = |parent: &mut [usize], mut i: usize| {
-            while parent[i] != i {
-                parent[i] = parent[parent[i]];
-                i = parent[i];
-            }
-            i
-        };
+        let mut parent = zed_graph::UnionFind::new(n);
         let mut first: HashMap<&str, usize> = HashMap::new();
         for (i, names) in self.names.iter().enumerate() {
             for &name in names {
                 let j = *first.entry(name).or_insert(i);
-                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
-                if a != b {
-                    let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
-                    parent[small] = big;
-                    size[big] += size[small];
-                }
+                parent.union(i, j);
             }
         }
         // The items of each join in written order, under the join's root.
         let mut written = vec![VecDeque::new(); n];
         for i in 0..n {
-            written[find(&mut parent, i)].push_back(i);
+            written[parent.find(i)].push_back(i);
         }
         order
             .into_iter()
             .map(|i| {
-                written[find(&mut parent, i)]
+                written[parent.find(i)]
                     .pop_front()
                     .expect("one place per item of the join")
             })

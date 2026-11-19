@@ -270,7 +270,7 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
             }
         }
     }
-    let mut set: Vec<usize> = (0..n).collect();
+    let mut set = zed_graph::UnionFind::new(n);
     // The edges into each set whose source is not yet known to be inside a component with it.
     let mut entries: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut head_of = vec![NONE; n];
@@ -278,13 +278,13 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
     let mut taken = vec![NONE; n];
     for &h in t.order.iter().rev() {
         for (u, w) in std::mem::take(&mut filed[h]) {
-            let r = find(&mut set, w);
+            let r = set.find(w);
             entries[r].push(u);
         }
         let mut work = Vec::new();
         for &u in &preds_back[h] {
             is_head[h] = true;
-            let r = find(&mut set, u);
+            let r = set.find(u);
             if r != h && taken[r] != h {
                 taken[r] = h;
                 work.push(r);
@@ -294,7 +294,7 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
         while let Some(x) = work.pop() {
             members.push(x);
             for u in std::mem::take(&mut entries[x]) {
-                let r = find(&mut set, u);
+                let r = set.find(u);
                 if r != h && taken[r] != h {
                     taken[r] = h;
                     work.push(r);
@@ -304,7 +304,8 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
         // Each member's entries were read when it was taken, so only the set changes.
         for x in members {
             head_of[x] = h;
-            set[x] = h;
+            // `h` stays the root: a set is named by its outermost head found so far.
+            set.union_into(h, x);
         }
     }
     // Each level's elements, in decreasing order of finishing.
@@ -332,15 +333,6 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
 }
 
 const NONE: usize = usize::MAX;
-
-/// The set that holds `v`, named by its outermost head found so far; halves the path.
-fn find(set: &mut [usize], mut v: usize) -> usize {
-    while set[v] != v {
-        set[v] = set[set[v]];
-        v = set[v];
-    }
-    v
-}
 
 /// The depth-first traversal from the vertices in order, each vertex's successors in order.
 struct Traversal {

@@ -3747,22 +3747,14 @@ impl Blocks {
                 index.entry(n).or_insert(i);
             }
         }
-        let mut parent: Vec<usize> = (0..index.len()).collect();
-        fn root(parent: &mut [usize], mut x: usize) -> usize {
-            while parent[x] != x {
-                parent[x] = parent[parent[x]];
-                x = parent[x];
-            }
-            x
-        }
+        let mut parent = zed_graph::UnionFind::new(index.len());
         let mut used = vec![false; index.len()];
         for (_, ns) in &rest {
             let first = index[&ns[0]];
             for n in ns {
                 let i = index[n];
                 used[i] = true;
-                let (ra, rb) = (root(&mut parent, first), root(&mut parent, i));
-                parent[ra] = rb;
+                parent.union(first, i);
             }
         }
         let mut whole = None;
@@ -3771,7 +3763,7 @@ impl Blocks {
             if !still {
                 continue;
             }
-            let r = root(&mut parent, i);
+            let r = parent.find(i);
             if !used[i] || whole.is_some_and(|w| w != r) {
                 return false;
             }

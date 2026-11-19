@@ -4500,20 +4500,13 @@ fn factors(g: &Formula) -> BTreeSet<Factor> {
 /// The constraints among `cons` in groups linked through shared variables (connected
 /// components), each group with its variables and constraints, and the group of each
 /// variable ([`Split::with`]).
-// Complexity tradeoff: union-find by size with path halving over the v variables of the c
-// constraints, O((c + v) log v) with the maps, as the rest of `Split::new`.
+// Complexity tradeoff: a `zed_graph::UnionFind` (union by rank, path halving) over the v
+// variables of the c constraints, O((c + v) log v) with the maps, as the rest of `Split::new`.
+// The groups are numbered in the order of `at`, so the root rule does not show.
 #[allow(clippy::type_complexity)]
 fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMap<Factor, usize>) {
     let mut at: BTreeMap<Factor, usize> = BTreeMap::new();
-    let mut parent: Vec<usize> = Vec::new();
-    let mut size: Vec<usize> = Vec::new();
-    fn root(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
+    let mut parent = zed_graph::UnionFind::default();
     let mut seen: Vec<(&Con, usize)> = Vec::new();
     for g in cons {
         let Formula::Con(c) = &***g else {
@@ -4524,18 +4517,12 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
             let next = parent.len();
             let i = *at.entry(x).or_insert(next);
             if i == next {
-                parent.push(i);
-                size.push(1);
+                parent.push();
             }
             match first {
                 None => first = Some(i),
                 Some(f) => {
-                    let (a, b) = (root(&mut parent, f), root(&mut parent, i));
-                    if a != b {
-                        let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
-                        parent[small] = big;
-                        size[big] += size[small];
-                    }
+                    parent.union(f, i);
                 }
             }
         }
@@ -4547,7 +4534,7 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
     let mut groups: Vec<(BTreeSet<Factor>, Vec<Con>)> = Vec::new();
     let mut group: BTreeMap<Factor, usize> = BTreeMap::new();
     for (x, i) in at {
-        let r = root(&mut parent, i);
+        let r = parent.find(i);
         let next = groups.len();
         let k = *index.entry(r).or_insert(next);
         if k == next {
@@ -4557,7 +4544,7 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
         group.insert(x, k);
     }
     for (c, f) in seen {
-        let r = root(&mut parent, f);
+        let r = parent.find(f);
         groups[index[&r]].1.push(c.clone());
     }
     (groups, group)
@@ -12851,14 +12838,9 @@ impl Scope {
             // without a leaf, so no kept block stays.
             self.seen.drop_blocks();
             let mut index: BTreeMap<Atom, usize> = BTreeMap::new();
-            let mut parent: Vec<usize> = Vec::new();
-            fn root(parent: &mut [usize], mut x: usize) -> usize {
-                while parent[x] != x {
-                    parent[x] = parent[parent[x]];
-                    x = parent[x];
-                }
-                x
-            }
+            // Each root that of the atom read before, as before the shared union-find: the
+            // trees below are split in the order of their roots.
+            let mut parent = zed_graph::UnionFind::default();
             let mut first: Vec<Option<usize>> = Vec::new();
             for g in self.relation.set() {
                 let mut atoms = g.atoms();
@@ -12868,11 +12850,10 @@ impl Scope {
                     let next = parent.len();
                     let i = *index.entry(a).or_insert(next);
                     if i == next {
-                        parent.push(i);
+                        parent.push();
                     }
                     if let Some(j) = at {
-                        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
-                        parent[ri] = rj;
+                        parent.union_into(j, i);
                     }
                     at = Some(i);
                 }
@@ -12881,7 +12862,7 @@ impl Scope {
             let mut trees: BTreeMap<usize, Vec<&Arc<Formula>>> = BTreeMap::new();
             for (g, at) in self.relation.set().iter().zip(first) {
                 if let Some(i) = at {
-                    trees.entry(root(&mut parent, i)).or_default().push(g);
+                    trees.entry(parent.find(i)).or_default().push(g);
                 }
             }
             let parts: Vec<(PartKey, PartWith, Formula)> = trees

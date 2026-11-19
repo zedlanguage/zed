@@ -58,6 +58,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
+use zed_graph::UnionFind;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
@@ -531,22 +532,14 @@ fn split(f: &Formula) -> Vec<Piece> {
     if conjuncts.len() < 2 {
         return whole();
     }
-    let mut parent: Vec<usize> = (0..conjuncts.len()).collect();
-    fn root(p: &mut [usize], mut i: usize) -> usize {
-        while p[i] != i {
-            p[i] = p[p[i]];
-            i = p[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::new(conjuncts.len());
     let mut first: HashMap<Atom, usize> = HashMap::new();
     let mut reads: Vec<HashSet<Atom>> = Vec::with_capacity(conjuncts.len());
     for (i, g) in conjuncts.iter().enumerate() {
         let atoms = atoms_of(g);
         for a in &atoms {
             let j = *first.entry(a.clone()).or_insert(i);
-            let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
-            parent[ri.max(rj)] = ri.min(rj);
+            parent.union_least(i, j);
         }
         reads.push(atoms);
     }
@@ -555,7 +548,7 @@ fn split(f: &Formula) -> Vec<Piece> {
     let mut of: HashMap<usize, usize> = HashMap::new();
     let mut groups: Vec<(Vec<Formula>, HashSet<Atom>)> = Vec::new();
     for (i, g) in conjuncts.iter().enumerate() {
-        let r = root(&mut parent, i);
+        let r = parent.find(i);
         let k = *of.entry(r).or_insert_with(|| {
             order.push(r);
             groups.push((Vec::new(), HashSet::new()));
@@ -2893,15 +2886,8 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
     // The rows over two atoms: (u, v, coefficient of u, of v, constant).
     let mut edges: Vec<(usize, usize, &Int, &Int, &Int)> = Vec::new();
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-    // The trees joined so far, by union-find with halving.
-    let mut root: Vec<usize> = (0..n).collect();
-    let find = |root: &mut Vec<usize>, mut i: usize| {
-        while root[i] != i {
-            root[i] = root[root[i]];
-            i = root[i];
-        }
-        i
-    };
+    // The trees joined so far.
+    let mut trees = UnionFind::new(n);
     for c in rows {
         if let Some((a, lo, hi)) = super::formula::one_bound(c) {
             let i = index[a];
@@ -2913,11 +2899,9 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
             return Ok(None);
         };
         let (u, v) = (index[x], index[y]);
-        let (ru, rv) = (find(&mut root, u), find(&mut root, v));
-        if ru == rv {
+        if !trees.union(u, v) {
             return Ok(None);
         }
-        root[ru] = rv;
         adj[u].push(edges.len());
         adj[v].push(edges.len());
         edges.push((u, v, a, b, &c.lin.constant));
@@ -3453,14 +3437,7 @@ fn met(
     let r0 = rows.len();
     let a0 = r0 + sets.len();
     let n = a0 + alts.len();
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn root(p: &mut [usize], mut i: usize) -> usize {
-        while p[i] != i {
-            p[i] = p[p[i]];
-            i = p[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::new(n);
     let mut first: HashMap<&Atom, usize> = HashMap::new();
     let items = (rows.iter().enumerate())
         .flat_map(|(i, k)| k.lin.terms.keys().map(move |a| (i, a)))
@@ -3479,25 +3456,24 @@ fn met(
             continue;
         }
         let j = *first.entry(a).or_insert(i);
-        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
         // The least index the root, so that a group, and the order of `groups` below, do not
         // depend on the order a hash set of atoms is read in (Sol, round 2 of PRES-pugh-xr).
-        parent[ri.max(rj)] = ri.min(rj);
+        parent.union_least(i, j);
     }
     work.read(read)?;
     // Ordered, so that the work charged before a group not shown exact is the same on every run.
     type Group = (Vec<Con>, Vec<usize>, Vec<usize>);
     let mut groups: BTreeMap<usize, Group> = BTreeMap::new();
     for (i, k) in rows.iter().enumerate() {
-        let r = root(&mut parent, i);
+        let r = parent.find(i);
         groups.entry(r).or_default().0.push(k.clone());
     }
     for j in 0..sets.len() {
-        let r = root(&mut parent, r0 + j);
+        let r = parent.find(r0 + j);
         groups.entry(r).or_default().1.push(j);
     }
     for j in 0..alts.len() {
-        let r = root(&mut parent, a0 + j);
+        let r = parent.find(a0 + j);
         groups.entry(r).or_default().2.push(j);
     }
     // `R ∧ Bi` for each block `Bi`, every row copied charged.
@@ -4389,27 +4365,19 @@ fn by_columns(
 // pass adding each row that meets the atoms so far is O(r^2·t).
 fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
     let mut index: HashMap<&Atom, usize> = HashMap::new();
-    let mut parent: Vec<usize> = Vec::new();
-    fn root(p: &mut [usize], mut i: usize) -> usize {
-        while p[i] != i {
-            p[i] = p[p[i]];
-            i = p[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::default();
     for k in rows {
         let mut first = None;
         for a in k.lin.terms.keys() {
             let n = parent.len();
             let i = *index.entry(a).or_insert(n);
             if i == n {
-                parent.push(n);
+                parent.push();
             }
             match first {
                 None => first = Some(i),
                 Some(f) => {
-                    let (x, y) = (root(&mut parent, f), root(&mut parent, i));
-                    parent[x] = y;
+                    parent.union(f, i);
                 }
             }
         }
@@ -4417,9 +4385,9 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
     let Some(&at) = index.get(s) else {
         return Vec::new();
     };
-    let top = root(&mut parent, at);
+    let top = parent.find(at);
     (rows.iter())
-        .filter(|k| (k.lin.terms.keys().next()).is_some_and(|a| root(&mut parent, index[a]) == top))
+        .filter(|k| (k.lin.terms.keys().next()).is_some_and(|a| parent.find(index[a]) == top))
         .cloned()
         .collect()
 }
@@ -4437,27 +4405,19 @@ fn row_groups(rows: &[Con], work: &mut Work) -> Result<Vec<Vec<Con>>, Refusal> {
         return Ok(vec![rows.to_vec()]);
     }
     let mut index: HashMap<&Atom, usize> = HashMap::new();
-    let mut parent: Vec<usize> = Vec::new();
-    fn root(p: &mut [usize], mut i: usize) -> usize {
-        while p[i] != i {
-            p[i] = p[p[i]];
-            i = p[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::default();
     for k in rows {
         let mut first = None;
         for a in k.lin.terms.keys() {
             let n = parent.len();
             let i = *index.entry(a).or_insert(n);
             if i == n {
-                parent.push(n);
+                parent.push();
             }
             match first {
                 None => first = Some(i),
                 Some(f) => {
-                    let (x, y) = (root(&mut parent, f), root(&mut parent, i));
-                    parent[x.max(y)] = x.min(y);
+                    parent.union_least(f, i);
                 }
             }
         }
@@ -4471,7 +4431,7 @@ fn row_groups(rows: &[Con], work: &mut Work) -> Result<Vec<Vec<Con>>, Refusal> {
             .keys()
             .next()
             .expect("every row reads an atom here");
-        let r = root(&mut parent, index[a]);
+        let r = parent.find(index[a]);
         let g = *of.entry(r).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1

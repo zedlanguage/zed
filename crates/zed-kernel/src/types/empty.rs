@@ -13790,8 +13790,8 @@ enum Edge {
 struct Trie {
     /// Each node's children by edge; a merged node's children are its class root's.
     kids: Vec<HashMap<Edge, usize>>,
-    /// The union-find of merged nodes.
-    same: Vec<usize>,
+    /// The union-find of merged nodes, each class's root the node holding its children.
+    same: zed_graph::UnionFind,
 }
 
 impl Trie {
@@ -13799,20 +13799,18 @@ impl Trie {
     fn new() -> Trie {
         Trie {
             kids: vec![HashMap::new()],
-            same: vec![0],
+            same: zed_graph::UnionFind::new(1),
         }
     }
 
     fn find(&mut self, x: usize) -> usize {
-        root(&mut self.same, x)
+        self.same.find(x)
     }
 
     /// A new node of no children, merged with none.
     fn add(&mut self) -> usize {
-        let next = self.kids.len();
         self.kids.push(HashMap::new());
-        self.same.push(next);
-        next
+        self.same.push()
     }
 
     fn child(&mut self, x: usize, e: Edge) -> usize {
@@ -13849,7 +13847,8 @@ impl Trie {
                 true => (x, y),
                 false => (y, x),
             };
-            self.same[small] = big;
+            // `big` stays the root: it holds the class's children from here on.
+            self.same.union_into(big, small);
             for (e, c) in std::mem::take(&mut self.kids[small]) {
                 match self.kids[big].entry(e) {
                     Entry::Vacant(v) => {
@@ -14597,21 +14596,6 @@ fn groups_by_search(t: &Type) -> Vec<Vec<Type>> {
     r.made
 }
 
-/// The root of `i` in the union-find `parent`, halving the path.
-fn root(parent: &mut [usize], mut i: usize) -> usize {
-    while parent[i] != i {
-        parent[i] = parent[parent[i]];
-        i = parent[i];
-    }
-    i
-}
-
-/// Joins the classes of `a` and `b`; the smaller index is the root.
-fn join(parent: &mut [usize], a: usize, b: usize) {
-    let (a, b) = (root(parent, a), root(parent, b));
-    parent[a.max(b)] = a.min(b);
-}
-
 /// A state of a list type read by [`affine_lists_empty`]: whether it holds the stop atom, the
 /// rest type taken by each integer it names, and the rest type taken by the integers it does
 /// not name, with the integers that one excludes; a missing rest type is no list.
@@ -14874,13 +14858,17 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
         .collect();
     // Union-find over the constraining operands, the last node the ground.
     let n = operands.len();
-    let mut parent: Vec<usize> = (0..=n).collect();
+    let mut parent = zed_graph::UnionFind::new(n + 1);
     let mut usable = false;
-    let edge = |parent: &mut Vec<usize>, swapped: &[usize]| -> Option<()> {
+    let edge = |parent: &mut zed_graph::UnionFind, swapped: &[usize]| -> Option<()> {
         match *swapped {
             [] => {}
-            [a] => join(parent, a, n),
-            [a, b] => join(parent, a, b),
+            [a] => {
+                parent.union_least(a, n);
+            }
+            [a, b] => {
+                parent.union_least(a, b);
+            }
             _ => return None,
         }
         Some(())
@@ -14930,10 +14918,10 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
     let mut odd: HashMap<usize, bool> = HashMap::new();
     for (o, &d) in need.iter().enumerate() {
         if d == Some(true) {
-            *odd.entry(root(&mut parent, o)).or_default() ^= true;
+            *odd.entry(parent.find(o)).or_default() ^= true;
         }
     }
-    let ground = root(&mut parent, n);
+    let ground = parent.find(n);
     odd.iter().any(|(&r, &b)| b && r != ground).then_some(true)
 }
 
@@ -15226,17 +15214,17 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
         });
     }
     let mut p0 = joined(base_tops.clone(), 0);
-    let mut parent: Vec<usize> = (0..n).collect();
+    let mut parent = zed_graph::UnionFind::new(n);
     // When `p0` already separates all `n` inputs into singletons, `(r0_i, r1_i)` is distinct
     // for every `p1`, so `joined(base_tops, 1)` cannot refine further and is skipped.
-    let p0_all_singletons = (0..n).all(|i| root(&mut p0, i) == i);
+    let p0_all_singletons = (0..n).all(|i| p0.find(i) == i);
     if !p0_all_singletons {
         let mut p1 = joined(base_tops, 1);
         let mut base_first: HashMap<(usize, usize), usize> = HashMap::new();
         for i in 0..n {
-            let key = (root(&mut p0, i), root(&mut p1, i));
+            let key = (p0.find(i), p1.find(i));
             let j = *base_first.entry(key).or_insert(i);
-            join(&mut parent, i, j);
+            parent.union_least(i, j);
         }
     }
     for (m, entries) in by_m {
@@ -15263,7 +15251,7 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
                 let mut p_run = joined(tops, dir);
                 let mut fresh: HashMap<(usize, usize), usize> = HashMap::new();
                 for (x, label) in label_m.iter_mut().enumerate().take(k) {
-                    let r = root(&mut p_run, x);
+                    let r = p_run.find(x);
                     *label = *fresh.entry((*label, r)).or_insert_with(|| {
                         let id = next_lbl;
                         next_lbl += 1;
@@ -15282,13 +15270,13 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
         let mut m_first: HashMap<usize, usize> = HashMap::new();
         for (x, &(i, _, _)) in entries.iter().enumerate() {
             let j = *m_first.entry(label_m[x]).or_insert(i);
-            join(&mut parent, i, j);
+            parent.union_least(i, j);
         }
     }
     let mut index: HashMap<usize, usize> = HashMap::new();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for i in 0..n {
-        let r = root(&mut parent, i);
+        let r = parent.find(i);
         let g = *index.entry(r).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
@@ -15346,7 +15334,7 @@ fn within_outside(takes: &[Row], refused: &[Row]) -> Type {
 
 /// One run of [`overlaps`]: the types of `tops` placed in one trie from its root; the
 /// union-find of their indices, joined where two share a key.
-fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
+fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
     let mut trie = Trie::new();
     let num_cells = tops.len();
     let mut s = Placing {
@@ -15356,7 +15344,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
         ..Placing::default()
     };
     s.sync(&trie);
-    let mut parent: Vec<usize> = (0..num_cells).collect();
+    let mut parent = zed_graph::UnionFind::new(num_cells);
     // The groups placed for each cell, by cell and group number, with their placements. A
     // type of a group placed for the cell is placed: met again, its node and the new one are
     // merged.
@@ -15412,7 +15400,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
                             && trie.find(orig_y) == y_root
                             && s.pending_cnt[j] == 0
                         {
-                            join(&mut parent, i, j);
+                            parent.union_least(i, j);
                             continue;
                         }
                         if let Some(rs) = &g.repeat_stem
@@ -15536,7 +15524,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
     let mut down = Vec::new();
     for &(x, i) in &wholes {
         match whole[at[x]] {
-            Some(w) => join(&mut parent, w, i),
+            Some(w) => {
+                parent.union_least(w, i);
+            }
             None => {
                 whole[at[x]] = Some(i);
                 down.push(at[x]);
@@ -15548,7 +15538,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
     loop {
         if let Some((p, w)) = enter.pop() {
             if let Some(v) = entered[p] {
-                join(&mut parent, v, w);
+                parent.union_least(v, w);
                 continue;
             }
             entered[p] = Some(w);
@@ -15558,7 +15548,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
                     continue;
                 }
                 match whole[y] {
-                    Some(v) => join(&mut parent, v, w),
+                    Some(v) => {
+                        parent.union_least(v, w);
+                    }
                     None => {
                         whole[y] = Some(w);
                         down.push(y);
@@ -15573,7 +15565,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
             let c = at[c];
             let Some((p, q)) = pending[c] else {
                 match whole[c] {
-                    Some(v) => join(&mut parent, v, w),
+                    Some(v) => {
+                        parent.union_least(v, w);
+                    }
                     None => {
                         whole[c] = Some(w);
                         down.push(c);
@@ -15583,7 +15577,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
             };
             let n = &placed_groups[p].nodes[q];
             if n.deep {
-                join(&mut parent, w, cells[p]);
+                parent.union_least(w, cells[p]);
             }
             if !n.kids.is_empty() {
                 enter.push((p, w));
@@ -15594,9 +15588,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> Vec<usize> {
     for (x, k, i) in points {
         let x = at[x];
         let j = *first.entry((x, k)).or_insert(i);
-        join(&mut parent, i, j);
+        parent.union_least(i, j);
         if let Some(w) = whole[x] {
-            join(&mut parent, i, w);
+            parent.union_least(i, w);
         }
     }
     parent

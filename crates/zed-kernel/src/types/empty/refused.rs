@@ -553,23 +553,14 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
 }
 
 /// The number of connected parts of the graph on `nodes` with the edges `refs`, their
-/// directions ignored: a union-find with path halving.
+/// directions ignored: a union-find ([`zed_graph::UnionFind`]).
 fn connected(nodes: &BTreeSet<usize>, refs: &BTreeSet<(usize, usize)>) -> usize {
     let index: Vec<usize> = nodes.iter().copied().collect();
     let at = |d: usize| index.binary_search(&d).expect("a node of the set");
-    let mut up: Vec<usize> = (0..index.len()).collect();
-    let find = |up: &mut Vec<usize>, mut x: usize| {
-        while up[x] != x {
-            up[x] = up[up[x]];
-            x = up[x];
-        }
-        x
-    };
+    let mut up = zed_graph::UnionFind::new(index.len());
     let mut parts = index.len();
     for &(a, b) in refs {
-        let (ra, rb) = (find(&mut up, at(a)), find(&mut up, at(b)));
-        if ra != rb {
-            up[ra] = rb;
+        if up.union(at(a), at(b)) {
             parts -= 1;
         }
     }

@@ -4373,21 +4373,15 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // would need a count per pair of classes sharing a function, which a function of k parameters
 // starts at k(k - 1)/2 pairs.
 fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
-    fn find(parent: &mut [usize], mut v: usize) -> usize {
-        while parent[v] != v {
-            parent[v] = parent[parent[v]];
-            v = parent[v];
-        }
-        v
-    }
     let nodes = first.last().copied().unwrap_or(0);
     let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
-    let mut parent: Vec<usize> = (0..nodes).collect();
+    // The root is chosen here, by the number of functions, since the functions move with it.
+    let mut parent = zed_graph::UnionFind::new(nodes);
     let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
     let mut refused: Vec<HashSet<usize>> = vec![HashSet::new(); nodes];
     let mut joined = vec![false; nodes];
     for &(a, b) in joins {
-        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        let (ra, rb) = (parent.find(a), parent.find(b));
         if ra == rb || refused[ra].contains(&rb) {
             continue;
         }
@@ -4403,7 +4397,7 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
             refused[rb].insert(ra);
             continue;
         }
-        parent[small] = big;
+        parent.union_into(big, small);
         let f = std::mem::take(&mut funs[small]);
         funs[big].extend(f);
         for r in std::mem::take(&mut refused[small]) {
@@ -4413,7 +4407,7 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         }
         joined[big] = true;
     }
-    let root = (0..nodes).map(|v| find(&mut parent, v)).collect();
+    let root = (0..nodes).map(|v| parent.find(v)).collect();
     (root, joined)
 }
 
