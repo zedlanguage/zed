@@ -101,30 +101,38 @@ fn passing_a_function_whose_bounded_variables_only_functions_hold_scales() {
     );
 }
 
+// A tuple that holds a function on a bounded variable of the signature is compared by the rule
+// of one shape, not the kernel's form (`Comparing::sub_near`), each function read through
+// `Cx::through_fn` as above: linear in n for one tuple of n functions and for n tuples of one.
+// Small instances:
+// `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names`.
+//
+// The two shapes are two tests, so two pieces of the test runner, each with its own time limit
+// (FAIL-bench-tuples-near-limit, 2026-11-19): as one test they took 12.2 s alone (load 34) and
+// 15.0 s in the l01_26 bench group run 4 at a time (load 27) against a 20 s limit, and were
+// stopped at 20.2 s and 28.3 s in slower group runs. Neither n nor any limit changed.
+//
+// Cost per function (callgrind and perf with DWARF call chains on the profiling build,
+// 2026-11-19): about 640K instructions per function for one tuple (2.05G at n = 3200) and 930K
+// for n tuples (2.98G); lexing, parsing and resolving the inputs, before timing, is a quarter of
+// the instructions of the process. The work is spread over the checker: at n = 800, of the
+// 1,059M instructions of the n-tuple run, the kernel forms of the tuples (`Comparing::by_form`)
+// are 11%, the first fill of new signatures' `VarFacts`, `VarBits` and digest 10%, `Row::new`
+// 7%, `Cx::open` 6%, allocation 9%, SipHash 8%, and no function more than 7% by its own code.
+// Cutting it needs fewer signatures made per function read at a binding (`Cx::through_fn`,
+// `Cx::bound_name`) or fewer kernel forms per tuple: plan row PERF-tuples-fn-per-binding.
 #[test]
-fn passing_functions_in_tuples_scales() {
-    // A tuple that holds a function on a bounded variable of the signature is compared by
-    // the rule of one shape, not the kernel's form (`Comparing::sub_near`), each function
-    // read through `Cx::through_fn` as above: linear in n for one tuple of n functions and for
-    // n tuples of one. Small instances:
-    // `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names`.
-    //
-    // Cost per function (FAIL-bench-tuples-near-limit, perf with DWARF call chains on the
-    // profiling build, 2026-11-19): about 640K instructions per function for one tuple
-    // (2.04G at n = 3200) and 925K for n tuples (2.96G); lexing, parsing and resolving the
-    // inputs, before timing, is 14% and 17% of the piece. No one function of the checker
-    // takes more than 7% of the samples by its own code (`Comparing::fits_read` 6.8%,
-    // `Denote::ty` 3.9%, `Cx::read` 3.4%, `merge` 2.9%, `var_mask` 2.6%, `Forms::fns` 2.5%,
-    // `Sig::digest` with its `OnceLock` 2.8%, the rest under 2.4% each), so there is no single
-    // site whose cut would take the piece far from its limit; the time is the checker's
-    // constant for each function read at a binding (`Cx::through_fn`, `Cx::bound_name`). At
-    // load 24 the piece takes 11.6 s of its 20 s limit; at load 52, 25.1 s of 33 s.
+fn passing_functions_in_one_tuple_scales() {
     check_scales(
         "one tuple of n functions, each with its own bounded variable, passed under other \
          names",
         3_200,
         |n| passed_through_fns_in_tuples(n, true),
     );
+}
+
+#[test]
+fn passing_functions_in_many_tuples_scales() {
     check_scales(
         "n tuples of one function, each with its own bounded variable, passed under other \
          names",

@@ -660,7 +660,8 @@ pub(super) fn passed_through_fns_in_tuples(n: usize, one: bool) -> String {
 
 #[test]
 fn functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names() {
-    // The small instances of the bench `passing_functions_in_tuples_scales`.
+    // The small instances of the benches `passing_functions_in_one_tuple_scales` and
+    // `passing_functions_in_many_tuples_scales`.
     for n in 1..=4 {
         for one in [true, false] {
             let src = passed_through_fns_in_tuples(n, one);
