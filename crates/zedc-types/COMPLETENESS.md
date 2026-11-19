@@ -134,8 +134,9 @@ TEST-types-unreached-paths-4.
 ## Row TEST-types-unreached-paths-4
 
 Line numbers are those of `ty.rs` at zed-impl 373e5d22a, from a new coverage run of the full
-local suite there; the tests named are in `src/ty/tests/unreached4.rs`. 66 lines are settled
-below: 35 by tests, 9 by proofs at the site, 22 as row TEST-types-unreached-paths-3 settled them. The other 79 are row TEST-types-unreached-paths-5 (see the end of this section).
+local suite there, which left 161 lines unreached; the tests named are in
+`src/ty/tests/unreached4.rs`. 82 lines are settled below: 35 by tests, 9 by proofs at the
+site, 38 as row TEST-types-unreached-paths-3 settled them (16 of these in the `tests` module). The other 79 are row TEST-types-unreached-paths-5 (see the end of this section).
 
 | Case | Covering test | Or the reason none is needed |
 |---|---|---|
@@ -162,6 +163,7 @@ below: 35 by tests, 9 by proofs at the site, 22 as row TEST-types-unreached-path
 | `unreachable!` arms (2905-2906, 2947-2948) | | As row TEST-types-unreached-paths-3 |
 | `errs_members` with no `#errs` (5348), `Ty::verdict` against the unknown (12503) | | As row TEST-types-unreached-paths-3 |
 | `Absorb::remade` (3107), `binding` of two walkers (3196-3198), `Facts` `eq` and `hash` (3568-3576) | | As row TEST-types-unreached-paths-3 |
+| Test code of the `tests` module (16 lines, 21343 on) | | As row TEST-types-unreached-paths-3: run only when a test fails, or a benchmark |
 
 Left for row TEST-types-unreached-paths-5 (owner types9), each read in this row but not yet
 settled: 9079 and 10105 (an empty list of shapes of an atom; `payloads` does not exclude
