@@ -454,9 +454,7 @@ impl Nodes {
                 let head = self.ints(&h)?;
                 if next == cur {
                     // The carrier: a self-loop holding the empty list.
-                    if s.is_none() {
-                        return None;
-                    }
+                    s.as_ref()?;
                     // Complexity tradeoff: merging self-loop carriers across distinct recursive
                     // groups by comparing unprojected `h.p().ints` in O(|vals|) avoids unfolding
                     // or intersecting DFA states across groups (O(|Q_1| * |Q_2|)), following

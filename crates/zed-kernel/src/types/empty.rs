@@ -13286,6 +13286,9 @@ impl Group {
     }
 }
 
+/// The groups of one direction of each type `overlaps` met, with the type's node ([`GROUPS`]).
+type GroupsMet = RefCell<ByType<(std::rc::Rc<Group>, usize)>>;
+
 thread_local! {
     /// The directional groups (`dir` in `0..2`) of each type that `overlaps` met inside a type,
     /// and the type's node there, until `Type::forget_emptiness`.
@@ -13294,7 +13297,7 @@ thread_local! {
     // `O(their total size)` of memory; clearing per call instead of caching both slots blows up
     // the K35 list bench from `8.1x` to `11.27x` by rebuilding the `n`-node list group `n` times
     // (`O(n^2)`, COMPLEXITY.md K36). Trigger: any split into classes.
-    static GROUPS: [RefCell<ByType<(std::rc::Rc<Group>, usize)>>; 2] =
+    static GROUPS: [GroupsMet; 2] =
         const { [RefCell::new(ByType::new()), RefCell::new(ByType::new())] };
     /// The number of the next [`Group`] made on this thread.
     static GROUP_IDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -14405,7 +14408,9 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     // two-slot `GROUPS` caching), whereas testing pairwise box meets exactly costs `O(n^2)`
     // emptiness searches (COMPLEXITY.md K36), and full `S_m` nested-spine invariance on arity
     // `m >= 3` would branch across all `m` components at each nested tuple depth (`O(m^d)`).
-    let mut by_m: BTreeMap<usize, Vec<(usize, bool, Vec<&Row>)>> = BTreeMap::new();
+    // Each child at a tuple length: its index, whether it is whole, and its rows.
+    type Kid<'r> = (usize, bool, Vec<&'r Row>);
+    let mut by_m: BTreeMap<usize, Vec<Kid<'_>>> = BTreeMap::new();
     let mut base_tops: Vec<Top> = Vec::with_capacity(n);
     for (idx, p) in parts.iter().enumerate() {
         let l = local_dir(p, &none, 0);
@@ -14500,9 +14505,9 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
                     .collect();
                 let mut p_run = joined(tops, dir);
                 let mut fresh: HashMap<(usize, usize), usize> = HashMap::new();
-                for x in 0..k {
+                for (x, label) in label_m.iter_mut().enumerate().take(k) {
                     let r = root(&mut p_run, x);
-                    label_m[x] = *fresh.entry((label_m[x], r)).or_insert_with(|| {
+                    *label = *fresh.entry((*label, r)).or_insert_with(|| {
                         let id = next_lbl;
                         next_lbl += 1;
                         id
@@ -15492,7 +15497,7 @@ fn exact_flat_diff_decide(
                             todo.extend(xs.iter().rev().map(Step::Visit));
                         }
                         rec::Shape::And(xs) => {
-                            let tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                            let tys: Vec<Type> = xs.iter().map(&mut eval_cached).collect();
                             if disjoint_top_carriers(&tys) {
                                 let pair = (bot_node, bot_node);
                                 seen.insert(e.class, pair);
@@ -15628,7 +15633,7 @@ fn exact_flat_diff_decide(
                                         return None;
                                     }
                                     let xs_tys: Vec<Type> =
-                                        xs.iter().map(|x| eval_cached(x)).collect();
+                                        xs.iter().map(&mut eval_cached).collect();
                                     let r_ty_m = flat_tuple_subtrahend(&r_ty, &xs_tys)?;
                                     let mut flats = Vec::with_capacity(m);
                                     let mut xs_inh = Vec::with_capacity(m);
@@ -16099,7 +16104,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             }
                         }
                         rec::Shape::And(xs) => {
-                            let tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                            let tys: Vec<Type> = xs.iter().map(&mut eval_cached).collect();
                             if !disjoint_top_carriers(&tys) {
                                 let mut rec_keys = BTreeSet::new();
                                 let mut closed_meet = Type::top();
@@ -16192,7 +16197,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             } else if let rec::Shape::Tuple(xs) = &a.e
                                 && !xs.is_empty()
                             {
-                                let xs_tys: Vec<Type> = xs.iter().map(|x| eval_cached(x)).collect();
+                                let xs_tys: Vec<Type> = xs.iter().map(&mut eval_cached).collect();
                                 if let Some(r_ty_m) = flat_tuple_subtrahend(&r_ty, &xs_tys) {
                                     let flats: Option<Vec<Type>> =
                                         xs_tys.iter().map(flat_part).collect();
@@ -16255,8 +16260,8 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
     while let Some((slot, rep)) = queue.pop_front() {
         let arms = std::mem::take(&mut nf_arm_watchers[slot]);
         for (aux, j) in arms {
-            if !nf_choice.contains_key(&aux) {
-                nf_choice.insert(aux, (j, rep));
+            if let Entry::Vacant(e) = nf_choice.entry(aux) {
+                e.insert((j, rep));
                 seed_slot(aux, rep, &mut vals, &mut queue);
             }
         }

@@ -7698,8 +7698,12 @@ struct Searched<G, M> {
     /// Each bucket's shapes that hold no variable, function or unknown, as the union of their
     /// kernel types made ready for many tests, with the bucket's other shapes; none where the
     /// bucket has no such shape ([`Searched::closed_left_out`]).
-    closed: BTreeMap<BucketAt<G>, Option<(zed_kernel::types::Membership, Rc<[usize]>)>>,
+    closed: BTreeMap<BucketAt<G>, Option<ClosedShapes>>,
 }
+
+/// A bucket's shapes that hold no variable, function or unknown, as one union ready for many
+/// tests, with the indices of the bucket's other shapes ([`Searched::closed`]).
+type ClosedShapes = (zed_kernel::types::Membership, Rc<[usize]>);
 
 impl<G: Ord + Clone, M> Searched<G, M> {
     fn new() -> Searched<G, M> {
@@ -13092,8 +13096,12 @@ struct Pairs<'m, K, V> {
     /// The functions of each type the walk met another type's functions with, filed once
     /// ([`FnIndex`]), by the address of its functions' node, with a clone of them that keeps
     /// the node from being freed, so that its address names them for the whole walk.
-    fn_index: RefCell<HashMap<*const (), (Members<Arc<Sig>>, Rc<FnIndex>)>>,
+    fn_index: RefCell<HashMap<*const (), FnsFiled>>,
 }
+
+/// A type's functions, kept so their node's address stays theirs, with their [`FnIndex`]
+/// ([`Pairs::fn_index`]).
+type FnsFiled = (Members<Arc<Sig>>, Rc<FnIndex>);
 
 impl<'m, K: std::hash::Hash + Eq + Copy + 'm, V: Clone + Unpin + 'm> Pairs<'m, K, V> {
     /// The answer kept for `key`, or the one `walk` makes in a frame of its own, then kept.
@@ -16430,8 +16438,12 @@ struct FnList {
     groups: Vec<(Box<[Kind]>, Vec<usize>)>,
     /// For each pattern of kinds of a function met, each group filed by the keys both read
     /// ([`project`]), made the first time that pattern is met.
-    filed: RefCell<HashMap<Box<[Kind]>, Rc<Vec<FMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>>>>>>,
+    filed: RefCell<HashMap<Box<[Kind]>, GroupsFiled>>,
 }
+
+/// Each group of functions filed by the keys a pattern of kinds reads, each key with the
+/// functions under it ([`FnIndex`]'s `filed`).
+type GroupsFiled = Rc<Vec<FMap<Vec<(ShapeKey, Option<Value>)>, Vec<usize>>>>;
 
 impl FnIndex {
     fn new(t: &Ty) -> FnIndex {

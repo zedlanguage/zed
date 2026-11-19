@@ -797,9 +797,12 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     assert!(misprinted("bool | (int -> int)", &want).is_empty());
     let payload = parse_type("#box((int,), ())").unwrap();
     assert!(misprinted("#box((int,), ())", &payload).is_empty());
-    let mut rng = Rng(zed_tests::seed::seed(
+    // The seed goes in the failure message too: `seed` writes its line to standard error
+    // directly, which the test harness does not capture, so a merge log does not show it.
+    let seed = zed_tests::seed::seed(
         "the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
-    ));
+    );
+    let mut rng = Rng(seed);
     let (mut wrong, mut read, mut seen, mut unpaired) = (Vec::new(), 0, HashSet::new(), 0);
     let mut forms = KERNEL_FORMS.map(|(f, _)| (f, 0usize));
     for _ in 0..3000 {
@@ -828,21 +831,56 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
         let printed = t.surface();
         assert!(
             printed.exact && printed.defs.is_empty() && printed.root.contains(form),
-            "`{form}` is not printed: `{text}` prints `{}`",
+            "`{form}` is not printed: `{text}` prints `{}` (ZED_TEST_SEED={seed})",
             printed.root
         );
         assert!(
             !kernel_read_back(&text, &printed.root, &mut wrong),
-            "`{text}`"
+            "`{text}` (ZED_TEST_SEED={seed})"
         );
         eprintln!("`{form}` printed only by `{text}`");
     }
     assert!(
         wrong.is_empty(),
-        "{} of {read}:\n{}",
+        "ZED_TEST_SEED={seed} repeats this run; {} of {read}:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
+}
+
+/// The kernel printer's round trip on a draw whose `a` in `a .. (a & (a | v)) -> b` was a
+/// union of two function types, the shape of seed 76. The merge of wt/kernel9 (log
+/// wt/merge-failures/20261118T193126Z-wt_kernel9-pend-step3.log, seed not recorded) met it on
+/// a base without the printer fix of TYPES-meet-fns-indexed: the meet printed as
+/// `(((bool -> #a) | (int ->? String)) -> bool) & (((bool -> #a) | (int ->? String) |
+/// (#pair(int, int) -> f64 | String)) ->? bool)`, two arrows joined by `&`, which reads back as
+/// an overload. The bounds `a` and `a & (a | v)` are one set, so the meet is the one arrow
+/// `a -> bool`.
+#[test]
+fn a_bounded_arrow_over_a_union_of_function_types_reads_back_as_printed() {
+    let pair = KType::atom_with("pair", &KType::tuple(vec![KType::int(), KType::int()]));
+    let f64_or_string = &KType::f64() | &KType::string();
+    let a = &KType::exact(KType::bool(), KType::atom("a"))
+        | &KType::partial(KType::int(), KType::string());
+    let v = &KType::exact(pair.clone(), f64_or_string.clone())
+        & &KType::partial(&pair | &KType::atom("b"), f64_or_string);
+    let t = &KType::exact(a.clone(), KType::bool()) & &KType::partial(&a | &v, KType::bool());
+    // The text the merge's draw printed for the type built above, as `kernel_generated` writes
+    // it.
+    let text = "(((bool) -> (#a)) | ((int) ->? (String))) .. ((((bool) -> (#a)) | ((int) ->? \
+                (String))) & ((((bool) -> (#a)) | ((int) ->? (String))) | ((#pair((int), (int))) \
+                .. ((#pair((int), (int))) & ((#pair((int), (int))) | (#b))) -> ((f64) | \
+                (String))))) -> (bool)";
+    let printed = t.surface();
+    assert!(printed.exact && printed.defs.is_empty(), "{}", printed.root);
+    assert!(!printed.root.contains(" & "), "{}", printed.root);
+    let mut wrong = Vec::new();
+    assert!(
+        !kernel_read_back(text, &printed.root, &mut wrong),
+        "{}",
+        printed.root
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 /// The kernel's meet of function types, which a program cannot write with `&` alone (that is
