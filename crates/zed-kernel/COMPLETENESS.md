@@ -316,10 +316,12 @@ the one-`Mor` step is closed: the 40,000 draws never reach it, a search of about
 draws (4 to 43 nodes, few `Mor` nodes) found 20-node systems that do, and one is the test
 `one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point`; with the second pass
 disabled it fails (node 15 answered inhabited, the game says not). A proof that the pass is
-unreachable was tried first and does not hold. The random test now also draws 600,000 wide
+unreachable was tried first and does not hold. The random test now also draws 420,000 wide
 systems (4 to 43 nodes, a `Mor` rate of 1 to 5 in 40 per system); they reach the second pass
-2 times, the test takes 12 to 16 s at load 37 to 45, and with the second pass disabled it
-fails. The proofs relied on above (cover2's
+2 times (draws 89,504 and 413,455; at first 600,000 were drawn, which pushed the test near its
+24 s limit and reached it no more), checked in two tests (`..._drawn_at_random` and
+`..._drawn_at_random_second_half`) that each assert their hit, and with the second pass
+disabled it fails. The proofs relied on above (cover2's
 and earlier) were re-derived in this round: `treap.rs` 195 (heap order by `(prio, key)` with the
 priority a function of the key), `bdd.rs` 1039, 1238 (only caller `Connect::not`), 1966 (all
 three `base` closures answer every `Part::Bdd`), 2495, `bes.rs` 352, 622, 747 (`Bes::add`,

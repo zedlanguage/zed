@@ -1059,6 +1059,8 @@ pub fn decide(raw: &Bes) -> Decision {
                 let w0 = g.children(m0)[0] as usize;
                 lfp(g, &u_set, true, MorRead::False, false, Some(m0), &mut sc);
                 if !sc.cur[w0] {
+                    #[cfg(test)]
+                    SECOND_PASSES.with(|c| c.set(c.get() + 1));
                     lfp(g, &u_set, true, MorRead::False, false, None, &mut sc);
                 }
                 for &v in &u_set {
@@ -1092,6 +1094,13 @@ pub fn decide(raw: &Bes) -> Decision {
         })
         .collect();
     Decision { answers, refusals }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How often this thread's `decide` took the second least fixed point of the one-`Mor`
+    /// step, so the random test can check that its draws still reach it.
+    static SECOND_PASSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -1269,10 +1278,35 @@ mod tests {
     }
 
     /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.
-    const WIDE_DRAWS: u64 = 600_000;
+    /// The draws are fixed by the seed; the only two that reach the one-`Mor` step's second
+    /// least fixed point are wide draws 89,504 and 413,455, and the 40,000 small draws reach
+    /// every other path. So the count stops a little after the second (it was 600,000, which
+    /// took up to 19.6 s alone at load 40 against the test's 24 s limit, `decide` 6 s of
+    /// every 9), and the draws are checked in two tests of about 6 s each (load 52 to 68),
+    /// each asserting that its half still reaches the pass.
+    const WIDE_DRAWS: u64 = 420_000;
+
+    /// The draws of `decide_agrees_with_the_game_on_systems_drawn_at_random` are numbered
+    /// from 0, the 40,000 small ones first; this one starts the second half of the test, which
+    /// holds the second draw that reaches the second pass (wide draw 413,455, so 453,455).
+    const SECOND_HALF: u64 = 250_000;
 
     #[test]
     fn decide_agrees_with_the_game_on_systems_drawn_at_random() {
+        draws_agree_with_the_game(0..SECOND_HALF);
+    }
+
+    /// The second half of the draws, a test of its own so each half stays well inside the
+    /// time limit of one test.
+    #[test]
+    fn decide_agrees_with_the_game_on_systems_drawn_at_random_second_half() {
+        draws_agree_with_the_game(SECOND_HALF..u64::MAX);
+    }
+
+    /// Draws every system in turn, so the seed reaches each draw the same way, and checks
+    /// `decide` against the game on the draws numbered in `checked`; asserts that those
+    /// draws take the second least fixed point of the one-`Mor` step at least once.
+    fn draws_agree_with_the_game(checked: std::ops::Range<u64>) {
         let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
         let mut next = |k: u64| {
             seed ^= seed << 13;
@@ -1281,11 +1315,14 @@ mod tests {
             seed % k
         };
         let (mut decided, mut refused) = (0, 0);
+        let second_before = super::SECOND_PASSES.with(std::cell::Cell::get);
         // Small systems with many `Mor` nodes, then wide ones with few: only the second
         // reach the second least fixed point of the one-`Mor` step (see
         // `one_morphism_whose_assumption_fails_takes_the_second_least_fixed_point`).
+        let mut index = 0;
         for (draws, span, wide) in [(40_000, 10, false), (WIDE_DRAWS, 40, true)] {
             for _ in 0..draws {
+                index += 1;
                 let n = 3 + next(span) as u32;
                 let mors = 1 + next(5);
                 let mut g = Bes::new();
@@ -1310,6 +1347,9 @@ mod tests {
                     };
                     g.set(v, kind, children);
                 }
+                if !checked.contains(&(index - 1)) {
+                    continue;
+                }
                 g.seal();
                 let want = by_the_game(&g);
                 let got = decide(&g);
@@ -1324,6 +1364,11 @@ mod tests {
                 }
             }
         }
+        let second = super::SECOND_PASSES.with(std::cell::Cell::get) - second_before;
+        assert!(
+            second >= 1,
+            "the second least fixed point of the one-Mor step taken {second} times, want 1"
+        );
         assert!(
             decided > 10 * refused,
             "{decided} decided, {refused} refused"
