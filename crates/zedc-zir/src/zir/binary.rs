@@ -1,7 +1,7 @@
 //! The binary form of ZIR: what a build caches and the backends read.
 //!
-//! It begins with the four bytes `ZIR\0` and the version as a 32-bit little-endian word; the
-//! root region follows. Every count, index and integer is a 64-bit little-endian word, every
+//! It begins with the four bytes `ZIR\0` (`ZIRs` for a stripped module, [`super::strip`]) and
+//! the version as a 32-bit little-endian word; the root region follows. Every count, index and integer is a 64-bit little-endian word, every
 //! string a count of bytes and then its UTF-8 bytes (a string value as the nodes of the tree its
 //! text is held in, each node once in the graph, `W::text`), and every choice a one-byte tag.
 //! A name (of an atom, a field, a port or an evidence key) is read by the rule the text form
@@ -27,10 +27,14 @@ use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Witness};
 use zed_kernel::text::{Piece, Text};
 use zed_kernel::value::{Atom, Value};
 
+use super::strip::Form;
 use super::text::{self, PRIMS, VERSION};
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src};
 
 const MAGIC: &[u8; 4] = b"ZIR\0";
+
+/// The first four bytes of a stripped module ([`encode_stripped`]).
+const MAGIC_STRIPPED: &[u8; 4] = b"ZIRs";
 
 /// The one NaN word the form writes: the quiet NaN with a zero payload. Rust does not fix the
 /// bits of `f64::NAN`, so the form fixes them itself.
@@ -76,7 +80,18 @@ fn index<T: PartialEq>(all: &[T], x: &T) -> u8 {
 /// memory to build or write one of its exact numbers ([`Rat::built_parts`]), or to grow the
 /// bytes written.
 pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
-    let mut w = W(MAGIC.to_vec(), None, HashMap::new(), None);
+    encode_as(MAGIC, root)
+}
+
+/// The binary form of [`strip`](super::strip::strip)`(root)`, which starts `ZIRs` in place of
+/// `ZIR\0`, so that [`decode_form`] reads it back as stripped and [`decode`] refuses it.
+/// [`TooLarge`] as at [`encode`].
+pub fn encode_stripped(root: &Region) -> Result<Vec<u8>, TooLarge> {
+    encode_as(MAGIC_STRIPPED, &super::strip::strip(root))
+}
+
+fn encode_as(magic: &[u8; 4], root: &Region) -> Result<Vec<u8>, TooLarge> {
+    let mut w = W(magic.to_vec(), None, HashMap::new(), None);
     w.0.extend_from_slice(&VERSION.to_le_bytes());
     w.region(root);
     match w.1 {
@@ -563,16 +578,32 @@ impl W {
 // ---------------------------------------------------------------------------------------------
 // Reading
 
-/// The graph encoded in `bytes`, which [`super::validate::validate`] has not yet checked.
+/// The graph encoded in `bytes`, a full module, which [`super::validate::validate`] has not
+/// yet checked. A stripped module is refused, as [`super::text::parse`] refuses one;
+/// [`decode_form`] reads both.
 pub fn decode(bytes: &[u8]) -> Result<Region, String> {
+    match decode_form(bytes)? {
+        (g, Form::Full) => Ok(g),
+        (_, Form::Stripped) => Err("byte 0: the data starts `ZIRs`, so the module is stripped \
+                                    of its facts, and this reader reads a full module, which \
+                                    starts `ZIR\\0`"
+            .into()),
+    }
+}
+
+/// The graph encoded in `bytes`, a full or a stripped module ([`encode_stripped`]), and its
+/// form, which its first four bytes give; as [`decode`] otherwise.
+pub fn decode_form(bytes: &[u8]) -> Result<(Region, Form), String> {
     let mut r = R {
         b: bytes,
         i: 0,
         nodes: Vec::new(),
     };
-    if r.take(4)? != MAGIC {
-        return Err("byte 0: the data does not start `ZIR\\0`".into());
-    }
+    let form = match r.take(4)? {
+        m if m == MAGIC => Form::Full,
+        m if m == MAGIC_STRIPPED => Form::Stripped,
+        _ => return Err("byte 0: the data does not start `ZIR\\0`".into()),
+    };
     let v = u32::from_le_bytes(r.take(4)?.try_into().expect("four bytes"));
     if v != VERSION {
         return Err(format!(
@@ -589,7 +620,7 @@ pub fn decode(bytes: &[u8]) -> Result<Region, String> {
         };
         return Err(format!("byte {}: {what} the graph, which ends here", r.i));
     }
-    Ok(root)
+    Ok((root, form))
 }
 
 /// A region or node whose parts are being read, with the number of nodes or regions still

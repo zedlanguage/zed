@@ -1388,7 +1388,7 @@ mod tests {
             op: s(var("g")),
             identity,
             depth,
-            ev: Evidence::from([("assoc".into(), grade)]),
+            ev: Evidence::from([("associative".into(), grade)]),
         };
         let generate = |pos| Term::Gen {
             init: s(var("i")),

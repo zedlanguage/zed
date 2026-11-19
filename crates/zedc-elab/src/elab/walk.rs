@@ -2440,7 +2440,7 @@ impl<'a> Elab<'a> {
                 identity: identity.map(|v| Shared::new(Term::Lit(v))),
                 depth,
                 ev: zed_kernel::term::Evidence::from([(
-                    "assoc".into(),
+                    "associative".into(),
                     zed_kernel::term::Grade::Axiom,
                 )]),
             };

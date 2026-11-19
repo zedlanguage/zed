@@ -9,18 +9,19 @@ use super::text;
 use super::{Edge, Node, Op, Region, RegionKind, Src, binds, kind_name, op_name};
 
 /// What a node's operation requires of it.
-struct Shape {
+pub(super) struct Shape {
     /// The inputs before the captures.
-    fixed: usize,
+    pub(super) fixed: usize,
     /// Whether the number of inputs must be exactly `fixed`.
     exact: bool,
     /// The number of outputs, when it is fixed.
     outputs: Option<usize>,
     /// Each region's kind, number of arguments before the captures, and number of results.
-    regions: Vec<(RegionKind, usize, usize)>,
+    pub(super) regions: Vec<(RegionKind, usize, usize)>,
 }
 
-fn shape(n: &Node) -> Result<Shape, String> {
+/// What `n`'s operation requires of it, or why it cannot have that operation.
+pub(super) fn shape(n: &Node) -> Result<Shape, String> {
     let ins = n.inputs.len();
     let outs = n.outputs.len();
     let leaf = |fixed| Shape {

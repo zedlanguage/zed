@@ -11,6 +11,7 @@ mod names;
 mod reading;
 mod rejections;
 pub(crate) mod scaling;
+pub(crate) mod stripped;
 mod validation;
 
 use zedc::zir::validate::validate;

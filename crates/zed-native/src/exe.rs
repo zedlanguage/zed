@@ -105,8 +105,11 @@ fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>)
 /// same way; the number of sites in 8 bytes and each site as its start and end in 8 bytes each,
 /// both [`u64::MAX`] for a node with none, by node number in `graph`, as
 /// [`lower_sited`](zedc::zir::lower::lower_sited) numbers them;
-/// then the graph. An error when the system refuses the memory to write one of the graph's
-/// exact numbers, or the memory of the data, which is asked before it is written.
+/// then the graph in its stripped binary form ([`zedc::zir::strip`]), which keeps what running
+/// needs and none of the facts kept for checking: the executable runs the program and is not
+/// re-checked, and stripping keeps the node numbers the sites use. An error when the system
+/// refuses the memory to write one of the graph's exact numbers, or the memory of the data,
+/// which is asked before it is written.
 // Complexity tradeoff: the executable holds the source lines the sites touch, one byte for each
 // other line, and 16 bytes a node, O(s + n) bytes at most for s bytes of source and n nodes,
 // written and read once, so that a run-time error prints the source line as `zedc run` does
@@ -128,7 +131,7 @@ pub(crate) fn data(
     let file = source.0.unwrap_or_default();
     let (source, sites) = kept_lines(source.1, sites);
     let source = source.as_str();
-    let zir = zedc::zir::binary::encode(graph).map_err(|e| {
+    let zir = zedc::zir::binary::encode_stripped(graph).map_err(|e| {
         format!(
             "Executable too large for memory: writing a constant of the program into the \
              executable takes {}. Repairs: free memory and build again, or run the program with \
@@ -203,7 +206,9 @@ impl Program {
             zir = rest;
             sites.push((start != usize::MAX).then_some(Span { start, end }));
         }
-        let graph = zedc::zir::binary::decode(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
+        // The data holds the stripped form; a full one would run the same.
+        let (graph, _) =
+            zedc::zir::binary::decode_form(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
         let sites = legalized_sites(&graph, crate::legal::EXPANSIONS, &sites);
         let graph = crate::legal::legalize(graph);
         let plan = plan(graph.graph(), fuse != 0);
@@ -450,7 +455,8 @@ mod tests {
         assert_eq!(p.sites, [site]);
         assert_eq!(p.ports, ports);
         assert_eq!(p.address, address);
-        let built = crate::legal::legalize(graph.clone());
+        // The data holds the graph stripped, and the start legalizes that.
+        let built = crate::legal::legalize(zedc::zir::strip::strip(&graph));
         assert_eq!(p.graph.graph(), built.graph());
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));

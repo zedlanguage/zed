@@ -14,7 +14,7 @@
 //! constant, written as the kernel prints values. A value edge is its type in the kernel's
 //! prefix syntax (`(| int String)`), then its facts when it has any: `in [0..=9]`,
 //! `class 1 mod 3`, `set {1, 5}`, and each facet as `facet units "m"` or `hint name "x"`. A
-//! state edge is `state out`.
+//! state edge is `state out`. A stripped module ([`super::strip`]) starts `zir 1 stripped`.
 //!
 //! Lines are written sorted by path, a region's header before its nodes, each node followed by
 //! its regions, and the results last; the reader accepts the lines in any order, so the form
@@ -36,6 +36,7 @@ use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Family;
 use zed_kernel::value::Value;
 
+use super::strip::Form;
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
 use crate::canon::Facet;
 use crate::canon::binders::level_of;
@@ -165,6 +166,15 @@ const KINDS: [RegionKind; 5] = [
 pub fn print(root: &Region) -> String {
     let mut out = format!("zir {VERSION}\n");
     region_lines(root, &mut out);
+    out
+}
+
+/// The stripped text form of the graph rooted at `root`: the text form of
+/// [`strip`](super::strip::strip)`(root)` under the first line `zir 1 stripped`, which
+/// [`parse_form`] reads back and [`parse`] refuses.
+pub fn print_stripped(root: &Region) -> String {
+    let mut out = format!("zir {VERSION} stripped\n");
+    region_lines(&super::strip::strip(root), &mut out);
     out
 }
 
@@ -385,21 +395,38 @@ pub fn pattern(p: &Pattern) -> String {
 // ---------------------------------------------------------------------------------------------
 // Reading
 
-/// The graph in `text`, which [`super::validate::validate`] has not yet checked. An error names the
-/// line and column.
+/// The graph in `text`, a full module, which [`super::validate::validate`] has not yet checked.
+/// An error names the line and column. A stripped module is refused, so that no reader takes
+/// one for a module whose facts it may re-check; [`parse_form`] reads both.
 pub fn parse(text: &str) -> Result<Region, String> {
+    match parse_form(text)? {
+        (g, Form::Full) => Ok(g),
+        (_, Form::Stripped) => Err(format!(
+            "the first line is `zir {VERSION} stripped`, so the module is stripped of its \
+             facts, and this reader reads a full module, whose first line is `zir {VERSION}`"
+        )),
+    }
+}
+
+/// The graph in `text`, a full or a stripped module ([`print_stripped`]), and its form, which
+/// its first line gives; as [`parse`] otherwise.
+pub fn parse_form(text: &str) -> Result<(Region, Form), String> {
     let mut lines = Vec::new();
-    let mut header = false;
+    let mut header = None;
     for (no, line) in text.lines().enumerate() {
         let no = no + 1;
         if line.trim().is_empty() {
             continue;
         }
-        if !header {
-            if line.trim() != format!("zir {VERSION}") {
+        if header.is_none() {
+            let line = line.trim();
+            if line == format!("zir {VERSION}") {
+                header = Some(Form::Full);
+            } else if line == format!("zir {VERSION} stripped") {
+                header = Some(Form::Stripped);
+            } else {
                 return Err(format!("line {no}: the first line is `zir {VERSION}`"));
             }
-            header = true;
             continue;
         }
         let mut p = P { s: line, i: 0 };
@@ -408,9 +435,9 @@ pub fn parse(text: &str) -> Result<Region, String> {
             .map_err(|e| format!("line {no}: column {}: {e}", p.i + 1))?;
         lines.push((l, no));
     }
-    if !header {
+    let Some(form) = header else {
         return Err(format!("the text is empty, and starts `zir {VERSION}`"));
-    }
+    };
     lines.sort_by_cached_key(|a| a.0.key());
     for w in lines.windows(2) {
         if w[0].0.key() == w[1].0.key() {
@@ -430,7 +457,7 @@ pub fn parse(text: &str) -> Result<Region, String> {
             l.what()
         ));
     }
-    Ok(root)
+    Ok((root, form))
 }
 
 /// The edge type written `s`, such as `int in [0..=9]`.

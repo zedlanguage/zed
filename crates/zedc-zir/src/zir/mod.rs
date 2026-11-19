@@ -51,6 +51,7 @@ pub mod canon;
 pub mod legalize;
 pub mod lower;
 pub mod memory;
+pub mod strip;
 pub mod text;
 pub mod validate;
 

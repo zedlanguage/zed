@@ -101,7 +101,7 @@ impl<'a> Elab<'a> {
             op: Shared::new(Term::PrimFn(p)),
             identity: identity.map(|v| Shared::new(Term::Lit(v))),
             depth: 1,
-            ev: Evidence::from([("assoc".into(), Grade::Axiom)]),
+            ev: Evidence::from([("associative".into(), Grade::Axiom)]),
         }
     }
 
