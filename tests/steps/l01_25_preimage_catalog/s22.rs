@@ -3325,14 +3325,47 @@ boxes_at_modulus_tests! {
 /// each value of a stride in `direct` (`block_set`), which made the preimage stage slower
 /// than linear in the pieces on `bench::s22::remainder_chains_in_the_linear_stage_scale`, so
 /// that listing was taken back (PRES-direct-stride-answer-downstream). The other three shapes
-/// have 24 refused cases (/home/luke/Work/wt/failing-tests/PRES-cover-refusals-moduli.rs).
+/// have 24 refused cases
+/// ([`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]).
 #[test]
 fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7() {
+    let refused =
+        refused_where_the_solver_answered(&["remainders of two inputs", "two moduli of one input"]);
+    let mut want = REFUSED_AT_A_STRIDE.to_vec();
+    want.sort();
+    assert_eq!(refused, want);
+}
+
+/// Row PRES-cover-refusals-moduli, the other three shapes of [`REMAINDER_SHAPES`]: as
+/// [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`], the
+/// cover answers wherever the solver alone answers, with a box of `x` inside the solver's,
+/// except in the cases of [`REFUSED_WITH_TWO_DISJUNCTIONS`], which are refused
+/// (`Refusal::Questions`) and must stay exactly those until PRES-cover-moduli-two-disjunctions
+/// answers them.
+#[test]
+fn the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7() {
+    let refused = refused_where_the_solver_answered(&[
+        "arms of x and y",
+        "arms over x",
+        "a test of the chain",
+    ]);
+    let mut want = REFUSED_WITH_TWO_DISJUNCTIONS.to_vec();
+    want.sort();
+    assert_eq!(refused, want);
+}
+
+/// The cases of [`REMAINDER_SHAPES`] named in `shapes`, at moduli 5 and 7, seeds 1 to 3 and
+/// k = 1, 2, 5, 13 over `x` and `y` in `[-60, 60]`, where the solver alone answers and the
+/// exact cover refuses, sorted: modulus, seed, shape, k. Asserts that where both answer, the
+/// cover's box of `x` lies inside the solver's.
+fn refused_where_the_solver_answered(
+    shapes: &[&'static str],
+) -> Vec<(i64, u64, &'static str, usize)> {
     let (ds, d) = (xy_in(60), Demand::Bool(true));
     let mut refused = Vec::new();
     for m in [5, 7] {
         for seed in 1..=3 {
-            for shape in ["remainders of two inputs", "two moduli of one input"] {
+            for &shape in shapes {
                 for k in [1, 2, 5, 13] {
                     let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
                     let alone = solver_alone(|| preimage(&t, &ds, &d));
@@ -3349,9 +3382,7 @@ fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_a
         }
     }
     refused.sort();
-    let mut want = REFUSED_AT_A_STRIDE.to_vec();
-    want.sort();
-    assert_eq!(refused, want);
+    refused
 }
 
 /// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`]
@@ -3382,6 +3413,38 @@ const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 25] = [
     (7, 3, "two moduli of one input", 2),
     (7, 3, "two moduli of one input", 5),
     (7, 3, "two moduli of one input", 13),
+];
+
+/// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
+/// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that
+/// both read the projected symbol and share a remainder atom, which neither the rule for one
+/// disjunction nor `cut_at_shared` answers (PRES-cover-moduli-two-disjunctions). Modulus,
+/// seed, shape, k.
+const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 24] = [
+    (5, 1, "arms over x", 13),
+    (5, 2, "arms of x and y", 5),
+    (5, 2, "arms of x and y", 13),
+    (5, 2, "arms over x", 5),
+    (5, 2, "arms over x", 13),
+    (5, 2, "a test of the chain", 13),
+    (5, 3, "arms over x", 13),
+    (5, 3, "a test of the chain", 5),
+    (7, 1, "arms of x and y", 5),
+    (7, 1, "arms of x and y", 13),
+    (7, 1, "arms over x", 5),
+    (7, 1, "arms over x", 13),
+    (7, 1, "a test of the chain", 5),
+    (7, 1, "a test of the chain", 13),
+    (7, 2, "arms of x and y", 5),
+    (7, 2, "arms over x", 2),
+    (7, 2, "arms over x", 5),
+    (7, 2, "arms over x", 13),
+    (7, 2, "a test of the chain", 5),
+    (7, 2, "a test of the chain", 13),
+    (7, 3, "arms of x and y", 13),
+    (7, 3, "arms over x", 5),
+    (7, 3, "arms over x", 13),
+    (7, 3, "a test of the chain", 13),
 ];
 
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and

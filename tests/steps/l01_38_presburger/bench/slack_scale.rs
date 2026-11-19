@@ -196,6 +196,23 @@ fn two_rows_scales() {
     });
 }
 
+/// `decide` on the paired chain, apart from [`paired_chain_project_scales`]: the two together
+/// took 21.7 s against a limit of 21 s (2026-11-19, load 33), each passing at 8.0 times.
+#[test]
+fn paired_chain_decide_scales() {
+    let k = 19000;
+    let (small, large) = (
+        build_paired_chain(k),
+        build_paired_chain(scaling::FACTOR * k),
+    );
+    for f in [&small, &large] {
+        assert_eq!(decide(f), Ok(false));
+    }
+    scaling::check_order("decide: paired_chain", k, 1, |m| {
+        drop(decide(if m == k { &small } else { &large }));
+    });
+}
+
 #[test]
 fn paired_chain_project_scales() {
     let k = 19000;
@@ -205,13 +222,9 @@ fn paired_chain_project_scales() {
         build_paired_chain(scaling::FACTOR * k),
     );
     for f in [&small, &large] {
-        assert_eq!(decide(f), Ok(false));
         let (p, _) = project_each(f, &y0).expect("paired_chain project");
         assert_eq!(p[0], Ok(IntervalSet::empty()));
     }
-    scaling::check_order("decide: paired_chain", k, 1, |m| {
-        drop(decide(if m == k { &small } else { &large }));
-    });
     scaling::check_order("project_each: paired_chain", k, 1, |m| {
         drop(project_each(if m == k { &small } else { &large }, &y0));
     });
@@ -258,8 +271,9 @@ fn dense_scales() {
 /// of the large size repeat and the names tie, so the two sizes took different paths. Before
 /// FAIL-or-if-tie-refusal the eight whole-formula questions of the large size were refused
 /// (`Unordered`) where those of the small size were searched (3.3 times, 10.2G instructions
-/// at 4096); since then the tied ones are searched too (13.3 times, 41.4G). Ties at both
-/// sizes are measured by `tied_projection_endpoint_reports_scale_past_512`.
+/// at 4096); since then the tied ones are searched too (13.3 times, 41.4G; 8.5 times, 27.0G
+/// on 2026-11-19 at 373e5d22a). Ties at both sizes are measured by
+/// `tied_projection_endpoint_reports_scale_past_512`.
 #[test]
 fn untied_projection_uses_the_endpoint_report() {
     let k = 512;
@@ -267,8 +281,9 @@ fn untied_projection_uses_the_endpoint_report() {
     let large = subset_sum_dp(&weights_distinct(8 * k));
     let y0 = [sym("y0")];
     let red = std::env::var_os("PDCX_RED").is_some();
-    // The solver alone: the join of row sums (module `row_sums`) answers both sizes exactly with
-    // the empty set, since the target is unreachable, and the endpoint report is not reached.
+    // The solver alone, with the join of row sums (module `row_sums`) off: with it on, row sums
+    // answer both sizes exactly with the empty set, since the target is unreachable, and the
+    // endpoint report this measures is not reached.
     scaling::check_order("I22 untied endpoint reports", k, 1, |m| {
         ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
@@ -321,8 +336,8 @@ fn ss_project_each_costs_at_most_four_decides() {
     if meter.unit() != "instructions" {
         return;
     }
-    // The solver alone: with the join of row sums (module `row_sums`) the questions the
-    // halving asks are narrow enough for it, and q is the exact empty set.
+    // The solver alone, with the join of row sums (module `row_sums`) off: with it on, the
+    // questions the halving asks are narrow enough for it, and q is the exact empty set.
     ROW_SUMS_OFF.with(|o| o.set(true));
     let f = subset_sum_dp(&weights(64));
     let y0 = [sym("y0")];

@@ -20000,8 +20000,8 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     // reaches one state in every order of the parts (module `forced`), so its verdict does not
     // depend on that order, and a contradiction then costs no O(n log n) ordering pass
     // (`canonical_parts` cost 7.5 times the whole projection of main on
-    // `l01_38_presburger::bench::slack_scale::paired_chain_project_scales`, which is
-    // `project_each`, the solver alone).
+    // `l01_38_presburger::bench::slack_scale::paired_chain_project_scales`, which measures
+    // `project_each`; the contradiction is found before the cover is reached).
     //
     // With the cover, every step below reads `cover_input(f)` and nothing else of `f`
     // (PRES-cover-order-refusals, PRES-cover-sign-through-h): each equation in the sign

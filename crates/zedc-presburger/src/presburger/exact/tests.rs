@@ -296,6 +296,13 @@ fn random_formulas_at_seed_13733945893095969990() {
     random_formulas_at(13733945893095969990);
 }
 
+/// [`random_formulas_project_to_the_values_of_their_points`] at seed 4164922340731529606,
+/// which refused 5 answers, past the 3 allowed (FAIL-exact-refusals-4164922340).
+#[test]
+fn random_formulas_at_seed_4164922340731529606() {
+    random_formulas_at(4164922340731529606);
+}
+
 /// A disjunct that the local repair showed to have no point with the constraints taken
 /// ([`super::super::Repair::Empty`]) is passed over without the solve of its whole group, also
 /// where the projection passed over one such disjunct before it (PRES-presbench1-red). Round 63
