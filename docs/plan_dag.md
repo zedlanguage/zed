@@ -2679,7 +2679,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 1 | READS-share-request | from DESIGN-consistency-audit: L21.2b: a port under #idempotent(key) or #raw never shares a request; sec:robustness excludes only #none ports, unmarked foreign calls and writes; both from d82758a, DESIGN decides neither; decide by standing rules or ask | - | - | DESIGN-consistency-audit |  |
 | 1 | REFUSAL-front-unsolved | Done: U1 (X38 cell discovery) by `cells_windows`, COMPLEXITY K106, hybrid cross-review round 3; U2 to U7 moved to REFUSAL-front-rest; handoff docs/handoff/REFUSAL-front-unsolved.md on wt/refusal-front-xr (X38 cell discovery, R10-C3 precision, shared named payloads, payload name prefixes, r10padded, answer certificate Q5, Case A second reading); review record /home/luke/Work/wt/rfx-scratch/review-record | - | - | REFUSAL-front-xr |  |
 | 2 | REFUSAL-front-rest | Done (agent front1, 2026-11-19; state table and sections U2 to U7 of docs/handoff/REFUSAL-front-unsolved.md): U2, U3, U4 found fixed on main, U3 pinned by the r11 tagged and named benches, a neighbor of U4 (one bare name after n payload names, 14.05 times) fixed by `Atoms::bare`; U5 fixed in `sweep::lits_ok` (8.143); U6 answer certificate: 19bc4e25 against the round-11 head on 19bc4e25's own tests, keyed by printed type, 737 changes in l01_23 and none elsewhere, no Inhabited/Empty flip, all 223 narrowings from 5d72f0689's `open_fork` term (checked by switching it off); U7 second reading at the code and a mutation run. The deferred tests are back (three were on main already, the ternary probe is the bench `r11_ternary_alignment_scales`, 8.146) and the deferred file is deleted. Later fork narrowings of the current kernel went to REFUSAL-front-post-r11-forks | - | - | REFUSAL-front-unsolved | `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_groups_and_refusals/refusals.rs` |
-| 2 | REFUSAL-front-post-r11-forks | Found by REFUSAL-front-rest (front1, U6): on the 19bc4e25 tests run on 75a3ed206, 22 answers that 19bc4e25 decides are Refused(Fork) for a cause other than the `open_fork` term of 5d72f0689: 16 Inhabited, 6 Empty, all in exact-oracle families that accept refusals (sweep_agreement xc, xp and r7rc, r6_reduction r6sat); 18 are decided by the round-11 head 22ff3536d too. One traced (`34eead6370d677c5`, xc2359, Empty) reaches the K26 fork refusal in `tuples_on` after the `classes` and key-region passes. Find the commit among the 188 kernel commits 22ff3536d..75a3ed206 that moved them there and decide each again, with no new cap or refusal; keys and dumps in /home/luke/Work/wt/scratch/front1-u6 (x1nar.k, cmp*), method in the handoff's U6 section | M | yes | none | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-post-r11-forks | Found by REFUSAL-front-rest (front1, U6): on the 19bc4e25 tests run on 75a3ed206, 22 answers that 19bc4e25 decides are Refused(Fork) for a cause other than the `open_fork` term of 5d72f0689: 16 Inhabited, 6 Empty, all in exact-oracle families that accept refusals (sweep_agreement xc, xp and r7rc, r6_reduction r6sat); 18 are decided by the round-11 head 22ff3536d too. One traced (`34eead6370d677c5`, xc2359, Empty) reaches the K26 fork refusal in `tuples_on` after the `classes` and key-region passes. Find the commit among the 188 kernel commits 22ff3536d..75a3ed206 that moved them there and decide each again, with no new cap or refusal; keys and dumps in /home/luke/Work/wt/scratch/front1-u6 (x1nar.k, cmp*), method in the handoff's U6 section | M | yes | none | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | REFUSAL-narrow-cells | Done: find_rep: disjoint-disjunct split, skip candidates inside an excluded tuple type, no refine on forked parts; COMPLEXITY K78; 131 targeted pieces pass after rebase on d5055bcf | - | - | none |  |
 | 1 | SCALE-fix-crossover | Done: decided by standing rule (timed crossovers with identical results are allowed): kept-power test straddles fast::MUL_LEAF=1024 (Toom-3 to NTT). Re-time the crossover on this machine; if the timing confirms it, set the test's sizes both on one side of it (a measure across a switch measures the switch); if the timing moves it, move it with the measurement in its comment | - | - | SCALE-fix-wide |  |
 | 1 | SCALE-fix-kernel | Done: 10 findings: zed_kernel bdd x4, l01_22 x2, l01_23 x4 (rec_order, excluded tuples, product cells, negated types); branch from wt/scale-ratio | - | - | SCALE-fix-wide |  |
@@ -3936,6 +3936,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | GROUP-layered-nowitness, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | GROUP-layered-nowitness, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | GROUP-layered-nowitness, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
@@ -4504,6 +4505,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROV-scaling-10_5, SPEC-pure-region-port-read | `crates/zed-kernel/src/eval.rs` |
 | 0 | PROV-scaling-10_5, POLY-square-cost-sizes | `crates/zed-kernel/src/poly.rs` |
 | 0 | PROV-scaling-10_5, LIMITS-remove-all | `crates/zed-kernel/src/` |
+| 0 | PROV-scaling-10_5, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PROV-scaling-10_5, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
 | 0 | PROV-scaling-10_5, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs`, `crates/zed-kernel/src/value.rs` |
@@ -5200,6 +5202,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAIL-ratio-kernel-bdd-print, FP-ops-order | `crates/zed-kernel/src/types/bdd/bench.rs` |
 | 0 | PERF-parity-cold-verdict, TEST-kernel-unreached-paths-4 | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
 | 0 | PERF-parity-cold-verdict, LIMITS-remove-all | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
+| 0 | PERF-parity-cold-verdict, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | PERF-parity-cold-verdict, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/rec/unfold.rs` |
@@ -5466,6 +5469,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-too-large-cast-origin, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-kernel-unreached-paths-4, LIMITS-remove-all | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
+| 0 | TEST-kernel-unreached-paths-4, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | TEST-kernel-unreached-paths-4, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
@@ -5766,6 +5770,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STUDY-zir-facts-carried, SPEC-m07-string-serial | `crates/zedc-zir/src/canon/serial.rs` |
 | 0 | STUDY-zir-facts-carried, FAIL-reversed-boxes-seed-6952189316955771677 | `crates/zedc/src/store/` |
 | 0 | LIMITS-remove-all, TEST-term-for-uncovered | `crates/zedc-check/` |
+| 0 | LIMITS-remove-all, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | LIMITS-remove-all, PERF-twovar-elim-per-arm | `crates/zedc-solvers/src/twovar.rs` |
 | 0 | LIMITS-remove-all, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | LIMITS-remove-all, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
@@ -5819,6 +5824,10 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-term-for-uncovered, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | REFUSAL-front-post-r11-forks, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-post-r11-forks, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-post-r11-forks, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | REFUSAL-front-post-r11-forks, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | BENCH-named-limits-side-by-side-tiers, FAIL-pendants-refused-boxes-2537877658227229631 | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-limits-side-by-side-tiers, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-limits-side-by-side-tiers, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -8394,7 +8403,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-kernel/src/types/`: level 0: FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, TEST-kernel-unreached-paths-4; level 1: PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 2: REFUSAL-front-rest; level 3: A5-print; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words, SET-type-check; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/bdd.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-set-tied-digest-depth; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5
 - `crates/zed-kernel/src/types/bdd/bench.rs`: level 0: FAIL-ratio-kernel-bdd-print; level 1: TIME-kernel-benches-over-cap-high-load
-- `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest; level 2: REFUSAL-front-rest; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7
+- `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, REFUSAL-front-post-r11-forks; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7
 - `crates/zed-kernel/src/types/empty/escape.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-escape-big-heads-scaling
 - `crates/zed-kernel/src/types/print.rs`: level 0: FAIL-print-meet-unnamed-bound, PERF-row-hash-tied-digest; level 3: A5-print; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/print/`: level 3: A5-print; level 8: SET-type-check
