@@ -39,8 +39,8 @@ tests/steps/l01_23_groups_and_refusals/refusals.rs); the probe families are buil
 | U3 | fixed: the two probes printed 21.8M and 11.6M units at 1024 (1.189G and 594M at the round-11 merge), 3.9 times per 4 times n | pinned: `bench::r11_tagged_payloads_must_scale` 7.994 and `r11_named_payloads_must_scale` 8.027 (16384 and 131072), replacing the two probes |
 | U4 | fixed: `r11_payload_name_prefixes_must_scale` 7.891 | a neighbor found and fixed: one bare name after n payload names, 14.05 times, now 7.852 (`front_bare_name_after_payload_prefixes_must_scale`; `Atoms::bare`, COMPLEXITY) |
 | U5 | open: 15.9 times from 512 to 4096 | fixed: `sweep::lits_ok` walked every listed integer once per head read; it reads the set's class union now (COMPLEXITY); 8.04 times, bench resized to 4096 and 32768, 8.143 |
-| U6 | open | open, not attempted in this run; what remains is in U6 below |
-| U7 | open | Mutant 2 argued at the code (comment above the narrowing in `find_prefix_chains`); the mutation run is in U7 below |
+| U6 | open | done: dumps of 19bc4e25 and the round-11 head on 19bc4e25's own tests, keyed by printed type; 737 changes in l01_23, no Inhabited/Empty flip; all 223 narrowings vanish with 5d72f0689's `open_fork` term switched off (U6 below). The current kernel has 22 more fork narrowings, filed as REFUSAL-front-post-r11-forks |
+| U7 | open | done: Case A read a second time and Mutant 2 argued at the code (comment above the narrowing in `find_prefix_chains`); the mutation run survived 18 firings in two exact-oracle tests (U7 below) |
 
 The deferred file /home/luke/Work/wt/scratch/deferred-tests/REFUSAL-front-rest.rs is deleted.
 Its parts: the three tests of part (a) were on main already, identical, and pass;
@@ -277,14 +277,117 @@ wrapper refusals that the item context turned into checked Inhabited answers. Co
 partial dump with three narrowings, all the X45 map rule (archive/r10/codex). Codex R9's dump
 of 19bc4e25 against cb709f13: 630,616 keys, 0 missing, 0 changed.
 
-What remains (front1, 2026-11-19; not attempted): the R9 tooling
-(review-record/r9/codex: dump-instrument.mjs, compare-dumps.mjs, replay-dump.mjs) keys each
-answer by the type's digest, which the canon-key change altered, so the two dumps share no
-keys. The certificate needs (1) a key both kernels compute alike, such as the printed type,
-(2) one corpus both kernels run: 19bc4e25 does not compile against today's tests (orch/r11x/
-notes.txt), so either its own test tree at 19bc4e25 is run on both kernels or a corpus of
-printed types is replayed, and (3) each changed answer explained. U2's narrowing no longer
-exists on main.
+### Result (front1, 2026-11-19): every narrowing explained
+
+Method. The R9 tooling keys each answer by the type's digest, which the canon-key change
+altered, so it cannot bridge the two kernels. Instead:
+
+- Key: a hash of the printed type (`format!("{t}")`), with the test thread's name
+  (`unnamed` for threads a test spawns) and the query kind (`v` for `verdict`, `e` for
+  `is_empty`). Only top-level queries were logged, not the ones a search makes inside.
+- Corpus: the zed-tests tree of 19bc4e25 itself, run in two scratch worktrees.
+  - Tree a: 19bc4e25 as it is.
+  - Tree b: the same tests with the kernel files of the round-11 head 22ff3536d.
+  Each test binary was run in chunks of 20 tests, each chunk under timeout 60.
+- The instrumentation was never committed. It is two wrappers around `verdict` and
+  `is_empty` that append one line per answer to a file.
+
+Totals over 77 binaries. Tree a gave 640,352 keys and tree b gave 639,596; 638,400 are in
+both. Of those, 737 differ, all in l01_23_subtyping. No other binary has a changed answer.
+Its keys found in one tree only are queries the other kernel did not ask:
+
+| binary | only in a | only in b |
+|---|---|---|
+| l01_16 | 633 (`is_empty` false, mostly single literals) | 0 |
+| l01_22 | 5 | 5 (the same types, printed with different `fn N` ids) |
+| l01_26 | 572 | 367 |
+| l01_27 | 690 | 212 |
+
+The 737 changes in l01_23, from a to b:
+
+| change | named tests | spawned threads |
+|---|---|---|
+| Refused(NoWitness) to Inhabited | 170 | 1 |
+| Refused(MorphismSplit) to Inhabited | 153 | 0 |
+| Refused(Fork) to Empty | 82 | 11 |
+| Refused(Fork) to Inhabited | 34 | 2 |
+| `is_empty` false to true | 4 | 10 |
+| Refused(MorphismSplit) to Refused(NoWitness) | 43 | 0 |
+| Refused(Fork) to Refused(NoWitness) | 4 | 0 |
+| Inhabited to Refused(Fork) | 1 | 222 |
+
+There is no change between Inhabited and Empty in either direction.
+
+- The 14 `is_empty` changes from false to true are types refused before. Of them, 10 are
+  Empty in b, and 4 are judgments tests on query order.
+- The 223 narrowings are 222 sweep_agreement and r6_reduction cases plus
+  `oracle::the_two_routes_agree_on_recursive_systems`. All 223 come from one term:
+  `open_fork` in `find_rep`, added by 5d72f0689 (GROUP-search-canon-key, "no new value
+  search over an open fork"). That commit is an ancestor of 22ff3536d.
+  - Check: tree b was rebuilt with the term switched off (env `U6_NO_OPEN_FORK`) and
+    l01_23 was run again. All 223 keys answer Inhabited, as in a.
+  - The other 514 changes are unchanged by the switch.
+  - The term stops the verdict from depending on query order (the reason for
+    5d72f0689), so these narrowings are accepted, of the same kind as R10-C3 (U2).
+    Removing the term is not an option.
+- The three map-item wrapper refusals named above were not looked for on their own. If
+  their tests are in this corpus, they are among the 737 changes, and the 223 narrowings
+  are all in l01_23.
+
+Limits of the certificate:
+
+- The printed type omits definition bodies, so two types can share a key. A few keys in
+  the current-kernel run below have more than one answer, probably for this reason.
+- A test that failed or timed out logged only the answers before it stopped. In tree a,
+  14 of 397 l01_23 tests did not pass: scaling tests under load (up to 97), and one
+  timeout (r6_reduction). Tree b had the same, plus four refusals tests whose expected
+  messages changed.
+- Gains (a refusal becoming decided) are not proved one by one. Where the tests have an
+  exact oracle, they check them against it.
+- The script that ran the chunks printed `basename`'s exit status instead of the test
+  binary's. The counts above come from the test logs, not from that status. Recounted per
+  chunk:
+  - tree a: 251 passed, 23 failed, 19 gave no result;
+  - tree b: 252 passed, 24 failed, 17 gave no result.
+
+### The current kernel against 19bc4e25 (beyond Q5)
+
+This compares the 19bc4e25 tests on 75a3ed206. They were copied in as a test binary
+`u6old`, with small shims for API changes. Some old tests fail on newer messages and print
+forms (343 of 397 l01_23 tests pass), so the coverage is partial. Diagnostics ran on the 24
+sweep_agreement tests and on r6_reduction until its timeout.
+
+| run | Inhabited to Fork | Empty to Fork | `is_empty` true to false |
+|---|---|---|---|
+| no switch | 267 | 8 | 8 |
+| `open_fork` off | 16 | 6 | 6 |
+| `forked` off (the K35 `past_fork` rule) | 17 | 6 | 6 |
+
+The run with no switch gives the same answers as the chunked run on every common key, so
+it is deterministic. The `open_fork` term again explains all but 22 narrowings: 16
+Inhabited to Fork and 6 Empty to Fork.
+
+Those 22 are new after the round-11 head:
+
+- 18 are decided in tree b (12 Inhabited, 6 Empty).
+- 4 are refused in b but Inhabited in b with `open_fork` off.
+- All come from tests with exact oracles that accept a refusal: sweep_agreement families
+  xc, xp and r7rc, and r6_reduction cases r6sat.
+
+One of them was traced: `34eead6370d677c5`, xc2359, Empty in a and b. The refusal comes from
+the K26 fork refusal in `tuples_on` (`self.refuse_fork()` after the `classes` split and the
+key-region pass), reached from `Search::solve`.
+
+The commit that moved this type there is not found. 188 kernel commits lie between 22ff3536d
+and 75a3ed206, and `tuples_on` changed in several of them:
+
+- the key regions of 10c13b7c7 and 34a583731;
+- `take_blame_on_false`;
+- `nested_cover` and `take_out_piece` inside the loop.
+
+This is filed as REFUSAL-front-post-r11-forks. The keys, the dumps and the switch method are
+under /home/luke/Work/wt/scratch/front1-u6 (x1nar.k and the cmp* directories). The scratch
+trees are removed.
 
 ## U7. Case A proof and Mutant 2 (needs a second reader)
 
@@ -294,6 +397,36 @@ narrowing holds when `!step_loose`, `non_disjoint_stop_heads` is empty and `spin
 It argues Mutant 2 (dropping `!step_loose`) changes only precision, never an Empty. Claude did
 not review it. Open: a second seat's reading, and a whole-program mutation or order test
 (Codex names this as its claim most likely to be wrong).
+
+Second reading and mutation run (front1, 2026-11-19, on 75a3ed206). Steps 1 to 7 of Codex Q4
+were checked against today's `find_prefix_chains` and hold:
+
+- Pass 1 and Pass 2 store a forced child as `None` and leave it `None`. A partial group whose
+  tokens all jump cuts `Some(rem_w)` by its head per child, through `jump_target` or the
+  `multi_partial_groups` event loop, so `rem_w` is R less the union of the heads landing at w.
+- A group with staying tokens sets `step_loose` instead.
+- The dominance in step 6 rests on three facts. The rest of the problem depends on x only
+  through the set of live tokens. Positive heads and the decided negative groups treat every x
+  in R alike. A larger set of live negative tokens never admits more lists. So an x in every
+  `rem_w` leaves exactly the forced tokens, and every other x leaves at least those.
+
+The Mutant 2 argument is written at the guard. It covers both readers of the narrowed `r0`: the
+same-step return guarded by the earlier steps' `had_loose`, and `witness_heads`.
+
+Mutation run: the guard without `!step_loose`, with a line printed each time the narrowing ran
+on a loose step. All 578 zed-kernel lib tests and all 747 l01_23 tests ran one at a time.
+
+- Every test passed, except the bench `judgments::bench::a_meet_of_unions_of_functions_scales`.
+  It timed out at 60 s at load 95 and passed on the unmutated tree. That bench does not reach
+  the guard: it printed no line before it timed out.
+- The mutant ran on a loose step 18 times: 14 in
+  `sweep_agreement::r7_random_optional_spine_choices_against_masks` and 4 in
+  `r9_run_tokens_against_product_automaton`. Both tests check every case against an exact
+  decider (the masks, and a search of the rows' product automaton) in both definition orders.
+- So the mutant survives, as the argument predicts: it is sound, and no test can tell it apart
+  by its verdicts.
+- Nothing in the suite measures what the guard buys in precision. The guard is kept as Codex
+  kept it.
 
 ## Follow-ups outside this item (recorded, not part of the remainder)
 
