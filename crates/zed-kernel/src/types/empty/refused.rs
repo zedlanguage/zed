@@ -289,6 +289,22 @@ fn meet_operands(
     v: u32,
     refused: impl Fn(&u32) -> bool,
 ) -> Vec<String> {
+    // `v` is in a refusal's `tuples`, so it has kind `And` in `why.graph` (`bes::refusal`),
+    // and `origin[v]` is a meet. Every place in the crate that gives a node of that graph its
+    // kind, all in types/empty.rs:
+    // - `system`, the members: `add(Bot)`; a member whose body is a reference: `set(Or)`.
+    // - `system`, a closed part, or a recursive morphism read whole: `add(Bot)`, then
+    //   `set(Bot)` or `set(Top)`, or kept `Bot` as a leaf.
+    // - `system`, a part with children written as the member's body: `set` with the kind of
+    //   `Made::node`. That is `And` only for a tuple, an atom or a meet, and for a meet this
+    //   branch inserts `meets[def]`.
+    // - `system`, any other part with children: one `add(Bot)` per new key, in the `Vacant`
+    //   branch that also pushes its origin and, for a meet, inserts `meets[v]`; its kind is
+    //   set from that key once all nodes are made. An `Occupied` key reuses that node, whose
+    //   origin and `meets` entry both come from the first part with the key.
+    // - `judge` and `Others::new`: `set(Top)` or `set(Bot)` on the leaves only.
+    // `exact_flat_diff_decide` builds a `Bes` of its own, which never reaches a `Why`. So an
+    // `And` node whose origin is a meet always has its entry.
     let nodes = why
         .meets
         .get(&v)
