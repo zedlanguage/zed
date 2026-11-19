@@ -245,10 +245,15 @@ fn res_complement(s: &[(Int, Int)], m: &Int) -> ResidueSet {
     let mut out = Vec::with_capacity(s.len() + 1);
     let mut cur = Int::ZERO;
     for (lo, hi) in s {
+        // The greatest end so far, not this one's (DRY-sorted-structures, D2): an interval
+        // inside an earlier one, as `(2, 3)` after `(0, 5)`, must not bring `cur` back to 4.
+        // Where a gap is written, `hi + 1 > lo > cur`, so the new end is this one's.
         if cur < *lo {
             out.push((cur, lo - &Int::ONE));
+            cur = hi + &Int::ONE;
+        } else {
+            cur = cur.max(hi + &Int::ONE);
         }
-        cur = hi + &Int::ONE;
     }
     if cur <= max_r {
         out.push((cur, max_r));
@@ -955,15 +960,15 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
     let mut top_clauses: Vec<&Formula> = Vec::new();
+    // The formula's one walk of the conjuncts (`Formula::conjunct_list`, dryA5 row 4), of which
+    // this was a copy in the same order, but for one thing kept: a disjunction or negation
+    // shared at two places is kept once, at its first, as this copy kept it, so step 6 folds it
+    // once. Whether a verdict holds with it twice is idempotence of conjunction; which point
+    // is found was not checked, so the list is kept as it was.
     let mut seen_top: HashSet<Id> = HashSet::new();
-    let mut stack = vec![f];
-    while let Some(g) = stack.pop() {
+    for g in f.conjunct_list().iter() {
         match g {
-            Formula::And(gs) => {
-                if seen_top.insert(Id::any(g)) {
-                    stack.extend(gs.iter().rev());
-                }
-            }
+            Formula::And(_) => unreachable!("conjunct_list flattens every conjunction"),
             Formula::Con(c) => top_cons.push(c),
             Formula::Or(ds) if ds.is_empty() => return Some(None),
             Formula::Or(_) | Formula::Not(_) => {
@@ -5904,3 +5909,22 @@ mod r6_tests;
 
 #[cfg(test)]
 mod r7_tests;
+
+#[cfg(test)]
+mod complement_tests {
+    use super::*;
+
+    /// An interval inside an earlier one (DRY-sorted-structures, D2): without the greatest end
+    /// kept, `(2, 3)` brought the next gap's start back to 4 and gave `[(4, 9)]`.
+    #[test]
+    fn the_complement_of_nested_intervals() {
+        let i = |l: i64, h: i64| (Int::from(l), Int::from(h));
+        let s = [i(0, 5), i(2, 3)];
+        assert_eq!(res_complement(&s, &Int::from(10)), [i(6, 9)]);
+        assert_eq!(
+            res_complement(&[i(1, 2), i(4, 4)], &Int::from(6)),
+            [i(0, 0), i(3, 3), i(5, 5)]
+        );
+        assert_eq!(res_complement(&[], &Int::from(3)), [i(0, 2)]);
+    }
+}

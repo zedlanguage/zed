@@ -25164,17 +25164,7 @@ fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
             Some(k) => (None, Some(k.div_floor(&-a))),
         }
     };
-    let meet = |x: &Ends, y: &Ends| -> Ends {
-        let lo = match (&x.0, &y.0) {
-            (Some(a), Some(b)) => Some(a.max(b).clone()),
-            (a, b) => a.clone().or_else(|| b.clone()),
-        };
-        let hi = match (&x.1, &y.1) {
-            (Some(a), Some(b)) => Some(a.min(b).clone()),
-            (a, b) => a.clone().or_else(|| b.clone()),
-        };
-        (lo, hi)
-    };
+    let meet = formula::ends_meet;
     // The constant of inequality `r` plus the greatest values of its terms, each read from
     // `ends(u)`, with the term of each atom left out in turn: for each atom of `r`, that sum
     // without its term, `None` where a term left in has no greatest value.

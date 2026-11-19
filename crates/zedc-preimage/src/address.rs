@@ -114,11 +114,10 @@ impl Digest {
         d
     }
 
+    // The kernel's one step (DRY-sorted-structures, row 2): this was a copy of it, byte for
+    // byte, so every address is the same as before.
     fn word(&mut self, x: u64) {
-        let mut z = (self.0.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        self.0 = z ^ (z >> 31);
+        self.0 = zed_kernel::digest::step(self.0, x);
     }
 
     fn str(&mut self, s: &str) {

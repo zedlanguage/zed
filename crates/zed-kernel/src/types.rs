@@ -5723,11 +5723,23 @@ fn merged(mut keys: Vec<Value>, listed: bool, below: Vec<Filed>) -> Filed {
     let keys = match sets[..] {
         [] if keys.is_empty() => Rc::new(Vec::new()),
         [set] if keys.is_empty() => Rc::clone(set),
-        _ => {
-            keys.extend(sets.iter().flat_map(|s| s.iter().cloned()));
-            keys.sort();
-            keys.dedup();
+        // Complexity tradeoff (DRY-sorted-structures, D1): the own keys sorted, then they and the
+        // `k` sets below, each sorted and distinct ([`Filed::keys`]), merged in pairs as
+        // references, O(m log m + N log k) comparisons for `m` own keys and `N` keys in all, and
+        // each distinct key cloned once. Before, every key was cloned and all `N` sorted together,
+        // O(N log N) unless the stable sort found the sets as runs, which it does only for runs
+        // longer than about √N.
+        [] => {
+            zed_collections::sorted::sort_dedup(&mut keys);
             Rc::new(keys)
+        }
+        _ => {
+            zed_collections::sorted::sort_dedup(&mut keys);
+            let mut lists: Vec<Vec<&Value>> = Vec::with_capacity(sets.len() + 1);
+            lists.push(keys.iter().collect());
+            lists.extend(sets.iter().map(|s| s.iter().collect()));
+            let all = zed_collections::sorted::union_all(lists);
+            Rc::new(all.into_iter().cloned().collect())
         }
     };
     Filed { keys, listed }

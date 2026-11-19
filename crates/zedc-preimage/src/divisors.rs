@@ -75,7 +75,8 @@ impl Sets {
         if let Some(&k) = self.numbers.get(d) {
             return k;
         }
-        let k = self.keys.len() as u32;
+        // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 divisors.
+        let k = u32::try_from(self.keys.len()).expect("fewer than 2^32 divisors");
         // The run's random priority of `d` (`PRIORITIES`): one set has one shape in a run.
         let priority = PRIORITIES.hash(d);
         self.keys.push((d.clone(), priority));

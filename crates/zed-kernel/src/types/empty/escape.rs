@@ -1560,7 +1560,8 @@ fn intern<'a>(items: impl Iterator<Item = &'a Ints>) -> (Vec<u32>, Vec<Ints>) {
         .map(|x| {
             *id.entry(x).or_insert_with(|| {
                 types.push(x.clone());
-                types.len() as u32 - 1
+                // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 sets.
+                u32::try_from(types.len() - 1).expect("fewer than 2^32 distinct sets")
             })
         })
         .collect();

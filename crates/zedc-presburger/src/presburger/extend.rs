@@ -1913,21 +1913,24 @@ fn met_outside(
 /// the others is divisible by the atom's coefficient. Each equality is read once its other
 /// atoms have values, whatever their order in `f`, so the time is that of `f`.
 fn fixed(m: &Point, f: &Formula) -> Model {
+    // The equalities among the conjuncts, each shared conjunction read once: the formula's one
+    // walk (`Formula::conjunct_list`, dryA5 row 4), read backward. This copy walked the
+    // conjunctions from the right, which gives the same list as the walk from the left read
+    // backward, but for a conjunction shared at two places, placed by the walk from the left
+    // at its first place rather than its last. That can change only which of two equalities
+    // that fix one atom to two values is read first (`ready` is a stack). Two such equalities,
+    // both conjoined in `f`, mean `f` has no point with `m`'s values, which [`met`] fixes, so
+    // [`met_outside`] finds no point whichever is read first: by a hole met at the first value,
+    // or by [`met`] of `f` and the holes.
     let mut eqs: Vec<&Con> = Vec::new();
-    // Each shared conjunction read once.
-    let mut seen: HashSet<Id> = HashSet::new();
-    let mut todo = vec![f];
-    while let Some(g) = todo.pop() {
-        match g {
-            Formula::And(gs) => {
-                if seen.insert(Id::any(g)) {
-                    todo.extend(gs.iter());
-                }
-            }
-            Formula::Con(c) if c.rel == Rel::Eq => eqs.push(c),
-            _ => {}
+    for g in f.conjunct_list().iter() {
+        if let Formula::Con(c) = g
+            && c.rel == Rel::Eq
+        {
+            eqs.push(c);
         }
     }
+    eqs.reverse();
     let mut at = Model::new();
     // The equalities that read each atom without a value, and how many such atoms each reads.
     let mut by: HashMap<&Atom, Vec<usize>> = HashMap::new();

@@ -1425,16 +1425,20 @@ impl<'t> Identity<'t> {
         let degree = |e: &[(u32, u64)]| e.iter().map(|(_, x)| u128::from(*x)).sum::<u128>();
         terms.sort_by(|(a, _), (b, _)| {
             degree(b).cmp(&degree(a)).then_with(|| {
-                // Graded lexicographic: the larger exponent of the first name first.
-                let dense = |e: &[(u32, u64)], v: u32| {
-                    e.iter().find(|(w, _)| *w == v).map_or(0, |(_, x)| *x)
-                };
-                let mut names: Vec<u32> = a.iter().chain(b.iter()).map(|(v, _)| *v).collect();
-                names.sort_unstable();
-                names.dedup();
-                names
-                    .iter()
-                    .map(|v| dense(b, *v).cmp(&dense(a, *v)))
+                // Graded lexicographic: the larger exponent of the first name first, a name
+                // missing from one side having exponent 0 there.
+                // Complexity tradeoff (DRY-sorted-structures, D1): one walk of the two lists side
+                // by side, O(|a| + |b|) with no allocation, which needs each list strictly
+                // increasing by name (`Key::exponents`: "the names with nonzero exponents, in the
+                // names' order"); before, the names of both were joined, sorted and deduplicated
+                // and each looked up in both lists, O((|a| + |b|)²) and a vector per comparison.
+                use zed_collections::sorted::{Joined, merge_join};
+                merge_join(a, b, |(v, _), (w, _)| v.cmp(w))
+                    .map(|j| match j {
+                        Joined::Left((_, x)) => 0.cmp(x),
+                        Joined::Right((_, y)) => y.cmp(&0),
+                        Joined::Both((_, x), (_, y)) => y.cmp(x),
+                    })
                     .find(|o| o.is_ne())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })

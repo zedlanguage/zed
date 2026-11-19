@@ -936,15 +936,7 @@ fn u_runs(
                 }
             }
         }
-        runs.sort_unstable();
-        let mut merged: Vec<(i128, i128)> = Vec::with_capacity(runs.len());
-        for (l, h) in runs {
-            match merged.last_mut() {
-                Some((_, e)) if *e >= l - 1 => *e = (*e).max(h),
-                _ => merged.push((l, h)),
-            }
-        }
-        return Ok(Some(finite(merged)));
+        return Ok(Some(finite(merge_runs(runs))));
     }
     // The values of the real shadow outside the dark one, each tried for an integer `w`.
     let mut add = |l: i128, h: i128| match runs.last_mut() {
@@ -1771,15 +1763,7 @@ fn poly_values(
                 }
             }
         }
-        runs.sort_unstable();
-        let mut merged: Vec<(i128, i128)> = Vec::with_capacity(runs.len());
-        for (l, h) in runs {
-            match merged.last_mut() {
-                Some((_, e)) if *e >= l - 1 => *e = (*e).max(h),
-                _ => merged.push((l, h)),
-            }
-        }
-        return Ok(Some(finite(merged)));
+        return Ok(Some(finite(merge_runs(runs))));
     }
     let mut add = |l: i128, h: i128| match runs.last_mut() {
         Some((_, e)) if *e + 1 == l => *e = h,
@@ -2054,6 +2038,49 @@ type Run = (Option<i128>, Option<i128>);
 /// Finite runs as [`Run`]s.
 fn finite(runs: Vec<(i128, i128)>) -> Vec<Run> {
     runs.into_iter().map(|(l, h)| (Some(l), Some(h))).collect()
+}
+
+/// The union of the closed runs `runs`, each `l <= h`, in any order, as sorted disjoint runs
+/// with no two adjacent: sorted, then each run joined to the last kept one where it overlaps or
+/// touches it. O(r log r) for r runs; the sort is needed, as the runs come one per `w` in the
+/// order of `w`, not of `u`. The one copy of the narrower way of [`u_runs`] and of
+/// [`poly_values`] (dryA5 row 22).
+///
+/// The test `l <= e + 1`, with `e + 1` saturated, is exact over all of `i128`: where `e` is
+/// `i128::MAX` every later run, starting at or after the kept run's start, overlaps it. The
+/// copies tested `e >= l - 1`, which overflowed at `l == i128::MIN` (a panic in a debug build).
+fn merge_runs(mut runs: Vec<(i128, i128)>) -> Vec<(i128, i128)> {
+    runs.sort_unstable();
+    let mut merged: Vec<(i128, i128)> = Vec::with_capacity(runs.len());
+    for (l, h) in runs {
+        match merged.last_mut() {
+            Some((_, e)) if l <= e.saturating_add(1) => *e = (*e).max(h),
+            _ => merged.push((l, h)),
+        }
+    }
+    merged
+}
+
+#[cfg(test)]
+mod merge_runs_tests {
+    use super::merge_runs;
+
+    /// Overlapping, nested, touching and apart runs, and the ends of `i128`, where the copies'
+    /// `l - 1` overflowed.
+    #[test]
+    fn runs_are_joined_where_they_overlap_or_touch() {
+        assert_eq!(
+            merge_runs(vec![(7, 9), (0, 5), (2, 3), (6, 6), (11, 12)]),
+            [(0, 9), (11, 12)]
+        );
+        assert_eq!(merge_runs(vec![]), []);
+        let (min, max) = (i128::MIN, i128::MAX);
+        assert_eq!(
+            merge_runs(vec![(min, min), (min, 0), (2, max), (max, max)]),
+            [(min, 0), (2, max)]
+        );
+        assert_eq!(merge_runs(vec![(min + 1, 0), (min, min)]), [(min, 0)]);
+    }
 }
 
 /// A row `x·X + y·Y + c >= 0` over two integer unknowns.

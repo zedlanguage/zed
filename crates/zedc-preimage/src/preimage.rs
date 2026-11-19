@@ -1746,7 +1746,8 @@ impl FormulaNumbers {
                 Formula::And(_) => Shape::And(ns),
                 Formula::Or(_) => Shape::Or(ns),
             };
-            let next = self.by_shape.len() as u32;
+            // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 shapes.
+            let next = u32::try_from(self.by_shape.len()).expect("fewer than 2^32 shapes");
             let n = *self.by_shape.entry(shape).or_insert(next);
             if let Some(id) = id {
                 self.by_id.insert(id, n);
@@ -12202,7 +12203,9 @@ fn ranges_complement(ranges: &[(usize, usize)], n: usize) -> Vec<(usize, usize)>
         if next < i {
             out.push((next, i - 1));
         }
-        next = j + 1;
+        // The greatest end so far, not this one's (DRY-sorted-structures, D2): a range inside
+        // an earlier one, as `2..=3` after `0..=5`, must not bring `next` back to 4.
+        next = next.max(j + 1);
     }
     if next < n {
         out.push((next, n - 1));
@@ -13982,6 +13985,18 @@ mod tests {
     use zedc_presburger::presburger::TWO_AT_A_TIME;
 
     mod bench;
+
+    /// A range inside an earlier one (DRY-sorted-structures, D2): without the greatest end
+    /// kept, `2..=3` brought the next gap's start back to 4 and gave `[(4, 9)]`.
+    #[test]
+    fn the_complement_of_nested_ranges() {
+        assert_eq!(ranges_complement(&[(0, 5), (2, 3)], 10), [(6, 9)]);
+        assert_eq!(
+            ranges_complement(&[(1, 2), (4, 4)], 6),
+            [(0, 0), (3, 3), (5, 5)]
+        );
+        assert_eq!(ranges_complement(&[], 3), [(0, 2)]);
+    }
 
     thread_local! {
         /// Whether [`Walk::cached`] remembers nothing a call stopped below ([`none_held`]).

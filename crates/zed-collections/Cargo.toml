@@ -1,0 +1,17 @@
+[package]
+name = "zed-collections"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Operations on sorted lists and other small data structures every crate shares, zed-kernel
+# included, so it depends on no other crate of the workspace (author P280: "if you need to create
+# another crate so that code can be reused, do it"). Also a dylib, as zed-kernel is: each test
+# binary links one shared copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[lints]
+workspace = true

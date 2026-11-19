@@ -37,7 +37,7 @@ use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::holes::{Holes, hole_of};
-use super::{Atom, Con, Formula, Id, Lin, Rel};
+use super::{Atom, Con, Formula, Lin, Rel};
 use zedc_int::int::Int;
 
 /// What the intervals and residues left say of a formula read with holes.
@@ -375,18 +375,14 @@ pub(super) fn key(f: &Formula, free: &dyn Fn(&Atom) -> bool) -> Option<Key> {
 /// What the intervals and residues left to the atoms of `f` read with `holes` say
 /// ([`Reading`]). Time near linear in `f` and the holes, as the module says.
 pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
-    // The conjuncts, nested conjunctions flattened, each shared one read once.
+    // The conjuncts, nested conjunctions flattened, each shared one read once: the formula's
+    // one walk (`Formula::conjunct_list`, dryA5 row 4), of which this was a copy, in the same
+    // order.
     let mut rows: Vec<&Con> = Vec::new();
     let mut clauses: Vec<&Formula> = Vec::new();
-    let mut seen: HashSet<Id> = HashSet::new();
-    let mut stack = vec![f];
-    while let Some(g) = stack.pop() {
+    for g in f.conjunct_list().iter() {
         match g {
-            Formula::And(gs) => {
-                if seen.insert(Id::any(g)) {
-                    stack.extend(gs.iter().rev());
-                }
-            }
+            Formula::And(_) => unreachable!("conjunct_list flattens every conjunction"),
             Formula::Con(c) => rows.push(c),
             Formula::Or(ds) if ds.is_empty() => return Reading::Empty,
             Formula::Or(_) | Formula::Not(_) => clauses.push(g),

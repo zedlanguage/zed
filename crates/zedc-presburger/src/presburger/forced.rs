@@ -316,7 +316,8 @@ impl<'f> Graph<'f> {
 
     /// The number of the variable `a`.
     fn number(&mut self, a: &'f Atom) -> u32 {
-        let next = self.vars.len() as u32;
+        // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 variables.
+        let next = u32::try_from(self.vars.len()).expect("fewer than 2^32 variables");
         *self.numbers.entry(a).or_insert_with(|| {
             self.vars.push(Var {
                 atom: a,

@@ -1052,6 +1052,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-collections"
+version = "0.0.0"
+
+[[package]]
 name = "zed-corpus-ref"
 version = "0.0.0"
 dependencies = [
@@ -1085,6 +1089,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-meter-settings",
 ]

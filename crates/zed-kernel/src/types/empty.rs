@@ -12815,11 +12815,13 @@ fn apart(x: &[usize], y: &[usize]) -> bool {
 }
 
 /// The union of two sorted lists of components, sorted.
+// Complexity tradeoff (DRY-sorted-structures, D1): one merge of the two strictly increasing
+// lists, O(|x| + |y|); before, the two were joined, sorted unstably and deduplicated,
+// O((|x| + |y|) log), the sort not seeing the two runs. The merge needs both lists strictly
+// increasing, and every `Known::on` is: `list` sorts and deduplicates it, `parity` takes the keys
+// of a `BTreeMap`, and the rest copy one or are made here.
 fn union_on(x: &[usize], y: &[usize]) -> std::rc::Rc<[usize]> {
-    let mut u: Vec<usize> = x.iter().chain(y).copied().collect();
-    u.sort_unstable();
-    u.dedup();
-    u.into()
+    zed_collections::sorted::merge(x, y).into()
 }
 
 /// `x | y` of two values that may be unknown.

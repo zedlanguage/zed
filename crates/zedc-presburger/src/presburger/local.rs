@@ -27,7 +27,7 @@ use std::collections::HashMap;
 
 use zedc_int::int::Int;
 
-use super::formula::{Atom, Con, Ends, Formula, Lin, Model, Rel};
+use super::formula::{Atom, Con, Ends, Formula, Lin, Model, Rel, ends_meet};
 
 /// One cluster of a part ([`super::clusters`]): its general rows and disjunctions with the
 /// difference rows on its atoms alone (`items`), and the bounds of each of its atoms (`ends`).
@@ -203,15 +203,7 @@ pub(super) fn cluster_sides(
             };
             return (sum(&a.0, &b.0), sum(&a.1, &b.1));
         }
-        let lo = match (&a.0, &b.0) {
-            (Some(p), Some(q)) => Some(p.max(q).clone()),
-            (p, q) => p.clone().or_else(|| q.clone()),
-        };
-        let hi = match (&a.1, &b.1) {
-            (Some(p), Some(q)) => Some(p.min(q).clone()),
-            (p, q) => p.clone().or_else(|| q.clone()),
-        };
-        (lo, hi)
+        ends_meet(a, b)
     };
     // The constraints on block `b` that `info`, what the other sides of cut node `x` allow,
     // gives.

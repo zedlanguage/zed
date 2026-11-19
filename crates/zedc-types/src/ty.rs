@@ -1271,8 +1271,9 @@ impl Above {
     }
 }
 
-/// The hasher of [`Same`]'s table of nodes by address: one folded multiply of the address;
-/// of [`Added`]'s names, one per byte.
+/// The hasher of [`Same`]'s table of nodes by address: one folded multiply of the address. Its
+/// keys are addresses the allocator chose, never a program's text, so it needs no seed; text
+/// goes to [`zed_kernel::digest::TextState`].
 #[derive(Default)]
 struct AddressHasher(u64);
 
@@ -3697,10 +3698,9 @@ impl VarFacts {
     // 5n lookups, 92M of the 146M instructions of the facts of 16000 (callgrind), the first
     // fit of a signature paying them. Used: a hash set of the names this walk added, one O(1)
     // hash per occurrence and one ordered lookup per distinct name (115M with SipHash, whose
-    // 43M is the hashing; [`AddressHasher`]'s folded multiply per byte is a few instructions
-    // per byte). Given up: the hash set's memory, one entry per distinct name, for the walk
-    // only, and a hash with a fixed key, which names chosen to collide could slow to a linear
-    // probe per name; the result is the same. A name added by a held function's facts
+    // 43M is the hashing; the seeded [`zed_kernel::digest::TextState`] takes a few instructions
+    // per 8 bytes). Given up: the hash set's memory, one entry per distinct name, for the walk
+    // only; the result is the same. A name added by a held function's facts
     // ([`Self::held`]) is not in `added`, so [`add`] still looks for it.
     fn add_to<'a>(&mut self, class: bool, v: &'a Arc<str>, added: &mut Added<'a>) -> bool {
         if !added.insert((class, &**v)) {
@@ -3715,7 +3715,10 @@ impl VarFacts {
 }
 
 /// The variables a walk of [`VarFacts`] has added, each with whether it went to the classes.
-type Added<'a> = HashSet<(bool, &'a str), std::hash::BuildHasherDefault<AddressHasher>>;
+// Hashed by the seeded text hasher (DRY-sorted-structures, D5): the names are the program's
+// text, which the unseeded `AddressHasher` let a program choose to collide. Only looked up, so
+// the seed's change of order from run to run reaches no result.
+type Added<'a> = zed_kernel::digest::TextSet<(bool, &'a str)>;
 
 /// What a row or payload shape keeps of the variables it holds at any depth, inside functions
 /// and payloads too, in place of their set (CK-data-memo, question A8): the smallest and the

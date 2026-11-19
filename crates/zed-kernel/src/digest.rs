@@ -65,18 +65,43 @@ impl Hasher for Digest {
 
 /// A map hashed by [`Digest`]. Its keys must be ids, numbers or digests the compiler drew, never
 /// a program's text: with no seed, a program could choose keys that collide and make each lookup
-/// read the whole table (hash flooding), so a map keyed by names keeps the standard map's seeded
-/// hasher. Making one costs nothing; the standard map reads a thread-local seed and SipHash-1-3
+/// read the whole table (hash flooding), so a map keyed by names takes the seeded [`TextState`].
+/// Making one costs nothing; the standard map reads a thread-local seed and SipHash-1-3
 /// hashes each key (KERNEL-randomstate-cost).
 pub type DigestMap<K, V> = HashMap<K, V, BuildHasherDefault<Digest>>;
 
 /// A set hashed by [`Digest`], with the keys of a [`DigestMap`].
 pub type DigestSet<K> = HashSet<K, BuildHasherDefault<Digest>>;
 
+/// The hasher of a map or set keyed by a program's text, such as names (DRY-sorted-structures,
+/// row 3): foldhash's fast hasher (O. Peters, foldhash 0.2, the default of hashbrown), seeded at
+/// random (a seed per map beside one global seed drawn at random once per process), so a program
+/// cannot choose names that collide (hash flooding needs the seed, which a written program does
+/// not see), and a few instructions per 8 bytes of text, where
+/// SipHash-1-3 took 43M of the 115M instructions of FAIL-ratio-payload-renamed's facts of 16000.
+/// It is not as strong as SipHash against an attacker who watches timings, which a compiler run on
+/// a written program does not face. Iteration order changes from run to run, so a map of this
+/// hasher must never be iterated where the order reaches a result: look keys up only.
+pub type TextState = hashbrown::DefaultHashBuilder;
+
+/// A map keyed by a program's text, hashed by [`TextState`].
+pub type TextMap<K, V> = HashMap<K, V, TextState>;
+
+/// A set of keys made of a program's text, hashed by [`TextState`].
+pub type TextSet<K> = HashSet<K, TextState>;
+
 /// The digest `h` with the word `x` added: splitmix64's finalizer of the two, the step of
-/// [`Digest`], and the combination of two digests that `value` and `types` build theirs with.
+/// [`Digest`], and the combination of two digests that `value` and `types` build theirs with;
+/// also the step of `zedc_preimage::address`'s digest of terms (DRY-sorted-structures, row 2).
+///
+/// The constants are splitmix64's (S. Vigna, after Steele, Lea and Flood 2014): the golden-ratio
+/// increment `0x9e37_79b9_7f4a_7c15` and the multipliers and shifts 30, 27, 31 of its
+/// finalizer, a bijection of `u64` that mixes every input bit into every output bit. The
+/// rotation by 29 of `h` before the xor makes the step depend on the order of the words, so
+/// `step(step(0, a), b)` and `step(step(0, b), a)` differ; `bdd::set::tests` inverts the step
+/// in each argument and relies on these exact constants.
 #[inline]
-pub(crate) fn step(h: u64, x: u64) -> u64 {
+pub fn step(h: u64, x: u64) -> u64 {
     let mut z = (h.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);

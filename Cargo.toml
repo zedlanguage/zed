@@ -15,6 +15,7 @@ members = [
     "crates/zedc-check",
     "crates/zedc-zir",
     "crates/zedc-elab",
+    "crates/zed-collections",
     "crates/zed-graph",
     "crates/zed-kernel",
     "crates/zed-rt",
@@ -40,6 +41,7 @@ repository = "https://github.com/zedlanguage/zed"
 publish = false
 
 [workspace.dependencies]
+zed-collections = { path = "crates/zed-collections" }
 zed-graph = { path = "crates/zed-graph" }
 zed-kernel = { path = "crates/zed-kernel" }
 zed-rt = { path = "crates/zed-rt" }

@@ -63,7 +63,7 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
 
 use super::absorbing;
-use super::formula::{Ends, Id};
+use super::formula::{Ends, Id, ends_meet};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
     GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
@@ -2835,20 +2835,6 @@ fn nothing(rows: &[Con]) -> HashMap<Atom, IntervalSet> {
         .flat_map(|c| c.lin.terms.keys())
         .map(|a| (a.clone(), IntervalSet::empty()))
         .collect()
-}
-
-/// The intersection of two intervals, each end `None` where it is unbounded; empty where the
-/// least is above the greatest.
-fn ends_meet(a: &Ends, b: &Ends) -> Ends {
-    let lo = match (&a.0, &b.0) {
-        (Some(x), Some(y)) => Some(x.max(y).clone()),
-        (x, y) => x.clone().or_else(|| y.clone()),
-    };
-    let hi = match (&a.1, &b.1) {
-        (Some(x), Some(y)) => Some(x.min(y).clone()),
-        (x, y) => x.clone().or_else(|| y.clone()),
-    };
-    (lo, hi)
 }
 
 fn ends_empty(a: &Ends) -> bool {

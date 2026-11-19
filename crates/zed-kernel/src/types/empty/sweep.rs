@@ -466,7 +466,16 @@ impl Sweep {
                 l.tail == y && l.sides == NONE
             };
             rs.sort_by_key(|&(h, y)| (!loops(y), h, lab(&self.links[y])));
-            rs.dedup();
+            // Each row once, at its first place (DRY-sorted-structures, D6). The sort is by a key
+            // that two rows `(h, y)`, `(h, y')` with `y != y'` can share, so `dedup` alone, which
+            // drops only equal neighbors, left a row twice where another of its key came between
+            // the two copies. That changed no answer (two rows of one key outside the loops are
+            // two `others`, refused either way, and a side row met twice is only tried twice by
+            // the existence test that reads `side_rows`), but it stored and tried rows again.
+            // The first copy's place is kept, so the order among rows of one key stays the
+            // order they were met in, which picks `main` and each side row's tail as before.
+            let mut met = crate::digest::DigestSet::default();
+            rs.retain(|r| met.insert(*r));
             let others: Vec<(usize, usize)> = rs.iter().filter(|r| !loops(r.1)).copied().collect();
             let main = match others[..] {
                 [] => rs[0],
