@@ -38,4 +38,13 @@ License 2.0 (LICENCE.md); each changed file keeps its license notice and says wh
 - `src/ord/set.rs`: `GenericOrdSet::union` now delegates to
   `GenericOrdMap::union`.
 
+2026-11-19, plan row BENCH-imbl-union-callers:
+
+- `src/nodes/btree.rs`: in `Node::union_with_key`, two leaves are united by inserting
+  the shorter leaf's keys into the longer one in place (the arm that already inserted a
+  leaf into a branch), not by merging both into a new `Vec` and new leaves. A uniquely
+  owned leaf is no longer copied; results are the same (the left value first in `f`, and
+  kept by `union`). The reason and the measurements are in the comment at that arm.
+- `src/ord/map.rs`: test `union_of_uniquely_owned_leaves_keeps_the_left_value`.
+
 Nothing here has been sent upstream.

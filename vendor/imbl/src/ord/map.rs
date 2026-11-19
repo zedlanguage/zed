@@ -3187,6 +3187,37 @@ mod test {
         }
     }
 
+    /// Two leaves, each uniquely owned, so that the shorter one's keys are inserted into the
+    /// longer one in place (`Node::union_with_key`): either side the shorter, with keys in
+    /// both, the left value still first in `f` and kept by `union`.
+    #[test]
+    fn union_of_uniquely_owned_leaves_keeps_the_left_value() {
+        for (na, nb) in [(1usize, 4usize), (4, 1), (3, 3), (2, 5), (5, 2), (6, 6)] {
+            let va: Vec<(usize, usize)> = (0..na).map(|i| (i * 2, 100 + i)).collect();
+            let vb: Vec<(usize, usize)> = (0..nb).map(|i| (i * 3, 200 + i)).collect();
+            let mut expected: collections::BTreeMap<usize, usize> = va.iter().copied().collect();
+            let mut plain = expected.clone();
+            for &(k, v) in &vb {
+                expected
+                    .entry(k)
+                    .and_modify(|l| *l = *l * 1000 + v)
+                    .or_insert(v);
+                plain.entry(k).or_insert(v);
+            }
+            let make =
+                |v: &[(usize, usize)]| -> OrdMap<usize, usize> { v.iter().copied().collect() };
+            let merged = make(&va).union_with_key(make(&vb), |_, l, r| l * 1000 + r);
+            merged.check_sane();
+            assert!(merged
+                .iter()
+                .map(|(&k, &v)| (k, v))
+                .eq(expected.into_iter()));
+            let kept = make(&va).union(make(&vb));
+            kept.check_sane();
+            assert!(kept.iter().map(|(&k, &v)| (k, v)).eq(plain.into_iter()));
+        }
+    }
+
     #[derive(Clone, Debug)]
     struct CountedKey(usize);
 

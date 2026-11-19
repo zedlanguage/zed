@@ -8,7 +8,10 @@
 // `PUSHES` and `Node::addresses`.
 // Modified for zed on 2026-11-19 (PERF-satellite-random-under9-redesign):
 // join-based O(m log(n/m + 1)) union (`Node::union_with_key`, `split_lt`,
-// `join_with_sep`). See CHANGES-zed.md at the crate root.
+// `join_with_sep`).
+// Modified for zed on 2026-11-19 (BENCH-imbl-union-callers): two leaves are
+// united by inserting the shorter into the longer in place, not by a merge into
+// new leaves. See CHANGES-zed.md at the crate root.
 
 use std::collections::VecDeque;
 use std::iter::FromIterator;
@@ -1034,63 +1037,33 @@ impl<K: Ord + Clone, V: Clone, P: SharedPointerKind> Node<K, V, P> {
     where
         F: FnMut(&K, V, V) -> V,
     {
-        if a.level() > b.level() {
+        // Of two leaves, the shorter is `a`, inserted into `b` below.
+        let shorter_leaf_last = match (&a, &b) {
+            (Node::Leaf(la), Node::Leaf(lb)) => la.keys.len() > lb.keys.len(),
+            _ => false,
+        };
+        if a.level() > b.level() || shorter_leaf_last {
             mem::swap(&mut a, &mut b);
             swapped = !swapped;
         }
         match (a, b) {
-            (Node::Leaf(la), Node::Leaf(lb)) => {
-                // Two-way merge of two sorted leaves (each <= NODE_SIZE).
-                let mut merged: Vec<(K, V)> = Vec::with_capacity(la.keys.len() + lb.keys.len());
-                let (mut ia, mut ib) = (0, 0);
-                while ia < la.keys.len() && ib < lb.keys.len() {
-                    match la.keys[ia].0.cmp(&lb.keys[ib].0) {
-                        std::cmp::Ordering::Less => {
-                            merged.push(la.keys[ia].clone());
-                            ia += 1;
-                        }
-                        std::cmp::Ordering::Greater => {
-                            merged.push(lb.keys[ib].clone());
-                            ib += 1;
-                        }
-                        std::cmp::Ordering::Equal => {
-                            *dupes += 1;
-                            let (k, va) = la.keys[ia].clone();
-                            let vb = lb.keys[ib].1.clone();
-                            let v = if !swapped {
-                                f(&k, va, vb)
-                            } else {
-                                f(&k, vb, va)
-                            };
-                            merged.push((k, v));
-                            ia += 1;
-                            ib += 1;
-                        }
-                    }
-                }
-                merged.extend(la.keys[ia..].iter().cloned());
-                merged.extend(lb.keys[ib..].iter().cloned());
-                if merged.len() <= NODE_SIZE {
-                    Node::Leaf(SharedPointer::new(Leaf {
-                        keys: Chunk::from_iter(merged),
-                    }))
-                } else {
-                    let mid = merged.len() / 2;
-                    let right_vec = merged.split_off(mid);
-                    let sep = right_vec[0].0.clone();
-                    Node::new_from_split(
-                        Node::Leaf(SharedPointer::new(Leaf {
-                            keys: Chunk::from_iter(merged),
-                        })),
-                        sep,
-                        Node::Leaf(SharedPointer::new(Leaf {
-                            keys: Chunk::from_iter(right_vec),
-                        })),
-                    )
-                }
-            }
+            // Complexity tradeoff: naive version (stage 2 of PERF-satellite-random-under9-
+            // redesign), two leaves merged into a new `Vec` and one or two new leaves, O(B)
+            // comparisons for B = NODE_SIZE keys and an allocation even when `b` is uniquely
+            // owned: 13.8% more bytes than imbl's one-by-one insert on the bench
+            // stars_formed_in_the_block_of_a_satellite at 4096. Used: the shorter leaf's keys
+            // inserted into the longer leaf in place, the arm below, as for a leaf into a
+            // branch: O(m log B) comparisons and at most m B key moves for the m <= B keys
+            // inserted, both bounded by a constant, so the O(m log(n/m + 1)) bound above
+            // holds; no allocation when `b` is uniquely owned, and `make_mut` copies `b` when
+            // it is shared, so the inputs' other owners keep their keys. Measured on that
+            // bench at 4096: 4,526.7M -> 4,461.6M instructions and 395.6M -> 365.7M bytes.
+            // A switch to the one-by-one insert below a size of the smaller side was measured
+            // and not used: at cutoffs 1, 4, 16, 64 and every size it lowered the bytes but
+            // raised the instructions (4,565M to 5,023M). COMPLEXITY.md row
+            // BENCH-imbl-union-callers.
             (Node::Leaf(la), mut b_node) => {
-                // Insert <= NODE_SIZE sorted keys from leaf `la` into branch `b_node`.
+                // Insert <= NODE_SIZE sorted keys from leaf `la` into `b_node`.
                 for (k, v) in la.keys.iter() {
                     if let InsertAction::Split(sep, right) =
                         b_node.insert_with_key(k.clone(), v.clone(), swapped, dupes, f)
