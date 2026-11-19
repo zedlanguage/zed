@@ -739,3 +739,80 @@ fn bounded_box_face_certificate_matches_from_scratch() {
     steps_hc.push(or(le(lin(&[(1, "x"), (3, "y")]), 30), ge(var("x"), 8)));
     check_steps(&axyz, &steps_hc);
 }
+||||||| parent of ac9b59e7c (case_wake: a test of later tests after a join of cases that recorded one part differently)
+
+/// The history of `a_test_joined_from_cases_projects_the_whole_block`, whose test splits into
+/// the cases `a == -2` and `y == 1`. Inside a case, `Scope::record` keeps the outer `projected`
+/// entry of a part it certified idle (the star `a <= x + y` in one case) while the other case
+/// records its own snapshot of that part, so `Scope::join_settled` meets two entries of one part
+/// with the same equalities and different snapshots. Each later test, asked of the joined scope,
+/// must give the projection from scratch: an entry the join kept wrongly would skip a
+/// projection those tests need.
+#[test]
+fn tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch()
+{
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let history = [
+        ge(var("x"), -1),
+        prim(Prim::Le, var("y"), int(1)),
+        prim(Prim::Le, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(2, "x"), (3, "y")]), 6),
+            ge(lin(&[(-1, "x"), (-2, "y")]), -1),
+        ),
+        or(
+            ge(lin(&[(1, "x"), (3, "y")]), 1),
+            ge(lin(&[(3, "x"), (-1, "y")]), 5),
+        ),
+        or(
+            ge(lin(&[(-3, "a")]), -1),
+            ge(lin(&[(-1, "y"), (1, "a")]), 1),
+        ),
+    ];
+    let ns: Vec<Arc<str>> = ["a", "x", "y"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in &history {
+        s = s.assume(t, true, &p);
+    }
+    let split = prim(
+        Prim::And,
+        prim(Prim::Ne, var("a"), int(-2)),
+        prim(Prim::Ne, var("y"), int(1)),
+    );
+    let later = [
+        (split, false),
+        (prim(Prim::Le, var("x"), int(4)), true),
+        (ge(var("a"), -3), true),
+        (prim(Prim::Ne, var("y"), int(0)), true),
+        (prim(Prim::Le, var("a"), int(2)), true),
+        (
+            or(
+                prim(Prim::Eq, var("y"), int(1)),
+                ge(lin(&[(1, "x"), (-1, "a")]), 3),
+            ),
+            true,
+        ),
+    ];
+    let mut kept = 0;
+    for (i, (t, holds)) in later.iter().enumerate() {
+        let got = s.assume(t, *holds, &p);
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = fresh.assume(t, *holds, &p);
+        want.forget_projections();
+        want.reduce();
+        assert_eq!(
+            intervals(&got, &ns),
+            intervals(&want, &ns),
+            "test {i}: {t:?} {holds}"
+        );
+        if got.bottom {
+            break;
+        }
+        kept += 1;
+        s = got;
+    }
+    assert!(kept >= 2, "only {kept} tests kept a point");
+}
