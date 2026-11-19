@@ -3862,6 +3862,59 @@ impl std::hash::Hash for HeightNode {
     }
 }
 
+/// The walk of [`Heights::height_bounds`] over the nodes not yet bounded, as
+/// [`zed_graph::Search`] reads it: each node is numbered when first met, in the order met.
+struct HeightWalk<'h> {
+    heights: &'h mut Heights,
+    /// The number of each node met.
+    number: HashMap<HeightNode, usize, Digests>,
+    /// Each node by its number.
+    nodes: Vec<HeightNode>,
+    /// The children of each node not bounded when it was met
+    /// ([`Heights::height_children`]).
+    children: Vec<Vec<HeightNode>>,
+    /// Whether each node is its own child.
+    looped: Vec<bool>,
+}
+
+impl HeightWalk<'_> {
+    /// Numbers `node`, met for the first time.
+    fn visit(&mut self, node: HeightNode) -> usize {
+        let n = self.nodes.len();
+        let cs: Vec<HeightNode> = (Heights::height_children(&node).into_iter())
+            .filter(|c| !self.heights.has_bounds(c))
+            .collect();
+        self.looped.push(cs.contains(&node));
+        self.number.insert(node.clone(), n);
+        self.nodes.push(node);
+        self.children.push(cs);
+        n
+    }
+}
+
+impl zed_graph::Walk for HeightWalk<'_> {
+    /// The place of the next child to read.
+    type At = usize;
+
+    fn next(&mut self, v: usize, k: &mut usize) -> Option<usize> {
+        let c = self.children[v].get(*k)?.clone();
+        *k += 1;
+        Some(match self.number.get(&c) {
+            Some(&m) => m,
+            None => self.visit(c),
+        })
+    }
+
+    /// Bounds the nodes of a cycle, the member last reached first, the order the walk written
+    /// here before (a pop of Tarjan's stack) bounded them in.
+    fn found(&mut self, members: &mut [usize], _from: Option<usize>) {
+        let cyclic = members.len() > 1 || self.looped[members[0]];
+        let nodes = &self.nodes;
+        self.heights
+            .bound_component(members.iter().rev().map(|&m| nodes[m].clone()), cyclic);
+    }
+}
+
 /// The bounds on the heights of types' values ([`height_bounds`]), kept in `HEIGHTS`.
 #[derive(Default)]
 struct Heights {
@@ -4235,89 +4288,48 @@ impl Heights {
         if let Some(pr) = t.p().atoms.payload_dag() {
             self.bound_payload_tree_fast(pr);
         }
-        // Tarjan's algorithm, on a list rather than the thread's stack. Each node reached and
-        // not bounded is numbered in the order it is reached; `children[n]` are its children not
-        // bounded, `low[n]` the least number reached from it on the stack, and a frame is a node
-        // with the next of its children to visit.
-        let mut index: HashMap<HeightNode, usize, Digests> = HashMap::default();
-        let mut nodes: Vec<HeightNode> = Vec::new();
-        let mut children: Vec<Vec<HeightNode>> = Vec::new();
-        let mut low: Vec<usize> = Vec::new();
-        let mut on_stack: Vec<bool> = Vec::new();
-        let mut looped: Vec<bool> = Vec::new();
-        let mut stack: Vec<usize> = Vec::new();
-        let mut frames: Vec<(usize, usize)> = Vec::new();
-        let mut reach = Some(HeightNode::Type(t.clone()));
-        loop {
-            if let Some(node) = reach.take() {
-                let n = nodes.len();
-                let cs: Vec<HeightNode> = (Self::height_children(&node).into_iter())
-                    .filter(|c| !self.has_bounds(c))
-                    .collect();
-                looped.push(cs.contains(&node));
-                index.insert(node.clone(), n);
-                nodes.push(node);
-                children.push(cs);
-                low.push(n);
-                on_stack.push(true);
-                stack.push(n);
-                frames.push((n, 0));
+        // Tarjan's search for the cycles is the workspace's one copy ([`zed_graph::Search`]),
+        // which takes nodes numbered as met, as the nodes here have no numbers of their own
+        // (DRY-graph-shared; the copy written out here before it cost the same, O(V + E)).
+        let mut walk = HeightWalk {
+            heights: self,
+            number: HashMap::default(),
+            nodes: Vec::new(),
+            children: Vec::new(),
+            looped: Vec::new(),
+        };
+        let root = walk.visit(HeightNode::Type(t.clone()));
+        zed_graph::Search::new().run(&mut walk, [root]);
+        self.bounds[t]
+    }
+
+    /// Bounds the nodes of one cycle of [`Heights::height_bounds`]'s walk (or one node on
+    /// none), every node they reach outside it bounded already.
+    fn bound_component(&mut self, nodes: impl Iterator<Item = HeightNode>, cyclic: bool) {
+        for node in nodes {
+            if !cyclic && let HeightNode::Payloads(ref u) = node {
+                self.bound_acyclic_payload_node(u);
+                continue;
             }
-            let Some(&mut (n, ref mut next)) = frames.last_mut() else {
-                break;
+            let lo = self.least_height_node(&node);
+            let b = if lo == u64::MAX {
+                None
+            } else if cyclic {
+                Some((lo, u64::MAX))
+            } else {
+                self.most_height(&node)
+                    .filter(|&hi| lo <= hi)
+                    .map(|hi| (lo, hi))
             };
-            if let Some(c) = children[n].get(*next) {
-                *next += 1;
-                match index.get(c) {
-                    Some(&m) if on_stack[m] => low[n] = low[n].min(m),
-                    Some(_) => {}
-                    None => reach = Some(c.clone()),
+            match node {
+                HeightNode::Type(ty) => {
+                    self.bounds.insert(ty, b);
                 }
-                continue;
-            }
-            frames.pop();
-            if let Some(&(parent, _)) = frames.last() {
-                low[parent] = low[parent].min(low[n]);
-            }
-            if low[n] != n {
-                continue;
-            }
-            let mut scc = Vec::new();
-            while let Some(m) = stack.pop() {
-                on_stack[m] = false;
-                scc.push(m);
-                if m == n {
-                    break;
-                }
-            }
-            let cyclic = scc.len() > 1 || looped[n];
-            for m in scc {
-                let node = nodes[m].clone();
-                if !cyclic && let HeightNode::Payloads(ref u) = node {
-                    self.bound_acyclic_payload_node(u);
-                    continue;
-                }
-                let lo = self.least_height_node(&node);
-                let b = if lo == u64::MAX {
-                    None
-                } else if cyclic {
-                    Some((lo, u64::MAX))
-                } else {
-                    self.most_height(&node)
-                        .filter(|&hi| lo <= hi)
-                        .map(|hi| (lo, hi))
-                };
-                match node {
-                    HeightNode::Type(ty) => {
-                        self.bounds.insert(ty, b);
-                    }
-                    HeightNode::Payloads(u) => {
-                        self.payload_bounds.insert(u.id(), b);
-                    }
+                HeightNode::Payloads(u) => {
+                    self.payload_bounds.insert(u.id(), b);
                 }
             }
         }
-        self.bounds[t]
     }
 
     /// The greatest height over the parts of `node` ([`Heights::height_bounds`]), every node
