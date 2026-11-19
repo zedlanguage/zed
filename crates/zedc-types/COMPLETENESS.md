@@ -175,3 +175,52 @@ settled: 9079 and 10105 (an empty list of shapes of an atom; `payloads` does not
 17354, 17359, 17497, 17750, 18201, 18301, 18575, 18580, 18945, 18946, 19746, 19747, 19922, 20021,
 20022, 20064, 20065, 20078, 20079, 20139, 20265, 20287, 20347. Lines 16344-17107 were changed on
 main by 97b5d1690 after 373e5d22a, so those in that range must be found again by their text.
+
+## Row TEST-types-unreached-paths-5
+
+Line numbers are those of `ty.rs` at zed-impl e94e784c1, where the 79 lines left by row
+TEST-types-unreached-paths-4 (unreached in its coverage run of the full local suite) were
+found again by their text. A line counted as reached by a test below was seen reached in a
+coverage run of that test. The proofs this row adds as comments move the
+later lines down. The tests named are in `src/ty/tests/unreached5.rs`; each was checked red
+before green by breaking the line on purpose and reverting it. 39 lines are settled below:
+31 by tests, 8 by proofs at the site. No wrong answer was found. The other 40 are row
+TEST-types-unreached-paths-6 (see the end of this section).
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| `near_form` against a tuple that holds the unknown (9237) | `a_tuple_less_the_unknown_is_empty` | |
+| `payloads_by_rest` and a payload check on an atom whose payload lists no shape (9100, 10126) | `atoms_with_a_payload_of_no_shape_are_within_any_payload` | |
+| A payload check where a shape of one item finds no group of its size (10138) | `a_payload_of_one_item_is_in_no_payload_of_two` | |
+| `diff` of a tuple and a kind-wide part, the rest kept outside the kernel type (10645) | `a_tuple_less_a_kind_wide_part_keeps_the_rest_outside_the_kernel_type` | |
+| `Addressed for Shape` (10817-10819) | `a_payload_shape_at_two_depths_is_read_once` | |
+| `tie` against a variable or the unknown (11598) | `a_check_against_a_variable_or_the_unknown_is_not_tied` | |
+| `refused_in_group` with no exact kernel type (12564) | `a_refused_check_beside_a_variable_names_its_recursive_type` | |
+| The meet of payloads where one side's payload is not known (12666, 12667) | `the_meet_with_a_payload_not_known_takes_the_listed_payloads` | |
+| `walk_held`: a row, shape or family met twice (12917, 12922, 12935) | `a_node_met_twice_in_the_walk_of_held_functions_is_entered_once` | |
+| `Ty::contains` of a family value (13027) | `a_family_value_is_in_a_type_with_a_family` | |
+| `Pairs::tried` filing the holders of a tuple read for many values (13548-13551) | `a_tuple_read_for_many_values_is_filed` | |
+| `Domains::no_fn_type` and the walk after it: a row or shape met twice (16734, 16739, 16839, 16844) | `a_node_met_twice_in_the_domain_of_a_meet_is_read_once` (a break makes it exponential; it then passes the 60 s limit) | |
+| The names digest of a payload not known (19029, 19030) | `the_names_digest_tells_a_payload_not_known_from_no_payload` | |
+| `Shared::of`: a row or function placed by an earlier print of the message (20148, 20149, 20162, 20163); `walk_parts` writing a hoisting function by its reference (20349) | `a_part_placed_by_an_earlier_print_of_a_message_is_written_by_its_reference` | |
+| `diff`: payloads listed for an atom outside the type's own set (10674) | | Guard, proof at the site: `prune_payloads` removes such payloads, and skipping them is right in any case |
+| `Forms::cut` of a form with no marks numbered (11749) | | Guard, proof at the site: forms are made only in `form_verdict` and `tie`, and both number the marks first |
+| `fns_met` on a type with no functions (13323) | | Guard, proof at the site: its one caller is guarded by `both_fns` |
+| `Sig::digest` hashing a signature with no digest (18385) | | Guard, proof at the site: `Members::push` computes every digest, and only `unwrap_to_change` drops one, on an owned signature |
+| `write_parts` started on neither a type nor a signature (20006) | | Guard, proof at the site: `Ty::write`, `Ty::text_spelled` and `Sig::write` pass only those |
+| `Shared::of` started on a row or another print (20105, 20106) | | Guard, proof at the site: its one caller is `write_parts` |
+| `Shared::of` settling a part that is neither a row nor a held function (20223) | | Guard, proof at the site: only rows and functions are placed, and the start signature is never below a part |
+
+Left for row TEST-types-unreached-paths-6, each read in this row but not yet settled (line
+numbers at e94e784c1, with the function each is in): 11642 (`Forms::form`, a morphism in a
+set; probably a guard, not proved), 14050 (`Cx::open`, mask 0), 14170 (`bound_in_fns`),
+14229, 14241 (`held_bounded`), 15195, 15215 (`repeated`), 15451, 15454 (`cover`, an equal
+arrow), 15494 (`equal_fits`; a test built from equal arrows did not reach it, since `Cx::open`
+renames the arrows' variables), 15593, 15594 (`refused_cover`, a variable no argument gives
+values of), 15938 (`met`), 16105, 16163 (`Narrowing::meet_within`), 16425 (`Approx::made`),
+16768 (`Domains::kernel_of`), 17126, 17129, 17148, 17168 (`Domains::fns_apart`), 17277
+(`keys_apart`), 17407, 17425, 17428-17432, 17438, 17443 (`Domains::inhabited_fn`), 17581
+(`Domains::meet`), 17834 (`ArrowIndex::keep_missing`), 18285 (`Places::walk`), 18659, 18664
+(`Sig::first_seen`, a node met twice), 19830, 19831 (`Walk::plan`, a union already taken
+out), 20371 (`walk_parts`, `Print::Found` not entered), 20431 (`walk_parts`, the swap of
+union names, which needs nested hoisting unions with bounded variables).

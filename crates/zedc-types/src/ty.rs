@@ -10856,6 +10856,13 @@ impl<'m, 's> Comparing<'m, 's> {
             let Some(Some(ts)) = t.payloads.get(*n) else {
                 continue;
             };
+            // A guard (row TEST-types-unreached-paths-5): `paid` holds every atom `n` that `u`
+            // lists, so neither `tk` nor `&u.set - &paid` holds one, and `out.set` holds the
+            // same atoms `n` as `t.set`. So this is reached only by a `t` that lists payloads for
+            // an atom its own set lacks, which `prune_payloads` removes and the operations on
+            // payload shapes do not make (the set holds each listed atom, above). If it is
+            // reached, skipping is right: such an atom has no value in `t`, so there is nothing
+            // to take away.
             if !holds_payload(&out.set, n) {
                 continue;
             }
@@ -11931,6 +11938,11 @@ impl Forms {
     /// Naive version, which is the one used: each set cut by each mark by name, O(k·m); with a
     /// kernel part for marks, each set would be cut once, O(k) (inferred).
     fn cut(&self, set: &KType) -> KType {
+        // A guard no input reaches (row TEST-types-unreached-paths-5): `cut` is called only
+        // by `level`, `level` only by `deep`, and `deep` only by `data`, which `form` and
+        // `comp` (called by `form` only) call. A `Forms` is made only in `form_verdict` and
+        // `tie`, and each calls `number_marks`, which sets `marks`, before its first `form`;
+        // nothing sets `marks` back to `None`.
         let Some(marks) = &self.marks else {
             return set.clone();
         };
@@ -13505,6 +13517,9 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
     // O(n·m). What each function's arrows say of its domain ([`Domains`]) is worked out once
     // for each function, not once for each pair.
     async fn fns_met(&'m self, a: &Ty, t: &Ty) -> Vec<Arc<Sig>> {
+        // A guard no input reaches (row TEST-types-unreached-paths-5): the one caller,
+        // `Pairs::meet`, calls this only where `a.both_fns(t)`, so `t.fns` is not empty, and
+        // `Members::node` is `None` only where `Members::is_empty` holds (both read `self.0`).
         let Some(node) = t.fns.node() else {
             return Vec::new();
         };
@@ -18567,6 +18582,15 @@ impl Sig {
         }
         // The hashes of the functions it holds that lack one are made first, deepest first, as
         // for its facts ([`Sig::facts`]).
+        //
+        // No input reaches the body of this loop (row TEST-types-unreached-paths-5); it is
+        // kept as a guard. Proof: `held_without` gives only signatures in the `fns` of a type
+        // of an arrow or a need of `self`. A signature gets into a `Members` only by
+        // `Members::push` (`extend`, `FromIterator`, `From<Vec>` and `retain` push too), which
+        // takes `member_digest`, and `Hash for Sig` hashes `digest()`, which sets `facts.2`.
+        // That signature is behind an `Arc` the type holds, so it is not changed after; only
+        // `Sig::unwrap_to_change` drops the facts, and of a signature it gives out, not one
+        // held. So every signature the walk could give has its hash already.
         for s in self.held_without(true, |s| s.facts.2.get().is_none()) {
             hash(s);
         }
@@ -20189,6 +20213,9 @@ fn write_parts<'a>(
     let (ty, sig) = match &start {
         Print::Ty(t, _) => (Absorb::ty(t), None),
         Print::Sig(s, _) => (None, Absorb::sig(s)),
+        // A guard no input reaches (row TEST-types-unreached-paths-5): the callers of
+        // `write_parts`, `Ty::write`, `Ty::text_spelled` and `Sig::write`, start at a
+        // `Print::Ty` or a `Print::Sig`.
         _ => (None, None),
     };
     let start = match (start, &ty, &sig) {
@@ -20288,6 +20315,8 @@ impl Shared {
         let first = match *start {
             Print::Ty(t, _) | Print::Found(t) => Node::Ty(t),
             Print::Sig(s, _) | Print::Family(s) => Node::Sig(s, None),
+            // Guards no input reaches (row TEST-types-unreached-paths-5): the one caller,
+            // `write_parts`, passes a `Print::Ty` or a `Print::Sig`, as there.
             Print::Row(r, _) => Node::Row(r),
             _ => return shared,
         };
@@ -20406,6 +20435,11 @@ impl Shared {
                         let key = (s as *const Sig, spelled);
                         settled.sigs.insert(key, (Arc::clone(arc), name));
                     }
+                    // A guard no input reaches (row TEST-types-unreached-paths-5): only rows and
+                    // functions are placed, and a function held by no `Arc` is the start, which
+                    // is counted once and not below a part: it is met again only through a node
+                    // it holds, and a node holds only nodes made before it (the proof at
+                    // [`NameDigests::enter`]), so it is never placed.
                     _ => {}
                 }
             }
@@ -21047,6 +21081,7 @@ mod tests {
 
     mod bench;
     mod unreached4;
+    mod unreached5;
 
     /// The parameter `x` of type `t`, for the signatures of the tests below.
     fn one_of(t: Ty, result: Ty) -> Sig {
