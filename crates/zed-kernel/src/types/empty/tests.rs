@@ -2388,3 +2388,30 @@ fn fork_read_by_another_group_is_blamed_on_its_reader() {
         assert_eq!(e, Verdict::Refused(Refusal::Fork), "F first: {f_first}");
     }
 }
+
+/// Item TEST-kernel-unreached-paths-6: the fixed priority by which a search picks the refusal
+/// it reports (`Search::refusal_rank`) puts the kinds in one strict order: a fork first, then a
+/// group, residues, shared cells by component, a tuple split, a morphism split, and no witness
+/// last, so the refusal kept does not depend on the order the give-ups are met in. No test meets a search that gives up on residues or on no witness
+/// beside another refusal, so the ranks of those two were not read.
+#[test]
+fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
+    let order = [
+        Refusal::Fork,
+        Refusal::Group,
+        Refusal::Residues,
+        Refusal::SharedCells(0),
+        Refusal::SharedCells(1),
+        Refusal::TupleSplit,
+        Refusal::MorphismSplit,
+        Refusal::NoWitness,
+    ];
+    for w in order.windows(2) {
+        assert!(
+            Search::refusal_rank(w[0]) < Search::refusal_rank(w[1]),
+            "{:?} before {:?}",
+            w[0],
+            w[1]
+        );
+    }
+}

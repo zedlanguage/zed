@@ -2992,6 +2992,9 @@ impl Search {
             return;
         }
         let ep = self.epoch;
+        // A search with `blame` and open forks returned above, so no arm here meets one (an arm
+        // `(Some(_), _) if self.open_forks && self.is_group => {}`, written before that return,
+        // was dead and is gone; item TEST-kernel-unreached-paths-6).
         match (&mut self.blame, self.current) {
             (Some(blame), Some(c)) if !self.open_forks => {
                 blame.push((c, r, ep));
@@ -2999,7 +3002,6 @@ impl Search {
                     self.blamed_node[c] = true;
                 }
             }
-            (Some(_), _) if self.open_forks && self.is_group => {}
             _ if self.strict
                 && self
                     .gave_up
