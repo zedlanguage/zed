@@ -957,11 +957,13 @@ expression: "tokens_by_key(&fences::design())"
  39 | @export ( str["c"] )
  40 | lookup ( m : Utf8String ->? bool , w : Utf8String ) -> bool | #notFound { m [ w ] }
  43 | @export ( str["c"] )
- 44 | percent ( n : u8 ) -> int [ 0₍10₎ ..< 100₍10₎ ] | #over { «if» n < 100₍10₎ { n } «else» { #over } }
+ 44 | known ( words : Set ( Utf8String ) , w : Utf8String ) -> bool { w . lower «in» words }
  47 | @export ( str["c"] )
- 48 | spellings ( text : Utf8String ) -> ( Utf8String , Utf8String ) ->? i64 {
- 49 | text . split ( str[" "] ) . group ( w -> ( w . lower , w ) ) . map ( ws -> ws . count )
- 50 | }
+ 48 | percent ( n : u8 ) -> int [ 0₍10₎ ..< 100₍10₎ ] | #over { «if» n < 100₍10₎ { n } «else» { #over } }
+ 51 | @export ( str["c"] )
+ 52 | spellings ( text : Utf8String ) -> ( Utf8String , Utf8String ) ->? i64 {
+ 53 | text . split ( str[" "] ) . group ( w -> ( w . lower , w ) ) . map ( ws -> ws . count )
+ 54 | }
 == DESIGN.md [sec:tour_basics] 1 L2
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;

@@ -271,6 +271,11 @@ Type ::: (A, B,) -> C ::: ((( A , B , )) -> C)
 Type ::: #fail(pos: int,) ::: (#fail ( (pos : int) , ))
 Type ::: Map(A, B,) ::: (Map ( A , B , ))
 Type ::: {1, 2,} ::: ({ 1 , 2 , })
+Type ::: Set(Utf8String) ::: (Set ( Utf8String ))
+Type ::: Set("a" | "b") & (("a" | "b") -> "a" | "b") ::: ((Set ( ("a" | "b") )) & (( ((( ("a" | "b") )) -> ("a" | "b")) )))
+Type ::: Set(U) & (L .. U -> U) ::: ((Set ( U )) & (( (L .. U -> U) )))
+Type ::: {Utf8String} ::: ERROR
+Type ::: {..Utf8String} ::: ERROR
 Item ::: type Pair(A, B,) = (A, B); ::: (type Pair (( A , B , )) = (( A , B )) ;)
 Item ::: f((a, b,)) = a; ::: (f ( (( a , b , )) ) (= a ;))
 Item ::: import a @hash("h",); ::: (import a @hash ( "h" , ) ;)
