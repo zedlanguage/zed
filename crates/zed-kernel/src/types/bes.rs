@@ -990,6 +990,48 @@ fn simplify(g: &Bes, in_sub: &mut [bool]) -> Bes {
 }
 
 /// Every node's answer, in time linear in nodes and edges (module docs). `g` must be sealed.
+///
+/// Every node answered [`Answer::Refused`] reaches a node of some refusal's `component` along
+/// edges of `raw` whose ends are all answered `Refused` (PROOF-refused-469-undecided-child; read
+/// by `empty::refused::refused_site`; checked on the random systems of the tests by
+/// `refused_nodes_reach_a_refusal`). Proof, by induction over the order in which
+/// the loop below fixes a node's answer. The answer is `Refused` when `refused[v]` or
+/// `lo[v] != hi[v]`. `refused` is only ever set, and `lo` and `hi` of a node are written only
+/// while its own component, or a part of it, is processed (`settle`, `bounds` and the passes
+/// write them for their `sub` alone), so an answer fixed is final. The components come
+/// children first, and so do the parts (`r_scc`) of one component, so every child of a node
+/// lies in its part or in a part or component already done. The cases that make a node
+/// `Refused`:
+/// 1. `settle` of a whole component leaves `lo[v] != hi[v]`. Both of its passes end at a
+///    fixed point of the same equations (an `Or` node holds when a child does, an `And` or
+///    `Mor` node when all do, a `Mor` node whose child is in the component never under
+///    `MorRead::False`, a constant always or never); they differ only in reading `lo` or `hi`
+///    outside the component. Take `lfp` and the pass `R` in which `v` holds: `v` was set when
+///    the last of the children that made it hold was set before it in `R` (an `Or` node by one
+///    child, an `And` or `Mor` node by all), or at the start by a child outside. In the other
+///    pass `v` fails, so one of those children `w` fails there too: an `Or` node fails only
+///    with every child failing, an `And` node only with some child failing. So `w` differs
+///    between the passes and holds in `R`, and if it is inside, it was set earlier in `R`.
+///    Repeating, the set order of `R` falls at each step, so the chain ends at a child outside
+///    the component with `lo != hi`, in a component done before. For `gfp` the same holds with
+///    the order in which nodes die in the pass where `v` fails (an `Or` node dies when its last
+///    child has died, an `And` or `Mor` node when one has). Every node on the chain is
+///    `Refused`.
+/// 2. `reaches_refused`: every node of `r_scc` is refused. `r_scc` is strongly connected, and
+///    one of its nodes has a child outside it that is refused or has `lo != hi`, in a part or
+///    component done before, so `Refused` for good.
+/// 3. `refusal` returns `Some`: every node of `r_scc` is refused, and `r_scc` is strongly
+///    connected, so each reaches a node of `u_set`, which is the refusal's `component`. This is
+///    the base case.
+/// 4. `refuse_upward` refuses `p`, a parent of a node refused before it.
+///
+/// No other step leaves `lo != hi`. A part not refused for `reaches_refused` has no child
+/// outside it with `lo != hi`, and within it the nodes outside `u_set` have `lo == hi` by
+/// `u_set`'s definition, so `settle` of `u_set` reads the same values outside `u_set` in its
+/// two passes and gives the same answer twice; the pass for one morphism and the deletion
+/// cascade set `lo` and `hi` alike. So every case but the third gives a `Refused` child, or a
+/// path within a strongly connected set to one, whose answer was fixed earlier. The paths
+/// follow edges of `simplify`'s copy, which keeps a subset of the edges of `raw`.
 pub fn decide(raw: &Bes) -> Decision {
     let n = raw.len();
     let mut sc = Scratch::new(n);
@@ -1389,6 +1431,40 @@ mod tests {
         draws_agree_with_the_game(SECOND_HALF..u64::MAX);
     }
 
+    /// Item PROOF-refused-469-undecided-child: every node `decide` refuses reaches a node of a
+    /// refusal's `component` along edges of `g` between refused nodes (the claim proved at
+    /// `decide`). Walks back from the components along parents, through refused nodes only,
+    /// in time linear in the nodes and edges.
+    fn refused_nodes_reach_a_refusal(g: &Bes, got: &super::Decision) {
+        let refused = |v: u32| got.answers[v as usize] == Answer::Refused;
+        let mut reaches = vec![false; g.len()];
+        let mut stack: Vec<u32> = Vec::new();
+        for r in &got.refusals {
+            assert!(!r.tuples.is_empty(), "a refusal lists a tuple: {r:?}");
+            for &v in &r.component {
+                assert!(refused(v), "node {v} of a refusal's component is refused");
+                if !reaches[v as usize] {
+                    reaches[v as usize] = true;
+                    stack.push(v);
+                }
+            }
+        }
+        while let Some(w) = stack.pop() {
+            for &p in g.parents(w) {
+                if refused(p) && !reaches[p as usize] {
+                    reaches[p as usize] = true;
+                    stack.push(p);
+                }
+            }
+        }
+        for v in 0..g.len() as u32 {
+            assert!(
+                !refused(v) || reaches[v as usize],
+                "refused node {v} reaches no refusal along refused nodes in {g:?}"
+            );
+        }
+    }
+
     /// Draws every system in turn, so the seed reaches each draw the same way, and checks
     /// `decide` against the game on the draws numbered in `checked`; asserts that those
     /// draws take the second least fixed point of the one-`Mor` step at least once.
@@ -1439,6 +1515,7 @@ mod tests {
                 g.seal();
                 let want = by_the_game(&g);
                 let got = decide(&g);
+                refused_nodes_reach_a_refusal(&g, &got);
                 for v in 0..n as usize {
                     match got.answers[v] {
                         Answer::Refused => refused += 1,
