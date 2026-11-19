@@ -3356,7 +3356,7 @@ fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_a
 
 /// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`]
 /// refused while `direct` does not list the values of a stride: modulus, seed, shape, k.
-const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 26] = [
+const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 25] = [
     (5, 1, "two moduli of one input", 5),
     (5, 1, "two moduli of one input", 13),
     (5, 2, "remainders of two inputs", 13),
@@ -3374,7 +3374,6 @@ const REFUSED_AT_A_STRIDE: [(i64, u64, &str, usize); 26] = [
     (7, 1, "two moduli of one input", 13),
     (7, 2, "remainders of two inputs", 5),
     (7, 2, "remainders of two inputs", 13),
-    (7, 2, "two moduli of one input", 1),
     (7, 2, "two moduli of one input", 2),
     (7, 2, "two moduli of one input", 5),
     (7, 2, "two moduli of one input", 13),
