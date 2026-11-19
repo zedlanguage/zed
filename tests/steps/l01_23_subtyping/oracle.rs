@@ -823,8 +823,8 @@ fn the_systems_reaching_rare_branches_agree_with_the_oracle() {
 /// emptiness search that no test of the local suite reached (llvm-cov over the whole suite,
 /// TEST-types-unreached-paths-2). Each was the first system of seeds 1 to 40 to reach its
 /// branch, found with a counter at each unreached line; the one-way pairs of the systems above
-/// reach none of them. With each, the refusals both routes give on it, out of two, and its meet's
-/// verdict.
+/// reach none of them. With each, the refusals both routes give on it in the full build, out of
+/// two (a record only: the test does not assert it, see below), and its meet's verdict.
 const SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS: [((u64, usize), usize, Verdict); 11] = [
     // `nested_pieces`: `laminar_pieces` leaves a test undecided, so the pieces are cut one by
     // one, and a later cell is read against the pieces before it.
@@ -854,18 +854,16 @@ const SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS: [((u64, usize), usize, Verdict);
 
 #[test]
 fn the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle() {
-    for ((seed, idx), refusals, meet) in SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS {
+    for ((seed, idx), _, meet) in SYSTEMS_REACHING_RARE_BRANCHES_BOTH_WAYS {
         let (a, b, classes) = recursive_classes(seed, idx).expect("the group is accepted");
         let none = |p: &dyn Fn(bool, bool) -> bool| !classes.iter().any(|(x, y, _)| p(*x, *y));
         let mut routes = Routes::default();
-        // `record` checks each verdict against the closure oracle.
+        // `record` checks each verdict against the closure oracle, and that the two routes
+        // agree. Only the verdicts are asserted: how many of the two pairs are refused depends
+        // on the digests, which differ between the full build and the short-addresses build
+        // (system (4, 3114) is decided both ways under short addresses).
         routes.record(&a, &b, none(&|x, y| x && !y));
         routes.record(&b, &a, none(&|x, y| y && !x));
-        assert_eq!(
-            (routes.same, routes.decided_over_refusal, routes.refused),
-            (2 - refusals, 0, refusals),
-            "system {seed}, {idx}: {routes:?}"
-        );
         Type::forget_emptiness();
         let v = (&a & &b).verdict();
         let disjoint = none(&|x, y| x && y);

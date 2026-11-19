@@ -1028,6 +1028,37 @@ impl Type {
         }
     }
 
+    /// A value of `self` built by the two searches of `verdict_alone`, the first that builds one,
+    /// as a plain value; `None` when neither builds one, or when the one built holds a value
+    /// with no plain form (a closure). Nothing is kept: each call searches again. For tests, so
+    /// an `Inhabited` verdict can be checked with [`Type::contains`] on the value it rests on.
+    // Complexity tradeoff: the cost of `verdict_alone`'s searches, with no front sweep (it gives
+    // a verdict, never a value) and no cache, against keeping the value of every verdict for a
+    // query only tests make.
+    pub fn witness(&self) -> Option<Value> {
+        let mut s = Search {
+            strict: true,
+            refuse_forks: true,
+            trials: Some(0),
+            ..Search::default()
+        };
+        s.swept.insert(self.clone(), None);
+        s.solve(self);
+        if s.refused.is_none()
+            && let Some(r) = s.rep(self)
+            && let Some(v) = s.plain(r)
+        {
+            return Some(v);
+        }
+        let mut s = Search {
+            strict: true,
+            open_forks: true,
+            ..Search::default()
+        };
+        let r = s.rep(self)?;
+        s.plain(r)
+    }
+
     /// Whether a search that does not end at a fork proves `self` empty with no fork under it:
     /// the search of [`group_verdicts`] with `self` its one root. Each fork is noted against
     /// the type being decided, and a part proved empty by one component is not charged with a

@@ -340,16 +340,24 @@ fn tuples_are_checked_against_the_tuple_types_that_may_hold_them() {
     let squares =
         Type::union_all((0..4).map(|i| Type::tuple(vec![span(i, i + 2), span(i, i + 2)])));
     assert_eq!(exact(&squares).len(), 13);
-    // The order: each box in turn, the last component fastest, a tuple an earlier box gave
-    // left out.
-    let pairs_of = |ps: &[(i64, i64)]| -> Vec<Value> {
+    // The tuples listed, compared as sets: the lengths above show each is listed once. The
+    // boxes are listed in the order of their digests, which differs between the full build and
+    // the short-addresses build, so the order is not part of the result.
+    let pairs_of = |ps: &[(i64, i64)]| -> BTreeSet<Value> {
         ps.iter().map(|&(a, b)| pair(int(a), int(b))).collect()
     };
     let first = [(1, 1), (1, 2), (2, 1), (2, 2), (0, 0), (0, 1), (1, 0)];
-    assert_eq!(exact(&boxes), pairs_of(&first));
+    assert_eq!(BTreeSet::from_iter(exact(&boxes)), pairs_of(&first));
     let rest = [(2, 3), (3, 2), (3, 3), (3, 4), (4, 3), (4, 4)];
-    assert_eq!(exact(&squares), pairs_of(&[&first[..], &rest[..]].concat()));
-    assert_eq!(exact(&crossed), pairs_of(&[(0, 1), (1, 0)]));
+    assert_eq!(
+        BTreeSet::from_iter(exact(&squares)),
+        pairs_of(&[&first[..], &rest[..]].concat())
+    );
+    assert_eq!(exact(&crossed).len(), 2);
+    assert_eq!(
+        BTreeSet::from_iter(exact(&crossed)),
+        pairs_of(&[(0, 1), (1, 0)])
+    );
 }
 
 #[test]
