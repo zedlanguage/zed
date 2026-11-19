@@ -5487,22 +5487,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         t.renamed(&self.names(t.var_facts().classes))
     }
 
-    /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it, and
-    /// each type variable it then prints given a name of its own: two that stand for different
-    /// variables never print as one. Each keeps its name where no variable before it took that
-    /// name; the others take the next names nothing in `s` uses. The variables are taken in
-    /// order: those `s` holds itself, in order of first appearance, its own and the classes of
-    /// functions that ended ([`Self::generalize`]) alike, and then those of the types its
-    /// classes were solved to, so `s`'s own keep their names before a variable of the
-    /// function around does. So a call `h(1)` of `h = (y) -> (y, x)` inside `p(x)` is
-    /// `T -> (T, U)` inside, though `h`'s variable and `p`'s are both named `T`, and prints
-    /// as `T -> (T, _)`, since `U` is not a variable of the signature's own
-    /// (FAIL-check-finished-names-clash; before, `p`'s class was given its name as `h`'s
-    /// was, and the line read `T -> (T, T)`).
-    ///
-    /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
-    /// types bound, with a hash set and map, so linear in their size, as the renaming that
-    /// follows is.
     /// Decodes `NeedKind::Fwd` in `s` (and recursively in nested functions `s` holds) ONLY when
     /// `s` holds an outer variable (`!s.holds_only_own_variables()`) alongside `NeedKind::Fwd`.
     /// Never decodes on top-level chain functions `h_i` (`O(1)` per link).
@@ -5540,7 +5524,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         let new_needs: Vec<Need> = s
             .needs
             .iter()
-            .map(|n| n.map_tys(|t| map_ty(t, &mut child_changed)))
+            .map(|n| {
+                n.with_held_fns(|f| {
+                    let nf = Self::r10_promote_open_fwds(f);
+                    if !Arc::ptr_eq(&nf, f) {
+                        child_changed = true;
+                    }
+                    nf
+                })
+            })
             .collect();
         let mut cur = if child_changed {
             let mut copy = (**s).clone();
@@ -5695,6 +5687,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it, and
+    /// each type variable it then prints given a name of its own: two that stand for different
+    /// variables never print as one. Each keeps its name where no variable before it took that
+    /// name; the others take the next names nothing in `s` uses. The variables are taken in
+    /// order: those `s` holds itself, in order of first appearance, its own and the classes of
+    /// functions that ended ([`Self::generalize`]) alike, and then those of the types its
+    /// classes were solved to, so `s`'s own keep their names before a variable of the
+    /// function around does. So a call `h(1)` of `h = (y) -> (y, x)` inside `p(x)` is
+    /// `T -> (T, U)` inside, though `h`'s variable and `p`'s are both named `T`, and prints
+    /// as `T -> (T, _)`, since `U` is not a variable of the signature's own
+    /// (FAIL-check-finished-names-clash; before, `p`'s class was given its name as `h`'s
+    /// was, and the line read `T -> (T, T)`).
+    ///
+    /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
+    /// types bound, with a hash set and map, so linear in their size, as the renaming that
+    /// follows is.
     fn finished_with(
         &self,
         s: &Arc<Sig>,

@@ -2533,9 +2533,9 @@ enum VarWalk<'a> {
 /// variables in that order, so each run's names rise in it. A step names a variable only while
 /// that variable still stands, as a variable, for a parameter (`sigma`) or an exit (`exits`):
 /// a replacement that puts another type in its place decodes the forward first, and
-/// [`Need::map_tys`] refuses one that does not (landing round 6), so no step adds a variable
+/// `Need::map_tys_in` refuses one that does not (landing round 6), so no step adds a variable
 /// the need does not hold. A replacement that renames one variable to another renames the step
-/// as well ([`Need::map_tys`]).
+/// as well (`Need::map_tys_in`).
 fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
     let from = stack.len();
     for a in &s.arrows {
@@ -2707,7 +2707,7 @@ fn sig_parts(
         .collect();
     // A compact forward's steps follow its arguments and exits as they are mapped
     // ([`Need::map_tys`]).
-    let needs = (s.needs.iter()).map(|n| n.map_tys(|_| next())).collect();
+    let needs = (s.needs.iter()).map(|n| n.map_tys_in(|_| next())).collect();
     (arrows, needs)
 }
 
@@ -2844,7 +2844,7 @@ impl<'b> Replacer<'b> {
     /// Whether the walk must replace in `s` with its compact forwards decoded into the needs
     /// they stand for, as the flat signature holds them (landing round 4, Codex L4.Codex-order
     /// and L4.Codex-hidden). A forward's steps follow an argument or exit renamed to another
-    /// variable ([`Need::map_tys`]), but not one replaced by another type, whose variables the
+    /// variable (`Need::map_tys_in`), but not one replaced by another type, whose variables the
     /// flat needs first show where the leaf needs use it, not after the forward's runs; and a
     /// binding of one of the forward's internal results, which no type of the signature shows,
     /// would leave it in the compact signature and replace it in the flat one. `nested`: `s` is
@@ -5176,8 +5176,9 @@ pub struct FwdNeed {
     /// substitution that binds a sigma or exit variable to a non-variable can close a held
     /// function over this one's variables, so such a substitution decodes the block first
     /// (`Replacer::must_decode`, `Settle::must_decode`, [`Sig::flat_for`]) and never reads a
-    /// stale bit (landing round 4, Gemini F-R4-3); [`Need::replace`] and [`Need::map_tys`],
-    /// which meet the block alone, panic on such a substitution (landing round 6).
+    /// stale bit (landing round 4, Gemini F-R4-3); [`Need::replace`], which meets the block
+    /// alone, panics on such a substitution, and [`Need::map_tys`] on any compact forward
+    /// (landing round 6).
     pub held_foreign_fn: bool,
     /// Cached outer class variables if `#4` is dropped in a negative-control test.
     pub held_classes: BTreeSet<Arc<str>>,
@@ -5811,25 +5812,55 @@ impl Need {
         }
         let tys = rebuild_tys(&mut w, self.tys());
         let mut tys = tys.into_iter();
-        self.map_tys(|_| {
+        self.map_tys_in(|_| {
             tys.next()
                 .expect("a walk makes one type of each type of a need")
         })
     }
 
     /// It with `f` applied to each of the types [`Need::tys`] gives, in that order.
-    /// Maps `f` over every type held in this need.
     ///
-    /// On a compact forward `f` may only rename its arguments and exits to variables that are
-    /// not its internal results, and change what the functions in its other types hold; any
-    /// other mapping panics, as one need cannot stand for the flat needs it would give. Decode
-    /// first with [`Sig::flat_for`] or [`Sig::decoded_needs_cow`] (landing round 6). `f` is
-    /// not applied to the functions the callee holds, so it must leave the variables they read
-    /// from around (`held_outer`) as they are. Nor is it shown the internal results, which no
-    /// type holds, so a mapping of one of those names is not seen and not checked here; it
-    /// changes the flat needs and not the compact one (landing round 6, Claude Q2.2,
-    /// `W -> int`). [`Need::replace`], whose bindings are known, refuses it.
-    pub fn map_tys(&self, mut f: impl FnMut(&Ty) -> Ty) -> Need {
+    /// A compact forward panics: decode it first with [`Sig::flat_for`] or
+    /// [`Sig::decoded_needs_cow`], map its held functions with [`Need::with_held_fns`], or
+    /// replace in it with [`Need::replace`]. `f` is never shown the forward's internal
+    /// results, which no type holds, nor the variables of the other needs of the signature,
+    /// so a mapping of an internal result (`W -> int`) or of another variable onto one
+    /// (`V -> W`) changes the flat needs and could not change the compact one, and no test of
+    /// `f`'s results finds it; one call of `f` on each internal result would cost
+    /// O(#needs the forward stands for) and break the linear chain (landing round 6, Claude
+    /// Q2.2).
+    pub fn map_tys(&self, f: impl FnMut(&Ty) -> Ty) -> Need {
+        assert!(
+            !matches!(self.kind, NeedKind::Fwd(_)),
+            "`Need::map_tys` does not take a compact forward, whose internal results it cannot \
+             see; decode it first with `Sig::flat_for`"
+        );
+        self.map_tys_in(f)
+    }
+
+    /// It with `each` applied to every function its types hold, as [`Ty::with_held_fns`] does;
+    /// no variable of the need itself changes, so a compact forward stays compact with the
+    /// same steps. O(size of the types) beside the calls of `each`.
+    pub fn with_held_fns(&self, mut each: impl FnMut(&Arc<Sig>) -> Arc<Sig>) -> Need {
+        self.map_tys_in(|t| {
+            if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+                return t.clone();
+            }
+            t.with_held_fns(&mut each)
+        })
+    }
+
+    /// [`Need::map_tys`] on any need. On a compact forward `f` may only rename its arguments
+    /// and exits to variables that are not its internal results, and change what the
+    /// functions in its other types hold; any other mapping of an argument or exit panics, as
+    /// one need cannot stand for the flat needs it would give. The callers show the bindings
+    /// it cannot see: [`Need::replace`] tests them with `Replacer::must_decode` first, and
+    /// [`Need::with_held_fns`] changes no variable. `sig_parts`, which remakes a whole
+    /// signature after a walk, is the remaining caller; a replacement reaches it only after
+    /// `Replacer::must_decode` has tested the signature. `f` is not applied to the functions the
+    /// callee holds, so it must leave the variables they read from around (`held_outer`) as
+    /// they are.
+    fn map_tys_in(&self, mut f: impl FnMut(&Ty) -> Ty) -> Need {
         Need {
             on: f(&self.on),
             kind: match &self.kind {
@@ -20671,8 +20702,11 @@ impl Sig {
     /// It as [`Sig::replace`] by `binds` walks it: with its compact forwards decoded into the
     /// flat needs where that replacement must decode them, else itself. For a caller that
     /// replaces its needs one by one ([`Need::replace`]), which sees no signature to decode
-    /// (landing round 5, Codex L5.Codex-direct-need). O(1) where nothing is decoded beyond the
-    /// test, else O(need_count) per forward, as [`Sig::replace`] costs.
+    /// (landing round 5, Codex L5.Codex-direct-need). Where nothing is decoded it costs the
+    /// `Replacer::must_decode` test, whose comment gives the cost per forward (O(#sigma +
+    /// #exits), plus the smaller side for internal results and held outer variables), plus one
+    /// listing of the bound types' variables; else O(need_count) per forward, as
+    /// [`Sig::replace`] costs (landing round 6, Claude Q5.2).
     pub fn flat_for(&self, binds: &Binds) -> Cow<'_, Sig> {
         let mut w = Replacer::new(binds, Mode::Replace);
         match w.must_decode(self, false) {

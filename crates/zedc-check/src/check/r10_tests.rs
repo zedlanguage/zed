@@ -2508,6 +2508,13 @@ fn order_with_marks(s: &Sig) -> Vec<std::sync::Arc<str>> {
 /// signature that keeps a forward through the needs one by one. Replacing the parameter a held
 /// lambda reads by `int` closes the lambda, which the forward's kept bit does not follow, so the
 /// replacement must decode the forward as [`Sig::replace`] does.
+///
+/// This calls `Sig::flat_for` itself; it does not go through `instantiated`, which met no
+/// forward in the 48 programs of `landing6_instantiated_written` and
+/// `landing6_instantiated_forward` (Claude L6 Q1.1). Were `instantiated` to meet one without
+/// its `flat_for`, `Need::replace` now panics on a replacement that must decode
+/// (`landing6_need_replace_refuses_bindings_of_internal_results`), so the gap cannot pass
+/// silently.
 #[test]
 fn landing5_need_replace_bypasses_signature_guard() {
     use zedc_types::ty::{Binds, Carrier, Ty};
@@ -2552,7 +2559,9 @@ fn landing5_need_replace_bypasses_signature_guard() {
 
 /// Landing round 5, Codex L5.Codex-direct-map-order: a need's types mapped one by one rename
 /// a forward's caller variable; its steps must follow, as a replacement of the signature makes
-/// them follow, or the variables come in another order than the flat needs give.
+/// them follow, or the variables come in another order than the flat needs give. Since landing
+/// round 6 `Need::map_tys` refuses a compact forward, so the need is renamed by
+/// `Need::replace`, which maps its types the same way.
 #[test]
 fn landing5_need_map_tys_leaves_step_order_stale() {
     use zedc_types::ty::{Binds, Ty};
@@ -2585,9 +2594,7 @@ fn landing5_need_map_tys_leaves_step_order_stale() {
         "signature replacement control"
     );
     let mut mapped = compact.clone();
-    mapped.needs = (compact.needs.iter())
-        .map(|n| n.map_tys(|t| t.replace(&bind)))
-        .collect();
+    mapped.needs = (compact.needs.iter()).map(|n| n.replace(&bind)).collect();
     mapped.facts = Default::default();
     assert_eq!(order_with_marks(&mapped), order_with_marks(&flat));
 }
@@ -3119,6 +3126,8 @@ fn landing6_need_map_tys_refuses_a_compound_replacement() {
 
 /// Landing round 6, Claude Q2.2: a renaming of a visible variable onto an internal result
 /// (`T -> W`) through `Need::map_tys` merged two variables in E and none in D; it panics.
+/// `Need::map_tys` now refuses every compact forward, so the renaming goes through
+/// `Need::replace`, which panics on it too.
 #[test]
 #[should_panic(expected = "decode it first")]
 fn landing6_need_map_tys_refuses_a_rename_onto_an_internal_result() {
@@ -3129,13 +3138,94 @@ fn landing6_need_map_tys_refuses_a_rename_onto_an_internal_result() {
     let visible = flat.needs[0].on.as_var().unwrap().clone();
     let bind: Binds = [(visible, Ty::var(hidden))].into_iter().collect();
     for n in &sig.needs {
-        n.map_tys(|t| t.replace(&bind));
+        n.replace(&bind);
     }
+}
+
+/// Landing round 6, Claude Q2.2 (battery): `Need::map_tys` is never shown a forward's
+/// internal results nor the other needs' variables, so a mapping of an internal result
+/// (`W -> int`), or of a variable no argument or exit holds onto one (`V -> W`), changed the
+/// flat needs and not the compact one, with no panic. It now refuses every compact forward,
+/// even with a mapping that changes nothing.
+#[test]
+#[should_panic(expected = "does not take a compact forward")]
+fn landing6_need_map_tys_refuses_a_compact_forward() {
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, sig, _) = sig_with_hidden(&d);
+    for n in &sig.needs {
+        n.map_tys(|t| t.clone());
+    }
+}
+
+/// Landing round 6, Claude Q2.2 (battery): the same bindings through `Need::replace`, which
+/// sees them: an internal result bound to a variable or to `int`, and a variable that is no
+/// argument or exit of the forward renamed onto one, each panic; a binding of an absent name
+/// is the control and keeps the need as it was.
+#[test]
+fn landing6_need_replace_refuses_bindings_of_internal_results() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, sig, hidden) = sig_with_hidden(&d);
+    let fwd = (sig.needs.iter())
+        .find_map(|n| match &n.kind {
+            NeedKind::Fwd(f) => f.holds_internal(&hidden).then(|| n.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let NeedKind::Fwd(f) = &fwd.kind else {
+        unreachable!()
+    };
+    let held: Vec<Arc<str>> = (f.sigma.iter().map(|(_, t)| t))
+        .chain(f.exits.iter().map(|(_, t)| t))
+        .filter_map(Ty::as_var)
+        .cloned()
+        .collect();
+    let flat = flat_of(&sig);
+    let outside = (flat.vars_order().iter())
+        .find(|v| !held.contains(v) && !f.holds_internal(v))
+        .expect("a variable of the signature that the forward's arguments and exits do not hold")
+        .clone();
+    let panics = |b: &Binds| catch_unwind(AssertUnwindSafe(|| fwd.replace(b))).is_err();
+    let one = |k: &Arc<str>, t: Ty| -> Binds { [(k.clone(), t)].into_iter().collect() };
+    assert!(panics(&one(&hidden, Ty::var("Fresh".into()))), "W -> Fresh");
+    assert!(panics(&one(&hidden, Ty::carrier(Carrier::Int))), "W -> int");
+    assert!(panics(&one(&outside, Ty::var(hidden.clone()))), "V -> W");
+    let absent = one(&Arc::from("AbsentAuditName"), Ty::carrier(Carrier::Int));
+    assert!(!panics(&absent));
+    assert_eq!(fwd.replace(&absent), fwd);
+}
+
+/// Landing round 6: `Need::with_held_fns`, which the checker uses on a compact forward in
+/// place of `Need::map_tys`, keeps it compact and equal to itself when each held function is
+/// kept, and the signature with it agrees with E.
+#[test]
+fn landing6_need_with_held_fns_keeps_a_compact_forward() {
+    let (d, _) = run_with_cfg(&chain_src(3, "lambda", false), R10Config::default());
+    let (_, sig, _) = sig_with_hidden(&d);
+    let mut calls = 0;
+    let mut kept = Sig::clone(&sig);
+    kept.needs = (sig.needs.iter())
+        .map(|n| {
+            n.with_held_fns(|f| {
+                calls += 1;
+                f.clone()
+            })
+        })
+        .collect();
+    assert!(calls > 0, "the lambda chain's forward holds a function");
+    assert_eq!(kept.needs, sig.needs);
+    assert!(kept.has_fwd_needs());
+    kept.facts = Default::default();
+    assert_eq!(kept, flat_of(&sig));
+    assert_eq!(kept.digest(), flat_of(&sig).digest());
 }
 
 /// Landing round 6, Codex and Gemini controls for the two panics above: swapping two
 /// arguments and renaming one onto another keep the forward compact and agree with E on
-/// order, `==` and digest.
+/// order, `==` and digest. The needs are renamed by `Need::replace`, as `Need::map_tys`
+/// refuses a compact forward.
 #[test]
 fn landing6_need_map_tys_renamings_agree_with_e() {
     use zedc_types::ty::{Binds, Ty};
@@ -3155,11 +3245,7 @@ fn landing6_need_map_tys_renamings_agree_with_e() {
     let v1 = fwd.sigma[1].1.as_var().unwrap().clone();
     let map = |s: &Sig, binds: &Binds| {
         let mut s = s.clone();
-        s.needs = s
-            .needs
-            .iter()
-            .map(|n| n.map_tys(|t| t.replace(binds)))
-            .collect();
+        s.needs = s.needs.iter().map(|n| n.replace(binds)).collect();
         s.facts = Default::default();
         s
     };
@@ -3426,3 +3512,37 @@ fn landing6_internal_results_count_as_variables_in_rows_and_shapes() {
     assert_eq!(t2c.renamed(&names), t2f.renamed(&names));
     assert_eq!(shc.renamed(&names), shf.renamed(&names));
 }
+
+/// Landing round 6, Claude Q1.2: a chain function passed where a function type takes its
+/// parameters in the other order is checked as `permuted_sig` makes it, whose needs are
+/// decoded and which therefore owns its forwards' internal results, as the flat signature
+/// (E's) does. Before this test, taking the compact `own` there failed nothing, as no `Info`
+/// the probe programs give reads it.
+#[test]
+fn landing6_permuted_sig_owns_the_internal_results() {
+    let src = chain_src(4, "f", false);
+    let (d, _) = run_with_cfg(&src, R10Config::default());
+    let (e, _) = run_with_cfg(&src, R10Config::eager());
+    // `grew`: the signatures whose compact own set lacks internal results the flat one has,
+    // where taking the compact set would fail the first assertion.
+    let mut grew = 0;
+    for (k, s) in &d.sigs {
+        if !s.needs.iter().any(|n| matches!(n.kind, NeedKind::Fwd(_))) {
+            continue;
+        }
+        let flat = &e.sigs[k];
+        grew += usize::from(s.own != flat.own);
+        let mut slot = Sig::clone(s);
+        slot.params.reverse();
+        let (kept, p) = crate::check::walk::permuted_sig(s, &slot, &[1, 0]);
+        assert_eq!(p.own, flat.own, "sig {k}: own");
+        assert_eq!(kept.len(), flat.needs.len(), "sig {k}: decoded needs");
+        assert_eq!(p.params, slot.params, "sig {k}: params");
+        for (a, b) in p.arrows.iter().zip(&s.arrows) {
+            assert_eq!((&a.params[0], &a.params[1]), (&b.params[1], &b.params[0]));
+        }
+    }
+    assert!(grew > 0, "no forward with internal results was met");
+}
+
+mod landing6_battery;

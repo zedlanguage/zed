@@ -19739,41 +19739,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return (Ty::func(e.clone()), None);
         }
-        // `s` with its parameters in `e`'s order.
+        // `inv[j]`: the parameter of `s` at place `j` of `e`, read for the ranges below.
         let mut inv = vec![0; from.len()];
         for (i, &j) in from.iter().enumerate() {
             inv[j] = i;
         }
-        // The needs that hold, at `s`'s parameter places, which `range_need_of` reads; the
-        // permuted signature holds them at `e`'s (FAIL-fit-declared-permuted-needs).
-        let (kept, own) = guarded_needs(&s, e);
-        let permuted = Sig {
-            bounds: s.bounds.clone(),
-            data: s.data,
-            dense: s.dense,
-            keys: s.keys.clone(),
-            word: s.word.clone(),
-            needs: needs_in_order(&kept, &from),
-            // The needs are decoded ([`guarded_needs`]), so the internal results of their
-            // forwards are own variables, as in the flat signature (landing round 5, Gemini
-            // L5-NB1).
-            own,
-            held: s.held.clone(),
-            named: s.named,
-            hull: s.hull.clone(),
-            facts: Default::default(),
-            params: e.params.clone(),
-            arrows: s
-                .arrows
-                .iter()
-                .map(|a| Arrow {
-                    params: inv.iter().map(|&i| a.params[i].clone()).collect(),
-                    result: a.result.clone(),
-                    partial: a.partial,
-                    stores_not_found: a.stores_not_found,
-                })
-                .collect(),
-        };
+        let (kept, permuted) = permuted_sig(&s, e, &from);
         let what = format!("`{}`", f.name);
         let permuted = Arc::new(permuted);
         // A range need the slot leaves in place (an exact arrow may pass any value of its
@@ -27977,6 +27948,46 @@ fn guarded_needs(s: &Sig, e: &Sig) -> (Vec<Need>, BTreeSet<Arc<str>>) {
         .cloned()
         .collect();
     (kept, own.into_owned())
+}
+
+/// The declared function `s` with its parameters in the order of the function type `e` it is
+/// passed as (`from[i]` is the place in `e` of `s`'s parameter `i`), and the needs that hold
+/// there ([`guarded_needs`]) at `s`'s parameter places, which `range_need_of` reads; the
+/// permuted signature holds them at `e`'s (FAIL-fit-declared-permuted-needs). Its needs are
+/// decoded, so the internal results of their forwards are own variables, as in the flat
+/// signature (landing round 5, Gemini L5-NB1; tested by
+/// `landing6_permuted_sig_owns_the_internal_results`, Claude L6 Q1.2).
+///
+/// Cost: O(needs + params · arrows), beside the one decode.
+pub(super) fn permuted_sig(s: &Sig, e: &Sig, from: &[usize]) -> (Vec<Need>, Sig) {
+    let mut inv = vec![0; from.len()];
+    for (i, &j) in from.iter().enumerate() {
+        inv[j] = i;
+    }
+    let (kept, own) = guarded_needs(s, e);
+    let permuted = Sig {
+        bounds: s.bounds.clone(),
+        data: s.data,
+        dense: s.dense,
+        keys: s.keys.clone(),
+        word: s.word.clone(),
+        needs: needs_in_order(&kept, from),
+        own,
+        held: s.held.clone(),
+        named: s.named,
+        hull: s.hull.clone(),
+        facts: Default::default(),
+        params: e.params.clone(),
+        arrows: (s.arrows.iter())
+            .map(|a| Arrow {
+                params: inv.iter().map(|&i| a.params[i].clone()).collect(),
+                result: a.result.clone(),
+                partial: a.partial,
+                stores_not_found: a.stores_not_found,
+            })
+            .collect(),
+    };
+    (kept, permuted)
 }
 
 /// The needs `needs` of a function, made at its own parameter places, at the places the
