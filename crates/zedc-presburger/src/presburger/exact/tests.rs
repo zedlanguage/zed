@@ -3493,3 +3493,73 @@ fn the_certificates_of_a_part_read_it_once_not_once_a_name() {
         "the certificates added {added} units of work for {read} units of constraints read"
     );
 }
+
+/// `s` asked of `f` by `exact_each`, given the solver's set `h`, with the forward certificate
+/// on and off: the two answers must agree.
+fn on_off(f: &Formula, h: &IntervalSet) -> String {
+    let run = |off: bool| {
+        GUARDED_OFF.set(off);
+        let got = exact_each(f, &[a("s")], (vec![Ok(h.clone())], vec![]), SOLVER);
+        GUARDED_OFF.set(false);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        format!("{:?}", got.sets)
+    };
+    let (on, off) = (run(false), run(true));
+    assert_eq!(on, off, "the certificate changed the answer");
+    on
+}
+
+/// The count of `guarded::prepare` (decline where the atoms number more than the definitions
+/// plus 2) at its edge. `s == x + y`, `0 <= s <= 9`, `0 <= x <= 3`: three atoms, one
+/// definition, exactly the definitions plus 2. The reading learns `s`, pins `x`, then takes the
+/// equation for `y`, so the certificate answers `[0, 9]`. A count that declined one atom
+/// earlier (at the definitions plus 1) would decline here, and this test would fail.
+#[test]
+fn a_part_with_exactly_two_atoms_more_than_its_definitions_is_certified() {
+    let f = Formula::And(Shared::new(vec![
+        eq(&[("x", 1), ("y", 1), ("s", -1)], 0),
+        ge(&[("s", 1)], 0),
+        ge(&[("s", -1)], 9),
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 3),
+    ]));
+    let h = IntervalSet::of(0, 9);
+    assert_eq!(certify(&f, "s", &h), Some(h.clone()));
+    on_off(&f, &h);
+}
+
+/// A definition that reaches two new atoms: `s == x + y + z` has three unknowns once `s` is
+/// known; a reading can pin one, and with no other definition the second stop declines. The
+/// atoms (4) are the definitions (1) plus 3, so `prepare` declines before any reading, the same
+/// answer the reading gives. Given a second definition `z == x`, which supplies one of the two,
+/// the atoms (4) are the definitions (2) plus 2: the reading pins `x`, takes `z`, then `y`, and
+/// the certificate answers, so the count does not decline it early. Both agree with the cover
+/// alone.
+#[test]
+fn a_definition_that_reaches_two_new_atoms_declines_unless_another_supplies_one() {
+    let bounds = || {
+        vec![
+            eq(&[("x", 1), ("y", 1), ("z", 1), ("s", -1)], 0),
+            ge(&[("s", 1)], 0),
+            ge(&[("s", -1)], 9),
+            ge(&[("x", 1)], 0),
+            ge(&[("x", -1)], 3),
+        ]
+    };
+    let h = IntervalSet::of(0, 9);
+    let alone = Formula::And(Shared::new(bounds()));
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    assert!(guarded::prepare(&alone, &mut work).unwrap().is_none());
+    assert_eq!(certify(&alone, "s", &h), None);
+    on_off(&alone, &h);
+    let mut parts = bounds();
+    parts.push(eq(&[("z", 1), ("x", -1)], 0));
+    let supplied = Formula::And(Shared::new(parts));
+    assert_eq!(certify(&supplied, "s", &h), Some(h.clone()));
+    on_off(&supplied, &h);
+}
